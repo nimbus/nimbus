@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-TEST_FILE_SUFFIXES = {".js", ".mjs", ".cjs"}
+from fixture_discovery import discover_fixture_files as discover_git_fixture_files
+
 RUST_NODE_COMPAT_ROOT = Path("crates/nimbus-runtime/src/runtime/tests/node")
 RUST_EXECUTED_FIXTURE_LANES = {"node20", "node22", "node24"}
 LANE_AWARE_BATCH_MACROS = {
@@ -73,18 +74,10 @@ def lane_ids() -> list[str]:
     return sorted(path.stem for path in (manifest_root() / "lanes").glob("node*.json"))
 
 
-def is_node_test_file(path: Path) -> bool:
-    return path.name.startswith("test-") and path.suffix in TEST_FILE_SUFFIXES
-
-
 def discover_fixture_files(lane: str) -> set[str]:
     metadata = lane_metadata(lane)
     fixture_root = repo_root() / metadata["vendored_fixture_root"]
-    return {
-        f"test/{path.relative_to(fixture_root)}"
-        for path in fixture_root.rglob("*")
-        if path.is_file() and is_node_test_file(path)
-    }
+    return {f"test/{path}" for path in discover_git_fixture_files(fixture_root)}
 
 
 def rust_source_lines() -> list[str]:
