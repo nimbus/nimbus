@@ -15,6 +15,7 @@
 
 pub mod attribute_value;
 pub mod auth;
+pub mod commands;
 pub mod config;
 pub mod dispatch;
 pub mod error;

@@ -25,6 +25,8 @@ base64.workspace = true
 # Exact decimal parsing for the order-preserving Number sort-key projection.
 bigdecimal = "0.4"
 serde_json.workspace = true
+# DynamoDB TableId (random v4) for table metadata.
+uuid = { version = "1", features = ["v4"] }
 # SigV4 verification primitives (vendored module in src/auth/sigv4/).
 hex.workspace = true
 hmac.workspace = true
