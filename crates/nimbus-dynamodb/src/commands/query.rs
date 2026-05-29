@@ -185,8 +185,13 @@ pub fn scan(
     }
     ordered.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // Segment partitioning (Segment/TotalSegments) lands in D2.4; a single-
-    // segment scan reads the whole table.
+    // Parallel scan: deterministically partition the table by a stable hash of
+    // the primary-key DocumentId. Across all TotalSegments the partition is a
+    // disjoint cover (every item in exactly one segment), stable across runs.
+    let (segment, total_segments) = validate_segments(input.segment, input.total_segments)?;
+    if total_segments > 1 {
+        ordered.retain(|(id, _)| segment_of(id, total_segments) == segment);
+    }
 
     // ExclusiveStartKey: skip items at or before the cursor's DocumentId.
     if let Some(start) = &input.exclusive_start_key {
@@ -240,6 +245,49 @@ pub fn scan(
         last_evaluated_key,
         consumed_capacity: None,
     })
+}
+
+/// Validate the parallel-scan `Segment`/`TotalSegments` pair, returning a
+/// normalized `(segment, total_segments)` (a single full segment when neither
+/// is given).
+///
+/// DynamoDB requires both-or-neither, `TotalSegments` in `1..=1_000_000`, and
+/// `0 <= Segment < TotalSegments`.
+fn validate_segments(
+    segment: Option<i64>,
+    total_segments: Option<i64>,
+) -> Result<(i64, i64), DynamoDbError> {
+    match (segment, total_segments) {
+        (None, None) => Ok((0, 1)),
+        (Some(segment), Some(total)) => {
+            if !(1..=1_000_000).contains(&total) {
+                return Err(DynamoDbError::ValidationException(
+                    "TotalSegments must be between 1 and 1000000".to_owned(),
+                ));
+            }
+            if !(0..total).contains(&segment) {
+                return Err(DynamoDbError::ValidationException(
+                    "Segment must be greater than or equal to 0 and less than TotalSegments"
+                        .to_owned(),
+                ));
+            }
+            Ok((segment, total))
+        }
+        _ => Err(DynamoDbError::ValidationException(
+            "The Segment and TotalSegments parameters must be specified together".to_owned(),
+        )),
+    }
+}
+
+/// Assign a `DocumentId` to a scan segment via a stable FNV-1a hash (so the
+/// partition is identical across processes and repeated runs).
+fn segment_of(doc_id: &str, total_segments: i64) -> i64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in doc_id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    (hash % total_segments as u64) as i64
 }
 
 /// Apply an optional `FilterExpression` (ConditionExpression grammar) to a set
@@ -852,6 +900,90 @@ mod tests {
             vec!["p1", "p2", "p3", "p4"],
             "every item exactly once"
         );
+    }
+
+    /// Scan one segment, returning the set of `pk` values it covers.
+    fn scan_segment(
+        service: &Arc<Service>,
+        context: &TenantIsolationContext,
+        segment: i64,
+        total: i64,
+    ) -> std::collections::BTreeSet<String> {
+        let out = scan_run(
+            service,
+            context,
+            json!({ "TableName": "Events", "Segment": segment, "TotalSegments": total }),
+        );
+        out.items
+            .unwrap()
+            .iter()
+            .map(|item| match item.get("pk") {
+                Some(AttributeValue::S(s)) => s.clone(),
+                other => panic!("pk: {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn scan_parallel_segments_are_a_stable_disjoint_cover() {
+        let (service, ctx, _t) = fixture();
+        create_events(&service, &ctx);
+        let all: std::collections::BTreeSet<String> = (0..20)
+            .map(|i| format!("p{i:02}"))
+            .inspect(|pk| put_event(&service, &ctx, pk, "1"))
+            .collect();
+
+        const TOTAL: i64 = 4;
+        let segments: Vec<std::collections::BTreeSet<String>> = (0..TOTAL)
+            .map(|s| scan_segment(&service, &ctx, s, TOTAL))
+            .collect();
+
+        // Union == full table.
+        let union: std::collections::BTreeSet<String> =
+            segments.iter().flatten().cloned().collect();
+        assert_eq!(union, all, "every item appears in some segment");
+
+        // Pairwise disjoint (no item in two segments).
+        let total_with_dupes: usize = segments.iter().map(std::collections::BTreeSet::len).sum();
+        assert_eq!(
+            total_with_dupes,
+            all.len(),
+            "no item appears in two segments"
+        );
+
+        // Stable across repeated runs.
+        for s in 0..TOTAL {
+            assert_eq!(
+                scan_segment(&service, &ctx, s, TOTAL),
+                segments[s as usize],
+                "segment {s} is stable across runs"
+            );
+        }
+    }
+
+    #[test]
+    fn scan_invalid_segment_is_rejected() {
+        let (service, ctx, _t) = fixture();
+        create_events(&service, &ctx);
+        // Segment >= TotalSegments.
+        let err = scan(
+            &service,
+            &ctx,
+            serde_json::from_value(
+                json!({ "TableName": "Events", "Segment": 4, "TotalSegments": 4 }),
+            )
+            .unwrap(),
+        )
+        .expect_err("segment out of range");
+        assert!(matches!(err, DynamoDbError::ValidationException(_)));
+        // Segment without TotalSegments.
+        let err = scan(
+            &service,
+            &ctx,
+            serde_json::from_value(json!({ "TableName": "Events", "Segment": 0 })).unwrap(),
+        )
+        .expect_err("segment without total");
+        assert!(matches!(err, DynamoDbError::ValidationException(_)));
     }
 
     #[test]
