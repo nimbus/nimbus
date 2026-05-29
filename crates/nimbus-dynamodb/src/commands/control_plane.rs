@@ -233,39 +233,99 @@ pub fn load_key_schema(
     Ok(load_description(service, context, table_name)?.key_schema)
 }
 
-/// Load the key schema for a Query/Scan target: the base table when
-/// `index_name` is `None`, otherwise the named LSI's or GSI's key schema.
+/// The key schema + projected-attribute set a Query/Scan reads through. For the
+/// base table, every attribute is available (`projected_attributes` is `None`);
+/// for an index, the attributes projected into it (KEYS_ONLY/INCLUDE/ALL).
+pub struct IndexQueryShape {
+    /// The key schema the read keys/orders on — the base table's, or the index's.
+    pub key_schema: Vec<KeySchemaElement>,
+    /// The base table's primary-key schema (the physical storage key, used to
+    /// derive each item's `DocumentId` for Scan ordering/pagination).
+    pub table_key_schema: Vec<KeySchemaElement>,
+    /// `None` = all attributes available (base table or `ALL` projection);
+    /// `Some(set)` = only these attribute names are available from the index.
+    pub projected_attributes: Option<std::collections::BTreeSet<String>>,
+}
+
+/// Resolve the Query/Scan shape for the base table (`index_name` = `None`) or a
+/// named LSI/GSI.
 ///
 /// # Errors
 /// `ResourceNotFoundException` if the table is absent; `ValidationException` if
 /// the named index does not exist on the table.
-pub fn load_index_key_schema(
+pub fn load_index_query_shape(
     service: &Arc<Service>,
     context: &TenantIsolationContext,
     table_name: &str,
     index_name: Option<&str>,
-) -> Result<Vec<KeySchemaElement>, DynamoDbError> {
+) -> Result<IndexQueryShape, DynamoDbError> {
     let description = load_description(service, context, table_name)?;
+    let table_key_schema = description.key_schema.clone();
     let Some(name) = index_name else {
-        return Ok(description.key_schema);
+        return Ok(IndexQueryShape {
+            key_schema: description.key_schema,
+            table_key_schema,
+            projected_attributes: None,
+        });
     };
+    // Table key attributes are always projected into every index.
+    let table_keys: std::collections::BTreeSet<String> = table_key_schema
+        .iter()
+        .map(|element| element.attribute_name.clone())
+        .collect();
     if let Some(lsi) = description
         .local_secondary_indexes
         .as_ref()
         .and_then(|indexes| indexes.iter().find(|index| index.index_name == name))
     {
-        return Ok(lsi.key_schema.clone());
+        return Ok(IndexQueryShape {
+            projected_attributes: projected_set(&lsi.projection, &table_keys, &lsi.key_schema),
+            key_schema: lsi.key_schema.clone(),
+            table_key_schema,
+        });
     }
     if let Some(gsi) = description
         .global_secondary_indexes
         .as_ref()
         .and_then(|indexes| indexes.iter().find(|index| index.index_name == name))
     {
-        return Ok(gsi.key_schema.clone());
+        return Ok(IndexQueryShape {
+            projected_attributes: projected_set(&gsi.projection, &table_keys, &gsi.key_schema),
+            key_schema: gsi.key_schema.clone(),
+            table_key_schema,
+        });
     }
     Err(DynamoDbError::ValidationException(format!(
         "The table does not have the specified index: {name}"
     )))
+}
+
+/// The attribute names available from an index given its projection. `ALL` →
+/// `None` (no restriction); KEYS_ONLY → table keys ∪ index keys; INCLUDE → those
+/// ∪ the declared non-key attributes.
+fn projected_set(
+    projection: &extenddb_core::types::Projection,
+    table_keys: &std::collections::BTreeSet<String>,
+    index_key_schema: &[KeySchemaElement],
+) -> Option<std::collections::BTreeSet<String>> {
+    use extenddb_core::types::ProjectionType;
+    match projection.projection_type {
+        ProjectionType::All => None,
+        ProjectionType::KeysOnly | ProjectionType::Include => {
+            let mut set = table_keys.clone();
+            set.extend(
+                index_key_schema
+                    .iter()
+                    .map(|element| element.attribute_name.clone()),
+            );
+            if projection.projection_type == ProjectionType::Include
+                && let Some(non_key) = &projection.non_key_attributes
+            {
+                set.extend(non_key.iter().cloned());
+            }
+            Some(set)
+        }
+    }
 }
 
 fn load_description(

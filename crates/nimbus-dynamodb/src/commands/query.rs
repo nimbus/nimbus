@@ -43,13 +43,14 @@ pub fn query(
     context: &TenantIsolationContext,
     input: QueryInput,
 ) -> Result<QueryOutput, DynamoDbError> {
-    // The query's key schema is the base table's, or the named LSI/GSI's.
-    let key_schema = control_plane::load_index_key_schema(
+    // The query keys on the base table's schema, or the named LSI/GSI's.
+    let shape = control_plane::load_index_query_shape(
         service,
         context,
         &input.table_name,
         input.index_name.as_deref(),
     )?;
+    let key_schema = shape.key_schema.clone();
     let table = TableName::new(&input.table_name).map_err(map_core_error)?;
     let limits = default_limits();
 
@@ -141,6 +142,8 @@ pub fn query(
     matched = filter_items(matched, input.filter_expression.as_deref(), &maps, &limits)?;
 
     let count = matched.len() as i64;
+    // Restrict each item to the index's projected attributes (KEYS_ONLY/INCLUDE).
+    restrict_to_projection(&mut matched, shape.projected_attributes.as_ref());
     let items = select_items(
         matched,
         input.select,
@@ -169,18 +172,37 @@ pub fn scan(
     context: &TenantIsolationContext,
     input: ScanInput,
 ) -> Result<ScanOutput, DynamoDbError> {
-    if input.index_name.is_some() {
-        return Err(DynamoDbError::ValidationException(
-            "Scanning a secondary index is not yet supported (planned in D4)".to_owned(),
-        ));
-    }
-    let key_schema = control_plane::load_key_schema(service, context, &input.table_name)?;
+    let shape = control_plane::load_index_query_shape(
+        service,
+        context,
+        &input.table_name,
+        input.index_name.as_deref(),
+    )?;
+    // The physical storage key is always the base table's primary key.
+    let key_schema = shape.table_key_schema.clone();
     let table = TableName::new(&input.table_name).map_err(map_core_error)?;
     let limits = default_limits();
+
+    // Index keys an item must carry to appear in an index scan (sparse index).
+    let index_key_attrs: Vec<String> = input
+        .index_name
+        .as_ref()
+        .map(|_| {
+            shape
+                .key_schema
+                .iter()
+                .map(|element| element.attribute_name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
 
     // Stable scan order by primary-key DocumentId for deterministic pagination.
     let mut ordered: Vec<(String, Item)> = Vec::new();
     for item in enumerate(service, context, &table)? {
+        // Sparse index: skip items missing any of the index's key attributes.
+        if !index_key_attrs.iter().all(|attr| item.contains_key(attr)) {
+            continue;
+        }
         let doc_id = crate::commands::item::primary_key_id(&item, &key_schema)?;
         ordered.push((doc_id.as_str().to_owned(), item));
     }
@@ -223,7 +245,7 @@ pub fn scan(
         input.expression_attribute_names.as_ref(),
         input.expression_attribute_values.as_ref(),
     );
-    let surviving = filter_items(
+    let mut surviving = filter_items(
         evaluated,
         input.filter_expression.as_deref(),
         &maps,
@@ -231,6 +253,8 @@ pub fn scan(
     )?;
 
     let count = surviving.len() as i64;
+    // Restrict each item to the index's projected attributes (KEYS_ONLY/INCLUDE).
+    restrict_to_projection(&mut surviving, shape.projected_attributes.as_ref());
     let items = select_items(
         surviving,
         input.select,
@@ -310,6 +334,20 @@ fn filter_items(
         }
     }
     Ok(kept)
+}
+
+/// Restrict each item to an index's projected attribute set (KEYS_ONLY/INCLUDE).
+/// `None` (base table or `ALL` projection) leaves every attribute in place.
+fn restrict_to_projection(
+    items: &mut [Item],
+    projected: Option<&std::collections::BTreeSet<String>>,
+) {
+    let Some(projected) = projected else {
+        return;
+    };
+    for item in items {
+        item.retain(|name, _| projected.contains(name));
+    }
 }
 
 /// Apply the `Select` mode + `ProjectionExpression` to the surviving items.
@@ -693,6 +731,271 @@ mod tests {
         )
         .expect_err("querying a nonexistent index must fail");
         assert!(matches!(err, DynamoDbError::ValidationException(_)));
+    }
+
+    /// Create a table with one GSI; `extra_attrs` are added to AttributeDefinitions.
+    fn create_with_gsi(
+        service: &Arc<Service>,
+        context: &TenantIsolationContext,
+        table: &str,
+        gsi_key: serde_json::Value,
+        projection: serde_json::Value,
+        extra_attrs: serde_json::Value,
+    ) {
+        let mut attrs = serde_json::json!([{ "AttributeName": "pk", "AttributeType": "S" }]);
+        attrs
+            .as_array_mut()
+            .unwrap()
+            .extend(extra_attrs.as_array().unwrap().iter().cloned());
+        let input: CreateTableInput = serde_json::from_value(json!({
+            "TableName": table,
+            "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+            "AttributeDefinitions": attrs,
+            "GlobalSecondaryIndexes": [{
+                "IndexName": "gsi",
+                "KeySchema": gsi_key,
+                "Projection": projection
+            }]
+        }))
+        .unwrap();
+        control_plane::create_table(service, context, input).expect("create with GSI");
+    }
+
+    fn put_json(
+        service: &Arc<Service>,
+        context: &TenantIsolationContext,
+        table: &str,
+        item: serde_json::Value,
+    ) {
+        crate::commands::item::put_item(
+            service,
+            context,
+            serde_json::from_value(json!({ "TableName": table, "Item": item })).unwrap(),
+        )
+        .expect("put");
+    }
+
+    #[test]
+    fn query_gsi_projection_keys_only_and_include() {
+        let (service, ctx, _t) = fixture();
+        // GSI keyed on `g` (S); KEYS_ONLY projects only {pk, g}.
+        create_with_gsi(
+            &service,
+            &ctx,
+            "KeysOnly",
+            json!([{ "AttributeName": "g", "KeyType": "HASH" }]),
+            json!({ "ProjectionType": "KEYS_ONLY" }),
+            json!([{ "AttributeName": "g", "AttributeType": "S" }]),
+        );
+        put_json(
+            &service,
+            &ctx,
+            "KeysOnly",
+            json!({ "pk": {"S": "a"}, "g": {"S": "x"}, "extra": {"N": "9"} }),
+        );
+        let out = query(
+            &service,
+            &ctx,
+            serde_json::from_value(json!({
+                "TableName": "KeysOnly",
+                "IndexName": "gsi",
+                "KeyConditionExpression": "g = :g",
+                "ExpressionAttributeValues": { ":g": {"S": "x"} },
+            }))
+            .unwrap(),
+        )
+        .expect("keys-only query");
+        let item = &out.items.unwrap()[0];
+        assert!(item.contains_key("pk") && item.contains_key("g"));
+        assert!(
+            !item.contains_key("extra"),
+            "KEYS_ONLY drops non-projected attrs"
+        );
+
+        // INCLUDE projects {pk, g, extra}.
+        create_with_gsi(
+            &service,
+            &ctx,
+            "Included",
+            json!([{ "AttributeName": "g", "KeyType": "HASH" }]),
+            json!({ "ProjectionType": "INCLUDE", "NonKeyAttributes": ["extra"] }),
+            json!([{ "AttributeName": "g", "AttributeType": "S" }]),
+        );
+        put_json(
+            &service,
+            &ctx,
+            "Included",
+            json!({ "pk": {"S": "a"}, "g": {"S": "x"}, "extra": {"N": "9"}, "other": {"N": "1"} }),
+        );
+        let out = query(
+            &service,
+            &ctx,
+            serde_json::from_value(json!({
+                "TableName": "Included",
+                "IndexName": "gsi",
+                "KeyConditionExpression": "g = :g",
+                "ExpressionAttributeValues": { ":g": {"S": "x"} },
+            }))
+            .unwrap(),
+        )
+        .expect("include query");
+        let item = &out.items.unwrap()[0];
+        assert!(
+            item.contains_key("extra"),
+            "INCLUDE keeps the named non-key attr"
+        );
+        assert!(!item.contains_key("other"), "INCLUDE drops unnamed attrs");
+    }
+
+    #[test]
+    fn query_gsi_numeric_range_preserves_precision_beyond_f64() {
+        let (service, ctx, _t) = fixture();
+        // GSI keyed on (g S, n N) — a numeric sort key.
+        create_with_gsi(
+            &service,
+            &ctx,
+            "Big",
+            json!([
+                { "AttributeName": "g", "KeyType": "HASH" },
+                { "AttributeName": "n", "KeyType": "RANGE" }
+            ]),
+            json!({ "ProjectionType": "ALL" }),
+            json!([
+                { "AttributeName": "g", "AttributeType": "S" },
+                { "AttributeName": "n", "AttributeType": "N" }
+            ]),
+        );
+        // These 18-digit values are indistinguishable as f64 but must order.
+        for (sk, n) in [("a", "100000000000000002"), ("b", "100000000000000001")] {
+            put_json(
+                &service,
+                &ctx,
+                "Big",
+                json!({ "pk": {"S": sk}, "g": {"S": "p"}, "n": {"N": n} }),
+            );
+        }
+        let out = query(
+            &service,
+            &ctx,
+            serde_json::from_value(json!({
+                "TableName": "Big",
+                "IndexName": "gsi",
+                "KeyConditionExpression": "g = :g AND n > :min",
+                "ExpressionAttributeValues": { ":g": {"S": "p"}, ":min": {"N": "100000000000000000"} },
+            }))
+            .unwrap(),
+        )
+        .expect("numeric range query");
+        let ns: Vec<String> = out
+            .items
+            .unwrap()
+            .iter()
+            .map(|item| match item.get("n") {
+                Some(AttributeValue::N(n)) => n.clone(),
+                other => panic!("n: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            ns,
+            vec!["100000000000000001", "100000000000000002"],
+            "full-precision numeric ordering (f64 would collapse these)"
+        );
+    }
+
+    #[test]
+    fn query_gsi_binary_range_is_byte_wise() {
+        let (service, ctx, _t) = fixture();
+        // GSI keyed on (g S, b B) — a binary sort key.
+        create_with_gsi(
+            &service,
+            &ctx,
+            "Bins",
+            json!([
+                { "AttributeName": "g", "KeyType": "HASH" },
+                { "AttributeName": "b", "KeyType": "RANGE" }
+            ]),
+            json!({ "ProjectionType": "ALL" }),
+            json!([
+                { "AttributeName": "g", "AttributeType": "S" },
+                { "AttributeName": "b", "AttributeType": "B" }
+            ]),
+        );
+        // Base64 of bytes [0x01], [0x02], [0xff]; byte-wise order is 01 < 02 < ff.
+        for (sk, b64) in [("a", "/w=="), ("b", "AQ=="), ("c", "Ag==")] {
+            put_json(
+                &service,
+                &ctx,
+                "Bins",
+                json!({ "pk": {"S": sk}, "g": {"S": "p"}, "b": {"B": b64} }),
+            );
+        }
+        let out = query(
+            &service,
+            &ctx,
+            serde_json::from_value(json!({
+                "TableName": "Bins",
+                "IndexName": "gsi",
+                "KeyConditionExpression": "g = :g",
+                "ExpressionAttributeValues": { ":g": {"S": "p"} },
+            }))
+            .unwrap(),
+        )
+        .expect("binary range query");
+        let bs: Vec<Vec<u8>> = out
+            .items
+            .unwrap()
+            .iter()
+            .map(|item| match item.get("b") {
+                Some(AttributeValue::B(bytes)) => bytes.clone(),
+                other => panic!("b: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            bs,
+            vec![vec![0x01u8], vec![0x02u8], vec![0xffu8]],
+            "binary sort key orders byte-wise (0x01 < 0x02 < 0xff)"
+        );
+    }
+
+    #[test]
+    fn scan_index_is_sparse_and_projected() {
+        let (service, ctx, _t) = fixture();
+        create_with_gsi(
+            &service,
+            &ctx,
+            "Sparse",
+            json!([{ "AttributeName": "g", "KeyType": "HASH" }]),
+            json!({ "ProjectionType": "KEYS_ONLY" }),
+            json!([{ "AttributeName": "g", "AttributeType": "S" }]),
+        );
+        // Two items have `g` (in the index), one does not (sparse).
+        put_json(
+            &service,
+            &ctx,
+            "Sparse",
+            json!({ "pk": {"S": "a"}, "g": {"S": "x"}, "extra": {"N": "1"} }),
+        );
+        put_json(
+            &service,
+            &ctx,
+            "Sparse",
+            json!({ "pk": {"S": "b"}, "g": {"S": "y"}, "extra": {"N": "2"} }),
+        );
+        put_json(&service, &ctx, "Sparse", json!({ "pk": {"S": "c"} }));
+        let out = scan(
+            &service,
+            &ctx,
+            serde_json::from_value(json!({ "TableName": "Sparse", "IndexName": "gsi" })).unwrap(),
+        )
+        .expect("index scan");
+        assert_eq!(out.count, 2, "only items present in the index are scanned");
+        for item in out.items.unwrap() {
+            assert!(item.contains_key("g"), "indexed item");
+            assert!(
+                !item.contains_key("extra"),
+                "KEYS_ONLY drops non-projected attrs"
+            );
+        }
     }
 
     #[test]
