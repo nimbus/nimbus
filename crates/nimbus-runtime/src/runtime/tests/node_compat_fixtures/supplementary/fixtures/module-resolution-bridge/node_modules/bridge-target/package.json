@@ -1,0 +1,14 @@
+{
+  "name": "bridge-target",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./esm-entry.mjs",
+      "require": "./cjs-entry.cjs"
+    },
+    "./feature": {
+      "import": "./esm-feature.mjs",
+      "require": "./cjs-feature.cjs"
+    }
+  }
+}
