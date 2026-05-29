@@ -37,3 +37,10 @@ sha2.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+# Operation-family latency baseline (p50/p95/p99). Custom harness — a plain
+# `fn main` driven by `cargo bench`; see docs/plans/proof/dynamodb-adapter/
+# performance-baseline.md.
+[[bench]]
+name = "operations"
+harness = false
