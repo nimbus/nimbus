@@ -6066,6 +6066,7 @@ dependencies = [
  "hex",
  "hmac 0.12.1",
  "http 1.4.0",
+ "serde_json",
  "sha2 0.10.9",
 ]
 
