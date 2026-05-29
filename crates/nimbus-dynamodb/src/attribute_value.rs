@@ -82,6 +82,17 @@ pub fn item_to_stored(item: &Item) -> BTreeMap<String, StoredValue> {
         .collect()
 }
 
+/// Convert a Nimbus typed-field sidecar map back into a DynamoDB item — the
+/// reverse of [`item_to_stored`], used when reading a stored document back for
+/// expression evaluation or as a response item.
+#[must_use]
+pub fn stored_to_item(stored: &BTreeMap<String, StoredValue>) -> Item {
+    stored
+        .iter()
+        .map(|(k, v)| (k.clone(), stored_to_attribute_value(v)))
+        .collect()
+}
+
 /// Reject the cases DynamoDB rejects at the item boundary: an empty top-level
 /// item and any empty `SS`/`NS`/`BS` (at any nesting depth), with
 /// `ValidationException`. Duplicate set members and wire-shape errors are
@@ -169,6 +180,19 @@ mod tests {
         assert_eq!(
             value, back,
             "AttributeValue must roundtrip through StoredValue"
+        );
+    }
+
+    #[test]
+    fn item_roundtrips_through_stored_sidecar() {
+        let mut item: Item = BTreeMap::new();
+        item.insert("pk".to_string(), AttributeValue::S("id-1".into()));
+        item.insert("count".to_string(), AttributeValue::N("42".into()));
+        item.insert("bin".to_string(), AttributeValue::B(vec![1, 2, 3]));
+        let back = stored_to_item(&item_to_stored(&item));
+        assert_eq!(
+            item, back,
+            "an item must roundtrip stored -> item -> stored"
         );
     }
 
