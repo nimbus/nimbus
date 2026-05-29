@@ -669,6 +669,52 @@ async fn scan_through_official_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_get_item_through_official_sdk() {
+    use aws_sdk_dynamodb::types::KeysAndAttributes;
+    use std::collections::HashMap;
+
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    create_orders(&client).await;
+    for pk in ["a", "b", "c"] {
+        client
+            .put_item()
+            .table_name("Orders")
+            .item("pk", AttributeValue::S(pk.into()))
+            .send()
+            .await
+            .expect("put");
+    }
+
+    let key = |pk: &str| -> HashMap<String, AttributeValue> {
+        HashMap::from([("pk".to_string(), AttributeValue::S(pk.into()))])
+    };
+    let requested = KeysAndAttributes::builder()
+        .keys(key("a"))
+        .keys(key("c"))
+        .keys(key("absent"))
+        .build()
+        .expect("keys and attributes");
+    let out = client
+        .batch_get_item()
+        .request_items("Orders", requested)
+        .send()
+        .await
+        .expect("batch_get_item");
+    let items = &out.responses().expect("responses")["Orders"];
+    assert_eq!(items.len(), 2, "present keys only");
+    let pks: std::collections::BTreeSet<String> = items
+        .iter()
+        .map(|item| item.get("pk").unwrap().as_s().unwrap().clone())
+        .collect();
+    assert_eq!(pks, ["a", "c"].iter().map(|s| (*s).to_string()).collect());
+    assert!(
+        out.unprocessed_keys().is_none_or(HashMap::is_empty),
+        "store processes every key"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented
     // default limit shape.
