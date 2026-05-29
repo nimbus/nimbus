@@ -1003,6 +1003,95 @@ async fn local_secondary_index_query_through_official_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn global_secondary_index_crud_through_official_sdk() {
+    use aws_sdk_dynamodb::types::{
+        CreateGlobalSecondaryIndexAction, DeleteGlobalSecondaryIndexAction,
+        GlobalSecondaryIndexUpdate, Projection, ProjectionType,
+    };
+
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    create_orders(&client).await;
+
+    // Create a GSI on a new attribute `gsk` via UpdateTable.
+    client
+        .update_table()
+        .table_name("Orders")
+        .attribute_definitions(
+            AttributeDefinition::builder()
+                .attribute_name("gsk")
+                .attribute_type(ScalarAttributeType::S)
+                .build()
+                .expect("attr"),
+        )
+        .global_secondary_index_updates(
+            GlobalSecondaryIndexUpdate::builder()
+                .create(
+                    CreateGlobalSecondaryIndexAction::builder()
+                        .index_name("by_gsk")
+                        .key_schema(
+                            KeySchemaElement::builder()
+                                .attribute_name("gsk")
+                                .key_type(KeyType::Hash)
+                                .build()
+                                .expect("ks"),
+                        )
+                        .projection(
+                            Projection::builder()
+                                .projection_type(ProjectionType::All)
+                                .build(),
+                        )
+                        .build()
+                        .expect("create gsi action"),
+                )
+                .build(),
+        )
+        .send()
+        .await
+        .expect("create GSI");
+
+    // DescribeTable shows the ACTIVE GSI.
+    let described = client
+        .describe_table()
+        .table_name("Orders")
+        .send()
+        .await
+        .expect("describe");
+    let gsis = described.table().unwrap().global_secondary_indexes();
+    assert_eq!(gsis.len(), 1);
+    assert_eq!(gsis[0].index_name(), Some("by_gsk"));
+    assert_eq!(gsis[0].index_status().map(|s| s.as_str()), Some("ACTIVE"));
+
+    // Delete the GSI.
+    client
+        .update_table()
+        .table_name("Orders")
+        .global_secondary_index_updates(
+            GlobalSecondaryIndexUpdate::builder()
+                .delete(
+                    DeleteGlobalSecondaryIndexAction::builder()
+                        .index_name("by_gsk")
+                        .build()
+                        .expect("delete gsi action"),
+                )
+                .build(),
+        )
+        .send()
+        .await
+        .expect("delete GSI");
+    let after = client
+        .describe_table()
+        .table_name("Orders")
+        .send()
+        .await
+        .expect("describe after delete");
+    assert!(
+        after.table().unwrap().global_secondary_indexes().is_empty(),
+        "GSI removed"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented
     // default limit shape.
