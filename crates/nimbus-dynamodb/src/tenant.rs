@@ -69,6 +69,19 @@ impl AccessKeyRegistry {
     pub fn len(&self) -> usize {
         self.bindings.len()
     }
+
+    /// The distinct tenants bound in this registry (deduped — a tenant may have
+    /// several access keys). The TTL sweeper enumerates these to find work.
+    #[must_use]
+    pub fn tenants(&self) -> Vec<TenantId> {
+        let mut tenants: Vec<TenantId> = Vec::new();
+        for tenant in self.bindings.values() {
+            if !tenants.contains(tenant) {
+                tenants.push(tenant.clone());
+            }
+        }
+        tenants
+    }
 }
 
 /// Build the tenant isolation context for a DynamoDB request scoped to `tenant`.

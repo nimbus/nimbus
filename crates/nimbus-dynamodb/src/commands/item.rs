@@ -81,10 +81,13 @@ pub fn put_item(
         service,
         context,
         &input.table_name,
-        event_name,
-        &keys,
-        existing.as_ref(),
-        Some(&input.item),
+        stream::ChangeEvent {
+            event_name,
+            keys: &keys,
+            old_image: existing.as_ref(),
+            new_image: Some(&input.item),
+            user_identity: None,
+        },
     )?;
 
     let attributes = match input.return_values {
@@ -187,10 +190,13 @@ pub fn delete_item(
             service,
             context,
             &input.table_name,
-            StreamEventName::Remove,
-            &keys,
-            existing.as_ref(),
-            None,
+            stream::ChangeEvent {
+                event_name: StreamEventName::Remove,
+                keys: &keys,
+                old_image: existing.as_ref(),
+                new_image: None,
+                user_identity: None,
+            },
         )?;
     }
 
@@ -276,10 +282,13 @@ pub fn update_item(
         service,
         context,
         &input.table_name,
-        event_name,
-        &keys,
-        old_item.as_ref(),
-        Some(&new_item),
+        stream::ChangeEvent {
+            event_name,
+            keys: &keys,
+            old_image: old_item.as_ref(),
+            new_image: Some(&new_item),
+            user_identity: None,
+        },
     )?;
 
     let attributes = match input.return_values {

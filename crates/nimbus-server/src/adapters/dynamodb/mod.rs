@@ -6,5 +6,6 @@
 //! from the adapter crate, which owns its own config type.
 
 pub mod listener;
+pub mod ttl_sweeper;
 
 pub use nimbus_dynamodb::DynamoDbConfig;

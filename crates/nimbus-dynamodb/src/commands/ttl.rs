@@ -10,15 +10,17 @@ use std::sync::Arc;
 
 use extenddb_core::error::DynamoDbError;
 use extenddb_core::types::{
-    DescribeTimeToLiveInput, DescribeTimeToLiveOutput, TimeToLiveDescription,
-    TimeToLiveSpecificationOutput, TimeToLiveStatus, UpdateTimeToLiveInput, UpdateTimeToLiveOutput,
+    AttributeValue, DescribeTimeToLiveInput, DescribeTimeToLiveOutput, StreamEventName,
+    TimeToLiveDescription, TimeToLiveSpecificationOutput, TimeToLiveStatus, UpdateTimeToLiveInput,
+    UpdateTimeToLiveOutput, extract_key,
 };
-use nimbus_core::{DocumentId, TableName};
+use nimbus_core::{DocumentId, StructuredQuery, TableName};
 use nimbus_engine::Service;
 use nimbus_tenant::TenantIsolationContext;
 use serde_json::{Map, Value};
 
-use crate::commands::control_plane;
+use crate::attribute_value::fields_to_item;
+use crate::commands::{control_plane, stream};
 use crate::error::map_core_error;
 
 /// Reserved table holding one TTL-config doc per table (doc id = table name).
@@ -149,6 +151,126 @@ fn upsert_ttl_state(
         Err(error) => return Err(map_core_error(error)),
     }
     Ok(())
+}
+
+/// The TTL attribute name a sweep should honor for `table_name`, or `None` when
+/// TTL is disabled.
+fn enabled_ttl_attribute(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+) -> Result<Option<String>, DynamoDbError> {
+    let (enabled, attribute_name) = load_ttl_state(service, context, table_name)?;
+    Ok(if enabled { attribute_name } else { None })
+}
+
+/// True when `item`'s TTL `attribute` is a Number epoch-seconds value at or
+/// before `now`. DynamoDB only expires items whose TTL attribute is a Number;
+/// a missing or non-Number attribute (or an unparseable one) is never expired.
+fn is_expired(item: &extenddb_core::types::Item, attribute: &str, now: i64) -> bool {
+    match item.get(attribute) {
+        Some(AttributeValue::N(value)) => {
+            value.parse::<f64>().is_ok_and(|epoch| epoch <= now as f64)
+        }
+        _ => false,
+    }
+}
+
+/// Sweep one table: delete every item whose TTL attribute is past `now`,
+/// emitting a TTL-attributed REMOVE stream event for each (no-op unless a stream
+/// is enabled). Returns the number of items reclaimed. A no-op when TTL is
+/// disabled for the table.
+///
+/// # Errors
+/// A mapped engine error if the table cannot be scanned or an item deleted.
+pub fn sweep_table(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+    now: i64,
+) -> Result<usize, DynamoDbError> {
+    let Some(attribute) = enabled_ttl_attribute(service, context, table_name)? else {
+        return Ok(0);
+    };
+    let key_schema = control_plane::load_key_schema(service, context, table_name)?;
+    let table = TableName::new(table_name).map_err(map_core_error)?;
+    let documents = match service.query_documents_structured(
+        context.tenant_id(),
+        &table,
+        &StructuredQuery::default(),
+    ) {
+        Ok(documents) => documents,
+        Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
+            return Ok(0);
+        }
+        Err(error) => return Err(map_core_error(error)),
+    };
+
+    let mut swept = 0;
+    for document in documents {
+        let item = fields_to_item(&document.fields)?;
+        if !is_expired(&item, &attribute, now) {
+            continue;
+        }
+        service
+            .delete_document(context.tenant_id(), table.clone(), document.id.clone())
+            .map_err(map_core_error)?;
+        // A TTL deletion is a service-originated REMOVE; the deleted item is the
+        // old image (DynamoDB carries it for NEW_AND_OLD_IMAGES / OLD_IMAGE).
+        let keys = extract_key(&item, &key_schema);
+        stream::capture_event(
+            service,
+            context,
+            table_name,
+            stream::ChangeEvent {
+                event_name: StreamEventName::Remove,
+                keys: &keys,
+                old_image: Some(&item),
+                new_image: None,
+                user_identity: Some(stream::ttl_user_identity()),
+            },
+        )?;
+        swept += 1;
+    }
+    Ok(swept)
+}
+
+/// Sweep every table the tenant owns, returning the total items reclaimed.
+///
+/// # Errors
+/// A mapped engine error if the catalog cannot be enumerated or a sweep fails.
+pub fn sweep_tenant(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    now: i64,
+) -> Result<usize, DynamoDbError> {
+    let mut swept = 0;
+    for description in control_plane::list_table_descriptions(service, context)? {
+        swept += sweep_table(service, context, &description.table_name, now)?;
+    }
+    Ok(swept)
+}
+
+/// Run one TTL sweep pass across every tenant bound in `access_keys`, returning
+/// the total items reclaimed plus any per-tenant errors. A failing tenant never
+/// aborts the others — periodic TTL reclamation is best-effort maintenance, so
+/// the driver logs the errors and keeps the schedule.
+#[must_use]
+pub fn sweep_all_tenants(
+    service: &Arc<Service>,
+    access_keys: &crate::AccessKeyRegistry,
+    now: i64,
+) -> (usize, Vec<(nimbus_core::TenantId, DynamoDbError)>) {
+    let mut swept = 0;
+    let mut errors = Vec::new();
+    for tenant in access_keys.tenants() {
+        let context = crate::tenant::tenant_context(tenant.clone(), "ttl-sweeper");
+        match sweep_tenant(service, &context, now) {
+            Ok(count) => swept += count,
+            Err(error) => errors.push((tenant, error)),
+        }
+    }
+    (swept, errors)
 }
 
 #[cfg(test)]
@@ -333,6 +455,204 @@ mod tests {
             describe(&service, &globex, "Sessions").time_to_live_status,
             TimeToLiveStatus::Disabled,
             "another tenant's TTL config is invisible"
+        );
+    }
+
+    // ---- D6.2: TTL sweeper ----
+
+    /// Put an item `pk` with an optional `expiresAt` TTL value (epoch seconds).
+    fn put(
+        service: &Arc<Service>,
+        context: &TenantIsolationContext,
+        table: &str,
+        pk: &str,
+        expires_at: Option<i64>,
+    ) {
+        let mut item = json!({ "pk": { "S": pk } });
+        if let Some(epoch) = expires_at {
+            item["expiresAt"] = json!({ "N": epoch.to_string() });
+        }
+        crate::commands::item::put_item(
+            service,
+            context,
+            serde_json::from_value(json!({ "TableName": table, "Item": item })).unwrap(),
+        )
+        .expect("put");
+    }
+
+    fn exists(
+        service: &Arc<Service>,
+        context: &TenantIsolationContext,
+        table: &str,
+        pk: &str,
+    ) -> bool {
+        crate::commands::item::get_item(
+            service,
+            context,
+            serde_json::from_value(json!({ "TableName": table, "Key": { "pk": { "S": pk } } }))
+                .unwrap(),
+        )
+        .expect("get")
+        .item
+        .is_some()
+    }
+
+    #[test]
+    fn sweep_deletes_expired_items_and_leaves_the_rest() {
+        let (service, ctx, _t) = fixture();
+        create_table(&service, &ctx, "Sessions");
+        update(&service, &ctx, "Sessions", true, "expiresAt").expect("enable");
+        let now = 1_700_000_000;
+        put(&service, &ctx, "Sessions", "old", Some(now - 10)); // expired
+        put(&service, &ctx, "Sessions", "edge", Some(now)); // expires exactly now → expired
+        put(&service, &ctx, "Sessions", "fresh", Some(now + 10_000)); // future
+        put(&service, &ctx, "Sessions", "noattr", None); // no TTL attribute
+
+        let swept = sweep_table(&service, &ctx, "Sessions", now).expect("sweep");
+        assert_eq!(swept, 2, "the past and exactly-now items are reclaimed");
+        assert!(!exists(&service, &ctx, "Sessions", "old"));
+        assert!(!exists(&service, &ctx, "Sessions", "edge"));
+        assert!(
+            exists(&service, &ctx, "Sessions", "fresh"),
+            "future item kept"
+        );
+        assert!(
+            exists(&service, &ctx, "Sessions", "noattr"),
+            "an item without the TTL attribute is never expired"
+        );
+    }
+
+    #[test]
+    fn sweep_is_a_noop_when_ttl_is_disabled() {
+        let (service, ctx, _t) = fixture();
+        create_table(&service, &ctx, "Sessions");
+        let now = 1_700_000_000;
+        put(&service, &ctx, "Sessions", "old", Some(now - 10));
+        let swept = sweep_table(&service, &ctx, "Sessions", now).expect("sweep");
+        assert_eq!(swept, 0, "no TTL configured → nothing is reclaimed");
+        assert!(exists(&service, &ctx, "Sessions", "old"));
+    }
+
+    #[test]
+    fn sweep_tenant_covers_every_table() {
+        let (service, ctx, _t) = fixture();
+        let now = 1_700_000_000;
+        for table in ["Sessions", "Carts"] {
+            create_table(&service, &ctx, table);
+            update(&service, &ctx, table, true, "expiresAt").expect("enable");
+            put(&service, &ctx, table, "old", Some(now - 10));
+            put(&service, &ctx, table, "fresh", Some(now + 10_000));
+        }
+        let swept = sweep_tenant(&service, &ctx, now).expect("sweep tenant");
+        assert_eq!(swept, 2, "one expired item per table");
+        assert!(!exists(&service, &ctx, "Sessions", "old"));
+        assert!(!exists(&service, &ctx, "Carts", "old"));
+    }
+
+    #[test]
+    fn sweep_all_tenants_aggregates_and_isolates() {
+        let (service, _ctx, _t) = fixture();
+        let acme = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
+        let globex = crate::tenant::tenant_context(TenantId::new("globex").unwrap(), "test");
+        crate::tenant::ensure_tenant(&service, &acme).expect("acme");
+        crate::tenant::ensure_tenant(&service, &globex).expect("globex");
+        let now = 1_700_000_000;
+        for ctx in [&acme, &globex] {
+            create_table(&service, ctx, "Sessions");
+            update(&service, ctx, "Sessions", true, "expiresAt").expect("enable");
+            put(&service, ctx, "Sessions", "old", Some(now - 10));
+        }
+
+        let registry = crate::AccessKeyRegistry::new()
+            .bind("AKIAACME", TenantId::new("acme").unwrap())
+            .bind("AKIAGLOBEX", TenantId::new("globex").unwrap());
+        let (swept, errors) = sweep_all_tenants(&service, &registry, now);
+        assert_eq!(swept, 2, "one expired item reclaimed per tenant");
+        assert!(errors.is_empty(), "no per-tenant errors: {errors:?}");
+        assert!(!exists(&service, &acme, "Sessions", "old"));
+        assert!(!exists(&service, &globex, "Sessions", "old"));
+    }
+
+    #[test]
+    fn ttl_removal_emits_service_user_identity_on_the_stream() {
+        use extenddb_core::types::{
+            DescribeStreamInput, GetRecordsInput, GetShardIteratorInput, ShardIteratorType,
+            StreamEventName,
+        };
+
+        let (service, ctx, _t) = fixture();
+        // Stream-enabled (both images) + TTL-enabled table.
+        let input: CreateTableInput = serde_json::from_value(json!({
+            "TableName": "Sessions",
+            "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+            "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
+            "StreamSpecification": { "StreamEnabled": true, "StreamViewType": "NEW_AND_OLD_IMAGES" }
+        }))
+        .unwrap();
+        let arn = control_plane::create_table(&service, &ctx, input)
+            .expect("create")
+            .table_description
+            .latest_stream_arn
+            .expect("stream arn");
+        update(&service, &ctx, "Sessions", true, "expiresAt").expect("enable ttl");
+
+        let now = 1_700_000_000;
+        put(&service, &ctx, "Sessions", "old", Some(now - 10));
+        let swept = sweep_table(&service, &ctx, "Sessions", now).expect("sweep");
+        assert_eq!(swept, 1);
+
+        // Read the stream back: the last record is the TTL REMOVE.
+        let shard = stream::describe_stream(
+            &service,
+            &ctx,
+            DescribeStreamInput {
+                stream_arn: arn.clone(),
+                limit: None,
+                exclusive_start_shard_id: None,
+            },
+        )
+        .expect("describe stream")
+        .stream_description
+        .shards[0]
+            .shard_id
+            .clone();
+        let iterator = stream::get_shard_iterator(
+            &service,
+            &ctx,
+            GetShardIteratorInput {
+                stream_arn: arn.clone(),
+                shard_id: shard,
+                shard_iterator_type: ShardIteratorType::TrimHorizon,
+                sequence_number: None,
+            },
+        )
+        .expect("iterator")
+        .shard_iterator
+        .expect("iterator");
+        let records = stream::get_records(
+            &service,
+            &ctx,
+            GetRecordsInput {
+                shard_iterator: iterator,
+                limit: None,
+            },
+        )
+        .expect("get records")
+        .records;
+
+        let remove = records
+            .iter()
+            .find(|record| record.event_name == StreamEventName::Remove)
+            .expect("a REMOVE record from the TTL sweep");
+        let identity = remove
+            .user_identity
+            .as_ref()
+            .expect("TTL REMOVE carries a userIdentity");
+        assert_eq!(identity.identity_type, "Service");
+        assert_eq!(identity.principal_id, "dynamodb.amazonaws.com");
+        assert!(
+            remove.dynamodb.old_image.is_some(),
+            "the deleted item is the old image"
         );
     }
 }

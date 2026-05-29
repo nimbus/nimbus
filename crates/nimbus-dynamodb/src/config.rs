@@ -6,6 +6,7 @@
 //! The SigV4 `auth_mode` toggle is added in D7.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::time::Duration;
 
 use nimbus_core::TenantId;
 
@@ -20,12 +21,20 @@ pub struct DynamoDbConfig {
     /// resolves its tenant through this registry (see [`AccessKeyRegistry`]);
     /// an empty registry rejects every request as `UnrecognizedClientException`.
     pub access_keys: AccessKeyRegistry,
+    /// How often the background TTL sweeper deletes expired items across every
+    /// bound tenant's tables. `None` disables the sweeper (TTL config is still
+    /// stored and described, but expired items are not reclaimed — like
+    /// DynamoDB Local). Defaults to every 60s.
+    pub ttl_sweep_interval: Option<Duration>,
 }
 
 impl DynamoDbConfig {
     /// Default port, matching the DynamoDB Local convention so
     /// `--endpoint-url http://localhost:8000` works out of the box.
     pub const DEFAULT_PORT: u16 = 8000;
+
+    /// Default cadence of the background TTL sweeper.
+    pub const DEFAULT_TTL_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 
     /// Bind to `127.0.0.1:<port>` (localhost-only, like the other Nimbus
     /// adapter listeners).
@@ -34,6 +43,7 @@ impl DynamoDbConfig {
         Self {
             bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
             access_keys: AccessKeyRegistry::new(),
+            ttl_sweep_interval: Some(Self::DEFAULT_TTL_SWEEP_INTERVAL),
         }
     }
 
@@ -49,6 +59,13 @@ impl DynamoDbConfig {
     #[must_use]
     pub fn with_access_key(mut self, access_key_id: impl Into<String>, tenant: TenantId) -> Self {
         self.access_keys = self.access_keys.bind(access_key_id, tenant);
+        self
+    }
+
+    /// Set the background TTL sweep cadence, or `None` to disable the sweeper.
+    #[must_use]
+    pub fn with_ttl_sweep_interval(mut self, interval: Option<Duration>) -> Self {
+        self.ttl_sweep_interval = interval;
         self
     }
 }
@@ -88,6 +105,22 @@ mod tests {
         // An unconfigured listener authenticates nothing: every request is
         // UnrecognizedClient until an operator binds an access key.
         assert!(DynamoDbConfig::default().access_keys.is_empty());
+    }
+
+    #[test]
+    fn default_enables_the_ttl_sweeper_at_60s() {
+        assert_eq!(
+            DynamoDbConfig::default().ttl_sweep_interval,
+            Some(Duration::from_secs(60))
+        );
+    }
+
+    #[test]
+    fn ttl_sweep_interval_is_configurable_and_disablable() {
+        let tuned = DynamoDbConfig::new(8000).with_ttl_sweep_interval(Some(Duration::from_secs(5)));
+        assert_eq!(tuned.ttl_sweep_interval, Some(Duration::from_secs(5)));
+        let off = DynamoDbConfig::new(8000).with_ttl_sweep_interval(None);
+        assert_eq!(off.ttl_sweep_interval, None);
     }
 
     #[test]
