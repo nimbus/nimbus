@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from fixture_discovery import discover_fixture_files  # noqa: E402
 from watchpoints import (  # noqa: E402
     DEFAULT_CATALOG_PATH,
     detect_unexpected_passes,
@@ -28,7 +29,6 @@ from classifications import (  # noqa: E402
 )
 
 
-TEST_FILE_SUFFIXES = {".js", ".mjs", ".cjs"}
 VALID_LANE_CLASSIFICATION_EXPECTATIONS = {
     "expected_failure",
     "expected_gap",
@@ -70,20 +70,8 @@ def family_catalog_files() -> list[Path]:
     return sorted((manifest_root() / "fixtures").glob("*.json"))
 
 
-def is_node_test_file(path: Path) -> bool:
-    return path.name.startswith("test-") and path.suffix in TEST_FILE_SUFFIXES
-
-
 def normalize_rust_fixture_path(path: str) -> str:
     return re.sub(r"^node[0-9]+/", "", path)
-
-
-def discover_fixture_files(fixture_root: Path) -> list[str]:
-    return sorted(
-        str(path.relative_to(fixture_root))
-        for path in fixture_root.rglob("*")
-        if path.is_file() and is_node_test_file(path)
-    )
 
 
 def extract_rust_referenced_tests(vendored_tests: set[str]) -> list[str]:

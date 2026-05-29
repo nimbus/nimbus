@@ -13,12 +13,12 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from fixture_discovery import discover_fixture_files as discover_git_fixture_files  # noqa: E402
 from schema import default_schema_path, validate_payload_against_schema  # noqa: E402
 from classifications import rust_fixture_refs  # noqa: E402
 from status import build_summary as build_status_summary  # noqa: E402
 
 
-TEST_FILE_SUFFIXES = {".js", ".mjs", ".cjs"}
 RUST_NODE_COMPAT_PATH = Path("crates/nimbus-runtime/src/runtime/tests/node/mod.rs")
 INVENTORY_SCHEMA_PATH = default_schema_path("fixture-inventory.schema.json")
 
@@ -55,20 +55,8 @@ def lane_metadata(lane: str) -> dict[str, Any]:
     return load_json(path)
 
 
-def is_node_test_file(path: Path) -> bool:
-    return path.name.startswith("test-") and path.suffix in TEST_FILE_SUFFIXES
-
-
-def canonical_test_path(path: Path, fixture_root: Path) -> str:
-    return f"test/{path.relative_to(fixture_root)}"
-
-
 def discover_fixture_files(fixture_root: Path) -> list[str]:
-    return sorted(
-        canonical_test_path(path, fixture_root)
-        for path in fixture_root.rglob("*")
-        if path.is_file() and is_node_test_file(path)
-    )
+    return [f"test/{path}" for path in discover_git_fixture_files(fixture_root)]
 
 
 def normalize_rust_fixture_path(path: str) -> str:
