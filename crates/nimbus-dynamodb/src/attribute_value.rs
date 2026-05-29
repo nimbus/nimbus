@@ -93,6 +93,49 @@ pub fn stored_to_item(stored: &BTreeMap<String, StoredValue>) -> Item {
         .collect()
 }
 
+/// Serialize a DynamoDB item into the `Document.fields` map the engine persists.
+///
+/// Each attribute is stored as its **AttributeValue wire JSON** (e.g.
+/// `{"N":"42"}`, `{"SS":["a"]}`), which is exactly lossless — N precision,
+/// sets, binary, and nesting all survive — and rides the standard
+/// `Mutation::Insert { fields }` path (the engine's mutation API does not carry
+/// the typed-field sidecar; see the storage-model decision / DDB-DIV-005). The
+/// reverse is [`fields_to_item`].
+///
+/// # Errors
+/// `InternalServerError` if an attribute fails to serialize (not expected for
+/// well-formed `AttributeValue`s).
+pub fn item_to_fields(item: &Item) -> Result<serde_json::Map<String, Value>, DynamoDbError> {
+    item.iter()
+        .map(|(k, v)| {
+            serde_json::to_value(v)
+                .map(|json| (k.clone(), json))
+                .map_err(|error| DynamoDbError::InternalServerError(error.to_string()))
+        })
+        .collect()
+}
+
+/// Reconstruct a DynamoDB item from a persisted `Document.fields` map — the
+/// reverse of [`item_to_fields`].
+///
+/// # Errors
+/// `InternalServerError` if a stored field is not a valid serialized
+/// `AttributeValue` (indicates storage corruption).
+pub fn fields_to_item(fields: &serde_json::Map<String, Value>) -> Result<Item, DynamoDbError> {
+    fields
+        .iter()
+        .map(|(k, v)| {
+            serde_json::from_value::<AttributeValue>(v.clone())
+                .map(|value| (k.clone(), value))
+                .map_err(|error| {
+                    DynamoDbError::InternalServerError(format!(
+                        "corrupt stored item attribute '{k}': {error}"
+                    ))
+                })
+        })
+        .collect()
+}
+
 /// Reject the cases DynamoDB rejects at the item boundary: an empty top-level
 /// item and any empty `SS`/`NS`/`BS` (at any nesting depth), with
 /// `ValidationException`. Duplicate set members and wire-shape errors are
@@ -181,6 +224,29 @@ mod tests {
             value, back,
             "AttributeValue must roundtrip through StoredValue"
         );
+    }
+
+    #[test]
+    fn item_roundtrips_through_wire_json_fields() {
+        // The persisted-fields form must be exactly lossless: N precision, sets,
+        // binary, and nesting all survive fields -> item.
+        let mut item: Item = BTreeMap::new();
+        item.insert("pk".to_string(), AttributeValue::S("id-1".into()));
+        item.insert(
+            "big".to_string(),
+            AttributeValue::N("99999999999999999999999999999999999999".into()),
+        );
+        item.insert(
+            "tags".to_string(),
+            AttributeValue::SS(["a", "b"].iter().map(|s| (*s).to_string()).collect()),
+        );
+        item.insert("bin".to_string(), AttributeValue::B(vec![0, 250, 7]));
+        let mut nested = BTreeMap::new();
+        nested.insert("n".to_string(), AttributeValue::N("3.5".into()));
+        item.insert("m".to_string(), AttributeValue::M(nested));
+        let fields = item_to_fields(&item).expect("serialize");
+        let back = fields_to_item(&fields).expect("deserialize");
+        assert_eq!(item, back, "item must roundtrip through wire-JSON fields");
     }
 
     #[test]

@@ -43,3 +43,68 @@ the opaque `DocumentId`.
 in D2.1. This entry will gain its regression test (type-correct ordering,
 including >17-digit numeric ranges that `f64` would collapse) when the projection
 lands.
+
+## DDB-DIV-003 — Reserved `_ddb_` table-name prefix (`nimbus-divergence`)
+
+**Real DynamoDB:** table names match `[a-zA-Z0-9_.-]{3,255}`; a `_ddb_` prefix is
+allowed.
+
+**Nimbus:** user table names beginning with `_ddb_` are rejected with
+`ValidationException`. The adapter persists each table's `TableDescription` in a
+tenant-scoped catalog table named `_ddb_catalog`; reserving the prefix prevents
+a user table from colliding with adapter metadata.
+
+**Regression test:** `crates/nimbus-dynamodb/src/commands/control_plane.rs` →
+`tests::reserved_prefix_and_bad_key_schema_rejected`.
+
+**Status:** accepted (D0.6).
+
+## DDB-DIV-004 — Table is `ACTIVE` immediately (`nimbus-divergence`)
+
+**Real DynamoDB:** CreateTable returns `CREATING`; the table transitions to
+`ACTIVE` asynchronously, and clients poll a `table_exists` waiter.
+
+**Nimbus:** table creation is synchronous, so CreateTable returns `ACTIVE` and
+the first DescribeTable already reports `ACTIVE`. SDK waiters observe `ACTIVE`
+on their first poll — strictly faster, with no behavioral regression for
+clients (no `CREATING` state is ever exposed).
+
+**Regression test:** `crates/nimbus-dynamodb/src/commands/control_plane.rs` →
+`tests::create_then_describe_roundtrips`; SDK-level
+`crates/nimbus-server/tests/dynamodb_spec/main.rs` →
+`control_plane_roundtrip_through_official_sdk` (asserts `TableStatus::Active`).
+
+**Status:** accepted (D0.6).
+
+## DDB-DIV-005 — Item storage format + PutItem overwrite atomicity (`nimbus-divergence`)
+
+**Real DynamoDB:** items are opaque to the storage engine; PutItem is an atomic
+full replace.
+
+**Nimbus:** each attribute is stored as its **AttributeValue wire-JSON**
+(`{"N":"42"}`, `{"SS":[…]}`, …) in the shared `documents` table's `fields` map,
+keyed by the composite-key `DocumentId` (D0.3). This is exactly lossless — `N`
+precision, sets, binary, and nesting all survive. The engine's mutation path
+(`Mutation::Insert { fields }`) carries only JSON `fields`, not the
+`typed_fields` sidecar, so:
+
+1. A non-DynamoDB adapter reading a DynamoDB-owned table sees DynamoDB-tagged
+   JSON rather than clean projected values. DynamoDB tables are DynamoDB-owned,
+   so this is acceptable.
+2. PutItem's replace-on-overwrite is implemented as delete + insert (the engine
+   exposes no atomic upsert / `Mutation::Replace`, and a bare insert errors on an
+   existing key). A process crash strictly between the delete and the insert
+   would leave the key absent.
+
+**Rationale:** this keeps every write on the sanctioned engine-owned mutation
+path with no change to the core `Mutation` enum (which ~21 sites and every
+adapter depend on). The proper fix for atomic overwrite is a store-level
+document upsert (or a `Mutation::Replace` variant), tracked as a follow-up
+before the D9 enterprise-readiness gate.
+
+**Regression test:** `crates/nimbus-dynamodb/src/attribute_value.rs` →
+`tests::item_roundtrips_through_wire_json_fields` (lossless storage form);
+`crates/nimbus-dynamodb/src/commands/item.rs` →
+`tests::put_overwrite_fully_replaces_not_merges` (replace, not merge).
+
+**Status:** accepted (D1.5); atomic-upsert follow-up tracked.
