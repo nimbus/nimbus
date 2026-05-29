@@ -129,3 +129,31 @@ require here.
 `tests::describe_stream_returns_single_open_shard`.
 
 **Status:** accepted (D5.2).
+
+## DDB-DIV-007 — Read-triggered stream-record retention (`nimbus-divergence`)
+
+**Real DynamoDB:** stream records are retained for 24 hours and then expire
+automatically (time-driven), independent of whether any consumer reads them.
+
+**Nimbus:** records past the 24h window are never returned by `GetRecords`
+(read-time eviction), and their backing storage is reclaimed on the next
+`GetRecords` poll of that stream. A stream that is never polled keeps its
+already-expired records on disk until the next poll, rather than having them
+swept by a background timer. The iterator always advances past expired records,
+so a re-poll never stalls. The stream's sequence high-water mark is persisted in
+a separate counter store (`_ddb_streamseq_<table>`), so reclaiming expired
+records never resets sequence numbers — they stay monotonic for the life of the
+stream, matching DynamoDB.
+
+**Rationale:** the adapter crate has no background scheduler of its own;
+hanging retention off the read path keeps eviction observable and deterministic
+(the consumer contract — "you never receive an expired record" — holds exactly)
+without introducing a timer thread. The separate counter store is what makes
+physical reclamation safe.
+
+**Regression tests:** `crates/nimbus-dynamodb/src/commands/stream.rs` →
+`tests::get_records_skips_expired_events_and_reclaims_their_storage` and
+`tests::reclaiming_expired_events_preserves_the_monotonic_sequence`.
+
+**Status:** accepted (D5.5); time-driven background compaction of never-polled
+streams is a follow-up.

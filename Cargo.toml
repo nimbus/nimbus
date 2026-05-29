@@ -51,6 +51,10 @@ aws-sdk-kms = { version = "1.105.0", default-features = false, features = ["rt-t
 # an endpoint override. Same HTTP/runtime feature flags as aws-sdk-kms so it
 # reuses the already-vetted aws-smithy/hyper/aws-lc stack (no new dup versions).
 aws-sdk-dynamodb = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
+# Official DynamoDB Streams SDK — dev-only, drives the streams data-plane parity
+# proof (DescribeStream/GetShardIterator/GetRecords/ListStreams) against the
+# same in-process listener. Same feature flags as aws-sdk-dynamodb.
+aws-sdk-dynamodbstreams = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
 arc-swap = "1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"

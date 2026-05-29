@@ -350,6 +350,29 @@ pub fn load_table_description(
     load_description(service, context, table_name)
 }
 
+/// Enumerate every table's `TableDescription` from the catalog (tenant-scoped).
+/// Public so Streams (D5.5 ListStreams) can find stream-enabled tables.
+///
+/// # Errors
+/// A mapped engine error if the catalog cannot be read or a record is corrupt.
+pub fn list_table_descriptions(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+) -> Result<Vec<TableDescription>, DynamoDbError> {
+    let documents = match service.query_documents_structured(
+        context.tenant_id(),
+        &catalog_table(),
+        &StructuredQuery::default(),
+    ) {
+        Ok(documents) => documents,
+        Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(map_core_error(error)),
+    };
+    documents.iter().map(description_from_doc).collect()
+}
+
 fn load_description(
     service: &Arc<Service>,
     context: &TenantIsolationContext,

@@ -15,9 +15,9 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use extenddb_core::error::DynamoDbError;
 use extenddb_core::types::{
     DescribeStreamInput, DescribeStreamOutput, GetRecordsInput, GetRecordsOutput,
-    GetShardIteratorInput, GetShardIteratorOutput, Item, SequenceNumberRange, Shard,
-    ShardIteratorType, StreamDescription, StreamEventName, StreamRecord, StreamRecordData,
-    StreamStatus, StreamViewType, TableDescription,
+    GetShardIteratorInput, GetShardIteratorOutput, Item, ListStreamsInput, ListStreamsOutput,
+    SequenceNumberRange, Shard, ShardIteratorType, StreamDescription, StreamEventName,
+    StreamRecord, StreamRecordData, StreamStatus, StreamSummary, StreamViewType, TableDescription,
 };
 use nimbus_core::{DocumentId, StructuredQuery, TableName};
 use nimbus_engine::Service;
@@ -52,23 +52,72 @@ pub(crate) fn stream_events_table(table_name: &str) -> Result<TableName, DynamoD
     TableName::new(format!("{STREAM_TABLE_PREFIX}{table_name}")).map_err(map_core_error)
 }
 
-/// The number of events currently captured for `table_name`'s stream (= the
-/// next sequence number that will be assigned). 0 when no stream store exists.
-pub(crate) fn stream_event_count(
+/// Reserved prefix for a stream's monotonic sequence counter store (one doc).
+/// Kept separate from the event store so reclaiming expired events never resets
+/// the high-water mark — DynamoDB sequence numbers are monotonic for the life
+/// of the stream, independent of retention.
+const STREAM_SEQ_PREFIX: &str = "_ddb_streamseq_";
+
+/// The tenant-scoped table holding `table_name`'s stream sequence counter.
+fn stream_seq_table(table_name: &str) -> Result<TableName, DynamoDbError> {
+    TableName::new(format!("{STREAM_SEQ_PREFIX}{table_name}")).map_err(map_core_error)
+}
+
+/// The fixed document id of a stream's sequence counter.
+fn seq_counter_id() -> Result<DocumentId, DynamoDbError> {
+    DocumentId::from_key("counter").map_err(map_core_error)
+}
+
+/// The next sequence number to assign for `table_name`'s stream (the monotonic
+/// high-water mark). 0 before the first event; survives event reclamation.
+///
+/// # Errors
+/// A mapped engine error if the counter cannot be read.
+pub(crate) fn next_sequence_value(
     service: &Arc<Service>,
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<i64, DynamoDbError> {
-    let table = stream_events_table(table_name)?;
-    match service.query_documents_structured(
+    match service.get_document(
         context.tenant_id(),
-        &table,
-        &StructuredQuery::default(),
+        &stream_seq_table(table_name)?,
+        seq_counter_id()?,
     ) {
-        Ok(documents) => Ok(documents.len() as i64),
+        Ok(document) => Ok(document
+            .fields
+            .get("next")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)),
         Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => Ok(0),
         Err(error) => Err(map_core_error(error)),
     }
+}
+
+/// Persist the next sequence number for `table_name`'s stream (upsert).
+fn set_sequence_value(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+    next: i64,
+) -> Result<(), DynamoDbError> {
+    let table = stream_seq_table(table_name)?;
+    let id = seq_counter_id()?;
+    let mut fields = Map::new();
+    fields.insert("next".to_owned(), Value::from(next));
+    match service.get_document(context.tenant_id(), &table, id.clone()) {
+        Ok(_) => {
+            service
+                .update_document(context.tenant_id(), table, id, fields)
+                .map_err(map_core_error)?;
+        }
+        Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
+            service
+                .insert_document_with_id(context.tenant_id(), table, id, fields)
+                .map_err(map_core_error)?;
+        }
+        Err(error) => return Err(map_core_error(error)),
+    }
+    Ok(())
 }
 
 /// Encode an opaque shard iterator (base64url; format is private to the adapter).
@@ -132,9 +181,11 @@ fn event_name_from_str(value: &str) -> StreamEventName {
 
 /// Capture a change event for `table_name` if it has a stream enabled
 /// (otherwise a no-op). Called by the write handlers after a successful
-/// mutation. Sequence numbers are assigned from the current event count
-/// (sufficient for the single-node write path; an atomic counter is a
-/// concurrency follow-up).
+/// mutation. Sequence numbers are assigned from the persistent high-water
+/// counter and the counter is then advanced — monotonic across event
+/// reclamation (a read-modify-write that is correct on the single-node write
+/// path; making the counter bump atomic under concurrent writers is a
+/// follow-up).
 ///
 /// # Errors
 /// A mapped engine error if the event cannot be persisted.
@@ -155,7 +206,7 @@ pub(crate) fn capture_event(
     {
         return Ok(());
     }
-    let seq = stream_event_count(service, context, table_name)?;
+    let seq = next_sequence_value(service, context, table_name)?;
     let event = StoredEvent {
         seq,
         created: epoch_seconds(),
@@ -181,6 +232,9 @@ pub(crate) fn capture_event(
             fields,
         )
         .map_err(map_core_error)?;
+    // Advance the high-water mark so the next event gets a fresh sequence even
+    // after expired events are reclaimed.
+    set_sequence_value(service, context, table_name, seq + 1)?;
     Ok(())
 }
 
@@ -216,6 +270,92 @@ fn read_events(
 
 /// The DynamoDB per-call record cap for GetRecords.
 const MAX_GET_RECORDS: usize = 1000;
+/// Stream record retention window (DynamoDB retains stream records for 24h).
+const STREAM_RETENTION_SECS: i64 = 86_400;
+/// The DynamoDB per-call cap for ListStreams.
+const MAX_LIST_STREAMS: usize = 100;
+
+/// ListStreams: enumerate stream-enabled tables (optionally filtered by
+/// `TableName`), paginated by `ExclusiveStartStreamArn`/`Limit`.
+///
+/// # Errors
+/// A mapped engine error if the catalog cannot be read.
+pub fn list_streams(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    input: ListStreamsInput,
+) -> Result<ListStreamsOutput, DynamoDbError> {
+    let mut summaries: Vec<StreamSummary> =
+        control_plane::list_table_descriptions(service, context)?
+            .into_iter()
+            .filter(|description| {
+                description
+                    .stream_specification
+                    .as_ref()
+                    .is_some_and(|spec| spec.stream_enabled)
+            })
+            .filter(|description| {
+                input
+                    .table_name
+                    .as_ref()
+                    .is_none_or(|name| &description.table_name == name)
+            })
+            .filter_map(|description| {
+                Some(StreamSummary {
+                    stream_arn: description.latest_stream_arn?,
+                    stream_label: description.latest_stream_label?,
+                    table_name: description.table_name,
+                })
+            })
+            .collect();
+    summaries.sort_by(|a, b| a.stream_arn.cmp(&b.stream_arn));
+
+    if let Some(start) = &input.exclusive_start_stream_arn {
+        summaries.retain(|summary| summary.stream_arn.as_str() > start.as_str());
+    }
+    let limit = input
+        .limit
+        .filter(|limit| *limit > 0)
+        .map(|limit| (limit as usize).min(MAX_LIST_STREAMS))
+        .unwrap_or(MAX_LIST_STREAMS);
+    let truncated = summaries.len() > limit;
+    summaries.truncate(limit);
+    let last_evaluated_stream_arn = truncated
+        .then(|| summaries.last().map(|summary| summary.stream_arn.clone()))
+        .flatten();
+
+    Ok(ListStreamsOutput {
+        streams: summaries,
+        last_evaluated_stream_arn,
+    })
+}
+
+/// Reclaim event docs older than `cutoff`, returning the count reclaimed. The
+/// `events` are the already-read store contents; doc ids are reconstructed
+/// deterministically from their sequence numbers, so no extra query is needed.
+/// The sequence counter is a separate store and is left untouched, so the
+/// high-water mark stays monotonic.
+///
+/// # Errors
+/// A mapped engine error if an expired event cannot be deleted.
+fn reclaim_expired_events(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+    events: &[StoredEvent],
+    cutoff: i64,
+) -> Result<usize, DynamoDbError> {
+    let table = stream_events_table(table_name)?;
+    let mut reclaimed = 0;
+    for event in events.iter().filter(|event| event.created < cutoff) {
+        let id = DocumentId::from_key(sequence_number(event.seq)).map_err(map_core_error)?;
+        service
+            .delete_document(context.tenant_id(), table.clone(), id)
+            .map_err(map_core_error)?;
+        reclaimed += 1;
+    }
+    Ok(reclaimed)
+}
 
 /// GetRecords: return the events at/after the iterator's position (≤1000),
 /// shaped per the table's StreamViewType, plus an advanced NextShardIterator.
@@ -236,22 +376,43 @@ pub fn get_records(
         .and_then(|spec| spec.stream_view_type)
         .unwrap_or(StreamViewType::NewAndOldImages);
 
-    let mut events = read_events(service, context, &description.table_name)?;
-    events.retain(|event| event.seq >= iterator.next_sequence);
+    let all_events = read_events(service, context, &description.table_name)?;
     let limit = input
         .limit
         .filter(|limit| *limit > 0)
         .map(|limit| (limit as usize).min(MAX_GET_RECORDS))
         .unwrap_or(MAX_GET_RECORDS);
-    events.truncate(limit);
+    let cutoff = epoch_seconds() - STREAM_RETENTION_SECS;
 
-    let next_sequence = events
+    // The window the iterator advances over: events at/after the iterator,
+    // capped at the page limit. Expired events stay in the window so the
+    // iterator still advances past them — a re-poll never stalls on records the
+    // retention window has dropped.
+    let window: Vec<&StoredEvent> = all_events
+        .iter()
+        .filter(|event| event.seq >= iterator.next_sequence)
+        .take(limit)
+        .collect();
+    let next_sequence = window
         .last()
         .map_or(iterator.next_sequence, |event| event.seq + 1);
-    let records = events
-        .iter()
+
+    // The returned batch excludes anything past the 24h retention window.
+    let records = window
+        .into_iter()
+        .filter(|event| event.created >= cutoff)
         .map(|event| shape_record(event, view_type))
         .collect::<Result<Vec<_>, _>>()?;
+
+    // Reclaim expired event storage on poll (the sequence counter is a separate
+    // store, so the high-water mark is unaffected).
+    reclaim_expired_events(
+        service,
+        context,
+        &description.table_name,
+        &all_events,
+        cutoff,
+    )?;
 
     Ok(GetRecordsOutput {
         records,
@@ -417,7 +578,9 @@ pub fn get_shard_iterator(
     }
     let next_sequence = match input.shard_iterator_type {
         ShardIteratorType::TrimHorizon => 0,
-        ShardIteratorType::Latest => stream_event_count(service, context, &description.table_name)?,
+        ShardIteratorType::Latest => {
+            next_sequence_value(service, context, &description.table_name)?
+        }
         ShardIteratorType::AtSequenceNumber => parse_sequence(input.sequence_number.as_deref())?,
         ShardIteratorType::AfterSequenceNumber => {
             parse_sequence(input.sequence_number.as_deref())? + 1
@@ -861,7 +1024,7 @@ mod tests {
         )
         .expect("put");
         assert_eq!(
-            stream_event_count(&service, &ctx, "plain").unwrap(),
+            next_sequence_value(&service, &ctx, "plain").unwrap(),
             0,
             "no events captured for a non-stream table"
         );
@@ -882,5 +1045,249 @@ mod tests {
         )
         .expect_err("missing table rejected");
         assert!(matches!(err, DynamoDbError::ResourceNotFoundException(_)));
+    }
+
+    // ---- D5.5: ListStreams + retention ----
+
+    /// Create a stream-enabled table with the given name; returns its ARN.
+    fn create_streamed_named(
+        service: &Arc<Service>,
+        context: &TenantIsolationContext,
+        name: &str,
+    ) -> String {
+        let input: CreateTableInput = serde_json::from_value(json!({
+            "TableName": name,
+            "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+            "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
+            "StreamSpecification": { "StreamEnabled": true, "StreamViewType": "NEW_IMAGE" }
+        }))
+        .unwrap();
+        control_plane::create_table(service, context, input)
+            .expect("create")
+            .table_description
+            .latest_stream_arn
+            .expect("arn")
+    }
+
+    /// Create a table without a stream (it must be excluded from ListStreams).
+    fn create_plain_named(service: &Arc<Service>, context: &TenantIsolationContext, name: &str) {
+        let input: CreateTableInput = serde_json::from_value(json!({
+            "TableName": name,
+            "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+            "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
+        }))
+        .unwrap();
+        control_plane::create_table(service, context, input).expect("create");
+    }
+
+    fn list(
+        service: &Arc<Service>,
+        context: &TenantIsolationContext,
+        table_name: Option<&str>,
+        limit: Option<i64>,
+        start: Option<&str>,
+    ) -> ListStreamsOutput {
+        list_streams(
+            service,
+            context,
+            ListStreamsInput {
+                table_name: table_name.map(str::to_owned),
+                limit,
+                exclusive_start_stream_arn: start.map(str::to_owned),
+            },
+        )
+        .expect("list streams")
+    }
+
+    /// Persist a stream event directly with a chosen sequence/timestamp, so
+    /// retention can be tested without waiting out the 24h window.
+    fn inject_event(
+        service: &Arc<Service>,
+        context: &TenantIsolationContext,
+        table_name: &str,
+        seq: i64,
+        created: i64,
+    ) {
+        let event = StoredEvent {
+            seq,
+            created,
+            event_name: "INSERT".to_owned(),
+            keys: json!({ "pk": { "S": format!("k{seq}") } })
+                .as_object()
+                .unwrap()
+                .clone(),
+            old_image: None,
+            new_image: Some(
+                json!({ "pk": { "S": format!("k{seq}") }, "v": { "N": "1" } })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        };
+        let Value::Object(fields) = serde_json::to_value(&event).unwrap() else {
+            panic!("event serializes to an object");
+        };
+        let id = DocumentId::from_key(sequence_number(seq)).unwrap();
+        service
+            .insert_document_with_id(
+                context.tenant_id(),
+                stream_events_table(table_name).unwrap(),
+                id,
+                fields,
+            )
+            .expect("inject event");
+    }
+
+    #[test]
+    fn list_streams_enumerates_only_stream_enabled_tables() {
+        let (service, ctx, _t) = fixture();
+        let alpha = create_streamed_named(&service, &ctx, "alpha");
+        let beta = create_streamed_named(&service, &ctx, "beta");
+        create_plain_named(&service, &ctx, "gamma");
+
+        let out = list(&service, &ctx, None, None, None);
+        assert_eq!(out.streams.len(), 2, "only the two streamed tables");
+        let arns: Vec<&str> = out.streams.iter().map(|s| s.stream_arn.as_str()).collect();
+        assert!(arns.contains(&alpha.as_str()) && arns.contains(&beta.as_str()));
+        let tables: Vec<&str> = out.streams.iter().map(|s| s.table_name.as_str()).collect();
+        assert!(tables.contains(&"alpha") && tables.contains(&"beta"));
+        assert!(!tables.contains(&"gamma"), "plain table excluded");
+        assert!(
+            out.streams.iter().all(|s| !s.stream_label.is_empty()),
+            "every summary carries a label"
+        );
+        assert!(out.last_evaluated_stream_arn.is_none(), "fully enumerated");
+    }
+
+    #[test]
+    fn list_streams_filters_by_table_name() {
+        let (service, ctx, _t) = fixture();
+        create_streamed_named(&service, &ctx, "alpha");
+        create_streamed_named(&service, &ctx, "beta");
+
+        let out = list(&service, &ctx, Some("alpha"), None, None);
+        assert_eq!(out.streams.len(), 1);
+        assert_eq!(out.streams[0].table_name, "alpha");
+
+        let none = list(&service, &ctx, Some("nonexistent"), None, None);
+        assert!(none.streams.is_empty(), "no match for an unknown table");
+    }
+
+    #[test]
+    fn list_streams_paginates_with_limit_and_exclusive_start() {
+        let (service, ctx, _t) = fixture();
+        for name in ["alpha", "beta", "gamma"] {
+            create_streamed_named(&service, &ctx, name);
+        }
+        let page1 = list(&service, &ctx, None, Some(2), None);
+        assert_eq!(page1.streams.len(), 2);
+        let cursor = page1
+            .last_evaluated_stream_arn
+            .clone()
+            .expect("more pages remain");
+        assert_eq!(
+            cursor, page1.streams[1].stream_arn,
+            "cursor is the last returned ARN"
+        );
+
+        let page2 = list(&service, &ctx, None, Some(2), Some(&cursor));
+        assert_eq!(page2.streams.len(), 1, "the final page");
+        assert!(
+            page2.last_evaluated_stream_arn.is_none(),
+            "no more pages after the last"
+        );
+        // The two pages cover all three streams with no overlap.
+        let mut seen: Vec<&str> = page1
+            .streams
+            .iter()
+            .chain(page2.streams.iter())
+            .map(|s| s.stream_arn.as_str())
+            .collect();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), 3, "all three streams, no duplicates");
+    }
+
+    #[test]
+    fn get_records_skips_expired_events_and_reclaims_their_storage() {
+        let (service, ctx, _t) = fixture();
+        let arn = create_streamed_named(&service, &ctx, "events");
+        let now = epoch_seconds();
+        inject_event(
+            &service,
+            &ctx,
+            "events",
+            0,
+            now - STREAM_RETENTION_SECS - 100,
+        ); // expired
+        inject_event(&service, &ctx, "events", 1, now); // fresh
+        assert_eq!(read_events(&service, &ctx, "events").unwrap().len(), 2);
+
+        let out = all_records(&service, &ctx, &arn);
+        assert_eq!(out.records.len(), 1, "the expired event is not returned");
+        assert_eq!(
+            out.records[0].dynamodb.keys.get("pk"),
+            Some(&extenddb_core::types::AttributeValue::S("k1".into())),
+            "the surviving record is the fresh one"
+        );
+        let next = out.next_shard_iterator.expect("iterator advances");
+        assert_eq!(
+            iterator_next_sequence(&next),
+            2,
+            "the iterator advances past the expired event so re-polling never stalls"
+        );
+        assert_eq!(
+            read_events(&service, &ctx, "events").unwrap().len(),
+            1,
+            "the expired event's storage is reclaimed on poll"
+        );
+    }
+
+    #[test]
+    fn reclaiming_expired_events_preserves_the_monotonic_sequence() {
+        let (service, ctx, _t) = fixture();
+        let arn = create_streamed_named(&service, &ctx, "events");
+        let now = epoch_seconds();
+        // Two events that have both aged out of the retention window, with the
+        // sequence counter advanced past them (as real capture would leave it).
+        inject_event(
+            &service,
+            &ctx,
+            "events",
+            0,
+            now - STREAM_RETENTION_SECS - 100,
+        );
+        inject_event(
+            &service,
+            &ctx,
+            "events",
+            1,
+            now - STREAM_RETENTION_SECS - 100,
+        );
+        set_sequence_value(&service, &ctx, "events", 2).expect("counter");
+
+        // A poll returns nothing (all expired) and reclaims both event docs.
+        let out = all_records(&service, &ctx, &arn);
+        assert!(out.records.is_empty(), "all events expired");
+        assert_eq!(
+            read_events(&service, &ctx, "events").unwrap().len(),
+            0,
+            "expired storage reclaimed"
+        );
+
+        // The high-water mark is preserved: the next captured event keeps
+        // climbing rather than colliding with a consumer's advanced iterator.
+        assert_eq!(
+            next_sequence_value(&service, &ctx, "events").unwrap(),
+            2,
+            "reclamation does not reset the counter"
+        );
+        put(&service, &ctx, "z", "9");
+        let fresh = read_events(&service, &ctx, "events").unwrap();
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(
+            fresh[0].seq, 2,
+            "the new event continues past the reclaimed sequences"
+        );
     }
 }
