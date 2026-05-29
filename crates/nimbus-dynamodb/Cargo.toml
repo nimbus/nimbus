@@ -18,6 +18,7 @@ workspace = true
 extenddb-core = { workspace = true }
 # Nimbus document value model (StoredValue typed sidecar, promoted in D0.1b).
 nimbus-core = { path = "../nimbus-core" }
+base64.workspace = true
 serde_json.workspace = true
 # SigV4 verification primitives (vendored module in src/auth/sigv4/).
 hex.workspace = true
