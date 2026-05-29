@@ -242,7 +242,7 @@
       "lane": "node20",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node20 supported-lane divergence: official v20.20.2 test-async-local-storage-exit-does-not-leak.js still expects the old JavaScript AsyncLocalStorage _propagate hook, while the current runtime matches the newer Node22/Node24 implementation shape",
+      "reason": "Pinned Node20 legacy-lane divergence: official v20.20.2 test-async-local-storage-exit-does-not-leak.js still expects the old JavaScript AsyncLocalStorage _propagate hook, while the current runtime matches the newer Node22/Node24 implementation shape",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
       "source_line": 853,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
@@ -308,7 +308,7 @@
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node24 supported-lane divergence: test-crypto-scrypt.js expects ERR_INCOMPATIBLE_OPTION_PAIR for duplicate short/long option pairs, while the current runtime still throws the older ERR_CRYPTO_SCRYPT_INVALID_PARAMETER shape used by the verified Node22 baseline",
+      "reason": "Pinned Node24 default-lane divergence: test-crypto-scrypt.js expects ERR_INCOMPATIBLE_OPTION_PAIR for duplicate short/long option pairs, while the current runtime still throws the older ERR_CRYPTO_SCRYPT_INVALID_PARAMETER shape used by the verified Node22 baseline",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 391,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
@@ -319,18 +319,18 @@
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node24 supported-lane drift: test-crypto-dh-stateless.js still expects ERR_OSSL_FAILED_DURING_DERIVATION on the invalid X25519 public-key case",
+      "reason": "Pinned Node24 default-lane drift: test-crypto-dh-stateless.js still expects ERR_OSSL_FAILED_DURING_DERIVATION on the invalid X25519 public-key case",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 509,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
-      "id": "node20_loader_context_crypto_dh_supported_watchpoint_batch",
-      "test_name": "node20_loader_context_crypto_dh_supported_watchpoint_batch",
+      "id": "node20_loader_context_crypto_dh_legacy_watchpoint_batch",
+      "test_name": "node20_loader_context_crypto_dh_legacy_watchpoint_batch",
       "lane": "node20",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node20 supported-lane divergence: test-crypto-dh.js still expects the older OpenSSL invalid-secret message while the verified Node22 baseline now returns the newer unspecified-validation shape",
+      "reason": "Pinned Node20 legacy-lane divergence: test-crypto-dh.js still expects the older OpenSSL invalid-secret message while the verified Node22 baseline now returns the newer unspecified-validation shape",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 519,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
@@ -369,12 +369,12 @@
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
-      "id": "node20_loader_context_crypto_authenticated_supported_watchpoint_batch",
-      "test_name": "node20_loader_context_crypto_authenticated_supported_watchpoint_batch",
+      "id": "node20_loader_context_crypto_authenticated_legacy_watchpoint_batch",
+      "test_name": "node20_loader_context_crypto_authenticated_legacy_watchpoint_batch",
       "lane": "node20",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node20 supported-lane divergence: test-crypto-authenticated.js still expects the older deprecation-warning ordering without DEP0182",
+      "reason": "Pinned Node20 legacy-lane divergence: test-crypto-authenticated.js still expects the older deprecation-warning ordering without DEP0182",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 559,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
@@ -385,7 +385,7 @@
       "lane": "node20",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node20 supported-lane divergence: test-https-hwm.js still times out on the current Node20 lane while the Node22/Node24 official files complete",
+      "reason": "Pinned Node20 legacy-lane divergence: test-https-hwm.js still times out on the current Node20 lane while the Node22/Node24 official files complete",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 596,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
@@ -396,7 +396,7 @@
       "lane": "node20",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node20 supported-lane divergence: test-tls-connect-hwm-option.js still times out on the current Node20 lane while the Node22/Node24 official files complete",
+      "reason": "Pinned Node20 legacy-lane divergence: test-tls-connect-hwm-option.js still times out on the current Node20 lane while the Node22/Node24 official files complete",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 606,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
@@ -484,7 +484,7 @@
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node24 supported-lane divergence: test-stream-pipeline.js currently returns an AbortError-style 'The operation was aborted' message where the staged Node24 fixture still expects the inner 'Boom!' pipeline error message",
+      "reason": "Pinned Node24 default-lane divergence: test-stream-pipeline.js currently returns an AbortError-style 'The operation was aborted' message where the staged Node24 fixture still expects the inner 'Boom!' pipeline error message",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 716,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
@@ -506,7 +506,7 @@
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-constants.js expects a newer constant-surface TypeError gate that Nimbus has not adopted into the current Node22 contract",
+      "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-constants.js expects a newer constant-surface TypeError gate that Nimbus has not adopted into the default lane yet",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 826,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
@@ -517,7 +517,7 @@
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-promises-file-handle-dispose.js now also asserts opendir Dir[Symbol.asyncDispose]() close semantics that the current runtime does not yet match",
+      "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-promises-file-handle-dispose.js now also asserts opendir Dir[Symbol.asyncDispose]() close semantics that the current runtime does not yet match",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 836,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
@@ -528,7 +528,7 @@
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-write-stream.js now also requires fs.close() to be observed when destroying WriteStream directly, while the current Node22 contract still follows the older file semantics",
+      "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-write-stream.js now also requires fs.close() to be observed when destroying WriteStream directly, while the current older Node22-compatible contract still follows the older file semantics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 846,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
@@ -539,7 +539,7 @@
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-write-stream-autoclose-option.js now also asserts ERR_INVALID_THIS when probing WriteStream.prototype.autoClose, while the current Node22 contract still follows the older surface",
+      "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-write-stream-autoclose-option.js now also asserts ERR_INVALID_THIS when probing WriteStream.prototype.autoClose, while the current older Node22-compatible contract still follows the older surface",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 856,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
@@ -550,7 +550,7 @@
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-symlink.js still expects the newer invalid-type ERR_INVALID_ARG_VALUE contract, while the current runtime intentionally keeps the Node22 ERR_FS_INVALID_SYMLINK_TYPE behavior",
+      "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-symlink.js still expects the newer invalid-type ERR_INVALID_ARG_VALUE contract, while the current runtime intentionally keeps the older Node22-compatible ERR_FS_INVALID_SYMLINK_TYPE behavior",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 866,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
@@ -561,7 +561,7 @@
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-opendir.js now also asserts ERR_INVALID_THIS for newer Dir handle receiver checks, while the current runtime intentionally keeps the Node22 directory-handle surface",
+      "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-opendir.js now also asserts ERR_INVALID_THIS for newer Dir handle receiver checks, while the current runtime intentionally keeps the older Node22-compatible directory-handle surface",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 876,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
@@ -572,7 +572,7 @@
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-promises-watch.js adds maxQueue and overflow option validation that Nimbus has not adopted into the current Node22-based fs.watch contract",
+      "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-promises-watch.js adds maxQueue and overflow option validation that Nimbus has not adopted into the default lane yet",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 886,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
@@ -688,56 +688,56 @@
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
-      "id": "node24_supported_lane_core_semantics_watchpoint",
-      "test_name": "node24_supported_lane_core_semantics_watchpoint",
+      "id": "node24_default_lane_core_semantics_watchpoint",
+      "test_name": "node24_default_lane_core_semantics_watchpoint",
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Node24 supported lane watchpoint: the broad core semantics batch includes known newer-console-clear drift and remains classified until that fixture is promoted green",
+      "reason": "Node24 default lane watchpoint: the broad core semantics batch includes known newer-console-clear drift and remains classified until that fixture is promoted green",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 1014,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
-      "id": "node24_supported_lane_process_and_timing_watchpoint",
-      "test_name": "node24_supported_lane_process_and_timing_watchpoint",
+      "id": "node24_default_lane_process_and_timing_watchpoint",
+      "test_name": "node24_default_lane_process_and_timing_watchpoint",
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Node24 supported lane watchpoint: the broad process/timing batch is classified until each carried fixture is replayed and promoted under the supported-lane gate",
+      "reason": "Node24 default lane watchpoint: the broad process/timing batch is classified until each carried fixture is replayed and promoted under the default-lane gate",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 1042,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
-      "id": "node24_supported_lane_streams_and_local_io_watchpoint",
-      "test_name": "node24_supported_lane_streams_and_local_io_watchpoint",
+      "id": "node24_default_lane_streams_and_local_io_watchpoint",
+      "test_name": "node24_default_lane_streams_and_local_io_watchpoint",
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Node24 supported lane watchpoint: the broad streams/local-I/O batch is classified until each carried fixture is replayed and promoted under the supported-lane gate",
+      "reason": "Node24 default lane watchpoint: the broad streams/local-I/O batch is classified until each carried fixture is replayed and promoted under the default-lane gate",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 1070,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
-      "id": "node24_supported_lane_networking_watchpoint",
-      "test_name": "node24_supported_lane_networking_watchpoint",
+      "id": "node24_default_lane_networking_watchpoint",
+      "test_name": "node24_default_lane_networking_watchpoint",
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Node24 supported lane watchpoint: the broad networking batch is classified until each carried fixture is replayed and promoted under the supported-lane gate",
+      "reason": "Node24 default lane watchpoint: the broad networking batch is classified until each carried fixture is replayed and promoted under the default-lane gate",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 1090,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
-      "id": "node24_supported_lane_loader_context_watchpoint",
-      "test_name": "node24_supported_lane_loader_context_watchpoint",
+      "id": "node24_default_lane_loader_context_watchpoint",
+      "test_name": "node24_default_lane_loader_context_watchpoint",
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Node24 supported lane watchpoint: the broad loader/context batch is classified until each carried fixture is replayed and promoted under the supported-lane gate",
+      "reason": "Node24 default lane watchpoint: the broad loader/context batch is classified until each carried fixture is replayed and promoted under the default-lane gate",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 1114,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"

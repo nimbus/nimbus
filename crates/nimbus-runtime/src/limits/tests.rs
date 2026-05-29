@@ -13,23 +13,21 @@ fn runtime_compatibility_target_parses_public_node_lts_aliases() {
         ("\"24\"", RuntimeCompatibilityTarget::Node24),
         ("\"node24\"", RuntimeCompatibilityTarget::Node24),
         ("\"Node24\"", RuntimeCompatibilityTarget::Node24),
+        ("\"26\"", RuntimeCompatibilityTarget::Node26),
+        ("\"node26\"", RuntimeCompatibilityTarget::Node26),
+        ("\"Node26\"", RuntimeCompatibilityTarget::Node26),
     ] {
         let parsed: RuntimeCompatibilityTarget =
             serde_json::from_str(raw).expect("target alias should parse");
         assert_eq!(parsed, expected, "{raw} should parse to {expected:?}");
     }
-
-    assert!(
-        serde_json::from_str::<RuntimeCompatibilityTarget>("\"26\"").is_err(),
-        "Node26 must not parse until the registry promotes a runtime target"
-    );
 }
 
 #[test]
 fn runtime_node_lts_metadata_is_derived_from_registry() {
     assert_eq!(
         RuntimeCompatibilityTarget::product_default_node_lts_target(),
-        RuntimeCompatibilityTarget::Node22
+        RuntimeCompatibilityTarget::Node24
     );
     assert_eq!(
         RuntimeCompatibilityTarget::configured_node_lts_targets(),
@@ -37,6 +35,7 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
             RuntimeCompatibilityTarget::Node20,
             RuntimeCompatibilityTarget::Node22,
             RuntimeCompatibilityTarget::Node24,
+            RuntimeCompatibilityTarget::Node26,
         ]
     );
     assert_eq!(
@@ -45,7 +44,7 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
             RuntimeCompatibilityTarget::Node22,
             RuntimeCompatibilityTarget::Node24,
         ],
-        "Node20 is EOL legacy and Node26 is preview-current without a runtime target"
+        "Node20 is EOL legacy and Node26 is Current/non-LTS, so neither is supported LTS"
     );
 
     for (target, major, phase, version, tag, codename, module_version, product_default) in [
@@ -67,7 +66,7 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
             "v22.22.3",
             Some("Jod"),
             "127",
-            true,
+            false,
         ),
         (
             RuntimeCompatibilityTarget::Node24,
@@ -77,6 +76,16 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
             "v24.16.0",
             Some("Krypton"),
             "137",
+            true,
+        ),
+        (
+            RuntimeCompatibilityTarget::Node26,
+            26,
+            RuntimeNodeSupportPhase::CurrentNonLts,
+            "26.2.0",
+            "v26.2.0",
+            None,
+            "147",
             false,
         ),
     ] {
@@ -102,6 +111,10 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
     assert!(
         !RuntimeCompatibilityTarget::Node20.is_supported_node_lts(),
         "Node20 must not be treated as active enterprise LTS after EOL"
+    );
+    assert!(
+        !RuntimeCompatibilityTarget::Node26.is_supported_node_lts(),
+        "Node26 is selectable as Current/non-LTS but must not be treated as enterprise LTS"
     );
     assert!(
         RuntimeCompatibilityTarget::WebStandardIsolate
@@ -134,6 +147,8 @@ fn application_preset_supports_node_lts_targets() {
     assert!(node20_limits.grants.net_connect.is_empty());
     assert!(node20_limits.grants.net_listen.is_empty());
     assert!(node20_limits.grants.worker.is_empty());
+    assert!(node20_limits.grants.sys.contains(&"osRelease".to_string()));
+    assert!(!node20_limits.grants.sys.contains(&"homedir".to_string()));
     assert!(!node20_limits.grants.sys.contains(&"inspector".to_string()));
     assert_eq!(
         node20_limits.compatibility_target,
@@ -147,6 +162,8 @@ fn application_preset_supports_node_lts_targets() {
     assert!(node_limits.grants.net_connect.is_empty());
     assert!(node_limits.grants.net_listen.is_empty());
     assert!(node_limits.grants.worker.is_empty());
+    assert!(node_limits.grants.sys.contains(&"osRelease".to_string()));
+    assert!(!node_limits.grants.sys.contains(&"homedir".to_string()));
     assert!(!node_limits.grants.sys.contains(&"inspector".to_string()));
     assert_eq!(
         node_limits.compatibility_target,
@@ -160,10 +177,27 @@ fn application_preset_supports_node_lts_targets() {
     assert!(node24_limits.grants.net_connect.is_empty());
     assert!(node24_limits.grants.net_listen.is_empty());
     assert!(node24_limits.grants.worker.is_empty());
+    assert!(node24_limits.grants.sys.contains(&"osRelease".to_string()));
+    assert!(!node24_limits.grants.sys.contains(&"homedir".to_string()));
     assert!(!node24_limits.grants.sys.contains(&"inspector".to_string()));
     assert_eq!(
         node24_limits.compatibility_target,
         RuntimeCompatibilityTarget::Node24
+    );
+
+    let node26_limits = RuntimeLimits::application_node26().normalized();
+    assert_eq!(node26_limits.mode, RuntimeMode::Standard);
+    assert_eq!(node26_limits.preset, RuntimePreset::Application);
+    assert!(node26_limits.grants.run.is_empty());
+    assert!(node26_limits.grants.net_connect.is_empty());
+    assert!(node26_limits.grants.net_listen.is_empty());
+    assert!(node26_limits.grants.worker.is_empty());
+    assert!(node26_limits.grants.sys.contains(&"osRelease".to_string()));
+    assert!(!node26_limits.grants.sys.contains(&"homedir".to_string()));
+    assert!(!node26_limits.grants.sys.contains(&"inspector".to_string()));
+    assert_eq!(
+        node26_limits.compatibility_target,
+        RuntimeCompatibilityTarget::Node26
     );
 }
 
@@ -179,6 +213,8 @@ fn node_permission_profiles_are_separated_by_deployment_intent() {
     assert!(production.grants.worker.is_empty());
     assert!(production.grants.run.is_empty());
     assert!(production.grants.ffi.is_empty());
+    assert!(production.grants.sys.contains(&"osRelease".to_string()));
+    assert!(!production.grants.sys.contains(&"homedir".to_string()));
     assert!(!production.grants.sys.contains(&"inspector".to_string()));
     assert!(
         !production
@@ -225,6 +261,7 @@ fn tooling_preset_requires_node_target() {
         RuntimeLimits::tooling_node20().normalized(),
         RuntimeLimits::tooling_node22().normalized(),
         RuntimeLimits::tooling_node24().normalized(),
+        RuntimeLimits::tooling_node26().normalized(),
     ] {
         assert_eq!(valid.mode, RuntimeMode::Standard);
         assert_eq!(valid.preset, RuntimePreset::Tooling);

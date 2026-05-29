@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "as_of": {
+      "type": "string"
+    },
+    "dashboard_summary": {
+      "additionalProperties": false,
+      "properties": {
+        "canary_check_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "canary_claim_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "required_canary_gap_count": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "canary_claim_count",
+        "canary_check_count",
+        "required_canary_gap_count"
+      ],
+      "type": "object"
+    },
+    "drift": {
+      "additionalProperties": {
+        "items": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "type": "object"
+    },
+    "drift_detected": {
+      "type": "boolean"
+    },
+    "generated_from": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "lane_contracts": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "dashboard_lane_role": {
+            "type": "string"
+          },
+          "evidence_policy": {
+            "type": "string"
+          },
+          "fixture_corpus_current_tag": {
+            "type": "string"
+          },
+          "fixture_sync_required": {
+            "type": "boolean"
+          },
+          "latest_official_tag": {
+            "type": "string"
+          },
+          "lane": {
+            "type": "string"
+          },
+          "major": {
+            "type": "integer"
+          },
+          "product_default": {
+            "type": "boolean"
+          },
+          "release_train_role": {
+            "enum": [
+              "product_default",
+              "supported_lts",
+              "legacy_grace",
+              "current_non_lts",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "runtime_compatibility_target": {
+            "type": "string"
+          },
+          "support_phase": {
+            "type": "string"
+          },
+          "upstream_tag": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "lane",
+          "major",
+          "release_train_role",
+          "support_phase",
+          "product_default",
+          "upstream_tag",
+          "latest_official_tag",
+          "fixture_corpus_current_tag",
+          "fixture_sync_required",
+          "dashboard_lane_role",
+          "runtime_compatibility_target",
+          "evidence_policy"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "live_probe": {
+      "additionalProperties": false,
+      "properties": {
+        "dist_index_checked": {
+          "type": "boolean"
+        },
+        "schedule_checked": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "dist_index_checked",
+        "schedule_checked"
+      ],
+      "type": "object"
+    },
+    "proof_gate": {
+      "additionalProperties": false,
+      "properties": {
+        "missing_digest_markers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "proof_artifact": {
+          "type": "string"
+        },
+        "proof_file_present": {
+          "type": "boolean"
+        },
+        "proof_readme": {
+          "type": "string"
+        },
+        "proof_readme_lists_artifact": {
+          "type": "boolean"
+        },
+        "required_digest_markers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "proof_artifact",
+        "proof_readme",
+        "proof_file_present",
+        "proof_readme_lists_artifact",
+        "required_digest_markers",
+        "missing_digest_markers"
+      ],
+      "type": "object"
+    },
+    "report_kind": {
+      "const": "nimbus_node_release_train",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "source_digests": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "source_urls": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "report_kind",
+    "as_of",
+    "generated_from",
+    "source_urls",
+    "source_digests",
+    "lane_contracts",
+    "dashboard_summary",
+    "live_probe",
+    "proof_gate",
+    "drift",
+    "drift_detected"
+  ],
+  "type": "object"
+}

@@ -11,6 +11,9 @@ pub(crate) fn runtime_error_to_core(error: NimbusRuntimeError) -> Error {
         NimbusRuntimeError::TenantQueueLimitExceeded { .. } => {
             Error::ResourceExhausted(error.to_string())
         }
+        NimbusRuntimeError::CapabilityDenied(message) => {
+            Error::InvalidInput(format!("convex runtime capability denied: {message}"))
+        }
         other => Error::Internal(format!("convex runtime error: {other}")),
     }
 }

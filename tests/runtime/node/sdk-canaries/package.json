@@ -1,0 +1,21 @@
+{
+  "name": "nimbus-sdk-canaries",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.100.0",
+    "@aws-sdk/client-s3": "3.1056.0",
+    "@slack/web-api": "7.16.0",
+    "@smithy/node-http-handler": "4.7.5",
+    "@upstash/redis": "1.38.0",
+    "ai": "6.0.192",
+    "jose": "6.2.3",
+    "nanoid": "5.1.11",
+    "octokit": "5.0.5",
+    "openai": "6.39.1",
+    "resend": "6.12.4",
+    "stripe": "22.2.0",
+    "uuid": "14.0.0",
+    "zod": "4.4.3"
+  }
+}

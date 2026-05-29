@@ -285,6 +285,12 @@ If you find yourself writing compatibility code, stop and make the breaking chan
 - Node-compatible runtime / `deno_core` / `rusty_v8` / embedded-codegen:
   `docs/architecture/runtime/adapter-boundary.md` and
   `docs/architecture/server/auth-runtime-trust.md` after the top-level docs.
+  Current default-quality work lives in
+  `docs/plans/node-default-runtime-support-hardening-plan.md` (NDS0..NDS10):
+  raise Node24 from bounded FaaS-compatible default to a well-supported default,
+  expand Node22/Node24 official fixture and package evidence, give Node26 real
+  Current-line fixture evidence, and subsume
+  `docs/plans/node-compat-cron-greening-plan.md`.
   Use `docs/plans/archive/node-compatible-runtime-plan.md`,
   `docs/plans/archive/node-lts-compatibility-plan.md`,
   `docs/plans/archive/node-compat-test-infrastructure-plan.md`, and

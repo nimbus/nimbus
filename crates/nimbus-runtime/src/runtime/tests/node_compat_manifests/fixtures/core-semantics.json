@@ -8,15 +8,15 @@
   "lane_batches": [
     {
       "lane": "node20",
-      "subset_test": "runtime::tests::node_compat::node20_supported_lane_executes_official_core_semantics_subset"
+      "subset_test": "runtime::tests::node_compat::node20_legacy_lane_executes_official_core_semantics_subset"
     },
     {
       "lane": "node22",
-      "subset_test": "runtime::tests::node_compat::node22_default_lane_executes_manifested_core_semantics_subset"
+      "subset_test": "runtime::tests::node_compat::node22_supported_lane_executes_manifested_core_semantics_subset"
     },
     {
       "lane": "node24",
-      "subset_test": "runtime::tests::node_compat::node24_supported_lane_core_semantics_watchpoint"
+      "subset_test": "runtime::tests::node_compat::node24_default_lane_core_semantics_watchpoint"
     }
   ],
   "manifest_doc": "docs/architecture/runtime/node-lts-compat/manifests/core-semantics.md",

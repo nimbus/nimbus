@@ -96,7 +96,7 @@
               "eol_legacy",
               "maintenance_lts",
               "active_lts",
-              "preview_current"
+              "current_non_lts"
             ]
           },
           "codename": {
@@ -152,7 +152,7 @@
             "enum": [
               "legacy_grace_regression_only",
               "supported_lts_lane_local_evidence",
-              "preview_no_enterprise_support_until_lts_and_evidence"
+              "current_non_lts_lane_local_evidence_until_lts_promotion"
             ]
           }
         }

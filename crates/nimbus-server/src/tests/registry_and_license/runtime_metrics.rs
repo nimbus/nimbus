@@ -151,7 +151,7 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
     );
 
     let lanes = body["lanes"].as_array().expect("lanes should be an array");
-    assert_eq!(lanes.len(), 5);
+    assert_eq!(lanes.len(), 6);
     let expected_lanes = [
         (
             "default",
@@ -182,6 +182,14 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
             false,
             "v8",
             "node24",
+            "linked",
+            "v8_isolate_heap_limit",
+        ),
+        (
+            "node26",
+            false,
+            "v8",
+            "node26",
             "linked",
             "v8_isolate_heap_limit",
         ),

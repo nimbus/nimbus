@@ -139,7 +139,7 @@ expected_phases = {
     "node20": "eol_legacy",
     "node22": "maintenance_lts",
     "node24": "active_lts",
-    "node26": "preview_current",
+    "node26": "current_non_lts",
 }
 for lane_name, phase in expected_phases.items():
     lane = lanes.get(lane_name)
@@ -159,8 +159,8 @@ supported = [
 ]
 if supported != ["node22", "node24"]:
     errors.append(f"supported LTS lane set should be ['node22', 'node24'], got {supported}")
-if registry.get("product_default_lane") != "node22":
-    errors.append("product default lane is not explicitly node22")
+if registry.get("product_default_lane") != "node24":
+    errors.append("product default lane is not explicitly node24")
 
 docs_text = "\n".join(
     path.read_text(encoding="utf-8")

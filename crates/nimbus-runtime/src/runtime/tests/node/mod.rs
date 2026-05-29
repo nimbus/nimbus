@@ -880,7 +880,7 @@ fn runtime_limits_for_node_compat_fixture(
     test_relative_path: &str,
     lane: Option<NodeCompatLane>,
 ) -> RuntimeLimits {
-    let mut limits = match lane.unwrap_or(NodeCompatLane::Node22) {
+    let mut limits = match lane.unwrap_or(NodeCompatLane::Node24) {
         NodeCompatLane::Node20 => RuntimeLimits::application_node20_local_development(),
         NodeCompatLane::Node22 => RuntimeLimits::application_node22_local_development(),
         NodeCompatLane::Node24 => RuntimeLimits::application_node24_local_development(),
@@ -946,7 +946,7 @@ fn node_compat_runtime_limits_only_grant_self_exec_to_known_respawn_fixtures() {
         runtime_limits_for_node_compat_fixture("test/parallel/test-repl-mode.js", None);
     assert_eq!(
         non_respawn_limits.compatibility_target,
-        RuntimeCompatibilityTarget::Node22
+        RuntimeCompatibilityTarget::Node24
     );
     assert!(non_respawn_limits.grants.run.is_empty());
 }

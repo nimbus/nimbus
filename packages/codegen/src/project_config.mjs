@@ -3,8 +3,11 @@ import path from "node:path";
 
 import { fileExists } from "./app.mjs";
 
-const DEFAULT_NODE_VERSION = "22";
-const SUPPORTED_NODE_VERSIONS = new Set(["20", "22", "24"]);
+const DEFAULT_NODE_VERSION = "24";
+const SUPPORTED_NODE_VERSIONS = new Set(["20", "22", "24", "26"]);
+const SUPPORTED_NODE_VERSION_LABEL = [...SUPPORTED_NODE_VERSIONS]
+  .map((version) => JSON.stringify(version))
+  .join(", ");
 
 function defaultProjectConfig() {
   return {
@@ -51,7 +54,7 @@ function parseNodeConfig(rawNode, appDir) {
   const nodeVersion = rawNode.nodeVersion ?? DEFAULT_NODE_VERSION;
   if (typeof nodeVersion !== "string" || !SUPPORTED_NODE_VERSIONS.has(nodeVersion)) {
     throw new Error(
-      `Invalid convex.json in ${appDir}: "node.nodeVersion" must be one of "20", "22", or "24".`,
+      `Invalid convex.json in ${appDir}: "node.nodeVersion" must be one of ${SUPPORTED_NODE_VERSION_LABEL}.`,
     );
   }
 

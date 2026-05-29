@@ -1,0 +1,7 @@
+{
+  "name": "@nimbus/node-convex-canaries",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Fixture root for Nimbus Convex-compatible Node canaries"
+}

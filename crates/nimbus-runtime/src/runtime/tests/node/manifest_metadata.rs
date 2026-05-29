@@ -9,6 +9,7 @@ const SCHEMA_JSON: &str = include_str!("../node_compat_manifests/schema.json");
 const NODE20_JSON: &str = include_str!("../node_compat_manifests/lanes/node20.json");
 const NODE22_JSON: &str = include_str!("../node_compat_manifests/lanes/node22.json");
 const NODE24_JSON: &str = include_str!("../node_compat_manifests/lanes/node24.json");
+const NODE26_JSON: &str = include_str!("../node_compat_manifests/lanes/node26.json");
 
 #[test]
 fn node_compat_lane_metadata_schema_is_valid_json_and_documents_required_fields() {
@@ -68,7 +69,7 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
             NODE20_JSON,
             "Node20",
             NodeCompatLaneRole::Legacy,
-            NodeCompatPublicContractRole::LegacyContract,
+            NodeCompatPublicContractRole::Legacy,
             "Node20",
             "application_node20",
             "v20.20.2",
@@ -79,25 +80,37 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
             "node22",
             NODE22_JSON,
             "Node22",
-            NodeCompatLaneRole::Default,
-            NodeCompatPublicContractRole::DefaultContract,
+            NodeCompatLaneRole::Supported,
+            NodeCompatPublicContractRole::Supported,
             "Node22",
             "application_node22",
-            "v22.15.0",
-            "b009466555c360513b8012ce549f716501090ee5",
-            "fba004eabc89c2b92d21e56d8ba24c23a952119f",
+            "v22.22.3",
+            "fdfa0ff0dbaf0fbf4d7d6d89a2ab807f3177fa5c",
+            "354ef4b9bd94d5b662a9c300ddacc67f95a1bbe8",
         ),
         (
             "node24",
             NODE24_JSON,
             "Node24",
-            NodeCompatLaneRole::Supported,
-            NodeCompatPublicContractRole::SupportedContract,
+            NodeCompatLaneRole::Default,
+            NodeCompatPublicContractRole::Default,
             "Node24",
             "application_node24",
-            "v24.15.0",
-            "848430679556aed0bd073f2bc263331ad84fa119",
-            "a20a24415694b80361d661d6ecc1ea0e260d9c32",
+            "v24.16.0",
+            "c7d10158bc31036de6783d66beaaaf551e3167aa",
+            "75143a8d75629c5d429dd0becb0d725e955f48fb",
+        ),
+        (
+            "node26",
+            NODE26_JSON,
+            "Node26",
+            NodeCompatLaneRole::Current,
+            NodeCompatPublicContractRole::Current,
+            "Node26",
+            "application_node26",
+            "v26.2.0",
+            "cfd7920d5a2d84905c4292362d01d07870047e93",
+            "30ffe3cfc2fda3684c38ec43aa79c381d398bf14",
         ),
     ];
 
@@ -149,11 +162,19 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
         );
         assert_eq!(
             metadata.fixture_provenance.nimbus_sync_commit,
-            "17a6bf48e3d69a5c153ffc89300629cc798346a5"
+            if expected_lane == "node20" {
+                "17a6bf48e3d69a5c153ffc89300629cc798346a5"
+            } else {
+                "e7e8b9d6d7c21af04e31a72d9d419863834ecc21"
+            }
         );
         assert_eq!(
             metadata.fixture_provenance.synced_at,
-            "2026-05-11T19:29:29-05:00"
+            if expected_lane == "node20" {
+                "2026-05-11T19:29:29-05:00"
+            } else {
+                "2026-05-28T20:32:23Z"
+            }
         );
         assert_eq!(metadata.fixture_provenance.recorded_at, "2026-05-28");
         assert!(
@@ -195,10 +216,10 @@ fn node_compat_lane_metadata_accepts_synthetic_future_lane_values() {
         "schema_version": 1,
         "lane": "node26",
         "upstream_fixture_line": "Node26",
-        "lane_role": "supported",
-        "public_contract_role": "supported_contract",
-        "runtime_execution_target": "Node24",
-        "runtime_limits_preset": "application_node24",
+        "lane_role": "current",
+        "public_contract_role": "current_contract",
+        "runtime_execution_target": "Node26",
+        "runtime_limits_preset": "application_node26",
         "upstream": {
             "repo": "nodejs/node",
             "tag": "v26.0.0",

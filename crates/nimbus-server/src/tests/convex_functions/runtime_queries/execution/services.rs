@@ -504,7 +504,8 @@ globalThis.__nimbusInvoke = async function() {
 export {};
 	"#,
         ),
-    );
+    )
+    .with_runtime_limits(nimbus_runtime::RuntimeLimits::application_node22_local_development());
     let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> =
         Arc::new(StubRuntimeServiceRegistry {
             binding: InvocationServiceBinding {
@@ -534,11 +535,16 @@ export {};
     let response = api
         .convex_named_query("demo", "network:scan", json!({}))
         .await;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let status = response.status();
     let body = response
         .text()
         .await
         .expect("error body should be readable");
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "unexpected response body: {body}"
+    );
     assert!(
         body.contains("microvm_service"),
         "error should name the unavailable fallback runtime tier: {body}"

@@ -190,16 +190,34 @@ async fn service_delete_only_notifies_filtered_subscriptions_for_matching_docume
         .await
         .expect("done initial update should arrive");
 
+    let deleted_document_id = active_document_id.clone();
     service
         .delete_document(&tenant_id, tasks_table(), active_document_id)
         .expect("delete should succeed");
+    let delete_sequence = durable_journal_commits(&service, &tenant_id, SequenceNumber(0))
+        .into_iter()
+        .find(|commit| {
+            commit.writes.iter().any(|write| {
+                write.doc_id == deleted_document_id
+                    && matches!(write.op_type, nimbus_core::WriteOpType::Delete)
+            })
+        })
+        .expect("delete commit should be durable")
+        .sequence;
 
-    let active_update = active_rx
-        .recv()
-        .await
-        .expect("active delete update should arrive");
-    match active_update {
-        SubscriptionUpdate::Result { snapshot, .. } => {
+    timeout(Duration::from_secs(1), async {
+        loop {
+            let active_update = active_rx
+                .recv()
+                .await
+                .expect("active delete update should arrive");
+            let snapshot = match active_update {
+                SubscriptionUpdate::Result { snapshot, .. } => snapshot,
+                other => panic!("unexpected active delete subscription event: {other:?}"),
+            };
+            if snapshot.covered_sequence.0 < delete_sequence.0 {
+                continue;
+            }
             let data = snapshot.to_json_documents();
             assert!(data.is_empty());
             assert_eq!(snapshot.deleted_documents.len(), 1);
@@ -207,11 +225,28 @@ async fn service_delete_only_notifies_filtered_subscriptions_for_matching_docume
                 snapshot.deleted_documents[0].fields.get("status"),
                 Some(&json!("active"))
             );
+            break;
         }
-        other => panic!("unexpected active delete subscription event: {other:?}"),
-    }
+    })
+    .await
+    .expect("active delete update should arrive after the delete commit");
 
-    let done_update = timeout(Duration::from_millis(100), done_rx.recv()).await;
+    let done_update = timeout(Duration::from_millis(100), async {
+        loop {
+            let done_update = done_rx
+                .recv()
+                .await
+                .expect("done subscription channel should remain open");
+            let snapshot = match done_update {
+                SubscriptionUpdate::Result { snapshot, .. } => snapshot,
+                other => panic!("unexpected done delete subscription event: {other:?}"),
+            };
+            if snapshot.covered_sequence.0 >= delete_sequence.0 {
+                return snapshot;
+            }
+        }
+    })
+    .await;
     assert!(
         done_update.is_err(),
         "deleting a non-matching document should not invalidate the other filter"

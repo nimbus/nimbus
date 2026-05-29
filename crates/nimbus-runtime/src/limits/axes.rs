@@ -78,6 +78,7 @@ pub enum RuntimeCompatibilityTarget {
     Node20,
     Node22,
     Node24,
+    Node26,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -86,7 +87,7 @@ pub enum RuntimeNodeSupportPhase {
     EolLegacy,
     MaintenanceLts,
     ActiveLts,
-    PreviewCurrent,
+    CurrentNonLts,
 }
 
 impl RuntimeNodeSupportPhase {
@@ -218,6 +219,7 @@ impl RuntimeCompatibilityTarget {
             "node20" | "node_20" | "node-20" | "Node20" | "20" => Some(Self::Node20),
             "node22" | "node_22" | "node-22" | "Node22" | "22" => Some(Self::Node22),
             "node24" | "node_24" | "node-24" | "Node24" | "24" => Some(Self::Node24),
+            "node26" | "node_26" | "node-26" | "Node26" | "26" => Some(Self::Node26),
             _ => None,
         }
     }
@@ -249,7 +251,10 @@ impl RuntimeCompatibilityTarget {
     }
 
     pub fn is_node(self) -> bool {
-        matches!(self, Self::Node20 | Self::Node22 | Self::Node24)
+        matches!(
+            self,
+            Self::Node20 | Self::Node22 | Self::Node24 | Self::Node26
+        )
     }
 
     pub fn is_supported_node_lts(self) -> bool {
@@ -262,6 +267,7 @@ impl RuntimeCompatibilityTarget {
             Self::Node20 => Some("node20"),
             Self::Node22 => Some("node22"),
             Self::Node24 => Some("node24"),
+            Self::Node26 => Some("node26"),
             Self::WebStandardIsolate | Self::BunJsc => None,
         }
     }
@@ -323,9 +329,11 @@ impl<'de> Deserialize<'de> for RuntimeCompatibilityTarget {
                     "node20",
                     "node22",
                     "node24",
+                    "node26",
                     "20",
                     "22",
                     "24",
+                    "26",
                 ],
             )
         })

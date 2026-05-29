@@ -427,6 +427,10 @@ pub(crate) fn classify_resolved_module_kind(
                 Ok(ResolvedNodeModuleKind::CommonJs)
             }
         }
+        Some("node") => Err(JsErrorBox::generic(format!(
+            "native addon module `{}` requires a service/microVM route; production in-process Node profiles do not grant ffi/native-addon authority",
+            path.display()
+        ))),
         Some(other) => Err(JsErrorBox::generic(format!(
             "unsupported runtime module extension `.{other}` for {}",
             path.display()

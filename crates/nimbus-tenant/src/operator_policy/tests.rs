@@ -979,12 +979,18 @@ fn node_runtime_profiles_follow_lts_registry_targets() {
             OperatorRuntimeProfile::Node22,
             nimbus_runtime::RuntimeCompatibilityTarget::Node22,
             nimbus_runtime::RuntimeNodeSupportPhase::MaintenanceLts,
-            true,
+            false,
         ),
         (
             OperatorRuntimeProfile::Node24,
             nimbus_runtime::RuntimeCompatibilityTarget::Node24,
             nimbus_runtime::RuntimeNodeSupportPhase::ActiveLts,
+            true,
+        ),
+        (
+            OperatorRuntimeProfile::Node26,
+            nimbus_runtime::RuntimeCompatibilityTarget::Node26,
+            nimbus_runtime::RuntimeNodeSupportPhase::CurrentNonLts,
             false,
         ),
     ] {
@@ -1013,17 +1019,17 @@ workloads:
   - kind: runtime_function
     name: "messages:send"
     runtime:
-      profile: "22"
+      profile: "26"
 "#,
     )
-    .expect("numeric Node LTS profile alias should parse");
+    .expect("numeric Current Node profile alias should parse");
     assert_eq!(
         numeric.workloads[0].runtime.profile,
-        OperatorRuntimeProfile::Node22
+        OperatorRuntimeProfile::Node26
     );
     assert_eq!(
         nimbus_runtime::RuntimeCompatibilityTarget::product_default_node_lts_target(),
-        nimbus_runtime::RuntimeCompatibilityTarget::Node22
+        nimbus_runtime::RuntimeCompatibilityTarget::Node24
     );
 }
 

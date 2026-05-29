@@ -7,6 +7,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import tarfile
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -109,9 +110,32 @@ def github_url(repo: str) -> str:
     return f"https://github.com/{repo}.git"
 
 
-def fetch_upstream_fixture_tree(lane: dict[str, Any], temp_root: Path) -> Path:
+def fetch_upstream_fixture_tree(
+    lane: dict[str, Any],
+    temp_root: Path,
+    source_root: Path | None,
+) -> Path:
     upstream = lane["upstream"]
     checkout = temp_root / f"{lane['lane']}-{upstream['tag']}"
+    if source_root is not None:
+        checkout.mkdir(parents=True, exist_ok=True)
+        archive_path = temp_root / f"{lane['lane']}-{upstream['tag']}.tar"
+        run(
+            [
+                "git",
+                "-C",
+                str(source_root),
+                "archive",
+                "--format=tar",
+                "--output",
+                str(archive_path),
+                upstream["tag"],
+                upstream["fixture_subtree"],
+            ]
+        )
+        with tarfile.open(archive_path) as archive:
+            archive.extractall(checkout)
+        return checkout / upstream["fixture_subtree"]
     run(
         [
             "git",
@@ -186,6 +210,30 @@ def command_plan(lane: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def local_source_command_plan(lane: dict[str, Any], source_root: Path) -> dict[str, Any]:
+    upstream = lane["upstream"]
+    selection_command = (
+        "python3 scripts/runtime/node/sync.py "
+        f"--lane {lane['lane']} --upstream-tag {upstream['tag']} --apply"
+    )
+    return {
+        "fetch": [
+            "git",
+            "-C",
+            str(source_root),
+            "archive",
+            "--format=tar",
+            "--output",
+            "<tempdir>",
+            upstream["tag"],
+            upstream["fixture_subtree"],
+        ],
+        "sparse_checkout": [],
+        "local_fixture_root": lane["vendored_fixture_root"],
+        "selection_command": selection_command,
+    }
+
+
 def validate_lane_provenance(lane: dict[str, Any]) -> None:
     registry_lane = registry_lanes_by_name().get(lane.get("lane"))
     path = manifest_root() / "lanes" / f"{lane.get('lane', '<unknown>')}.json"
@@ -213,6 +261,7 @@ def lane_with_overrides(args: argparse.Namespace) -> dict[str, Any]:
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     lane = lane_with_overrides(args)
     local_root = repo_root() / lane["vendored_fixture_root"]
+    source_root = Path(args.source_root).resolve() if args.source_root else None
     mode = "apply" if args.apply else "compare" if args.compare_upstream else "dry_run"
     report: dict[str, Any] = {
         "schema_version": 1,
@@ -226,7 +275,11 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "vendored_fixture_root": lane["vendored_fixture_root"],
         "local_fixture_root_exists": local_root.is_dir(),
         "local_test_file_count": len(fixture_files(local_root)),
-        "command_plan": command_plan(lane),
+        "command_plan": (
+            local_source_command_plan(lane, source_root)
+            if source_root is not None
+            else command_plan(lane)
+        ),
         "dry_run": mode == "dry_run",
         "diff": None,
         "applied": False,
@@ -235,7 +288,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         return report
 
     with tempfile.TemporaryDirectory(prefix=f"node-compat-sync-{lane['lane']}-") as tmp:
-        upstream_root = fetch_upstream_fixture_tree(lane, Path(tmp))
+        upstream_root = fetch_upstream_fixture_tree(lane, Path(tmp), source_root)
         local_snapshot = tree_snapshot(local_root)
         upstream_snapshot = tree_snapshot(upstream_root)
         report["upstream_test_file_count"] = len(fixture_files(upstream_root))
@@ -307,6 +360,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="override the lane metadata tag for this sync plan or operation",
     )
     parser.add_argument("--output-root", default=str(default_output_root()))
+    parser.add_argument(
+        "--source-root",
+        help="local nodejs/node checkout to archive from instead of cloning from GitHub",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="write a local sync plan only")
     mode.add_argument(

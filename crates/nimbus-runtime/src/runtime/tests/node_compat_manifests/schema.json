@@ -226,19 +226,29 @@
         },
         "lane_role": {
           "type": "string",
-          "enum": ["default", "supported", "legacy"]
+          "enum": ["default", "supported", "legacy", "current"]
         },
         "public_contract_role": {
           "type": "string",
-          "enum": ["default_contract", "supported_contract", "legacy_contract"]
+          "enum": [
+            "default_contract",
+            "supported_contract",
+            "legacy_contract",
+            "current_contract"
+          ]
         },
         "runtime_execution_target": {
           "type": "string",
-          "enum": ["Node20", "Node22", "Node24"]
+          "enum": ["Node20", "Node22", "Node24", "Node26"]
         },
         "runtime_limits_preset": {
           "type": "string",
-          "enum": ["application_node20", "application_node22", "application_node24"]
+          "enum": [
+            "application_node20",
+            "application_node22",
+            "application_node24",
+            "application_node26"
+          ]
         },
         "upstream": {
           "$ref": "#/$defs/upstreamMetadata"

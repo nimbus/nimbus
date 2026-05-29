@@ -102,6 +102,10 @@ impl RuntimeLimits {
         Self::application_node(RuntimeCompatibilityTarget::Node24)
     }
 
+    pub fn application_node26() -> Self {
+        Self::application_node(RuntimeCompatibilityTarget::Node26)
+    }
+
     pub fn application_node(target: RuntimeCompatibilityTarget) -> Self {
         Self::application_node_production_in_process(target)
     }
@@ -130,6 +134,10 @@ impl RuntimeLimits {
         Self::application_node_local_development(RuntimeCompatibilityTarget::Node24)
     }
 
+    pub fn application_node26_local_development() -> Self {
+        Self::application_node_local_development(RuntimeCompatibilityTarget::Node26)
+    }
+
     pub fn application_node_local_development(target: RuntimeCompatibilityTarget) -> Self {
         assert!(
             target.is_node(),
@@ -155,6 +163,10 @@ impl RuntimeLimits {
 
     pub fn application_node24_service_microvm() -> Self {
         Self::application_node_service_microvm(RuntimeCompatibilityTarget::Node24)
+    }
+
+    pub fn application_node26_service_microvm() -> Self {
+        Self::application_node_service_microvm(RuntimeCompatibilityTarget::Node26)
     }
 
     pub fn application_node_service_microvm(target: RuntimeCompatibilityTarget) -> Self {
@@ -203,6 +215,10 @@ impl RuntimeLimits {
 
     pub fn tooling_node24() -> Self {
         Self::tooling_node(RuntimeCompatibilityTarget::Node24)
+    }
+
+    pub fn tooling_node26() -> Self {
+        Self::tooling_node(RuntimeCompatibilityTarget::Node26)
     }
 
     pub fn tooling_node(target: RuntimeCompatibilityTarget) -> Self {

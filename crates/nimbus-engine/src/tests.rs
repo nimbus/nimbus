@@ -82,6 +82,7 @@ pub(crate) fn durable_journal_commits(
         .expect("durable journal should read")
         .into_iter()
         .map(|record| record.as_commit_entry())
+        .filter(|commit| !commit.writes.is_empty())
         .collect()
 }
 

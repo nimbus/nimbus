@@ -33,10 +33,12 @@ fn pinned_materialized_serving_snapshots_remain_stable_after_later_applies() {
         .expect("warming query should succeed");
     assert_eq!(document_bodies(&warmed), vec!["Ada"]);
 
-    let before_insert = service
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should load")
-        .applied_head;
+    let before_insert = published_sequence(
+        &service,
+        &tenant_id,
+        &table,
+        "warmed table should expose a publication",
+    );
     let pinned = service
         .materialized_serving_snapshot_for_testing(&tenant_id, before_insert)
         .expect("serving snapshot should load")
@@ -58,10 +60,12 @@ fn pinned_materialized_serving_snapshots_remain_stable_after_later_applies() {
         )
         .expect("second insert should succeed");
 
-    let after_insert = service
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should load")
-        .applied_head;
+    let after_insert = published_sequence(
+        &service,
+        &tenant_id,
+        &table,
+        "resident table should publish after the second insert",
+    );
     let current = service
         .materialized_serving_snapshot_for_testing(&tenant_id, after_insert)
         .expect("current serving snapshot should load")
@@ -127,10 +131,12 @@ fn materialized_surface_reacquires_retained_covering_version_for_older_required_
         .expect("warming query should succeed");
     assert_eq!(document_bodies(&warmed), vec!["Ada"]);
 
-    let first_sequence = service
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should load")
-        .applied_head;
+    let first_sequence = published_sequence(
+        &service,
+        &tenant_id,
+        &table,
+        "warmed table should expose its first serving publication",
+    );
 
     service
         .insert_document(
@@ -143,10 +149,12 @@ fn materialized_surface_reacquires_retained_covering_version_for_older_required_
         )
         .expect("second insert should succeed");
 
-    let second_sequence = service
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should load")
-        .applied_head;
+    let second_sequence = published_sequence(
+        &service,
+        &tenant_id,
+        &table,
+        "resident table should publish after the second insert",
+    );
 
     let retained = service
         .materialized_serving_snapshot_for_testing(&tenant_id, first_sequence)
@@ -242,10 +250,12 @@ fn pinned_materialized_serving_snapshot_is_exact_across_multiple_loaded_tables()
             ]),
         )
         .expect("alpha update insert should succeed");
-    let alpha_update_sequence = service
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should load")
-        .applied_head;
+    let alpha_update_sequence = published_sequence(
+        &service,
+        &tenant_id,
+        &alpha,
+        "alpha should publish after its update insert",
+    );
 
     service
         .insert_document(
@@ -257,10 +267,12 @@ fn pinned_materialized_serving_snapshot_is_exact_across_multiple_loaded_tables()
             ]),
         )
         .expect("beta update insert should succeed");
-    let latest_sequence = service
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should load")
-        .applied_head;
+    let latest_sequence = published_sequence(
+        &service,
+        &tenant_id,
+        &beta,
+        "beta should publish after its update insert",
+    );
 
     let exact_snapshot = service
         .materialized_serving_snapshot_for_testing(&tenant_id, alpha_update_sequence)
@@ -333,10 +345,12 @@ async fn serving_snapshot_waiter_wakes_when_new_frontier_is_published() {
         .query_documents(&tenant_id, &query)
         .expect("warming query should succeed");
 
-    let first_sequence = service
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should load")
-        .applied_head;
+    let first_sequence = published_sequence(
+        &service,
+        &tenant_id,
+        &table,
+        "warmed table should expose its first serving publication",
+    );
     let required_sequence = SequenceNumber(first_sequence.0.saturating_add(1));
 
     let waiter = tokio::spawn({
@@ -440,10 +454,12 @@ fn pinned_serving_snapshot_extends_retention_until_release() {
         .query_documents(&tenant_id, &query)
         .expect("warming query should succeed");
 
-    let first_sequence = service
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should load")
-        .applied_head;
+    let first_sequence = published_sequence(
+        &service,
+        &tenant_id,
+        &table,
+        "warmed table should publish before pinning",
+    );
     let pinned = service
         .materialized_serving_snapshot_for_testing(&tenant_id, first_sequence)
         .expect("first serving snapshot should load")
@@ -461,10 +477,12 @@ fn pinned_serving_snapshot_extends_retention_until_release() {
             )
             .expect("follow-up insert should succeed");
     }
-    let third_sequence = service
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should load")
-        .applied_head;
+    let third_sequence = published_sequence(
+        &service,
+        &tenant_id,
+        &table,
+        "resident table should publish after follow-up inserts",
+    );
 
     let pinned_stats = service
         .serving_snapshot_manager_stats_for_testing(&tenant_id)
@@ -489,10 +507,12 @@ fn pinned_serving_snapshot_extends_retention_until_release() {
             ]),
         )
         .expect("final insert should succeed");
-    let fourth_sequence = service
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should load")
-        .applied_head;
+    let fourth_sequence = published_sequence(
+        &service,
+        &tenant_id,
+        &table,
+        "resident table should publish after the final insert",
+    );
 
     let released_stats = service
         .serving_snapshot_manager_stats_for_testing(&tenant_id)

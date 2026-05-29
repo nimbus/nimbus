@@ -39,7 +39,7 @@ Each adapter speaks a different client protocol against the same engine.
 ## Runtimes
 
 - [Runtimes](runtimes/) -- developer-facing runtime families and support posture
-- [Node.js runtime](runtimes/nodejs/) -- `"use node"`, Node20 / Node22 / Node24 selection,
+- [Node.js runtime](runtimes/nodejs/) -- `"use node"`, Node20 / Node22 / Node24 / Node26 selection,
   packages, bundling, compatibility evidence, and current limits
 
 ## Architecture

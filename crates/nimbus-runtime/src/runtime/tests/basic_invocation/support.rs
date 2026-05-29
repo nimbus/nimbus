@@ -72,6 +72,14 @@ pub(super) fn tooling_canary_root() -> PathBuf {
     repo_root().join("tests/runtime/node/tooling-canaries")
 }
 
+pub(super) fn sdk_canary_root() -> PathBuf {
+    repo_root().join("tests/runtime/node/sdk-canaries")
+}
+
+pub(super) fn host_heavy_canary_root() -> PathBuf {
+    repo_root().join("tests/runtime/node/host-heavy-canaries")
+}
+
 pub(super) fn copy_dir_recursive(source: &Path, destination: &Path) {
     std::fs::create_dir_all(destination).expect("destination directory should build");
     for entry in std::fs::read_dir(source).expect("source directory should be readable") {
@@ -188,6 +196,50 @@ pub(super) fn prepare_tooling_canary_app() -> PreparedToolingCanaryApp {
     }
 }
 
+pub(super) fn prepare_application_sdk_canary_app() -> PreparedApplicationCanaryApp {
+    let canary_root = sdk_canary_root();
+    let canary_node_modules = canary_root.join("node_modules");
+    assert!(
+        canary_node_modules.is_dir(),
+        "SDK canary dependencies are missing at {}; run `npm ci --prefix {}` first",
+        canary_node_modules.display(),
+        canary_root.display(),
+    );
+
+    let tempdir = tempdir().expect("tempdir should build");
+    let app_root = tempdir.path().join("app");
+    let bundle_dir = app_root.join(".nimbus/convex");
+    std::fs::create_dir_all(&bundle_dir).expect("bundle dir should build");
+    copy_dir_recursive(&canary_node_modules, &bundle_dir.join("node_modules"));
+
+    PreparedApplicationCanaryApp {
+        _tempdir: tempdir,
+        bundle_path: bundle_dir.join("bundle.mjs"),
+    }
+}
+
+pub(super) fn prepare_application_host_heavy_canary_app() -> PreparedApplicationCanaryApp {
+    let canary_root = host_heavy_canary_root();
+    let canary_node_modules = canary_root.join("node_modules");
+    assert!(
+        canary_node_modules.is_dir(),
+        "host-heavy canary dependencies are missing at {}; run `npm ci --prefix {}` first",
+        canary_node_modules.display(),
+        canary_root.display(),
+    );
+
+    let tempdir = tempdir().expect("tempdir should build");
+    let app_root = tempdir.path().join("app");
+    let bundle_dir = app_root.join(".nimbus/convex");
+    std::fs::create_dir_all(&bundle_dir).expect("bundle dir should build");
+    copy_dir_recursive(&canary_node_modules, &bundle_dir.join("node_modules"));
+
+    PreparedApplicationCanaryApp {
+        _tempdir: tempdir,
+        bundle_path: bundle_dir.join("bundle.mjs"),
+    }
+}
+
 pub(super) fn stage_networking_canary_bundle(
     app: &PreparedApplicationCanaryApp,
     bundle_fixture_name: &str,
@@ -198,6 +250,34 @@ pub(super) fn stage_networking_canary_bundle(
     std::fs::copy(&source, &app.bundle_path).unwrap_or_else(|error| {
         panic!(
             "networking canary bundle {} should stage: {error}",
+            source.display()
+        )
+    });
+}
+
+pub(super) fn stage_sdk_canary_bundle(
+    app: &PreparedApplicationCanaryApp,
+    bundle_fixture_name: &str,
+) {
+    let source = sdk_canary_root().join("bundles").join(bundle_fixture_name);
+    std::fs::copy(&source, &app.bundle_path).unwrap_or_else(|error| {
+        panic!(
+            "SDK canary bundle {} should stage: {error}",
+            source.display()
+        )
+    });
+}
+
+pub(super) fn stage_host_heavy_canary_bundle(
+    app: &PreparedApplicationCanaryApp,
+    bundle_fixture_name: &str,
+) {
+    let source = host_heavy_canary_root()
+        .join("bundles")
+        .join(bundle_fixture_name);
+    std::fs::copy(&source, &app.bundle_path).unwrap_or_else(|error| {
+        panic!(
+            "host-heavy canary bundle {} should stage: {error}",
             source.display()
         )
     });
@@ -335,6 +415,62 @@ pub(super) async fn run_application_networking_canary_bundle(
         .await
         .unwrap_or_else(|error| {
             panic!("networking canary bundle {bundle_fixture_name} should execute: {error}")
+        })
+}
+
+pub(super) async fn run_application_sdk_canary_bundle(
+    app: &PreparedApplicationCanaryApp,
+    bundle_fixture_name: &str,
+    limits: RuntimeLimits,
+) -> std::result::Result<Value, String> {
+    stage_sdk_canary_bundle(app, bundle_fixture_name);
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        Arc::new(RuntimePolicy::new(limits)),
+    );
+    runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&app.bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "sdk:canary".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .map_err(|error| format!("SDK canary bundle {bundle_fixture_name} should execute: {error}"))
+}
+
+pub(super) async fn run_application_host_heavy_canary_bundle(
+    app: &PreparedApplicationCanaryApp,
+    bundle_fixture_name: &str,
+    limits: RuntimeLimits,
+) -> std::result::Result<Value, String> {
+    stage_host_heavy_canary_bundle(app, bundle_fixture_name);
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        Arc::new(RuntimePolicy::new(limits)),
+    );
+    runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&app.bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "host-heavy:canary".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .map_err(|error| {
+            format!("host-heavy canary bundle {bundle_fixture_name} should execute: {error}")
         })
 }
 
@@ -575,6 +711,354 @@ pub(super) fn assert_tooling_canary_result(
             Ok(())
         }
         other => Err(format!("unexpected tooling canary bundle fixture: {other}")),
+    }
+}
+
+fn sdk_canary_bool(actual: &Value, key: &str) -> std::result::Result<bool, String> {
+    actual
+        .get(key)
+        .and_then(Value::as_bool)
+        .ok_or_else(|| format!("missing bool field {key} in {actual}"))
+}
+
+fn sdk_canary_i64(actual: &Value, key: &str) -> std::result::Result<i64, String> {
+    actual
+        .get(key)
+        .and_then(Value::as_i64)
+        .ok_or_else(|| format!("missing integer field {key} in {actual}"))
+}
+
+fn sdk_canary_string<'a>(actual: &'a Value, key: &str) -> std::result::Result<&'a str, String> {
+    actual
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("missing string field {key} in {actual}"))
+}
+
+fn require_sdk_string(
+    actual: &Value,
+    key: &str,
+    expected: &str,
+) -> std::result::Result<(), String> {
+    let actual_value = sdk_canary_string(actual, key)?;
+    if actual_value == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "field {key} expected {expected:?}, got {actual_value:?} in {actual}"
+        ))
+    }
+}
+
+pub(super) fn assert_sdk_canary_result(
+    bundle_fixture_name: &str,
+    actual: &Value,
+) -> std::result::Result<(), String> {
+    match bundle_fixture_name {
+        "openai.mjs" => {
+            require_sdk_string(actual, "content", "openai-ok")?;
+            require_sdk_string(actual, "requestPath", "/v1/chat/completions")?;
+            require_sdk_string(actual, "requestModel", "nimbus-test-model")?;
+            require_sdk_string(actual, "authHeader", "Bearer sk-nimbus")
+        }
+        "anthropic.mjs" => {
+            require_sdk_string(actual, "text", "anthropic-ok")?;
+            require_sdk_string(actual, "requestPath", "/v1/messages")?;
+            require_sdk_string(actual, "requestModel", "claude-nimbus")?;
+            require_sdk_string(actual, "apiKeyHeader", "sk-ant-nimbus")
+        }
+        "ai.mjs" => {
+            require_sdk_string(actual, "schemaType", "object")?;
+            require_sdk_string(actual, "toolResult", "ai:ok")?;
+            if !sdk_canary_bool(actual, "hasStopPredicate")? {
+                return Err(format!("AI SDK stop predicate missing: {actual}"));
+            }
+            Ok(())
+        }
+        "stripe.mjs" => {
+            require_sdk_string(actual, "id", "cus_nimbus")?;
+            require_sdk_string(actual, "email", "ada@example.com")?;
+            require_sdk_string(actual, "requestPath", "/v1/customers")?;
+            require_sdk_string(actual, "authHeader", "Bearer sk_test_nimbus")?;
+            let body = sdk_canary_string(actual, "requestBody")?;
+            if !body.contains("email=ada%40example.com") {
+                return Err(format!("stripe request body missing email: {actual}"));
+            }
+            Ok(())
+        }
+        "resend.mjs" => {
+            require_sdk_string(actual, "id", "email_nimbus")?;
+            require_sdk_string(actual, "requestPath", "/emails")?;
+            require_sdk_string(actual, "requestSubject", "Nimbus canary")?;
+            require_sdk_string(actual, "authHeader", "Bearer re_nimbus")
+        }
+        "aws-s3.mjs" => {
+            require_sdk_string(actual, "bucketName", "nimbus-canary")?;
+            require_sdk_string(actual, "requestPath", "/?x-id=ListBuckets")?;
+            if !sdk_canary_bool(actual, "authHeaderPresent")? {
+                return Err(format!("AWS SDK auth header was missing: {actual}"));
+            }
+            Ok(())
+        }
+        "slack.mjs" => {
+            if !sdk_canary_bool(actual, "ok")? {
+                return Err(format!("slack auth.test did not report ok: {actual}"));
+            }
+            require_sdk_string(actual, "team", "Nimbus")?;
+            require_sdk_string(actual, "user", "ada")?;
+            require_sdk_string(actual, "requestPath", "/api/auth.test")?;
+            require_sdk_string(actual, "authHeader", "Bearer xoxb-nimbus")
+        }
+        "octokit.mjs" => {
+            require_sdk_string(actual, "login", "nimbus-bot")?;
+            if sdk_canary_i64(actual, "id")? != 42 {
+                return Err(format!("octokit id mismatch: {actual}"));
+            }
+            require_sdk_string(actual, "requestPath", "/user")?;
+            require_sdk_string(actual, "authHeader", "token ghp_nimbus")
+        }
+        "jose.mjs" => {
+            require_sdk_string(actual, "subject", "user_123")?;
+            require_sdk_string(actual, "role", "admin")?;
+            require_sdk_string(actual, "headerAlg", "HS256")?;
+            if sdk_canary_i64(actual, "tokenParts")? != 3 {
+                return Err(format!("jose token part count mismatch: {actual}"));
+            }
+            Ok(())
+        }
+        "zod.mjs" => {
+            if sdk_canary_i64(actual, "count")? != 3 {
+                return Err(format!("zod count mismatch: {actual}"));
+            }
+            require_sdk_string(actual, "firstTag", "nimbus")?;
+            if sdk_canary_bool(actual, "failure")? {
+                return Err(format!("zod invalid parse unexpectedly passed: {actual}"));
+            }
+            if sdk_canary_i64(actual, "issueCount")? < 1 {
+                return Err(format!("zod issue count missing: {actual}"));
+            }
+            Ok(())
+        }
+        "uuid.mjs" => {
+            require_sdk_string(actual, "id", "bc0a1831-8c89-5ac7-b2cb-a52eb2bf8222")?;
+            if !sdk_canary_bool(actual, "valid")? {
+                return Err(format!("uuid validation failed: {actual}"));
+            }
+            Ok(())
+        }
+        "nanoid.mjs" => {
+            require_sdk_string(actual, "id", "nnnnnnnn")?;
+            if sdk_canary_i64(actual, "length")? != 8 {
+                return Err(format!("nanoid length mismatch: {actual}"));
+            }
+            Ok(())
+        }
+        "upstash-redis.mjs" => {
+            require_sdk_string(actual, "value", "redis-ok")?;
+            let calls = actual
+                .get("calls")
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("missing upstash calls in {actual}"))?;
+            if calls.len() != 2 {
+                return Err(format!("unexpected upstash call count in {actual}"));
+            }
+            Ok(())
+        }
+        other => Err(format!("unexpected SDK canary bundle fixture: {other}")),
+    }
+}
+
+fn host_heavy_string<'a>(actual: &'a Value, key: &str) -> std::result::Result<&'a str, String> {
+    actual
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("missing string field {key} in {actual}"))
+}
+
+fn assert_denial_contains_any(
+    actual: &Value,
+    bundle_fixture_name: &str,
+    tokens: &[&str],
+) -> std::result::Result<(), String> {
+    let denied = host_heavy_string(actual, "denied")?;
+    if tokens.iter().any(|token| denied.contains(token)) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{bundle_fixture_name} denial did not contain any expected token {tokens:?}: {actual}"
+        ))
+    }
+}
+
+pub(super) fn assert_host_heavy_canary_result(
+    bundle_fixture_name: &str,
+    actual: &Value,
+) -> std::result::Result<(), String> {
+    if host_heavy_string(actual, "supportStatus")? != "service_microvm_required" {
+        return Err(format!(
+            "{bundle_fixture_name} did not report service/microVM boundary: {actual}"
+        ));
+    }
+    if host_heavy_string(actual, "diagnostic")? != "NIMBUS_NODE_HOST_HEAVY_SERVICE_ROUTE_REQUIRED" {
+        return Err(format!(
+            "{bundle_fixture_name} did not report the host-heavy diagnostic token: {actual}"
+        ));
+    }
+
+    match bundle_fixture_name {
+        "child-process.mjs" => {
+            if host_heavy_string(actual, "surface")? != "child_process" {
+                return Err(format!("child_process surface mismatch: {actual}"));
+            }
+            assert_denial_contains_any(
+                actual,
+                bundle_fixture_name,
+                &["runtime run capability denied", "Requires run access"],
+            )
+        }
+        "worker-threads.mjs" => {
+            if host_heavy_string(actual, "surface")? != "worker_threads" {
+                return Err(format!("worker_threads surface mismatch: {actual}"));
+            }
+            assert_denial_contains_any(
+                actual,
+                bundle_fixture_name,
+                &["runtime worker grant denied for `thread`"],
+            )
+        }
+        "inspector.mjs" => {
+            if host_heavy_string(actual, "surface")? != "inspector" {
+                return Err(format!("inspector surface mismatch: {actual}"));
+            }
+            assert_denial_contains_any(
+                actual,
+                bundle_fixture_name,
+                &[
+                    "node:inspector requires a service/microVM route",
+                    "inspector authority",
+                ],
+            )
+        }
+        "repl.mjs" => {
+            if host_heavy_string(actual, "surface")? != "repl" {
+                return Err(format!("repl surface mismatch: {actual}"));
+            }
+            assert_denial_contains_any(
+                actual,
+                bundle_fixture_name,
+                &[
+                    "node:repl requires an interactive host process",
+                    "REPL authority",
+                ],
+            )
+        }
+        "node-test-runner.mjs" => {
+            if host_heavy_string(actual, "surface")? != "node_test_runner" {
+                return Err(format!("node_test_runner surface mismatch: {actual}"));
+            }
+            assert_denial_contains_any(
+                actual,
+                bundle_fixture_name,
+                &["runtime run capability denied", "Requires run access"],
+            )
+        }
+        "native-addon.mjs" => {
+            if host_heavy_string(actual, "surface")? != "native_addon" {
+                return Err(format!("native_addon surface mismatch: {actual}"));
+            }
+            assert_denial_contains_any(
+                actual,
+                bundle_fixture_name,
+                &["native addon module", "ffi/native-addon authority", ".node"],
+            )
+        }
+        "persistent-fs.mjs" => {
+            if host_heavy_string(actual, "surface")? != "persistent_filesystem" {
+                return Err(format!("persistent_filesystem surface mismatch: {actual}"));
+            }
+            assert_denial_contains_any(
+                actual,
+                bundle_fixture_name,
+                &[
+                    "runtime write capability denied",
+                    "runtime read capability denied",
+                    "Requires write access",
+                    "Requires read access",
+                ],
+            )
+        }
+        "raw-server-listen.mjs" => {
+            if host_heavy_string(actual, "surface")? != "raw_server_listen" {
+                return Err(format!("raw_server_listen surface mismatch: {actual}"));
+            }
+            assert_denial_contains_any(
+                actual,
+                bundle_fixture_name,
+                &["Requires net access", "network access", "listen"],
+            )
+        }
+        "prisma-engine.mjs" => {
+            if host_heavy_string(actual, "surface")? != "prisma_engine" {
+                return Err(format!("prisma_engine surface mismatch: {actual}"));
+            }
+            assert_denial_contains_any(
+                actual,
+                bundle_fixture_name,
+                &["native addon module", "ffi/native-addon authority", ".node"],
+            )
+        }
+        "sharp-native.mjs" => {
+            if host_heavy_string(actual, "surface")? != "sharp_native" {
+                return Err(format!("sharp_native surface mismatch: {actual}"));
+            }
+            assert_denial_contains_any(
+                actual,
+                bundle_fixture_name,
+                &[
+                    "native addon module",
+                    "ffi/native-addon authority",
+                    "Could not load the \"sharp\" module",
+                    ".node",
+                ],
+            )
+        }
+        "esbuild-binary.mjs" => {
+            if host_heavy_string(actual, "surface")? != "esbuild_binary" {
+                return Err(format!("esbuild_binary surface mismatch: {actual}"));
+            }
+            assert_denial_contains_any(
+                actual,
+                bundle_fixture_name,
+                &[
+                    "runtime run capability denied",
+                    "Requires run access",
+                    "spawn",
+                    "unref",
+                ],
+            )
+        }
+        other => Err(format!(
+            "unexpected host-heavy canary bundle fixture: {other}"
+        )),
+    }
+}
+
+pub(super) fn assert_host_heavy_canary_error(
+    bundle_fixture_name: &str,
+    error: &str,
+) -> std::result::Result<(), String> {
+    match bundle_fixture_name {
+        "raw-server-listen.mjs"
+            if error.contains("Requires net access") && error.contains("127.0.0.1:0") =>
+        {
+            Ok(())
+        }
+        "raw-server-listen.mjs" => Err(format!(
+            "raw-server-listen.mjs did not fail with net-listen denial: {error}"
+        )),
+        other => Err(format!(
+            "{other} failed during execution instead of returning a diagnostic payload: {error}"
+        )),
     }
 }
 

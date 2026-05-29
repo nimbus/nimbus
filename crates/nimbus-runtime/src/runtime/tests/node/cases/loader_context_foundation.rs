@@ -314,47 +314,47 @@ const NODE_TOOLS_CONSTANTS_FOUNDATION_BATCH: &[NodeCompatBatchEntry] = &[
 ];
 
 const NODE_TOOLS_TRACE_EVENTS_FOUNDATION_BATCH: &[NodeCompatBatchEntry] = &[
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-api.js",
         "node22/test/parallel/test-trace-events-api.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-api.js",
         "node22/test/parallel/test-trace-events-api.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-binding.js",
         "node22/test/parallel/test-trace-events-binding.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-bootstrap.js",
         "node22/test/parallel/test-trace-events-bootstrap.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-category-used.js",
         "node22/test/parallel/test-trace-events-category-used.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-console.js",
         "node22/test/parallel/test-trace-events-console.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-dynamic-enable.js",
         "node22/test/parallel/test-trace-events-dynamic-enable.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-environment.js",
         "node22/test/parallel/test-trace-events-environment.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-metadata.js",
         "node22/test/parallel/test-trace-events-metadata.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-none.js",
         "node22/test/parallel/test-trace-events-none.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-process-exit.js",
         "node22/test/parallel/test-trace-events-process-exit.js"
     ),

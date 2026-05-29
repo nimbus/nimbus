@@ -53,11 +53,11 @@ fn node_compat_manifest_report_schema_is_versioned_and_serializes_deterministica
         "legacy_contract"
     );
     assert_eq!(lane_summaries[1]["lane"], "node22");
-    assert_eq!(lane_summaries[1]["lane_role"], "default");
+    assert_eq!(lane_summaries[1]["lane_role"], "supported");
     assert_eq!(lane_summaries[2]["lane"], "node24");
     assert_eq!(
         lane_summaries[2]["public_contract_role"],
-        "supported_contract"
+        "default_contract"
     );
 }
 
@@ -84,7 +84,7 @@ fn node_compat_manifest_report_summarizes_lane_slice_and_preset_counts_from_exec
     assert_eq!(report.lane_summaries[0].lane_role, "legacy");
     assert_eq!(
         report.lane_summaries[1].public_contract_role,
-        "default_contract"
+        "supported_contract"
     );
     assert_eq!(report.lane_summaries[0].fixture_count, 10);
     assert_eq!(report.lane_summaries[1].fixture_count, 10);
@@ -146,8 +146,8 @@ fn node_compat_manifest_report_builds_catalog_summary_deterministically() {
             {
                 "lane": "node22",
                 "upstream_fixture_line": "Node22",
-                "lane_role": "default",
-                "public_contract_role": "default_contract",
+                "lane_role": "supported",
+                "public_contract_role": "supported_contract",
                 "runtime_execution_target": "Node22",
                 "runtime_limits_preset": "application_node22",
                 "total_fixture_entries": 57,
@@ -156,8 +156,8 @@ fn node_compat_manifest_report_builds_catalog_summary_deterministically() {
             {
                 "lane": "node24",
                 "upstream_fixture_line": "Node24",
-                "lane_role": "supported",
-                "public_contract_role": "supported_contract",
+                "lane_role": "default",
+                "public_contract_role": "default_contract",
                 "runtime_execution_target": "Node24",
                 "runtime_limits_preset": "application_node24",
                 "total_fixture_entries": 56,
@@ -246,7 +246,7 @@ fn node_compat_manifest_report_aggregates_observed_results_deterministically() {
                 "public_contract_role": "legacy_contract",
                 "runtime_execution_target": "Node20",
                 "runtime_limits_preset": "application_node20",
-                "subset_test": "runtime::tests::node_compat::node20_supported_lane_executes_official_networking_subset",
+                "subset_test": "runtime::tests::node_compat::node20_legacy_lane_executes_official_networking_subset",
                 "expected_fixture_count": 10,
                 "observed_fixture_count": 2,
                 "counts": {
@@ -259,11 +259,11 @@ fn node_compat_manifest_report_aggregates_observed_results_deterministically() {
             {
                 "lane": "node22",
                 "upstream_fixture_line": "Node22",
-                "lane_role": "default",
-                "public_contract_role": "default_contract",
+                "lane_role": "supported",
+                "public_contract_role": "supported_contract",
                 "runtime_execution_target": "Node22",
                 "runtime_limits_preset": "application_node22",
-                "subset_test": "runtime::tests::node_compat::node22_default_lane_executes_manifested_networking_subset",
+                "subset_test": "runtime::tests::node_compat::node22_supported_lane_executes_manifested_networking_subset",
                 "expected_fixture_count": 10,
                 "observed_fixture_count": 1,
                 "counts": {
@@ -276,11 +276,11 @@ fn node_compat_manifest_report_aggregates_observed_results_deterministically() {
             {
                 "lane": "node24",
                 "upstream_fixture_line": "Node24",
-                "lane_role": "supported",
-                "public_contract_role": "supported_contract",
+                "lane_role": "default",
+                "public_contract_role": "default_contract",
                 "runtime_execution_target": "Node24",
                 "runtime_limits_preset": "application_node24",
-                "subset_test": "runtime::tests::node_compat::node24_supported_lane_networking_watchpoint",
+                "subset_test": "runtime::tests::node_compat::node24_default_lane_networking_watchpoint",
                 "expected_fixture_count": 9,
                 "observed_fixture_count": 1,
                 "counts": {
@@ -460,8 +460,8 @@ fn node_compat_manifest_report_aggregates_observed_catalog_results_deterministic
             {
                 "lane": "node22",
                 "upstream_fixture_line": "Node22",
-                "lane_role": "default",
-                "public_contract_role": "default_contract",
+                "lane_role": "supported",
+                "public_contract_role": "supported_contract",
                 "runtime_execution_target": "Node22",
                 "runtime_limits_preset": "application_node22",
                 "total_expected_results": 20,
@@ -477,8 +477,8 @@ fn node_compat_manifest_report_aggregates_observed_catalog_results_deterministic
             {
                 "lane": "node24",
                 "upstream_fixture_line": "Node24",
-                "lane_role": "supported",
-                "public_contract_role": "supported_contract",
+                "lane_role": "default",
+                "public_contract_role": "default_contract",
                 "runtime_execution_target": "Node24",
                 "runtime_limits_preset": "application_node24",
                 "total_expected_results": 19,

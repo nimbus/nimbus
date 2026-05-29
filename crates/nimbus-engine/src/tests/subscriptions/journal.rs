@@ -57,12 +57,13 @@ async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_jo
         .expect("journal pause handle should load");
     pause.arm();
 
+    let first_delete_document_id = first_document_id.clone();
     let first_delete = {
         let service = Arc::clone(&service);
         let tenant_id = tenant_id.clone();
         tokio::spawn(async move {
             service
-                .delete_document_async(tenant_id, tasks_table(), first_document_id)
+                .delete_document_async(tenant_id, tasks_table(), first_delete_document_id)
                 .await
         })
     };
@@ -75,12 +76,13 @@ async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_jo
         "journal worker should pause before applying the queued delete batch"
     );
 
+    let second_delete_document_id = second_document_id.clone();
     let second_delete = {
         let service = Arc::clone(&service);
         let tenant_id = tenant_id.clone();
         tokio::spawn(async move {
             service
-                .delete_document_async(tenant_id, tasks_table(), second_document_id)
+                .delete_document_async(tenant_id, tasks_table(), second_delete_document_id)
                 .await
         })
     };
@@ -102,12 +104,31 @@ async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_jo
     .await
     .expect("queued deletes should complete once the journal worker is released");
 
-    let update = timeout(Duration::from_secs(1), rx.recv())
-        .await
-        .expect("coalesced delete subscription update should arrive")
-        .expect("subscription channel should remain open");
-    match update {
-        SubscriptionUpdate::Result { snapshot, .. } => {
+    let delete_sequence = durable_journal_commits(&service, &tenant_id, SequenceNumber(0))
+        .into_iter()
+        .filter(|commit| {
+            commit.writes.iter().any(|write| {
+                matches!(write.op_type, nimbus_core::WriteOpType::Delete)
+                    && (write.doc_id == first_document_id || write.doc_id == second_document_id)
+            })
+        })
+        .map(|commit| commit.sequence)
+        .max_by_key(|sequence| sequence.0)
+        .expect("both delete commits should be durable");
+
+    timeout(Duration::from_secs(1), async {
+        loop {
+            let update = rx
+                .recv()
+                .await
+                .expect("coalesced delete subscription update should arrive");
+            let snapshot = match update {
+                SubscriptionUpdate::Result { snapshot, .. } => snapshot,
+                other => panic!("unexpected coalesced delete update: {other:?}"),
+            };
+            if snapshot.covered_sequence.0 < delete_sequence.0 {
+                continue;
+            }
             let data = snapshot.to_json_documents();
             assert!(
                 snapshot.commit.is_none(),
@@ -133,9 +154,11 @@ async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_jo
                 titles,
                 BTreeSet::from(["Task A".to_string(), "Task B".to_string()])
             );
+            break;
         }
-        other => panic!("unexpected coalesced delete update: {other:?}"),
-    }
+    })
+    .await
+    .expect("coalesced delete subscription update should cover both deletes");
 }
 
 #[tokio::test]

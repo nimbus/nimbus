@@ -73,7 +73,7 @@ fn node_compat_manifest_resolution_builds_lane_execution_plan_deterministically(
     assert_eq!(plan.lanes[2].lane, "node24");
     assert_eq!(
         plan.lanes[0].subset_test,
-        "runtime::tests::node_compat::node20_supported_lane_executes_official_networking_subset"
+        "runtime::tests::node_compat::node20_legacy_lane_executes_official_networking_subset"
     );
     assert_eq!(plan.lanes[0].fixtures.len(), 10);
     assert_eq!(plan.lanes[1].fixtures.len(), 10);
@@ -111,6 +111,7 @@ fn node_compat_manifest_resolution_rejects_duplicate_fixture_ids_across_families
                 "node20.json".to_string(),
                 "node22.json".to_string(),
                 "node24.json".to_string(),
+                "node26.json".to_string(),
             ],
             lane_catalogs,
             named_behavior_catalog:
@@ -142,13 +143,13 @@ fn node_compat_manifest_resolution_supports_future_lane_keys_without_new_rust_fi
         NodeCompatFamilyLaneBatch {
             lane: "node22".to_string(),
             subset_test:
-                "runtime::tests::node_compat::node22_default_lane_executes_manifested_core_semantics_subset"
+                "runtime::tests::node_compat::node22_supported_lane_executes_manifested_core_semantics_subset"
                     .to_string(),
         },
         NodeCompatFamilyLaneBatch {
             lane: "node26".to_string(),
             subset_test:
-                "runtime::tests::node_compat::node26_preview_lane_executes_manifested_core_semantics_subset"
+                "runtime::tests::node_compat::node26_current_lane_executes_manifested_core_semantics_subset"
                     .to_string(),
         },
     ];
@@ -178,15 +179,24 @@ fn node_compat_manifest_resolution_supports_future_lane_keys_without_new_rust_fi
             "schema_version": 1,
             "lane": "node26",
             "upstream_fixture_line": "Node26",
-            "lane_role": "supported",
-            "public_contract_role": "supported_contract",
-            "runtime_execution_target": "Node24",
-            "runtime_limits_preset": "application_node24",
+            "lane_role": "current",
+            "public_contract_role": "current_contract",
+            "runtime_execution_target": "Node26",
+            "runtime_limits_preset": "application_node26",
             "upstream": {
                 "repo": "nodejs/node",
-                "tag": "v26.0.0",
+                "tag": "v26.2.0",
+                "commit": "cfd7920d5a2d84905c4292362d01d07870047e93",
+                "tag_object": "30ffe3cfc2fda3684c38ec43aa79c381d398bf14",
                 "fixture_subtree": "test",
                 "source_kind": "vendored_official_fixture_corpus"
+            },
+            "fixture_provenance": {
+                "synced_at": "2026-05-28T20:32:23Z",
+                "selection_command": "python3 scripts/runtime/node/sync.py --lane node26 --upstream-tag v26.2.0 --apply",
+                "nimbus_sync_commit": "e7e8b9d6d7c21af04e31a72d9d419863834ecc21",
+                "recorded_at": "2026-05-28",
+                "recorded_from": "synthetic future-lane test fixture"
             },
             "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
             "manifest_docs": [
@@ -238,6 +248,7 @@ fn node_compat_manifest_resolution_rejects_unknown_named_behavior_phase_links() 
             "node20.json".to_string(),
             "node22.json".to_string(),
             "node24.json".to_string(),
+            "node26.json".to_string(),
         ],
         lane_catalogs,
         named_behavior_catalog: NodeCompatNamedBehaviorCatalog {

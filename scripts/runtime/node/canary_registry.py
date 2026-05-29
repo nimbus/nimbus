@@ -109,6 +109,8 @@ def command_run(args: argparse.Namespace) -> None:
                     "package": canary["package"],
                     "pinned_version": canary["pinned_version"],
                     "runtime_preset": canary["runtime_preset"],
+                    "evidence_kind": canary.get("evidence_kind", "positive_support"),
+                    "support_status": canary.get("support_status", "supported"),
                     "claim_ids": canary["claim_ids"],
                     "lane": lane_run["lane"],
                     "compatibility_target": lane_run["compatibility_target"],
@@ -160,6 +162,8 @@ def command_run(args: argparse.Namespace) -> None:
                 "package": lane_run["package"],
                 "pinned_version": lane_run["pinned_version"],
                 "runtime_preset": lane_run["runtime_preset"],
+                "evidence_kind": lane_run["evidence_kind"],
+                "support_status": lane_run["support_status"],
                 "claim_ids": lane_run["claim_ids"],
                 "lane": lane_run["lane"],
                 "compatibility_target": lane_run["compatibility_target"],
@@ -244,6 +248,12 @@ def command_validate_claims(_: argparse.Namespace) -> None:
         raise SystemExit(f"claims missing active canary mappings: {', '.join(missing)}")
 
     for claim in claims:
+        evidence_kind = claim.get("evidence_kind", "positive_support")
+        support_status = claim.get("support_status", "supported")
+        if evidence_kind == "diagnostic" and support_status == "supported":
+            raise SystemExit(
+                f"diagnostic claim {claim['id']} must not use supported support_status"
+            )
         doc_path = repo_root() / claim["doc_path"]
         if not doc_path.is_file():
             raise SystemExit(f"missing doc path for claim {claim['id']}: {doc_path}")

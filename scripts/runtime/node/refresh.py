@@ -120,6 +120,8 @@ def build_steps(args: argparse.Namespace, metadata: dict[str, Any]) -> list[tupl
         str(repo_root() / "target" / "node-compat" / "sync"),
         *sync_mode_args(args),
     ]
+    if args.source_root:
+        sync_command.extend(["--source-root", args.source_root])
     if args.tag and args.apply:
         sync_command.extend(["--upstream-tag", metadata["after_tag"]])
     elif args.tag and not metadata["written"]:
@@ -218,6 +220,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lane", required=True, help="lane id, for example node22")
     parser.add_argument("--tag", help="new upstream Node tag for the lane")
     parser.add_argument("--output-root", default=str(default_output_root()))
+    parser.add_argument(
+        "--source-root",
+        help="local nodejs/node checkout to archive from instead of cloning from GitHub",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="plan only; do not edit lane metadata")
     mode.add_argument("--compare-upstream", action="store_true", help="fetch upstream and diff")

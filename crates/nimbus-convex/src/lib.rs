@@ -169,6 +169,7 @@ pub struct ConvexRegistry {
     node20_runtime_lane: ConvexRuntimeLane,
     node22_runtime_lane: ConvexRuntimeLane,
     node24_runtime_lane: ConvexRuntimeLane,
+    node26_runtime_lane: ConvexRuntimeLane,
     bun_jsc_runtime_lane: ConvexRuntimeLane,
     runtime_bundle_provenance: Option<RuntimeBundleProvenanceConfig>,
 }
@@ -182,6 +183,8 @@ impl Default for ConvexRegistry {
             convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node22);
         let node24_runtime_lane =
             convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node24);
+        let node26_runtime_lane =
+            convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node26);
         let bun_jsc_runtime_lane = convex_bun_jsc_runtime_lane(RuntimeLimits::default());
         Self {
             functions: HashMap::new(),
@@ -195,6 +198,7 @@ impl Default for ConvexRegistry {
             node20_runtime_lane,
             node22_runtime_lane,
             node24_runtime_lane,
+            node26_runtime_lane,
             bun_jsc_runtime_lane,
             runtime_bundle_provenance: None,
         }
@@ -225,8 +229,16 @@ fn convex_node_runtime_lane(
     base_limits: RuntimeLimits,
     target: RuntimeCompatibilityTarget,
 ) -> ConvexRuntimeLane {
-    let mut limits = RuntimeLimits::application_node(target);
-    limits.apply_resource_overrides_from(&base_limits);
+    let use_full_override = matches!(base_limits.backend_kind, RuntimeBackendKind::V8)
+        && base_limits.compatibility_target == target;
+    let mut limits = if use_full_override {
+        base_limits.clone()
+    } else {
+        RuntimeLimits::application_node(target)
+    };
+    if !use_full_override {
+        limits.apply_resource_overrides_from(&base_limits);
+    }
     ConvexRuntimeLane::from_limits(
         limits,
         RuntimeExecutionAdapterState::Linked,

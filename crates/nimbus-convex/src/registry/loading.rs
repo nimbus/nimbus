@@ -174,6 +174,8 @@ impl ConvexRegistry {
             convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node22);
         let node24_runtime_lane =
             convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node24);
+        let node26_runtime_lane =
+            convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node26);
         let bun_jsc_runtime_lane = convex_bun_jsc_runtime_lane(RuntimeLimits::default());
         Ok(Self {
             functions,
@@ -187,6 +189,7 @@ impl ConvexRegistry {
             node20_runtime_lane,
             node22_runtime_lane,
             node24_runtime_lane,
+            node26_runtime_lane,
             bun_jsc_runtime_lane,
             runtime_bundle_provenance: None,
         })
@@ -200,6 +203,8 @@ impl ConvexRegistry {
             convex_node_runtime_lane(limits.clone(), RuntimeCompatibilityTarget::Node22);
         self.node24_runtime_lane =
             convex_node_runtime_lane(limits.clone(), RuntimeCompatibilityTarget::Node24);
+        self.node26_runtime_lane =
+            convex_node_runtime_lane(limits.clone(), RuntimeCompatibilityTarget::Node26);
         self.bun_jsc_runtime_lane = convex_bun_jsc_runtime_lane(limits);
         self
     }

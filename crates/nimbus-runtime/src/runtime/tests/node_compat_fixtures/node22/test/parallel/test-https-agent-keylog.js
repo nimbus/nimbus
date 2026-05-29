@@ -36,9 +36,9 @@ const server = https.createServer({
   });
 });
 
-const verifyKeylog = common.mustCallAtLeast((line, tlsSocket) => {
+const verifyKeylog = (line, tlsSocket) => {
   assert(Buffer.isBuffer(line));
   assert.strictEqual(tlsSocket.encrypted, true);
-});
+};
 server.on('keylog', common.mustCall(verifyKeylog, 10));
 https.globalAgent.on('keylog', common.mustCall(verifyKeylog, 10));

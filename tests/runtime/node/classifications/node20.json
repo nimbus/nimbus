@@ -51,7 +51,7 @@
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "networking/crypto",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node20_loader_context_crypto_authenticated_supported_watchpoint_batch, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node20_loader_context_crypto_authenticated_legacy_watchpoint_batch, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
     },
     {
       "test_path": "test/parallel/test-crypto-des3-wrap.js",
@@ -234,13 +234,6 @@
       "classification": "rust_watchpoint_expected_failure",
       "owner": "process-and-timing/process-host",
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_process_env_delete_application_preset_watchpoint, node22_process_env_delete_application_preset_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-process-features.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "process-and-timing/process-host",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_process_features_watchpoint"
     },
     {
       "test_path": "test/parallel/test-stream-duplex-readable-end.js",

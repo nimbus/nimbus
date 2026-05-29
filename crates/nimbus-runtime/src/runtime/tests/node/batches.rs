@@ -179,7 +179,7 @@ macro_rules! node22_only_batch_case {
     };
 }
 
-macro_rules! node22_default_only_batch_case {
+macro_rules! node22_exclusive_batch_case {
     ($test_relative_path:literal, $fixture_source_path:literal) => {
         NodeCompatBatchEntry {
             test_relative_path: $test_relative_path,
