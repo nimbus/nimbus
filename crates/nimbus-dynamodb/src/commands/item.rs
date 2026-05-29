@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use extenddb_core::error::DynamoDbError;
 use extenddb_core::types::{
-    GetItemInput, GetItemOutput, Item, KeySchemaElement, KeyType, PutItemInput, PutItemOutput,
-    ReturnValues,
+    DeleteItemInput, DeleteItemOutput, GetItemInput, GetItemOutput, Item, KeySchemaElement,
+    KeyType, PutItemInput, PutItemOutput, ReturnValues,
 };
 use nimbus_core::{DocumentId, TableName};
 use nimbus_engine::Service;
@@ -126,6 +126,51 @@ fn project_get(input: &GetItemInput, item: Item) -> Result<Item, DynamoDbError> 
             .collect());
     }
     Ok(item)
+}
+
+/// DeleteItem: gate on any `ConditionExpression`, delete the item if present,
+/// and honor `ReturnValues` (NONE / ALL_OLD). Deleting an absent key with no
+/// condition is a successful no-op (DynamoDB semantics).
+///
+/// # Errors
+/// `ResourceNotFoundException` if the table is absent; `ValidationException`
+/// for a missing key; `ConditionalCheckFailedException` if the condition fails.
+pub fn delete_item(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    input: DeleteItemInput,
+) -> Result<DeleteItemOutput, DynamoDbError> {
+    let key_schema = control_plane::load_key_schema(service, context, &input.table_name)?;
+    let id = primary_key_id(&input.key, &key_schema)?;
+    let table = TableName::new(&input.table_name).map_err(map_core_error)?;
+
+    let existing = read_item(service, context, &table, id.clone())?;
+
+    let limits = default_limits();
+    let gate_item = existing.clone().unwrap_or_default();
+    check_condition(
+        input.condition_expression.as_deref(),
+        input.expression_attribute_names.as_ref(),
+        input.expression_attribute_values.as_ref(),
+        &gate_item,
+        &limits,
+    )?;
+
+    if existing.is_some() {
+        service
+            .delete_document(context.tenant_id(), table, id)
+            .map_err(map_core_error)?;
+    }
+
+    let attributes = match input.return_values {
+        ReturnValues::AllOld => existing,
+        _ => None,
+    };
+    Ok(DeleteItemOutput {
+        attributes,
+        consumed_capacity: None,
+        item_collection_metrics: None,
+    })
 }
 
 /// Read a stored item by id, mapping a missing document to `None`.
@@ -462,5 +507,103 @@ mod tests {
             json!({ "TableName": "Orders", "Key": { "pk": {"S": "o1"} }, "ConsistentRead": true }),
         );
         assert!(out.item.is_some());
+    }
+
+    // ---- D1.7: DeleteItem ----
+
+    fn delete(
+        service: &Arc<Service>,
+        context: &TenantIsolationContext,
+        input: serde_json::Value,
+    ) -> Result<DeleteItemOutput, DynamoDbError> {
+        delete_item(service, context, serde_json::from_value(input).unwrap())
+    }
+
+    #[test]
+    fn delete_removes_the_item() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        put(
+            &service,
+            &ctx,
+            json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"} } }),
+        )
+        .expect("put");
+        delete(
+            &service,
+            &ctx,
+            json!({ "TableName": "Orders", "Key": { "pk": {"S": "o1"} } }),
+        )
+        .expect("delete");
+        assert!(stored(&service, &ctx, "o1").is_none(), "item is gone");
+    }
+
+    #[test]
+    fn delete_all_old_returns_the_deleted_item() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        put(
+            &service,
+            &ctx,
+            json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"}, "v": {"N": "7"} } }),
+        )
+        .expect("put");
+        let out = delete(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "o1"} },
+                "ReturnValues": "ALL_OLD",
+            }),
+        )
+        .expect("delete");
+        let old = out.attributes.expect("deleted item returned");
+        assert_eq!(old.get("v"), Some(&AttributeValue::N("7".into())));
+    }
+
+    #[test]
+    fn delete_absent_key_is_a_noop_success() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        let out = delete(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "absent"} },
+                "ReturnValues": "ALL_OLD",
+            }),
+        )
+        .expect("delete of absent key succeeds");
+        assert!(out.attributes.is_none(), "nothing to return");
+    }
+
+    #[test]
+    fn delete_with_failing_condition_is_conditional_check_failed() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        put(
+            &service,
+            &ctx,
+            json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"} } }),
+        )
+        .expect("put");
+        // attribute_not_exists(pk) must fail since the item exists.
+        let err = delete(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "o1"} },
+                "ConditionExpression": "attribute_not_exists(pk)",
+            }),
+        )
+        .expect_err("condition should fail");
+        assert!(matches!(
+            err,
+            DynamoDbError::ConditionalCheckFailedException(_, _)
+        ));
+        assert!(stored(&service, &ctx, "o1").is_some(), "item not deleted");
     }
 }

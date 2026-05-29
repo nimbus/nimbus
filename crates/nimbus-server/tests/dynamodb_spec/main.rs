@@ -331,6 +331,58 @@ async fn put_get_roundtrip_through_official_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_item_through_official_sdk() {
+    // DeleteItem end-to-end: ALL_OLD returns the deleted item, the item is then
+    // gone, and deleting an absent key is a successful no-op.
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    create_orders(&client).await;
+
+    client
+        .put_item()
+        .table_name("Orders")
+        .item("pk", AttributeValue::S("o1".into()))
+        .item("v", AttributeValue::N("7".into()))
+        .send()
+        .await
+        .expect("put_item");
+
+    let deleted = client
+        .delete_item()
+        .table_name("Orders")
+        .key("pk", AttributeValue::S("o1".into()))
+        .return_values(ReturnValue::AllOld)
+        .send()
+        .await
+        .expect("delete_item");
+    assert_eq!(
+        deleted.attributes().and_then(|a| a.get("v")),
+        Some(&AttributeValue::N("7".into()))
+    );
+
+    // The item is gone.
+    let got = client
+        .get_item()
+        .table_name("Orders")
+        .key("pk", AttributeValue::S("o1".into()))
+        .send()
+        .await
+        .expect("get_item");
+    assert!(got.item().is_none());
+
+    // Deleting an absent key succeeds with nothing returned.
+    let noop = client
+        .delete_item()
+        .table_name("Orders")
+        .key("pk", AttributeValue::S("o1".into()))
+        .return_values(ReturnValue::AllOld)
+        .send()
+        .await
+        .expect("delete of absent key succeeds");
+    assert!(noop.attributes().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented
     // default limit shape.
