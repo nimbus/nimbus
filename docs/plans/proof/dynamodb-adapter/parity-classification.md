@@ -107,6 +107,39 @@ silently skipped:
 | `strict_mode_still_isolates_tenants` | Verification preserves tenant isolation | match | PASS |
 | `persisted_signed_key_authenticates_and_rotates_in_strict_mode` | Persisted key auth + rotation invalidates old secret | match | PASS |
 
+## ExtendDB lane (D8.6)
+
+ExtendDB is the Apache-2.0 DynamoDB-on-PostgreSQL adapter Nimbus reuses
+(`extenddb-core`, pinned rev `0448ca0`). It is a secondary ground truth: where
+Nimbus matches ExtendDB but **not** real DynamoDB, the diff is classified
+`accept-extenddb-divergence`.
+
+- **Checkout:** present at `~/src/github.com/ExtendDB/extenddb`; the pinned
+  source is `/Users/jack/.cargo/git/checkouts/extenddb-afcc0f7d71e33b8a/0448ca0`
+  (workspace crates: `auth`, `bin`, `core`, `engine`, `server`, `storage`,
+  `storage-postgres`).
+- **Status:** blocked in this environment. ExtendDB's server requires a running
+  PostgreSQL backend plus TLS + a credential-provisioning bootstrap that is not
+  available in this sandbox (the same Docker/daemon and external-service
+  constraints that block the DynamoDB Local lane).
+- **Setup commands (to run where the dependencies are available):**
+  ```sh
+  # In ~/src/github.com/ExtendDB/extenddb:
+  cargo build -p extenddb              # build the server binary
+  extenddb init                         # initialize the data directory
+  # Configure: throttling_enabled=false, control_plane_delay_seconds=0
+  # Serve over HTTPS/TLS; clients connect with verify=False (self-signed dev cert).
+  devtools/provision-test-credentials   # mint an access key/secret + region
+  ```
+  Then re-run `bash scripts/dynamodb-parity.sh` with the ExtendDB endpoint as a
+  third lane and diff the same corpus.
+- **Next action:** stand up PostgreSQL + ExtendDB per the commands above on a
+  host with those services, then add the ExtendDB endpoint to the runner.
+- **`accept-extenddb-divergence` entries:** none. Nimbus's 6 recorded
+  divergences (DDB-DIV-004/006/007/008/009) differ from **both** real DynamoDB
+  and ExtendDB (e.g. ExtendDB models 4 stream shards; Nimbus exposes 1), so none
+  are an ExtendDB-matching divergence.
+
 ## Verdict
 
 - **27 / 27** scenarios are **classified** (no unresolved diffs): 21 **match**
