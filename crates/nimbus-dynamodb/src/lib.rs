@@ -19,9 +19,11 @@ pub mod config;
 pub mod dispatch;
 pub mod error;
 pub mod key;
+pub mod tenant;
 pub mod wire;
 
 pub use error::map_core_error;
+pub use tenant::AccessKeyRegistry;
 
 pub use attribute_value::{
     attribute_value_to_stored, item_to_stored, stored_to_attribute_value, validate_item,
