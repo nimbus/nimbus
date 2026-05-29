@@ -10,6 +10,7 @@
     "packages/nimbus-ui",
     "packages/codegen",
     "packages/mongodb",
+    "packages/dynamodb",
     "demos/convex/html",
     "demos/convex/http",
     "demos/convex/node",
