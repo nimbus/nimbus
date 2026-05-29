@@ -146,12 +146,14 @@ pub fn firestore_grpc_code(error: &Error) -> Code {
         Error::TenantNotFound(_)
         | Error::DocumentNotFound(_)
         | Error::ScheduledJobNotFound(_)
-        | Error::SchemaNotFound(_) => Code::NotFound,
+        | Error::SchemaNotFound(_)
+        | Error::NotFound(_) => Code::NotFound,
         Error::Conflict(_) => Code::Aborted,
         Error::ResourceExhausted(_) => Code::ResourceExhausted,
         Error::PermissionDenied(_) => Code::PermissionDenied,
         Error::InvalidInput(_) | Error::SchemaValidation(_) => Code::InvalidArgument,
         Error::AlreadyExists(_) => Code::AlreadyExists,
+        Error::Transport(_) => Code::Unavailable,
         Error::Storage { kind, .. } => match kind {
             StorageErrorKind::Busy
             | StorageErrorKind::Transient
@@ -189,7 +191,8 @@ fn firebase_rest_error(error: &Error) -> FirestoreRestError {
         Error::TenantNotFound(_)
         | Error::DocumentNotFound(_)
         | Error::ScheduledJobNotFound(_)
-        | Error::SchemaNotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND"),
+        | Error::SchemaNotFound(_)
+        | Error::NotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND"),
         Error::Conflict(_) => (StatusCode::CONFLICT, "ABORTED"),
         Error::ResourceExhausted(_) => (StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED"),
         Error::PermissionDenied(_) => (StatusCode::FORBIDDEN, "PERMISSION_DENIED"),
@@ -197,6 +200,7 @@ fn firebase_rest_error(error: &Error) -> FirestoreRestError {
             (StatusCode::BAD_REQUEST, "INVALID_ARGUMENT")
         }
         Error::AlreadyExists(_) => (StatusCode::CONFLICT, "ALREADY_EXISTS"),
+        Error::Transport(_) => (StatusCode::SERVICE_UNAVAILABLE, "UNAVAILABLE"),
         Error::Storage { kind, .. } => match kind {
             StorageErrorKind::Busy
             | StorageErrorKind::Transient

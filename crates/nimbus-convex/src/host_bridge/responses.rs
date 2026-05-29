@@ -48,6 +48,12 @@ pub enum ConvexRuntimeEncodedError {
     Serialization {
         message: String,
     },
+    NotFound {
+        message: String,
+    },
+    Transport {
+        message: String,
+    },
     Internal {
         message: String,
     },
@@ -99,6 +105,8 @@ impl ConvexRuntimeEncodedError {
                 message,
             },
             Error::Serialization(message) => Self::Serialization { message },
+            Error::NotFound(message) => Self::NotFound { message },
+            Error::Transport(message) => Self::Transport { message },
             Error::Internal(message) => Self::Internal { message },
         }
     }
@@ -134,6 +142,8 @@ impl ConvexRuntimeEncodedError {
                 .map(|kind| Error::storage(kind, message))
                 .unwrap_or_else(Error::Internal),
             Self::Serialization { message } => Error::Serialization(message),
+            Self::NotFound { message } => Error::NotFound(message),
+            Self::Transport { message } => Error::Transport(message),
             Self::Internal { message } => Error::Internal(message),
         }
     }

@@ -11,6 +11,8 @@ It complements:
 - [Firebase compatibility](../../adapters/firebase/compatibility.md)
 - [runtime-capability-adapter-boundary-plan.md](../../plans/archive/runtime-capability-adapter-boundary-plan.md)
 - [server-runtime-canonicalization-plan.md](../../plans/archive/server-runtime-canonicalization-plan.md)
+- [Node systemd D-Bus binding](../../operating/node-dbus-binding.md) — the
+  live `SystemdDbusClient` host-lifecycle binding behind the node boundary
 
 ## Why This Boundary Exists
 
