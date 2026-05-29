@@ -210,6 +210,9 @@ fn route(
         "TransactGetItems" => run(request, |input| {
             transact::transact_get_items(ctx.service, context, input)
         }),
+        "TransactWriteItems" => run(request, |input| {
+            transact::transact_write_items(ctx.service, context, input)
+        }),
         other => wire::render_error(&DynamoDbError::InternalServerError(format!(
             "{other} is not yet implemented"
         ))),
@@ -400,17 +403,14 @@ mod tests {
 
     #[test]
     fn unimplemented_known_operation_returns_placeholder_after_auth() {
-        // TransactWriteItems is recognized but has no handler yet. With valid
-        // auth it passes authentication and tenant-ensure, then hits the placeholder.
+        // DescribeStream is recognized but has no handler yet. With valid auth
+        // it passes authentication and tenant-ensure, then hits the placeholder.
         let (_temp, service, registry) = fixture();
         let ctx = DispatchContext {
             service: &service,
             access_keys: &registry,
         };
-        let headers = headers_for(
-            "TransactWriteItems",
-            Some(&signed_authorization(ACCESS_KEY)),
-        );
+        let headers = headers_for("DescribeStream", Some(&signed_authorization(ACCESS_KEY)));
         let (status, body) = dispatch(&ctx, &headers, b"{}");
         assert_eq!(status, 500);
         assert!(

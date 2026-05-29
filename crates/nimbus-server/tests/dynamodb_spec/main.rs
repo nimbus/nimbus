@@ -826,6 +826,103 @@ async fn transact_get_items_through_official_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn transact_write_items_through_official_sdk() {
+    use aws_sdk_dynamodb::types::{ConditionCheck, Put, TransactWriteItem};
+
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    create_orders(&client).await;
+    client
+        .put_item()
+        .table_name("Orders")
+        .item("pk", AttributeValue::S("guard".into()))
+        .send()
+        .await
+        .expect("seed guard");
+
+    // ConditionCheck (guard exists) gates a Put — both apply atomically.
+    client
+        .transact_write_items()
+        .transact_items(
+            TransactWriteItem::builder()
+                .condition_check(
+                    ConditionCheck::builder()
+                        .table_name("Orders")
+                        .key("pk", AttributeValue::S("guard".into()))
+                        .condition_expression("attribute_exists(pk)")
+                        .build()
+                        .expect("condition check"),
+                )
+                .build(),
+        )
+        .transact_items(
+            TransactWriteItem::builder()
+                .put(
+                    Put::builder()
+                        .table_name("Orders")
+                        .item("pk", AttributeValue::S("new".into()))
+                        .build()
+                        .expect("put"),
+                )
+                .build(),
+        )
+        .send()
+        .await
+        .expect("transact write should commit");
+    let got = client
+        .get_item()
+        .table_name("Orders")
+        .key("pk", AttributeValue::S("new".into()))
+        .send()
+        .await
+        .expect("get new");
+    assert!(got.item().is_some(), "gated put applied");
+
+    // A failing condition cancels the whole transaction — the sibling Put of
+    // `doomed` must not land.
+    let err = client
+        .transact_write_items()
+        .transact_items(
+            TransactWriteItem::builder()
+                .put(
+                    Put::builder()
+                        .table_name("Orders")
+                        .item("pk", AttributeValue::S("doomed".into()))
+                        .build()
+                        .expect("put"),
+                )
+                .build(),
+        )
+        .transact_items(
+            TransactWriteItem::builder()
+                .put(
+                    Put::builder()
+                        .table_name("Orders")
+                        .item("pk", AttributeValue::S("guard".into()))
+                        .condition_expression("attribute_not_exists(pk)")
+                        .build()
+                        .expect("put"),
+                )
+                .build(),
+        )
+        .send()
+        .await
+        .expect_err("transaction should cancel");
+    assert!(
+        err.into_service_error().is_transaction_canceled_exception(),
+        "a failing condition must return TransactionCanceledException"
+    );
+    let doomed = client
+        .get_item()
+        .table_name("Orders")
+        .key("pk", AttributeValue::S("doomed".into()))
+        .send()
+        .await
+        .expect("get doomed");
+    assert!(doomed.item().is_none(), "no partial write on cancellation");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented
     // default limit shape.
