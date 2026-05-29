@@ -25,7 +25,7 @@ pub mod tenant;
 pub mod wire;
 
 pub use error::map_core_error;
-pub use tenant::{AccessKeyRegistry, ensure_tenant, tenant_context};
+pub use tenant::{AccessKeyRegistry, AuthMode, KeyBinding, ensure_tenant, tenant_context};
 
 pub use attribute_value::{
     attribute_value_to_stored, fields_to_item, item_to_fields, item_to_stored,
