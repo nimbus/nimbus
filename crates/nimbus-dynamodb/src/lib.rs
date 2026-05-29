@@ -19,6 +19,7 @@ pub mod commands;
 pub mod config;
 pub mod dispatch;
 pub mod error;
+pub mod expression;
 pub mod key;
 pub mod tenant;
 pub mod wire;
@@ -27,7 +28,8 @@ pub use error::map_core_error;
 pub use tenant::{AccessKeyRegistry, ensure_tenant, tenant_context};
 
 pub use attribute_value::{
-    attribute_value_to_stored, item_to_stored, stored_to_attribute_value, validate_item,
+    attribute_value_to_stored, item_to_stored, stored_to_attribute_value, stored_to_item,
+    validate_item,
 };
 pub use config::DynamoDbConfig;
 pub use dispatch::{DispatchContext, KNOWN_OPERATIONS, dispatch, is_known_operation};
