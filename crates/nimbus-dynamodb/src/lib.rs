@@ -14,3 +14,8 @@
 //! land from D0.1 onward.
 
 pub mod auth;
+pub mod dispatch;
+pub mod wire;
+
+pub use dispatch::{KNOWN_OPERATIONS, dispatch, is_known_operation};
+pub use wire::{WireResponse, render_error, render_success};
