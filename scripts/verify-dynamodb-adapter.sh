@@ -84,10 +84,10 @@ plan_file() {
 # have <path>  -> file or dir exists
 have() { [ -e "$1" ]; }
 
-# grep_q <pattern> <path...> -> pattern found (quiet)
+# grep_q [grep-flags] <pattern> <path...> -> match found (quiet, recursive).
+# All args forward straight to grep so callers may pass flags like -i / -E.
 grep_q() {
-  local pat="$1"; shift
-  grep -Rqs -- "${pat}" "$@" 2>/dev/null
+  grep -Rqs "$@" 2>/dev/null
 }
 
 PLAN="$(plan_file)"
@@ -144,10 +144,12 @@ step C4 "Upstream attribution: extenddb-core pin + vendored SigV4 headers + NOTI
 # ---------------------------------------------------------------------------
 attr_ok=1; note=""
 grep_q 'extenddb-core' "${ROOT_CARGO}" || { attr_ok=0; note="extenddb-core not pinned in root Cargo.toml"; }
-grep_q -i 'ExtendDB' "${NOTICE_FILE}" || { attr_ok=0; note="${note}; ${NOTICE_FILE} missing ExtendDB entry"; }
+grep_q 'ExtendDB' "${NOTICE_FILE}" || { attr_ok=0; note="${note}; ${NOTICE_FILE} missing ExtendDB entry"; }
 if have "${SIGV4_DIR}"; then
   for f in mod canonical parse signing_key verify; do
-    if ! grep_q -i 'Apache License' "${SIGV4_DIR}/${f}.rs"; then
+    # Vendored files carry the SPDX identifier `Apache-2.0` (not the full
+    # "Apache License" text); accept either form.
+    if ! grep_q -E 'Apache-2\.0|Apache License' "${SIGV4_DIR}/${f}.rs"; then
       attr_ok=0; note="${note}; ${f}.rs missing Apache-2.0 header"
     fi
   done

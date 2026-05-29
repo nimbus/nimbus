@@ -8,6 +8,7 @@ members = [
     "crates/nimbus-bridge",
     "crates/nimbus-cloud-functions",
     "crates/nimbus-convex",
+    "crates/nimbus-dynamodb",
     "crates/nimbus-firebase",
     "crates/nimbus-license",
     "crates/nimbus-machine",
@@ -78,6 +79,7 @@ deno_websocket = "0.253.0"
 node_resolver = { version = "0.86.0", features = ["sync"] }
 crc32c = "0.6"
 crc32fast = "1"
+extenddb-core = { git = "https://github.com/ExtendDB/extenddb", rev = "0448ca066c86bddf2eb465092b8b6854923665ee" }
 futures = "0.3"
 fs2 = "0.4"
 hex = "0.4"

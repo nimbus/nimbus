@@ -1,0 +1,23 @@
+[package]
+name = "nimbus-dynamodb"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# DynamoDB protocol core (AttributeValue, expression language, validation,
+# error taxonomy) — pinned git rev; see docs/plans/dynamodb-adapter-plan.md.
+extenddb-core = { workspace = true }
+# SigV4 verification primitives (vendored module in src/auth/sigv4/).
+hex.workspace = true
+hmac.workspace = true
+http.workspace = true
+sha2.workspace = true
