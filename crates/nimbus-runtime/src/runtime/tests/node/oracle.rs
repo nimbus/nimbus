@@ -119,6 +119,7 @@ fn node_env_var_for_lane(lane: &str) -> Result<&'static str, String> {
         "node20" => Ok("NIMBUS_NODE20_BIN"),
         "node22" => Ok("NIMBUS_NODE22_BIN"),
         "node24" => Ok("NIMBUS_NODE24_BIN"),
+        "node26" => Ok("NIMBUS_NODE26_BIN"),
         other => Err(format!("unsupported oracle lane `{other}`")),
     }
 }
@@ -128,6 +129,7 @@ fn expected_node_major_for_lane(lane: &str) -> Result<u32, String> {
         "node20" => Ok(20),
         "node22" => Ok(22),
         "node24" => Ok(24),
+        "node26" => Ok(26),
         other => Err(format!("unsupported oracle lane `{other}`")),
     }
 }
@@ -543,6 +545,13 @@ fn node_compat_oracle_classification_rejects_mismatched_node_major_versions() {
         error.contains("requires a Node 22 binary"),
         "version mismatch error should mention the expected lane major: {error}",
     );
+}
+
+#[test]
+fn node_compat_oracle_classification_accepts_node26_binary_versions() {
+    let binary = validate_node_binary_version("node26", PathBuf::from("/tmp/node"), "v26.2.0\n")
+        .expect("node26 oracle lane should accept a Node 26 binary");
+    assert_eq!(binary.version, "v26.2.0");
 }
 
 #[test]

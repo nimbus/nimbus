@@ -25,6 +25,7 @@ enum NodeCompatLane {
     Node20,
     Node22,
     Node24,
+    Node26,
 }
 
 #[derive(Clone, Copy)]
@@ -49,6 +50,7 @@ fn node_compat_lane_name(lane: NodeCompatLane) -> &'static str {
         NodeCompatLane::Node20 => "node20",
         NodeCompatLane::Node22 => "node22",
         NodeCompatLane::Node24 => "node24",
+        NodeCompatLane::Node26 => "node26",
     }
 }
 
@@ -57,6 +59,7 @@ fn node_compat_lane_from_manifest_name(lane: &str) -> std::result::Result<NodeCo
         "node20" => Ok(NodeCompatLane::Node20),
         "node22" => Ok(NodeCompatLane::Node22),
         "node24" => Ok(NodeCompatLane::Node24),
+        "node26" => Ok(NodeCompatLane::Node26),
         other => Err(format!("unsupported manifest lane `{other}`")),
     }
 }
@@ -70,6 +73,8 @@ fn inferred_node_compat_lane_from_fixture_source_path(
         Some(NodeCompatLane::Node22)
     } else if fixture_source_path.starts_with("node24/") {
         Some(NodeCompatLane::Node24)
+    } else if fixture_source_path.starts_with("node26/") {
+        Some(NodeCompatLane::Node26)
     } else {
         None
     }
@@ -238,6 +243,7 @@ impl NodeCompatBatchEntry {
             NodeCompatLane::Node20 => self.node20_fixture_source_path,
             NodeCompatLane::Node22 => self.node22_fixture_source_path,
             NodeCompatLane::Node24 => self.node24_fixture_source_path,
+            NodeCompatLane::Node26 => None,
         }
     }
 
@@ -252,6 +258,7 @@ impl NodeCompatBatchEntry {
             NodeCompatLane::Node24 if !self.node24_extra_files.is_empty() => {
                 self.node24_extra_files
             }
+            NodeCompatLane::Node26 => self.shared_extra_files,
             _ => self.shared_extra_files,
         }
     }
@@ -884,6 +891,7 @@ fn runtime_limits_for_node_compat_fixture(
         NodeCompatLane::Node20 => RuntimeLimits::application_node20_local_development(),
         NodeCompatLane::Node22 => RuntimeLimits::application_node22_local_development(),
         NodeCompatLane::Node24 => RuntimeLimits::application_node24_local_development(),
+        NodeCompatLane::Node26 => RuntimeLimits::application_node26_local_development(),
     };
     if node_compat_fixture_requires_runtime_self_exec(test_relative_path) {
         // These compat fixtures respawn the copied harness binary via
@@ -1110,7 +1118,7 @@ fn resolve_seeded_fixture_context(
         String,
         String,
         &'static NodeCompatBatchEntry,
-        &'static str,
+        String,
     ),
     String,
 > {
@@ -1143,10 +1151,27 @@ fn resolve_seeded_fixture_context(
         ));
     }
     let (family_catalog, fixture_seed) = matches.pop().expect("match should exist");
-    let manifest_fixture_source_path =
-        fixture_seed.lane_sources.get(lane_name).ok_or_else(|| {
-            format!("seeded manifest fixture `{test_relative_path}` has no `{lane_name}` source")
-        })?;
+    let manifest_fixture_source_path = match fixture_seed.lane_sources.get(lane_name) {
+        Some(source_path) => source_path.to_string(),
+        None if matches!(lane, NodeCompatLane::Node26) => {
+            // Node26 current-line oracle samples are tracked against the
+            // vendored official corpus without promoting the whole lane into
+            // the green subset manifest.
+            let source_path = format!("{lane_name}/{test_relative_path}");
+            let fixture_path = node_compat_fixture_root().join(&source_path);
+            if !fixture_path.is_file() {
+                return Err(format!(
+                    "seeded manifest fixture `{test_relative_path}` has no `{lane_name}` source and default source `{source_path}` is missing"
+                ));
+            }
+            source_path
+        }
+        None => {
+            return Err(format!(
+                "seeded manifest fixture `{test_relative_path}` has no `{lane_name}` source"
+            ));
+        }
+    };
     let batch_entry = family_batch_entries(&family_catalog.family)?
         .iter()
         .find(|entry| entry.test_relative_path == test_relative_path)
@@ -1156,19 +1181,31 @@ fn resolve_seeded_fixture_context(
                 family_catalog.family
             )
         })?;
-    let batch_fixture_source_path = batch_entry
-        .fixture_source_path_for_lane(lane)
-        .ok_or_else(|| {
-            format!(
+    let batch_fixture_source_path = match batch_entry.fixture_source_path_for_lane(lane) {
+        Some(batch_fixture_source_path) => {
+            if batch_fixture_source_path != manifest_fixture_source_path {
+                return Err(format!(
+                    "seeded manifest fixture `{test_relative_path}` mismatched `{lane_name}` source: manifest=`{manifest_fixture_source_path}` batch=`{batch_fixture_source_path}`"
+                ));
+            }
+            batch_fixture_source_path.to_string()
+        }
+        None if matches!(lane, NodeCompatLane::Node26) => {
+            let fixture_path = node_compat_fixture_root().join(&manifest_fixture_source_path);
+            if !fixture_path.is_file() {
+                return Err(format!(
+                    "seeded manifest fixture `{test_relative_path}` references missing `{lane_name}` source `{manifest_fixture_source_path}`"
+                ));
+            }
+            manifest_fixture_source_path
+        }
+        None => {
+            return Err(format!(
                 "seeded family batch `{}` fixture `{test_relative_path}` has no `{lane_name}` source",
                 family_catalog.family
-            )
-        })?;
-    if batch_fixture_source_path != manifest_fixture_source_path {
-        return Err(format!(
-            "seeded manifest fixture `{test_relative_path}` mismatched `{lane_name}` source: manifest=`{manifest_fixture_source_path}` batch=`{batch_fixture_source_path}`"
-        ));
-    }
+            ));
+        }
+    };
     Ok((
         lane,
         family_catalog.family.clone(),
@@ -1188,9 +1225,9 @@ pub(super) fn observe_seeded_fixture_runtime_outcome(
     let execution = panic::catch_unwind(AssertUnwindSafe(|| {
         execute_manifested_node_compat_test(
             batch_entry.test_relative_path,
-            fixture_source_path,
+            &fixture_source_path,
             batch_entry.extra_files_for_lane(lane),
-            matches!(lane, NodeCompatLane::Node24),
+            matches!(lane, NodeCompatLane::Node24 | NodeCompatLane::Node26),
             Some(lane),
             None,
             None,
@@ -1224,7 +1261,7 @@ pub(super) fn materialize_seeded_fixture_bundle_for_lane(
 ) -> std::result::Result<NodeCompatMaterializedSeededFixtureBundle, String> {
     let (lane, family, slice, batch_entry, fixture_source_path) =
         resolve_seeded_fixture_context(lane_name, test_relative_path)?;
-    let test_source = read_node_compat_fixture_text(fixture_source_path);
+    let test_source = read_node_compat_fixture_text(&fixture_source_path);
     let owned_extra_files: Vec<(String, Vec<u8>)> = batch_entry
         .extra_files_for_lane(lane)
         .iter()
@@ -1269,7 +1306,7 @@ pub(super) fn materialize_seeded_fixture_bundle_for_lane(
         test_relative_path,
         test_source: &test_source,
         extra_files: &borrowed_extra_files,
-        capture_top_level_skip: matches!(lane, NodeCompatLane::Node24),
+        capture_top_level_skip: matches!(lane, NodeCompatLane::Node24 | NodeCompatLane::Node26),
         lane: Some(lane),
         prelude_script: Some(effective_prelude.as_str()),
         postlude_script: resolved_postlude_behavior.map(NodeCompatNamedPostludeBehavior::script),
@@ -1448,7 +1485,7 @@ fn run_manifested_subset_for_lane(
                     fixture.test_relative_path,
                     fixture_source_path,
                     fixture.extra_files_for_lane(lane),
-                    matches!(lane, NodeCompatLane::Node24),
+                    matches!(lane, NodeCompatLane::Node24 | NodeCompatLane::Node26),
                     Some(lane),
                     None,
                     None,
@@ -1538,6 +1575,7 @@ fn run_node_compat_watchpoint_batch(
         "node20" => NodeCompatLane::Node20,
         "node22" => NodeCompatLane::Node22,
         "node24" => NodeCompatLane::Node24,
+        "node26" => NodeCompatLane::Node26,
         other => panic!("unsupported node_compat watchpoint lane `{other}`"),
     };
     let mut failures = Vec::new();
@@ -1671,7 +1709,7 @@ pub(super) fn collect_seeded_slice_observed_result_records(
                     batch_entry.test_relative_path,
                     fixture_source_path,
                     batch_entry.extra_files_for_lane(lane),
-                    matches!(lane, NodeCompatLane::Node24),
+                    matches!(lane, NodeCompatLane::Node24 | NodeCompatLane::Node26),
                     Some(lane),
                     None,
                     None,
