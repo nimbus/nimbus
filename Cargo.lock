@@ -6290,6 +6290,7 @@ dependencies = [
  "nimbus-cloud-functions",
  "nimbus-convex",
  "nimbus-core",
+ "nimbus-dynamodb",
  "nimbus-engine",
  "nimbus-firebase",
  "nimbus-license",
