@@ -28,7 +28,7 @@ use nimbus_tenant::TenantIsolationContext;
 use serde_json::Value;
 
 use crate::auth::sigv4::parse::parse_authorization;
-use crate::commands::control_plane;
+use crate::commands::{control_plane, discovery};
 use crate::tenant::{AccessKeyRegistry, ensure_tenant, tenant_context};
 use crate::wire::{self, WireResponse};
 
@@ -129,8 +129,13 @@ pub fn dispatch(ctx: &DispatchContext<'_>, headers: &HeaderMap, body: &[u8]) -> 
         return wire::render_error(&error);
     }
 
-    // 6. Route to the per-operation handler.
-    route(ctx, &context, &operation, request)
+    // 6. Route to the per-operation handler. The `Host` lets DescribeEndpoints
+    //    echo the address the client used.
+    let host = headers
+        .get("host")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("localhost");
+    route(ctx, &context, &operation, request, host)
 }
 
 /// Resolve the request's tenant from the SigV4 `Authorization` header.
@@ -162,6 +167,7 @@ fn route(
     context: &TenantIsolationContext,
     operation: &str,
     request: Value,
+    host: &str,
 ) -> WireResponse {
     match operation {
         "CreateTable" => run(request, |input| {
@@ -179,9 +185,21 @@ fn route(
         "UpdateTable" => run(request, |input| {
             control_plane::update_table(ctx.service, context, input)
         }),
+        // Discovery ops take no meaningful input and touch no tenant data.
+        "DescribeEndpoints" => render_output(&discovery::describe_endpoints(host)),
+        "DescribeLimits" => render_output(&discovery::describe_limits()),
         other => wire::render_error(&DynamoDbError::InternalServerError(format!(
             "{other} is not yet implemented"
         ))),
+    }
+}
+
+/// Render a serializable handler output into a success envelope, or a 500 if it
+/// cannot be serialized.
+fn render_output<O: serde::Serialize>(output: &O) -> WireResponse {
+    match serde_json::to_value(output) {
+        Ok(body) => wire::render_success(body),
+        Err(error) => wire::render_error(&DynamoDbError::InternalServerError(error.to_string())),
     }
 }
 
@@ -204,12 +222,7 @@ where
         }
     };
     match handler(input) {
-        Ok(output) => match serde_json::to_value(output) {
-            Ok(body) => wire::render_success(body),
-            Err(error) => {
-                wire::render_error(&DynamoDbError::InternalServerError(error.to_string()))
-            }
-        },
+        Ok(output) => render_output(&output),
         Err(error) => wire::render_error(&error),
     }
 }
@@ -381,6 +394,44 @@ mod tests {
                 .unwrap()
                 .contains("not yet implemented"),
             "{body}"
+        );
+    }
+
+    #[test]
+    fn describe_limits_returns_stub_limits_through_dispatch() {
+        let (_temp, service, registry) = fixture();
+        let ctx = DispatchContext {
+            service: &service,
+            access_keys: &registry,
+        };
+        let headers = headers_for("DescribeLimits", Some(&signed_authorization(ACCESS_KEY)));
+        let (status, body) = dispatch(&ctx, &headers, b"{}");
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["AccountMaxReadCapacityUnits"].as_i64(), Some(80_000));
+        assert_eq!(body["TableMaxWriteCapacityUnits"].as_i64(), Some(40_000));
+    }
+
+    #[test]
+    fn describe_endpoints_echoes_host_through_dispatch() {
+        let (_temp, service, registry) = fixture();
+        let ctx = DispatchContext {
+            service: &service,
+            access_keys: &registry,
+        };
+        let mut headers = headers_for("DescribeEndpoints", Some(&signed_authorization(ACCESS_KEY)));
+        headers.insert(
+            "host",
+            http::HeaderValue::from_static("dynamodb.local:8000"),
+        );
+        let (status, body) = dispatch(&ctx, &headers, b"{}");
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(
+            body["Endpoints"][0]["Address"].as_str(),
+            Some("dynamodb.local:8000")
+        );
+        assert_eq!(
+            body["Endpoints"][0]["CachePeriodInMinutes"].as_i64(),
+            Some(1440)
         );
     }
 

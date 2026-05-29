@@ -4,3 +4,4 @@
 //! operations to these handlers via a `DispatchContext`.
 
 pub mod control_plane;
+pub mod discovery;
