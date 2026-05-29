@@ -6069,8 +6069,11 @@ dependencies = [
  "hmac 0.12.1",
  "http 1.4.0",
  "nimbus-core",
+ "nimbus-engine",
+ "nimbus-tenant",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
 ]
 
 [[package]]
