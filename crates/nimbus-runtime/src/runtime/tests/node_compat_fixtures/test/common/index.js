@@ -12,8 +12,14 @@ const mustCallChecks = [];
 const isDebug = process.features?.debug === true;
 const isAIX = process.platform === 'aix';
 const isIBMi = process.platform === 'os400';
+const isSunOS = process.platform === 'sunos';
+const isFreeBSD = process.platform === 'freebsd';
+const isOpenBSD = process.platform === 'openbsd';
+const isLinux = process.platform === 'linux';
+const isMacOS = process.platform === 'darwin';
 const isRiscv64 = process.arch === 'riscv64';
 const isWindows = process.platform === 'win32';
+const isASan = process.config?.variables?.asan === 1;
 const hasInspector = process.features?.inspector === true;
 const hasSQLite = Boolean(process.versions?.sqlite);
 let localhostIPv4 = null;
@@ -185,6 +191,17 @@ function skipIfDumbTerminal() {
 function skipIfInspectorDisabled() {
   if (!hasInspector) {
     skip('V8 inspector is disabled');
+  }
+}
+
+function isPi() {
+  try {
+    const cpuinfo = fs.readFileSync('/proc/cpuinfo', { encoding: 'utf8' });
+    const ok = /^Hardware\s*:\s*(.*)$/im.exec(cpuinfo)?.[1] === 'BCM2835';
+    /^/.test('');
+    return ok;
+  } catch {
+    return false;
   }
 }
 
@@ -1356,9 +1373,16 @@ module.exports = {
   hasIntl: typeof Intl === 'object' && typeof Intl.DateTimeFormat === 'function',
   isDumbTerminal: process.env.TERM === 'dumb',
   isAIX,
+  isASan,
+  isDebug,
+  isFreeBSD,
   isIBMi,
-  isMacOS: process.platform === 'darwin',
+  isLinux,
+  isMacOS,
+  isOpenBSD,
+  isPi,
   isRiscv64,
+  isSunOS,
   isWindows,
   isAlive,
   localIPv6Hosts,
@@ -1392,6 +1416,14 @@ module.exports = {
       localhostIPv4 = '127.0.0.1';
     }
     return localhostIPv4;
+  },
+  get isInsideDirWithUnusualChars() {
+    return __dirname.includes('%') ||
+           (!isWindows && __dirname.includes('\\')) ||
+           __dirname.includes('$') ||
+           __dirname.includes('\n') ||
+           __dirname.includes('\r') ||
+           __dirname.includes('\t');
   },
   get enoughTestMem() {
     try {

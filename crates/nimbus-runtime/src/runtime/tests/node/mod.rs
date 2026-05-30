@@ -237,6 +237,18 @@ fn scoped_node_options_flag(flag: &str) -> ScopedProcessEnvVar {
     ScopedProcessEnvVar::set("NODE_OPTIONS", &next_value)
 }
 
+fn grant_node_options_read_for_fixture_flags(limits: &mut RuntimeLimits) {
+    const NODE_OPTIONS: &str = "NODE_OPTIONS";
+    if !limits
+        .grants
+        .env_read
+        .iter()
+        .any(|name| name == NODE_OPTIONS)
+    {
+        limits.grants.env_read.push(NODE_OPTIONS.to_string());
+    }
+}
+
 impl NodeCompatBatchEntry {
     fn fixture_source_path_for_lane(self, lane: NodeCompatLane) -> Option<&'static str> {
         match lane {
@@ -732,7 +744,10 @@ fn execute_upstream_node_compat_test_with_extra_files(
         postlude_script,
         mode: NodeCompatBundleMode::Runtime,
     });
-    let limits = runtime_limits_for_node_compat_fixture(test_relative_path, lane);
+    let mut limits = runtime_limits_for_node_compat_fixture(test_relative_path, lane);
+    if fixture_needs_pending_deprecation {
+        grant_node_options_read_for_fixture_flags(&mut limits);
+    }
     let wall_clock_timeout = node_compat_fixture_wall_clock_timeout(&limits);
     let lane_name = lane.map(node_compat_lane_name).unwrap_or("unspecified");
     let runtime = NimbusRuntime::with_policy(
@@ -1067,6 +1082,37 @@ fn node_compat_harness_message_port_exit_criterion_blocks_unqualified_worker_pro
         criterion.contains("production in-process"),
         "MessagePort worker hazards should not be promoted into production in-process profiles by implication"
     );
+}
+
+#[test]
+fn node_compat_common_fixture_platform_booleans_track_process_platform() {
+    execute_upstream_node_compat_test_with_extra_files(
+        "test/parallel/test-nimbus-common-platform-booleans.js",
+        r#"'use strict';
+
+const assert = require('assert');
+const common = require('../common');
+
+assert.strictEqual(common.isAIX, process.platform === 'aix');
+assert.strictEqual(common.isFreeBSD, process.platform === 'freebsd');
+assert.strictEqual(common.isIBMi, process.platform === 'os400');
+assert.strictEqual(common.isLinux, process.platform === 'linux');
+assert.strictEqual(common.isMacOS, process.platform === 'darwin');
+assert.strictEqual(common.isOpenBSD, process.platform === 'openbsd');
+assert.strictEqual(common.isSunOS, process.platform === 'sunos');
+assert.strictEqual(common.isWindows, process.platform === 'win32');
+assert.strictEqual(common.isDebug, process.features.debug === true);
+assert.strictEqual(common.isASan, process.config?.variables?.asan === 1);
+assert.strictEqual(typeof common.isPi, 'function');
+assert.strictEqual(typeof common.isInsideDirWithUnusualChars, 'boolean');
+"#,
+        &[],
+        false,
+        Some(NodeCompatLane::Node24),
+        None,
+        None,
+    )
+    .expect("node_compat common fixture platform booleans should execute");
 }
 
 fn execute_manifested_node_compat_test(

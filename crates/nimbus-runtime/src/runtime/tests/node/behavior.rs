@@ -135,15 +135,6 @@ const CHECKOUT_ROOT_CWD_PRELUDE: &str = r#"
 const PENDING_DEPRECATION_PRELUDE: &str = r#"
 {
   const __nimbusNodeProcess = createRequire(import.meta.url)("node:process");
-  const existingNodeOptions =
-    typeof __nimbusNodeProcess.env.NODE_OPTIONS === "string"
-      ? __nimbusNodeProcess.env.NODE_OPTIONS
-      : "";
-  if (!existingNodeOptions.split(/\s+/u).includes("--pending-deprecation")) {
-    __nimbusNodeProcess.env.NODE_OPTIONS = existingNodeOptions.trim().length === 0
-      ? "--pending-deprecation"
-      : `${existingNodeOptions} --pending-deprecation`;
-  }
   globalThis.process ??= __nimbusNodeProcess;
 }
 "#;
@@ -260,4 +251,3 @@ impl NodeCompatNamedPostludeBehavior {
             .find(|behavior| behavior.script() == script)
     }
 }
-
