@@ -34,6 +34,21 @@ fn tags_id(table_name: &str) -> Result<DocumentId, DynamoDbError> {
     DocumentId::from_key(table_name).map_err(map_core_error)
 }
 
+/// Drop `table_name`'s tag entries when the table is deleted, so a table
+/// recreated under the same name does not inherit stale tags (F4).
+pub(crate) fn reclaim_for_table(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+) -> Result<(), DynamoDbError> {
+    match service.delete_document(context.tenant_id(), tags_table()?, tags_id(table_name)?) {
+        Ok(()) | Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
+            Ok(())
+        }
+        Err(error) => Err(map_core_error(error)),
+    }
+}
+
 /// Extract the table name from a `…:table/<name>` resource ARN.
 fn table_name_from_arn(arn: &str) -> Result<&str, DynamoDbError> {
     arn.split(":table/")

@@ -26,7 +26,7 @@ use nimbus_engine::Service;
 use nimbus_tenant::TenantIsolationContext;
 use serde_json::Value;
 
-use crate::commands::item;
+use crate::commands::{item, stream, tag, ttl};
 use crate::error::map_core_error;
 
 /// Tenant-scoped table whose documents hold one `TableDescription` per DynamoDB
@@ -93,6 +93,14 @@ pub fn delete_table(
     // `documents` table — the `deleting` lifecycle, not a physical DROP TABLE),
     // so a failure here leaves the table describable and the delete retryable.
     reclaim_table_items(service, context, &input.table_name)?;
+    // Reclaim the table's sidecar state so a table later recreated under the
+    // same name starts clean — stream events + the `_ddb_streamseq_` high-water
+    // counter, the `_ddb_ttl` config doc, and the `_ddb_tags` entries (F4).
+    // Otherwise a recreated table would inherit a stale stream sequence and
+    // orphaned TTL/tag metadata.
+    stream::reclaim_for_table(service, context, &input.table_name)?;
+    ttl::reclaim_for_table(service, context, &input.table_name)?;
+    tag::reclaim_for_table(service, context, &input.table_name)?;
     let id = catalog_id(&input.table_name)?;
     service
         .delete_document(context.tenant_id(), catalog_table(), id)
@@ -1022,6 +1030,103 @@ mod tests {
             ),
             Err(DynamoDbError::ResourceNotFoundException(_))
         ));
+    }
+
+    #[test]
+    fn delete_table_reclaims_sidecars_so_recreate_starts_fresh() {
+        // F4: DeleteTable must drop the table's stream events, the
+        // `_ddb_streamseq_` high-water counter, the `_ddb_ttl` config doc, and
+        // the `_ddb_tags` entry — so a table recreated under the same name does
+        // not inherit a stale stream sequence or orphaned TTL/tag metadata.
+        let (service, ctx, _t) = fixture();
+        let streamed: CreateTableInput = serde_json::from_value(serde_json::json!({
+            "TableName": "events",
+            "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+            "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
+            "StreamSpecification": { "StreamEnabled": true, "StreamViewType": "NEW_IMAGE" }
+        }))
+        .unwrap();
+        create_table(&service, &ctx, streamed.clone()).expect("create");
+
+        // Writes capture stream events and advance the sequence counter.
+        for pk in ["a", "b", "c"] {
+            crate::commands::item::put_item(
+                &service,
+                &ctx,
+                serde_json::from_value(
+                    serde_json::json!({ "TableName": "events", "Item": { "pk": {"S": pk} } }),
+                )
+                .unwrap(),
+            )
+            .expect("put");
+        }
+        // Seed TTL + tag sidecar docs (keyed by table name, as their stores are).
+        for sidecar in ["_ddb_ttl", "_ddb_tags"] {
+            let mut fields = serde_json::Map::new();
+            fields.insert("seeded".to_owned(), Value::Bool(true));
+            service
+                .insert_document_with_id(
+                    ctx.tenant_id(),
+                    TableName::new(sidecar).unwrap(),
+                    DocumentId::from_key("events").unwrap(),
+                    fields,
+                )
+                .expect("seed sidecar");
+        }
+        assert_eq!(
+            stream::next_sequence_value(&service, &ctx, "events").unwrap(),
+            3,
+            "counter advanced by the three writes"
+        );
+        assert_eq!(count_items(&service, &ctx, "_ddb_stream_events"), 3);
+
+        delete_table(
+            &service,
+            &ctx,
+            DeleteTableInput {
+                table_name: "events".to_owned(),
+            },
+        )
+        .expect("delete");
+
+        // Every sidecar is reclaimed.
+        assert_eq!(
+            count_items(&service, &ctx, "_ddb_stream_events"),
+            0,
+            "stream events reclaimed"
+        );
+        assert_eq!(
+            stream::next_sequence_value(&service, &ctx, "events").unwrap(),
+            0,
+            "sequence high-water counter reclaimed"
+        );
+        assert_eq!(
+            count_items(&service, &ctx, "_ddb_ttl"),
+            0,
+            "TTL config reclaimed"
+        );
+        assert_eq!(
+            count_items(&service, &ctx, "_ddb_tags"),
+            0,
+            "tags reclaimed"
+        );
+
+        // Recreate under the same name → a fresh stream starting at sequence 0.
+        create_table(&service, &ctx, streamed).expect("recreate");
+        crate::commands::item::put_item(
+            &service,
+            &ctx,
+            serde_json::from_value(
+                serde_json::json!({ "TableName": "events", "Item": { "pk": {"S": "fresh"} } }),
+            )
+            .unwrap(),
+        )
+        .expect("put after recreate");
+        assert_eq!(
+            stream::next_sequence_value(&service, &ctx, "events").unwrap(),
+            1,
+            "the recreated stream restarted at 0 (now 1 after one write), not the stale mark"
+        );
     }
 
     fn count_items(service: &Arc<Service>, ctx: &TenantIsolationContext, table: &str) -> usize {

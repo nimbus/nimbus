@@ -84,6 +84,45 @@ fn seq_counter_id() -> Result<DocumentId, DynamoDbError> {
     DocumentId::from_key("counter").map_err(map_core_error)
 }
 
+/// Delete every document in `table`, tolerating a never-materialized table.
+fn delete_all(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table: &TableName,
+) -> Result<(), DynamoDbError> {
+    let documents = match service.query_documents_structured(
+        context.tenant_id(),
+        table,
+        &StructuredQuery::default(),
+    ) {
+        Ok(documents) => documents,
+        Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
+            return Ok(());
+        }
+        Err(error) => return Err(map_core_error(error)),
+    };
+    for document in documents {
+        service
+            .delete_document(context.tenant_id(), table.clone(), document.id)
+            .map_err(map_core_error)?;
+    }
+    Ok(())
+}
+
+/// Drop all of `table_name`'s stream state — its captured events **and** its
+/// sequence high-water counter — when the table is deleted (F4). A table later
+/// recreated under the same name then starts a fresh stream at sequence 0
+/// rather than inheriting a stale high-water mark.
+pub(crate) fn reclaim_for_table(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+) -> Result<(), DynamoDbError> {
+    delete_all(service, context, &stream_events_table(table_name)?)?;
+    delete_all(service, context, &stream_seq_table(table_name)?)?;
+    Ok(())
+}
+
 /// The next sequence number to assign for `table_name`'s stream (the monotonic
 /// high-water mark). 0 before the first event; survives event reclamation.
 ///
