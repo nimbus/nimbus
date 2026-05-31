@@ -14,7 +14,10 @@ use extenddb_core::types::{
     KeyType, PutItemInput, PutItemOutput, ReturnValues, StreamEventName, UpdateItemInput,
     UpdateItemOutput, extract_key,
 };
-use nimbus_core::{DocumentId, TableName};
+use nimbus_core::{
+    AtomicWrite, AtomicWriteBatch, DocumentId, DocumentLocator, PrincipalContext, TableName,
+    WriteKey, WritePrecondition, WriteSetMode,
+};
 use nimbus_engine::Service;
 use nimbus_tenant::TenantIsolationContext;
 
@@ -22,10 +25,96 @@ use crate::attribute_value::{fields_to_item, item_to_fields, validate_item};
 use crate::commands::{control_plane, stream};
 use crate::error::map_core_error;
 use crate::expression::{
-    apply_update, build_maps, check_condition, default_limits, parse_update_expression,
-    project_item, reject_key_updates, updated_attributes,
+    CONDITION_FAILED_MESSAGE, apply_update, build_maps, check_condition, default_limits,
+    parse_update_expression, project_item, reject_key_updates, updated_attributes,
 };
 use crate::key::encode_key;
+
+/// Whether a `ConditionExpression` is present and non-empty (an empty string is
+/// not a condition). Drives whether a write attaches an existence precondition.
+fn has_condition(condition: Option<&str>) -> bool {
+    condition.is_some_and(|expression| !expression.is_empty())
+}
+
+/// Atomically create-or-replace `fields` under `id` in a **single** storage
+/// transaction (`WriteSetMode::Overwrite`), replacing the former non-atomic
+/// `delete` + `insert` whose crash window could leave the row deleted with the
+/// replacement never written (F2). `precondition` re-validates the document's
+/// live existence state at commit, closing the check-then-write TOCTOU on
+/// conditional writes (F9). Returns the raw core error so the caller can map a
+/// lost existence-precondition race to `ConditionalCheckFailedException`.
+pub(crate) fn atomic_overwrite(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table: TableName,
+    id: DocumentId,
+    fields: serde_json::Map<String, serde_json::Value>,
+    precondition: WritePrecondition,
+) -> Result<(), nimbus_core::Error> {
+    let batch = AtomicWriteBatch::new(vec![AtomicWrite::Set {
+        key: WriteKey::from(DocumentLocator::new(table, id)),
+        document: fields,
+        mode: WriteSetMode::Overwrite,
+        precondition,
+        transforms: Vec::new(),
+    }])?;
+    service
+        .begin_mutation_execution_unit(context.tenant_id().clone(), PrincipalContext::system())?
+        .execute_atomic_write_batch(batch)?;
+    Ok(())
+}
+
+/// Atomically delete `id` (a no-op success if already absent — DeleteItem
+/// semantics). `precondition` closes the conditional-delete TOCTOU (F9): a
+/// concurrent existence flip between the condition check and the commit fails
+/// the precondition. Returns the raw core error for conditional remapping.
+fn atomic_delete(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table: TableName,
+    id: DocumentId,
+    precondition: WritePrecondition,
+) -> Result<(), nimbus_core::Error> {
+    let batch = AtomicWriteBatch::new(vec![AtomicWrite::Delete {
+        key: WriteKey::from(DocumentLocator::new(table, id)),
+        precondition,
+        missing_ok: true,
+    }])?;
+    service
+        .begin_mutation_execution_unit(context.tenant_id().clone(), PrincipalContext::system())?
+        .execute_atomic_write_batch(batch)?;
+    Ok(())
+}
+
+/// Map a single-item **conditional** write failure. A lost existence
+/// precondition — a concurrent writer flipped the document's existence between
+/// the condition check and the commit — surfaces from the Overwrite/Delete
+/// precondition as `AlreadyExists`/`DocumentNotFound`; for a conditional write
+/// that is a `ConditionalCheckFailedException`. All other errors map normally.
+fn map_conditional_write_error(error: nimbus_core::Error) -> DynamoDbError {
+    match error {
+        nimbus_core::Error::AlreadyExists(_) | nimbus_core::Error::DocumentNotFound(_) => {
+            DynamoDbError::ConditionalCheckFailedException(
+                CONDITION_FAILED_MESSAGE.to_owned(),
+                None,
+            )
+        }
+        other => map_core_error(other),
+    }
+}
+
+/// Choose the existence precondition for a write: unconditional writes use no
+/// precondition (DynamoDB last-writer-wins), while a conditional write pins the
+/// snapshot's existence state so the commit is rejected if it changed (F9). The
+/// engine models only existence-level preconditions, so this is existence-level
+/// OCC — the same bound the transactional path enforces.
+fn write_precondition(conditional: bool, existed: bool) -> WritePrecondition {
+    if conditional {
+        WritePrecondition::exists(existed)
+    } else {
+        WritePrecondition::default()
+    }
+}
 
 /// PutItem: validate the item, gate on any `ConditionExpression`, replace-or-
 /// insert it, and honor `ReturnValues` (NONE / ALL_OLD).
@@ -57,18 +146,19 @@ pub fn put_item(
         &limits,
     )?;
 
-    // PutItem fully *replaces* the item. The engine has no atomic upsert and a
-    // bare insert errors on an existing key, so an overwrite is delete + insert.
-    // (An atomic store-level upsert is the proper follow-up — see DDB-DIV-005.)
+    // PutItem fully *replaces* the item via a single atomic Overwrite write
+    // (create-or-replace in one storage transaction). A conditional put pins the
+    // snapshot's existence state so a concurrent race fails the precondition.
     let fields = item_to_fields(&input.item)?;
-    if existing.is_some() {
-        service
-            .delete_document(context.tenant_id(), table.clone(), id.clone())
-            .map_err(map_core_error)?;
-    }
-    service
-        .insert_document_with_id(context.tenant_id(), table, id, fields)
-        .map_err(map_core_error)?;
+    let conditional = has_condition(input.condition_expression.as_deref());
+    let precondition = write_precondition(conditional, existing.is_some());
+    atomic_overwrite(service, context, table, id, fields, precondition).map_err(|error| {
+        if conditional {
+            map_conditional_write_error(error)
+        } else {
+            map_core_error(error)
+        }
+    })?;
 
     // Capture a stream event (no-op unless the table has a stream enabled).
     let event_name = if existing.is_some() {
@@ -181,9 +271,18 @@ pub fn delete_item(
     )?;
 
     if existing.is_some() {
-        service
-            .delete_document(context.tenant_id(), table, id)
-            .map_err(map_core_error)?;
+        // Atomic delete with an existence precondition for conditional deletes,
+        // closing the check-then-delete TOCTOU (F9). Unconditional deletes use
+        // no precondition (last-writer-wins).
+        let conditional = has_condition(input.condition_expression.as_deref());
+        let precondition = write_precondition(conditional, true);
+        atomic_delete(service, context, table, id, precondition).map_err(|error| {
+            if conditional {
+                map_conditional_write_error(error)
+            } else {
+                map_core_error(error)
+            }
+        })?;
         // Capture a REMOVE stream event (no-op unless a stream is enabled).
         let keys = extract_key(&input.key, &key_schema);
         stream::capture_event(
@@ -260,16 +359,18 @@ pub fn update_item(
     let mut new_item = old_item.clone().unwrap_or_else(|| input.key.clone());
     apply_update(&actions, &mut new_item, &maps)?;
 
-    // Store the result (replace; overwrite atomicity per DDB-DIV-005).
+    // Store the result via a single atomic Overwrite (create-or-replace in one
+    // storage transaction). A conditional update pins the snapshot's existence.
     let fields = item_to_fields(&new_item)?;
-    if old_item.is_some() {
-        service
-            .delete_document(context.tenant_id(), table.clone(), id.clone())
-            .map_err(map_core_error)?;
-    }
-    service
-        .insert_document_with_id(context.tenant_id(), table, id, fields)
-        .map_err(map_core_error)?;
+    let conditional = has_condition(input.condition_expression.as_deref());
+    let precondition = write_precondition(conditional, old_item.is_some());
+    atomic_overwrite(service, context, table, id, fields, precondition).map_err(|error| {
+        if conditional {
+            map_conditional_write_error(error)
+        } else {
+            map_core_error(error)
+        }
+    })?;
 
     // Capture a stream event (no-op unless the table has a stream enabled).
     let event_name = if old_item.is_some() {
@@ -325,14 +426,18 @@ pub(crate) fn store_item(
     let key_schema = control_plane::load_key_schema(service, context, table_name)?;
     let id = primary_key_id(item, &key_schema)?;
     let table = TableName::new(table_name).map_err(map_core_error)?;
-    if read_item(service, context, &table, id.clone())?.is_some() {
-        service
-            .delete_document(context.tenant_id(), table.clone(), id.clone())
-            .map_err(map_core_error)?;
-    }
-    service
-        .insert_document_with_id(context.tenant_id(), table, id, item_to_fields(item)?)
-        .map_err(map_core_error)?;
+    // Unconditional create-or-replace in a single atomic transaction (no read
+    // needed — Overwrite handles both create and replace).
+    let fields = item_to_fields(item)?;
+    atomic_overwrite(
+        service,
+        context,
+        table,
+        id,
+        fields,
+        WritePrecondition::default(),
+    )
+    .map_err(map_core_error)?;
     Ok(())
 }
 
@@ -578,6 +683,102 @@ mod tests {
         )
         .expect("create-if-absent should succeed for a new key");
         assert!(stored(&service, &ctx, "fresh").is_some());
+    }
+
+    /// Build the `Orders` document id for a `pk` value (mirrors `stored`).
+    fn orders_id(service: &Arc<Service>, context: &TenantIsolationContext, pk: &str) -> DocumentId {
+        let key: Item = [("pk".to_string(), AttributeValue::S(pk.into()))]
+            .into_iter()
+            .collect();
+        let schema = control_plane::load_key_schema(service, context, "Orders").unwrap();
+        primary_key_id(&key, &schema).unwrap()
+    }
+
+    fn pk_fields(pk: &str) -> serde_json::Map<String, serde_json::Value> {
+        let item: Item = [("pk".to_string(), AttributeValue::S(pk.into()))]
+            .into_iter()
+            .collect();
+        item_to_fields(&item).unwrap()
+    }
+
+    /// F9: the existence precondition makes the atomic overwrite reject a write
+    /// whose snapshot existence assumption no longer holds — the engine-level
+    /// closure of the check-then-write TOCTOU. A stale create (snapshot said
+    /// absent, item now exists) and a stale must-exist (snapshot said present,
+    /// item now gone) both fail, and the conditional mapper surfaces them as
+    /// `ConditionalCheckFailedException` rather than leaking ResourceInUse /
+    /// ResourceNotFound.
+    #[test]
+    fn atomic_overwrite_enforces_existence_precondition() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        put(
+            &service,
+            &ctx,
+            json!({ "TableName": "Orders", "Item": { "pk": {"S": "live"} } }),
+        )
+        .expect("seed");
+
+        let table = TableName::new("Orders").unwrap();
+        // Snapshot claimed absence, but "live" exists → exists(false) rejected.
+        let stale_create = atomic_overwrite(
+            &service,
+            &ctx,
+            table.clone(),
+            orders_id(&service, &ctx, "live"),
+            pk_fields("live"),
+            WritePrecondition::exists(false),
+        )
+        .map_err(map_conditional_write_error)
+        .expect_err("stale create must be rejected");
+        assert!(matches!(
+            stale_create,
+            DynamoDbError::ConditionalCheckFailedException(_, _)
+        ));
+
+        // Snapshot claimed presence, but "ghost" is absent → exists(true) rejected.
+        let stale_update = atomic_overwrite(
+            &service,
+            &ctx,
+            table,
+            orders_id(&service, &ctx, "ghost"),
+            pk_fields("ghost"),
+            WritePrecondition::exists(true),
+        )
+        .map_err(map_conditional_write_error)
+        .expect_err("stale must-exist update must be rejected");
+        assert!(matches!(
+            stale_update,
+            DynamoDbError::ConditionalCheckFailedException(_, _)
+        ));
+
+        // Neither rejected write mutated the store.
+        assert!(stored(&service, &ctx, "live").is_some());
+        assert!(stored(&service, &ctx, "ghost").is_none());
+    }
+
+    /// F2: `store_item` (the BatchWriteItem / TransactWriteItems put path)
+    /// creates-or-replaces through the single atomic Overwrite path — no
+    /// delete-then-insert window. A fresh key is created; an existing key is
+    /// replaced wholesale.
+    #[test]
+    fn store_item_overwrites_atomically() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        let first: Item =
+            serde_json::from_value(json!({ "pk": {"S": "o1"}, "x": {"N": "1"} })).unwrap();
+        store_item(&service, &ctx, "Orders", &first).expect("create");
+        assert_eq!(
+            stored(&service, &ctx, "o1").unwrap().get("x"),
+            Some(&AttributeValue::N("1".into()))
+        );
+
+        let second: Item =
+            serde_json::from_value(json!({ "pk": {"S": "o1"}, "y": {"N": "2"} })).unwrap();
+        store_item(&service, &ctx, "Orders", &second).expect("replace");
+        let item = stored(&service, &ctx, "o1").unwrap();
+        assert!(!item.contains_key("x"), "store_item replaces wholesale");
+        assert_eq!(item.get("y"), Some(&AttributeValue::N("2".into())));
     }
 
     #[test]

@@ -21,11 +21,12 @@ use extenddb_core::types::{
     ListTablesOutput, LsiDescription, ProvisionedThroughputDescription, TableDescription,
     TableStatus, UpdateTableInput, UpdateTableOutput,
 };
-use nimbus_core::{Document, DocumentId, StructuredQuery, TableName};
+use nimbus_core::{Document, DocumentId, StructuredQuery, TableName, WritePrecondition};
 use nimbus_engine::Service;
 use nimbus_tenant::TenantIsolationContext;
 use serde_json::Value;
 
+use crate::commands::item;
 use crate::error::map_core_error;
 
 /// Tenant-scoped table whose documents hold one `TableDescription` per DynamoDB
@@ -201,18 +202,22 @@ pub fn update_table(
         description.stream_specification = Some(stream);
     }
 
-    // Re-persist the catalog doc as a full replace (delete + insert).
-    // `update_document` is a field-merge that cannot *remove* fields, so
-    // clearing the last GSI (`GlobalSecondaryIndexes` → absent) needs a wholesale
-    // rewrite. (Catalog-doc overwrite atomicity is the DDB-DIV-005 follow-up.)
+    // Re-persist the catalog doc as a single atomic full replace. A field-merge
+    // (`update_document`) cannot *remove* fields, so clearing the last GSI
+    // (`GlobalSecondaryIndexes` → absent) needs a wholesale rewrite; routing it
+    // through the atomic Overwrite primitive makes that rewrite a single storage
+    // transaction instead of a delete-then-insert with a crash window (F2).
     let fields = description_to_fields(&description)?;
     let id = catalog_id(&input.table_name)?;
-    service
-        .delete_document(context.tenant_id(), catalog_table(), id.clone())
-        .map_err(map_core_error)?;
-    service
-        .insert_document_with_id(context.tenant_id(), catalog_table(), id, fields)
-        .map_err(map_core_error)?;
+    item::atomic_overwrite(
+        service,
+        context,
+        catalog_table(),
+        id,
+        fields,
+        WritePrecondition::default(),
+    )
+    .map_err(map_core_error)?;
 
     Ok(UpdateTableOutput {
         table_description: description,
