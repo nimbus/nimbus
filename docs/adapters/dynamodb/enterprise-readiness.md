@@ -80,6 +80,15 @@ store is global (and maps each key to exactly one tenant).
   DynamoDB's 400 KB item × 25-item `BatchWriteItem` limits) and returns
   `413 Payload Too Large` before buffering or parsing — an oversized payload
   cannot force a large pre-authentication allocation.
+- **Credential store.** Access keys never bind to a reserved Nimbus-internal
+  tenant (`_nimbus_*`) — both the `put_access_key` write path and the request
+  resolution path refuse it, so a request can't pivot to the global access-key
+  catalog. `list_access_keys` returns a secret-free `RedactedAccessKey` view; the
+  secret access key is never read back over a listing surface. At rest, the
+  access-key documents ride the platform `LocalEncryptionConfig` envelope
+  encryption like all other data — **enable it in production** (or use an
+  external database with its own at-rest encryption); the adapter adds no bespoke
+  secret cipher.
 
 ## Performance baseline
 

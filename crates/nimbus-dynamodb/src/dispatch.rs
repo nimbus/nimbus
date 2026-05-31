@@ -188,6 +188,13 @@ fn authenticate(
 /// in-memory registry is the fast path; on a miss the persisted key store
 /// (D7.3) is consulted so runtime-configured keys authenticate without a
 /// restart. An id in neither is `UnrecognizedClientException`.
+/// The `UnrecognizedClientException` returned for an unknown or refused key.
+fn unrecognized_client_token() -> DynamoDbError {
+    DynamoDbError::UnrecognizedClientException(
+        "The security token included in the request is invalid.".to_owned(),
+    )
+}
+
 fn resolve_binding(
     ctx: &DispatchContext<'_>,
     access_key_id: &str,
@@ -196,13 +203,17 @@ fn resolve_binding(
         return Ok((binding.tenant.clone(), binding.secret.clone()));
     }
     match key_management::lookup(ctx.service, access_key_id)? {
-        Some(stored) => Ok((
-            TenantId::new(stored.tenant).map_err(map_core_error)?,
-            stored.secret,
-        )),
-        None => Err(DynamoDbError::UnrecognizedClientException(
-            "The security token included in the request is invalid.".to_owned(),
-        )),
+        Some(stored) => {
+            let tenant = TenantId::new(stored.tenant).map_err(map_core_error)?;
+            // Defense in depth: a stored key whose tenant is reserved (e.g. a
+            // pre-existing or corrupt record) must never resolve, or a request
+            // could read internal stores like the access-key catalog (F6a).
+            if crate::tenant::is_reserved_tenant(&tenant) {
+                return Err(unrecognized_client_token());
+            }
+            Ok((tenant, stored.secret))
+        }
+        None => Err(unrecognized_client_token()),
     }
 }
 
