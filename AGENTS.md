@@ -73,7 +73,7 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   completed baseline, closed 2026-05-27). Inspiration source is ExtendDB
   (Apache-2.0 DynamoDB adapter on PostgreSQL) at
   `~/src/github.com/ExtendDB/extenddb`. Independent
-  of `docs/plans/dynamodb-adapter-plan.md`; applies across every
+  of `docs/plans/archive/dynamodb-adapter-plan.md`; applies across every
   existing backend and adapter, not only the DynamoDB lane. `/goal`
   control plane gated on
   `bash scripts/verify-multi-backend-adapter-hardening.sh` (fifteen
