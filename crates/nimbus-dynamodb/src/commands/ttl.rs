@@ -36,6 +36,21 @@ fn ttl_id(table_name: &str) -> Result<DocumentId, DynamoDbError> {
     DocumentId::from_key(table_name).map_err(map_core_error)
 }
 
+/// Drop `table_name`'s TTL configuration document when the table is deleted, so
+/// a table recreated under the same name does not inherit stale TTL state (F4).
+pub(crate) fn reclaim_for_table(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+) -> Result<(), DynamoDbError> {
+    match service.delete_document(context.tenant_id(), ttl_table()?, ttl_id(table_name)?) {
+        Ok(()) | Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
+            Ok(())
+        }
+        Err(error) => Err(map_core_error(error)),
+    }
+}
+
 /// The persisted TTL state for a table: `(enabled, attribute_name)`. Disabled
 /// with no attribute when TTL was never configured.
 fn load_ttl_state(

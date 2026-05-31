@@ -188,6 +188,13 @@ fn authenticate(
 /// in-memory registry is the fast path; on a miss the persisted key store
 /// (D7.3) is consulted so runtime-configured keys authenticate without a
 /// restart. An id in neither is `UnrecognizedClientException`.
+/// The `UnrecognizedClientException` returned for an unknown or refused key.
+fn unrecognized_client_token() -> DynamoDbError {
+    DynamoDbError::UnrecognizedClientException(
+        "The security token included in the request is invalid.".to_owned(),
+    )
+}
+
 fn resolve_binding(
     ctx: &DispatchContext<'_>,
     access_key_id: &str,
@@ -196,13 +203,17 @@ fn resolve_binding(
         return Ok((binding.tenant.clone(), binding.secret.clone()));
     }
     match key_management::lookup(ctx.service, access_key_id)? {
-        Some(stored) => Ok((
-            TenantId::new(stored.tenant).map_err(map_core_error)?,
-            stored.secret,
-        )),
-        None => Err(DynamoDbError::UnrecognizedClientException(
-            "The security token included in the request is invalid.".to_owned(),
-        )),
+        Some(stored) => {
+            let tenant = TenantId::new(stored.tenant).map_err(map_core_error)?;
+            // Defense in depth: a stored key whose tenant is reserved (e.g. a
+            // pre-existing or corrupt record) must never resolve, or a request
+            // could read internal stores like the access-key catalog (F6a).
+            if crate::tenant::is_reserved_tenant(&tenant) {
+                return Err(unrecognized_client_token());
+            }
+            Ok((tenant, stored.secret))
+        }
+        None => Err(unrecognized_client_token()),
     }
 }
 
@@ -340,12 +351,16 @@ mod tests {
     const ACCESS_KEY: &str = "AKIAACME";
 
     /// A `Service` + registry binding `ACCESS_KEY` → tenant `acme`. The tempdir
-    /// is returned so the caller holds it for the test's lifetime.
+    /// is returned so the caller holds it for the test's lifetime. These tests
+    /// drive routing with synthetic (`Signature=deadbeef`) headers, so the
+    /// registry is explicit [`AuthMode::LookupOnly`] — strict-mode verification
+    /// is covered by the `strict_*` tests and the parity suite.
     fn fixture() -> (tempfile::TempDir, Arc<Service>, AccessKeyRegistry) {
         let temp = tempfile::tempdir().expect("tempdir");
         let service = Arc::new(Service::new(temp.path()).expect("service"));
-        let registry =
-            AccessKeyRegistry::new().bind(ACCESS_KEY, TenantId::new("acme").expect("tenant"));
+        let registry = AccessKeyRegistry::new()
+            .bind(ACCESS_KEY, TenantId::new("acme").expect("tenant"))
+            .with_mode(AuthMode::LookupOnly);
         (temp, service, registry)
     }
 
@@ -592,7 +607,8 @@ mod tests {
         let service = Arc::new(Service::new(temp.path()).expect("service"));
         let registry = AccessKeyRegistry::new()
             .bind("AKIAACME", TenantId::new("acme").expect("tenant"))
-            .bind("AKIAGLOBEX", TenantId::new("globex").expect("tenant"));
+            .bind("AKIAGLOBEX", TenantId::new("globex").expect("tenant"))
+            .with_mode(AuthMode::LookupOnly);
         let ctx = DispatchContext {
             service: &service,
             access_keys: &registry,
@@ -674,9 +690,11 @@ mod tests {
     }
 
     #[test]
-    fn lookup_mode_is_the_default() {
-        let (_temp, _service, registry) = fixture();
-        assert_eq!(registry.mode(), AuthMode::LookupOnly);
+    fn strict_mode_is_the_default() {
+        // Secure-by-default: a bare registry verifies signatures. The routing
+        // fixture opts into lookup explicitly; the strict fixture stays strict.
+        assert_eq!(AccessKeyRegistry::new().mode(), AuthMode::Strict);
+        assert_eq!(fixture().2.mode(), AuthMode::LookupOnly);
         assert_eq!(strict_fixture().2.mode(), AuthMode::Strict);
     }
 

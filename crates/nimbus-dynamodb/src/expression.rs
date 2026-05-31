@@ -130,7 +130,7 @@ pub fn parse_key_condition_expression(
 }
 
 /// The AWS message for a failed conditional write.
-const CONDITION_FAILED_MESSAGE: &str = "The conditional request failed";
+pub(crate) const CONDITION_FAILED_MESSAGE: &str = "The conditional request failed";
 
 /// Evaluate an optional `ConditionExpression` against `item` as a write gate.
 ///

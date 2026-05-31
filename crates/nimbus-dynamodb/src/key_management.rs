@@ -9,6 +9,14 @@
 //! in the static in-memory [`crate::AccessKeyRegistry`], so operators can add or
 //! rotate credentials live. The static registry stays the fast path; the store
 //! is read only on a registry miss.
+//!
+//! **At-rest protection** rides the platform envelope encryption, not a bespoke
+//! scheme: the `_ddb_access_keys` documents are ordinary tenant storage, so when
+//! `nimbus-engine`'s `LocalEncryptionConfig` is enabled (master-key-file /
+//! key-directory / AWS-KMS wrapped-DEK) the secrets are encrypted at rest like
+//! all other data. Production deployments must enable it (or use an external
+//! database with its own at-rest encryption). Secrets are **never** returned
+//! over the management/listing API — see [`RedactedAccessKey`].
 
 use std::sync::Arc;
 
@@ -42,6 +50,28 @@ pub struct StoredAccessKey {
     /// the region from the request's credential scope).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
+}
+
+/// A **secret-free** view of a stored access key for the management/listing API.
+/// The secret access key exists only to verify inbound SigV4 signatures and is
+/// never read back over a listing surface, so it is omitted entirely here (F6b).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RedactedAccessKey {
+    /// The Nimbus tenant id this access key resolves to.
+    pub tenant: String,
+    /// The region this key is configured for (informational).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+}
+
+impl RedactedAccessKey {
+    /// Drop the secret from a stored record, keeping only the listable fields.
+    fn from_stored(record: StoredAccessKey) -> Self {
+        Self {
+            tenant: record.tenant,
+            region: record.region,
+        }
+    }
 }
 
 fn store_context() -> Result<TenantIsolationContext, DynamoDbError> {
@@ -104,6 +134,15 @@ pub fn put_access_key(
     secret: Option<String>,
     region: Option<String>,
 ) -> Result<(), DynamoDbError> {
+    // A key must never be bound to a reserved Nimbus-internal tenant (e.g. the
+    // key-store's own `_nimbus_ddb_system`) — that would let a request scoped to
+    // it read every stored credential (F6a).
+    if crate::tenant::is_reserved_tenant(tenant) {
+        return Err(DynamoDbError::ValidationException(format!(
+            "Access keys cannot be bound to the reserved Nimbus-internal tenant '{}'",
+            tenant.as_str()
+        )));
+    }
     let context = store_context()?;
     ensure_tenant(service, &context)?;
     let record = StoredAccessKey {
@@ -181,14 +220,15 @@ pub fn lookup(
     }
 }
 
-/// List every configured access key as `(access_key_id, record)` pairs, sorted
-/// by id.
+/// List every configured access key as `(access_key_id, redacted_record)` pairs,
+/// sorted by id. The returned [`RedactedAccessKey`] omits the secret — it is
+/// never exposed over the listing surface (F6b).
 ///
 /// # Errors
 /// A mapped engine error for a storage failure.
 pub fn list_access_keys(
     service: &Arc<Service>,
-) -> Result<Vec<(String, StoredAccessKey)>, DynamoDbError> {
+) -> Result<Vec<(String, RedactedAccessKey)>, DynamoDbError> {
     let context = store_context()?;
     let documents = match service.query_documents_structured(
         context.tenant_id(),
@@ -214,7 +254,10 @@ pub fn list_access_keys(
             .map_err(|error| {
                 DynamoDbError::InternalServerError(format!("corrupt access key: {error}"))
             })?;
-            Ok((document.id.as_str().to_owned(), record))
+            Ok((
+                document.id.as_str().to_owned(),
+                RedactedAccessKey::from_stored(record),
+            ))
         })
         .collect::<Result<Vec<_>, DynamoDbError>>()?;
     keys.sort_by(|a, b| a.0.cmp(&b.0));
@@ -326,6 +369,55 @@ mod tests {
         assert_eq!(lookup(&service, "AKIAACME").unwrap(), None);
         // Idempotent.
         delete_access_key(&service, "AKIAACME").expect("delete again");
+    }
+
+    #[test]
+    fn put_access_key_rejects_a_reserved_tenant() {
+        // F6a: binding a key to the key-store's own reserved tenant (or any
+        // `_nimbus`-prefixed tenant) would expose every stored credential.
+        let (service, _t) = service();
+        assert!(matches!(
+            put_access_key(
+                &service,
+                "AKIAEVIL",
+                &tenant("_nimbus_ddb_system"),
+                Some("s".to_owned()),
+                None,
+            ),
+            Err(DynamoDbError::ValidationException(_))
+        ));
+        assert!(
+            put_access_key(&service, "AKIAEVIL2", &tenant("_nimbus_other"), None, None).is_err(),
+            "any _nimbus-prefixed tenant is reserved"
+        );
+        // A non-reserved tenant still works.
+        put_access_key(&service, "AKIAOK", &tenant("acme"), None, None).expect("normal put");
+    }
+
+    #[test]
+    fn list_access_keys_redacts_secrets() {
+        // F6b: the secret must never be returned over the listing surface.
+        let (service, _t) = service();
+        put_access_key(
+            &service,
+            "AKIAACME",
+            &tenant("acme"),
+            Some("top-secret-value".to_owned()),
+            Some("us-east-1".to_owned()),
+        )
+        .expect("put");
+        let keys = list_access_keys(&service).expect("list");
+        assert_eq!(keys.len(), 1);
+        let (id, redacted) = &keys[0];
+        assert_eq!(id, "AKIAACME");
+        assert_eq!(redacted.tenant, "acme");
+        assert_eq!(redacted.region.as_deref(), Some("us-east-1"));
+        // Structurally secret-free: serializing the listed view leaks nothing.
+        let json = serde_json::to_string(redacted).expect("serialize");
+        assert!(
+            !json.contains("top-secret-value") && !json.contains("secret"),
+            "redacted view must not carry the secret: {json}"
+        );
     }
 
     #[test]

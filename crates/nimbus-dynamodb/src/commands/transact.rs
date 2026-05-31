@@ -11,9 +11,9 @@ use std::sync::Arc;
 
 use extenddb_core::error::DynamoDbError;
 use extenddb_core::types::{
-    CancellationReason, Item, ItemResponse, ReturnValuesOnConditionCheckFailure,
-    TransactGetItemsInput, TransactGetItemsOutput, TransactWriteItem, TransactWriteItemsInput,
-    TransactWriteItemsOutput,
+    CancellationReason, Item, ItemResponse, KeySchemaElement, ReturnValuesOnConditionCheckFailure,
+    StreamEventName, TransactGetItemsInput, TransactGetItemsOutput, TransactWriteItem,
+    TransactWriteItemsInput, TransactWriteItemsOutput, extract_key,
 };
 use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, Document, DocumentLocator, PrincipalContext, TableName,
@@ -23,8 +23,8 @@ use nimbus_engine::Service;
 use nimbus_tenant::TenantIsolationContext;
 
 use crate::attribute_value::{fields_to_item, item_to_fields};
-use crate::commands::control_plane;
 use crate::commands::item::primary_key_id;
+use crate::commands::{control_plane, stream};
 use crate::error::map_core_error;
 use crate::expression::{
     apply_update, build_maps, default_limits, evaluate_condition, parse_condition,
@@ -178,12 +178,30 @@ pub fn transact_write_items(
         });
     }
 
-    // All conditions held: commit every write atomically.
-    let writes: Vec<AtomicWrite> = plans.into_iter().map(|plan| plan.write).collect();
+    // All conditions held: commit every write — plus the stream events they
+    // produce — atomically in one batch.
+    let mut writes: Vec<AtomicWrite> = Vec::with_capacity(plans.len());
+    let mut changes: Vec<StreamChange> = Vec::new();
+    for plan in plans {
+        writes.push(plan.write);
+        if let Some(change) = plan.change {
+            changes.push(change);
+        }
+    }
+    append_stream_writes(service, context, &mut writes, &changes)?;
     let batch = AtomicWriteBatch::new(writes).map_err(map_core_error)?;
     service
         .commit_transaction_session(context.tenant_id(), &token, &principal, Some(batch))
-        .map_err(map_core_error)?;
+        .map_err(|error| match error {
+            // A concurrent writer claimed one of our stream sequence numbers
+            // first (the event's Create write collided): a transaction conflict.
+            nimbus_core::Error::AlreadyExists(_) => DynamoDbError::TransactionConflictException(
+                "Transaction request cannot be processed because a concurrent writer claimed a \
+                 stream sequence number"
+                    .to_owned(),
+            ),
+            other => map_core_error(other),
+        })?;
 
     Ok(TransactWriteItemsOutput {
         consumed_capacity: None,
@@ -191,12 +209,73 @@ pub fn transact_write_items(
     })
 }
 
+/// `INSERT` for a newly created item, `MODIFY` when it already existed.
+fn existed_event(existed: bool) -> StreamEventName {
+    if existed {
+        StreamEventName::Modify
+    } else {
+        StreamEventName::Insert
+    }
+}
+
+/// A stream change produced by one transacted write, captured during planning so
+/// its event can be folded into the same atomic commit batch.
+struct StreamChange {
+    table_name: String,
+    event_name: StreamEventName,
+    keys: Item,
+    old_image: Option<Item>,
+    new_image: Option<Item>,
+}
+
+/// Append stream-event writes for every stream-enabled table touched by this
+/// transaction, so the events commit atomically with the data (F3) and the
+/// per-table sequence advances atomically in the same batch (F8). Sequence
+/// numbers are assigned from each table's high-water counter; a concurrent
+/// writer that claimed a number first makes the event's `Create` write collide,
+/// failing the whole transaction (surfaced as `TransactionConflictException`).
+fn append_stream_writes(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    writes: &mut Vec<AtomicWrite>,
+    changes: &[StreamChange],
+) -> Result<(), DynamoDbError> {
+    // Distinct tables, in first-seen order, so sequence assignment is stable.
+    let mut tables: Vec<&str> = Vec::new();
+    for change in changes {
+        if !tables.contains(&change.table_name.as_str()) {
+            tables.push(&change.table_name);
+        }
+    }
+    for table_name in tables {
+        if !stream::stream_enabled(service, context, table_name)? {
+            continue;
+        }
+        let mut seq = stream::next_sequence_value(service, context, table_name)?;
+        for change in changes.iter().filter(|c| c.table_name == table_name) {
+            let event = stream::ChangeEvent {
+                event_name: change.event_name,
+                keys: &change.keys,
+                old_image: change.old_image.as_ref(),
+                new_image: change.new_image.as_ref(),
+                user_identity: None,
+            };
+            writes.push(stream::stream_event_write(table_name, seq, &event)?);
+            seq += 1;
+        }
+        writes.push(stream::sequence_counter_write(table_name, seq)?);
+    }
+    Ok(())
+}
+
 /// One planned write plus its cancellation reason (code `"None"` unless its
-/// condition failed).
+/// condition failed) and the stream change it produces (`None` for
+/// ConditionCheck and for deletes of an absent item).
 struct PlannedWrite {
     write: AtomicWrite,
     reason: CancellationReason,
     failed: bool,
+    change: Option<StreamChange>,
 }
 
 fn plan_writes(
@@ -232,7 +311,13 @@ fn plan_one(
         &transact.update,
     ) {
         (Some(check), None, None, None) => {
-            let (key, current, precond, doc) = read_target(
+            let TargetSnapshot {
+                key,
+                current,
+                precondition: precond,
+                doc,
+                ..
+            } = read_target(
                 service,
                 context,
                 principal,
@@ -254,11 +339,19 @@ fn plan_one(
                 },
                 reason: reason(failed, check.return_values_on_condition_check_failure, &doc),
                 failed,
+                // ConditionCheck is a guard, not a mutation — no stream event.
+                change: None,
             })
         }
         (None, Some(put), None, None) => {
             crate::attribute_value::validate_item(&put.item)?;
-            let (key, current, precond, doc) = read_target(
+            let TargetSnapshot {
+                key,
+                current,
+                precondition: precond,
+                doc,
+                key_schema,
+            } = read_target(
                 service,
                 context,
                 principal,
@@ -273,6 +366,13 @@ fn plan_one(
                 &current,
                 limits,
             )?;
+            let change = Some(StreamChange {
+                table_name: put.table_name.clone(),
+                event_name: existed_event(doc.is_some()),
+                keys: extract_key(&put.item, &key_schema),
+                old_image: doc.is_some().then(|| current.clone()),
+                new_image: Some(put.item.clone()),
+            });
             Ok(PlannedWrite {
                 write: AtomicWrite::Set {
                     key,
@@ -283,10 +383,17 @@ fn plan_one(
                 },
                 reason: reason(failed, put.return_values_on_condition_check_failure, &doc),
                 failed,
+                change,
             })
         }
         (None, None, Some(delete), None) => {
-            let (key, current, precond, doc) = read_target(
+            let TargetSnapshot {
+                key,
+                current,
+                precondition: precond,
+                doc,
+                key_schema,
+            } = read_target(
                 service,
                 context,
                 principal,
@@ -301,6 +408,14 @@ fn plan_one(
                 &current,
                 limits,
             )?;
+            // DynamoDB emits a REMOVE record only when an item was deleted.
+            let change = doc.as_ref().map(|_| StreamChange {
+                table_name: delete.table_name.clone(),
+                event_name: StreamEventName::Remove,
+                keys: extract_key(&delete.key, &key_schema),
+                old_image: Some(current.clone()),
+                new_image: None,
+            });
             Ok(PlannedWrite {
                 write: AtomicWrite::Delete {
                     key,
@@ -313,11 +428,17 @@ fn plan_one(
                     &doc,
                 ),
                 failed,
+                change,
             })
         }
         (None, None, None, Some(update)) => {
-            let key_schema = control_plane::load_key_schema(service, context, &update.table_name)?;
-            let (key, current, precond, doc) = read_target(
+            let TargetSnapshot {
+                key,
+                current,
+                precondition: precond,
+                doc,
+                key_schema,
+            } = read_target(
                 service,
                 context,
                 principal,
@@ -333,8 +454,8 @@ fn plan_one(
                 limits,
             )?;
             // Build the post-update item only when the condition holds.
-            let document = if failed {
-                serde_json::Map::new()
+            let (document, new_item) = if failed {
+                (serde_json::Map::new(), None)
             } else {
                 let actions = parse_update_expression(&update.update_expression, limits)?;
                 let maps = build_maps(
@@ -348,8 +469,15 @@ fn plan_one(
                     current.clone()
                 };
                 apply_update(&actions, &mut new_item, &maps)?;
-                item_to_fields(&new_item)?
+                (item_to_fields(&new_item)?, Some(new_item))
             };
+            let change = new_item.map(|new_item| StreamChange {
+                table_name: update.table_name.clone(),
+                event_name: existed_event(doc.is_some()),
+                keys: extract_key(&new_item, &key_schema),
+                old_image: doc.is_some().then(|| current.clone()),
+                new_image: Some(new_item),
+            });
             Ok(PlannedWrite {
                 write: AtomicWrite::Set {
                     key,
@@ -364,6 +492,7 @@ fn plan_one(
                     &doc,
                 ),
                 failed,
+                change,
             })
         }
         _ => Err(DynamoDbError::ValidationException(
@@ -383,7 +512,7 @@ fn read_target(
     token: &TransactionSessionToken,
     table_name: &str,
     key_or_item: &Item,
-) -> Result<(WriteKey, Item, WritePrecondition, Option<Document>), DynamoDbError> {
+) -> Result<TargetSnapshot, DynamoDbError> {
     let key_schema = control_plane::load_key_schema(service, context, table_name)?;
     let id = primary_key_id(key_or_item, &key_schema)?;
     let table = TableName::new(table_name).map_err(map_core_error)?;
@@ -399,7 +528,24 @@ fn read_target(
     // available; existence consistency covers create-if-absent / must-exist.)
     let precondition = WritePrecondition::exists(doc.is_some());
     let key = WriteKey::from(DocumentLocator::new(table, id));
-    Ok((key, current, precondition, doc))
+    Ok(TargetSnapshot {
+        key,
+        current,
+        precondition,
+        doc,
+        key_schema,
+    })
+}
+
+/// The snapshot view of one transacted op's target: its write key, current item
+/// (empty if absent), existence precondition, raw document, and key schema (for
+/// building the stream record's keys).
+struct TargetSnapshot {
+    key: WriteKey,
+    current: Item,
+    precondition: WritePrecondition,
+    doc: Option<Document>,
+    key_schema: Vec<KeySchemaElement>,
 }
 
 fn condition_holds(

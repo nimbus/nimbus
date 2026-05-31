@@ -39,6 +39,7 @@ pub use key::{
     decode_key, encode_key, is_reserved_attribute_name, sortable_key, validate_attribute_names,
 };
 pub use key_management::{
-    StoredAccessKey, delete_access_key, list_access_keys, put_access_key, rotate_secret,
+    RedactedAccessKey, StoredAccessKey, delete_access_key, list_access_keys, put_access_key,
+    rotate_secret,
 };
 pub use wire::{WireResponse, render_error, render_success};

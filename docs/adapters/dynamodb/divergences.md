@@ -2,8 +2,14 @@
 
 Intentional, recorded differences between the Nimbus DynamoDB adapter and real
 DynamoDB / the ExtendDB reference. Every entry has a rationale and a regression
-test asserting the chosen behavior. The parity runner (D8) classifies any
-unrecorded difference as `nimbus-divergence` and fails until it appears here.
+test asserting the chosen behavior. These behaviors are pinned by executable
+checks — the official-SDK parity suite
+(`crates/nimbus-server/tests/dynamodb_spec`, 27 scenarios) and the ground-truth
+corpus (`crates/nimbus-dynamodb/tests/ground_truth.rs`, diffed against the
+captured DynamoDB Local / AWS API response contract — see
+`docs/plans/proof/dynamodb-adapter-hardening/ground-truth-corpus.md`) — so a drift
+on a covered surface fails CI. The corpus is the executable ground truth; it is
+not an exhaustive auto-classifier of every possible difference.
 
 Classifications: `nimbus-divergence` (Nimbus differs from both DynamoDB Local and
 ExtendDB — must be justified here) and `accept-extenddb-divergence` (Nimbus
@@ -29,20 +35,23 @@ real workload needs full-size DynamoDB keys. Most keys are far below this.
 
 **Status:** accepted (D0.3).
 
-## DDB-DIV-002 — Sort-key ordering uses an order-preserving projection (planned)
+## DDB-DIV-002 — Sort-key ordering uses an order-preserving encoding (`nimbus-divergence`)
 
 Real DynamoDB orders sort keys by type (`N` numeric, `S` UTF-8 byte-wise, `B`
-byte-wise). Nimbus's index/compare path runs numbers through `f64` and cannot
-index binary, so the adapter projects each key/index attribute into an
-order-preserving sortable string in `_pk`/`_sk` (and per-index `_gsi1_*` fields):
-`S` → raw UTF-8, `N` → a full-precision lexicographically-sortable decimal
-encoding, `B` → fixed-case hex. Range conditions evaluate that projection, not
-the opaque `DocumentId`.
+byte-wise). Nimbus encodes each key/index value into an order-preserving sortable
+string (the D0.3 sortable-key encoding): `S` → raw UTF-8, `N` → a full-precision
+lexicographically-sortable decimal encoding, `B` → fixed-case hex. Range
+conditions and ordering evaluate that encoding, so comparisons are type-correct
+(including >17-digit numeric ranges that `f64` would collapse) rather than going
+through the opaque `DocumentId`.
 
-**Status:** projection lands in the D0.3 sortable-key follow-up; range execution
-in D2.1. This entry will gain its regression test (type-correct ordering,
-including >17-digit numeric ranges that `f64` would collapse) when the projection
-lands.
+**Regression test:** `crates/nimbus-dynamodb/src/commands/query.rs` →
+`tests::query_gsi_numeric_range_preserves_precision_beyond_f64` (full-precision
+numeric ordering) and `tests::query_gsi_binary_range_is_byte_wise` (byte-wise
+binary ordering).
+
+**Status:** accepted (D0.3 / D2.1); the sortable-key encoding and its
+type-correct range execution have landed with the regression tests above.
 
 ## DDB-DIV-003 — Reserved `_ddb_` table-name prefix (`nimbus-divergence`)
 
@@ -76,7 +85,7 @@ clients (no `CREATING` state is ever exposed).
 
 **Status:** accepted (D0.6).
 
-## DDB-DIV-005 — Item storage format + PutItem overwrite atomicity (`nimbus-divergence`)
+## DDB-DIV-005 — Item storage format (`nimbus-divergence`)
 
 **Real DynamoDB:** items are opaque to the storage engine; PutItem is an atomic
 full replace.
@@ -85,29 +94,33 @@ full replace.
 (`{"N":"42"}`, `{"SS":[…]}`, …) in the shared `documents` table's `fields` map,
 keyed by the composite-key `DocumentId` (D0.3). This is exactly lossless — `N`
 precision, sets, binary, and nesting all survive. The engine's mutation path
-(`Mutation::Insert { fields }`) carries only JSON `fields`, not the
-`typed_fields` sidecar, so:
+carries only JSON `fields`, not the `typed_fields` sidecar, so a non-DynamoDB
+adapter reading a DynamoDB-owned table sees DynamoDB-tagged JSON rather than
+clean projected values. DynamoDB tables are DynamoDB-owned, so this is
+acceptable.
 
-1. A non-DynamoDB adapter reading a DynamoDB-owned table sees DynamoDB-tagged
-   JSON rather than clean projected values. DynamoDB tables are DynamoDB-owned,
-   so this is acceptable.
-2. PutItem's replace-on-overwrite is implemented as delete + insert (the engine
-   exposes no atomic upsert / `Mutation::Replace`, and a bare insert errors on an
-   existing key). A process crash strictly between the delete and the insert
-   would leave the key absent.
+PutItem's replace-on-overwrite **is atomic**: every single-item write
+(PutItem / UpdateItem / `store_item` / the UpdateTable catalog rewrite) runs as a
+one-element `AtomicWriteBatch` with `WriteSetMode::Overwrite` — a single storage
+transaction that creates-or-replaces with no delete-then-insert crash window
+(hardening H2, F2). Conditional writes additionally pin the snapshot's existence
+state with a `WritePrecondition`, so a write cannot be raced between its
+condition check and its commit (F9, existence-level OCC — the same bound the
+transactional path enforces).
 
 **Rationale:** this keeps every write on the sanctioned engine-owned mutation
-path with no change to the core `Mutation` enum (which ~21 sites and every
-adapter depend on). The proper fix for atomic overwrite is a store-level
-document upsert (or a `Mutation::Replace` variant), tracked as a follow-up
-before the D9 enterprise-readiness gate.
+path (the atomic-write primitive the transactional path already uses), with no
+change to the core `Mutation` enum.
 
 **Regression test:** `crates/nimbus-dynamodb/src/attribute_value.rs` →
 `tests::item_roundtrips_through_wire_json_fields` (lossless storage form);
 `crates/nimbus-dynamodb/src/commands/item.rs` →
-`tests::put_overwrite_fully_replaces_not_merges` (replace, not merge).
+`tests::put_overwrite_fully_replaces_not_merges` (replace, not merge),
+`tests::store_item_overwrites_atomically` (atomic create-or-replace),
+`tests::atomic_overwrite_enforces_existence_precondition` (conditional-write
+TOCTOU closure).
 
-**Status:** accepted (D1.5); atomic-upsert follow-up tracked.
+**Status:** accepted (D1.5); overwrite atomicity resolved in hardening H2.
 
 ## DDB-DIV-006 — Single-shard streams (`nimbus-divergence`)
 

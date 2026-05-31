@@ -79,6 +79,10 @@ pub fn query(
     // Disambiguate which clause is PK vs SK against the real partition key.
     key_condition.resolve_pk_sk(&hash_attr, &maps.names)?;
     let pk_value = resolve_value(&key_condition.pk_value, &maps)?;
+    // Encode the query's partition-key value once. A non-scalar *query* value is
+    // a client `ValidationException` (propagated here); a non-scalar *item*
+    // value is skipped in the loop below (sparse-index semantics), not an error.
+    let pk_key = sortable_key(&pk_value)?;
 
     // Select the partition, then apply the optional sort-key condition.
     let mut matched: Vec<Item> = Vec::new();
@@ -86,7 +90,13 @@ pub fn query(
         let Some(item_pk) = item.get(&hash_attr) else {
             continue;
         };
-        if !sortable_eq(item_pk, &pk_value)? {
+        // An item whose partition-key attribute is non-scalar (M / L / BOOL /
+        // NULL) cannot match a scalar key condition — skip it rather than
+        // aborting the whole Query on the un-encodable value (F7).
+        let Ok(item_key) = sortable_key(item_pk) else {
+            continue;
+        };
+        if item_key != pk_key {
             continue;
         }
         if let Some(sk_condition) = &key_condition.sk_condition {
@@ -415,12 +425,6 @@ fn resolve_value(expr: &Expr, maps: &ExpressionMaps) -> Result<AttributeValue, D
     }
 }
 
-/// Type-correct equality via the order-preserving sortable encoding (so `5`
-/// and `5.0` compare equal for numeric keys).
-fn sortable_eq(a: &AttributeValue, b: &AttributeValue) -> Result<bool, DynamoDbError> {
-    Ok(sortable_key(a)? == sortable_key(b)?)
-}
-
 /// Compare two items by their sort-key attribute (ascending, type-correct).
 fn sort_cmp(a: &Item, b: &Item, sk_name: &str) -> Ordering {
     let key = |item: &Item| {
@@ -463,14 +467,24 @@ fn eval_sort_condition(
     }
 }
 
-/// Type-correct comparison of two attribute values under `op`, via the sortable
-/// encoding (lexicographic order of the encoding == value order).
+/// Type-correct comparison of an item's sort-key value (`left`) against a query
+/// bound (`right`) under `op`, via the sortable encoding (lexicographic order of
+/// the encoding == value order).
+///
+/// `left` is the stored item's attribute: if it is non-scalar (M / L / BOOL /
+/// NULL) it cannot satisfy a scalar comparison, so the item is treated as a
+/// no-match (skipped) rather than aborting the whole Query (F7). `right` is the
+/// client-supplied bound, so a non-scalar bound there is still a propagated
+/// `ValidationException`.
 fn compare(
     left: &AttributeValue,
     op: &CompareOp,
     right: &AttributeValue,
 ) -> Result<bool, DynamoDbError> {
-    let ordering = sortable_key(left)?.cmp(&sortable_key(right)?);
+    let Ok(left_key) = sortable_key(left) else {
+        return Ok(false);
+    };
+    let ordering = left_key.cmp(&sortable_key(right)?);
     Ok(match op {
         CompareOp::Eq => ordering == Ordering::Equal,
         CompareOp::Ne => ordering != Ordering::Equal,
@@ -996,6 +1010,66 @@ mod tests {
                 "KEYS_ONLY drops non-projected attrs"
             );
         }
+    }
+
+    /// F7: a GSI Query over a table containing heterogeneous items — some with
+    /// the indexed key attribute non-scalar (M / L / BOOL / NULL) or absent —
+    /// must return only the matching scalar items, *skipping* the others, rather
+    /// than aborting the whole request with a `ValidationException`.
+    #[test]
+    fn query_gsi_skips_non_scalar_and_absent_index_keys() {
+        let (service, ctx, _t) = fixture();
+        create_with_gsi(
+            &service,
+            &ctx,
+            "Hetero",
+            json!([{ "AttributeName": "g", "KeyType": "HASH" }]),
+            json!({ "ProjectionType": "ALL" }),
+            json!([{ "AttributeName": "g", "AttributeType": "S" }]),
+        );
+        // A matching scalar, a different scalar, and three items the index can't
+        // key: a Map, a List, and one with no `g` at all.
+        put_json(
+            &service,
+            &ctx,
+            "Hetero",
+            json!({ "pk": {"S": "a"}, "g": {"S": "match"} }),
+        );
+        put_json(
+            &service,
+            &ctx,
+            "Hetero",
+            json!({ "pk": {"S": "b"}, "g": {"S": "other"} }),
+        );
+        put_json(
+            &service,
+            &ctx,
+            "Hetero",
+            json!({ "pk": {"S": "c"}, "g": {"M": { "nested": {"S": "x"} }} }),
+        );
+        put_json(
+            &service,
+            &ctx,
+            "Hetero",
+            json!({ "pk": {"S": "d"}, "g": {"L": [{"S": "y"}]} }),
+        );
+        put_json(&service, &ctx, "Hetero", json!({ "pk": {"S": "e"} }));
+
+        let out = query(
+            &service,
+            &ctx,
+            serde_json::from_value(json!({
+                "TableName": "Hetero",
+                "IndexName": "gsi",
+                "KeyConditionExpression": "g = :g",
+                "ExpressionAttributeValues": { ":g": {"S": "match"} }
+            }))
+            .unwrap(),
+        )
+        .expect("non-scalar index keys must be skipped, not error the Query");
+        assert_eq!(out.count, 1, "only the matching scalar item is returned");
+        let items = out.items.unwrap();
+        assert_eq!(items[0].get("pk"), Some(&AttributeValue::S("a".into())));
     }
 
     #[test]

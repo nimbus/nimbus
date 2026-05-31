@@ -11,7 +11,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use nimbus_core::TenantId;
-use nimbus_dynamodb::AccessKeyRegistry;
+use nimbus_dynamodb::{AccessKeyRegistry, AuthMode};
 use nimbus_engine::Service;
 use nimbus_testing::DeterministicTestCase;
 use serde_json::{Value, json};
@@ -60,8 +60,9 @@ pub(crate) const DYNAMODB_STREAMS_EVENT_DELIVERY_CASE: DeterministicTestCase =
 fn harness_router() -> (Router, tempfile::TempDir) {
     let temp = tempfile::tempdir().expect("tempdir");
     let service = Arc::new(Service::new(temp.path()).expect("service"));
-    let registry =
-        AccessKeyRegistry::new().bind(ACCESS_KEY, TenantId::new("acme").expect("tenant"));
+    let registry = AccessKeyRegistry::new()
+        .bind(ACCESS_KEY, TenantId::new("acme").expect("tenant"))
+        .with_mode(AuthMode::LookupOnly);
     (router(service, registry), temp)
 }
 

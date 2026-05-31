@@ -20,7 +20,10 @@ use extenddb_core::types::{
     StreamRecord, StreamRecordData, StreamStatus, StreamSummary, StreamViewType, TableDescription,
     UserIdentity,
 };
-use nimbus_core::{DocumentId, StructuredQuery, TableName};
+use nimbus_core::{
+    AtomicWrite, AtomicWriteBatch, DocumentId, DocumentLocator, PrincipalContext, StructuredQuery,
+    TableName, WriteKey, WritePrecondition, WriteSetMode,
+};
 use nimbus_engine::Service;
 use nimbus_tenant::TenantIsolationContext;
 use serde::{Deserialize, Serialize};
@@ -81,6 +84,45 @@ fn seq_counter_id() -> Result<DocumentId, DynamoDbError> {
     DocumentId::from_key("counter").map_err(map_core_error)
 }
 
+/// Delete every document in `table`, tolerating a never-materialized table.
+fn delete_all(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table: &TableName,
+) -> Result<(), DynamoDbError> {
+    let documents = match service.query_documents_structured(
+        context.tenant_id(),
+        table,
+        &StructuredQuery::default(),
+    ) {
+        Ok(documents) => documents,
+        Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
+            return Ok(());
+        }
+        Err(error) => return Err(map_core_error(error)),
+    };
+    for document in documents {
+        service
+            .delete_document(context.tenant_id(), table.clone(), document.id)
+            .map_err(map_core_error)?;
+    }
+    Ok(())
+}
+
+/// Drop all of `table_name`'s stream state — its captured events **and** its
+/// sequence high-water counter — when the table is deleted (F4). A table later
+/// recreated under the same name then starts a fresh stream at sequence 0
+/// rather than inheriting a stale high-water mark.
+pub(crate) fn reclaim_for_table(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+) -> Result<(), DynamoDbError> {
+    delete_all(service, context, &stream_events_table(table_name)?)?;
+    delete_all(service, context, &stream_seq_table(table_name)?)?;
+    Ok(())
+}
+
 /// The next sequence number to assign for `table_name`'s stream (the monotonic
 /// high-water mark). 0 before the first event; survives event reclamation.
 ///
@@ -106,7 +148,10 @@ pub(crate) fn next_sequence_value(
     }
 }
 
-/// Persist the next sequence number for `table_name`'s stream (upsert).
+/// Persist the next sequence number for `table_name`'s stream (upsert). Only
+/// used by tests to seed the counter; the live write path advances the counter
+/// atomically inside [`capture_event`]'s single-batch write.
+#[cfg(test)]
 fn set_sequence_value(
     service: &Arc<Service>,
     context: &TenantIsolationContext,
@@ -204,31 +249,14 @@ pub(crate) struct ChangeEvent<'a> {
     pub user_identity: Option<UserIdentity>,
 }
 
-/// Capture a change event for `table_name` if it has a stream enabled
-/// (otherwise a no-op). Called by the write handlers after a successful
-/// mutation. Sequence numbers are assigned from the persistent high-water
-/// counter and the counter is then advanced — monotonic across event
-/// reclamation (a read-modify-write that is correct on the single-node write
-/// path; making the counter bump atomic under concurrent writers is a
-/// follow-up).
-///
-/// # Errors
-/// A mapped engine error if the event cannot be persisted.
-pub(crate) fn capture_event(
-    service: &Arc<Service>,
-    context: &TenantIsolationContext,
-    table_name: &str,
-    change: ChangeEvent<'_>,
-) -> Result<(), DynamoDbError> {
-    let description = control_plane::load_table_description(service, context, table_name)?;
-    if !description
-        .stream_specification
-        .as_ref()
-        .is_some_and(|spec| spec.stream_enabled)
-    {
-        return Ok(());
-    }
-    let seq = next_sequence_value(service, context, table_name)?;
+/// Bound on optimistic retries when a concurrent writer claims the same stream
+/// sequence number before us. Writers contend only on the single per-table
+/// counter doc, so in practice one retry suffices; the bound guards against a
+/// pathological live-lock.
+const MAX_SEQUENCE_RETRIES: usize = 32;
+
+/// Serialize a [`StoredEvent`] at sequence `seq` to its stored field map.
+fn event_fields(change: &ChangeEvent<'_>, seq: i64) -> Result<Map<String, Value>, DynamoDbError> {
     let event = StoredEvent {
         seq,
         created: epoch_seconds(),
@@ -236,29 +264,121 @@ pub(crate) fn capture_event(
         keys: item_to_fields(change.keys)?,
         old_image: change.old_image.map(item_to_fields).transpose()?,
         new_image: change.new_image.map(item_to_fields).transpose()?,
-        user_identity: change.user_identity,
+        user_identity: change.user_identity.clone(),
     };
-    let fields = match serde_json::to_value(&event) {
-        Ok(Value::Object(map)) => map,
-        _ => {
-            return Err(DynamoDbError::InternalServerError(
-                "failed to serialize stream event".to_owned(),
-            ));
-        }
-    };
-    let id = DocumentId::from_key(sequence_number(seq)).map_err(map_core_error)?;
-    service
-        .insert_document_with_id(
-            context.tenant_id(),
+    match serde_json::to_value(&event) {
+        Ok(Value::Object(map)) => Ok(map),
+        _ => Err(DynamoDbError::InternalServerError(
+            "failed to serialize stream event".to_owned(),
+        )),
+    }
+}
+
+/// The atomic `Create` write for a stream event at `seq` — the event-store
+/// document keyed by its zero-padded sequence number. `Create` (not `Overwrite`)
+/// makes a colliding sequence from a concurrent writer fail the commit rather
+/// than silently clobber its event.
+pub(crate) fn stream_event_write(
+    table_name: &str,
+    seq: i64,
+    change: &ChangeEvent<'_>,
+) -> Result<AtomicWrite, DynamoDbError> {
+    let event_id = DocumentId::from_key(sequence_number(seq)).map_err(map_core_error)?;
+    Ok(AtomicWrite::Set {
+        key: WriteKey::from(DocumentLocator::new(
             stream_events_table(table_name)?,
-            id,
-            fields,
-        )
+            event_id,
+        )),
+        document: event_fields(change, seq)?,
+        mode: WriteSetMode::Create,
+        precondition: WritePrecondition::default(),
+        transforms: Vec::new(),
+    })
+}
+
+/// The atomic `Overwrite` write advancing a stream's high-water counter to
+/// `next`. Kept in a separate store so reclaiming expired events never resets it.
+pub(crate) fn sequence_counter_write(
+    table_name: &str,
+    next: i64,
+) -> Result<AtomicWrite, DynamoDbError> {
+    let mut fields = Map::new();
+    fields.insert("next".to_owned(), Value::from(next));
+    Ok(AtomicWrite::Set {
+        key: WriteKey::from(DocumentLocator::new(
+            stream_seq_table(table_name)?,
+            seq_counter_id()?,
+        )),
+        document: fields,
+        mode: WriteSetMode::Overwrite,
+        precondition: WritePrecondition::default(),
+        transforms: Vec::new(),
+    })
+}
+
+/// Whether `table_name` has a stream enabled (the gate for capturing events).
+pub(crate) fn stream_enabled(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+) -> Result<bool, DynamoDbError> {
+    let description = control_plane::load_table_description(service, context, table_name)?;
+    Ok(description
+        .stream_specification
+        .as_ref()
+        .is_some_and(|spec| spec.stream_enabled))
+}
+
+/// Capture a change event for `table_name` if it has a stream enabled
+/// (otherwise a no-op). Called by the write handlers after a successful
+/// mutation.
+///
+/// The event document and the advanced high-water counter are written in a
+/// **single** `AtomicWriteBatch` (one storage transaction), so the sequence bump
+/// can never be torn from the event it numbers. The event is written with
+/// `WriteSetMode::Create` keyed by its sequence number, so if a concurrent
+/// writer already claimed this sequence the commit fails (`AlreadyExists`) and we
+/// retry with a freshly read counter — yielding strictly monotonic,
+/// no-duplicate / no-loss sequence numbers under concurrency (F8), replacing the
+/// former non-atomic read / insert / set across three separate engine calls.
+///
+/// # Errors
+/// A mapped engine error if the event cannot be persisted, or
+/// `InternalServerError` if sequence allocation cannot converge within
+/// [`MAX_SEQUENCE_RETRIES`].
+pub(crate) fn capture_event(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+    change: ChangeEvent<'_>,
+) -> Result<(), DynamoDbError> {
+    if !stream_enabled(service, context, table_name)? {
+        return Ok(());
+    }
+
+    for _ in 0..MAX_SEQUENCE_RETRIES {
+        let seq = next_sequence_value(service, context, table_name)?;
+        let batch = AtomicWriteBatch::new(vec![
+            stream_event_write(table_name, seq, &change)?,
+            sequence_counter_write(table_name, seq + 1)?,
+        ])
         .map_err(map_core_error)?;
-    // Advance the high-water mark so the next event gets a fresh sequence even
-    // after expired events are reclaimed.
-    set_sequence_value(service, context, table_name, seq + 1)?;
-    Ok(())
+
+        match service
+            .begin_mutation_execution_unit(context.tenant_id().clone(), PrincipalContext::system())
+            .map_err(map_core_error)?
+            .execute_atomic_write_batch(batch)
+        {
+            Ok(_) => return Ok(()),
+            // A concurrent writer claimed this sequence first: re-read and retry.
+            Err(nimbus_core::Error::AlreadyExists(_)) => continue,
+            Err(error) => return Err(map_core_error(error)),
+        }
+    }
+
+    Err(DynamoDbError::InternalServerError(
+        "stream sequence allocation exhausted retries under contention".to_owned(),
+    ))
 }
 
 /// Read all captured events for a table's stream, ascending by sequence.
@@ -951,6 +1071,108 @@ mod tests {
             out.next_shard_iterator.is_some(),
             "open shard always advances"
         );
+    }
+
+    /// H3/F3: BatchWriteItem emits stream records (it previously emitted none).
+    /// A put of a fresh key is INSERT, a put over an existing key is MODIFY, and
+    /// a delete of an existing key is REMOVE — all delivered via GetRecords with
+    /// strictly increasing sequence numbers.
+    #[test]
+    fn batch_write_emits_stream_records() {
+        let (service, ctx, _t) = fixture();
+        let arn = streamed_table(&service, &ctx, "NEW_AND_OLD_IMAGES");
+        put(&service, &ctx, "old", "1"); // seed: will be MODIFY then nothing
+        let input = serde_json::from_value(json!({
+            "RequestItems": { "events": [
+                { "PutRequest": { "Item": { "pk": {"S": "fresh"}, "v": {"N": "1"} } } },
+                { "PutRequest": { "Item": { "pk": {"S": "old"}, "v": {"N": "2"} } } },
+                { "DeleteRequest": { "Key": { "pk": {"S": "fresh"} } } }
+            ] }
+        }))
+        .unwrap();
+        crate::commands::batch::batch_write_item(&service, &ctx, input).expect("batch write");
+
+        let out = all_records(&service, &ctx, &arn);
+        // 1 (seed INSERT) + INSERT(fresh) + MODIFY(old) + REMOVE(fresh).
+        let names: Vec<StreamEventName> = out.records.iter().map(|r| r.event_name).collect();
+        assert_eq!(
+            names,
+            vec![
+                StreamEventName::Insert, // seed put
+                StreamEventName::Insert, // batch put fresh
+                StreamEventName::Modify, // batch put over old
+                StreamEventName::Remove, // batch delete fresh
+            ],
+            "BatchWriteItem must emit one stream record per write"
+        );
+        let seqs: Vec<i64> = out
+            .records
+            .iter()
+            .map(|r| r.dynamodb.sequence_number.parse::<i64>().unwrap())
+            .collect();
+        assert!(
+            seqs.windows(2).all(|w| w[1] > w[0]),
+            "sequence numbers strictly increase: {seqs:?}"
+        );
+    }
+
+    /// H3/F3: TransactWriteItems emits stream records, folded into the same
+    /// atomic commit as the data writes. A put and an update in one transaction
+    /// deliver INSERT + INSERT (the update upserts a fresh key) via GetRecords.
+    #[test]
+    fn transact_write_emits_stream_records() {
+        let (service, ctx, _t) = fixture();
+        let arn = streamed_table(&service, &ctx, "NEW_AND_OLD_IMAGES");
+        let input = serde_json::from_value(json!({
+            "TransactItems": [
+                { "Put": { "TableName": "events", "Item": { "pk": {"S": "p1"}, "v": {"N": "1"} } } },
+                { "Update": {
+                    "TableName": "events",
+                    "Key": { "pk": {"S": "u1"} },
+                    "UpdateExpression": "SET v = :v",
+                    "ExpressionAttributeValues": { ":v": {"N": "9"} }
+                } }
+            ]
+        }))
+        .unwrap();
+        crate::commands::transact::transact_write_items(&service, &ctx, input).expect("transact");
+
+        let out = all_records(&service, &ctx, &arn);
+        let names: Vec<StreamEventName> = out.records.iter().map(|r| r.event_name).collect();
+        assert_eq!(
+            names,
+            vec![StreamEventName::Insert, StreamEventName::Insert],
+            "TransactWriteItems must emit a stream record per write"
+        );
+        let seqs: Vec<i64> = out
+            .records
+            .iter()
+            .map(|r| r.dynamodb.sequence_number.parse::<i64>().unwrap())
+            .collect();
+        assert_eq!(
+            seqs,
+            vec![0, 1],
+            "transacted events get consecutive sequences"
+        );
+    }
+
+    /// H3/F8: sequence allocation is monotonic and gap-free across writes — the
+    /// high-water counter advances atomically in the same batch as each event,
+    /// so no two records share a sequence number and none is skipped.
+    #[test]
+    fn capture_event_allocates_monotonic_sequences() {
+        let (service, ctx, _t) = fixture();
+        let arn = streamed_table(&service, &ctx, "NEW_IMAGE");
+        for i in 0..5 {
+            put(&service, &ctx, &format!("k{i}"), &i.to_string());
+        }
+        let out = all_records(&service, &ctx, &arn);
+        let seqs: Vec<i64> = out
+            .records
+            .iter()
+            .map(|r| r.dynamodb.sequence_number.parse::<i64>().unwrap())
+            .collect();
+        assert_eq!(seqs, vec![0, 1, 2, 3, 4], "monotonic, gap-free sequences");
     }
 
     #[test]
