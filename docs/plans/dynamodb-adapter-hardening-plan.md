@@ -7,8 +7,15 @@ multi-tenant enterprise workloads — not just local-dev parity.
 
 ## Status
 
-- **Plan status:** `pending` (authored 2026-05-31 from the post-merge audit;
-  not yet promoted to `in_progress`).
+- **Plan status:** `in_progress` (promoted 2026-05-31 on the
+  `dynamodb-adapter-hardening` worktree branch; verifier
+  `scripts/verify-dynamodb-adapter-hardening.sh` scaffolded RED at 2 passed,
+  9 failed).
+- **Active item:** H1 (SigV4 body-hash binding + auth robustness + strict
+  default). All of H1..H7 are `pending`.
+- **Auth decision (D-Auth):** resolved — **strict-by-default** with `LookupOnly`
+  surviving only as a loopback-only `insecure_dev_auth` escape hatch (set by the
+  `/goal` directive 2026-05-31).
 - **Source:** every item below was **verified against the merged code at the
   cited `file:line`** — agent discovery was re-confirmed by direct reading. One
   agent claim (modularity of `query.rs`/`stream.rs`) was **refuted** and is
