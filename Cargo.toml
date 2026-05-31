@@ -8,6 +8,7 @@ members = [
     "crates/nimbus-bridge",
     "crates/nimbus-cloud-functions",
     "crates/nimbus-convex",
+    "crates/nimbus-dynamodb",
     "crates/nimbus-firebase",
     "crates/nimbus-license",
     "crates/nimbus-machine",
@@ -45,6 +46,15 @@ all = "deny"
 aes-gcm-siv = "0.11"
 aws-config = { version = "1.8.16", features = ["behavior-version-latest"] }
 aws-sdk-kms = { version = "1.105.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
+# Official AWS Rust SDK for DynamoDB — dev-only, used by the dynamodb_spec
+# parity runner to prove every operation through an official SDK client against
+# an endpoint override. Same HTTP/runtime feature flags as aws-sdk-kms so it
+# reuses the already-vetted aws-smithy/hyper/aws-lc stack (no new dup versions).
+aws-sdk-dynamodb = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
+# Official DynamoDB Streams SDK — dev-only, drives the streams data-plane parity
+# proof (DescribeStream/GetShardIterator/GetRecords/ListStreams) against the
+# same in-process listener. Same feature flags as aws-sdk-dynamodb.
+aws-sdk-dynamodbstreams = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
 arc-swap = "1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
@@ -78,6 +88,7 @@ deno_websocket = "0.253.0"
 node_resolver = { version = "0.86.0", features = ["sync"] }
 crc32c = "0.6"
 crc32fast = "1"
+extenddb-core = { git = "https://github.com/ExtendDB/extenddb", rev = "0448ca066c86bddf2eb465092b8b6854923665ee" }
 futures = "0.3"
 fs2 = "0.4"
 hex = "0.4"

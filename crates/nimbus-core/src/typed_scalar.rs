@@ -24,6 +24,13 @@ pub enum TypedScalarValue {
     MinKey,
     MaxKey,
     JavaScriptCode { code: String },
+    // DynamoDB-specific scalars (see docs/plans/dynamodb-adapter-plan.md): `Number`
+    // is an arbitrary-precision decimal kept as its exact string (38 sig digits,
+    // beyond f64/i64); `StringSet`/`NumberSet`/`BinarySet` are DynamoDB SS/NS/BS.
+    Number { repr: String },
+    StringSet { values: Vec<String> },
+    NumberSet { values: Vec<String> },
+    BinarySet { values: Vec<Vec<u8>> },
 }
 
 impl TypedScalarValue {
@@ -41,7 +48,31 @@ impl TypedScalarValue {
             Self::MinKey => Value::String("MinKey".to_string()),
             Self::MaxKey => Value::String("MaxKey".to_string()),
             Self::JavaScriptCode { code } => Value::String(code.clone()),
+            Self::Number { repr } => number_repr_to_json(repr),
+            Self::StringSet { values } => {
+                Value::Array(values.iter().map(|s| Value::String(s.clone())).collect())
+            }
+            Self::NumberSet { values } => {
+                Value::Array(values.iter().map(|s| number_repr_to_json(s)).collect())
+            }
+            Self::BinarySet { values } => Value::Array(
+                values
+                    .iter()
+                    .map(|b| Value::String(base64_encode(b)))
+                    .collect(),
+            ),
         }
+    }
+}
+
+/// Project a DynamoDB `N` decimal string to clean JSON: a JSON number when the
+/// repr fits, else the exact decimal string. The typed sidecar remains the
+/// authoritative full-precision value; this projection is only for adapters that
+/// read the plain JSON view.
+fn number_repr_to_json(repr: &str) -> Value {
+    match serde_json::from_str::<Value>(repr) {
+        Ok(value @ Value::Number(_)) => value,
+        _ => Value::String(repr.to_string()),
     }
 }
 
@@ -100,8 +131,21 @@ impl SpecialDouble {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StoredValue {
-    Json { value: Value },
-    TypedScalar { value: TypedScalarValue },
+    Json {
+        value: Value,
+    },
+    TypedScalar {
+        value: TypedScalarValue,
+    },
+    // Nested containers whose children may themselves be plain JSON, typed
+    // scalars, or further maps/lists — lets typed scalars survive inside
+    // DynamoDB `M`/`L` and as set members (the flat top-level sidecar could not).
+    Map {
+        entries: BTreeMap<String, StoredValue>,
+    },
+    List {
+        items: Vec<StoredValue>,
+    },
 }
 
 impl StoredValue {
@@ -109,6 +153,15 @@ impl StoredValue {
         match self {
             Self::Json { value } => value.clone(),
             Self::TypedScalar { value } => value.projected_json(),
+            Self::Map { entries } => Value::Object(
+                entries
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.projected_json()))
+                    .collect(),
+            ),
+            Self::List { items } => {
+                Value::Array(items.iter().map(StoredValue::projected_json).collect())
+            }
         }
     }
 }
@@ -162,7 +215,7 @@ impl NumericValue {
     }
 }
 
-pub type TypedFieldMap = BTreeMap<String, TypedScalarValue>;
+pub type TypedFieldMap = BTreeMap<String, StoredValue>;
 
 #[cfg(test)]
 mod tests {
@@ -286,5 +339,110 @@ mod tests {
             let back: TypedScalarValue = serde_json::from_str(&json).expect("should deserialize");
             assert_eq!(value, back);
         }
+    }
+
+    #[test]
+    fn dynamodb_scalar_variants_project_and_roundtrip() {
+        // N projects to a JSON number when it fits; sets project to JSON arrays.
+        assert_eq!(
+            TypedScalarValue::Number {
+                repr: "123.45".into()
+            }
+            .projected_json(),
+            json!(123.45)
+        );
+        // A 38-digit number exceeds f64/i64: the clean projection is a best-effort
+        // JSON number (lossy), while the typed sidecar's exact `repr` is preserved
+        // — proven by the exact-roundtrip loop below.
+        let big = "1234567890123456789012345678901234567.8";
+        assert!(
+            TypedScalarValue::Number { repr: big.into() }
+                .projected_json()
+                .is_number()
+        );
+        assert_eq!(
+            TypedScalarValue::StringSet {
+                values: vec!["a".into(), "b".into()]
+            }
+            .projected_json(),
+            json!(["a", "b"])
+        );
+        assert_eq!(
+            TypedScalarValue::NumberSet {
+                values: vec!["1".into(), "2".into()]
+            }
+            .projected_json(),
+            json!([1, 2])
+        );
+        assert_eq!(
+            TypedScalarValue::BinarySet {
+                values: vec![vec![0u8], vec![255u8]]
+            }
+            .projected_json(),
+            json!([base64_encode(&[0u8]), base64_encode(&[255u8])])
+        );
+
+        for value in [
+            TypedScalarValue::Number { repr: big.into() },
+            TypedScalarValue::StringSet {
+                values: vec!["x".into()],
+            },
+            TypedScalarValue::NumberSet {
+                values: vec!["9".into()],
+            },
+            TypedScalarValue::BinarySet {
+                values: vec![vec![1, 2, 3]],
+            },
+        ] {
+            let json = serde_json::to_string(&value).expect("serialize");
+            let back: TypedScalarValue = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(value, back, "exact roundtrip preserves DynamoDB precision");
+        }
+    }
+
+    #[test]
+    fn stored_value_carries_typed_scalars_nested_in_map_and_list() {
+        // A Map containing a precise Number and a List of a Binary — exactly the
+        // nesting the flat top-level sidecar could not express (MongoDB L8).
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "amount".to_string(),
+            StoredValue::TypedScalar {
+                value: TypedScalarValue::Number {
+                    repr: "10000000000000000000000000000000000001".into(),
+                },
+            },
+        );
+        entries.insert(
+            "blobs".to_string(),
+            StoredValue::List {
+                items: vec![StoredValue::TypedScalar {
+                    value: TypedScalarValue::Binary {
+                        subtype: 0,
+                        data: vec![1, 2, 3],
+                    },
+                }],
+            },
+        );
+        entries.insert(
+            "label".to_string(),
+            StoredValue::Json { value: json!("ok") },
+        );
+        let tree = StoredValue::Map { entries };
+
+        // Clean JSON projection: nested binary becomes base64, plain JSON passes
+        // through, and the big number projects best-effort as a JSON number
+        // (its exact value is preserved in the typed tree, asserted by the
+        // roundtrip below).
+        let projected = tree.projected_json();
+        assert!(projected["amount"].is_number());
+        assert_eq!(projected["blobs"], json!([base64_encode(&[1, 2, 3])]));
+        assert_eq!(projected["label"], json!("ok"));
+
+        // The typed tree itself roundtrips losslessly, so the nested typed
+        // leaves survive storage.
+        let serialized = serde_json::to_string(&tree).expect("serialize");
+        let back: StoredValue = serde_json::from_str(&serialized).expect("deserialize");
+        assert_eq!(tree, back);
     }
 }

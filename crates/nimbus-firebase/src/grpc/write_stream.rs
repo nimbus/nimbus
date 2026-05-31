@@ -787,6 +787,11 @@ pub(super) fn encode_stored_value_to_grpc(value: &StoredValue) -> Result<Value, 
     match value {
         StoredValue::Json { value } => encode_nimbus_value_to_grpc(value),
         StoredValue::TypedScalar { value } => encode_typed_scalar_to_grpc(value),
+        // DynamoDB-shaped nested typed trees are not representable on the
+        // Firestore gRPC surface (reached only via cross-adapter reads).
+        StoredValue::Map { .. } | StoredValue::List { .. } => Err(Status::internal(
+            "DynamoDB nested typed values are not supported on the Firestore gRPC surface",
+        )),
     }
 }
 

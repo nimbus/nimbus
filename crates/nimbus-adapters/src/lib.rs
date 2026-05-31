@@ -16,6 +16,11 @@ pub mod convex {
     pub use nimbus_convex::*;
 }
 
+#[cfg(feature = "dynamodb")]
+pub mod dynamodb {
+    pub use nimbus_dynamodb::*;
+}
+
 #[cfg(feature = "firebase")]
 pub mod firebase {
     pub use nimbus_firebase::*;

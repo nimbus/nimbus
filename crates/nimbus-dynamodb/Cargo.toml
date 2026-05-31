@@ -1,0 +1,46 @@
+[package]
+name = "nimbus-dynamodb"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# DynamoDB protocol core (AttributeValue, expression language, validation,
+# error taxonomy) — pinned git rev; see docs/plans/dynamodb-adapter-plan.md.
+extenddb-core = { workspace = true }
+# Nimbus document value model (StoredValue typed sidecar, promoted in D0.1b).
+nimbus-core = { path = "../nimbus-core" }
+# Engine Service (table/document lifecycle) + tenant isolation context.
+nimbus-engine = { path = "../nimbus-engine" }
+nimbus-tenant = { path = "../nimbus-tenant" }
+base64.workspace = true
+# Exact decimal parsing for the order-preserving Number sort-key projection.
+bigdecimal = "0.4"
+# Trait bounds for the generic dispatch deserialize/serialize helper.
+serde.workspace = true
+serde_json.workspace = true
+# DynamoDB TableId (random v4) for table metadata.
+uuid = { version = "1", features = ["v4"] }
+# SigV4 verification primitives (vendored module in src/auth/sigv4/).
+hex.workspace = true
+hmac.workspace = true
+http.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+# Operation-family latency baseline (p50/p95/p99). Custom harness — a plain
+# `fn main` driven by `cargo bench`; see docs/plans/proof/dynamodb-adapter/
+# performance-baseline.md.
+[[bench]]
+name = "operations"
+harness = false
