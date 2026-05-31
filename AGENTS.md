@@ -291,7 +291,7 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   raise Node24 from bounded FaaS-compatible default to a well-supported default,
   expand Node22/Node24 official fixture and package evidence, give Node26 real
   Current-line fixture evidence, and subsume
-  `docs/plans/node-compat-cron-greening-plan.md`.
+  `docs/plans/archive/node-compat-cron-greening-plan.md`.
   Use `docs/plans/archive/node-compatible-runtime-plan.md`,
   `docs/plans/archive/node-lts-compatibility-plan.md`,
   `docs/plans/archive/node-compat-test-infrastructure-plan.md`, and

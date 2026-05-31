@@ -20,9 +20,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
     canaries pass, but treats the current Node24 19.3% official
     full-corpus pass rate and Node26 0 official fixture passes as
     insufficient for a "well-supported default" claim. Introduces a
-    default-support posture with explicit full-corpus, FaaS-required,
-    local-dev-only, service/microVM-routed, and out-of-scope denominators;
-    subsumes `docs/plans/node-compat-cron-greening-plan.md`; expands
+    V8-isolate-only default-support posture with explicit full-corpus,
+    V8-isolate-required, diagnostic-only non-isolate, and out-of-scope
+    denominators; welcomes truthful compatibility shims while forbidding
+    fake-success stubs; requires a `nimbus/nimbus` plus `nimbus/deno` shim and
+    emulation inventory with user-facing capability disclosure;
+    subsumes `docs/plans/archive/node-compat-cron-greening-plan.md`; expands
     Node24/Node22 fixture and package evidence; adds real Convex app
     suites; gives Node26 real Current-line fixture evidence; and gates
     docs/CI on the stricter posture.

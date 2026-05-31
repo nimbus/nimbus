@@ -12,13 +12,31 @@ const mustCallChecks = [];
 const isDebug = process.features?.debug === true;
 const isAIX = process.platform === 'aix';
 const isIBMi = process.platform === 'os400';
+const isSunOS = process.platform === 'sunos';
+const isFreeBSD = process.platform === 'freebsd';
+const isOpenBSD = process.platform === 'openbsd';
+const isLinux = process.platform === 'linux';
+const isMacOS = process.platform === 'darwin';
 const isRiscv64 = process.arch === 'riscv64';
 const isWindows = process.platform === 'win32';
+const isASan = process.config?.variables?.asan === 1;
 const hasInspector = process.features?.inspector === true;
 const hasSQLite = Boolean(process.versions?.sqlite);
 let localhostIPv4 = null;
 const localIPv6Hosts = ['localhost'];
 const tmpdir = require('./tmpdir.js');
+let nimbusForkCurrentCwd = process.cwd();
+const nimbusOriginalProcessChdir = typeof process.chdir === 'function'
+  ? process.chdir.bind(process)
+  : null;
+if (nimbusOriginalProcessChdir) {
+  process.chdir = function nimbusHarnessChdir(directory) {
+    const nextCwd = path.resolve(nimbusForkCurrentCwd, String(directory));
+    const result = nimbusOriginalProcessChdir(directory);
+    nimbusForkCurrentCwd = nextCwd;
+    return result;
+  };
+}
 const PIPE = (() => {
   const pipeName = `n.${process.pid}.sock`;
   if (isWindows) {
@@ -185,6 +203,17 @@ function skipIfDumbTerminal() {
 function skipIfInspectorDisabled() {
   if (!hasInspector) {
     skip('V8 inspector is disabled');
+  }
+}
+
+function isPi() {
+  try {
+    const cpuinfo = fs.readFileSync('/proc/cpuinfo', { encoding: 'utf8' });
+    const ok = /^Hardware\s*:\s*(.*)$/im.exec(cpuinfo)?.[1] === 'BCM2835';
+    /^/.test('');
+    return ok;
+  } catch {
+    return false;
   }
 }
 
@@ -503,28 +532,42 @@ const nimbusClusterShimInstalled = Symbol.for('nimbus.nodeCompatClusterShimInsta
 const nimbusForkExitCleanupInstalled = Symbol.for('nimbus.nodeCompatForkExitCleanupInstalled');
 const nimbusForkWorkers = new Set();
 const nimbusForkWorkerCompletions = new Set();
+const nimbusAsyncChildProcessCompletions = new Set();
 
-async function flushNimbusForkWorkers() {
+async function flushNimbusChildProcesses() {
   const deadline = Date.now() + 1000;
 
   for (;;) {
-    if (nimbusForkWorkerCompletions.size === 0) {
+    if (
+      nimbusForkWorkerCompletions.size === 0 &&
+      nimbusAsyncChildProcessCompletions.size === 0
+    ) {
       await Promise.resolve();
       await new Promise((resolve) => queueMicrotask(resolve));
       if (typeof process.nextTick === 'function') {
         await new Promise((resolve) => process.nextTick(resolve));
       }
-      if (nimbusForkWorkerCompletions.size === 0) {
+      if (
+        nimbusForkWorkerCompletions.size === 0 &&
+        nimbusAsyncChildProcessCompletions.size === 0
+      ) {
         return;
       }
     }
 
-    await Promise.allSettled([...nimbusForkWorkerCompletions]);
+    await Promise.all([
+      ...nimbusForkWorkerCompletions,
+      ...nimbusAsyncChildProcessCompletions,
+    ]);
     if (Date.now() >= deadline) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
+}
+
+async function flushNimbusForkWorkers() {
+  await flushNimbusChildProcesses();
 }
 
 function isNimbusNodeCompatCommand(command) {
@@ -778,6 +821,26 @@ function installClusterShim() {
     enumerable: false,
     writable: false,
   });
+
+  try {
+    const clusterAlias = require('cluster');
+    if (clusterAlias !== cluster && clusterAlias[nimbusClusterShimInstalled] !== true) {
+      if (clusterAlias.Worker?.prototype) {
+        clusterAlias.Worker.prototype.disconnect = cluster.Worker.prototype.disconnect;
+      }
+      if (typeof clusterAlias.fork === 'function') {
+        clusterAlias.fork = cluster.fork;
+      }
+      Object.defineProperty(clusterAlias, nimbusClusterShimInstalled, {
+        value: true,
+        configurable: false,
+        enumerable: false,
+        writable: false,
+      });
+    }
+  } catch {
+    // Some fixture subsets do not load the unprefixed alias.
+  }
 }
 
 function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
@@ -796,6 +859,43 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
   child.__nimbusCompletion = new Promise((resolve) => {
     resolveCompletion = resolve;
   });
+  const runChildEventSoon = (callback) => {
+    try {
+      setTimeout(callback, 0);
+    } catch {
+      try {
+        queueMicrotask(callback);
+      } catch {
+        callback();
+      }
+    }
+  };
+  const maybeHandleClusterQueryServer = (message) => {
+    const value = message?.value;
+    if (
+      message?.type !== 'internalMessage' ||
+      value?.cmd !== 'NODE_CLUSTER' ||
+      value?.act !== 'queryServer'
+    ) {
+      return false;
+    }
+    const key = `${value.address}:${value.port}:${value.addressType}:${value.fd}` +
+      (value.port === 0 ? `:${value.index}` : '');
+    worker.postMessage({
+      cmd: 'NODE_CLUSTER',
+      ack: value.seq,
+      errno: 0,
+      __nimbusSharedHandle: true,
+      key,
+      data: value.data ?? null,
+      sockname: {
+        address: value.address,
+        port: value.port,
+        family: value.addressType === 6 ? 'IPv6' : 'IPv4',
+      },
+    });
+    return true;
+  };
   const trackedCompletion = child.__nimbusCompletion.finally(() => {
     nimbusForkWorkerCompletions.delete(trackedCompletion);
   });
@@ -808,7 +908,12 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
     const ipc = new EventEmitter();
     const processObject = require("node:process");
     const requireFromChild = require("node:module").createRequire(workerData.modulePath);
+    const pathModule = require("node:path");
     const nimbusListeningNotified = Symbol.for("nimbus.nodeCompatForkListeningNotified");
+    const nimbusClusterWorkerReplayInstalled = Symbol.for("nimbus.nodeCompatClusterWorkerReplayInstalled");
+    const pendingIpcMessages = [];
+    let replayingPendingIpcMessages = false;
+    let exitCloseTimer = null;
 
     const originalEmit = processObject.emit.bind(processObject);
     const originalOn = processObject.on.bind(processObject);
@@ -824,10 +929,140 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
       ) {
         return;
       }
-      if (processObject.connected !== false && ipc.listenerCount("message") > 0) {
+      const hasLifecycleListener =
+        ipc.listenerCount("message") > 0 ||
+        processObject.listenerCount("disconnect") > 0 ||
+        processObject.listenerCount("internalMessage") > 0;
+      if (processObject.connected !== false && hasLifecycleListener) {
         parentPort.ref();
       } else {
         parentPort.unref();
+      }
+    };
+    const closeForkWorker = () => {
+      if (exitCloseTimer !== null) {
+        clearTimeout(exitCloseTimer);
+        exitCloseTimer = null;
+      }
+      try {
+        parentPort.close();
+      } catch {
+        // The final lifecycle notification was already posted.
+      }
+      try {
+        if (typeof globalThis.__nimbusCloseWorker === "function") {
+          globalThis.__nimbusCloseWorker();
+          return;
+        }
+        if (typeof globalThis.close === "function") {
+          globalThis.close();
+        }
+      } catch {
+        // The worker thread is already on its way down.
+      }
+    };
+    const hasClusterWorkerMessageListener = () => {
+      try {
+        const cluster = require("node:cluster");
+        return cluster?.isWorker === true &&
+          cluster.worker &&
+          typeof cluster.worker.listenerCount === "function" &&
+          cluster.worker.listenerCount("message") > 0;
+      } catch {
+        return false;
+      }
+    };
+    const hasIpcMessageConsumer = () =>
+      ipc.listenerCount("message") > 0 || hasClusterWorkerMessageListener();
+    const traceEventCategoriesFromExecArgv = () => {
+      for (let i = 0; i < processObject.execArgv.length; i++) {
+        const arg = processObject.execArgv[i];
+        if (arg === "--trace-event-categories") {
+          return processObject.execArgv[i + 1];
+        }
+        if (
+          typeof arg === "string" &&
+          arg.startsWith("--trace-event-categories=")
+        ) {
+          return arg.slice("--trace-event-categories=".length);
+        }
+      }
+      return null;
+    };
+    const enableTraceEventsFromExecArgv = () => {
+      const categoryList = traceEventCategoriesFromExecArgv();
+      if (typeof categoryList !== "string" || categoryList.length === 0) {
+        return;
+      }
+      const categories = categoryList.split(",").filter((category) => category.length > 0);
+      if (categories.length === 0) {
+        return;
+      }
+      try {
+        require("node:trace_events").createTracing({ categories }).enable();
+      } catch {
+        // Invalid trace category input should not prevent fork startup.
+      }
+    };
+    const emitIpcMessage = (message) => {
+      ipc.emit("message", message);
+      originalEmit("message", message);
+    };
+    const replayPendingIpcMessages = () => {
+      if (replayingPendingIpcMessages || !hasIpcMessageConsumer()) {
+        return;
+      }
+      replayingPendingIpcMessages = true;
+      try {
+        while (pendingIpcMessages.length > 0 && hasIpcMessageConsumer()) {
+          emitIpcMessage(pendingIpcMessages.shift());
+        }
+      } finally {
+        replayingPendingIpcMessages = false;
+      }
+    };
+    const schedulePendingIpcReplay = () => {
+      try {
+        queueMicrotask(replayPendingIpcMessages);
+      } catch {
+        replayPendingIpcMessages();
+      }
+    };
+    const patchClusterWorkerMessageReplay = () => {
+      try {
+        const cluster = require("node:cluster");
+        const worker = cluster?.worker;
+        if (
+          cluster?.isWorker !== true ||
+          !worker ||
+          worker[nimbusClusterWorkerReplayInstalled] === true
+        ) {
+          return;
+        }
+        const originalWorkerOn = worker.on.bind(worker);
+        const originalWorkerOnce = worker.once.bind(worker);
+        worker.on = function on(name, listener) {
+          const result = originalWorkerOn(name, listener);
+          if (name === "message") {
+            schedulePendingIpcReplay();
+          }
+          return result;
+        };
+        worker.once = function once(name, listener) {
+          const result = originalWorkerOnce(name, listener);
+          if (name === "message") {
+            schedulePendingIpcReplay();
+          }
+          return result;
+        };
+        Object.defineProperty(worker, nimbusClusterWorkerReplayInstalled, {
+          value: true,
+          configurable: false,
+          enumerable: false,
+          writable: false,
+        });
+      } catch {
+        // Non-cluster children do not need the replay hook.
       }
     };
 
@@ -842,6 +1077,33 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
     processObject.execPath = workerData.execPath;
     processObject.connected = true;
     processObject.exitCode = null;
+    let nimbusLogicalCwd = processObject.cwd();
+    const originalProcessCwd = processObject.cwd.bind(processObject);
+    const originalProcessChdir = processObject.chdir.bind(processObject);
+    processObject.cwd = function cwd() {
+      return nimbusLogicalCwd;
+    };
+    processObject.chdir = function chdir(directory) {
+      const nextCwd = pathModule.resolve(nimbusLogicalCwd, String(directory));
+      const result = originalProcessChdir(directory);
+      nimbusLogicalCwd = nextCwd;
+      return result;
+    };
+    try {
+      Object.defineProperty(globalThis, "process", {
+        value: processObject,
+        configurable: true,
+        enumerable: false,
+        writable: true,
+      });
+    } catch {
+      try {
+        globalThis.process = processObject;
+      } catch {
+        // The emulated fork child can still run through require("node:process"),
+        // but CommonJS fixtures normally read the global process binding.
+      }
+    }
     const patchForkWorkerThreadView = (target) => {
       if (!target || typeof target !== "object") {
         return;
@@ -905,6 +1167,21 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
     } catch {
       // Best-effort only.
     }
+    const emitProcessExitOnce = (code) => {
+      const exitCode = code == null ? 0 : Number(code);
+      if (!processObject._exiting) {
+        processObject._exiting = true;
+        originalEmit("exit", exitCode);
+      }
+      return exitCode;
+    };
+    try {
+      globalThis.addEventListener("unload", () => {
+        emitProcessExitOnce(processObject.exitCode);
+      });
+    } catch {
+      // Not every worker embedder exposes unload events.
+    }
     processObject.exit = function exit(code) {
       if (code !== undefined) {
         processObject.exitCode = code;
@@ -919,11 +1196,9 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
         } catch {
           // Best-effort only; the parent can still observe a terminated worker.
         }
+        syncIpcRefState();
       }
-      if (!processObject._exiting) {
-        processObject._exiting = true;
-        originalEmit("exit", exitCode);
-      }
+      emitProcessExitOnce(exitCode);
       try {
         parentPort.postMessage({
           __nimbusType: "exit",
@@ -932,10 +1207,23 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
       } catch {
         // Best-effort only; the parent can still observe a terminated worker.
       }
+      try {
+        exitCloseTimer = setTimeout(closeForkWorker, 100);
+      } catch {
+        try {
+          queueMicrotask(closeForkWorker);
+        } catch {
+          closeForkWorker();
+        }
+      }
     };
     processObject.reallyExit = processObject.exit;
     processObject.send = function send(message) {
-      parentPort.postMessage({ type: "message", value: message });
+      if (message && message.cmd === "NODE_CLUSTER") {
+        parentPort.postMessage({ type: "internalMessage", value: message });
+      } else {
+        parentPort.postMessage({ type: "message", value: message });
+      }
       return true;
     };
     processObject.disconnect = function disconnect() {
@@ -955,17 +1243,27 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
       if (name === "message") {
         ipc.on(name, listener);
         syncIpcRefState();
+        schedulePendingIpcReplay();
         return processObject;
       }
-      return originalOn(name, listener);
+      const result = originalOn(name, listener);
+      if (name === "disconnect" || name === "internalMessage") {
+        syncIpcRefState();
+      }
+      return result;
     };
     processObject.once = function once(name, listener) {
       if (name === "message") {
         ipc.once(name, listener);
         syncIpcRefState();
+        schedulePendingIpcReplay();
         return processObject;
       }
-      return originalOnce(name, listener);
+      const result = originalOnce(name, listener);
+      if (name === "disconnect" || name === "internalMessage") {
+        syncIpcRefState();
+      }
+      return result;
     };
     processObject.off = function off(name, listener) {
       if (name === "message") {
@@ -993,9 +1291,27 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
     for (const [key, value] of Object.entries(workerData.env)) {
       processObject.env[key] = value;
     }
-    if (typeof workerData.cwd === "string" && workerData.cwd.length > 0) {
-      processObject.chdir(workerData.cwd);
+    try {
+      const cluster = require("node:cluster");
+      if (cluster?.isWorker === true) {
+        delete processObject.env.NODE_UNIQUE_ID;
+      }
+    } catch {
+      // Best-effort only; the fork child can still run non-cluster fixtures.
     }
+    patchClusterWorkerMessageReplay();
+    if (typeof workerData.cwd === "string" && workerData.cwd.length > 0) {
+      try {
+        if (typeof Deno !== "undefined" && typeof Deno.chdir === "function") {
+          Deno.chdir(workerData.cwd);
+        }
+      } catch {
+        // process.chdir below preserves the Node-visible error behavior.
+      }
+      processObject.chdir(workerData.cwd);
+      processObject.env.DENO_NODE_TRACE_EVENT_DIRECTORY = workerData.cwd;
+    }
+    enableTraceEventsFromExecArgv();
 
     ipc.on("removeListener", (name) => {
       if (name === "message") {
@@ -1003,7 +1319,21 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
       }
     });
 
+    let childStarted = false;
+    const startForkChild = () => {
+      if (childStarted) {
+        return;
+      }
+      childStarted = true;
+      requireFromChild(workerData.modulePath);
+      parentPort.postMessage({ type: "online" });
+    };
+
     parentPort.on("message", (message) => {
+      if (message && message.__nimbusType === "start") {
+        startForkChild();
+        return;
+      }
       if (message && message.__nimbusType === "clusterDisconnect") {
         try {
           const cluster = require("node:cluster");
@@ -1021,11 +1351,42 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
         processObject.disconnect();
         return;
       }
-      ipc.emit("message", message);
+      if (message && message.__nimbusType === "exitAck") {
+        closeForkWorker();
+        return;
+      }
+      if (message && message.__nimbusType === "forceClose") {
+        closeForkWorker();
+        return;
+      }
+      if (message && message.cmd === "NODE_CLUSTER") {
+        let handle;
+        if (message.__nimbusSharedHandle === true) {
+          handle = {
+            close() {},
+            listen() {
+              return 0;
+            },
+            ref() {},
+            unref() {},
+          };
+          if (message.sockname) {
+            handle.getsockname = (out) => {
+              Object.assign(out, message.sockname);
+              return 0;
+            };
+          }
+        }
+        originalEmit("internalMessage", message, handle);
+        return;
+      }
+      if (!hasIpcMessageConsumer()) {
+        pendingIpcMessages.push(message);
+        return;
+      }
+      emitIpcMessage(message);
     });
     syncIpcRefState();
-    requireFromChild(workerData.modulePath);
-    parentPort.postMessage({ type: "online" });
   `;
 
   const env =
@@ -1046,10 +1407,13 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
       ? process.execArgv.map((value) => String(value))
       : [];
   const execPath = typeof options?.execPath === 'string' ? options.execPath : process.execPath;
-  const cwd = typeof options?.cwd === 'string' ? options.cwd : null;
+  const cwd = typeof options?.cwd === 'string'
+    ? path.resolve(nimbusForkCurrentCwd, options.cwd)
+    : nimbusForkCurrentCwd;
 
   const worker = new Worker(workerBootstrap, {
     eval: true,
+    env,
     workerData: {
       modulePath: String(modulePath),
       args: args.map((value) => String(value)),
@@ -1059,6 +1423,22 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
       execPath,
     },
   });
+  const startForkWorker = () => {
+    try {
+      worker.postMessage({ __nimbusType: 'start' });
+    } catch {
+      // Worker construction succeeded, but it may have failed before start.
+    }
+  };
+  try {
+    setTimeout(startForkWorker, 0);
+  } catch {
+    try {
+      queueMicrotask(startForkWorker);
+    } catch {
+      startForkWorker();
+    }
+  }
   nimbusForkWorkers.add(worker);
   let requestedExitCode = null;
   let requestedSignalCode = null;
@@ -1070,17 +1450,30 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
     if (message?.__nimbusType === 'disconnect') {
       if (child.connected) {
         child.connected = false;
-        child.emit('disconnect');
+        runChildEventSoon(() => child.emit('disconnect'));
       }
     } else if (message?.__nimbusType === 'exit') {
       requestedExitCode = Number.isInteger(message.code) ? message.code : 0;
+      try {
+        worker.postMessage({ __nimbusType: 'exitAck' });
+      } catch {
+        // The worker may already be closing itself after publishing status.
+      }
       void worker.terminate();
     } else if (message?.type === 'online') {
-      child.emit('online');
+      runChildEventSoon(() => {
+        child.emit('internalMessage', { cmd: 'NODE_CLUSTER', act: 'online' });
+        child.emit('online');
+      });
     } else if (message?.type === 'listening') {
-      child.emit('listening', message.value ?? null);
+      runChildEventSoon(() => child.emit('listening', message.value ?? null));
+    } else if (message?.type === 'internalMessage') {
+      if (maybeHandleClusterQueryServer(message)) {
+        return;
+      }
+      runChildEventSoon(() => child.emit('internalMessage', message.value));
     } else if (message?.type === 'message') {
-      child.emit('message', message.value);
+      runChildEventSoon(() => child.emit('message', message.value));
     }
   });
   worker.once('error', (error) => {
@@ -1100,12 +1493,14 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
     child.connected = false;
     child.exitCode = requestedSignalCode == null ? (requestedExitCode ?? code) : null;
     child.signalCode = requestedSignalCode;
-    resolveCompletion?.({
-      code: child.exitCode,
-      signal: child.signalCode,
+    runChildEventSoon(() => {
+      child.emit('exit', child.exitCode, child.signalCode);
+      child.emit('close', child.exitCode, child.signalCode);
+      resolveCompletion?.({
+        code: child.exitCode,
+        signal: child.signalCode,
+      });
     });
-    child.emit('exit', child.exitCode, child.signalCode);
-    child.emit('close', child.exitCode, child.signalCode);
   });
 
   child.send = function send(message) {
@@ -1118,9 +1513,14 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
     requestedExitCode = null;
     if (this.connected) {
       this.connected = false;
-      child.emit('disconnect');
+      runChildEventSoon(() => child.emit('disconnect'));
     }
     nimbusForkWorkers.delete(worker);
+    try {
+      worker.postMessage({ __nimbusType: 'forceClose' });
+    } catch {
+      // The worker may already have exited while the signal was being sent.
+    }
     void worker.terminate();
     return true;
   };
@@ -1185,9 +1585,20 @@ function createNimbusAsyncChildProcess(command, args = [], options = {}) {
       child.stdout?.end();
       child.stderr?.end();
       child.emit('error', error);
-      throw error;
+      return {
+        pid: child.pid,
+        code: 1,
+        signal: null,
+        stdout: '',
+        stderr: typeof error?.stack === 'string' ? `${error.stack}\n` : `${String(error)}\n`,
+      };
     }
   })();
+  const trackedCompletion = child.__nimbusCompletion.finally(() => {
+    nimbusAsyncChildProcessCompletions.delete(trackedCompletion);
+  });
+  trackedCompletion.catch(() => {});
+  nimbusAsyncChildProcessCompletions.add(trackedCompletion);
 
   return child;
 }
@@ -1322,6 +1733,28 @@ function installChildProcessShim() {
     enumerable: false,
     writable: false,
   });
+
+  try {
+    const childProcessAlias = require('child_process');
+    if (
+      childProcessAlias !== childProcess &&
+      childProcessAlias[nimbusChildProcessShimInstalled] !== true
+    ) {
+      childProcessAlias.spawnSync = childProcess.spawnSync;
+      childProcessAlias.execFileSync = childProcess.execFileSync;
+      childProcessAlias.spawn = childProcess.spawn;
+      childProcessAlias.execFile = childProcess.execFile;
+      childProcessAlias.fork = childProcess.fork;
+      Object.defineProperty(childProcessAlias, nimbusChildProcessShimInstalled, {
+        value: true,
+        configurable: false,
+        enumerable: false,
+        writable: false,
+      });
+    }
+  } catch {
+    // Some fixture subsets do not load the unprefixed alias.
+  }
 }
 
 installChildProcessShim();
@@ -1356,9 +1789,16 @@ module.exports = {
   hasIntl: typeof Intl === 'object' && typeof Intl.DateTimeFormat === 'function',
   isDumbTerminal: process.env.TERM === 'dumb',
   isAIX,
+  isASan,
+  isDebug,
+  isFreeBSD,
   isIBMi,
-  isMacOS: process.platform === 'darwin',
+  isLinux,
+  isMacOS,
+  isOpenBSD,
+  isPi,
   isRiscv64,
+  isSunOS,
   isWindows,
   isAlive,
   localIPv6Hosts,
@@ -1387,11 +1827,20 @@ module.exports = {
   PIPE,
   spawnPromisified,
   __nimbusFlushForkWorkers: flushNimbusForkWorkers,
+  __nimbusFlushChildProcesses: flushNimbusChildProcesses,
   get localhostIPv4() {
     if (localhostIPv4 === null) {
       localhostIPv4 = '127.0.0.1';
     }
     return localhostIPv4;
+  },
+  get isInsideDirWithUnusualChars() {
+    return __dirname.includes('%') ||
+           (!isWindows && __dirname.includes('\\')) ||
+           __dirname.includes('$') ||
+           __dirname.includes('\n') ||
+           __dirname.includes('\r') ||
+           __dirname.includes('\t');
   },
   get enoughTestMem() {
     try {

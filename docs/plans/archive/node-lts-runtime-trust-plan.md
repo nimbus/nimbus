@@ -31,7 +31,7 @@ the research baseline, proof files, and the current working tree.
 1. Read `AGENTS.md`, then this plan, then the research baseline.
 2. Check `git status --short` and treat unrelated dirty files as user or prior
    work. Do not revert them.
-3. Read `docs/plans/node-compat-cron-greening-plan.md` before touching Node
+3. Read `docs/plans/archive/node-compat-cron-greening-plan.md` before touching Node
    bootstrap, process metadata, or node-compat harness code. If NCG is still
    active and touches the same files, coordinate rather than interleaving
    hidden assumptions.
@@ -84,7 +84,7 @@ As of 2026-05-27:
 - Node22 is Maintenance LTS and must be a supported LTS lane.
 - Node24 is Active LTS and must be a supported LTS lane.
 - Node26 is Current and should be preview-only until it reaches LTS.
-- `docs/plans/node-compat-cron-greening-plan.md` is a nearer-term plan to green
+- `docs/plans/archive/node-compat-cron-greening-plan.md` is a nearer-term plan to green
   the currently failing Node Compatibility cron. NLRT does not silence that
   plan; it builds the next support architecture around it.
 
@@ -264,7 +264,7 @@ Findings:
   NLRT0 is accepted and marked `in_progress`.
 - No requirement is left without a measurable artifact or verifier condition.
 - The only live coordination hazard is overlap with
-  `docs/plans/node-compat-cron-greening-plan.md`; the resume protocol and risk
+  `docs/plans/archive/node-compat-cron-greening-plan.md`; the resume protocol and risk
   register now make that coordination explicit.
 
 Re-audited on 2026-05-28 after the maintainability/refactor extraction.
@@ -299,7 +299,7 @@ Closeout audit on 2026-05-28:
 ## References
 
 - `docs/plans/research/node-lts-runtime-and-deno-fork-strategy.md`
-- `docs/plans/node-compat-cron-greening-plan.md`
+- `docs/plans/archive/node-compat-cron-greening-plan.md`
 - `docs/runtimes/nodejs/compatibility.md`
 - `docs/runtimes/nodejs/evidence/refreshing.md`
 - `docs/architecture/runtime/permission-model.md`

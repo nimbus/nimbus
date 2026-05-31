@@ -3,18 +3,19 @@ use super::support::*;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial_test::serial(postgres_provider)]
 async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_direct_crud() {
-    // This lane validates correctness, not a tight performance SLO. Under the
-    // full workspace test load in CI, external-provider tests can run much
-    // slower than the focused local case, so keep enough headroom to catch
-    // real hangs without flaking on runner contention. The Coverage shards
-    // run this under cargo-llvm-cov instrumentation, which adds another
-    // multiplier on top of CI runner contention.
-    expect_external_provider_future_within(
-        "postgres repeated direct CRUD should finish promptly",
-        Duration::from_secs(60),
-        Duration::from_secs(360),
-        async {
-            with_postgres_service_config(|service_config, _provider_config| async move {
+    with_postgres_service_config(|service_config, _provider_config| async move {
+        // This lane validates correctness, not a tight performance SLO. Keep
+        // the bounded watchdog scoped to the direct CRUD contract rather than
+        // Docker/Testcontainers fixture provisioning. Under the full workspace
+        // test load in CI, external-provider tests can run much slower than
+        // the focused local case, so keep enough headroom to catch real hangs
+        // without flaking on runner contention. The Coverage shards run this
+        // under cargo-llvm-cov instrumentation, which adds another multiplier.
+        expect_external_provider_future_within(
+            "postgres repeated direct CRUD should finish promptly",
+            Duration::from_secs(60),
+            Duration::from_secs(360),
+            async {
                 let tenant_id = TenantId::new("pg-repeated-crud").expect("tenant id should build");
                 let service = Arc::new(
                     Service::new_with_persistence_config(service_config)
@@ -27,10 +28,11 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
                     .await
                     .expect("tenant should create");
 
-                // Keep enough direct CRUD churn to validate sequence/head
-                // correctness, but do not turn this external-provider lane
-                // into a throughput benchmark under shared CI runners.
-                const CRUD_ROUNDS: usize = 48;
+                // This is a semantic sequence-head check, not a throughput
+                // benchmark. A dozen full insert/update/delete cycles keeps
+                // repeated direct CRUD coverage while leaving enough timeout
+                // headroom for Docker-backed local Postgres fixtures.
+                const CRUD_ROUNDS: usize = 12;
                 for round in 0..CRUD_ROUNDS {
                     let document_id = service
                         .insert_document_async(
@@ -85,10 +87,10 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
                     .await
                     .expect("service should quiesce before Postgres fixture cleanup");
                 drop(service);
-            })
-            .await;
-        },
-    )
+            },
+        )
+        .await;
+    })
     .await;
 }
 

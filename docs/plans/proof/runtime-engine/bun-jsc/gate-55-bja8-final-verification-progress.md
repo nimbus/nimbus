@@ -28,7 +28,7 @@ Unrelated local dirty files remain outside the Bun/JSC commits:
 
 - generated Convex demo files under `demos/convex/*/convex/_generated/`
 - `package-lock.json`
-- `docs/plans/node-compat-cron-greening-plan.md`
+- `docs/plans/archive/node-compat-cron-greening-plan.md`
 - untracked desktop-auth proof screenshots
 
 ## Passing Local Broad Gates
