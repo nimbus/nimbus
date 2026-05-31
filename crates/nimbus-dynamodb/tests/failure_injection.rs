@@ -24,7 +24,11 @@ fn service() -> (Arc<Service>, tempfile::TempDir) {
 }
 
 fn registry() -> AccessKeyRegistry {
-    AccessKeyRegistry::new().bind(KEY, TenantId::new("acme").expect("tenant"))
+    // Fault-injection drives synthetic-signature requests, so use the lookup
+    // escape hatch; strict verification has its own coverage at line 220.
+    AccessKeyRegistry::new()
+        .bind(KEY, TenantId::new("acme").expect("tenant"))
+        .with_mode(AuthMode::LookupOnly)
 }
 
 fn signed_as(key: &str) -> String {

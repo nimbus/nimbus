@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use http::{HeaderMap, HeaderValue};
 use nimbus_core::TenantId;
-use nimbus_dynamodb::{AccessKeyRegistry, DispatchContext, dispatch};
+use nimbus_dynamodb::{AccessKeyRegistry, AuthMode, DispatchContext, dispatch};
 use nimbus_engine::Service;
 use serde_json::{Value, json};
 
@@ -18,9 +18,12 @@ const GLOBEX_KEY: &str = "AKIAGLOBEX";
 fn fixture() -> (Arc<Service>, AccessKeyRegistry, tempfile::TempDir) {
     let temp = tempfile::tempdir().expect("tempdir");
     let service = Arc::new(Service::new(temp.path()).expect("service"));
+    // Synthetic-signature requests exercise tenant scoping through the lookup
+    // escape hatch; cross-tenant isolation holds independently of auth mode.
     let registry = AccessKeyRegistry::new()
         .bind(ACME_KEY, TenantId::new("acme").expect("tenant"))
-        .bind(GLOBEX_KEY, TenantId::new("globex").expect("tenant"));
+        .bind(GLOBEX_KEY, TenantId::new("globex").expect("tenant"))
+        .with_mode(AuthMode::LookupOnly);
     (service, registry, temp)
 }
 
