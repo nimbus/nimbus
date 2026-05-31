@@ -76,6 +76,12 @@ pub fn encode_proto_json_stored_value(
     match value {
         StoredValue::Json { value } => encode_proto_json_value(value),
         StoredValue::TypedScalar { value } => encode_proto_json_typed_scalar(value),
+        // DynamoDB-shaped nested typed trees; not representable on the Firestore
+        // surface (reached only when cross-adapter reading DynamoDB-written data).
+        StoredValue::Map { .. } => Err(FirestoreProtoJsonError::UnsupportedType("storedValue:Map")),
+        StoredValue::List { .. } => {
+            Err(FirestoreProtoJsonError::UnsupportedType("storedValue:List"))
+        }
     }
 }
 
@@ -318,6 +324,18 @@ pub fn firestore_value_from_typed_scalar(
         )),
         TypedScalarValue::JavaScriptCode { .. } => Err(FirestoreProtoJsonError::UnsupportedType(
             "typedScalar:JavaScriptCode",
+        )),
+        TypedScalarValue::Number { .. } => Err(FirestoreProtoJsonError::UnsupportedType(
+            "typedScalar:Number",
+        )),
+        TypedScalarValue::StringSet { .. } => Err(FirestoreProtoJsonError::UnsupportedType(
+            "typedScalar:StringSet",
+        )),
+        TypedScalarValue::NumberSet { .. } => Err(FirestoreProtoJsonError::UnsupportedType(
+            "typedScalar:NumberSet",
+        )),
+        TypedScalarValue::BinarySet { .. } => Err(FirestoreProtoJsonError::UnsupportedType(
+            "typedScalar:BinarySet",
         )),
     }
 }

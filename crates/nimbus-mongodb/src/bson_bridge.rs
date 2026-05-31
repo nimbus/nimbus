@@ -44,13 +44,13 @@ pub fn bson_doc_to_document(
         let (json_val, typed_opt) = bson_to_json_with_metadata(value);
         fields.insert(key.to_string(), json_val);
         if let Some(typed) = typed_opt {
-            typed_fields.insert(key.to_string(), typed);
+            typed_fields.insert(key.to_string(), typed.into());
         }
     }
 
     let mut doc = Document::with_id(doc_id, table.clone(), fields);
     if let Some(typed) = id_typed {
-        typed_fields.insert("_id_type".to_string(), typed);
+        typed_fields.insert("_id_type".to_string(), typed.into());
     }
     doc.typed_fields = typed_fields;
     Ok(doc)
@@ -149,7 +149,7 @@ fn bson_to_canonical_id_string(value: &Bson) -> String {
 }
 
 fn reconstruct_bson_id(document: &Document) -> Bson {
-    if let Some(typed) = document.typed_fields.get("_id_type") {
+    if let Some(typed) = document.typed_field("_id_type") {
         return typed_scalar_to_bson(typed);
     }
     let id_str = document.id.as_str();
@@ -361,6 +361,13 @@ fn typed_scalar_to_bson(typed: &TypedScalarValue) -> Bson {
         TypedScalarValue::MinKey => Bson::MinKey,
         TypedScalarValue::MaxKey => Bson::MaxKey,
         TypedScalarValue::JavaScriptCode { code } => Bson::JavaScriptCode(code.clone()),
+        // DynamoDB-specific scalars (N/SS/NS/BS) are not native MongoDB types.
+        // They only reach here when a DynamoDB-written document is read back
+        // through the MongoDB adapter (cross-adapter); project via clean JSON.
+        TypedScalarValue::Number { .. }
+        | TypedScalarValue::StringSet { .. }
+        | TypedScalarValue::NumberSet { .. }
+        | TypedScalarValue::BinarySet { .. } => json_to_bson(&typed.projected_json()),
     }
 }
 
@@ -441,7 +448,7 @@ mod tests {
         assert_eq!(nimbus_doc.id.as_str().len(), 24);
         assert!(nimbus_doc.typed_fields.contains_key("_id_type"));
         assert!(matches!(
-            nimbus_doc.typed_fields.get("_id_type"),
+            nimbus_doc.typed_field("_id_type"),
             Some(TypedScalarValue::ObjectId { .. })
         ));
 
@@ -488,7 +495,7 @@ mod tests {
 
         let nimbus_doc = bson_doc_to_document(&bson_doc, &test_table()).unwrap();
         assert!(matches!(
-            nimbus_doc.typed_fields.get("data"),
+            nimbus_doc.typed_field("data"),
             Some(TypedScalarValue::Binary { subtype: 0, data }) if data == &[0xCA, 0xFE, 0xBA, 0xBE]
         ));
 
@@ -509,7 +516,7 @@ mod tests {
 
         let nimbus_doc = bson_doc_to_document(&bson_doc, &test_table()).unwrap();
         assert!(matches!(
-            nimbus_doc.typed_fields.get("pattern"),
+            nimbus_doc.typed_field("pattern"),
             Some(TypedScalarValue::Regex { pattern, options })
                 if pattern == "^hello" && options == "i"
         ));
@@ -534,7 +541,7 @@ mod tests {
 
         let nimbus_doc = bson_doc_to_document(&bson_doc, &test_table()).unwrap();
         assert!(matches!(
-            nimbus_doc.typed_fields.get("created"),
+            nimbus_doc.typed_field("created"),
             Some(TypedScalarValue::Timestamp { value: Timestamp(ms) }) if *ms == millis as u64
         ));
 
@@ -554,7 +561,7 @@ mod tests {
 
         let nimbus_doc = bson_doc_to_document(&bson_doc, &test_table()).unwrap();
         assert!(matches!(
-            nimbus_doc.typed_fields.get("ts"),
+            nimbus_doc.typed_field("ts"),
             Some(TypedScalarValue::MongoTimestamp {
                 seconds: 1000,
                 increment: 5
@@ -581,11 +588,11 @@ mod tests {
 
         let nimbus_doc = bson_doc_to_document(&bson_doc, &test_table()).unwrap();
         assert!(matches!(
-            nimbus_doc.typed_fields.get("low"),
+            nimbus_doc.typed_field("low"),
             Some(TypedScalarValue::MinKey)
         ));
         assert!(matches!(
-            nimbus_doc.typed_fields.get("high"),
+            nimbus_doc.typed_field("high"),
             Some(TypedScalarValue::MaxKey)
         ));
 
@@ -656,7 +663,7 @@ mod tests {
 
         let nimbus_doc = bson_doc_to_document(&bson_doc, &test_table()).unwrap();
         assert!(matches!(
-            nimbus_doc.typed_fields.get("validator"),
+            nimbus_doc.typed_field("validator"),
             Some(TypedScalarValue::JavaScriptCode { code })
                 if code == "function() { return true; }"
         ));
@@ -716,7 +723,7 @@ mod tests {
 
         let nimbus_doc = bson_doc_to_document(&bson_doc, &test_table()).unwrap();
         assert!(matches!(
-            nimbus_doc.typed_fields.get("price"),
+            nimbus_doc.typed_field("price"),
             Some(TypedScalarValue::Decimal128 { .. })
         ));
 

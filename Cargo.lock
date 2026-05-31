@@ -502,6 +502,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-dynamodb"
+version = "1.111.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc418346e3cb248c7d59e642acbcb06488b7c7cd2ba6ebc79e8003f618c60099"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.4.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
+name = "aws-sdk-dynamodbstreams"
+version = "1.99.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30a60509ffa138c6a4d7cfcfd5e28fb1b58f087cd2801602bba9753f4b3d1723"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.4.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-kms"
 version = "1.105.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -962,6 +1010,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd228125315b132eed175bf47619ac79b945b26e56b848ba203ae4ea8603609"
 dependencies = [
  "scoped-tls",
+]
+
+[[package]]
+name = "bigdecimal"
+version = "0.4.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d6867f1565b3aad85681f1015055b087fcfd840d6aeee6eee7f2da317603695"
+dependencies = [
+ "autocfg",
+ "libm",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -3695,6 +3757,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "extenddb-core"
+version = "0.1.0"
+source = "git+https://github.com/ExtendDB/extenddb?rev=0448ca066c86bddf2eb465092b8b6854923665ee#0448ca066c86bddf2eb465092b8b6854923665ee"
+dependencies = [
+ "base64 0.22.1",
+ "bigdecimal",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
+ "uuid",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5896,6 +5972,7 @@ version = "0.1.33"
 dependencies = [
  "nimbus-cloud-functions",
  "nimbus-convex",
+ "nimbus-dynamodb",
  "nimbus-firebase",
  "nimbus-mongodb",
 ]
@@ -6028,6 +6105,26 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.18",
  "ulid",
+]
+
+[[package]]
+name = "nimbus-dynamodb"
+version = "0.1.33"
+dependencies = [
+ "base64 0.22.1",
+ "bigdecimal",
+ "extenddb-core",
+ "hex",
+ "hmac 0.12.1",
+ "http 1.4.0",
+ "nimbus-core",
+ "nimbus-engine",
+ "nimbus-tenant",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "uuid",
 ]
 
 [[package]]
@@ -6235,6 +6332,8 @@ dependencies = [
 name = "nimbus-server"
 version = "0.1.33"
 dependencies = [
+ "aws-sdk-dynamodb",
+ "aws-sdk-dynamodbstreams",
  "axum 0.8.8",
  "base64 0.22.1",
  "bson",
@@ -6250,6 +6349,7 @@ dependencies = [
  "nimbus-cloud-functions",
  "nimbus-convex",
  "nimbus-core",
+ "nimbus-dynamodb",
  "nimbus-engine",
  "nimbus-firebase",
  "nimbus-license",

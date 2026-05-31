@@ -5,6 +5,7 @@ use nimbus_engine::Service;
 use crate::adapters;
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
 use crate::adapters::convex::ConvexRegistry;
+use crate::adapters::dynamodb::DynamoDbConfig;
 use crate::adapters::firebase::FirebaseConfig;
 use crate::adapters::mongodb::MongoDbConfig;
 use crate::license::LicenseState;
@@ -19,6 +20,7 @@ use nimbus_services::SandboxServiceManager;
 pub struct ServeOptions {
     router_options: RouterOptions,
     mongodb_config: Option<MongoDbConfig>,
+    dynamodb_config: Option<DynamoDbConfig>,
 }
 
 impl ServeOptions {
@@ -30,6 +32,7 @@ impl ServeOptions {
         Self {
             router_options,
             mongodb_config: None,
+            dynamodb_config: None,
         }
     }
 
@@ -62,6 +65,11 @@ impl ServeOptions {
 
     pub fn with_mongodb(mut self, mongodb_config: MongoDbConfig) -> Self {
         self.mongodb_config = Some(mongodb_config);
+        self
+    }
+
+    pub fn with_dynamodb(mut self, dynamodb_config: DynamoDbConfig) -> Self {
+        self.dynamodb_config = Some(dynamodb_config);
         self
     }
 
@@ -153,6 +161,7 @@ pub async fn serve(
     let ServeOptions {
         mut router_options,
         mongodb_config,
+        dynamodb_config,
     } = options;
     let service = router_options.service();
     if !router_options.has_system_convex_registry() {
@@ -160,6 +169,10 @@ pub async fn serve(
             router_options.with_system_convex_registry(load_default_system_convex_registry()?);
     }
     let config = router_options.into_build_config();
+
+    // Sibling adapter listeners share the same `Arc<Service>`; collect their
+    // task handles so the main HTTP server's return aborts every one of them.
+    let mut adapter_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
     if let Some(mongodb_config) = mongodb_config {
         let mongodb_listener = tokio::net::TcpListener::bind(mongodb_config.bind_addr).await?;
@@ -177,18 +190,58 @@ pub async fn serve(
         .map_err(|error| std::io::Error::other(error.to_string()))?;
         let mongodb_service = Arc::clone(&service);
         let mongodb_auth = mongodb_config.auth;
-        let mongodb_handle = tokio::spawn(async move {
+        adapter_handles.push(tokio::spawn(async move {
             adapters::mongodb::listener::run_listener_with_auth(
                 mongodb_listener,
                 mongodb_service,
                 mongodb_auth,
             )
             .await;
-        });
-        let http_result = serve_with_router_config(listener, config).await;
-        mongodb_handle.abort();
-        return http_result;
+        }));
     }
 
-    serve_with_router_config(listener, config).await
+    if let Some(dynamodb_config) = dynamodb_config {
+        let dynamodb_listener = tokio::net::TcpListener::bind(dynamodb_config.bind_addr).await?;
+        let dynamodb_addr = dynamodb_listener.local_addr()?;
+        crate::system_tenant::record_listener_state_async(
+            &service,
+            "dynamodb",
+            "http",
+            &dynamodb_addr.to_string(),
+            "listening",
+            Some(env!("CARGO_PKG_VERSION")),
+            None,
+        )
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let dynamodb_service = Arc::clone(&service);
+        let dynamodb_access_keys = dynamodb_config.access_keys;
+        // Spawn the background TTL sweeper before the access-key registry is
+        // moved into the listener task (it shares the same registry + service).
+        if let Some(interval) = dynamodb_config.ttl_sweep_interval {
+            let sweeper_service = Arc::clone(&service);
+            let sweeper_keys = Arc::new(dynamodb_access_keys.clone());
+            adapter_handles.push(tokio::spawn(
+                adapters::dynamodb::ttl_sweeper::run_ttl_sweeper(
+                    sweeper_service,
+                    sweeper_keys,
+                    interval,
+                ),
+            ));
+        }
+        adapter_handles.push(tokio::spawn(async move {
+            adapters::dynamodb::listener::run_listener(
+                dynamodb_listener,
+                dynamodb_service,
+                dynamodb_access_keys,
+            )
+            .await;
+        }));
+    }
+
+    let http_result = serve_with_router_config(listener, config).await;
+    for handle in adapter_handles {
+        handle.abort();
+    }
+    http_result
 }
