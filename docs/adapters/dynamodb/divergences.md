@@ -2,8 +2,14 @@
 
 Intentional, recorded differences between the Nimbus DynamoDB adapter and real
 DynamoDB / the ExtendDB reference. Every entry has a rationale and a regression
-test asserting the chosen behavior. The parity runner (D8) classifies any
-unrecorded difference as `nimbus-divergence` and fails until it appears here.
+test asserting the chosen behavior. These behaviors are pinned by executable
+checks — the official-SDK parity suite
+(`crates/nimbus-server/tests/dynamodb_spec`, 27 scenarios) and the ground-truth
+corpus (`crates/nimbus-dynamodb/tests/ground_truth.rs`, diffed against the
+captured DynamoDB Local / AWS API response contract — see
+`docs/plans/proof/dynamodb-adapter-hardening/ground-truth-corpus.md`) — so a drift
+on a covered surface fails CI. The corpus is the executable ground truth; it is
+not an exhaustive auto-classifier of every possible difference.
 
 Classifications: `nimbus-divergence` (Nimbus differs from both DynamoDB Local and
 ExtendDB — must be justified here) and `accept-extenddb-divergence` (Nimbus
@@ -29,20 +35,23 @@ real workload needs full-size DynamoDB keys. Most keys are far below this.
 
 **Status:** accepted (D0.3).
 
-## DDB-DIV-002 — Sort-key ordering uses an order-preserving projection (planned)
+## DDB-DIV-002 — Sort-key ordering uses an order-preserving encoding (`nimbus-divergence`)
 
 Real DynamoDB orders sort keys by type (`N` numeric, `S` UTF-8 byte-wise, `B`
-byte-wise). Nimbus's index/compare path runs numbers through `f64` and cannot
-index binary, so the adapter projects each key/index attribute into an
-order-preserving sortable string in `_pk`/`_sk` (and per-index `_gsi1_*` fields):
-`S` → raw UTF-8, `N` → a full-precision lexicographically-sortable decimal
-encoding, `B` → fixed-case hex. Range conditions evaluate that projection, not
-the opaque `DocumentId`.
+byte-wise). Nimbus encodes each key/index value into an order-preserving sortable
+string (the D0.3 sortable-key encoding): `S` → raw UTF-8, `N` → a full-precision
+lexicographically-sortable decimal encoding, `B` → fixed-case hex. Range
+conditions and ordering evaluate that encoding, so comparisons are type-correct
+(including >17-digit numeric ranges that `f64` would collapse) rather than going
+through the opaque `DocumentId`.
 
-**Status:** projection lands in the D0.3 sortable-key follow-up; range execution
-in D2.1. This entry will gain its regression test (type-correct ordering,
-including >17-digit numeric ranges that `f64` would collapse) when the projection
-lands.
+**Regression test:** `crates/nimbus-dynamodb/src/commands/query.rs` →
+`tests::query_gsi_numeric_range_preserves_precision_beyond_f64` (full-precision
+numeric ordering) and `tests::query_gsi_binary_range_is_byte_wise` (byte-wise
+binary ordering).
+
+**Status:** accepted (D0.3 / D2.1); the sortable-key encoding and its
+type-correct range execution have landed with the regression tests above.
 
 ## DDB-DIV-003 — Reserved `_ddb_` table-name prefix (`nimbus-divergence`)
 
