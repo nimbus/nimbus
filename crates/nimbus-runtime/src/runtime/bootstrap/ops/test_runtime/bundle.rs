@@ -78,6 +78,25 @@ pub(super) fn rewrite_bundle_path(
     ))
 }
 
+pub(super) fn rewrite_bundle_output_path(
+    candidate: &Path,
+    source_root: &Path,
+    target_root: &Path,
+) -> PathBuf {
+    let canonical_candidate =
+        std::fs::canonicalize(candidate).unwrap_or_else(|_| candidate.to_path_buf());
+    let canonical_source_root =
+        std::fs::canonicalize(source_root).unwrap_or_else(|_| source_root.to_path_buf());
+    if canonical_candidate.starts_with(&canonical_source_root) {
+        return rewrite_bundle_path(candidate, source_root, target_root);
+    }
+    let file_name = candidate
+        .file_name()
+        .map(|name| name.to_owned())
+        .unwrap_or_else(|| "output".into());
+    target_root.join("__nimbus-output").join(file_name)
+}
+
 pub(super) fn rewrite_bundle_env(
     env: &BTreeMap<String, String>,
     source_root: &Path,
@@ -133,7 +152,7 @@ fn runtime_test_spawn_file_output_syncs(
             }
             Some((
                 original.clone(),
-                rewrite_bundle_path(&original, source_bundle_root, bundle_root),
+                rewrite_bundle_output_path(&original, source_bundle_root, bundle_root),
             ))
         })
         .collect::<Vec<_>>();
@@ -143,7 +162,7 @@ fn runtime_test_spawn_file_output_syncs(
         if original.is_absolute() {
             syncs.push((
                 original.clone(),
-                rewrite_bundle_path(&original, source_bundle_root, bundle_root),
+                rewrite_bundle_output_path(&original, source_bundle_root, bundle_root),
             ));
         }
     }
@@ -222,6 +241,27 @@ pub(super) fn write_runtime_test_spawn_bundle(
             // that package-resolution contract.
             copy_dir_recursive(&cwd_node_modules, &bundle_node_modules)?;
         }
+    }
+
+    for (original_path, rewritten_path) in &file_output_syncs {
+        if !original_path.is_file() || rewritten_path.exists() {
+            continue;
+        }
+        if let Some(parent) = rewritten_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                JsErrorBox::generic(format!(
+                    "node_compat subprocess input sync should create {}: {error}",
+                    parent.display()
+                ))
+            })?;
+        }
+        std::fs::copy(original_path, rewritten_path).map_err(|error| {
+            JsErrorBox::generic(format!(
+                "node_compat subprocess input sync should copy {} -> {}: {error}",
+                original_path.display(),
+                rewritten_path.display()
+            ))
+        })?;
     }
 
     let bundle_source =

@@ -144,16 +144,6 @@ fn node22_node_tools_test_runner_reporters_batch_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned node-tools node:test/reporters watchpoint: test-runner-run-files-undefined.mjs is now narrowed to the missing node:test/reporters builtin family rather than the earlier eval/input-type harness gap"]
-fn node22_node_tools_test_runner_reporters_watchpoint() {
-    run_node_compat_watchpoint(
-        "test/parallel/test-runner-run-files-undefined.mjs",
-        "test/parallel/test-runner-run-files-undefined.mjs",
-        COMMON_TEST_RUNNER_RUN_EDGE_EXTRA_FILES,
-    );
-}
-
-#[test]
 fn node22_node_tools_test_runner_reporter_output_batch_fixture() {
     run_node_compat_watchpoint_entry_batch(
         "node22-node-tools-test-runner-reporter-output-batch",

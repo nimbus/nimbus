@@ -237,6 +237,18 @@ fn scoped_node_options_flag(flag: &str) -> ScopedProcessEnvVar {
     ScopedProcessEnvVar::set("NODE_OPTIONS", &next_value)
 }
 
+fn grant_node_options_read_for_fixture_flags(limits: &mut RuntimeLimits) {
+    const NODE_OPTIONS: &str = "NODE_OPTIONS";
+    if !limits
+        .grants
+        .env_read
+        .iter()
+        .any(|name| name == NODE_OPTIONS)
+    {
+        limits.grants.env_read.push(NODE_OPTIONS.to_string());
+    }
+}
+
 impl NodeCompatBatchEntry {
     fn fixture_source_path_for_lane(self, lane: NodeCompatLane) -> Option<&'static str> {
         match lane {
@@ -430,6 +442,10 @@ fn should_quiesce_then_require_fixture(test_relative_path: &str) -> bool {
         "test/parallel/test-async-hooks-disable-during-promise.js"
             | "test/parallel/test-async-hooks-promise-triggerid.js"
             | "test/parallel/test-async-hooks-promise.js"
+            | "test/parallel/test-repl-definecommand.js"
+            | "test/parallel/test-repl-mode.js"
+            | "test/parallel/test-repl-recoverable.js"
+            | "test/parallel/test-repl-reset-event.js"
     )
 }
 
@@ -504,7 +520,11 @@ globalThis.global.gc = __nimbusTestGc;"#
     };
     let uses_prelude = prelude_script.is_some();
     let capture_import_error = capture_top_level_skip
-        || should_capture_top_level_import_error_for_fixture(test_relative_path);
+        || should_capture_top_level_import_error_for_fixture(test_relative_path)
+        || matches!(
+            default_prelude_behavior_for_fixture(test_relative_path),
+            Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel)
+        );
     let import_preamble = if should_quiesce_then_require_fixture(test_relative_path) {
         String::new()
     } else if capture_import_error {
@@ -614,6 +634,18 @@ try {{
     } else {
         "globalThis.__nimbusInvoke = async function () {"
     };
+    let child_process_flush_script = if use_sync_tick_drain {
+        ""
+    } else {
+        r#"  await common.__nimbusFlushChildProcesses?.();
+"#
+    };
+    let process_exit_cleanup_script = if use_sync_tick_drain {
+        ""
+    } else {
+        r#"      await common.__nimbusFlushChildProcesses?.();
+"#
+    };
     std::fs::write(
         &bundle_path,
         format!(
@@ -625,6 +657,24 @@ const __nimbusCompatMainScriptPath = new URL(
   import.meta.url,
 ).pathname;
 globalThis.global ??= globalThis;
+const __nimbusProcessExitCodeFromError = (error) => {{
+  const marker = "__NIMBUS_NODE_COMPAT_PROCESS_EXIT__:";
+  if (error?.code !== "NIMBUS_NODE_COMPAT_PROCESS_EXIT") {{
+    return null;
+  }}
+  const rendered =
+    typeof error?.message === "string" ? error.message : String(error);
+  const markerIndex = rendered.indexOf(marker);
+  if (markerIndex < 0) {{
+    return Number(globalThis.process?.exitCode ?? 0);
+  }}
+  const numericPrefix = rendered
+    .slice(markerIndex + marker.length)
+    .match(/^-?\d+/)?.[0];
+  return numericPrefix === undefined
+    ? Number(globalThis.process?.exitCode ?? 0)
+    : Number(numericPrefix);
+}};
 {gc_setup_script}
 if (typeof globalThis.process === "object" && globalThis.process !== null) {{
   globalThis.process.execPath = __nimbusCompatExecPath;
@@ -647,16 +697,33 @@ if (typeof globalThis.process === "object" && globalThis.process !== null) {{
 
 {invoke_signature}
   const require = createRequire(import.meta.url);
+  try {{
 {invoke_import_guard}
-  const common = require("./test/common/index.js");
+    const common = require("./test/common/index.js");
 {async_drain_script}
 {postlude_script}
-  common.__nimbusAssert?.();
-  return {{
-    ok: true,
-    skipped: false,
-    testPath: "{test_relative_path}",
-  }};
+{child_process_flush_script}
+    common.__nimbusAssert?.();
+    globalThis.__nimbusNodeCompatInvocationFinalized = true;
+    return {{
+      ok: true,
+      skipped: false,
+      testPath: "{test_relative_path}",
+    }};
+  }} catch (__nimbusInvokeError) {{
+    const __nimbusExitCode =
+      __nimbusProcessExitCodeFromError(__nimbusInvokeError);
+    if (__nimbusExitCode === 0) {{
+{process_exit_cleanup_script}
+      globalThis.__nimbusNodeCompatInvocationFinalized = true;
+      return {{
+        ok: true,
+        skipped: false,
+        testPath: "{test_relative_path}",
+      }};
+    }}
+    throw __nimbusInvokeError;
+  }}
 }};
 
 export {{}};
@@ -732,7 +799,10 @@ fn execute_upstream_node_compat_test_with_extra_files(
         postlude_script,
         mode: NodeCompatBundleMode::Runtime,
     });
-    let limits = runtime_limits_for_node_compat_fixture(test_relative_path, lane);
+    let mut limits = runtime_limits_for_node_compat_fixture(test_relative_path, lane);
+    if fixture_needs_pending_deprecation {
+        grant_node_options_read_for_fixture_flags(&mut limits);
+    }
     let wall_clock_timeout = node_compat_fixture_wall_clock_timeout(&limits);
     let lane_name = lane.map(node_compat_lane_name).unwrap_or("unspecified");
     let runtime = NimbusRuntime::with_policy(
@@ -1067,6 +1137,37 @@ fn node_compat_harness_message_port_exit_criterion_blocks_unqualified_worker_pro
         criterion.contains("production in-process"),
         "MessagePort worker hazards should not be promoted into production in-process profiles by implication"
     );
+}
+
+#[test]
+fn node_compat_common_fixture_platform_booleans_track_process_platform() {
+    execute_upstream_node_compat_test_with_extra_files(
+        "test/parallel/test-nimbus-common-platform-booleans.js",
+        r#"'use strict';
+
+const assert = require('assert');
+const common = require('../common');
+
+assert.strictEqual(common.isAIX, process.platform === 'aix');
+assert.strictEqual(common.isFreeBSD, process.platform === 'freebsd');
+assert.strictEqual(common.isIBMi, process.platform === 'os400');
+assert.strictEqual(common.isLinux, process.platform === 'linux');
+assert.strictEqual(common.isMacOS, process.platform === 'darwin');
+assert.strictEqual(common.isOpenBSD, process.platform === 'openbsd');
+assert.strictEqual(common.isSunOS, process.platform === 'sunos');
+assert.strictEqual(common.isWindows, process.platform === 'win32');
+assert.strictEqual(common.isDebug, process.features.debug === true);
+assert.strictEqual(common.isASan, process.config?.variables?.asan === 1);
+assert.strictEqual(typeof common.isPi, 'function');
+assert.strictEqual(typeof common.isInsideDirWithUnusualChars, 'boolean');
+"#,
+        &[],
+        false,
+        Some(NodeCompatLane::Node24),
+        None,
+        None,
+    )
+    .expect("node_compat common fixture platform booleans should execute");
 }
 
 fn execute_manifested_node_compat_test(
