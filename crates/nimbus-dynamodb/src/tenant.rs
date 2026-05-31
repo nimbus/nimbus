@@ -41,6 +41,19 @@ pub enum AuthMode {
     LookupOnly,
 }
 
+/// Tenants whose id begins with this prefix are Nimbus-internal — e.g. the
+/// DynamoDB access-key store's `_nimbus_ddb_system`. An access key must never
+/// bind or resolve to one, or an authenticated request could read another
+/// tenant's stored credentials out of an internal table.
+pub(crate) const RESERVED_TENANT_PREFIX: &str = "_nimbus";
+
+/// Whether `tenant` is a reserved Nimbus-internal tenant (see
+/// [`RESERVED_TENANT_PREFIX`]).
+#[must_use]
+pub(crate) fn is_reserved_tenant(tenant: &TenantId) -> bool {
+    tenant.as_str().starts_with(RESERVED_TENANT_PREFIX)
+}
+
 /// One access key's binding: the tenant it scopes to, plus the secret access
 /// key (required only in [`AuthMode::Strict`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,13 +146,19 @@ impl AccessKeyRegistry {
     /// Resolve an access-key id to its full binding (tenant + optional secret).
     ///
     /// # Errors
-    /// `UnrecognizedClientException` if the access-key id has no binding.
+    /// `UnrecognizedClientException` if the access-key id has no binding, or if
+    /// it is (mis-)bound to a reserved Nimbus-internal tenant — such a binding is
+    /// refused so it can never expose an internal store like the access-key
+    /// catalog, regardless of how it was configured.
     pub fn binding(&self, access_key_id: &str) -> Result<&KeyBinding, DynamoDbError> {
-        self.bindings.get(access_key_id).ok_or_else(|| {
-            DynamoDbError::UnrecognizedClientException(
-                "The security token included in the request is invalid.".to_owned(),
-            )
-        })
+        let binding = self
+            .bindings
+            .get(access_key_id)
+            .ok_or_else(unrecognized_client)?;
+        if is_reserved_tenant(&binding.tenant) {
+            return Err(unrecognized_client());
+        }
+        Ok(binding)
     }
 
     /// Whether any access keys are configured.
@@ -166,6 +185,14 @@ impl AccessKeyRegistry {
         }
         tenants
     }
+}
+
+/// The `UnrecognizedClientException` real AWS / DynamoDB returns for an
+/// unrecognized (or refused) access key.
+fn unrecognized_client() -> DynamoDbError {
+    DynamoDbError::UnrecognizedClientException(
+        "The security token included in the request is invalid.".to_owned(),
+    )
 }
 
 /// Build the tenant isolation context for a DynamoDB request scoped to `tenant`.
@@ -242,6 +269,28 @@ mod tests {
             registry.resolve("AKIAACME"),
             Err(DynamoDbError::UnrecognizedClientException(_))
         ));
+    }
+
+    #[test]
+    fn binding_refuses_a_reserved_tenant() {
+        // F6a: a key bound (or mis-bound) to a reserved Nimbus-internal tenant
+        // must never resolve — it would expose internal stores.
+        let registry = AccessKeyRegistry::new().bind("AKIAEVIL", tenant("_nimbus_ddb_system"));
+        assert!(matches!(
+            registry.binding("AKIAEVIL"),
+            Err(DynamoDbError::UnrecognizedClientException(_))
+        ));
+        assert!(matches!(
+            registry.resolve("AKIAEVIL"),
+            Err(DynamoDbError::UnrecognizedClientException(_))
+        ));
+    }
+
+    #[test]
+    fn is_reserved_tenant_flags_the_internal_prefix() {
+        assert!(is_reserved_tenant(&tenant("_nimbus_ddb_system")));
+        assert!(is_reserved_tenant(&tenant("_nimbus_other")));
+        assert!(!is_reserved_tenant(&tenant("acme")));
     }
 
     #[test]
