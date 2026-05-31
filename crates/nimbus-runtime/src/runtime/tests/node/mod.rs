@@ -442,6 +442,10 @@ fn should_quiesce_then_require_fixture(test_relative_path: &str) -> bool {
         "test/parallel/test-async-hooks-disable-during-promise.js"
             | "test/parallel/test-async-hooks-promise-triggerid.js"
             | "test/parallel/test-async-hooks-promise.js"
+            | "test/parallel/test-repl-definecommand.js"
+            | "test/parallel/test-repl-mode.js"
+            | "test/parallel/test-repl-recoverable.js"
+            | "test/parallel/test-repl-reset-event.js"
     )
 }
 
@@ -516,7 +520,11 @@ globalThis.global.gc = __nimbusTestGc;"#
     };
     let uses_prelude = prelude_script.is_some();
     let capture_import_error = capture_top_level_skip
-        || should_capture_top_level_import_error_for_fixture(test_relative_path);
+        || should_capture_top_level_import_error_for_fixture(test_relative_path)
+        || matches!(
+            default_prelude_behavior_for_fixture(test_relative_path),
+            Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel)
+        );
     let import_preamble = if should_quiesce_then_require_fixture(test_relative_path) {
         String::new()
     } else if capture_import_error {
@@ -626,6 +634,18 @@ try {{
     } else {
         "globalThis.__nimbusInvoke = async function () {"
     };
+    let child_process_flush_script = if use_sync_tick_drain {
+        ""
+    } else {
+        r#"  await common.__nimbusFlushChildProcesses?.();
+"#
+    };
+    let process_exit_cleanup_script = if use_sync_tick_drain {
+        ""
+    } else {
+        r#"      await common.__nimbusFlushChildProcesses?.();
+"#
+    };
     std::fs::write(
         &bundle_path,
         format!(
@@ -637,6 +657,24 @@ const __nimbusCompatMainScriptPath = new URL(
   import.meta.url,
 ).pathname;
 globalThis.global ??= globalThis;
+const __nimbusProcessExitCodeFromError = (error) => {{
+  const marker = "__NIMBUS_NODE_COMPAT_PROCESS_EXIT__:";
+  if (error?.code !== "NIMBUS_NODE_COMPAT_PROCESS_EXIT") {{
+    return null;
+  }}
+  const rendered =
+    typeof error?.message === "string" ? error.message : String(error);
+  const markerIndex = rendered.indexOf(marker);
+  if (markerIndex < 0) {{
+    return Number(globalThis.process?.exitCode ?? 0);
+  }}
+  const numericPrefix = rendered
+    .slice(markerIndex + marker.length)
+    .match(/^-?\d+/)?.[0];
+  return numericPrefix === undefined
+    ? Number(globalThis.process?.exitCode ?? 0)
+    : Number(numericPrefix);
+}};
 {gc_setup_script}
 if (typeof globalThis.process === "object" && globalThis.process !== null) {{
   globalThis.process.execPath = __nimbusCompatExecPath;
@@ -659,16 +697,33 @@ if (typeof globalThis.process === "object" && globalThis.process !== null) {{
 
 {invoke_signature}
   const require = createRequire(import.meta.url);
+  try {{
 {invoke_import_guard}
-  const common = require("./test/common/index.js");
+    const common = require("./test/common/index.js");
 {async_drain_script}
 {postlude_script}
-  common.__nimbusAssert?.();
-  return {{
-    ok: true,
-    skipped: false,
-    testPath: "{test_relative_path}",
-  }};
+{child_process_flush_script}
+    common.__nimbusAssert?.();
+    globalThis.__nimbusNodeCompatInvocationFinalized = true;
+    return {{
+      ok: true,
+      skipped: false,
+      testPath: "{test_relative_path}",
+    }};
+  }} catch (__nimbusInvokeError) {{
+    const __nimbusExitCode =
+      __nimbusProcessExitCodeFromError(__nimbusInvokeError);
+    if (__nimbusExitCode === 0) {{
+{process_exit_cleanup_script}
+      globalThis.__nimbusNodeCompatInvocationFinalized = true;
+      return {{
+        ok: true,
+        skipped: false,
+        testPath: "{test_relative_path}",
+      }};
+    }}
+    throw __nimbusInvokeError;
+  }}
 }};
 
 export {{}};

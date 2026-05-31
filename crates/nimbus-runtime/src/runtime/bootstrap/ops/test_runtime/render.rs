@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use crate::backends::v8::embedder::JsErrorBox;
 
-use super::bundle::{rewrite_bundle_env, rewrite_bundle_path, rewrite_bundle_string};
+use super::bundle::{
+    rewrite_bundle_env, rewrite_bundle_output_path, rewrite_bundle_path, rewrite_bundle_string,
+};
 use super::types::{RuntimeTestRunnerIsolation, RuntimeTestSpawnMode, RuntimeTestSpawnPlan};
 
 pub(super) fn render_runtime_test_spawn_bundle_source(
@@ -51,6 +53,50 @@ pub(super) fn render_runtime_test_spawn_bundle_source(
             };
         if *input_type_module {
             let eval_module_path = bundle_dir.join("__nimbus_eval__.mjs");
+            let eval_require_base_path = eval_module_path
+                .clone()
+                .to_string_lossy()
+                .into_owned();
+            let mut rendered_source = rendered_source;
+            let mut needs_eval_require = false;
+            for (needle, replacement) in [
+                (
+                    "import test from \"test\";",
+                    "const test = __nimbusEvalRequire(\"test\");",
+                ),
+                (
+                    "import test from 'test';",
+                    "const test = __nimbusEvalRequire('test');",
+                ),
+                (
+                    "import(\"test\")",
+                    "Promise.resolve({ default: __nimbusEvalRequire(\"test\") })",
+                ),
+                (
+                    "import('test')",
+                    "Promise.resolve({ default: __nimbusEvalRequire('test') })",
+                ),
+            ] {
+                if rendered_source.contains(needle) {
+                    rendered_source = rendered_source.replace(needle, replacement);
+                    needs_eval_require = true;
+                }
+            }
+            if needs_eval_require {
+                let eval_require_base_path =
+                    serde_json::to_string(&eval_require_base_path)
+                        .expect("eval require base path should serialize");
+                rendered_source = format!(
+                    "import {{ createRequire as __nimbusCreateRequire }} from \"node:module\";\nconst __nimbusEvalRequire = __nimbusCreateRequire({eval_require_base_path});\n{rendered_source}"
+                );
+            }
+            if let Some(parent) = eval_module_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    JsErrorBox::generic(format!(
+                        "node_compat eval module parent should build: {error}"
+                    ))
+                })?;
+            }
             std::fs::write(&eval_module_path, &rendered_source).map_err(|error| {
                 JsErrorBox::generic(format!(
                     "node_compat eval module should write: {error}"
@@ -87,13 +133,68 @@ if (__nimbusEvalResult !== undefined) {
                             rewrite_bundle_path(&base_path, source_bundle_root, bundle_dir)
                         }
                     } else {
-                        base_path
+                        bundle_dir.join("$deno$eval.cjs")
                     }
                 })
                 .unwrap_or_else(|| bundle_dir.join("$deno$eval.cjs"))
                 .to_string_lossy()
                 .into_owned();
-            format!(
+            if rendered_source.contains("import(") || rendered_source.contains("import (") {
+                let rendered_source = rendered_source
+                    .replace(
+                        "import(\"test\")",
+                        "Promise.resolve({ default: __nimbusEvalRequire(\"test\") })",
+                    )
+                    .replace(
+                        "import('test')",
+                        "Promise.resolve({ default: __nimbusEvalRequire('test') })",
+                    );
+                let rendered_source = format!(
+                    "const __nimbusEvalRequire = require(\"node:module\").createRequire({});\n{}",
+                    serde_json::to_string(&eval_require_base_path)
+                        .expect("eval require base path should serialize"),
+                    rendered_source
+                );
+                let eval_file_path = bundle_dir.join("$deno$eval.cjs");
+                if let Some(parent) = eval_file_path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|error| {
+                        JsErrorBox::generic(format!(
+                            "node_compat eval module parent should build: {error}"
+                        ))
+                    })?;
+                }
+                std::fs::write(&eval_file_path, &rendered_source).map_err(|error| {
+                    JsErrorBox::generic(format!(
+                        "node_compat eval module should write: {error}"
+                    ))
+                })?;
+                format!(
+                    r#"
+const __nimbusEvalFilename = {filename};
+const __nimbusEvalRequire = require("node:module").createRequire(__nimbusEvalFilename);
+let __nimbusEvalResult = __nimbusEvalRequire(__nimbusEvalFilename);
+if (
+  __nimbusEvalResult &&
+  typeof __nimbusEvalResult.then === "function"
+) {{
+  __nimbusEvalResult = await __nimbusEvalResult;
+}}
+{print_result_block}"#,
+                    filename = serde_json::to_string(&eval_file_path.to_string_lossy())
+                        .expect("eval require base path should serialize"),
+                    print_result_block = if *print_result {
+                        r#"
+if (__nimbusEvalResult !== undefined) {
+  stdout += `${captureChunk(__nimbusEvalResult)}
+`;
+}
+"#
+                    } else {
+                        ""
+                    }
+                )
+            } else {
+                format!(
                 r#"
 const __nimbusEvalSource = {source};
 const __nimbusEvalFilename = {filename};
@@ -134,6 +235,7 @@ if (__nimbusEvalResult !== undefined) {
                     ""
                 }
             )
+            }
         }
     }
     RuntimeTestSpawnMode::LegacyInspectorFlagError => r#"
@@ -178,7 +280,24 @@ stderr += "`node --debug` and `node --debug-brk` are invalid. Please use `node -
             .collect::<Vec<_>>();
         let rendered_rerun_failures_file = rerun_failures_file
             .as_deref()
-            .map(rewrite_string);
+            .map(|value| {
+                if let Some(source_bundle_root) = plan.source_bundle_root.as_deref() {
+                    if plan.permission_restricted {
+                        value.to_string()
+                    } else {
+                        let path = PathBuf::from(value);
+                        if path.is_absolute() {
+                            rewrite_bundle_output_path(&path, source_bundle_root, bundle_dir)
+                                .to_string_lossy()
+                                .into_owned()
+                        } else {
+                            rewrite_string(value)
+                        }
+                    }
+                } else {
+                    value.to_string()
+                }
+            });
         let rendered_cwd = plan.cwd.as_deref().map(|cwd| {
             if let Some(source_bundle_root) = plan.source_bundle_root.as_deref() {
                 if plan.permission_restricted {
@@ -1344,8 +1463,28 @@ globalThis.__nimbusInvoke = async function () {{
   let __nimbusLastAsyncFatalError = undefined;
   let __nimbusOriginalCwd = null;
   let __nimbusOriginalCwdDescriptor = null;
+  const __nimbusProcessExitCodeFromError = (error) => {{
+const marker = "__NIMBUS_NODE_COMPAT_PROCESS_EXIT__:";
+if (error?.code !== "NIMBUS_NODE_COMPAT_PROCESS_EXIT") {{
+  return null;
+}}
+const rendered =
+  typeof error?.message === "string" ? error.message : String(error);
+const markerIndex = rendered.indexOf(marker);
+if (markerIndex < 0) {{
+  return Number(process.exitCode ?? 0);
+}}
+const numericPrefix = rendered
+  .slice(markerIndex + marker.length)
+  .match(/^-?\d+/)?.[0];
+return numericPrefix === undefined
+  ? Number(process.exitCode ?? 0)
+  : Number(numericPrefix);
+  }};
   const originalStdoutWrite = process.stdout.write.bind(process.stdout);
   const originalStderrWrite = process.stderr.write.bind(process.stderr);
+  const __nimbusPreviousWasiStdioCapture =
+    globalThis.__nimbusRuntimeCaptureWasiStdio;
   const __nimbusAppendAsyncFatalError = (error, fallbackCode = 1) => {{
 code = fallbackCode;
 const rendered = typeof error?.stack === "string" ? error.stack : String(error);
@@ -1392,6 +1531,7 @@ return true;
 stderr += captureChunk(chunk);
 return true;
   }};
+  globalThis.__nimbusRuntimeCaptureWasiStdio = true;
   process.on("uncaughtException", __nimbusCaptureAsyncFatalError);
   process.on("unhandledRejection", __nimbusCaptureAsyncFatalError);
   globalThis.addEventListener("error", __nimbusHandleRuntimeErrorEvent);
@@ -1432,18 +1572,23 @@ if (__nimbusReporterFailureArmed) {{
   await new Promise((resolve) => setTimeout(resolve, 0));
 }}
   }} catch (error) {{
-code = __nimbusReporterExecutionActive ? 7 : 1;
-const rendered = typeof error?.stack === "string" ? error.stack : String(error);
-const renderedCode =
-  typeof error?.code === "string" && error.code.length > 0 ? error.code : null;
-if (rendered.length > 0) {{
-  if (stderr.length > 0 && !stderr.endsWith("\n")) {{
-    stderr += "\n";
+const exitCode = __nimbusProcessExitCodeFromError(error);
+if (exitCode !== null) {{
+  code = exitCode;
+}} else {{
+  code = __nimbusReporterExecutionActive ? 7 : 1;
+  const rendered = typeof error?.stack === "string" ? error.stack : String(error);
+  const renderedCode =
+    typeof error?.code === "string" && error.code.length > 0 ? error.code : null;
+  if (rendered.length > 0) {{
+    if (stderr.length > 0 && !stderr.endsWith("\n")) {{
+      stderr += "\n";
+    }}
+    if (renderedCode && !rendered.includes(renderedCode)) {{
+      stderr += `${{renderedCode}}\n`;
+    }}
+    stderr += `${{rendered}}\n`;
   }}
-  if (renderedCode && !rendered.includes(renderedCode)) {{
-    stderr += `${{renderedCode}}\n`;
-  }}
-  stderr += `${{rendered}}\n`;
 }}
   }} finally {{
 process.off("uncaughtException", __nimbusCaptureAsyncFatalError);
@@ -1453,10 +1598,16 @@ globalThis.removeEventListener(
   "unhandledrejection",
   __nimbusHandleRuntimeRejectionEvent,
 );
-{working_directory_cleanup}
-process.stdout.write = originalStdoutWrite;
-process.stderr.write = originalStderrWrite;
-  }}
+	{working_directory_cleanup}
+	process.stdout.write = originalStdoutWrite;
+	process.stderr.write = originalStderrWrite;
+	if (__nimbusPreviousWasiStdioCapture === undefined) {{
+	  delete globalThis.__nimbusRuntimeCaptureWasiStdio;
+	}} else {{
+	  globalThis.__nimbusRuntimeCaptureWasiStdio =
+	    __nimbusPreviousWasiStdioCapture;
+	}}
+	  }}
 
   return {{
 pid: typeof process.pid === "number" ? process.pid : 0,

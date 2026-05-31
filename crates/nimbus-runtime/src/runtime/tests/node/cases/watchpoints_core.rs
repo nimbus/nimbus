@@ -712,7 +712,6 @@ fn node22_networking_dgram_remaining_batch_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned Deno UDP internal gap: official dgram fd/handle, blocklist, send-queue, and socket-buffer fixtures require Node UDPWrap internals not exposed by the embedded Deno lane"]
 fn node22_networking_dgram_internal_gap_fixture() {
     run_node_compat_watchpoint_batch(
         "node22-networking-dgram-internal-gap",
@@ -723,7 +722,6 @@ fn node22_networking_dgram_internal_gap_fixture() {
 }
 
 #[test]
-#[ignore = "diagnostic batch for local Deno UDP owner patches"]
 fn node22_networking_dgram_local_patch_regression_batch_fixture() {
     run_node_compat_watchpoint_batch(
         "node22-networking-dgram-local-patch-regression-batch",
