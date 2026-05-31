@@ -34,9 +34,9 @@ closed before the adapter is the system of record for real tenants.
 | F2 | Single-item + catalog writes use non-atomic `delete`+`insert` (crash window loses the row); the atomic `WriteSetMode::Overwrite` primitive *does* exist and is used by transact | `commands/item.rs:64-71,263-272,318-336`, `control_plane.rs:204-215`, `transact.rs:277-280` | **High (data integrity)** |
 | F3 | `BatchWriteItem` and `TransactWriteItems` emit **no** stream records (0 `capture_event` calls); same writes via Put/Update/Delete do | `commands/batch.rs`, `transact.rs` (no `capture_event`) | **High (correctness/CDC)** |
 | F4 | `DeleteTable` leaks sidecar state (`_ddb_stream_<t>`, `_ddb_streamseq_<t>`, `_ddb_ttl`, `_ddb_tags`); recreate-after-delete inherits a **stale stream sequence high-water mark** | `commands/control_plane.rs` `delete_table` | **High (correctness)** |
-| F5 | Auth defaults to `LookupOnly` (no signature/secret check) and `DynamoDbConfig` has no ergonomic strict/secret builder | `tenant.rs:30-35` (default), `config.rs:47-63` | **High (security)** |
+| F5 | Auth defaults to `LookupOnly` (no signature/secret check) and `DynamoDbConfig` has no ergonomic strict/secret builder — cross-cutting: the MongoDB sibling is also permissive (see D-Auth), and the adapter *has* a working strict path it just defaults off | `tenant.rs:30-35` (default), `config.rs:47-63` | **High (security), cross-cutting** |
 | F6a | No reserved-name guard: an access key can be bound to the global key-store tenant `_nimbus_ddb_system`, exposing every stored credential | `tenant.rs` (`bind`/`with_access_key`), `key_management.rs:26` | **Medium (security)** |
-| F6b | Access-key secrets are stored in plaintext and returned cleartext by `lookup`/`list_access_keys` | `key_management.rs:32-45,161-222` | **Medium (security)** |
+| F6b | `list_access_keys` returns access-key **secrets cleartext over the management API** (redaction gap). At rest the secrets are ordinary documents already covered by the platform `LocalEncryptionConfig` envelope encryption when enabled — so the real gap is the API listing + requiring platform encryption in prod, **not** a missing per-secret scheme | `key_management.rs:189-222` (listing), `persistence_config.rs:24-80` (platform encryption) | **Medium (security)** |
 | F7 | Index `Query`/`Scan` aborts the whole request (`ValidationException`) when any item's indexed key attribute is non-scalar/absent, instead of skipping it (DynamoDB's sparse-index semantics) | `commands/query.rs:89,420-421` (`?` propagates) vs `:428-429` (swallowed) | **Medium (correctness)** |
 | F8 | Stream sequence counter is a non-atomic read-modify-write across three separate engine calls → duplicate/lost sequence numbers under concurrency | `commands/stream.rs` `capture_event` (`next_sequence_value` → insert → `set_sequence_value`) | **Medium (correctness)** |
 | F9 | Conditional single-item writes have a check-then-write TOCTOU (read existing, evaluate condition, then non-transactional write) | `commands/item.rs:48-71,171-186` | **Medium (correctness)** |
@@ -51,17 +51,40 @@ closed before the adapter is the system of record for real tenants.
 
 ## Decisions (resolve before/at promotion)
 
-- **D-Auth — default to Strict, gate Ler behind a loud dev flag.** Pre-launch
-  (`CLAUDE.md`: breaking changes preferred), make `AuthMode::Strict` the default,
-  require every bound key to carry a secret, and gate `LookupOnly` behind an
-  explicit `insecure_dev_auth` builder that refuses a non-loopback `bind_addr`
-  and logs a prominent warning. (Resolves F5.)
-- **D-Secret — encrypt secrets at rest; never list them.** SigV4 needs the
-  plaintext secret to derive the date-scoped signing key, so one-way hashing is
-  not an option. Encrypt `StoredAccessKey.secret` at rest with a
-  deployment-provided sealing key (reuse the existing `aws-sdk-kms` integration
-  or a local sealing key), and make `list_access_keys` return a redacted
-  metadata-only view. (Resolves F6b.)
+- **D-Auth — set the default in conformance with the cross-cutting auth
+  posture, not adapter-locally.** Today's `LookupOnly` (skip verification)
+  mirrors DynamoDB Local exactly (accept-any-signature; a developer's dummy
+  creds work unchanged) and is *no weaker than the MongoDB sibling*, whose
+  `dispatch` (`commands/mod.rs:30-67`) runs `insert`/`find`/`update`/`delete`
+  without ever checking `conn.authenticated`. So strict-by-default **raises** the
+  bar rather than matching an existing strict practice — and the adapter already
+  has the strongest auth *capability* of any Nimbus adapter (a real SigV4
+  strict-verification path); it just ships it off by default. Target: make
+  `AuthMode::Strict` the production default with ergonomic `DynamoDbConfig`
+  builders for signed keys, and keep `LookupOnly` only as an explicit,
+  loopback-only, loudly-logged `insecure_dev_auth` escape hatch that preserves
+  DynamoDB-Local drop-in parity. **Decision needed:** confirm the trade-off
+  (DynamoDB-Local drop-in parity vs. strict-by-default) and set the default in
+  conformance with `docs/architecture/server/auth-runtime-trust.md`, ideally
+  hardening both adapters together rather than the DynamoDB lane unilaterally.
+  (Resolves F5. The F1 body-binding fix is an unambiguous bug and lands
+  regardless of this decision.)
+- **D-Secret — reuse the platform encryption-at-rest; do not invent a scheme.**
+  The access-key store is ordinary documents in a tenant DB
+  (`key_management.rs:81-89`, system tenant `_nimbus_ddb_system`), so it already
+  inherits `nimbus-engine`'s `LocalEncryptionConfig` envelope encryption —
+  `MasterKeyFile` (HKDF-derived) / `KeyDirectory` / **`AwsKms`** wrapping
+  per-subject DEKs via the shared manifest-backed wrapped-DEK contract
+  (`persistence_config.rs:24-80`, `nimbus-storage::AwsKmsKeyProvider`) — exactly
+  like all other persisted data, when encryption is enabled. SigV4 needs the
+  secret *recoverable* (it derives the date-scoped signing key), so it must be
+  encrypted, not hashed — which the envelope scheme already provides. There is
+  therefore **no bespoke sealing key and no per-field cipher to build.** The
+  only adapter-specific work is: redact `list_access_keys` so secrets never
+  leave over the management API (`lookup` keeps returning the secret internally
+  for verification), and require encryption-at-rest (or an external DB with its
+  own at-rest encryption) for any production deployment that uses the persisted
+  key store. (Resolves F6b.)
 - **D-Atomic — one engine transaction per logical write.** Route every
   single-item write, the catalog rewrite, the stream-event + sequence write, and
   the TTL-sweep delete through a single `AtomicWriteBatch` (the primitive
@@ -80,11 +103,11 @@ verifier-gated, regression test per fix. Ordered by severity then dependency.
 
 | ID | Item | Status | Covers | Completion criteria | Required evidence |
 | --- | --- | --- | --- | --- | --- |
-| H1 | **Strict-SigV4-by-default + body-hash binding + auth robustness** | `pending` | F1, F5, F10, F11, F13, F17 | `AuthMode::Strict` is the default; `DynamoDbConfig` gains `with_auth_mode` + signed-key binders and an explicit loopback-only `insecure_dev_auth`; `verify_signature` rejects when `x-amz-content-sha256 != sha256(body)`; `parse_iso8601_basic` range-validates; `constant_time_eq` handles unequal lengths safely; an explicit DynamoDB-aligned body limit is set on the listener; the TLS-termination requirement is documented | Tests: a request whose body is swapped under a fixed `x-amz-content-sha256` is rejected `InvalidSignatureException`; a correctly-signed body verifies (already green); out-of-range timestamps rejected; oversize body rejected pre-auth; a lookup-mode config on a non-loopback bind is refused. Parity test through the real SDK still green. |
+| H1 | **SigV4 body-hash binding + auth robustness + strict default** | `pending` | F1, F5, F10, F11, F13, F17 | **First (unambiguous bug):** `verify_signature` rejects when `x-amz-content-sha256 != sha256(body)`; `parse_iso8601_basic` range-validates; `constant_time_eq` handles unequal lengths safely; an explicit DynamoDB-aligned body limit is set on the listener; the TLS-termination requirement is documented. **Then (per the D-Auth cross-cutting decision):** `DynamoDbConfig` gains ergonomic `with_auth_mode` + signed-key binders; `AuthMode::Strict` becomes the production default with `LookupOnly` surviving only as a loopback-only `insecure_dev_auth` escape hatch | Tests: a request whose body is swapped under a fixed `x-amz-content-sha256` is rejected `InvalidSignatureException`; a correctly-signed body verifies (already green); out-of-range timestamps rejected; oversize body rejected pre-auth; a lookup-mode config on a non-loopback bind is refused. Parity test through the real SDK still green. |
 | H2 | **Atomic single-item + catalog writes** | `pending` | F2, F9 | PutItem / UpdateItem / overwrite `store_item` / `UpdateTable` catalog rewrite use a one-element `AtomicWriteBatch` with `WriteSetMode::Overwrite`; conditional writes use `WritePrecondition` (no read-then-write TOCTOU); correct DDB-DIV-005's justification | Tests: a simulated crash/error between the (former) delete and insert can no longer lose the item (assert the row survives an injected mid-write failure or that only the atomic path is used); two concurrent conditional PutItems serialize correctly; existing item/transact tests stay green |
 | H3 | **Unified atomic stream capture (incl. batch/transact)** | `pending` | F3, F8 | Stream-event emission + sequence allocation fold into the **same** `AtomicWriteBatch` as the source mutation for single-item, BatchWriteItem, **and** TransactWriteItems; the sequence high-water mark advances atomically (monotonic, no duplicates/loss under concurrency) | Tests: a BatchWriteItem and a TransactWriteItems on a stream-enabled table deliver the expected INSERT/MODIFY/REMOVE records via GetRecords (new parity + unit tests); concurrent writers produce strictly increasing, gap-checked sequence numbers |
 | H4 | **Table-lifecycle sidecar reclamation** | `pending` | F4 | `DeleteTable` drops `_ddb_stream_<t>`, `_ddb_streamseq_<t>`, the `_ddb_ttl` doc, and `_ddb_tags` entries; recreate-after-delete starts a fresh stream sequence at 0 | Tests: create→write→DeleteTable→recreate same name→stream sequence restarts and no orphaned events/tags/TTL config remain |
-| H5 | **Credential-store hardening** | `pending` | F6a, F6b | `bind`/`with_access_key`/`bind_signed`/`put_access_key` reject a reserved-prefix tenant (`_nimbus_*`) and `resolve_binding` refuses a stored key whose tenant is reserved; secrets are encrypted at rest; `list_access_keys` returns a redacted (secret-free) view | Tests: binding a key to `_nimbus_ddb_system` is rejected; a request authenticated against the reserved tenant cannot read `_ddb_access_keys`; `list_access_keys` never emits a secret; secrets are unreadable on disk without the sealing key |
+| H5 | **Credential-store hardening** | `pending` | F6a, F6b | `bind`/`with_access_key`/`bind_signed`/`put_access_key` reject a reserved-prefix tenant (`_nimbus_*`) and `resolve_binding` refuses a stored key whose tenant is reserved; `list_access_keys` returns a redacted (secret-free) view; **at-rest protection is delegated to the platform `LocalEncryptionConfig` — no bespoke cipher** — and production use of the persisted key store is documented as requiring encryption-at-rest (or an external DB with its own at-rest encryption) | Tests: binding a key to `_nimbus_ddb_system` is rejected; a request authenticated against the reserved tenant cannot read `_ddb_access_keys`; `list_access_keys` never emits a secret; with `LocalEncryptionConfig` enabled, the access-key store's on-disk bytes contain no plaintext secret (proving it rides the platform envelope encryption rather than a per-secret scheme) |
 | H6 | **Query/Scan robustness on heterogeneous items** | `pending` | F7 | An item whose indexed key attribute is absent or non-scalar is **skipped** (sparse-index semantics), not erroring the whole request; `sortable_eq` and `sort_cmp` behave consistently | Tests: a GSI Query over a table containing items with the indexed attribute missing / set to `M`/`L`/`BOOL`/`NULL` returns only the matching scalar items and does not raise `ValidationException` |
 | H7 | **Evidence rigor + doc accuracy** | `pending` | F12, F14, F15, F16 | A captured DynamoDB-Local golden corpus is diffed against Nimbus in CI (Docker lane optional); the bench asserts the expected status and is wired to a CI lane enforcing the 2×-p99 thresholds; the soak test adds read-back correctness invariants; `validate_attribute_names` is wired into the write path or removed; DDB-DIV-002/005 doc text corrected; the "classification" language matches executable reality | Evidence: a committed golden-corpus diff report; a CI bench-regression lane; soak read-back assertions; the corrected divergence entries |
 
@@ -113,3 +136,4 @@ The plan is complete when every H-item is `done` and:
 | Date | Item | Status | Notes | Commands / evidence |
 | --- | --- | --- | --- | --- |
 | 2026-05-31 | — | `pending` | Plan authored from the post-merge audit. Every finding verified at the cited `file:line` against the merged adapter; the modularity claim was refuted and excluded. Awaiting promotion. | Audit + line-level re-verification of F1–F17. |
+| 2026-05-31 | D-Secret / D-Auth | `pending` (revised) | **Aligned the encryption + auth decisions with existing platform practice** after confirming the repo already has unified envelope-encryption-at-rest. Dropped the bespoke "sealing key" from D-Secret/H5 — the access-key store inherits `nimbus-engine::LocalEncryptionConfig` (master-key-file / key-dir / AWS-KMS wrapped-DEK via `nimbus-storage::AwsKmsKeyProvider`) like all persisted data; F6b re-scoped to the `list_access_keys` redaction + a prod encryption-at-rest requirement. Reframed D-Auth/H1: the body-binding fix (F1) is an unambiguous bug and lands first; strict-by-default (F5) is a *cross-cutting* posture decision (the MongoDB sibling is also permissive — `commands/mod.rs:30-67` runs data commands without an `authenticated` check), to be set per `docs/architecture/server/auth-runtime-trust.md` with the DynamoDB-Local-parity trade-off flagged for a decision. | Read `nimbus-engine/src/persistence_config.rs`, `nimbus-storage/src/lib.rs` (`AwsKmsKeyProvider`, `encrypted_redb`), `nimbus-mongodb/src/lib.rs` (`AuthConfig`) + `commands/mod.rs` dispatch. |
