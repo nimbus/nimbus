@@ -76,7 +76,7 @@ clients (no `CREATING` state is ever exposed).
 
 **Status:** accepted (D0.6).
 
-## DDB-DIV-005 — Item storage format + PutItem overwrite atomicity (`nimbus-divergence`)
+## DDB-DIV-005 — Item storage format (`nimbus-divergence`)
 
 **Real DynamoDB:** items are opaque to the storage engine; PutItem is an atomic
 full replace.
@@ -85,29 +85,33 @@ full replace.
 (`{"N":"42"}`, `{"SS":[…]}`, …) in the shared `documents` table's `fields` map,
 keyed by the composite-key `DocumentId` (D0.3). This is exactly lossless — `N`
 precision, sets, binary, and nesting all survive. The engine's mutation path
-(`Mutation::Insert { fields }`) carries only JSON `fields`, not the
-`typed_fields` sidecar, so:
+carries only JSON `fields`, not the `typed_fields` sidecar, so a non-DynamoDB
+adapter reading a DynamoDB-owned table sees DynamoDB-tagged JSON rather than
+clean projected values. DynamoDB tables are DynamoDB-owned, so this is
+acceptable.
 
-1. A non-DynamoDB adapter reading a DynamoDB-owned table sees DynamoDB-tagged
-   JSON rather than clean projected values. DynamoDB tables are DynamoDB-owned,
-   so this is acceptable.
-2. PutItem's replace-on-overwrite is implemented as delete + insert (the engine
-   exposes no atomic upsert / `Mutation::Replace`, and a bare insert errors on an
-   existing key). A process crash strictly between the delete and the insert
-   would leave the key absent.
+PutItem's replace-on-overwrite **is atomic**: every single-item write
+(PutItem / UpdateItem / `store_item` / the UpdateTable catalog rewrite) runs as a
+one-element `AtomicWriteBatch` with `WriteSetMode::Overwrite` — a single storage
+transaction that creates-or-replaces with no delete-then-insert crash window
+(hardening H2, F2). Conditional writes additionally pin the snapshot's existence
+state with a `WritePrecondition`, so a write cannot be raced between its
+condition check and its commit (F9, existence-level OCC — the same bound the
+transactional path enforces).
 
 **Rationale:** this keeps every write on the sanctioned engine-owned mutation
-path with no change to the core `Mutation` enum (which ~21 sites and every
-adapter depend on). The proper fix for atomic overwrite is a store-level
-document upsert (or a `Mutation::Replace` variant), tracked as a follow-up
-before the D9 enterprise-readiness gate.
+path (the atomic-write primitive the transactional path already uses), with no
+change to the core `Mutation` enum.
 
 **Regression test:** `crates/nimbus-dynamodb/src/attribute_value.rs` →
 `tests::item_roundtrips_through_wire_json_fields` (lossless storage form);
 `crates/nimbus-dynamodb/src/commands/item.rs` →
-`tests::put_overwrite_fully_replaces_not_merges` (replace, not merge).
+`tests::put_overwrite_fully_replaces_not_merges` (replace, not merge),
+`tests::store_item_overwrites_atomically` (atomic create-or-replace),
+`tests::atomic_overwrite_enforces_existence_precondition` (conditional-write
+TOCTOU closure).
 
-**Status:** accepted (D1.5); atomic-upsert follow-up tracked.
+**Status:** accepted (D1.5); overwrite atomicity resolved in hardening H2.
 
 ## DDB-DIV-006 — Single-shard streams (`nimbus-divergence`)
 
