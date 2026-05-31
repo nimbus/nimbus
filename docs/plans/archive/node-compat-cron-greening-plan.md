@@ -1,15 +1,16 @@
 # Node Compat Cron Greening Plan (NCG)
 
-Status: `superseded by docs/plans/node-default-runtime-support-hardening-plan.md`
+Status: `archived, superseded by docs/plans/node-default-runtime-support-hardening-plan.md`
 Owner: `node-compat`
 Verifier: `scripts/verify-node-compat-cron-greening.sh` (scaffolded in NCG0)
 Baseline proof: `docs/plans/proof/node-compat-cron-greening/ncg0-baseline.md`
 
-Supersession note: this plan is intentionally narrow. It greens the historical
-Node Compatibility cron foundation failures, but it does not define or prove
-that Node24 is a well-supported product default. The broader active control
-plane is `docs/plans/node-default-runtime-support-hardening-plan.md`, which
-subsumes the NCG foundation-slice work in NDS2.
+Supersession note: this plan is intentionally narrow and was archived without
+execution. It greens the historical Node Compatibility cron foundation
+failures, but it does not define or prove that Node24 is a well-supported
+product default. The broader active control plane is
+`docs/plans/node-default-runtime-support-hardening-plan.md`, which subsumes the
+NCG foundation-slice work in NDS2. Do not resume NCG directly.
 
 ## Why this plan exists
 
@@ -180,10 +181,9 @@ require explicit user authorization per-tag.
 `bash scripts/verify-node-compat-cron-greening.sh` exits 0 with
 summary line `10 passed, 0 failed`. The 10 conditions:
 
-1. **Plan file exists** — either `docs/plans/node-compat-cron-greening-plan.md`
-   (active) or `docs/plans/archive/node-compat-cron-greening-plan.md`
-   (archived). Accepts either so closeout doesn't require a verifier
-   change.
+1. **Plan file exists** —
+   `docs/plans/archive/node-compat-cron-greening-plan.md`. This archived,
+   superseded copy is retained for historical context only.
 2. **Routing entry exists in `CLAUDE.md`** — substring match on
    `node-compat-cron-greening`.
 3. **NCG0 baseline proof exists** at

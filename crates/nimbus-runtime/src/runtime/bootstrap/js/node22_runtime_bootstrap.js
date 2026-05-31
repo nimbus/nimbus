@@ -1686,6 +1686,26 @@ function createFsPromisesWatchTypeError(name, expected, value) {
   return error;
 }
 
+function createFsPromisesWatchRangeError(name, range, value) {
+  const error = new RangeError(
+    `The value of "${name}" is out of range. It must be ${range}. Received ${value}`,
+  );
+  error.code = "ERR_OUT_OF_RANGE";
+  return error;
+}
+
+function createFsPromisesWatchValueError(name, value, reason) {
+  const error = new TypeError(`The "${name}" argument ${reason}. Received ${value}`);
+  error.code = "ERR_INVALID_ARG_VALUE";
+  return error;
+}
+
+function createFsPromisesWatchQueueOverflowError(maxQueue) {
+  const error = new Error(`fs.watch maxQueue exceeded: ${maxQueue}`);
+  error.code = "ERR_FS_WATCH_QUEUE_OVERFLOW";
+  return error;
+}
+
 function createFsPromisesWatchAbortError(cause = undefined) {
   const error = new Error("The operation was aborted");
   error.name = "AbortError";
@@ -1748,11 +1768,38 @@ function validateFsPromisesWatchOptions(options) {
       optionsSnapshot.signal,
     );
   }
+  const maxQueue = optionsSnapshot.maxQueue ?? 2048;
+  if (typeof maxQueue !== "number") {
+    throw createFsPromisesWatchTypeError(
+      "options.maxQueue",
+      "number",
+      maxQueue,
+    );
+  }
+  if (!Number.isInteger(maxQueue)) {
+    throw createFsPromisesWatchRangeError(
+      "options.maxQueue",
+      "an integer",
+      maxQueue,
+    );
+  }
+  const overflow = optionsSnapshot.overflow ?? "ignore";
+  if (overflow !== "ignore" && overflow !== "error") {
+    throw createFsPromisesWatchValueError(
+      "options.overflow",
+      overflow,
+      "must be one of: 'ignore', 'error'",
+    );
+  }
   const signal = optionsSnapshot.signal;
   delete optionsSnapshot.signal;
+  delete optionsSnapshot.maxQueue;
+  delete optionsSnapshot.overflow;
   return {
     __proto__: null,
     builtin: optionsSnapshot,
+    maxQueue,
+    overflow,
     signal,
   };
 }
@@ -2285,7 +2332,8 @@ function patchNodeFsReadSemantics(nodeProcess) {
     ) {
       const patchedWatch = function (path, options) {
         const normalizedPath = nodeFsGetValidatedPathToString(path);
-        const { builtin, signal } = validateFsPromisesWatchOptions(options);
+        const { builtin, maxQueue, overflow, signal } =
+          validateFsPromisesWatchOptions(options);
         const watcher = nodeFs.watch(normalizedPath, builtin);
         let closed = false;
         let pendingAbortError = null;
@@ -2296,6 +2344,18 @@ function patchNodeFsReadSemantics(nodeProcess) {
           const waiter = pending.shift();
           if (waiter) {
             waiter(entry);
+            return;
+          }
+          if (entry.kind === "value" && queue.length >= maxQueue) {
+            if (overflow === "error") {
+              queue.length = 0;
+              queue.push({
+                kind: "error",
+                value: createFsPromisesWatchQueueOverflowError(maxQueue),
+              });
+            } else {
+              nodeProcess?.emitWarning?.("fs.watch maxQueue exceeded");
+            }
             return;
           }
           queue.push(entry);
@@ -2558,11 +2618,23 @@ function processUnhandledPromiseRejection(promise, reason) {
     promise,
     reason,
   });
+  const hasNodeDomain = promise?.domain || reason?.domain;
+
+  if (
+    hasNodeDomain &&
+    typeof internals.nodeProcessUnhandledRejectionCallback !== "undefined"
+  ) {
+    internals.nodeProcessUnhandledRejectionCallback(rejectionEvent);
+    if (rejectionEvent.defaultPrevented) {
+      return true;
+    }
+  }
 
   globalThis.dispatchEvent(rejectionEvent);
 
   if (
     !rejectionEvent.defaultPrevented &&
+    !hasNodeDomain &&
     typeof internals.nodeProcessUnhandledRejectionCallback !== "undefined"
   ) {
     internals.nodeProcessUnhandledRejectionCallback(rejectionEvent);
@@ -2582,6 +2654,49 @@ function processRejectionHandled(promise, reason) {
   if (typeof internals.nodeProcessRejectionHandledCallback !== "undefined") {
     internals.nodeProcessRejectionHandledCallback(rejectionHandledEvent);
   }
+}
+
+function installNimbusDomainPromiseRejectPatch() {
+  if (Promise.reject.__nimbusDomainAware === true) {
+    return;
+  }
+  const originalReject = Promise.reject;
+  function reject(reason) {
+    const promise = originalReject.apply(this, arguments);
+    const domain = globalThis.process?.domain ?? nodeProcessBuiltin?.domain;
+    if (domain !== null && domain !== undefined) {
+      Object.defineProperty(promise, "domain", {
+        configurable: true,
+        enumerable: false,
+        value: domain,
+        writable: true,
+      });
+      if (reason !== null && typeof reason === "object") {
+        Object.defineProperty(reason, "domain", {
+          configurable: true,
+          enumerable: false,
+          value: domain,
+          writable: true,
+        });
+        if (reason.domainThrown === undefined) {
+          reason.domainThrown = true;
+        }
+      }
+    }
+    return promise;
+  }
+  Object.defineProperty(reject, "__nimbusDomainAware", {
+    configurable: false,
+    enumerable: false,
+    value: true,
+    writable: false,
+  });
+  Object.defineProperty(Promise, "reject", {
+    configurable: true,
+    enumerable: false,
+    value: reject,
+    writable: true,
+  });
 }
 
 function runtimeWorkerNormalizeTransferList(transferOrOptions) {
@@ -3134,6 +3249,49 @@ function createNimbusSharedWorkerEnvProxy() {
   });
 }
 
+function seedNodeClusterWorkerIfNeeded(workerBootstrapState, workerMetadataObject) {
+  if (workerBootstrapState?.runningOnMainThread !== false) {
+    return;
+  }
+
+  const processEnv = globalThis.process?.env;
+  const uniqueId = workerMetadataObject?.env?.NODE_UNIQUE_ID ??
+    processEnv?.NODE_UNIQUE_ID;
+  if (typeof uniqueId !== "string" || uniqueId.length === 0) {
+    return;
+  }
+
+  const schedulingPolicy = workerMetadataObject?.env?.NODE_CLUSTER_SCHED_POLICY ??
+    processEnv?.NODE_CLUSTER_SCHED_POLICY;
+  try {
+    const clusterModule = core.loadExtScript("ext:deno_node/cluster.ts");
+    if (clusterModule?.default?.isWorker === true) {
+      return;
+    }
+    if (typeof internals.__initCluster === "function") {
+      internals.__initCluster(uniqueId, schedulingPolicy);
+    }
+  } catch {
+    // Cluster is optional for most embedded workers; user code will surface
+    // any real load error if it later imports node:cluster.
+  }
+}
+
+Object.defineProperty(globalThis, "__nimbusCloseWorker", {
+  value: () => {
+    if (typeof core.ops.op_worker_close === "function") {
+      core.ops.op_worker_close();
+      return;
+    }
+    if (typeof globalThis.close === "function") {
+      globalThis.close();
+    }
+  },
+  configurable: true,
+  enumerable: false,
+  writable: true,
+});
+
 function installNimbusSharedWorkerEnvProxy() {
   const snapshot = Object.create(null);
   const currentEnv =
@@ -3529,6 +3687,7 @@ seedNodeProcessBuiltinModuleLoader(globalThis.process);
 seedNodeProcessFinalization(globalThis.process);
 installNimbusProcessDlopenErrorMapping(globalThis.process);
 installNimbusNativeExtensionErrorMapping(globalThis.process);
+installNimbusDomainPromiseRejectPatch();
 const workerBootstrapState =
   typeof core.ops.op_nimbus_worker_bootstrap_state === "function"
     ? core.ops.op_nimbus_worker_bootstrap_state()
@@ -3576,6 +3735,7 @@ if (typeof internals.__initWorkerThreads === "function") {
       writable: true,
     });
   }
+  seedNodeClusterWorkerIfNeeded(workerBootstrapState, workerMetadataObject);
 }
 patchNodeFsReadSemantics(globalThis.process);
 seedNodeProcessLoadEnvFile(globalThis.process);

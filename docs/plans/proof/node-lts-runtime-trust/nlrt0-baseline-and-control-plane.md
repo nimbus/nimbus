@@ -55,7 +55,7 @@ NLRT1 must replace this hand-inspected baseline with a verifier that inspects
 
 ## NCG Coordination
 
-`docs/plans/node-compat-cron-greening-plan.md` remains the nearer-term cron
+`docs/plans/archive/node-compat-cron-greening-plan.md` remains the nearer-term cron
 greening plan for current Node compatibility failures. NLRT must read and
 coordinate with NCG before touching Node bootstrap, process metadata, or
 node-compat harness code.

@@ -59,16 +59,34 @@ import { createRequire as __nimbusCreateRequireForProcessExit } from "node:modul
 const __nimbusRequireForProcessExit =
   __nimbusCreateRequireForProcessExit(import.meta.url);
 const __nimbusProcessExitSentinel = "__NIMBUS_NODE_COMPAT_PROCESS_EXIT__";
+const __nimbusProcessExitTargets = new Set([
+  globalThis.process,
+  __nimbusRequireForProcessExit("node:process"),
+]);
 
-if (globalThis.process && typeof globalThis.process.reallyExit === "function") {
-  globalThis.process.reallyExit = (code) => {
-    const resolvedCode = code ?? globalThis.process.exitCode ?? 0;
-    globalThis.process.exitCode = resolvedCode;
-    __nimbusRequireForProcessExit("./test/common/index.js").__nimbusAssert?.();
-    const exitError = new Error(`${__nimbusProcessExitSentinel}:${resolvedCode}`);
-    exitError.code = "NIMBUS_NODE_COMPAT_PROCESS_EXIT";
-    throw exitError;
-  };
+for (const __nimbusProcessExitTarget of __nimbusProcessExitTargets) {
+  if (
+    __nimbusProcessExitTarget &&
+    typeof __nimbusProcessExitTarget.reallyExit === "function"
+  ) {
+    __nimbusProcessExitTarget.reallyExit = (code) => {
+      const resolvedCode = code ?? __nimbusProcessExitTarget.exitCode ?? 0;
+      __nimbusProcessExitTarget.exitCode = resolvedCode;
+      if (globalThis.process && globalThis.process !== __nimbusProcessExitTarget) {
+        globalThis.process.exitCode = resolvedCode;
+      }
+      if (
+        resolvedCode === 0 &&
+        globalThis.__nimbusNodeCompatInvocationFinalized === true
+      ) {
+        return;
+      }
+      __nimbusRequireForProcessExit("./test/common/index.js").__nimbusAssert?.();
+      const exitError = new Error(`${__nimbusProcessExitSentinel}:${resolvedCode}`);
+      exitError.code = "NIMBUS_NODE_COMPAT_PROCESS_EXIT";
+      throw exitError;
+    };
+  }
 }
 "#;
 

@@ -770,9 +770,63 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
     const processBase = globalThis.process ?? {};
     // Deno's Node shim owns non-configurable process fields such as
     // process.release, so install a Nimbus-owned wrapper for lane metadata.
-    const processValue = Object.create(
+    const processTarget = Object.create(
       Object.getPrototypeOf(processBase) ?? Object.prototype,
     );
+    const processValue = new Proxy(processTarget, {
+      set(target, property, value, receiver) {
+        const result = Reflect.set(target, property, value, receiver);
+        if (
+          result &&
+          processBase &&
+          typeof processBase === "object"
+        ) {
+          const baseDescriptor = Object.getOwnPropertyDescriptor(processBase, property);
+          if (
+            !baseDescriptor ||
+            baseDescriptor.writable === true ||
+            typeof baseDescriptor.set === "function"
+          ) {
+            try {
+              Reflect.set(processBase, property, value);
+            } catch (_error) {}
+          }
+        }
+        return result;
+      },
+      defineProperty(target, property, descriptor) {
+        const result = Reflect.defineProperty(target, property, descriptor);
+        if (
+          result &&
+          processBase &&
+          typeof processBase === "object"
+        ) {
+          const baseDescriptor = Object.getOwnPropertyDescriptor(processBase, property);
+          if (!baseDescriptor || baseDescriptor.configurable === true) {
+            try {
+              Reflect.defineProperty(processBase, property, descriptor);
+            } catch (_error) {}
+          }
+        }
+        return result;
+      },
+      deleteProperty(target, property) {
+        const result = Reflect.deleteProperty(target, property);
+        if (
+          result &&
+          processBase &&
+          typeof processBase === "object"
+        ) {
+          const baseDescriptor = Object.getOwnPropertyDescriptor(processBase, property);
+          if (!baseDescriptor || baseDescriptor.configurable === true) {
+            try {
+              Reflect.deleteProperty(processBase, property);
+            } catch (_error) {}
+          }
+        }
+        return result;
+      },
+    });
     for (const property of Reflect.ownKeys(processBase)) {
       if (
         property === "cwd" ||
@@ -880,6 +934,45 @@ delete globalThis.__nimbusRetainDenoForNodeLazyScripts;
 delete globalThis.__bootstrap;
 delete globalThis.bootstrap;
 __nimbusInstallRuntimeContractGlobals(__nimbusRuntimeContract);
+if (Promise.reject.__nimbusDomainAware !== true) {
+  const __nimbusOriginalPromiseReject = Promise.reject;
+  function __nimbusDomainAwarePromiseReject(reason) {
+    const promise = __nimbusOriginalPromiseReject.apply(this, arguments);
+    const domain = globalThis.process?.domain;
+    if (domain !== null && domain !== undefined) {
+      Object.defineProperty(promise, "domain", {
+        configurable: true,
+        enumerable: false,
+        value: domain,
+        writable: true,
+      });
+      if (reason !== null && typeof reason === "object") {
+        Object.defineProperty(reason, "domain", {
+          configurable: true,
+          enumerable: false,
+          value: domain,
+          writable: true,
+        });
+        if (reason.domainThrown === undefined) {
+          reason.domainThrown = true;
+        }
+      }
+    }
+    return promise;
+  }
+  Object.defineProperty(__nimbusDomainAwarePromiseReject, "__nimbusDomainAware", {
+    configurable: false,
+    enumerable: false,
+    value: true,
+    writable: false,
+  });
+  Object.defineProperty(Promise, "reject", {
+    configurable: true,
+    enumerable: false,
+    value: __nimbusDomainAwarePromiseReject,
+    writable: true,
+  });
+}
 "#;
 
 const RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE: &str =
