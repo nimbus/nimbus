@@ -10,13 +10,14 @@ use std::sync::Arc;
 use extenddb_core::error::DynamoDbError;
 use extenddb_core::types::{
     BatchGetItemInput, BatchGetItemOutput, BatchWriteItemInput, BatchWriteItemOutput, Item,
+    StreamEventName, extract_key,
 };
 use nimbus_core::TableName;
 use nimbus_engine::Service;
 use nimbus_tenant::TenantIsolationContext;
 
-use crate::commands::control_plane;
 use crate::commands::item::{primary_key_id, read_item, remove_item, store_item};
+use crate::commands::{control_plane, stream};
 use crate::error::map_core_error;
 use crate::expression::{default_limits, project_item};
 
@@ -116,10 +117,56 @@ pub fn batch_write_item(
     }
 
     for (table_name, requests) in &input.request_items {
+        let key_schema = control_plane::load_key_schema(service, context, table_name)?;
+        let table = TableName::new(table_name).map_err(map_core_error)?;
         for request in requests {
             match (&request.put_request, &request.delete_request) {
-                (Some(put), None) => store_item(service, context, table_name, &put.item)?,
-                (None, Some(delete)) => remove_item(service, context, table_name, &delete.key)?,
+                (Some(put), None) => {
+                    // Read the prior image first so the stream record is a
+                    // correct INSERT vs MODIFY with the right old image.
+                    let id = primary_key_id(&put.item, &key_schema)?;
+                    let old = read_item(service, context, &table, id)?;
+                    store_item(service, context, table_name, &put.item)?;
+                    let keys = extract_key(&put.item, &key_schema);
+                    stream::capture_event(
+                        service,
+                        context,
+                        table_name,
+                        stream::ChangeEvent {
+                            event_name: if old.is_some() {
+                                StreamEventName::Modify
+                            } else {
+                                StreamEventName::Insert
+                            },
+                            keys: &keys,
+                            old_image: old.as_ref(),
+                            new_image: Some(&put.item),
+                            user_identity: None,
+                        },
+                    )?;
+                }
+                (None, Some(delete)) => {
+                    let id = primary_key_id(&delete.key, &key_schema)?;
+                    let old = read_item(service, context, &table, id)?;
+                    remove_item(service, context, table_name, &delete.key)?;
+                    // DynamoDB emits a REMOVE record only when an item was
+                    // actually deleted.
+                    if let Some(old_image) = old.as_ref() {
+                        let keys = extract_key(&delete.key, &key_schema);
+                        stream::capture_event(
+                            service,
+                            context,
+                            table_name,
+                            stream::ChangeEvent {
+                                event_name: StreamEventName::Remove,
+                                keys: &keys,
+                                old_image: Some(old_image),
+                                new_image: None,
+                                user_identity: None,
+                            },
+                        )?;
+                    }
+                }
                 _ => {
                     return Err(DynamoDbError::ValidationException(
                         "Each WriteRequest must contain exactly one of PutRequest or DeleteRequest"
