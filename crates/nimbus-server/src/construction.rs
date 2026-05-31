@@ -203,6 +203,13 @@ pub async fn serve(
     if let Some(dynamodb_config) = dynamodb_config {
         let dynamodb_listener = tokio::net::TcpListener::bind(dynamodb_config.bind_addr).await?;
         let dynamodb_addr = dynamodb_listener.local_addr()?;
+        // The signature-skipping lookup escape hatch is loopback-only: refuse to
+        // expose an unauthenticated DynamoDB surface on a network-reachable
+        // address. Production must use the default Strict mode with signed keys.
+        adapters::dynamodb::listener::guard_lookup_is_loopback_only(
+            dynamodb_addr,
+            &dynamodb_config.access_keys,
+        )?;
         crate::system_tenant::record_listener_state_async(
             &service,
             "dynamodb",
