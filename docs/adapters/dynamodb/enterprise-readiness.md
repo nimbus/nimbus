@@ -103,8 +103,13 @@ rejected). Each carries a regression test and is classified in the parity report
 - **Throttling:** Nimbus never emits `ProvisionedThroughputExceededException`
   (no provisioned-capacity model).
 - **Streams:** one shard per stream; record retention is reclaimed on read.
-- **Stream sequence counter:** monotonic and persisted; making the counter bump
-  atomic under concurrent writers is a follow-up (single-node correct today).
+  BatchWriteItem and TransactWriteItems emit stream records like the single-item
+  writes; a transaction's events are folded into its atomic commit.
+- **Stream sequence counter:** monotonic and persisted; the event and the
+  advanced high-water counter are written in a single atomic batch (the event
+  uses `Create` mode keyed by its sequence, so a concurrent writer that claims a
+  number first loses the commit and retries), giving gap-free, no-duplicate
+  sequence numbers under concurrency.
 - **TTL sweeper:** read/timer-driven reclamation; a never-polled, never-swept
   stream retains expired records until its next poll.
 - **Ground-truth parity lanes** (DynamoDB Local, ExtendDB) are Docker/Postgres

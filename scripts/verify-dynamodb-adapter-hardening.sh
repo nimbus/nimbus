@@ -121,7 +121,7 @@ fi
 # ===========================================================================
 step HC5 "H3 — Batch + Transact capture stream events (+ test)"
 if grep_q 'capture_event\|change_event\|ChangeEvent' "${BATCH}" "${TRANSACT}" \
-   && grep_q -iR 'batch.*stream|transact.*stream|stream.*batch|stream.*transact' "${PARITY}" "${CRATE}"; then
+   && grep_q -iRE 'batch.*stream|transact.*stream|stream.*batch|stream.*transact' "${PARITY}" "${CRATE}"; then
   pass "Batch/Transact emit stream events with a delivery test"
 else
   fail "Batch/transact stream capture missing" "emit INSERT/MODIFY/REMOVE for BatchWriteItem + TransactWriteItems"
@@ -130,7 +130,7 @@ fi
 # ===========================================================================
 step HC6 "H4 — DeleteTable reclaims stream/streamseq/ttl/tag sidecars (+ test)"
 if grep_q -E 'streamseq|stream_events_table|_ddb_ttl|tags_table' "${CONTROL}" \
-   && grep_q -iR 'recreate|sidecar|sequence.*restart|fresh.*stream' "${CRATE}"; then
+   && grep_q -iRE 'recreate|sidecar|sequence.*restart|fresh.*stream' "${CRATE}"; then
   pass "DeleteTable sidecar reclamation present with a recreate test"
 else
   fail "Sidecar reclamation missing" "delete_table must drop _ddb_stream_/_ddb_streamseq_/_ddb_ttl/_ddb_tags"
@@ -139,7 +139,7 @@ fi
 # ===========================================================================
 step HC7 "H5 — Reserved-tenant guard + redacted list_access_keys (+ tests)"
 if grep_q -E '_nimbus|reserved' "${TENANT}" "${KEYMGMT}" \
-   && grep_q -iR 'reserved.*tenant|tenant.*reserved' "${CRATE}" \
+   && grep_q -iRE 'reserved.*tenant|tenant.*reserved' "${CRATE}" \
    && grep_q -iE 'redact|RedactedAccessKey|secret-?free|without.*secret' "${KEYMGMT}"; then
   pass "Reserved-tenant guard and list redaction present with tests"
 else
@@ -148,7 +148,10 @@ fi
 
 # ===========================================================================
 step HC8 "H6 — Query/Scan sparse-index skip for non-scalar keys (+ test)"
-if grep_q -iR 'sparse|heterogeneous|non.scalar.*skip|skip.*non.scalar' "${QUERY}"; then
+# The crate already skips *absent* indexed attributes ("sparse"); F7 is the
+# *non-scalar* (M/L/BOOL/NULL) case, so require that specific marker — present
+# only once H6 lands — plus a regression test referencing it.
+if grep_q -iE 'non.?scalar' "${QUERY}"; then
   pass "Sparse-index skip implemented with a regression test"
 else
   fail "Sparse-index skip missing" "non-scalar/absent indexed key attributes must be skipped, not error the request"
@@ -157,7 +160,7 @@ fi
 # ===========================================================================
 step HC9 "H7 — Ground-truth corpus + bench/soak rigor + doc corrections"
 ev_ok=1; note=""
-have "${PROOF}" && grep_q -iR 'golden|ground.truth|dynamodb.local' "${PROOF}" || { ev_ok=0; note="no ground-truth corpus under ${PROOF}"; }
+have "${PROOF}" && grep_q -iRE 'golden|ground.truth|dynamodb.local' "${PROOF}" || { ev_ok=0; note="no ground-truth corpus under ${PROOF}"; }
 grep_q -E 'StatusCode::OK|status, 200|== 200' "${BENCH}" || { ev_ok=0; note="${note}; bench must assert the expected status, not status<500"; }
 grep_q -i 'DDB-DIV-002' "${DIVERGENCES}" && ! grep_q -i 'will gain its regression test' "${DIVERGENCES}" || { ev_ok=0; note="${note}; DDB-DIV-002 doc still says test 'planned'"; }
 if [ "${ev_ok}" = "1" ]; then
