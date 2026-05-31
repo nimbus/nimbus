@@ -1,13 +1,13 @@
 # DynamoDB Adapter — Startup Prompt
 
 Recoverable copy of the autonomous objective for
-`docs/plans/dynamodb-adapter-plan.md`. The canonical definition lives in that
+`docs/plans/archive/dynamodb-adapter-plan.md`. The canonical definition lives in that
 plan's **Goal Control Plane** section; this file mirrors it so the prompt is
 recoverable from a file as well as from the plan.
 
 ## Objective
 
-Complete `docs/plans/dynamodb-adapter-plan.md` autonomously end to end. Ship a
+Complete `docs/plans/archive/dynamodb-adapter-plan.md` autonomously end to end. Ship a
 `nimbus-dynamodb` concrete adapter crate that serves the DynamoDB HTTP/JSON wire
 protocol on its own port, covering compatibility tiers T0–T7 (control plane;
 single-item ops + expressions; Query/Scan; batch + transactions; secondary
@@ -50,5 +50,5 @@ DynamoDB protocol dependencies out of `nimbus-server`; and pass
 ## `/goal` prompt
 
 ```text
-/goal Complete docs/plans/dynamodb-adapter-plan.md autonomously end to end on a dedicated worktree branch — never push to main directly. First (D0.0a) create the worktree branch: `git worktree add ../nimbus-dynamodb-adapter -b dynamodb-adapter`, and do all work from there. Work one roadmap item at a time in dependency order (D0.0a control-plane scaffold first, then D0.0..D9.7), mark exactly one item in_progress, satisfy its completion gate, commit per item with the plan checkpoint, and record the commands run plus observed counts in the execution log before closing it. Ship the nimbus-dynamodb concrete adapter crate for DynamoDB tiers T0-T7 plus the @nimbus/dynamodb package, prove every supported operation through an official SDK client (AWS CLI / JS v3 / Rust / Python) against an endpoint override, classify every DynamoDB-Local/ExtendDB divergence in docs/adapters/dynamodb/divergences.md with a regression test, hold two-tenant isolation, and commit failure-injection, soak, performance-baseline, and enterprise-readiness evidence. Keep DynamoDB protocol dependencies out of nimbus-server. Done when every roadmap item is done, `bash scripts/verify-dynamodb-adapter.sh` exits 0 with "N passed, 0 failed", `cargo fmt --all --check` + `make clippy` + `make deny` + `make verify-third-party-attribution` + strict docs-reference validation + `git diff --check` all pass, the `dynamodb-adapter` branch is pushed and full CI is green on it, and a PR `dynamodb-adapter → main` is open (the final closeout action — do not merge it yourself).
+/goal Complete docs/plans/archive/dynamodb-adapter-plan.md autonomously end to end on a dedicated worktree branch — never push to main directly. First (D0.0a) create the worktree branch: `git worktree add ../nimbus-dynamodb-adapter -b dynamodb-adapter`, and do all work from there. Work one roadmap item at a time in dependency order (D0.0a control-plane scaffold first, then D0.0..D9.7), mark exactly one item in_progress, satisfy its completion gate, commit per item with the plan checkpoint, and record the commands run plus observed counts in the execution log before closing it. Ship the nimbus-dynamodb concrete adapter crate for DynamoDB tiers T0-T7 plus the @nimbus/dynamodb package, prove every supported operation through an official SDK client (AWS CLI / JS v3 / Rust / Python) against an endpoint override, classify every DynamoDB-Local/ExtendDB divergence in docs/adapters/dynamodb/divergences.md with a regression test, hold two-tenant isolation, and commit failure-injection, soak, performance-baseline, and enterprise-readiness evidence. Keep DynamoDB protocol dependencies out of nimbus-server. Done when every roadmap item is done, `bash scripts/verify-dynamodb-adapter.sh` exits 0 with "N passed, 0 failed", `cargo fmt --all --check` + `make clippy` + `make deny` + `make verify-third-party-attribution` + strict docs-reference validation + `git diff --check` all pass, the `dynamodb-adapter` branch is pushed and full CI is green on it, and a PR `dynamodb-adapter → main` is open (the final closeout action — do not merge it yourself).
 ```

@@ -14,7 +14,7 @@ workspace = true
 
 [dependencies]
 # DynamoDB protocol core (AttributeValue, expression language, validation,
-# error taxonomy) — pinned git rev; see docs/plans/dynamodb-adapter-plan.md.
+# error taxonomy) — pinned git rev; see docs/plans/archive/dynamodb-adapter-plan.md.
 extenddb-core = { workspace = true }
 # Nimbus document value model (StoredValue typed sidecar, promoted in D0.1b).
 nimbus-core = { path = "../nimbus-core" }
