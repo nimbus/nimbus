@@ -146,6 +146,9 @@ pub fn validate_item(item: &Item) -> Result<(), DynamoDbError> {
             "The number of conditions on the keys is invalid; an item must contain at least one attribute".to_owned(),
         ));
     }
+    // Reject top-level attribute names that collide with Nimbus-reserved
+    // projection fields (`_pk`/`_sk`/`_gsi*`/…) before they reach storage (F12).
+    crate::key::validate_attribute_names(item)?;
     for value in item.values() {
         validate_attribute_value(value)?;
     }
@@ -316,6 +319,28 @@ mod tests {
             validate_item(&empty),
             Err(DynamoDbError::ValidationException(_))
         ));
+    }
+
+    #[test]
+    fn validate_item_rejects_reserved_attribute_names() {
+        // F12: validate_attribute_names is now wired into the write path, so an
+        // item carrying a Nimbus-reserved name (`_pk`/`_sk`/`_nimbus_*`) is
+        // rejected before it can collide with the internal projection fields.
+        for reserved in ["_pk", "_sk", "_nimbus_internal"] {
+            let mut item: Item = BTreeMap::new();
+            item.insert(reserved.to_string(), AttributeValue::S("x".into()));
+            assert!(
+                matches!(
+                    validate_item(&item),
+                    Err(DynamoDbError::ValidationException(_))
+                ),
+                "reserved attribute name {reserved} must be rejected"
+            );
+        }
+        // A normal attribute name is fine.
+        let mut ok: Item = BTreeMap::new();
+        ok.insert("pk".to_string(), AttributeValue::S("a".into()));
+        assert!(validate_item(&ok).is_ok());
     }
 
     #[test]

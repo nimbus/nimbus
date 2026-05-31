@@ -62,7 +62,7 @@ fn mixed_workload_soak_fails_closed_without_panics() {
     let arn = "arn:aws:dynamodb:ddblocal:000000000000:table/Soak";
     let mut tally = Tally::default();
 
-    let mut run = |operation: &str, key: &str, body: Value| {
+    let mut run = |operation: &str, key: &str, body: Value| -> Value {
         let (status, json) = dispatch(&ctx, &headers(key, operation), body.to_string().as_bytes());
         tally.total += 1;
         if (200..300).contains(&status) {
@@ -87,6 +87,7 @@ fn mixed_workload_soak_fails_closed_without_panics() {
             );
             tally.modeled_errors += 1;
         }
+        json
     };
 
     // Two tables: a simple HASH table and a HASH+RANGE table for queries.
@@ -139,6 +140,20 @@ fn mixed_workload_soak_fails_closed_without_panics() {
                 "UpdateExpression": "SET v = :v",
                 "ExpressionAttributeValues": { ":v": { "N": (i + 1).to_string() } },
             }),
+        );
+
+        // Read-back correctness invariant (F15): the value just written must be
+        // the value read back. This proves the workload actually mutates and
+        // persists state correctly, not merely that each call returns 2xx.
+        let read_back = run(
+            "GetItem",
+            KEY,
+            json!({ "TableName": "Soak", "Key": { "pk": { "S": pk } } }),
+        );
+        assert_eq!(
+            read_back["Item"]["v"]["N"].as_str(),
+            Some((i + 1).to_string().as_str()),
+            "GetItem must read back the value written by the preceding UpdateItem"
         );
 
         // A range write + query.

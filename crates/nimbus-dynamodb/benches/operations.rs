@@ -195,7 +195,11 @@ fn main() {
             let start = Instant::now();
             let (status, _) = call(op, body);
             let elapsed = start.elapsed().as_nanos();
-            assert!(status < 500, "{label} returned {status}");
+            // Every benched case is a valid operation: assert the *expected*
+            // success status, not merely `< 500` (which a modeled 4xx would
+            // silently pass), so a regression that turns a 200 into a 400 fails
+            // the bench instead of skewing the latency numbers (F15).
+            assert_eq!(status, 200, "{label} returned {status}");
             samples.push(elapsed);
         }
         let (p50, p95, p99) = percentiles(samples);
