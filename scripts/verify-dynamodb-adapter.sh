@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the DynamoDB Adapter plan
-# (`docs/plans/dynamodb-adapter-plan.md`).
+# (`docs/plans/archive/dynamodb-adapter-plan.md`).
 #
 # Exits 0 iff every condition in the plan's "## Completion Gate" is satisfied.
 # Shipped in D0.0a so /goal is verifiable from day one: it FAILS on every
@@ -22,7 +22,7 @@ cd "${REPO_ROOT}" || exit 2
 
 # -------- expected artifact paths -----------------------------------------
 
-PLAN_ACTIVE="docs/plans/dynamodb-adapter-plan.md"
+PLAN_ACTIVE="docs/plans/archive/dynamodb-adapter-plan.md"
 PLAN_ARCHIVED="docs/plans/archive/dynamodb-adapter-plan.md"
 START_PROMPT="docs/prompts/dynamodb-adapter-start.md"
 
