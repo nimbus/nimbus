@@ -67,12 +67,27 @@ pub fn verify_signature(
         ));
     }
 
-    // Reject UNSIGNED-PAYLOAD: real DynamoDB requires a computed body hash
-    // for all API calls. UNSIGNED-PAYLOAD is only valid for S3.
+    // Reject UNSIGNED-PAYLOAD and bind the request body to the signature.
+    //
+    // The canonical request trusts the client-supplied `x-amz-content-sha256`
+    // value as the payload hash, so the signature only attests to *that hash*,
+    // not to the bytes we actually dispatch. Without re-deriving the body hash
+    // here, a captured signed request's body could be swapped while keeping the
+    // same header + `Signature` and verification would still pass. Real
+    // DynamoDB rejects such a mismatch; so do we.
     if let Some(content_sha) = headers.get("x-amz-content-sha256") {
         if content_sha.as_bytes() == b"UNSIGNED-PAYLOAD" {
+            // UNSIGNED-PAYLOAD is only valid for S3; DynamoDB requires a hash.
             return Err(DynamoDbError::InvalidSignatureException(
                 "UNSIGNED-PAYLOAD is not supported for DynamoDB operations.".to_owned(),
+            ));
+        }
+        let actual = canonical::sha256_hex(body);
+        let provided = content_sha.to_str().unwrap_or_default();
+        if !provided.eq_ignore_ascii_case(&actual) {
+            return Err(DynamoDbError::InvalidSignatureException(
+                "The request body does not match the x-amz-content-sha256 it was signed with."
+                    .to_owned(),
             ));
         }
     }
@@ -166,6 +181,19 @@ fn parse_iso8601_basic(s: &str) -> Option<i64> {
     let min: i64 = s[11..13].parse().ok()?;
     let sec: i64 = s[13..15].parse().ok()?;
 
+    // Range-validate each field so a malformed-but-parseable timestamp (e.g.
+    // `20269999T999999Z`) is rejected outright rather than mapped to a nonsense
+    // epoch that could land inside the ±15-minute skew window. (`sec` allows 60
+    // for leap seconds.)
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&min)
+        || !(0..=60).contains(&sec)
+    {
+        return None;
+    }
+
     // Days-since-epoch via Howard Hinnant's date algorithm (general, not range-limited).
     let y = if month <= 2 { year - 1 } else { year };
     let era = y / 400;
@@ -180,18 +208,19 @@ fn parse_iso8601_basic(s: &str) -> Option<i64> {
 
 /// Constant-time byte comparison to prevent timing attacks.
 ///
-/// The early return on length mismatch leaks timing information about whether
-/// lengths match. Callers must ensure both inputs have equal length (e.g.,
-/// hex-encoded signatures are always 64 bytes).
+/// Processes every byte of the longer input (no early return on length
+/// mismatch) so the running time depends only on the input lengths — never on
+/// *where* the inputs first differ. `parsed.signature` is attacker-controlled
+/// and arbitrary-length, so unequal lengths must be handled safely here.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
     let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
+    let n = a.len().max(b.len());
+    for i in 0..n {
+        let x = a.get(i).copied().unwrap_or(0);
+        let y = b.get(i).copied().unwrap_or(0);
         diff |= x ^ y;
     }
-    diff == 0
+    diff == 0 && a.len() == b.len()
 }
 
 #[cfg(test)]
@@ -321,6 +350,38 @@ mod tests {
                 assert!(
                     msg.contains("UNSIGNED-PAYLOAD"),
                     "Expected 'UNSIGNED-PAYLOAD' in: {msg}"
+                );
+            }
+            other => panic!("Expected InvalidSignatureException, got: {other:?}"),
+        }
+    }
+
+    /// H1 regression: a tampered body is rejected even when the rest of the
+    /// canonical request is signed correctly. The signer advertises
+    /// `x-amz-content-sha256 = sha256("{}")` but the transport delivers a
+    /// different body; binding the body to the signature must reject it with a
+    /// content-sha256 mismatch rather than trusting the header.
+    #[test]
+    fn tampered_body_is_rejected() {
+        let parsed = make_parsed(
+            "dynamodb",
+            "20260415",
+            "content-type;host;x-amz-content-sha256;x-amz-date",
+        );
+        let mut headers = make_headers("20260415T120000Z");
+        // Header pins the hash of the *original* body the client signed.
+        headers.insert(
+            "x-amz-content-sha256",
+            canonical::sha256_hex(b"{}").parse().unwrap(),
+        );
+        // Transport delivers a swapped body under the same pinned hash.
+        let tampered_body = br#"{"TableName":"evil"}"#;
+        let err = verify_signature(&parsed, "secret", "POST", "/", "", &headers, tampered_body);
+        match err {
+            Err(DynamoDbError::InvalidSignatureException(msg)) => {
+                assert!(
+                    msg.contains("does not match the x-amz-content-sha256"),
+                    "Expected content-sha256 mismatch in: {msg}"
                 );
             }
             other => panic!("Expected InvalidSignatureException, got: {other:?}"),

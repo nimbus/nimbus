@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use http::{HeaderMap, HeaderValue};
 use nimbus_core::TenantId;
-use nimbus_dynamodb::{AccessKeyRegistry, DispatchContext, dispatch};
+use nimbus_dynamodb::{AccessKeyRegistry, AuthMode, DispatchContext, dispatch};
 use nimbus_engine::Service;
 use serde_json::{Value, json};
 
@@ -51,7 +51,9 @@ struct Tally {
 fn mixed_workload_soak_fails_closed_without_panics() {
     let temp = tempfile::tempdir().expect("tempdir");
     let service = Arc::new(Service::new(temp.path()).expect("service"));
-    let registry = AccessKeyRegistry::new().bind(KEY, TenantId::new("acme").expect("tenant"));
+    let registry = AccessKeyRegistry::new()
+        .bind(KEY, TenantId::new("acme").expect("tenant"))
+        .with_mode(AuthMode::LookupOnly);
     let ctx = DispatchContext {
         service: &service,
         access_keys: &registry,

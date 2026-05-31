@@ -87,7 +87,7 @@ fi
 # ===========================================================================
 step HC2 "H1 — SigV4 request body bound to the signature (+ regression test)"
 if grep_q -E 'sha256_hex\(body\)|sha256.*body' "${VERIFY}" \
-   && grep_q -iR 'tampered.body|body.*tamper|content.sha256.*mismatch' "${CRATE}" "${PARITY}"; then
+   && grep_q -iE 'tampered.body|body.*tamper|content.sha256.*mismatch' "${CRATE}" "${PARITY}"; then
   pass "verify.rs binds the body hash and a tampered-body regression test exists"
 else
   fail "Body-binding not proven" "verify.rs must compare x-amz-content-sha256 to sha256(body) with a regression test"
@@ -98,8 +98,9 @@ step HC3 "H1 — Strict is the default + ergonomic auth/secret config builders"
 if grep_q 'insecure_dev_auth' "${CONFIG}" \
    && grep_q -E 'with_auth_mode|with_signed_access_key|bind_signed' "${CONFIG}" \
    && grep_q -E '#\[default\]' "${TENANT}" && grep_q -E 'Strict' "${TENANT}"; then
-  # the #[default] must sit on Strict, not LookupOnly
-  if grep -Pzoq '#\[default\]\s*\n\s*Strict' "${TENANT}" 2>/dev/null; then
+  # the #[default] must sit on Strict, not LookupOnly. `grep -A1` is portable
+  # across BSD/GNU grep (unlike `-Pz`): the line after `#[default]` is `Strict`.
+  if grep -A1 '#\[default\]' "${TENANT}" | grep -Eq '^[[:space:]]*Strict\b'; then
     pass "AuthMode::Strict is the default and config has auth/secret builders + insecure_dev_auth"
   else
     fail "Strict is not the default" "move #[default] to Strict in ${TENANT}"

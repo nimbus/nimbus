@@ -32,8 +32,9 @@ Per-operation fields, exceptions, and test lanes: `feature-coverage.md`.
 ## SDK compatibility
 
 Every supported operation works through the official **Rust** `aws-sdk-dynamodb`
-(27/27 parity scenarios) and `aws-sdk-dynamodbstreams`, in both lookup and strict
-SigV4 modes, by endpoint override. **JS v3**, **boto3 (Python)**, **AWS CLI**,
+(27/27 parity scenarios) and `aws-sdk-dynamodbstreams` under the default strict
+SigV4 verification (the parity fixtures bind the SDK's secret and verify every
+signature end to end), by endpoint override. **JS v3**, **boto3 (Python)**, **AWS CLI**,
 and **Java v2** are wired the same way (endpoint override + access key);
 their lanes are recorded in `sdk-compatibility.md`. No supported operation fails
 through an official SDK due to protocol drift.
@@ -55,6 +56,30 @@ TTL-configure, tag, or infer each other's tables — even with identical table
 names. Unbound keys and wrong signatures fail closed (`tenant-isolation.md`).
 The catalog, TTL, tag, and stream stores are per-tenant; only the access-key
 store is global (and maps each key to exactly one tenant).
+
+## Transport security & authentication posture
+
+- **Strict SigV4 is the default.** `AuthMode::Strict` verifies the full SigV4
+  signature (canonical request, derived signing key, constant-time compare) and
+  rejects requests outside the ±15-minute timestamp window. Bind production keys
+  with `DynamoDbConfig::with_signed_access_key`.
+- **Request body is signature-bound.** Strict verification rejects a request
+  unless `x-amz-content-sha256` equals `sha256(body)`, so the body cannot be
+  tampered with under a captured signature (and `UNSIGNED-PAYLOAD` is refused for
+  DynamoDB operations).
+- **The lookup escape hatch is loopback-only.** `DynamoDbConfig::insecure_dev_auth`
+  skips signature verification for local development; the server **refuses to
+  bind it to a non-loopback address**. Never expose it on a routable interface.
+- **TLS termination is required in production.** SigV4 provides request
+  authentication and integrity but **not confidentiality** — the listener speaks
+  plaintext HTTP. Deploy it behind a TLS-terminating proxy (or mesh) so
+  credentials and payloads are encrypted in transit. SigV4 also has no per-request
+  nonce: its only replay bound is the ±15-minute clock window, which TLS plus a
+  trusted network boundary are expected to backstop.
+- **Request-body cap.** The listener caps request bodies at 16 MiB (aligned to
+  DynamoDB's 400 KB item × 25-item `BatchWriteItem` limits) and returns
+  `413 Payload Too Large` before buffering or parsing — an oversized payload
+  cannot force a large pre-authentication allocation.
 
 ## Performance baseline
 

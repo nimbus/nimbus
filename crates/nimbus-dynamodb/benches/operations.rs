@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use http::{HeaderMap, HeaderValue};
 use nimbus_core::TenantId;
-use nimbus_dynamodb::{AccessKeyRegistry, DispatchContext, dispatch};
+use nimbus_dynamodb::{AccessKeyRegistry, AuthMode, DispatchContext, dispatch};
 use nimbus_engine::Service;
 use serde_json::{Value, json};
 
@@ -51,7 +51,11 @@ fn percentiles(mut samples: Vec<u128>) -> (u128, u128, u128) {
 fn main() {
     let temp = tempfile::tempdir().expect("tempdir");
     let service = Arc::new(Service::new(temp.path()).expect("service"));
-    let registry = AccessKeyRegistry::new().bind(KEY, TenantId::new("acme").expect("tenant"));
+    // Synthetic headers (no real SigV4 signature), so the bench drives the
+    // lookup escape hatch rather than strict verification.
+    let registry = AccessKeyRegistry::new()
+        .bind(KEY, TenantId::new("acme").expect("tenant"))
+        .with_mode(AuthMode::LookupOnly);
     let ctx = DispatchContext {
         service: &service,
         access_keys: &registry,

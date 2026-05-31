@@ -51,9 +51,9 @@ impl Drop for Fixture {
 }
 
 impl Fixture {
-    /// An `aws-sdk-dynamodb` client signing as `access_key`, pointed at this
-    /// fixture's listener. The secret is arbitrary — the adapter is lookup-only
-    /// (D0.8); strict signature verification is D7.
+    /// An `aws-sdk-dynamodb` client signing as `access_key` with [`CLIENT_SECRET`],
+    /// pointed at this fixture's listener. The default fixtures bind that same
+    /// secret in [`AuthMode::Strict`], so the SDK's real SigV4 signature verifies.
     fn client(&self, access_key: &str) -> Client {
         let config = aws_sdk_dynamodb::Config::builder()
             .behavior_version(BehaviorVersion::latest())
@@ -64,7 +64,7 @@ impl Fixture {
             .retry_config(RetryConfig::disabled())
             .credentials_provider(Credentials::new(
                 access_key.to_owned(),
-                "test-secret",
+                CLIENT_SECRET,
                 None,
                 None,
                 "dynamodb_spec",
@@ -84,7 +84,7 @@ impl Fixture {
             .retry_config(aws_sdk_dynamodbstreams::config::retry::RetryConfig::disabled())
             .credentials_provider(aws_sdk_dynamodbstreams::config::Credentials::new(
                 access_key.to_owned(),
-                "test-secret",
+                CLIENT_SECRET,
                 None,
                 None,
                 "dynamodb_spec",
@@ -95,13 +95,20 @@ impl Fixture {
 }
 
 /// Boot a fresh adapter on `127.0.0.1:0` with the given access-key → tenant
-/// bindings.
+/// bindings, in the secure-by-default [`AuthMode::Strict`] mode. Every key is
+/// bound with [`CLIENT_SECRET`] — the same secret [`Fixture::client`] signs
+/// with — so every parity scenario exercises real SigV4 verification end to end
+/// rather than the signature-skipping lookup escape hatch.
 async fn fixture_with_keys(bindings: &[(&str, &str)]) -> Fixture {
     let temp = tempfile::tempdir().expect("tempdir");
     let service = Arc::new(Service::new(temp.path()).expect("service"));
-    let mut registry = AccessKeyRegistry::new();
+    let mut registry = AccessKeyRegistry::new().with_mode(AuthMode::Strict);
     for (key, tenant) in bindings {
-        registry = registry.bind(*key, TenantId::new(*tenant).expect("valid tenant"));
+        registry = registry.bind_signed(
+            *key,
+            TenantId::new(*tenant).expect("valid tenant"),
+            CLIENT_SECRET,
+        );
     }
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");

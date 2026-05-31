@@ -29,14 +29,16 @@ use crate::error::map_core_error;
 /// How the adapter authenticates requests.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AuthMode {
-    /// Extract the access key and resolve it to a tenant without verifying the
-    /// SigV4 signature. The default; convenient for local development where the
-    /// secret is arbitrary.
-    #[default]
-    LookupOnly,
     /// Verify the full SigV4 signature against the per-key secret and reject
-    /// requests outside the ±15-minute timestamp window.
+    /// requests outside the ±15-minute timestamp window. The default: the
+    /// adapter is secure-by-default and rejects forged or replayed requests.
+    #[default]
     Strict,
+    /// Extract the access key and resolve it to a tenant *without* verifying the
+    /// SigV4 signature. Insecure — any signature is accepted — so it is only an
+    /// opt-in local-development escape hatch (`DynamoDbConfig::insecure_dev_auth`)
+    /// and the server refuses to bind it to a non-loopback address.
+    LookupOnly,
 }
 
 /// One access key's binding: the tenant it scopes to, plus the secret access
@@ -59,7 +61,8 @@ pub struct AccessKeyRegistry {
 }
 
 impl AccessKeyRegistry {
-    /// An empty registry (no access keys configured), `LookupOnly` mode.
+    /// An empty registry (no access keys configured) in the secure-by-default
+    /// [`AuthMode::Strict`] mode.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -109,6 +112,14 @@ impl AccessKeyRegistry {
     #[must_use]
     pub fn mode(&self) -> AuthMode {
         self.mode
+    }
+
+    /// Whether this registry skips SigV4 verification ([`AuthMode::LookupOnly`]).
+    /// The server uses this to refuse binding an insecure registry to a
+    /// non-loopback address — the lookup escape hatch is loopback-only.
+    #[must_use]
+    pub fn is_insecure_lookup(&self) -> bool {
+        matches!(self.mode, AuthMode::LookupOnly)
     }
 
     /// Resolve an access-key id to its bound tenant.
@@ -198,6 +209,22 @@ mod tests {
         assert_eq!(registry.len(), 2);
         assert_eq!(registry.resolve("AKIAACME").unwrap(), &tenant("acme"));
         assert_eq!(registry.resolve("AKIAGLOBEX").unwrap(), &tenant("globex"));
+    }
+
+    #[test]
+    fn strict_is_the_default_mode() {
+        // Secure-by-default: a freshly built registry verifies signatures and is
+        // not flagged as the insecure loopback-only escape hatch.
+        let registry = AccessKeyRegistry::new();
+        assert_eq!(registry.mode(), AuthMode::Strict);
+        assert!(!registry.is_insecure_lookup());
+        assert_eq!(AuthMode::default(), AuthMode::Strict);
+    }
+
+    #[test]
+    fn lookup_mode_is_flagged_insecure() {
+        let registry = AccessKeyRegistry::new().with_mode(AuthMode::LookupOnly);
+        assert!(registry.is_insecure_lookup());
     }
 
     #[test]
