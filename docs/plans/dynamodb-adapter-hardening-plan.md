@@ -1,0 +1,115 @@
+# DynamoDB Adapter — Hardening Plan
+
+Close the verified correctness, data-integrity, and security gaps found in a
+post-merge audit of `crates/nimbus-dynamodb` (shipped via PR #4) so the adapter
+is trustworthy for production authentication, streamed/CDC consumers, and
+multi-tenant enterprise workloads — not just local-dev parity.
+
+## Status
+
+- **Plan status:** `pending` (authored 2026-05-31 from the post-merge audit;
+  not yet promoted to `in_progress`).
+- **Source:** every item below was **verified against the merged code at the
+  cited `file:line`** — agent discovery was re-confirmed by direct reading. One
+  agent claim (modularity of `query.rs`/`stream.rs`) was **refuted** and is
+  excluded (both files are under the 1,500-line soft threshold).
+- **Predecessor:** `docs/plans/archive/dynamodb-adapter-plan.md` (the completed
+  build; D0.0a..D9.7). This plan is the hardening follow-on, not a rebuild.
+
+## Why this matters (enterprise trust)
+
+The adapter is functionally complete and SDK-proven, but the audit found that
+its **write paths are not crash-/concurrency-safe**, **batch/transact writes are
+invisible to Streams**, and **strict SigV4 does not actually bind the request
+body**. Each of these silently violates a guarantee an enterprise DynamoDB
+customer assumes (durable atomic writes, complete change capture, request
+integrity). They do not block the merge that already happened, but they must be
+closed before the adapter is the system of record for real tenants.
+
+## Verified findings → severity
+
+| ID | Finding | Verified at | Severity |
+| --- | --- | --- | --- |
+| F1 | Strict SigV4 never verifies `x-amz-content-sha256` == `sha256(body)` → request body is cryptographically unbound | `auth/sigv4/canonical.rs:41-48`, `verify.rs:70-78` | **Critical (security)** |
+| F2 | Single-item + catalog writes use non-atomic `delete`+`insert` (crash window loses the row); the atomic `WriteSetMode::Overwrite` primitive *does* exist and is used by transact | `commands/item.rs:64-71,263-272,318-336`, `control_plane.rs:204-215`, `transact.rs:277-280` | **High (data integrity)** |
+| F3 | `BatchWriteItem` and `TransactWriteItems` emit **no** stream records (0 `capture_event` calls); same writes via Put/Update/Delete do | `commands/batch.rs`, `transact.rs` (no `capture_event`) | **High (correctness/CDC)** |
+| F4 | `DeleteTable` leaks sidecar state (`_ddb_stream_<t>`, `_ddb_streamseq_<t>`, `_ddb_ttl`, `_ddb_tags`); recreate-after-delete inherits a **stale stream sequence high-water mark** | `commands/control_plane.rs` `delete_table` | **High (correctness)** |
+| F5 | Auth defaults to `LookupOnly` (no signature/secret check) and `DynamoDbConfig` has no ergonomic strict/secret builder | `tenant.rs:30-35` (default), `config.rs:47-63` | **High (security)** |
+| F6a | No reserved-name guard: an access key can be bound to the global key-store tenant `_nimbus_ddb_system`, exposing every stored credential | `tenant.rs` (`bind`/`with_access_key`), `key_management.rs:26` | **Medium (security)** |
+| F6b | Access-key secrets are stored in plaintext and returned cleartext by `lookup`/`list_access_keys` | `key_management.rs:32-45,161-222` | **Medium (security)** |
+| F7 | Index `Query`/`Scan` aborts the whole request (`ValidationException`) when any item's indexed key attribute is non-scalar/absent, instead of skipping it (DynamoDB's sparse-index semantics) | `commands/query.rs:89,420-421` (`?` propagates) vs `:428-429` (swallowed) | **Medium (correctness)** |
+| F8 | Stream sequence counter is a non-atomic read-modify-write across three separate engine calls → duplicate/lost sequence numbers under concurrency | `commands/stream.rs` `capture_event` (`next_sequence_value` → insert → `set_sequence_value`) | **Medium (correctness)** |
+| F9 | Conditional single-item writes have a check-then-write TOCTOU (read existing, evaluate condition, then non-transactional write) | `commands/item.rs:48-71,171-186` | **Medium (correctness)** |
+| F10 | `parse_iso8601_basic` does not range-validate month/day/hour/min/sec | `auth/sigv4/verify.rs:158-179` | **Low (security)** |
+| F11 | `constant_time_eq` early-returns on length mismatch (length is attacker-controlled; `parse.rs` does no length check) | `auth/sigv4/verify.rs:186-188`, `parse.rs:70` | **Low (security)** |
+| F12 | `validate_attribute_names` is exported but never called on any write path (only `validate_item` runs) | `commands/item.rs:42,324` | **Low** |
+| F13 | No explicit request-body size cap aligned to DynamoDB limits; the body is JSON-parsed before authentication (axum's 2 MB default is the only bound) | `adapters/dynamodb/listener.rs:58`, `dispatch.rs:112-119` | **Low (security)** |
+| F14 | The "parity" runner has no executable ground-truth (DynamoDB Local / ExtendDB) lane; the divergences doc's "classifies any unrecorded difference" claim is not backed by code | `crates/nimbus-server/tests/dynamodb_spec/main.rs`, `docs/adapters/dynamodb/divergences.md` | **Test rigor** |
+| F15 | The benchmark asserts only `status < 500` (passes on a 4xx) and runs in no CI lane; the soak test proves liveness, not correctness (no read-back) | `benches/operations.rs:~194`, `tests/soak.rs` | **Test rigor** |
+| F16 | `DDB-DIV-002` divergence entry says its regression test is "planned" though the tests already exist; `DDB-DIV-005`'s "no atomic upsert" justification is factually wrong | `docs/adapters/dynamodb/divergences.md` | **Doc accuracy** |
+| F17 | No replay protection beyond the ±15-minute window (inherent to SigV4); TLS-termination requirement is undocumented | `auth/sigv4/verify.rs:114-142` | **Doc / inherent** |
+
+## Decisions (resolve before/at promotion)
+
+- **D-Auth — default to Strict, gate Ler behind a loud dev flag.** Pre-launch
+  (`CLAUDE.md`: breaking changes preferred), make `AuthMode::Strict` the default,
+  require every bound key to carry a secret, and gate `LookupOnly` behind an
+  explicit `insecure_dev_auth` builder that refuses a non-loopback `bind_addr`
+  and logs a prominent warning. (Resolves F5.)
+- **D-Secret — encrypt secrets at rest; never list them.** SigV4 needs the
+  plaintext secret to derive the date-scoped signing key, so one-way hashing is
+  not an option. Encrypt `StoredAccessKey.secret` at rest with a
+  deployment-provided sealing key (reuse the existing `aws-sdk-kms` integration
+  or a local sealing key), and make `list_access_keys` return a redacted
+  metadata-only view. (Resolves F6b.)
+- **D-Atomic — one engine transaction per logical write.** Route every
+  single-item write, the catalog rewrite, the stream-event + sequence write, and
+  the TTL-sweep delete through a single `AtomicWriteBatch` (the primitive
+  `transact_write_items` already uses), so data + index + commit-log + stream
+  capture commit together. (Resolves F2, F3, F8, F9, and the latent
+  `AlreadyExists`→`ResourceInUseException` mis-map.)
+- **D-Parity — captured ground-truth corpus.** Since Docker is not always
+  present, capture a checked-in DynamoDB-Local golden-response corpus for the
+  scenario set and diff Nimbus against it in CI, with the live Docker lane as an
+  optional upgrade. (Resolves F14.)
+
+## Roadmap
+
+Statuses: `pending`, `in_progress`, `done`, `blocked`. One item at a time,
+verifier-gated, regression test per fix. Ordered by severity then dependency.
+
+| ID | Item | Status | Covers | Completion criteria | Required evidence |
+| --- | --- | --- | --- | --- | --- |
+| H1 | **Strict-SigV4-by-default + body-hash binding + auth robustness** | `pending` | F1, F5, F10, F11, F13, F17 | `AuthMode::Strict` is the default; `DynamoDbConfig` gains `with_auth_mode` + signed-key binders and an explicit loopback-only `insecure_dev_auth`; `verify_signature` rejects when `x-amz-content-sha256 != sha256(body)`; `parse_iso8601_basic` range-validates; `constant_time_eq` handles unequal lengths safely; an explicit DynamoDB-aligned body limit is set on the listener; the TLS-termination requirement is documented | Tests: a request whose body is swapped under a fixed `x-amz-content-sha256` is rejected `InvalidSignatureException`; a correctly-signed body verifies (already green); out-of-range timestamps rejected; oversize body rejected pre-auth; a lookup-mode config on a non-loopback bind is refused. Parity test through the real SDK still green. |
+| H2 | **Atomic single-item + catalog writes** | `pending` | F2, F9 | PutItem / UpdateItem / overwrite `store_item` / `UpdateTable` catalog rewrite use a one-element `AtomicWriteBatch` with `WriteSetMode::Overwrite`; conditional writes use `WritePrecondition` (no read-then-write TOCTOU); correct DDB-DIV-005's justification | Tests: a simulated crash/error between the (former) delete and insert can no longer lose the item (assert the row survives an injected mid-write failure or that only the atomic path is used); two concurrent conditional PutItems serialize correctly; existing item/transact tests stay green |
+| H3 | **Unified atomic stream capture (incl. batch/transact)** | `pending` | F3, F8 | Stream-event emission + sequence allocation fold into the **same** `AtomicWriteBatch` as the source mutation for single-item, BatchWriteItem, **and** TransactWriteItems; the sequence high-water mark advances atomically (monotonic, no duplicates/loss under concurrency) | Tests: a BatchWriteItem and a TransactWriteItems on a stream-enabled table deliver the expected INSERT/MODIFY/REMOVE records via GetRecords (new parity + unit tests); concurrent writers produce strictly increasing, gap-checked sequence numbers |
+| H4 | **Table-lifecycle sidecar reclamation** | `pending` | F4 | `DeleteTable` drops `_ddb_stream_<t>`, `_ddb_streamseq_<t>`, the `_ddb_ttl` doc, and `_ddb_tags` entries; recreate-after-delete starts a fresh stream sequence at 0 | Tests: create→write→DeleteTable→recreate same name→stream sequence restarts and no orphaned events/tags/TTL config remain |
+| H5 | **Credential-store hardening** | `pending` | F6a, F6b | `bind`/`with_access_key`/`bind_signed`/`put_access_key` reject a reserved-prefix tenant (`_nimbus_*`) and `resolve_binding` refuses a stored key whose tenant is reserved; secrets are encrypted at rest; `list_access_keys` returns a redacted (secret-free) view | Tests: binding a key to `_nimbus_ddb_system` is rejected; a request authenticated against the reserved tenant cannot read `_ddb_access_keys`; `list_access_keys` never emits a secret; secrets are unreadable on disk without the sealing key |
+| H6 | **Query/Scan robustness on heterogeneous items** | `pending` | F7 | An item whose indexed key attribute is absent or non-scalar is **skipped** (sparse-index semantics), not erroring the whole request; `sortable_eq` and `sort_cmp` behave consistently | Tests: a GSI Query over a table containing items with the indexed attribute missing / set to `M`/`L`/`BOOL`/`NULL` returns only the matching scalar items and does not raise `ValidationException` |
+| H7 | **Evidence rigor + doc accuracy** | `pending` | F12, F14, F15, F16 | A captured DynamoDB-Local golden corpus is diffed against Nimbus in CI (Docker lane optional); the bench asserts the expected status and is wired to a CI lane enforcing the 2×-p99 thresholds; the soak test adds read-back correctness invariants; `validate_attribute_names` is wired into the write path or removed; DDB-DIV-002/005 doc text corrected; the "classification" language matches executable reality | Evidence: a committed golden-corpus diff report; a CI bench-regression lane; soak read-back assertions; the corrected divergence entries |
+
+## Completion gate
+
+The plan is complete when every H-item is `done` and:
+
+1. Each fix carries a named regression test that fails against today's code and
+   passes after the fix.
+2. `cargo test -p nimbus-dynamodb` and
+   `cargo test -p nimbus-server --test dynamodb_spec` are green, including new
+   atomic-write, batch/transact-stream, sidecar-cleanup, sparse-index, and
+   body-binding tests.
+3. `docs/adapters/dynamodb/divergences.md` is factually correct (no claim that an
+   available primitive is unavailable); the feature-coverage and
+   enterprise-readiness docs reflect the hardened behavior.
+4. A ground-truth (DynamoDB-Local golden) comparison runs in CI.
+5. `cargo fmt --all --check`, `make clippy`, `make deny`,
+   `make verify-third-party-attribution`, `npm run docs:validate-refs:strict`,
+   and `git diff --check` all pass.
+6. When promoted to `/goal` execution, a `scripts/verify-dynamodb-adapter-hardening.sh`
+   verifier encodes conditions 1–5 and prints `N passed, 0 failed`.
+
+## Execution log
+
+| Date | Item | Status | Notes | Commands / evidence |
+| --- | --- | --- | --- | --- |
+| 2026-05-31 | — | `pending` | Plan authored from the post-merge audit. Every finding verified at the cited `file:line` against the merged adapter; the modularity claim was refuted and excluded. Awaiting promotion. | Audit + line-level re-verification of F1–F17. |
