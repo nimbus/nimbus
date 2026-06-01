@@ -29,6 +29,18 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Node24/Node22 fixture and package evidence; adds real Convex app
     suites; gives Node26 real Current-line fixture evidence; and gates
     docs/CI on the stricter posture.
+- `docs/plans/deno-rusty-v8-upstream-alignment-plan.md`
+  - ready upstream-alignment plan for the Deno-family runtime forks before the
+    next serious NDS3 fixture-promotion wave. Rebuilds the `nimbus/deno` fork
+    on upstream `denoland/deno@v2.8.1`, classifies every carried and dirty
+    Deno patch as upstream-replaced, upstream-adjacent,
+    Nimbus-embedding-specific, still-needed-node-gap, or obsolete; drops
+    duplicate local logic such as upstream-reverted `module.enableCompileCache`
+    unless product-specific proof exists; audits `nimbus/rusty_v8` against
+    upstream `v149.2.0` without losing Nimbus `Locker` / `UnenteredIsolate`
+    safety; republishes immutable fork tags, repins Nimbus, reruns focused and
+    broad Node compatibility evidence, and hands the upstream-aligned baseline
+    back to NDS.
 - `docs/plans/nimbus-sandbox-plan.md`
   - proposed unified sandbox plan for every Nimbus workload on the
     `nimbus-libkrun` fork via capability profiles (lambda / desktop / gpu).
@@ -117,6 +129,13 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
     binary release, Homebrew/cask, Linux package mirror, and release-owned OCI
     image lanes are in flight under this plan.
+- `docs/plans/nimbus-assets-crate-plan.md`
+  - proposed follow-on plan for extracting in-scope production distribution,
+    UI, and template bytes into a focused private `nimbus-assets` crate.
+    Covers the BPD JS package payload, operator UI bytes, auth static assets,
+    init scaffold templates, and machine bootstrap templates while keeping
+    routing, auth, provisioning, codegen, adapter behavior, and release policy
+    in their existing owner crates.
 
 ## Current Reference Baselines
 

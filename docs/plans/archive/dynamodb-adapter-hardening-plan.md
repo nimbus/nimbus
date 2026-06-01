@@ -7,9 +7,9 @@ multi-tenant enterprise workloads — not just local-dev parity.
 
 ## Status
 
-- **Plan status:** `done` (all of H1..H7 landed on the
-  `dynamodb-adapter-hardening` worktree branch; verifier
-  `scripts/verify-dynamodb-adapter-hardening.sh` reports `11 passed, 0 failed`).
+- **Plan status:** `archived 2026-06-01` — completed baseline. All of H1..H7
+  landed on the `dynamodb-adapter-hardening` worktree branch; verifier
+  `scripts/verify-dynamodb-adapter-hardening.sh` reports `11 passed, 0 failed`.
 - **Active item:** — (complete). H1..H7 are all `done`.
 - **Auth decision (D-Auth):** resolved — **strict-by-default** with `LookupOnly`
   surviving only as a loopback-only `insecure_dev_auth` escape hatch (set by the
