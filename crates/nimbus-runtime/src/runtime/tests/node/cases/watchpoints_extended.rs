@@ -666,6 +666,156 @@ fn node22_https_agent_additional_options_watchpoint() {
 }
 
 #[test]
+fn node24_net_connect_abort_controller_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-net-connect-abort-controller.js",
+        "node24/test/parallel/test-net-connect-abort-controller.js",
+        &[],
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_http_agent_abort_controller_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-http-agent-abort-controller.js",
+        "node24/test/parallel/test-http-agent-abort-controller.js",
+        COMMON_COUNTDOWN_EXTRA_FILES,
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_http_response_statuscode_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-http-response-statuscode.js",
+        "node24/test/parallel/test-http-response-statuscode.js",
+        COMMON_COUNTDOWN_EXTRA_FILES,
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_http_response_splitting_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-http-response-splitting.js",
+        "node24/test/parallel/test-http-response-splitting.js",
+        COMMON_COUNTDOWN_EXTRA_FILES,
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_http2_util_update_options_buffer_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-http2-util-update-options-buffer.js",
+        "node24/test/parallel/test-http2-util-update-options-buffer.js",
+        &[],
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_https_agent_abort_controller_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-https-agent-abort-controller.js",
+        "node24/test/parallel/test-https-agent-abort-controller.js",
+        COMMON_TLS_KEY_EXTRA_FILES,
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_https_abortcontroller_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-https-abortcontroller.js",
+        "node24/test/parallel/test-https-abortcontroller.js",
+        COMMON_TLS_KEY_EXTRA_FILES,
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_https_client_get_url_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-https-client-get-url.js",
+        "node24/test/parallel/test-https-client-get-url.js",
+        COMMON_TLS_KEY_EXTRA_FILES,
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_https_strict_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-https-strict.js",
+        "node24/test/parallel/test-https-strict.js",
+        COMMON_TLS_EXTENDED_CERT_EXTRA_FILES,
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_https_pfx_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-https-pfx.js",
+        "node24/test/parallel/test-https-pfx.js",
+        COMMON_TLS_SESSION_CERT_EXTRA_FILES,
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_https_agent_keylog_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-https-agent-keylog.js",
+        "node24/test/parallel/test-https-agent-keylog.js",
+        COMMON_TLS_KEY_EXTRA_FILES,
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_https_agent_sni_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-https-agent-sni.js",
+        "node24/test/parallel/test-https-agent-sni.js",
+        COMMON_TLS_KEY_EXTRA_FILES,
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_https_client_override_global_agent_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-https-client-override-global-agent.js",
+        "node24/test/parallel/test-https-client-override-global-agent.js",
+        COMMON_TLS_KEY_EXTRA_FILES,
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_https_resume_after_renew_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-https-resume-after-renew.js",
+        "node24/test/parallel/test-https-resume-after-renew.js",
+        COMMON_TLS_SESSION_CERT_EXTRA_FILES,
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_tls_connect_abort_controller_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-tls-connect-abort-controller.js",
+        "node24/test/parallel/test-tls-connect-abort-controller.js",
+        COMMON_TLS_EXTENDED_CERT_EXTRA_FILES,
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
 #[ignore = "Pinned later-family dependency: test-stream-writable-samecb-singletick.js asserts async_hooks TickObject allocation counts, which are owned by the broader async_hooks/task-accounting family rather than the current pure-stream contract"]
 fn node22_stream_writable_samecb_singletick_watchpoint() {
     run_node_compat_watchpoint(
@@ -1191,7 +1341,6 @@ fn node22_supported_lane_executes_manifested_networking_subset() {
 }
 
 #[test]
-#[ignore = "Node24 default lane watchpoint: the broad networking batch is classified until each carried fixture is replayed and promoted under the default-lane gate"]
 fn node24_default_lane_networking_watchpoint() {
     run_manifested_subset_for_lane("networking", NodeCompatLane::Node24, NETWORKING_BATCH);
 }
