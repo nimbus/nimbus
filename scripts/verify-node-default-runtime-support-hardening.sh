@@ -123,7 +123,7 @@ if [ -f "${CONTROL_PROOF}" ] &&
    [ -n "${PLAN_FILE}" ] &&
    grep -q 'Active worktree | `/Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening`' "${PLAN_FILE}" &&
    grep -q 'Active branch | `codex/node-default-runtime-support-hardening`' "${PLAN_FILE}" &&
-   grep -q 'Current row | `NDS0`' "${PLAN_FILE}"; then
+   grep -Eq 'Current row \| `NDS(0|1)`' "${PLAN_FILE}"; then
   pass "Control-plane proof and Active Execution Pointer are populated"
 else
   fail "Control-plane proof or Active Execution Pointer incomplete" "Draft PR/main-visible pointer may still be pending"
