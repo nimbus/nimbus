@@ -42,14 +42,26 @@ compile-time schema or planner extraction.
 
 ## Codegen And Migration Taste
 
-For Convex-style projects, the shipped codegen entrypoints are now:
+For Convex-style projects, the canonical codegen entrypoint is:
 
 - `nimbus codegen --app ./my-app`
-- `npx convex codegen --app ./my-app`
-- `npx nimbus-codegen --app ./my-app`
 
-All three invoke the same `@nimbus/codegen` pipeline and produce the same
-`_generated/*` plus `.nimbus/convex/` outputs.
+Codegen runs **in-binary** by default and `nimbus codegen` is the only
+app-facing codegen entrypoint. The `nimbus` binary runs the embedded
+`@nimbus/codegen` engine inside its V8 tooling runtime, so no `@nimbus/codegen`
+is installed into the app and no external `node` is required. The **entire
+default Convex authoring surface is in-binary and offline**: schema, server
+definitions, http routes, and `auth.config.{ts,js}` (auth.config is evaluated by
+the compile-time TypeScript AST interpreter — the same path as schema/server —
+not bundled with esbuild). There is **no** separate `npx convex codegen` /
+`npx nimbus-codegen` step; `@nimbus/codegen` is not a registry-installed app
+dependency. The external `node` runner has two roles: it is the **supported**
+runner for **Cloud Functions** (the one out-of-contract surface — its runtime
+bundling needs esbuild plugins, and its Firebase SDKs are developer-supplied),
+and a **diagnostic/transition-only** opt-out for the in-contract Convex surface
+via `NIMBUS_CODEGEN_RUNNER=external-node` (never the supported Convex path, never
+an offline path). All Convex paths produce the same `_generated/*` plus
+`.nimbus/convex/` outputs.
 
 Generated files should still be checked into version control. That keeps
 frontend typechecking and CI stable even when a developer has not run the CLI

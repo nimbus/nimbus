@@ -68,6 +68,19 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      # nimbus-bin embeds the dependency-closed JS package payload via
+      # rust-embed; build + stage it once and pass it to the compile jobs (BPD1).
+      - name: Build embedded package payload
+        run: make build-packages
+
+      - name: Upload embedded package payload
+        uses: actions/upload-artifact@v7
+        with:
+          name: embedded-packages
+          path: crates/nimbus-bin/embedded-packages
+          if-no-files-found: error
+          retention-days: 1
+
   warm-sccache:
     # Mirrors ci.yml's warm-sccache: prime sccache so coverage shards do
     # not all cold-compile identical crates in parallel.
@@ -94,6 +107,15 @@ jobs:
 
       - name: Refresh nimbus-ui artifact mtimes
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Download embedded package payload
+        uses: actions/download-artifact@v8
+        with:
+          name: embedded-packages
+          path: crates/nimbus-bin/embedded-packages
+
+      - name: Refresh embedded package payload mtimes
+        run: find crates/nimbus-bin/embedded-packages -exec touch {} +
 
       - name: Warm sccache via workspace check
         run: cargo check --workspace
@@ -186,6 +208,15 @@ jobs:
 
       - name: Refresh nimbus-ui artifact mtimes
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Download embedded package payload
+        uses: actions/download-artifact@v8
+        with:
+          name: embedded-packages
+          path: crates/nimbus-bin/embedded-packages
+
+      - name: Refresh embedded package payload mtimes
+        run: find crates/nimbus-bin/embedded-packages -exec touch {} +
 
       # PW1: pin libsql image + cache docker layer.
       - name: Restore cached libsql docker image
@@ -283,6 +314,15 @@ jobs:
 
       - name: Refresh nimbus-ui artifact mtimes
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Download embedded package payload
+        uses: actions/download-artifact@v8
+        with:
+          name: embedded-packages
+          path: crates/nimbus-bin/embedded-packages
+
+      - name: Refresh embedded package payload mtimes
+        run: find crates/nimbus-bin/embedded-packages -exec touch {} +
 
       - name: Rebuild instrumented workspace (no run)
         # cargo-llvm-cov's `report` subcommand needs the instrumented

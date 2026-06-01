@@ -77,7 +77,8 @@ db.messages.find()
 ```bash
 mkdir my-app && cd my-app
 npm init -y
-npm install mongodb @nimbus/mongodb
+npm install mongodb                 # the official driver (developer-supplied)
+nimbus packages provision mongodb   # the @nimbus/mongodb helper (from the binary)
 ```
 
 ```typescript
@@ -125,7 +126,10 @@ connection string for Nimbus. It does not wrap the MongoDB driver -- you
 create and manage the `MongoClient` yourself.
 
 ```bash
-npm install @nimbus/mongodb mongodb
+# @nimbus/mongodb (the URI helper) is provisioned by the nimbus binary:
+nimbus packages provision mongodb
+# the official MongoDB driver is developer-supplied:
+npm install mongodb
 ```
 
 ```typescript

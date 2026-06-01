@@ -1,7 +1,14 @@
 import path from "node:path";
 
-import { build } from "esbuild";
-
+// esbuild is loaded lazily so this module loads before esbuild is resolved.
+// Cloud Functions runtime bundling needs esbuild plugins (dynamic virtual
+// modules), which do not run in the in-binary V8 tooling runtime today, so the
+// whole Cloud Functions surface is out of the in-binary/offline contract and
+// runs on the external Node.js runner (where esbuild bundling works). CF public
+// Firebase SDK deps are developer-supplied/preinstall. This is the supported
+// Cloud Functions path, by design — see the plan's `## Offline contract
+// boundaries` (BPD4/BPD7). The default Convex surface, including auth.config,
+// runs in-binary and does not use this module.
 import {
   cloudFunctionsAdminAppSource,
   cloudFunctionsAdminFirestoreSource,
@@ -10,6 +17,7 @@ import {
 } from "./runtime_sources.mjs";
 
 async function buildCloudFunctionsRuntimeBundle(project) {
+  const { build } = await import("esbuild");
   const runtimeProject = withRelativeEntrypoints(project);
   const result = await build({
     absWorkingDir: runtimeProject.appDir,

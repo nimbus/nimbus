@@ -135,6 +135,20 @@ jobs:
       - name: Refresh nimbus-ui artifact mtimes
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
+      - name: Set up Node.js for target-local embedded payload
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Build target-local embedded package payload
+        env:
+          NIMBUS_EMBEDDED_ESBUILD_PLATFORM: linux-arm64
+        run: npm run build:embedded-packages
+
       - name: Build release binary
         run: cargo build --release -p nimbus-bin
 
@@ -181,16 +195,19 @@ jobs:
             runner: ubuntu-22.04
             os: linux
             arch: x86_64
+            esbuild_platform: linux-x64
             archive: tar.gz
           - target: aarch64-apple-darwin
             runner: macos-14
             os: darwin
             arch: arm64
+            esbuild_platform: darwin-arm64
             archive: tar.gz
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
             os: windows
             arch: x86_64
+            esbuild_platform: win32-x64
             archive: zip
           # Windows ARM64 — V8 prebuilt available, but no free GitHub runner yet.
           # Uncomment when GitHub adds a free windows-arm64 runner.
@@ -225,6 +242,20 @@ jobs:
       - name: Refresh nimbus-ui artifact mtimes
         shell: bash
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Set up Node.js for target-local embedded payload
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Build target-local embedded package payload
+        env:
+          NIMBUS_EMBEDDED_ESBUILD_PLATFORM: ${{ matrix.esbuild_platform }}
+        run: npm run build:embedded-packages
 
       - name: Set up Windows Perl
         if: matrix.os == 'windows'

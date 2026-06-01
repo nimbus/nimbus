@@ -53,14 +53,14 @@ const FORBIDDEN_COMPILE_TIME_PROPERTIES = new Set([
   "prototype",
 ]);
 
-function validateCompileTimeEvaluation(node, filePath, label) {
-  const rejection = findUnsafeCompileTimeExpression(node, label);
+function validateCompileTimeEvaluation(node, filePath, label, allowedIdentifiers) {
+  const rejection = findUnsafeCompileTimeExpression(node, label, allowedIdentifiers);
   if (rejection) {
     throw unsupportedError(filePath, rejection);
   }
 }
 
-function findUnsafeCompileTimeExpression(root, label) {
+function findUnsafeCompileTimeExpression(root, label, allowedIdentifiers) {
   let rejection = null;
   const reject = (message) => {
     rejection ??= message;
@@ -78,7 +78,8 @@ function findUnsafeCompileTimeExpression(root, label) {
 
     if (
       ts.isIdentifier(node) &&
-      FORBIDDEN_COMPILE_TIME_IDENTIFIERS.has(node.text)
+      FORBIDDEN_COMPILE_TIME_IDENTIFIERS.has(node.text) &&
+      !(allowedIdentifiers && allowedIdentifiers.has(node.text))
     ) {
       reject(`unsafe compile-time ${label} reference "${node.text}"`);
       return;
@@ -644,4 +645,79 @@ class Scope {
   }
 }
 
-export { createInterpretedResolver, evaluateCompileTimeExpressionSource };
+/**
+ * Statically evaluate a module's `export default` expression in-binary, using
+ * the same TypeScript AST interpreter as schema/server extraction (no esbuild,
+ * no dynamic import). Top-level `const` declarations are evaluated in source
+ * order into scope; `import`/type-only statements are ignored. `options.globals`
+ * supplies opt-in caller globals (e.g. `{ process: { env } }` for auth.config),
+ * whose names are also allowed past the forbidden-identifier guard.
+ *
+ * Intended for trusted, declarative config modules (Convex `auth.config.*`),
+ * not arbitrary user resolver code.
+ */
+function evaluateModuleDefaultExport(source, options = {}) {
+  const filePath = options.filePath ?? "module";
+  const globals = options.globals ?? {};
+  const allowedIdentifiers = new Set(Object.keys(globals));
+
+  const sourceFile = ts.createSourceFile(
+    `${filePath}.module.ts`,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  if (sourceFile.parseDiagnostics && sourceFile.parseDiagnostics.length > 0) {
+    const diagnostic = sourceFile.parseDiagnostics[0];
+    throw unsupportedError(
+      filePath,
+      `module parsing (${ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")})`,
+    );
+  }
+
+  const scope = new Scope(null);
+  for (const [name, value] of Object.entries(globals)) {
+    scope.define(name, value);
+  }
+
+  let defaultExpression = null;
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement) || ts.isTypeAliasDeclaration(statement)
+      || ts.isInterfaceDeclaration(statement)) {
+      continue;
+    }
+    if (ts.isExportAssignment(statement) && !statement.isExportEquals) {
+      defaultExpression = statement.expression;
+      continue;
+    }
+    if (ts.isVariableStatement(statement)) {
+      const isConst = (statement.declarationList.flags & ts.NodeFlags.Const) !== 0;
+      if (!isConst) {
+        throw unsupportedError(filePath, "module-level variables must be const");
+      }
+      for (const declaration of statement.declarationList.declarations) {
+        if (declaration.initializer === undefined) {
+          throw unsupportedError(filePath, "module-level const declarations require initializers");
+        }
+        validateCompileTimeEvaluation(declaration.initializer, filePath, "module", allowedIdentifiers);
+        const value = evaluateExpression(declaration.initializer, scope, filePath);
+        bindPattern(declaration.name, value, scope, filePath);
+      }
+      continue;
+    }
+    // Ignore other declarations (e.g. exported helpers the default doesn't use).
+  }
+
+  if (defaultExpression === null) {
+    throw unsupportedError(filePath, "module has no `export default`");
+  }
+  validateCompileTimeEvaluation(defaultExpression, filePath, "module", allowedIdentifiers);
+  return evaluateExpression(defaultExpression, scope, filePath);
+}
+
+export {
+  createInterpretedResolver,
+  evaluateCompileTimeExpressionSource,
+  evaluateModuleDefaultExport,
+};

@@ -13,11 +13,13 @@ use nimbus::{
 };
 use tokio::process::Command;
 
+use crate::embedded_packages;
 use crate::node;
 
-const CODEGEN_PACKAGE_SPECIFIER: &str = "@nimbus/codegen";
-const CODEGEN_WORKSPACE_ENTRY: [&str; 4] = ["packages", "codegen", "src", "main.mjs"];
-const EMBEDDED_CODEGEN_PILOT_ENV: &str = "NIMBUS_EXPERIMENTAL_EMBEDDED_CODEGEN";
+/// Selects the codegen runner. Default (unset) is the in-binary V8 tooling
+/// runner; set to `external-node` for the diagnostic/transition-only external
+/// `node` runner (not a supported offline path — BPD4).
+const CODEGEN_RUNNER_ENV: &str = "NIMBUS_CODEGEN_RUNNER";
 const EMBEDDED_CODEGEN_BUNDLE_PREFIX: &str = ".nimbus-codegen-";
 const EMBEDDED_CODEGEN_BUNDLE_SUFFIX: &str = ".mjs";
 const CODEGEN_BOOTSTRAP: &str = r#"
@@ -66,7 +68,22 @@ export {};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CodegenRunner {
+    /// Runs codegen via an external `node`. This runner has two distinct roles:
+    ///
+    /// 1. The **supported** runner for **Cloud Functions**, the one authoring
+    ///    surface deliberately out of the in-binary/offline contract (esbuild
+    ///    plugin bundling + developer-supplied Firebase SDKs). CF apps select it
+    ///    automatically; this is supported behavior for that surface, not a
+    ///    fallback.
+    /// 2. A **diagnostic/transition-only** opt-out for the **in-contract Convex**
+    ///    surface, reachable only via `NIMBUS_CODEGEN_RUNNER=external-node`. The
+    ///    Convex surface (schema, server, http, auth.config) is fully supported
+    ///    in-binary, so this opt-out is never the supported Convex path and is
+    ///    never counted as the BPD offline/in-binary proof.
     ExternalNode,
+    /// Default for the whole Convex authoring surface: the in-binary V8 tooling
+    /// runner, sourcing the embedded tooling closure (codegen prebundle +
+    /// esbuild + platform `@esbuild` binary for the surfaces that use them).
     EmbeddedPilot,
 }
 
@@ -80,8 +97,6 @@ struct CodegenExecutionContext {
     app_dir: PathBuf,
     package_install_dirs: Vec<PathBuf>,
     embedded_package_install_dir: PathBuf,
-    external_import_target: String,
-    embedded_import_target: String,
     options: CodegenOptions,
 }
 
@@ -123,8 +138,52 @@ pub(crate) async fn run_codegen_for_app_dir_with_options(
     app_dir: &Path,
     options: CodegenOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let runner = resolve_codegen_runner()?;
+    let runner = resolve_default_codegen_runner(app_dir)?;
     run_codegen_for_app_dir_with_runner_and_options(app_dir, runner, options).await
+}
+
+/// Pick the runner for the default codegen path (`nimbus codegen`/`dev`/`start`).
+/// An explicit `NIMBUS_CODEGEN_RUNNER` value always wins. With no explicit
+/// setting, in-binary is the supported default for the whole Convex authoring
+/// surface — schema, server, http, and `auth.config` — which all run in the V8
+/// tooling runtime with no external Node.
+///
+/// The sole exception is **Cloud Functions**, which is out of the in-binary /
+/// offline contract by design (its runtime bundling needs esbuild plugins, and
+/// its Firebase server SDKs are developer-supplied). Cloud Functions apps route
+/// to the external Node.js runner. This is the supported behavior for that
+/// detected surface, not a diagnostic fallback — see the plan's
+/// `## Offline contract boundaries`.
+fn resolve_default_codegen_runner(app_dir: &Path) -> io::Result<CodegenRunner> {
+    let env = std::env::var_os(CODEGEN_RUNNER_ENV);
+    let explicit = env
+        .as_deref()
+        .map(|value| !value.is_empty())
+        .unwrap_or(false);
+    let runner = parse_codegen_runner_env(env)?;
+    if !explicit && runner == CodegenRunner::EmbeddedPilot && is_cloud_functions_app(app_dir) {
+        crate::cli_ux::write_stderr_line(
+            "info: Cloud Functions codegen runs on the external Node.js runner \
+             (Cloud Functions is out of the in-binary/offline contract)",
+        )?;
+        return Ok(CodegenRunner::ExternalNode);
+    }
+    Ok(runner)
+}
+
+/// Whether `app_dir` is a Cloud Functions project — a `firebase.json` layout or
+/// the `@google-cloud/functions-framework` framework variant. Cloud Functions is
+/// the one authoring surface kept out of the in-binary/offline contract, so it
+/// runs on the external Node.js runner.
+fn is_cloud_functions_app(app_dir: &Path) -> bool {
+    let Ok(dir) = canonicalize_app_dir(app_dir) else {
+        return false;
+    };
+    node::firebase_functions_project(&dir)
+        .ok()
+        .flatten()
+        .is_some()
+        || crate::deploy::package_declares_functions_framework(&dir.join("package.json"))
 }
 
 #[cfg(test)]
@@ -142,6 +201,7 @@ pub(crate) async fn run_codegen_for_app_dir_with_runner_and_options(
     options: CodegenOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let context = resolve_codegen_execution_context(app_dir, options)?;
+    crate::provision::ensure_known_app_packages(&context.app_dir)?;
     match runner {
         CodegenRunner::ExternalNode => run_external_codegen_for_app_dir(&context).await,
         CodegenRunner::EmbeddedPilot => run_embedded_codegen_for_app_dir(&context).await,
@@ -192,27 +252,22 @@ fn resolve_codegen_execution_context(
         .first()
         .cloned()
         .unwrap_or_else(|| app_dir.clone());
-    let external_import_target = resolve_codegen_import_target(&app_dir, &package_install_dirs);
-    let embedded_import_target =
-        resolve_embedded_codegen_import_target(&embedded_package_install_dir);
     Ok(CodegenExecutionContext {
         app_dir,
         package_install_dirs,
         embedded_package_install_dir,
-        external_import_target,
-        embedded_import_target,
         options,
     })
 }
 
-fn build_codegen_process(context: &CodegenExecutionContext) -> Command {
+fn build_codegen_process(context: &CodegenExecutionContext, codegen_bundle: &Path) -> Command {
     let mut command = Command::new("node");
     command.current_dir(&context.app_dir);
     command.arg("--input-type=module");
     command.arg("--eval");
     command.arg(CODEGEN_BOOTSTRAP);
     command.arg("--");
-    command.arg(&context.external_import_target);
+    command.arg(codegen_bundle);
     command.arg("--app");
     command.arg(".");
     if context.options.debug_node_apis {
@@ -224,23 +279,18 @@ fn build_codegen_process(context: &CodegenExecutionContext) -> Command {
     command
 }
 
-fn resolve_codegen_runner() -> io::Result<CodegenRunner> {
-    parse_codegen_runner_env(env::var_os(EMBEDDED_CODEGEN_PILOT_ENV))
-}
-
 fn parse_codegen_runner_env(value: Option<std::ffi::OsString>) -> io::Result<CodegenRunner> {
+    // Default (unset/empty) is the in-binary V8 tooling runner. The external
+    // `node` runner is an opt-in diagnostic/transition-only escape hatch.
     let Some(value) = value else {
-        return Ok(CodegenRunner::ExternalNode);
+        return Ok(CodegenRunner::EmbeddedPilot);
     };
     let normalized = value.to_string_lossy().trim().to_ascii_lowercase();
     match normalized.as_str() {
-        "" | "0" | "false" | "no" | "off" | "node" | "external-node" => {
-            Ok(CodegenRunner::ExternalNode)
-        }
-        "1" | "true" | "yes" | "on" | "embedded" | "pilot" => Ok(CodegenRunner::EmbeddedPilot),
+        "" | "in-binary" | "embedded" | "tooling" | "default" => Ok(CodegenRunner::EmbeddedPilot),
+        "external-node" | "external" | "node" => Ok(CodegenRunner::ExternalNode),
         _ => Err(io::Error::other(format!(
-            "{EMBEDDED_CODEGEN_PILOT_ENV} must be one of \
-             1/0, true/false, on/off, yes/no, embedded, or node; got {:?}",
+            "{CODEGEN_RUNNER_ENV} must be one of in-binary (default) or external-node; got {:?}",
             value
         ))),
     }
@@ -250,7 +300,12 @@ async fn run_external_codegen_for_app_dir(
     context: &CodegenExecutionContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
     node::ensure_node22_runtime_available()?;
-    let mut command = build_codegen_process(context);
+    // The external Node runner is a process boundary, not a package-distribution
+    // boundary: it still runs the binary's embedded codegen/tooling closure so
+    // developer apps never need an installed @nimbus/codegen package.
+    let (_tooling_dir, codegen_bundle) =
+        materialize_codegen_tooling(context, "external-node-codegen-tooling-")?;
+    let mut command = build_codegen_process(context, &codegen_bundle);
     let status = command.status().await.map_err(|error| {
         io::Error::new(
             error.kind(),
@@ -275,8 +330,15 @@ async fn run_external_codegen_for_app_dir(
 async fn run_embedded_codegen_for_app_dir(
     context: &CodegenExecutionContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    ensure_embedded_codegen_package_available(&context.embedded_package_install_dir)?;
     ensure_embedded_codegen_layout_supported(context)?;
+    // Materialize the embedded tooling closure (codegen prebundle + esbuild +
+    // platform @esbuild native binary) into a temp run dir. The prebundle
+    // resolves esbuild module-relative from `<temp>/node_modules`; codegen reads
+    // and writes the absolute app dir. The app needs no `node_modules/@nimbus/
+    // codegen` — the binary owns codegen (BPD4 runner-flip).
+    // Materialize inside the app's `.nimbus/tmp` — an allowed runtime read root.
+    // A temp dir outside the app is capability-denied by the tooling runtime.
+    let (_tooling_dir, codegen_bundle) = materialize_codegen_tooling(context, "codegen-tooling-")?;
     let mut bootstrap_bundle = write_embedded_codegen_bootstrap_bundle(&context.app_dir)?;
     bootstrap_bundle.as_file_mut().flush()?;
     let bundle = RuntimeBundle::new(bootstrap_bundle.path());
@@ -284,7 +346,7 @@ async fn run_embedded_codegen_for_app_dir(
         kind: InvocationKind::Action,
         function_name: "__nimbus_internal:codegen".to_string(),
         args: serde_json::json!({
-            "codegenSpecifier": context.embedded_import_target.clone(),
+            "codegenSpecifier": codegen_bundle.display().to_string(),
             "cliArgs": embedded_codegen_cli_args(context),
         }),
         page_size: None,
@@ -304,8 +366,8 @@ async fn run_embedded_codegen_for_app_dir(
         .await
         .map_err(|error| {
             io::Error::other(format!(
-                "embedded codegen pilot failed for {}: {error}. \
-             Unset {EMBEDDED_CODEGEN_PILOT_ENV} to use the external Node.js runner.",
+                "in-binary codegen failed for {}: {error}. \
+             Set {CODEGEN_RUNNER_ENV}=external-node for the diagnostic external Node.js runner.",
                 context.app_dir.display()
             ))
         })?;
@@ -320,27 +382,37 @@ async fn run_embedded_codegen_for_app_dir(
     .into())
 }
 
-fn embedded_codegen_cli_args(context: &CodegenExecutionContext) -> Vec<&'static str> {
-    let mut args = vec!["--app", "."];
+fn materialize_codegen_tooling(
+    context: &CodegenExecutionContext,
+    prefix: &str,
+) -> io::Result<(tempfile::TempDir, PathBuf)> {
+    // Materialize inside the app's `.nimbus/tmp` — an allowed runtime read root
+    // for the embedded path and an app-owned location for the external path. A
+    // temp dir outside the app is capability-denied by the tooling runtime.
+    let tooling_parent = context.app_dir.join(".nimbus").join("tmp");
+    fs::create_dir_all(&tooling_parent)?;
+    let tooling_dir = tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir_in(&tooling_parent)?;
+    let codegen_bundle = embedded_packages::materialize_tooling(tooling_dir.path())?;
+    Ok((tooling_dir, codegen_bundle))
+}
+
+fn embedded_codegen_cli_args(context: &CodegenExecutionContext) -> Vec<String> {
+    // Absolute app dir: the codegen bundle runs from a temp tooling dir, so a
+    // relative `.` would point at the wrong place. codegen reads/writes this
+    // absolute path via the runtime's node-compatible fs.
+    let mut args = vec!["--app".to_string(), context.app_dir.display().to_string()];
     if context.options.debug_node_apis {
-        args.push("--debug-node-apis");
+        args.push("--debug-node-apis".to_string());
     }
     args
 }
 
-fn ensure_embedded_codegen_package_available(package_install_dir: &Path) -> io::Result<()> {
-    let package_manifest = codegen_package_manifest_path(package_install_dir);
-    if package_manifest.is_file() {
-        return Ok(());
-    }
-    Err(io::Error::other(format!(
-        "embedded codegen pilot requires a staged {} package at {}. \
-         Install app dependencies first or unset {} to use the external Node.js runner.",
-        CODEGEN_PACKAGE_SPECIFIER,
-        package_manifest.display(),
-        EMBEDDED_CODEGEN_PILOT_ENV
-    )))
-}
+// (Obsolete) The embedded runner no longer requires a staged
+// `node_modules/@nimbus/codegen` in the app: it materializes the codegen
+// prebundle + esbuild tooling closure from the embedded payload
+// (`embedded_packages::materialize_tooling`). Removed in the BPD4 runner-flip.
 
 fn ensure_embedded_codegen_layout_supported(context: &CodegenExecutionContext) -> io::Result<()> {
     if context.package_install_dirs.len() == 1
@@ -349,19 +421,11 @@ fn ensure_embedded_codegen_layout_supported(context: &CodegenExecutionContext) -
         return Ok(());
     }
     Err(io::Error::other(format!(
-        "embedded codegen pilot does not yet support Firebase Cloud Functions package layouts rooted at {}. \
-         Unset {} to use the external Node.js runner.",
+        "in-binary codegen does not yet support Firebase Cloud Functions package layouts rooted at {}. \
+         Set {}=external-node to use the supported Cloud Functions external Node.js runner.",
         context.embedded_package_install_dir.display(),
-        EMBEDDED_CODEGEN_PILOT_ENV
+        CODEGEN_RUNNER_ENV
     )))
-}
-
-fn codegen_package_manifest_path(package_install_dir: &Path) -> PathBuf {
-    package_install_dir
-        .join("node_modules")
-        .join("@nimbus")
-        .join("codegen")
-        .join("package.json")
 }
 
 fn write_embedded_codegen_bootstrap_bundle(app_dir: &Path) -> io::Result<tempfile::NamedTempFile> {
@@ -390,86 +454,6 @@ fn write_embedded_codegen_bootstrap_bundle(app_dir: &Path) -> io::Result<tempfil
             )
         })?;
     Ok(temp_file)
-}
-
-fn resolve_codegen_import_target(app_dir: &Path, package_install_dirs: &[PathBuf]) -> String {
-    resolve_codegen_import_target_with_search_roots(
-        package_install_dirs,
-        codegen_workspace_search_roots(app_dir),
-    )
-}
-
-fn resolve_embedded_codegen_import_target(package_install_dir: &Path) -> String {
-    resolve_installed_codegen_entry(package_install_dir)
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| CODEGEN_PACKAGE_SPECIFIER.to_string())
-}
-
-fn resolve_codegen_import_target_with_search_roots(
-    package_install_dirs: &[PathBuf],
-    search_roots: Vec<PathBuf>,
-) -> String {
-    find_workspace_codegen_entry(search_roots)
-        .or_else(|| {
-            package_install_dirs
-                .iter()
-                .find_map(|install_dir| resolve_installed_codegen_entry(install_dir))
-        })
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| CODEGEN_PACKAGE_SPECIFIER.to_string())
-}
-
-fn codegen_workspace_search_roots(app_dir: &Path) -> Vec<PathBuf> {
-    let mut search_roots = vec![app_dir.to_path_buf()];
-
-    if let Ok(current_dir) = env::current_dir() {
-        search_roots.push(current_dir);
-    }
-
-    if let Ok(current_exe) = env::current_exe() {
-        search_roots.push(current_exe);
-    }
-
-    search_roots
-}
-
-fn find_workspace_codegen_entry(search_roots: Vec<PathBuf>) -> Option<PathBuf> {
-    search_roots
-        .into_iter()
-        .find_map(|root| find_workspace_codegen_entry_from(&root))
-}
-
-fn find_workspace_codegen_entry_from(start: &Path) -> Option<PathBuf> {
-    let start = if start.is_dir() {
-        start
-    } else {
-        start.parent()?
-    };
-    start.ancestors().find_map(|ancestor| {
-        let candidate = CODEGEN_WORKSPACE_ENTRY
-            .iter()
-            .fold(ancestor.to_path_buf(), |path, segment| path.join(segment));
-        candidate.is_file().then_some(candidate)
-    })
-}
-
-fn resolve_installed_codegen_entry(package_install_dir: &Path) -> Option<PathBuf> {
-    let package_manifest = codegen_package_manifest_path(package_install_dir);
-    let package_root = package_manifest.parent()?.to_path_buf();
-    let content = fs::read_to_string(&package_manifest).ok()?;
-    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let entry = parsed
-        .get("exports")
-        .and_then(|exports| {
-            exports
-                .as_str()
-                .or_else(|| exports.get(".").and_then(serde_json::Value::as_str))
-        })
-        .or_else(|| parsed.get("main").and_then(serde_json::Value::as_str))
-        .unwrap_or("./src/main.mjs");
-    let relative_entry = entry.strip_prefix("./").unwrap_or(entry);
-    let resolved = package_root.join(relative_entry);
-    resolved.is_file().then_some(resolved)
 }
 
 struct EmbeddedCodegenHost;
@@ -506,74 +490,17 @@ mod tests {
             .to_path_buf()
     }
 
-    fn workspace_embedded_codegen_dependencies_available() -> bool {
-        let repo_root = repo_root();
-        repo_root.join("packages/codegen/src/main.mjs").is_file()
-            && repo_root.join("node_modules/esbuild").is_dir()
-            && repo_root.join("node_modules/typescript").is_dir()
-            && repo_root.join("node_modules/@esbuild").is_dir()
+    fn embedded_codegen_tooling_available() -> bool {
+        // The embedded runner sources its tooling closure (codegen prebundle +
+        // esbuild + platform @esbuild binary) from the embedded payload, staged
+        // by `make build-packages`. Skip if the binary was built without it.
+        !crate::embedded_packages::manifest().tooling.is_empty()
     }
 
-    fn copy_dir_recursive(source: &Path, destination: &Path) {
-        fs::create_dir_all(destination).unwrap_or_else(|error| {
-            panic!(
-                "destination directory {} should create: {error}",
-                destination.display()
-            );
-        });
-        for entry in fs::read_dir(source).unwrap_or_else(|error| {
-            panic!("source directory {} should read: {error}", source.display());
-        }) {
-            let entry = entry.expect("directory entry should resolve");
-            let entry_path = entry.path();
-            let destination_path = destination.join(entry.file_name());
-            if entry
-                .file_type()
-                .expect("directory entry type should load")
-                .is_dir()
-            {
-                copy_dir_recursive(&entry_path, &destination_path);
-            } else {
-                fs::copy(&entry_path, &destination_path).unwrap_or_else(|error| {
-                    panic!(
-                        "copy {} -> {} should succeed: {error}",
-                        entry_path.display(),
-                        destination_path.display()
-                    );
-                });
-            }
-        }
-    }
-
-    fn stage_workspace_codegen_package(package_install_dir: &Path) {
-        let repo_root = repo_root();
-        let package_root = package_install_dir
-            .join("node_modules")
-            .join("@nimbus")
-            .join("codegen");
-        fs::create_dir_all(&package_root).expect("package root should create");
-        fs::copy(
-            repo_root.join("packages/codegen/package.json"),
-            package_root.join("package.json"),
-        )
-        .expect("package.json should copy");
-        copy_dir_recursive(
-            &repo_root.join("packages/codegen/src"),
-            &package_root.join("src"),
-        );
-        copy_dir_recursive(
-            &repo_root.join("node_modules/esbuild"),
-            &package_install_dir.join("node_modules/esbuild"),
-        );
-        copy_dir_recursive(
-            &repo_root.join("node_modules/typescript"),
-            &package_install_dir.join("node_modules/typescript"),
-        );
-        copy_dir_recursive(
-            &repo_root.join("node_modules/@esbuild"),
-            &package_install_dir.join("node_modules/@esbuild"),
-        );
-    }
+    // (Removed `copy_dir_recursive` + `stage_workspace_codegen_package`: the
+    // embedded codegen runner now materializes its tooling closure from the
+    // embedded payload, so tests no longer stage @nimbus/codegen + esbuild into
+    // an app's node_modules. BPD4 runner-flip.)
 
     fn write_convex_codegen_source_fixture(app_dir: &Path) {
         let convex_dir = app_dir.join("convex");
@@ -624,89 +551,28 @@ export const syncUser = onDocumentCreated("users/{userId}", async (event) => eve
     }
 
     #[test]
-    fn finds_workspace_codegen_entry_from_repo_target_tempdir() {
-        let temp = tempdir_in_repo_target();
-
-        let entry = find_workspace_codegen_entry_from(temp.path())
-            .expect("repo-relative tempdir should resolve workspace codegen entry");
-
-        assert_eq!(entry, repo_root().join("packages/codegen/src/main.mjs"));
-    }
-
-    #[test]
-    fn returns_none_when_no_workspace_codegen_entry_is_present() {
-        let temp = tempfile::tempdir().expect("tempdir should create");
-        let entry = find_workspace_codegen_entry_from(temp.path());
-
-        assert!(
-            entry.is_none(),
-            "non-repo tempdir should not resolve workspace codegen"
-        );
-    }
-
-    #[test]
-    fn resolve_codegen_import_target_uses_cloud_functions_install_root_when_workspace_entry_is_absent()
-     {
-        let temp = tempfile::tempdir().expect("tempdir should create");
-        let install_root = temp.path().join("functions");
-        let entry_path = install_root.join("node_modules/@nimbus/codegen/src/main.mjs");
-        fs::create_dir_all(entry_path.parent().expect("entry parent should resolve"))
-            .expect("entry parent should create");
-        fs::write(
-            install_root.join("node_modules/@nimbus/codegen/package.json"),
-            r#"{"exports":{"." :"./src/main.mjs"}}"#,
-        )
-        .expect("package manifest should write");
-        fs::write(&entry_path, "export async function runCliFromArgs() {}")
-            .expect("entry file should write");
-
-        let import_target = resolve_codegen_import_target_with_search_roots(
-            std::slice::from_ref(&install_root),
-            Vec::new(),
-        );
-
-        assert_eq!(import_target, entry_path.display().to_string());
-    }
-
-    #[test]
-    fn resolve_codegen_import_target_searches_all_firebase_codebase_roots() {
-        let temp = tempfile::tempdir().expect("tempdir should create");
-        let app_root = temp.path().join("app");
-        let first_root = app_root.join("packages/app-functions");
-        let second_root = app_root.join("packages/admin-functions");
-        fs::create_dir_all(&first_root).expect("first root should create");
-        let entry_path = second_root.join("node_modules/@nimbus/codegen/src/main.mjs");
-        fs::create_dir_all(entry_path.parent().expect("entry parent should resolve"))
-            .expect("entry parent should create");
-        fs::write(
-            second_root.join("node_modules/@nimbus/codegen/package.json"),
-            r#"{"exports":{"." :"./src/main.mjs"}}"#,
-        )
-        .expect("package manifest should write");
-        fs::write(&entry_path, "export async function runCliFromArgs() {}")
-            .expect("entry file should write");
-
-        let import_target =
-            resolve_codegen_import_target_with_search_roots(&[first_root, second_root], Vec::new());
-
-        assert_eq!(import_target, entry_path.display().to_string());
-    }
-
-    #[test]
-    fn codegen_runner_defaults_to_external_node_when_env_is_unset() {
+    fn codegen_runner_defaults_to_in_binary_when_env_is_unset() {
+        // BPD4: in-binary V8 codegen is the default; external Node is opt-in.
         assert_eq!(
             parse_codegen_runner_env(None).expect("unset env should parse"),
-            CodegenRunner::ExternalNode
+            CodegenRunner::EmbeddedPilot
         );
     }
 
     #[test]
-    fn codegen_runner_accepts_truthy_embedded_values() {
-        for value in ["1", "true", "on", "yes", "embedded", "pilot"] {
+    fn codegen_runner_selects_in_binary_or_external_node() {
+        for value in ["", "in-binary", "embedded", "tooling", "default"] {
             assert_eq!(
                 parse_codegen_runner_env(Some(OsString::from(value)))
                     .unwrap_or_else(|error| panic!("value {value:?} should parse: {error}")),
                 CodegenRunner::EmbeddedPilot
+            );
+        }
+        for value in ["external-node", "external", "node"] {
+            assert_eq!(
+                parse_codegen_runner_env(Some(OsString::from(value)))
+                    .unwrap_or_else(|error| panic!("value {value:?} should parse: {error}")),
+                CodegenRunner::ExternalNode
             );
         }
     }
@@ -716,28 +582,79 @@ export const syncUser = onDocumentCreated("users/{userId}", async (event) => eve
         let error = parse_codegen_runner_env(Some(OsString::from("maybe")))
             .expect_err("unknown value should be rejected");
         assert!(
-            error.to_string().contains(EMBEDDED_CODEGEN_PILOT_ENV),
+            error.to_string().contains(CODEGEN_RUNNER_ENV),
             "unexpected error: {error}"
         );
     }
 
     #[tokio::test]
-    async fn embedded_pilot_generates_convex_artifacts_from_staged_workspace_package() {
-        if !workspace_embedded_codegen_dependencies_available() {
+    async fn external_node_codegen_uses_embedded_tooling_without_app_codegen_package() {
+        if !embedded_codegen_tooling_available() {
             eprintln!(
-                "skipping embedded Convex codegen pilot test; workspace JS dependencies are unavailable"
+                "skipping external Node codegen test; embedded tooling closure is not staged \
+                 (run `make build-packages`)"
+            );
+            return;
+        }
+        if let Err(error) = crate::node::ensure_node22_runtime_available() {
+            eprintln!("skipping external Node codegen test; Node.js baseline unavailable: {error}");
+            return;
+        }
+
+        let temp = tempdir_in_repo_target();
+        write_firebase_cloud_functions_fixture(temp.path());
+
+        run_codegen_for_app_dir_with_runner(temp.path(), CodegenRunner::ExternalNode)
+            .await
+            .expect("external Node CF codegen should use the embedded tooling closure");
+
+        assert!(
+            !temp
+                .path()
+                .join("functions/node_modules/@nimbus/codegen")
+                .exists(),
+            "external Node runner must not require app-installed @nimbus/codegen"
+        );
+        let firebase_dir = temp.path().join(".nimbus").join("firebase");
+        assert!(
+            firebase_dir.join("artifact.json").is_file(),
+            "cloud functions artifact manifest should be generated"
+        );
+        assert!(
+            firebase_dir.join("targets.json").is_file(),
+            "cloud functions targets manifest should be generated"
+        );
+        assert!(
+            firebase_dir.join("bundle.mjs").is_file(),
+            "cloud functions runtime bundle should be generated"
+        );
+    }
+
+    #[tokio::test]
+    async fn embedded_codegen_generates_convex_artifacts_without_app_node_modules() {
+        if !embedded_codegen_tooling_available() {
+            eprintln!(
+                "skipping embedded Convex codegen test; embedded tooling closure is not staged \
+                 (run `make build-packages`)"
             );
             return;
         }
 
         let temp = tempdir_in_repo_target();
         write_convex_codegen_source_fixture(temp.path());
-        stage_workspace_codegen_package(temp.path());
+        // NB: no stage_workspace_codegen_package — the in-binary runner
+        // materializes the embedded tooling closure itself. The app has no
+        // node_modules at all.
 
         run_codegen_for_app_dir_with_runner(temp.path(), CodegenRunner::EmbeddedPilot)
             .await
-            .expect("embedded codegen pilot should generate Convex artifacts");
+            .expect("embedded codegen should generate Convex artifacts from the embedded tooling");
 
+        // cond 14: codegen ran with no app-provided @nimbus/codegen.
+        assert!(
+            !temp.path().join("node_modules/@nimbus/codegen").exists(),
+            "embedded codegen must not require an app-provided @nimbus/codegen"
+        );
         let convex_dir = temp.path().join(".nimbus").join("convex");
         assert!(
             convex_dir.join("functions.json").is_file(),
@@ -759,16 +676,15 @@ export const syncUser = onDocumentCreated("users/{userId}", async (event) => eve
 
     #[tokio::test]
     async fn embedded_pilot_rejects_cloud_functions_layout_with_clear_message() {
-        if !workspace_embedded_codegen_dependencies_available() {
+        if !embedded_codegen_tooling_available() {
             eprintln!(
-                "skipping embedded Cloud Functions codegen pilot test; workspace JS dependencies are unavailable"
+                "skipping embedded Cloud Functions codegen test; embedded tooling closure is not staged"
             );
             return;
         }
 
         let temp = tempdir_in_repo_target();
         write_firebase_cloud_functions_fixture(temp.path());
-        stage_workspace_codegen_package(&temp.path().join("functions"));
 
         let error = run_codegen_for_app_dir_with_runner(temp.path(), CodegenRunner::EmbeddedPilot)
             .await
@@ -779,7 +695,7 @@ export const syncUser = onDocumentCreated("users/{userId}", async (event) => eve
             "unexpected embedded Cloud Functions rejection: {message}"
         );
         assert!(
-            message.contains(EMBEDDED_CODEGEN_PILOT_ENV),
+            message.contains(CODEGEN_RUNNER_ENV),
             "rejection should direct users back to the external Node.js runner: {message}"
         );
     }

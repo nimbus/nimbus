@@ -72,6 +72,15 @@ pub(crate) async fn run_init_command(
         }
     }
 
+    // Provision the adapter's embedded packages so the scaffold's `file:`
+    // specifiers resolve offline. Without this, an `--install` run (or a later
+    // `npm install`) would link a dangling symlink to an absent target.
+    if let Some(target) = adapter.provision_target() {
+        let selection = crate::provision::Selection::parse(target)
+            .expect("adapter provision target must be a known selection");
+        crate::provision::ensure(&canonical, &selection)?;
+    }
+
     if command.install && adapter.needs_node_dependencies() {
         let npm_dir = adapter_npm_install_dir(adapter, &canonical);
         cli_ux::write_stderr_line("")?;
@@ -355,13 +364,19 @@ mod tests {
     #[test]
     fn convex_package_json_template_substitution() {
         let rendered = render_template(CONVEX_PACKAGE_JSON_TMPL, "my-app");
+        // BPD: the scaffold references the binary-provisioned convex package via
+        // a file: specifier, never a registry version range.
         assert!(
-            rendered.contains(&format!("\"convex\": \"^{CONVEX_VERSION}\"")),
-            "rendered package.json should contain convex version"
+            rendered.contains("\"convex\": \"file:./.nimbus/packages/convex\""),
+            "rendered package.json should reference convex via a file: specifier"
         );
         assert!(
-            rendered.contains(&format!("\"@nimbus/codegen\": \"^{CODEGEN_VERSION}\"")),
-            "rendered package.json should contain codegen version"
+            !rendered.contains("@nimbus/codegen"),
+            "scaffold must not declare @nimbus/codegen (codegen runs in-binary)"
+        );
+        assert!(
+            !rendered.contains('^'),
+            "scaffold must not declare registry version ranges for Nimbus packages"
         );
         assert!(
             rendered.contains("\"name\": \"my-app\""),
@@ -381,9 +396,12 @@ mod tests {
             "rendered package.json should contain the project name"
         );
         assert!(
-            rendered.contains(&format!("\"@nimbus/codegen\": \"^{CODEGEN_VERSION}\"")),
-            "rendered package.json should contain codegen version"
+            !rendered.contains("@nimbus/codegen"),
+            "scaffold must not declare @nimbus/codegen (codegen runs in-binary)"
         );
+        // Cloud Functions is the documented external-Node / preinstall fallback
+        // outside the no-network claim: the Google server SDKs stay developer-
+        // supplied registry deps (Offline contract boundaries, cond 11).
         assert!(
             rendered.contains("\"firebase-functions\""),
             "rendered package.json should contain firebase-functions"
@@ -419,8 +437,12 @@ mod tests {
 
         let pkg = std::fs::read_to_string(tmp.path().join("package.json")).unwrap();
         assert!(
-            pkg.contains(&format!("\"convex\": \"^{CONVEX_VERSION}\"")),
-            "package.json should have substituted convex version"
+            pkg.contains("\"convex\": \"file:./.nimbus/packages/convex\""),
+            "package.json should reference convex via a file: specifier"
+        );
+        assert!(
+            !pkg.contains("@nimbus/codegen"),
+            "scaffold package.json must not declare @nimbus/codegen"
         );
         assert!(
             !pkg.contains("{{"),

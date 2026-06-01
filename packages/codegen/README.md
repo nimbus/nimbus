@@ -1,65 +1,36 @@
 # @nimbus/codegen
 
-The code generation engine for [Nimbus](../../README.md) apps. It reads your
-app's function source root (`nimbus/` or `convex/`), and produces:
+Code generation for Nimbus applications. Generates TypeScript types and runtime
+artifacts from your schema and function definitions.
 
-- the `_generated/*` files (`api`, `dataModel`, `server`, `scheduled`) that the
-  [`nimbus`](../nimbus/README.md) / [`convex`](../convex/README.md) clients
-  import for typed function references, and
-- the verified runtime artifacts under `.nimbus/convex/`
-  (`functions.json`, `bundle.mjs`, `bundle.sha256`) that the Nimbus V8 runtime
-  loads and SHA-256 checks before every invocation.
+`@nimbus/codegen` is a private, internal package. It is **embedded in the
+`nimbus` binary** and run from there — it is not published to npm, not installed
+into your app, and not invoked directly.
 
-Codegen does **not** execute your source in the Node process. Schema, server
-definitions, and resolver planning run through a restricted TypeScript AST
-interpreter with an explicit supported subset, which rejects unsafe globals and
-prototype-constructor access. See the
-[Convex codegen security boundary](../../docs/adapters/convex/compatibility.md#codegen-security-boundary)
-for details.
+## Usage
 
-## CLI
+Run codegen through the Nimbus CLI:
 
 ```bash
-nimbus-codegen --app <dir>   # generate _generated/* and the runtime bundle
+nimbus codegen --app .
 ```
 
-`<dir>` is the app root. The source root is resolved automatically: `nimbus/`
-(native) when present, otherwise `convex/` (compatibility). This is the same
-engine invoked by `convex codegen` in the [`convex`](../convex/README.md)
-package.
+`nimbus dev` also runs a codegen pass before starting the local server. The
+entire default Convex authoring surface — schema, server, http, and
+`auth.config.{ts,js}` — is generated in-binary (the binary's embedded V8 tooling
+runtime), so no external Node.js toolchain or `node_modules/@nimbus/codegen` is
+required. Cloud Functions is the one out-of-contract surface and runs codegen on
+an external Node.js runner, but that runner still executes the
+binary-materialized embedded codegen bundle rather than an app-installed
+`@nimbus/codegen` package; see
+[`docs/adapters/convex/compatibility.md`](../../docs/adapters/convex/compatibility.md)
+for the runner contract.
 
-## Programmatic API
+## Documentation
 
-```js
-import { runCliFromArgs } from "@nimbus/codegen";
+See the [main Nimbus documentation](../../README.md) for complete usage
+instructions.
 
-await runCliFromArgs(["--app", "./my-app"], {
-  onInfo: (message) => console.error(message),
-});
-```
+## License
 
-| Import | What it is |
-| --- | --- |
-| `@nimbus/codegen` | The library entry (`runCliFromArgs` and generation helpers) |
-| `@nimbus/codegen/cli` | The executable CLI module (also exposed as the `nimbus-codegen` bin) |
-
-## What it emits
-
-| Output | Location | Purpose |
-| --- | --- | --- |
-| `_generated/api`, `_generated/server`, `_generated/dataModel`, `_generated/scheduled` | under the source root | Typed references the client SDKs import |
-| `functions.json` | `.nimbus/convex/` | Function manifest with per-function runtime metadata |
-| `bundle.mjs` | `.nimbus/convex/` | Runtime handler bundle materialized by the V8 runtime |
-| `bundle.sha256` | `.nimbus/convex/` | Integrity hash verified before every invocation |
-
-## Scripts
-
-```bash
-npm run test --workspace @nimbus/codegen       # selftest suite
-npm run typecheck --workspace @nimbus/codegen   # type-only selftest pass
-```
-
-## Related
-
-- [`nimbus`](../nimbus/README.md) / [`convex`](../convex/README.md) — consume the generated files
-- [Convex compatibility reference](../../docs/adapters/convex/compatibility.md)
+See [LICENSE](../../LICENSE) in the repository root.

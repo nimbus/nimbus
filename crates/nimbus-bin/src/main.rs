@@ -8,6 +8,7 @@ mod credentials;
 mod deploy;
 mod dev;
 mod dirs;
+mod embedded_packages;
 mod encryption;
 mod init;
 mod local_server_client;
@@ -16,6 +17,7 @@ mod node;
 mod node_service;
 mod path_boundary;
 mod policy;
+mod provision;
 mod sandbox_supervisor;
 mod start;
 #[cfg(test)]
@@ -33,6 +35,7 @@ use crate::init::{InitCommand, run_init_command};
 use crate::machine::{MachineCommand, run_machine_command};
 use crate::node_service::{NodeCommand, run_node_command};
 use crate::policy::{PolicyCommand, run_policy_command};
+use crate::provision::{PackagesCommand, run_packages_command};
 use crate::sandbox_supervisor::{SandboxSupervisorCommand, run_sandbox_supervisor_command};
 use crate::start::{StartCommand, persistence_config_from_start_command, run_start_command};
 use crate::token::{TokenCommand, run_token_command};
@@ -85,6 +88,9 @@ enum Command {
     /// Encryption admin commands.
     #[command(subcommand)]
     Encryption(EncryptionCommand),
+    /// Provision embedded Nimbus JS packages into an app (`.nimbus/packages/`).
+    #[command(subcommand)]
+    Packages(PackagesCommand),
     /// Internal sandbox-local supervisor entrypoint.
     #[command(name = "sandbox-supervisor", hide = true)]
     SandboxSupervisor(SandboxSupervisorCommand),
@@ -118,6 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 persistence_config_from_start_command(&StartCommand::default())?;
             run_encryption_command(command, &persistence_config).await?;
         }
+        Command::Packages(command) => run_packages_command(command).await?,
         Command::SandboxSupervisor(command) => run_sandbox_supervisor_command(command).await?,
     }
     Ok(())
