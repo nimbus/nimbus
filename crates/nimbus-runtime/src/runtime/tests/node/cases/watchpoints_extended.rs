@@ -776,6 +776,15 @@ fn node22_process_load_env_file_fixture() {
 }
 
 #[test]
+fn node24_process_load_env_file_fixture() {
+    run_node_compat_watchpoint(
+        "test/parallel/test-process-load-env-file.js",
+        "node24/test/parallel/test-process-load-env-file.js",
+        NODE24_PROCESS_LOAD_ENV_FILE_EXTRA_FILES,
+    );
+}
+
+#[test]
 fn node22_fs_glob_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-glob.mjs",
@@ -1001,8 +1010,7 @@ fn node22_supported_lane_executes_manifested_core_semantics_subset() {
 }
 
 #[test]
-#[ignore = "Node24 default lane watchpoint: the broad core semantics batch includes known newer-console-clear drift and remains classified until that fixture is promoted green"]
-fn node24_default_lane_core_semantics_watchpoint() {
+fn node24_default_lane_executes_core_semantics_subset() {
     run_manifested_subset_for_lane(
         "core-semantics",
         NodeCompatLane::Node24,

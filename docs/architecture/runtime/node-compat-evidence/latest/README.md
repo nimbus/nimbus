@@ -2,7 +2,7 @@
 
 This directory is the checked-in latest snapshot of the generated Node.js runtime support evidence outputs.
 
-- evidence_generated_at: `2026-05-28T21:01:09.492421+00:00`
+- evidence_generated_at: `2026-06-01T09:02:55.621092+00:00`
 - publish_root: `docs/architecture/runtime/node-compat-evidence/latest`
 - status source: `target/node-compat/status/status-summary.json`
 - dashboard source: `target/node-compat/dashboard/dashboard-summary.json`
@@ -11,33 +11,30 @@ This directory is the checked-in latest snapshot of the generated Node.js runtim
 
 | Lane | Upstream | Vendored test files | Documented passed | Unclassified | Pass rate |
 | --- | --- | ---: | ---: | ---: | ---: |
-| `node20` | `v20.20.2` | 1308 | 902 | 0 | 69.0% |
-| `node22` | `v22.22.3` | 4748 | 1000 | 0 | 21.1% |
-| `node24` | `v24.16.0` | 5198 | 1002 | 0 | 19.3% |
+| `node20` | `v20.20.2` | 1308 | 899 | 0 | 68.7% |
+| `node22` | `v22.22.3` | 4773 | 1024 | 0 | 21.5% |
+| `node24` | `v24.16.0` | 5198 | 276 | 0 | 5.3% |
 | `node26` | `v26.2.0` | 5578 | 0 | 0 | 0.0% |
 
 ## Expectation Coverage
 
-- Rust ignored tests: 67
-- catalog entries: 67
+- Rust ignored tests: 78
+- catalog entries: 78
 - catalog path: `tests/runtime/node/expectations/rust-watchpoints.json`
 - unexpected passes: 0
 
 ## Dashboard Coverage
 
-- representative Node test checks: 8
+- representative Node test checks: 0
 - package/framework canary claims: 37
-- package/framework canary checks: 101
-- canary artifact bundles: 2
-- oracle reports: 2
+- package/framework canary checks: 0
+- canary artifact bundles: 0
+- oracle reports: 0
 - required canary gaps: 0
 
 ## Trend Coverage
 
-- trend snapshot: `trend-summary.json` and `trend-summary.md`
-- baseline available: `true`
-- lane trend rows: 4
-- evidence trend metrics: 8
+- trend snapshot: unavailable; run `make node-compat-trends` before publishing
 
 ## Files
 

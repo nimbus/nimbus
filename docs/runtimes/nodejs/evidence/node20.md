@@ -11,11 +11,11 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 - upstream fixture line: `v20.20.2`
 - runtime execution target: `Node20`
 - vendored official fixtures: `1308`
-- passed official fixtures: `902`
-- expected failure / known gap fixtures: `401`
-- skipped / excluded fixtures: `5`
+- passed official fixtures: `899`
+- expected failure / known gap fixtures: `403`
+- skipped / excluded fixtures: `6`
 - unclassified fixtures: `0`
-- official fixture pass rate: `69.0%`
+- official fixture pass rate: `68.7%`
 - classified coverage: `100.0%`
 
 ## Classification Catalog
@@ -24,16 +24,15 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 
 | Expectation | Count |
 | --- | ---: |
-| Expected failure | 38 |
-| Known gap | 363 |
-| Skipped / excluded | 5 |
+| Expected failure | 20 |
+| Known gap | 383 |
+| Skipped / excluded | 6 |
 
 ## Canary Coverage
 
 | Package | Preset | Pinned version | Evidence | Support boundary | Status |
 | --- | --- | --- | --- | --- | --- |
-| `express` | Application | `4.19.2` | Support | Supported | Passed |
-| `fastify` | Application | `4.28.1` | Support | Supported | Passed |
+| none in current snapshot | n/a | n/a | n/a | n/a | n/a |
 
 ## Claim Boundary
 

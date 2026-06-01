@@ -46,7 +46,7 @@ Node26 is Current/non-LTS compatibility evidence and is not enterprise LTS suppo
 ## Canary Summary
 
 - package/framework canary claims: `37`
-- package/framework canary checks: `101`
+- package/framework canary checks: `0`
 - diagnostic canary claims: `11`
 - required canary gaps: `0`
 

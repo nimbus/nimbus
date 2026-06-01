@@ -586,7 +586,7 @@ def build_lane_summaries(lanes: list[dict], family_summaries: list[dict]) -> lis
         path_owned_green = len(refs.nonignored - classified_paths)
         documented_green = path_owned_green
         documented_green_source = (
-            "rust_nonignored_path_owned_fixture_inventory_minus_classified_red_skip"
+            "rust_nonignored_execution_fixture_inventory_minus_classified_red_skip"
         )
         unmanifested_or_unclassified = max(
             0, len(fixtures) - documented_green - classified_red_skip
@@ -693,8 +693,9 @@ def build_summary(
             "Counts every vendored lane-local test-* JS/CJS/MJS fixture, then "
             "compares that denominator to the documented manifested passed subset "
             "plus explicit lane classification catalogs. Supported lanes use "
-            "non-ignored Rust fixture evidence minus explicit expected-failure, "
-            "known-gap, and skipped classifications as the passed numerator. "
+            "non-ignored Rust tests that execute node-compat fixtures for the "
+            "matching lane minus explicit expected-failure, known-gap, and "
+            "skipped classifications as the passed numerator. "
             "Ignored watchpoints never count as passed. Expected failures, known "
             "gaps, and skipped/excluded entries are not pass claims; the remaining "
             "remainder is intentionally reported as unmanifested_or_unclassified, "

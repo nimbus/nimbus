@@ -31,31 +31,7 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 
 | Package | Preset | Pinned version | Evidence | Support boundary | Status |
 | --- | --- | --- | --- | --- | --- |
-| `@anthropic-ai/sdk` | Application | `0.100.0` | Support | Supported | Passed |
-| `@aws-sdk/client-s3` | Application | `3.1056.0` | Support | Supported | Passed |
-| `convex-use-node-real-app` | Application | `nimbus` | Support | Supported | Passed |
-| `node:child_process` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `esbuild` | Application | `0.28.0` | Diagnostic | Service/microVM required | Passed |
-| `node:inspector` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `native-addon` | Application | `nimbus` | Diagnostic | Service/microVM required | Passed |
-| `node --test` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `persistent-filesystem` | Application | `nimbus` | Diagnostic | Service/microVM required | Passed |
-| `prisma` | Application | `engine-boundary` | Diagnostic | Service/microVM required | Passed |
-| `raw-server-listen` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `node:repl` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `sharp` | Application | `0.34.5` | Diagnostic | Service/microVM required | Passed |
-| `node:worker_threads` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `jose` | Application | `6.2.3` | Support | Supported | Passed |
-| `nanoid` | Application | `5.1.11` | Support | Supported | Passed |
-| `octokit` | Application | `5.0.5` | Support | Supported | Passed |
-| `openai` | Application | `6.39.1` | Support | Supported | Passed |
-| `resend` | Application | `6.12.4` | Support | Supported | Passed |
-| `@slack/web-api` | Application | `7.16.0` | Support | Supported | Passed |
-| `stripe` | Application | `22.2.0` | Support | Supported | Passed |
-| `@upstash/redis` | Application | `1.38.0` | Support | Supported | Passed |
-| `uuid` | Application | `14.0.0` | Support | Supported | Passed |
-| `ai` | Application | `6.0.192` | Support | Supported | Passed |
-| `zod` | Application | `4.4.3` | Support | Supported | Passed |
+| none in current snapshot | n/a | n/a | n/a | n/a | n/a |
 
 ## Claim Boundary
 

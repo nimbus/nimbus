@@ -14,6 +14,25 @@ from fixture_discovery import discover_fixture_files as discover_git_fixture_fil
 
 RUST_NODE_COMPAT_ROOT = Path("crates/nimbus-runtime/src/runtime/tests/node")
 RUST_EXECUTED_FIXTURE_LANES = {"node20", "node22", "node24"}
+RUST_EXECUTION_MARKERS = {
+    "execute_manifested_node_compat_test(",
+    "execute_upstream_node_compat_test_with_extra_files(",
+    "run_manifested_subset_for_lane(",
+    "run_node_compat_watchpoint(",
+    "run_node_compat_watchpoint_batch(",
+    "run_node_compat_watchpoint_entry_batch(",
+    "run_node_compat_watchpoint_for_lane(",
+}
+FORCED_LANE_CLASSIFICATIONS: dict[str, dict[str, dict[str, str]]] = {
+    "node24": {
+        "test/parallel/test-buffer-tostring-rangeerror.js": {
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "core-semantics/buffer",
+            "reason": "The official Node24 fixture self-skips at runtime due to host memory requirements, so it is excluded from green support claims even when the containing core-semantics batch passes.",
+        },
+    },
+}
 LANE_AWARE_BATCH_MACROS = {
     "node20_only_batch_case",
     "node22_exclusive_batch_case",
@@ -208,6 +227,40 @@ def lane_fixture_literals(text: str, lane: str) -> set[str]:
     return references
 
 
+def body_executes_node_compat_fixtures(text: str) -> bool:
+    return any(marker in text for marker in RUST_EXECUTION_MARKERS)
+
+
+def inferred_test_function_lane(name: str, body: str) -> str | None:
+    """Infer which Node lane a Rust test actually executes.
+
+    Status numerators must come from runtime execution evidence. Topology and
+    report-shape tests mention batch constants for all lanes, but they do not
+    run those fixtures. Lane inference therefore follows the concrete execution
+    call sites: test function names, explicit `NodeCompatLane::NodeXX`
+    arguments, and lane-prefixed fixture source paths.
+    """
+
+    lanes: set[str] = set()
+    for lane in RUST_EXECUTED_FIXTURE_LANES:
+        if re.search(rf"(^|_){lane}($|_)", name):
+            lanes.add(lane)
+
+    for major in ("20", "22", "24"):
+        if f"NodeCompatLane::Node{major}" in body:
+            lanes.add(f"node{major}")
+
+    for literal in fixture_literals(body):
+        if literal.startswith("node") and "/" in literal:
+            prefix, _relative = literal.split("/", 1)
+            if prefix in RUST_EXECUTED_FIXTURE_LANES:
+                lanes.add(prefix)
+
+    if len(lanes) == 1:
+        return next(iter(lanes))
+    return None
+
+
 def collect_const_blocks(lines: list[str]) -> dict[str, str]:
     blocks: dict[str, str] = {}
     index = 0
@@ -295,9 +348,20 @@ def collect_test_functions(
                     break
             index += 1
         body = "\n".join(block)
+        if not body_executes_node_compat_fixtures(body):
+            index += 1
+            continue
+        if inferred_test_function_lane(name, body) != lane:
+            index += 1
+            continue
         literals = set(lane_fixture_literals(body, lane))
-        for const_name in re.findall(r"\b[A-Z][A-Z0-9_]+\b", body):
-            literals.update(expand_const_literals(const_name, const_blocks, lane))
+        expands_broad_ignored_watchpoint = (
+            any("ignore" in attr for attr in attrs)
+            and "run_manifested_subset_for_lane(" in body
+        )
+        if not expands_broad_ignored_watchpoint:
+            for const_name in re.findall(r"\b[A-Z][A-Z0-9_]+\b", body):
+                literals.update(expand_const_literals(const_name, const_blocks, lane))
         functions.append(
             {
                 "name": name,
@@ -411,6 +475,10 @@ def classification_for_unpromoted(path: str, fixture_root: Path) -> dict[str, st
     }
 
 
+def forced_lane_classification(lane: str, path: str) -> dict[str, str] | None:
+    return FORCED_LANE_CLASSIFICATIONS.get(lane, {}).get(path)
+
+
 def existing_classified_paths(catalog: dict[str, Any] | None) -> set[str]:
     if catalog is None:
         return set()
@@ -438,7 +506,9 @@ def build_catalog(lane: str, *, preserve_existing: bool) -> dict[str, Any]:
     catalog_path = classification_catalog_path(lane)
     existing = load_json(catalog_path) if preserve_existing and catalog_path.is_file() else None
     existing_paths = existing_classified_paths(existing)
+    forced_paths = set(FORCED_LANE_CLASSIFICATIONS.get(lane, {})) & fixtures
     nongreen_paths = set(fixtures - refs.nonignored)
+    nongreen_paths.update(forced_paths)
     nongreen_paths.update(existing_paths & fixtures)
 
     entries: list[dict[str, Any]] = []
@@ -460,7 +530,9 @@ def build_catalog(lane: str, *, preserve_existing: bool) -> dict[str, Any]:
 
     grouped_paths: dict[tuple[str, str, str, str], list[str]] = defaultdict(list)
     for path in sorted(nongreen_paths - {entry["test_path"] for entry in entries}):
-        classification = classification_for_unpromoted(path, fixture_root)
+        classification = forced_lane_classification(lane, path) or classification_for_unpromoted(
+            path, fixture_root
+        )
         key = (
             classification["expectation"],
             classification["classification"],
