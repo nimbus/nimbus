@@ -1,6 +1,6 @@
 # DUA1 Deno Overlap Audit
 
-status: in_progress
+status: done
 date: 2026-06-01
 branch: codex/deno-rusty-v8-upstream-alignment
 worktree: /Users/jack/src/github.com/nimbus/nimbus-worktrees/deno-rusty-v8-upstream-alignment
@@ -9,33 +9,32 @@ verifier: scripts/verify-deno-rusty-v8-upstream-alignment.sh
 
 ## Proof Contract Checklist
 
-1. **Row and status.** DUA1 is in progress. DUA0 is now done and draft PR #11
+1. **Row and status.** DUA1 is done. DUA0 is done and draft PR #11
    is the remote review/CI control surface for this row.
 2. **Input baseline.** The Deno fork patch stack, upstream `v2.8.1` target,
    fetched tags, and current dirty-file state are recorded below.
 3. **Disposition table.** Every local Deno commit through
-   `v2.8.0-nimbus.15` has an initial disposition below. DUA3/DUA4 must refine
-   any broad `upstream-adjacent` or `still-needed-node-gap` carry before
-   replay.
+   `v2.8.0-nimbus.15` has a disposition below, plus hunk-level replay
+   instructions for every upstream-overlapping area.
 4. **Implementation evidence.** This row is audit-only so far; no fork patch
    has been replayed or dropped.
-5. **Focused verification.** Local fetch, patch-id, and targeted diff evidence
-   are recorded below.
+5. **Focused verification.** Local fetch, range-diff, patch-id, overlap, and
+   targeted diff evidence are recorded below.
 6. **Broad verification.** DUA1 does not run broad compatibility groups; DUA6
    owns the post-repin broad rebaseline.
-7. **Residual risks.** The audit still needs hunk-level source mapping before
-   DUA1 can close.
+7. **Residual risks.** DUA1 is closed as an audit row. DUA3/DUA4 still own
+   source changes and runtime proof before any compatibility claim moves.
 
 ## Row And Status
 
-DUA1 is in progress. The local upstream Deno checkout was stale at row start
+DUA1 is done. The local upstream Deno checkout was stale at row start
 and did not have `v2.8.1`; fetching tags made `v2.8.1` available in both the
 upstream checkout and the Nimbus fork checkout for local comparison.
 
 This proof intentionally separates two facts:
 
 - No Nimbus fork commit has an exact patch-id match in upstream `v2.8.1`.
-- Several upstream `v2.8.1` commits overlap the same logical areas and should
+- Several upstream `v2.8.1` commits overlap the same logical areas and must
   replace or shrink Nimbus patches during DUA3/DUA4.
 
 ## Input Baseline
@@ -160,6 +159,64 @@ Dirty Deno files:
 | --- | --- |
 | `/Users/jack/src/github.com/nimbus/deno` | clean at DUA1 start |
 
+## Hunk-Level Source Mapping
+
+DUA1 compared the local Nimbus patch stack with upstream `v2.8.1` at commit
+and file level. The result is not "replay everything": it is "start from
+upstream `v2.8.1`, preserve its fixes, and replay only the local hunks that
+remain distinct after focused tests." No local commit is an exact upstream
+patch-id match, but many local commits touch files that upstream also changed.
+
+Commit matching evidence:
+
+```console
+git -C /Users/jack/src/github.com/nimbus/deno range-diff --creation-factor=80 v2.8.0..v2.8.0-nimbus.15 v2.8.0..v2.8.1
+git -C /Users/jack/src/github.com/nimbus/deno cherry -v v2.8.1 v2.8.0-nimbus.15
+```
+
+Observed: `range-diff` reports all 15 Nimbus commits only on the local side
+and all 45 upstream `v2.8.1` commits only on the upstream side. `git cherry`
+reports all 15 Nimbus commits with `+`, so DUA3 cannot mark any whole commit
+as exact upstream-replaced.
+
+Upstream-preservation rules for DUA3:
+
+| Local area | Upstream `v2.8.1` owner | DUA3 rule |
+| --- | --- | --- |
+| Compile cache APIs in `01_require.js` and `internal/compile_cache.js` | `54179d8b7a` | Do not replay. Upstream reverted this surface because Deno already has V8 code caching and the polyfill added unwanted environment-permission reads. |
+| DNS/fetch resolved-IP permission checks | `3d6c61477c` | Preserve upstream permission behavior. If carrying the local Hickory/rustls security bump, port it around upstream's permissioned resolver rather than replacing that resolver. |
+| Lazy ESM source retention | `96aeaf2851` | Preserve upstream clone/retention semantics. Local `ModuleMap::clear_pending_state` is a separate Nimbus warm-reuse reset hunk. |
+| Core host-object deserialization | `bd343a7d5a` | Preserve upstream `core.deserialize` host-object brand handling. Carry local `node:v8` JS stream host-object behavior only if focused `node:v8` fixtures still fail on raw `v2.8.1`. |
+| `fs.promises`, `fs.exists`, and `fs.watch` open errors | `728239f30f`, `c10cf515cb`, `e805fcd6e4` | Preserve upstream fixes. Carry only distinct local fs/statfs/open/mkdir/truncate/writeFile/duplexify hunks with focused evidence. |
+| TLS/PFX/certificate handling and HTTP keep-alive wakeups | `8ab97008ce`, `c2c91051c0`, `7aadfe88fb`, `5ca12ed9c9`, `88d31a2ec6` | Preserve upstream TLS/PFX and HTTP fixes. Carry only distinct local SNI, keylog, http2, or globalAgent behavior after focused tests prove gaps. |
+| `process.loadEnvFile` permission and `node:util` APIs/inspect behavior | `044bed8486`, `4e8c17423c`, `41d7773ae8` | Preserve upstream permission/API/Proxy-trap behavior. Local process/util hunks must be replayed only when they do not shadow those upstream changes. |
+| Module API and CommonJS loader behavior | `1fab348518`, `54179d8b7a` | Preserve upstream `Module.register` static export and compile-cache removal. Carry local CommonJS global path, loader, or package behavior only with focused loader evidence. |
+| `node:sqlite` panic/error behavior | `12a12f2ed2` | Upstream aggregate panic prevention is adjacent, not the local `set_db_config` error-return hunk. Carry local sqlite config error behavior only if raw upstream still panics or loses the error. |
+
+Per-commit replay map:
+
+| Local commit | Upstream-overlap files | Hunk-level action for DUA3/DUA4 |
+| --- | --- | --- |
+| `7530d3c1a1` | `Cargo.toml`, `Cargo.lock` | Replace the old `v149.0.0-nimbus.1` pin with the DUA2-selected `v149.2.0-nimbus.*` substrate. Do not carry stale lockfile hunks. |
+| `363de88e0d` | `libs/core/modules/map.rs` | Carry Nimbus locker lifecycle and warm-reuse reset hunks only around upstream `96aeaf2851` lazy ESM retention. Both behaviors must coexist. |
+| `c0d5302324` | none in upstream `v2.8.1` changed-file intersection | Re-test embedded `node:vm` and zlib behavior on `v2.8.1`; carry as Nimbus embedding/Node compatibility only if focused tests still fail. |
+| `9225357ba8` | `ext/node_sqlite/database.rs` | Treat as adjacent to upstream `12a12f2ed2`. Preserve upstream aggregate panic fix; carry local config-error return only with focused sqlite proof. |
+| `37b6333a1f` | `Cargo.toml`, `Cargo.lock`, `ext/fetch/dns.rs`, `ext/fetch/lib.rs` | Port only the still-needed Hickory/rustls security bump around upstream `3d6c61477c` permission checks. Never drop resolved-IP deny-list enforcement. |
+| `21015e0bb9` | none | Re-test MessagePort queued-data delivery; carry only if upstream `v2.8.1` still drops queued data before listeners attach. |
+| `70dba91f18` | none | Re-test Node constants binding shape; carry if constants fixtures still fail on raw upstream. |
+| `fc5ead421f` | `ext/node/lib.rs` only | Local dgram/tcp/udp behavior has no direct upstream dgram replacement. Preserve unrelated upstream `ext/node/lib.rs` changes and replay network ops only with focused evidence. |
+| `e6cf99d4a3` | `ext/node/lib.rs`, `01_require.js`, `fs.ts`, `process.ts`, `util.ts`, `libs/node_resolver/resolution.rs` | Split before replay. Preserve upstream compile-cache removal, `Module.register`, `process.loadEnvFile` permission, `node:util` additions, `util.inspect` Proxy behavior, and package browser-field map support. Carry only distinct REPL/testing/SEA/tracing/global path/fs/util hunks with tests. |
+| `ae79fb3e4b` | none | Re-test `addAbortListener` stop-propagation semantics; carry if upstream still diverges from Node. |
+| `5099d87414` | none | Re-test legacy URL parsing; carry only if raw upstream still fails the compatibility fixtures. |
+| `843e485fb9` | `ext/web/01_console.js` | Adjacent to upstream `41d7773ae8` inspect work. Preserve upstream no-Proxy-trap behavior; carry ArrayBuffer `byteLength` label hunk if focused inspect fixtures still require it. |
+| `663306f565` | `ext/node/ops/fs.rs`, `fs.ts`, `internal/fs/promises.ts` | Preserve upstream `fs.promises`, `fs.exists`, and `fs.watch` fixes. Carry only distinct fs/statfs/open/mkdir/truncate/writeFile/stream duplexify behavior with focused and broad evidence. |
+| `d1c53e4315` | `ext/node/ops/tls_wrap.rs`, `_http_server.js`, `_tls_common.ts`, `_tls_wrap.js`, `fs.ts`, `ext/node_crypto/keys.rs`, `ext/node_crypto/lib.rs`, `ext/web/01_console.js` | Preserve upstream TLS/PFX/authorized and HTTP timer fixes. Carry distinct SNI, keylog, http2, globalAgent, crypto-key, and console hunks only if focused tests prove remaining gaps. |
+| `1f101bf003` | `ext/node/lib.rs`, `01_require.js` | Drop compile-cache surface. Preserve upstream host-object deserialization. Re-test CommonJS loader, crypto, `node:v8`, JS stream host-object, and V8 serialization behavior before carrying local hunks. |
+
+This map is the DUA3 replay contract: replay starts from upstream `v2.8.1`;
+upstream-owned fixes are the baseline; local hunks are guilty until focused
+tests prove they are still needed and not duplicate local compatibility code.
+
 ## Implementation Evidence
 
 No Deno fork code has been changed by DUA1 yet. Evidence gathered so far:
@@ -167,6 +224,8 @@ No Deno fork code has been changed by DUA1 yet. Evidence gathered so far:
 - Upstream tags were fetched into `/Users/jack/src/github.com/denoland/deno`.
 - Tag `v2.8.1` was fetched into `/Users/jack/src/github.com/nimbus/deno` from
   the local upstream checkout.
+- `git range-diff --creation-factor=80 v2.8.0..v2.8.0-nimbus.15 v2.8.0..v2.8.1`
+  reports no exact commit mapping.
 - `git cherry -v v2.8.1 v2.8.0-nimbus.15` reports every local Nimbus commit
   with `+`, proving no exact patch-id match against upstream `v2.8.1`.
 - Targeted upstream diffs show compile-cache removal, Module.register export,
@@ -180,7 +239,10 @@ Commands run:
 ```console
 git -C /Users/jack/src/github.com/denoland/deno fetch --tags origin
 git -C /Users/jack/src/github.com/nimbus/deno fetch --tags local-denoland
+git -C /Users/jack/src/github.com/nimbus/deno range-diff --creation-factor=80 v2.8.0..v2.8.0-nimbus.15 v2.8.0..v2.8.1
 git -C /Users/jack/src/github.com/nimbus/deno cherry -v v2.8.1 v2.8.0-nimbus.15
+git -C /Users/jack/src/github.com/nimbus/deno diff --name-only v2.8.0..v2.8.0-nimbus.15
+git -C /Users/jack/src/github.com/nimbus/deno diff --name-only v2.8.0..v2.8.1
 git -C /Users/jack/src/github.com/denoland/deno log --oneline --reverse v2.8.0..v2.8.1 -- ext/node libs/node_resolver libs/core ext/node_crypto ext/net ext/fetch ext/tls ext/web
 git -C /Users/jack/src/github.com/denoland/deno diff --stat v2.8.0..v2.8.1 -- ext/node libs/node_resolver libs/core ext/node_crypto ext/net ext/fetch ext/tls ext/web
 git -C /Users/jack/src/github.com/denoland/deno grep -n "enableCompileCache\\|module.enableCompileCache\\|JSStream\\|js_stream\\|globalPaths\\|NODE_PATH" v2.8.1 -- ext/node
@@ -190,14 +252,21 @@ bash scripts/verify-deno-rusty-v8-upstream-alignment.sh
 Observed:
 
 - `v2.8.1` fetched successfully.
+- `range-diff` shows no local commit is equivalent to an upstream `v2.8.1`
+  commit.
 - `git cherry` shows all 15 Nimbus fork commits as `+` relative to upstream
   `v2.8.1`, so DUA cannot blindly mark any commit as exact upstream-replaced.
+- File-level overlap is concentrated in the tables above; several local
+  commits have no direct upstream file overlap and must still be retested
+  rather than replayed blindly.
 - Upstream `v2.8.1` deletes `ext/node/polyfills/internal/compile_cache.js`.
 - Upstream `v2.8.1` contains `internal/js_stream_socket.js` and `js_stream`
   internal binding entries, but the local `.15` `internal_binding/js_stream.ts`
   and V8 serializer host-object behavior still need hunk-level comparison.
-- The DUA verifier now reports `5 passed, 18 failed`, with DUA2-DUA8 failures
-  expected because implementation rows have not run yet.
+- `bash scripts/verify-deno-rusty-v8-upstream-alignment.sh` reports
+  `8 passed, 15 failed`. The remaining failures are DUA3 through DUA8 and
+  closeout gates, which are expected because implementation rows have not run
+  yet.
 
 ## Broad Verification
 
@@ -216,10 +285,16 @@ repin the upstream-aligned forks.
 
 ## Residual Risks
 
-- DUA1 is not done until hunk-level mapping proves which hunks are actually
-  upstream-replaced versus only adjacent.
-- Broad mixed commits `c0d5302324` and `e6cf99d4a3` need extra care because a
-  commit-level disposition is too coarse for safe replay.
-- PR creation for the DUA branch is still blocked by invalid `gh` auth and
-  GitHub connector `403`, so DUA0 remains in progress even though DUA1 audit
-  work has started locally.
+- DUA1 is audit-complete, but no Deno fork code has been rebuilt yet. DUA3 must
+  prove the replay map against a real upstream `v2.8.1` branch.
+- Broad mixed commits `c0d5302324`, `e6cf99d4a3`, `663306f565`,
+  `d1c53e4315`, and `1f101bf003` need extra care because a commit-level
+  disposition is too coarse for safe replay.
+- The DUA PR exists at `https://github.com/nimbus/nimbus/pull/11`; hosted
+  `gh` auth failures observed inside the sandbox were a permission/escalation
+  issue, not a real credential blocker.
+- The corrected `rusty_v8` branch CI run for
+  `d247474e613e8050fef0348cf11f5e01bd94cdfd` was still in progress when DUA1
+  closed. DUA5 must either consume the immutable release tag after artifact
+  validation or create a superseding `v149.2.0-nimbus.*` tag from the corrected
+  branch head.
