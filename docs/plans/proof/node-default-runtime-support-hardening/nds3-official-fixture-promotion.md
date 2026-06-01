@@ -16,7 +16,7 @@ matching-lane non-ignored Rust tests that execute official fixtures, then
 promoted the Node24 `core-semantics` broad group from ignored watchpoint to
 regular green coverage.
 
-The row is not done. Node24 is now `632 / 5198` full-corpus official fixtures
+The row is not done. Node24 is now `892 / 5198` full-corpus official fixtures
 passed, and the NDS3 closeout gate remains `>= 2000`.
 
 ## Broad Pre-Run
@@ -92,8 +92,9 @@ Promoted fixes to the canonical Deno fork:
 | `v2.8.0-nimbus.11` | `5099d87414` | Align legacy Node URL parsing and `pathToFileURL(..., { windows: true })` error behavior. |
 | `v2.8.0-nimbus.12` | `843e485fb9` | Align ArrayBuffer and SharedArrayBuffer inspect output with Node's non-enumerable `[byteLength]` label. |
 | `v2.8.0-nimbus.13` | `663306f565` | Improve Node stream duplex lifecycle and local filesystem compatibility for statfs, appendFile validation, cwd-relative path handling, watch behavior, symlink target handling, and async open error normalization. |
+| `v2.8.0-nimbus.14` | `d1c53e4315` | Improve Node24 networking compatibility: abort-listener observability, raw `writeHead` header validation, invalid status-code errors, `NODE_TLS_REJECT_UNAUTHORIZED`, PFX extraction, TLS keylog events, HTTP/2 state buffers, SNI preservation, `https.globalAgent` reassignment, and SecureContext ticket callback shape. |
 
-Nimbus is repinned to `v2.8.0-nimbus.13` in `Cargo.toml` and `Cargo.lock`.
+Nimbus is repinned to `v2.8.0-nimbus.14` in `Cargo.toml` and `Cargo.lock`.
 
 Focused verification:
 
@@ -196,7 +197,112 @@ cargo test -p nimbus-runtime node24_default_lane_executes_streams_and_local_io_s
 
 Observed: `308 passed, 0 skipped, 0 failed`.
 
-Regenerated evidence after the streams/local I/O promotion:
+Networking broad rerun before fixes:
+
+```console
+cargo test -p nimbus-runtime node24_default_lane_networking_watchpoint -- --ignored --nocapture --test-threads=1
+```
+
+Observed: `254 passed, 0 skipped, 14 failed`.
+
+Failure inventory:
+
+- `test-http-agent-abort-controller.js`
+- `test-http-response-statuscode.js`
+- `test-http-response-splitting.js`
+- `test-https-agent-abort-controller.js`
+- `test-https-client-get-url.js`
+- `test-http2-util-update-options-buffer.js`
+- `test-https-agent-sni.js`
+- `test-https-client-override-global-agent.js`
+- `test-https-abortcontroller.js`
+- `test-https-resume-after-renew.js`
+- `test-https-pfx.js`
+- `test-https-strict.js`
+- `test-https-agent-keylog.js`
+- `test-tls-connect-abort-controller.js`
+
+Focused networking fixes:
+
+- Deno `events.addAbortListener` now uses observable abort listeners while
+  retaining stop-immediate-propagation resistance, fixing the HTTP/HTTPS/net/TLS
+  abort-controller listener-count fixtures.
+- Deno raw `ServerResponse.writeHead(status, headers)` now validates external
+  header names and values before storing them, fixing response-splitting
+  protection and odd flat-array validation.
+- Deno invalid HTTP status-code errors now use Node's
+  `ERR_HTTP_INVALID_STATUS_CODE` formatting.
+- Deno TLS now reads `NODE_TLS_REJECT_UNAUTHORIZED` live and emits the Node
+  warning once.
+- Deno `SecureContext` now validates and extracts PFX/PKCS#12 cert/key/CA
+  material for rustls-backed TLS.
+- Deno TLS keylog lines are bridged into Node-style `keylog` events.
+- Deno `internalBinding("http2")` now exposes runtime-bound HTTP/2 state
+  buffers used by `internal/http2/util`.
+- Deno TLS preserves Node/OpenSSL SNI behavior for names rustls rejects by
+  using a same-length valid placeholder internally and restoring the plaintext
+  ClientHello SNI.
+- Deno `node:https` exposes a mutable accessor-backed `globalAgent`.
+- Deno `SecureContext.context.enableTicketKeyCallback()` exists as a
+  brand-checked no-op hook while rustls owns ticket rotation.
+
+Focused networking verification:
+
+```console
+cargo test -p nimbus-runtime abort_controller_fixture -- --nocapture --test-threads=1
+cargo test -p nimbus-runtime node24_http_response_statuscode_fixture -- --nocapture --test-threads=1
+cargo test -p nimbus-runtime node24_http_response_splitting_fixture -- --nocapture --test-threads=1
+cargo test -p nimbus-runtime node24_https_client_get_url_fixture -- --nocapture --test-threads=1
+cargo test -p nimbus-runtime node24_https_strict_fixture -- --nocapture --test-threads=1
+cargo test -p nimbus-runtime node24_https_pfx_fixture -- --nocapture --test-threads=1
+cargo test -p nimbus-runtime node24_https_agent_keylog_fixture -- --nocapture --test-threads=1
+cargo test -p nimbus-runtime node24_http2_util_update_options_buffer_fixture -- --nocapture --test-threads=1
+cargo test -p nimbus-runtime node24_https_agent_sni_fixture -- --nocapture --test-threads=1
+cargo test -p nimbus-runtime node24_https_client_override_global_agent_fixture -- --nocapture --test-threads=1
+cargo test -p nimbus-runtime node24_https_resume_after_renew_fixture -- --nocapture --test-threads=1
+```
+
+Observed: all focused networking fixtures passed.
+
+Networking broad rerun on local Deno path:
+
+```console
+cargo test -p nimbus-runtime node24_default_lane_networking_watchpoint -- --ignored --nocapture --test-threads=1
+```
+
+Observed: `268 passed, 0 skipped, 0 failed`.
+
+Networking broad rerun after publishing and repinning to
+`v2.8.0-nimbus.14`:
+
+```console
+cargo test -p nimbus-runtime node24_default_lane_networking_watchpoint -- --ignored --nocapture --test-threads=1
+```
+
+Observed: `268 passed, 0 skipped, 0 failed`.
+
+Promoted non-ignored networking rerun:
+
+```console
+cargo test -p nimbus-runtime node24_default_lane_networking_watchpoint -- --nocapture --test-threads=1
+```
+
+Observed: `268 passed, 0 skipped, 0 failed`.
+
+Evidence generator correction:
+
+- Promoting the networking batch exposed an overcount: the status generator
+  expanded explicit `NodeCompatBatchEntry` values without honoring
+  `node24_fixture_source_path: None`, so it reported `270` networking fixtures
+  even though the runner executed `268`.
+- `scripts/runtime/node/classifications.py` now masks explicit batch-entry
+  structs and counts a fixture only when the lane-specific fixture source is
+  `Some(...)`.
+- The corrected status reports Node24 networking as `268`, matching the
+  runner output. This also corrected historical Node20/Node22 totals where
+  lane-disabled entries had been counted as green.
+
+Regenerated evidence after the networking promotion and generator correction:
 
 ```console
 python3 scripts/runtime/node/classifications.py sync --lane all
@@ -223,22 +329,22 @@ Current generated full-corpus official fixture posture:
 
 | Lane | Passed | Vendored | Pass rate |
 | --- | ---: | ---: | ---: |
-| `node20` | 899 | 1308 | 68.7% |
-| `node22` | 1024 | 4773 | 21.5% |
-| `node24` | 632 | 5198 | 12.2% |
+| `node20` | 893 | 1308 | 68.3% |
+| `node22` | 1023 | 4773 | 21.4% |
+| `node24` | 892 | 5198 | 17.2% |
 | `node26` | 0 | 5578 | 0.0% |
 
 Current Node24 default-support posture:
 
 | Metric | Count |
 | --- | ---: |
-| Current passed | 632 |
-| Required gaps | 1470 |
-| Optional promotable gaps | 427 |
-| Diagnostic gaps | 2043 |
+| Current passed | 892 |
+| Required gaps | 1477 |
+| Optional promotable gaps | 422 |
+| Diagnostic gaps | 1781 |
 | Harness-only gaps | 602 |
 | Upstream/platform gaps | 24 |
-| Estimated reachable pass ceiling | 2529 |
+| Estimated reachable pass ceiling | 2791 |
 
 ## Evidence Links
 
@@ -250,14 +356,16 @@ Current Node24 default-support posture:
 - `crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs`
 - `crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs`
 - `crates/nimbus-runtime/src/runtime/bootstrap/js/node22_runtime_bootstrap.js`
-- Deno fork tag `v2.8.0-nimbus.13` (`663306f565d3d58da607070d237bca196d2d47f9`)
+- Deno fork tag `v2.8.0-nimbus.14` (`d1c53e4315fff77c279db3c68933fab6ec2e84d5`)
 
 ## Residual Risks
 
 - NDS3 is still far below the `2000` Node24 full-corpus closeout threshold.
 - The next focused waves must continue from the broad failure inventory rather
   than adding isolated green tests disconnected from the official corpus.
-- Remaining Node24 failures are concentrated in loader/context and networking.
+- Remaining NDS3 work is concentrated in loader/context plus additional
+  non-foundation fixture clusters outside the promoted Node24 networking
+  manifest.
   They must be fixed, reclassified as stricter non-isolate diagnostics, or moved
   to a documented blocked state with exact fixture ownership.
 - Node22 parity is not yet proven for the final NDS3 state; the proof must

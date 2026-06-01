@@ -58,7 +58,7 @@
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "networking/crypto",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node20_loader_context_crypto_authenticated_legacy_watchpoint_batch"
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_legacy_watchpoint_batch"
     },
     {
       "test_path": "test/parallel/test-crypto-des3-wrap.js",
@@ -66,6 +66,13 @@
       "classification": "rust_watchpoint_expected_failure",
       "owner": "networking/crypto",
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
+    },
+    {
+      "test_path": "test/parallel/test-crypto-dh.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/crypto",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_dh_legacy_watchpoint_batch"
     },
     {
       "test_path": "test/parallel/test-events-once.js",
@@ -80,6 +87,13 @@
       "classification": "rust_watchpoint_expected_failure",
       "owner": "streams-local-io/fs-host-io",
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_fs_stat_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-https-hwm.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/https",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_https_hwm_watchpoint"
     },
     {
       "test_path": "test/parallel/test-module-loading-error.js",
@@ -143,6 +157,13 @@
       "classification": "rust_watchpoint_expected_failure",
       "owner": "streams-local-io/stream",
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_stream_transform_split_objectmode_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-tls-connect-hwm-option.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/tls",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_tls_connect_hwm_option_watchpoint"
     }
   ],
   "groups": [
@@ -332,6 +353,16 @@
       "id": "node20-requires_unpromoted_node_surface-13",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
+      "owner": "networking/zlib",
+      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
+      "test_paths": [
+        "test/parallel/test-zlib-brotli-16GB.js"
+      ]
+    },
+    {
+      "id": "node20-requires_unpromoted_node_surface-14",
+      "expectation": "expected_gap",
+      "classification": "requires_unpromoted_node_surface",
       "owner": "node-compat/unpromoted-surface",
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
@@ -378,7 +409,7 @@
       ]
     },
     {
-      "id": "node20-requires_unpromoted_node_surface-14",
+      "id": "node20-requires_unpromoted_node_surface-15",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/diagnostics-channel",
@@ -409,7 +440,7 @@
       ]
     },
     {
-      "id": "node20-requires_unpromoted_node_surface-15",
+      "id": "node20-requires_unpromoted_node_surface-16",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/os",
@@ -422,7 +453,7 @@
       ]
     },
     {
-      "id": "node20-requires_unpromoted_node_surface-16",
+      "id": "node20-requires_unpromoted_node_surface-17",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/perf-hooks",
@@ -432,7 +463,7 @@
       ]
     },
     {
-      "id": "node20-requires_unpromoted_node_surface-17",
+      "id": "node20-requires_unpromoted_node_surface-18",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/process-host",
@@ -515,7 +546,7 @@
       ]
     },
     {
-      "id": "node20-requires_unpromoted_node_surface-18",
+      "id": "node20-requires_unpromoted_node_surface-19",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/timers",
@@ -570,7 +601,7 @@
       ]
     },
     {
-      "id": "node20-requires_unpromoted_node_surface-19",
+      "id": "node20-requires_unpromoted_node_surface-20",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/fs-host-io",
@@ -655,7 +686,7 @@
       ]
     },
     {
-      "id": "node20-requires_unpromoted_node_surface-20",
+      "id": "node20-requires_unpromoted_node_surface-21",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/readline-tty",
@@ -676,7 +707,7 @@
       ]
     },
     {
-      "id": "node20-requires_unpromoted_node_surface-21",
+      "id": "node20-requires_unpromoted_node_surface-22",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/stream",
@@ -715,7 +746,7 @@
       ]
     },
     {
-      "id": "node20-requires_wpt_harness-22",
+      "id": "node20-requires_wpt_harness-23",
       "expectation": "expected_gap",
       "classification": "requires_wpt_harness",
       "owner": "node-compat/wpt-harness",
@@ -726,7 +757,7 @@
       ]
     },
     {
-      "id": "node20-upstream_known_issue_or_platform_boundary-23",
+      "id": "node20-upstream_known_issue_or_platform_boundary-24",
       "expectation": "expected_gap",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "node-compat/platform-boundary",
@@ -737,7 +768,7 @@
       ]
     },
     {
-      "id": "node20-support_fixture_not_top_level_test-24",
+      "id": "node20-support_fixture_not_top_level_test-25",
       "expectation": "expected_skip",
       "classification": "support_fixture_not_top_level_test",
       "owner": "node-compat-denominator/fixture-sync",
@@ -749,12 +780,14 @@
       ]
     },
     {
-      "id": "node20-vendored_non_official_placeholder-25",
+      "id": "node20-vendored_non_official_placeholder-26",
       "expectation": "expected_skip",
       "classification": "vendored_non_official_placeholder",
       "owner": "node-compat-denominator/fixture-sync",
       "reason": "The vendored file is empty fixture corpus residue, so it is excluded from green support claims until a runnable upstream counterpart is proven and promoted.",
       "test_paths": [
+        "test/parallel/test-crypto-default-shake-lengths-oneshot.js",
+        "test/parallel/test-crypto-oneshot-hash-xof.js",
         "test/parallel/test-dgram-reuseport.js",
         "test/parallel/test-module-setsourcemapssupport.js",
         "test/parallel/test-v8-string-is-one-byte-representation.js"

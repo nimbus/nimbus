@@ -982,6 +982,7 @@
         "test/async-hooks/test-crypto-randomBytes.js",
         "test/parallel/test-crypto-async-sign-verify.js",
         "test/parallel/test-crypto-certificate.js",
+        "test/parallel/test-crypto-default-shake-lengths.js",
         "test/parallel/test-crypto-domain.js",
         "test/parallel/test-crypto-domains.js",
         "test/parallel/test-crypto-ecb.js",

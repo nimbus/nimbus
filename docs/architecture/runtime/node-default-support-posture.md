@@ -19,17 +19,17 @@ behavior, test-harness-only, or upstream/platform boundary.
 
 | Lane | Role | Full Corpus | Current Passed | Required Gaps | Optional Gaps | Diagnostic | Harness Only | Upstream/Platform | Source Unpromoted | Remaining Unpromoted |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `node20` | `legacy` | 1308 | 899 | 298 | 1 | 62 | 46 | 2 | 342 | 0 |
-| `node22` | `supported` | 4773 | 1024 | 1291 | 366 | 1670 | 396 | 26 | 3419 | 0 |
-| `node24` | `default` | 5198 | 632 | 1470 | 427 | 2043 | 602 | 24 | 4209 | 0 |
+| `node20` | `legacy` | 1308 | 893 | 301 | 1 | 63 | 48 | 2 | 343 | 0 |
+| `node22` | `supported` | 4773 | 1023 | 1291 | 366 | 1671 | 396 | 26 | 3420 | 0 |
+| `node24` | `default` | 5198 | 892 | 1477 | 422 | 1781 | 602 | 24 | 3941 | 0 |
 | `node26` | `current` | 5578 | 0 | 2085 | 595 | 2245 | 630 | 23 | 5233 | 0 |
 
 ## Node24 Feasibility
 
-- current passed: `632`
-- required gap count: `1470`
-- optional promotable gap count: `427`
-- estimated reachable pass ceiling: `2529`
+- current passed: `892`
+- required gap count: `1477`
+- optional promotable gap count: `422`
+- estimated reachable pass ceiling: `2791`
 - target reachable in this plan: `true`
 
 The ceiling is an NDS1 estimate, not a completion claim. NDS3 may re-enter

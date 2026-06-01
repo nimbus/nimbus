@@ -513,7 +513,7 @@ completion.
 | Active goal objective | `019e7f94-cc55-7862-b9ec-be1103d7aea1` |
 | Last completed row | `NDS2` |
 | Current row | `NDS3` |
-| Latest verifier output | `15 passed, 19 failed (NDS3 in progress after Node24 streams/local-I/O promotion; current-row and future-row gates failing as expected)` |
+| Latest verifier output | `15 passed, 19 failed (NDS3 in progress after Node24 networking promotion; Node24 is 892 / 5198 and current-row/future-row gates fail as expected)` |
 
 ## Ledger Status Values
 

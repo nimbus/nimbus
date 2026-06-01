@@ -136,8 +136,46 @@ def macro_invocations(text: str) -> list[tuple[str, str, tuple[int, int]]]:
     return invocations
 
 
+def node_compat_batch_entries(text: str) -> list[tuple[str, tuple[int, int]]]:
+    entries: list[tuple[str, tuple[int, int]]] = []
+    pattern = re.compile(r"\bNodeCompatBatchEntry\s*\{")
+    index = 0
+    while True:
+        match = pattern.search(text, index)
+        if match is None:
+            break
+        depth = 1
+        cursor = match.end()
+        while cursor < len(text) and depth > 0:
+            char = text[cursor]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+            cursor += 1
+        if depth == 0:
+            entries.append((text[match.end() : cursor - 1], (match.start(), cursor)))
+        index = max(cursor, match.end())
+    return entries
+
+
 def string_args(text: str) -> list[str]:
     return re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', text)
+
+
+def field_string(text: str, field_name: str) -> str | None:
+    match = re.search(
+        rf"\b{re.escape(field_name)}\s*:\s*(?:Some\(\s*)?\"([^\"\\]*(?:\\.[^\"\\]*)*)\"",
+        text,
+        flags=re.S,
+    )
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def field_is_none(text: str, field_name: str) -> bool:
+    return re.search(rf"\b{re.escape(field_name)}\s*:\s*None\b", text) is not None
 
 
 def lane_relative_literal(literal: str, lane: str) -> str | None:
@@ -167,6 +205,16 @@ def lane_fixture_literals(text: str, lane: str) -> set[str]:
         relative = lane_relative_literal(literal, lane)
         if relative is not None:
             references.add(relative)
+
+    for body, (start, end) in node_compat_batch_entries(text):
+        for offset in range(start, end):
+            masked[offset] = " "
+        test_relative_path = field_string(body, "test_relative_path")
+        lane_source_field = f"{lane}_fixture_source_path"
+        if field_is_none(body, lane_source_field):
+            continue
+        if field_string(body, lane_source_field) is not None:
+            add(test_relative_path)
 
     for name, body, (start, end) in macro_invocations(text):
         if name not in LANE_AWARE_BATCH_MACROS:
