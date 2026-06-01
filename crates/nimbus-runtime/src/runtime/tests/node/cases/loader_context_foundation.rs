@@ -133,7 +133,10 @@ const LOADER_CONTEXT_FOLLOWUP_V8_HELPER_BATCH: &[NodeCompatBatchEntry] = &[
 ];
 
 const LOADER_CONTEXT_FOLLOWUP_V8_GREEN_BATCH: &[NodeCompatBatchEntry] = &[
+    shared_official_batch_case!("test/parallel/test-v8-version-tag.js"),
     shared_official_batch_case!("test/parallel/test-v8-deserialize-buffer.js"),
+    shared_official_batch_case!("test/parallel/test-v8-stats.js"),
+    shared_official_batch_case!("test/parallel/test-v8-flag-type-check.js"),
 ];
 
 const LOADER_CONTEXT_FOLLOWUP_VM_BASIC_BATCH: &[NodeCompatBatchEntry] = &[

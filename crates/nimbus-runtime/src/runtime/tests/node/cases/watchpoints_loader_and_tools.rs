@@ -173,6 +173,16 @@ fn node24_loader_context_followup_module_commonjs_remainder_batch_fixture() {
 }
 
 #[test]
+fn node24_loader_context_global_paths_preserve_local_precedence_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-module-loading-globalpaths.js",
+        "node24/test/parallel/test-module-loading-globalpaths.js",
+        MODULE_COMMONJS_FIXTURES_EXTRA_FILES,
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
 fn node22_loader_context_followup_inspector_front_edge_batch_fixture() {
     run_node_compat_watchpoint_entry_batch(
         "node22-loader-context-followup-inspector-front-edge-batch",
@@ -457,6 +467,17 @@ fn node24_loader_context_followup_v8_green_batch_fixture() {
         "node24-loader-context-followup-v8-green-batch",
         NodeCompatLane::Node24,
         LOADER_CONTEXT_FOLLOWUP_V8_GREEN_BATCH,
+    );
+}
+
+#[test]
+#[ignore = "Pinned V8 wire-format boundary: Nimbus runs on the v8_deno_core V8 build, so Node's exact serialized-byte fixture remains a platform boundary even though the functional v8 helper subset is green"]
+fn node24_loader_context_v8_serdes_wire_format_watchpoint() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-v8-serdes.js",
+        "node24/test/parallel/test-v8-serdes.js",
+        &[],
+        NodeCompatLane::Node24,
     );
 }
 

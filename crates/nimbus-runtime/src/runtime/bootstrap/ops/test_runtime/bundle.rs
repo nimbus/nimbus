@@ -123,6 +123,39 @@ fn rewrite_bundle_command(command: &str, source_root: &Path, target_root: &Path)
     }
 }
 
+fn materialize_standalone_command(
+    command: &str,
+    bundle_root: &Path,
+) -> std::result::Result<String, JsErrorBox> {
+    let command_path = Path::new(command);
+    if !command_path.is_absolute() || !command_path.is_file() {
+        return Ok(command.to_string());
+    }
+
+    let file_name = command_path.file_name().ok_or_else(|| {
+        JsErrorBox::generic(format!(
+            "node_compat subprocess command `{command}` should have a file name"
+        ))
+    })?;
+    let target = bundle_root.join("bin").join(file_name);
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            JsErrorBox::generic(format!(
+                "node_compat subprocess command dir should build {}: {error}",
+                parent.display()
+            ))
+        })?;
+    }
+    std::fs::copy(command_path, &target).map_err(|error| {
+        JsErrorBox::generic(format!(
+            "node_compat subprocess command should copy {} -> {}: {error}",
+            command_path.display(),
+            target.display()
+        ))
+    })?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
 fn runtime_test_spawn_file_output_syncs(
     plan: &RuntimeTestSpawnPlan,
     bundle_root: &Path,
@@ -224,7 +257,7 @@ pub(super) fn write_runtime_test_spawn_bundle(
             rewrite_bundle_command(&plan.command, source_bundle_root, &bundle_dir)
         }
     } else {
-        plan.command.clone()
+        materialize_standalone_command(&plan.command, &bundle_dir)?
     };
 
     if let Some(source_bundle_root) = plan.source_bundle_root.as_deref() {

@@ -93,7 +93,8 @@ function runCallChecks() {
   }
 
   const detail = failed.map((context) => (
-    `Expected ${context.name} to be called ${context.messageSegment}, actual ${context.actual}.`
+    `Expected ${context.name} to be called ${context.messageSegment}, actual ${context.actual}.` +
+    (context.creationStack ? `\n${context.creationStack}` : '')
   )).join('\n');
   assert.fail(`Mismatched function calls:\n${detail}`);
 }
@@ -114,6 +115,7 @@ function _mustCallInner(fn, criteria = 1, field) {
     [field]: criteria,
     actual: 0,
     name: fn.name || '<anonymous>',
+    creationStack: new Error(`mustCall created for ${fn.name || '<anonymous>'}`).stack,
   };
   mustCallChecks.push(context);
 
