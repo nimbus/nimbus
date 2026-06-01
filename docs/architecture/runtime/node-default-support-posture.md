@@ -21,15 +21,15 @@ behavior, test-harness-only, or upstream/platform boundary.
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `node20` | `legacy` | 1308 | 899 | 298 | 1 | 62 | 46 | 2 | 342 | 0 |
 | `node22` | `supported` | 4773 | 1024 | 1291 | 366 | 1670 | 396 | 26 | 3419 | 0 |
-| `node24` | `default` | 5198 | 323 | 1730 | 427 | 2083 | 611 | 24 | 4511 | 0 |
+| `node24` | `default` | 5198 | 632 | 1470 | 427 | 2043 | 602 | 24 | 4209 | 0 |
 | `node26` | `current` | 5578 | 0 | 2085 | 595 | 2245 | 630 | 23 | 5233 | 0 |
 
 ## Node24 Feasibility
 
-- current passed: `323`
-- required gap count: `1730`
+- current passed: `632`
+- required gap count: `1470`
 - optional promotable gap count: `427`
-- estimated reachable pass ceiling: `2480`
+- estimated reachable pass ceiling: `2529`
 - target reachable in this plan: `true`
 
 The ceiling is an NDS1 estimate, not a completion claim. NDS3 may re-enter

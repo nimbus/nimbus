@@ -696,13 +696,20 @@ if (typeof globalThis.process === "object" && globalThis.process !== null) {{
 {import_preamble}
 
 {invoke_signature}
+  let __nimbusInvokeStep = "create require";
   const require = createRequire(import.meta.url);
   try {{
+    __nimbusInvokeStep = "import guard";
 {invoke_import_guard}
+    __nimbusInvokeStep = "require common";
     const common = require("./test/common/index.js");
+    __nimbusInvokeStep = "async drain";
 {async_drain_script}
+    __nimbusInvokeStep = "postlude";
 {postlude_script}
+    __nimbusInvokeStep = "child process flush";
 {child_process_flush_script}
+    __nimbusInvokeStep = "common assert";
     common.__nimbusAssert?.();
     globalThis.__nimbusNodeCompatInvocationFinalized = true;
     return {{
@@ -711,6 +718,9 @@ if (typeof globalThis.process === "object" && globalThis.process !== null) {{
       testPath: "{test_relative_path}",
     }};
   }} catch (__nimbusInvokeError) {{
+    if (__nimbusInvokeError === undefined) {{
+      throw new Error(`Nimbus node_compat harness rejected with undefined during ${{__nimbusInvokeStep}}`);
+    }}
     const __nimbusExitCode =
       __nimbusProcessExitCodeFromError(__nimbusInvokeError);
     if (__nimbusExitCode === 0) {{
@@ -1637,7 +1647,8 @@ fn run_node_compat_watchpoint_for_lane(
     extra_files: &[NodeCompatExtraFixtureEntry],
     lane: NodeCompatLane,
 ) {
-    execute_manifested_node_compat_test(
+    let snapshot = NodeCompatHostProcessSnapshot::capture();
+    let result = execute_manifested_node_compat_test(
         test_relative_path,
         fixture_source_path,
         extra_files,
@@ -1645,8 +1656,9 @@ fn run_node_compat_watchpoint_for_lane(
         Some(lane),
         None,
         None,
-    )
-    .unwrap_or_else(|error| panic!("{error}"));
+    );
+    snapshot.restore();
+    result.unwrap_or_else(|error| panic!("{error}"));
 }
 
 fn run_node_compat_watchpoint(
@@ -1654,7 +1666,8 @@ fn run_node_compat_watchpoint(
     fixture_source_path: &str,
     extra_files: &[NodeCompatExtraFixtureEntry],
 ) {
-    execute_manifested_node_compat_test(
+    let snapshot = NodeCompatHostProcessSnapshot::capture();
+    let result = execute_manifested_node_compat_test(
         test_relative_path,
         fixture_source_path,
         extra_files,
@@ -1662,8 +1675,9 @@ fn run_node_compat_watchpoint(
         None,
         None,
         None,
-    )
-    .unwrap_or_else(|error| panic!("{error}"));
+    );
+    snapshot.restore();
+    result.unwrap_or_else(|error| panic!("{error}"));
 }
 
 fn run_node_compat_watchpoint_batch(

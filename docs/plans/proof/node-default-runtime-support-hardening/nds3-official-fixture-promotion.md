@@ -16,7 +16,7 @@ matching-lane non-ignored Rust tests that execute official fixtures, then
 promoted the Node24 `core-semantics` broad group from ignored watchpoint to
 regular green coverage.
 
-The row is not done. Node24 is now `323 / 5198` full-corpus official fixtures
+The row is not done. Node24 is now `632 / 5198` full-corpus official fixtures
 passed, and the NDS3 closeout gate remains `>= 2000`.
 
 ## Broad Pre-Run
@@ -51,7 +51,8 @@ The first focused wave grouped the failures this way:
 | Abort listener propagation semantics | `test-events-add-abort-listener.mjs` | `nimbus/deno` | Fork fix in Deno's Node events polyfill so `events.addAbortListener` is not blocked by user `stopImmediatePropagation`. |
 | Legacy URL parser/path conversion semantics | `test-url-parse-format.js`, `test-url-parse-invalid-input.js`, `test-url-pathtofileurl.js` | `nimbus/deno` | Fork fix in Deno's Node URL polyfill for legacy host parsing, invalid-port warning, control-character stripping, and invalid Windows UNC hosts. |
 | Dotenv fixture support | `test-process-load-env-file.js` | `nimbus/nimbus` | Vendor the official `.env` support fixture required by the manifest entry. |
-| Remaining Node24 broad failures | loader, networking, process/timing, streams/local IO fixtures listed above | mixed | Still open for later NDS3 focused waves. |
+| Streams/local I/O semantics | `test-stream-duplex-from.js`, `test-fs-append-file.js`, `test-fs-whatwg-url.js`, `test-fs-mkdir.js`, `test-fs-statfs.js`, `test-fs-truncate.js`, `test-fs-watch-enoent.js`, `test-fs-watch-encoding.js`, plus the broad-rerun-discovered `test-fs-glob.mjs` and `test-fs-readfile-flags.js` | `nimbus/nimbus`, `nimbus/deno` | Fix stream duplex abort/destroy propagation in the Deno fork; align statfs, appendFile validation, relative cwd path resolution, deleted-cwd mkdir/rmdir behavior, fs.watch no-entry/encoding behavior, symlink target semantics, and async open `EEXIST` normalization. |
+| Remaining Node24 broad failures | loader and networking fixtures listed above | mixed | Still open for later NDS3 focused waves. |
 
 NDS3 also found an evidence-accounting bug: the prior `1002` Node24 pass count
 was a source-topology count that included non-executing metadata/topology tests
@@ -90,8 +91,9 @@ Promoted fixes to the canonical Deno fork:
 | `v2.8.0-nimbus.10` | `ae79fb3e4b` | Align `events.addAbortListener` with Node abort-listener propagation semantics. |
 | `v2.8.0-nimbus.11` | `5099d87414` | Align legacy Node URL parsing and `pathToFileURL(..., { windows: true })` error behavior. |
 | `v2.8.0-nimbus.12` | `843e485fb9` | Align ArrayBuffer and SharedArrayBuffer inspect output with Node's non-enumerable `[byteLength]` label. |
+| `v2.8.0-nimbus.13` | `663306f565` | Improve Node stream duplex lifecycle and local filesystem compatibility for statfs, appendFile validation, cwd-relative path handling, watch behavior, symlink target handling, and async open error normalization. |
 
-Nimbus is repinned to `v2.8.0-nimbus.12` in `Cargo.toml` and `Cargo.lock`.
+Nimbus is repinned to `v2.8.0-nimbus.13` in `Cargo.toml` and `Cargo.lock`.
 
 Focused verification:
 
@@ -100,6 +102,9 @@ cargo test -p nimbus-runtime node24_console_ -- --nocapture
 cargo test -p nimbus-runtime node24_events_add_abort_listener_fixture -- --nocapture
 cargo test -p nimbus-runtime node24_url_ -- --nocapture
 cargo test -p nimbus-runtime node24_process_load_env_file_fixture -- --nocapture
+cargo test -p nimbus-runtime node24_fs_ -- --nocapture --test-threads=1
+cargo test -p nimbus-runtime node24_stream_duplex_from_fixture -- --nocapture --test-threads=1
+cargo test -p nimbus-runtime node24_fs_readfile_flags_fixture -- --nocapture --test-threads=1
 ```
 
 Observed:
@@ -108,6 +113,9 @@ Observed:
 - `node24_events_add_abort_listener_fixture`: `1 passed`.
 - `node24_url_`: `3 passed`.
 - `node24_process_load_env_file_fixture`: `1 passed`.
+- `node24_fs_`: `8 passed, 7 ignored, 0 failed`.
+- `node24_stream_duplex_from_fixture`: `1 passed`.
+- `node24_fs_readfile_flags_fixture`: `1 passed`.
 
 ## Broad Final Rerun
 
@@ -152,7 +160,43 @@ cargo test -p nimbus-runtime node24_default_lane_executes_process_and_timing_sub
 
 Observed: `48 passed, 0 skipped, 0 failed`.
 
-Regenerated evidence after the core promotion:
+Streams/local I/O broad rerun before promotion:
+
+```console
+cargo test -p nimbus-runtime node24_default_lane_streams_and_local_io_watchpoint -- --ignored --nocapture --test-threads=1
+```
+
+Observed before the final focused fix: `307 passed, 0 skipped, 1 failed`.
+
+Remaining failure:
+
+- `test-fs-readfile-flags.js` expected `EEXIST` for exclusive-create readFile
+  flags on an existing file, but async `open()` normalization returned
+  `ENOENT`.
+
+Focused fix:
+
+- Added `node24_fs_readfile_flags_fixture`.
+- Fixed Deno fork async `open()` normalization to stat the target and return
+  `EEXIST` when `O_EXCL` opens an existing file.
+
+Streams/local I/O broad rerun on the published Deno tag:
+
+```console
+cargo test -p nimbus-runtime node24_default_lane_streams_and_local_io_watchpoint -- --ignored --nocapture --test-threads=1
+```
+
+Observed: `308 passed, 0 skipped, 0 failed`.
+
+Promoted non-ignored broad rerun:
+
+```console
+cargo test -p nimbus-runtime node24_default_lane_executes_streams_and_local_io_subset -- --nocapture --test-threads=1
+```
+
+Observed: `308 passed, 0 skipped, 0 failed`.
+
+Regenerated evidence after the streams/local I/O promotion:
 
 ```console
 python3 scripts/runtime/node/classifications.py sync --lane all
@@ -164,26 +208,37 @@ python3 scripts/runtime/node/default_support_posture.py
 make node-compat-publish-docs
 ```
 
+Current control-plane verifier:
+
+```console
+bash scripts/verify-node-default-runtime-support-hardening.sh
+```
+
+Observed: `15 passed, 19 failed`. The remaining failures are the expected NDS3
+closeout/future-row gates: Node24 still needs `>= 2000` full-corpus passes,
+Node22 parity is not yet proven for the final NDS3 denominator, Node26 and
+NDS5..NDS10 are still pending, and the plan is not closed.
+
 Current generated full-corpus official fixture posture:
 
 | Lane | Passed | Vendored | Pass rate |
 | --- | ---: | ---: | ---: |
 | `node20` | 899 | 1308 | 68.7% |
 | `node22` | 1024 | 4773 | 21.5% |
-| `node24` | 323 | 5198 | 6.2% |
+| `node24` | 632 | 5198 | 12.2% |
 | `node26` | 0 | 5578 | 0.0% |
 
 Current Node24 default-support posture:
 
 | Metric | Count |
 | --- | ---: |
-| Current passed | 323 |
-| Required gaps | 1730 |
+| Current passed | 632 |
+| Required gaps | 1470 |
 | Optional promotable gaps | 427 |
-| Diagnostic gaps | 2083 |
-| Harness-only gaps | 611 |
+| Diagnostic gaps | 2043 |
+| Harness-only gaps | 602 |
 | Upstream/platform gaps | 24 |
-| Estimated reachable pass ceiling | 2480 |
+| Estimated reachable pass ceiling | 2529 |
 
 ## Evidence Links
 
@@ -195,15 +250,15 @@ Current Node24 default-support posture:
 - `crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs`
 - `crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs`
 - `crates/nimbus-runtime/src/runtime/bootstrap/js/node22_runtime_bootstrap.js`
+- Deno fork tag `v2.8.0-nimbus.13` (`663306f565d3d58da607070d237bca196d2d47f9`)
 
 ## Residual Risks
 
 - NDS3 is still far below the `2000` Node24 full-corpus closeout threshold.
 - The next focused waves must continue from the broad failure inventory rather
   than adding isolated green tests disconnected from the official corpus.
-- Remaining Node24 failures are concentrated in loader/context, networking, and
-  streams/local IO. They must be fixed, reclassified as stricter non-isolate
-  diagnostics, or moved to a documented blocked state with exact fixture
-  ownership.
+- Remaining Node24 failures are concentrated in loader/context and networking.
+  They must be fixed, reclassified as stricter non-isolate diagnostics, or moved
+  to a documented blocked state with exact fixture ownership.
 - Node22 parity is not yet proven for the final NDS3 state; the proof must
   include a same-denominator Node22 rerun before NDS3 can close.

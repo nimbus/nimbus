@@ -1082,8 +1082,97 @@ fn node22_supported_lane_executes_manifested_streams_and_local_io_subset() {
 }
 
 #[test]
-#[ignore = "Node24 default lane watchpoint: the broad streams/local-I/O batch is classified until each carried fixture is replayed and promoted under the default-lane gate"]
-fn node24_default_lane_streams_and_local_io_watchpoint() {
+fn node24_stream_duplex_from_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-stream-duplex-from.js",
+        "node24/test/parallel/test-stream-duplex-from.js",
+        &[],
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_fs_append_file_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-fs-append-file.js",
+        "node24/test/parallel/test-fs-append-file.js",
+        &[],
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_fs_readfile_flags_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-fs-readfile-flags.js",
+        "node24/test/parallel/test-fs-readfile-flags.js",
+        &[],
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_fs_whatwg_url_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-fs-whatwg-url.js",
+        "node24/test/parallel/test-fs-whatwg-url.js",
+        SHARED_FIXTURES_DIR_EXTRA_FILES,
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_fs_mkdir_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-fs-mkdir.js",
+        "node24/test/parallel/test-fs-mkdir.js",
+        &[],
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_fs_statfs_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-fs-statfs.js",
+        "node24/test/parallel/test-fs-statfs.js",
+        &[],
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_fs_truncate_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-fs-truncate.js",
+        "node24/test/parallel/test-fs-truncate.js",
+        &[],
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_fs_watch_enoent_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-fs-watch-enoent.js",
+        "node24/test/parallel/test-fs-watch-enoent.js",
+        &[],
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_fs_watch_encoding_fixture() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-fs-watch-encoding.js",
+        "node24/test/parallel/test-fs-watch-encoding.js",
+        &[],
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_streams_and_local_io_subset() {
     run_manifested_subset_for_lane(
         "streams-and-local-io",
         NodeCompatLane::Node24,

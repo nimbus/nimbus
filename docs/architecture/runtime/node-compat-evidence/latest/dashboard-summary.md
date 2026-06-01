@@ -9,13 +9,13 @@
 
 ## Suite Status
 - source: `target/node-compat/status/status-summary.json`
-- rust ignored tests: `78`
+- rust ignored tests: `76`
 
 | Lane | Upstream | Role | Passed | Expected failure / known gap | Skipped / excluded | Classified total | Classified coverage count | Vendored | Unclassified | Pass rate |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `node20` | `v20.20.2` | `legacy` | 899 | 403 | 6 | 409 | 1308 | 1308 | 0 | 68.7% |
 | `node22` | `v22.22.3` | `supported` | 1024 | 3729 | 20 | 3749 | 4773 | 4773 | 0 | 21.5% |
-| `node24` | `v24.16.0` | `default` | 276 | 4872 | 50 | 4922 | 5198 | 5198 | 0 | 5.3% |
+| `node24` | `v24.16.0` | `default` | 632 | 4516 | 50 | 4566 | 5198 | 5198 | 0 | 12.2% |
 | `node26` | `v26.2.0` | `current` | 0 | 5529 | 49 | 5578 | 5578 | 5578 | 0 | 0.0% |
 
 ### Suite Warnings
