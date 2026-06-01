@@ -19,9 +19,10 @@ Current `rusty_v8` candidate branch: `nimbus/v149.2.0`
 Current accepted `rusty_v8` release tag: `v149.2.0-nimbus.1`
 (`ce6663111a3ff8fde06bc04ba19bbbced60dbc8d`, 16 release assets present).
 Current DUA branch: `codex/deno-rusty-v8-upstream-alignment`
-Next action: push the DUA closeout commit to PR #11 and resume NDS3 from the
-upstream-aligned `v2.8.1-nimbus.1` / `v149.2.0-nimbus.1` baseline. DUA6 found
-and fixed two repin regressions (`process.loadEnvFile` and `fs.watch`
+Next action: push the PR #11 Node FaaS generated-evidence repair, wait for
+hosted checks, then integrate PR #11 into the NDS branch and resume NDS3 from
+the upstream-aligned `v2.8.1-nimbus.1` / `v149.2.0-nimbus.1` baseline. DUA6
+found and fixed two repin regressions (`process.loadEnvFile` and `fs.watch`
 missing-entry semantics), then restored the promoted Node24 foundation groups
 to their pre-DUA posture. DUA7 confirmed generated status evidence did not
 change and updated the fork ledger plus NDS handoff notes. DUA8 local closeout

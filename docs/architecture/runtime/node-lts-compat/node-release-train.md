@@ -20,7 +20,7 @@ metadata changes.
 ## Dashboard Separation
 
 - canary claims: `37`
-- canary checks: `101`
+- canary checks: `0`
 - required canary gaps: `0`
 
 Node24 remains the product default, Node22 remains supported
@@ -31,8 +31,8 @@ and Node26 remains Current/non-LTS until LTS promotion gates pass.
 
 - `docs/architecture/runtime/node-lts-compat/node-lts-lanes.json` sha256: `beaa3816420eb6263aa186340217a662978e9e9098efb1241fb27e23f61bb7e1`
 - `docs/architecture/runtime/node-lts-compat/node-latest-suite-tags.json` sha256: `48d7181e4be7e5928342e0a87eae81c62adf47d0546ad186c3630e0985a98038`
-- `docs/architecture/runtime/node-compat-evidence/latest/status-summary.json` sha256: `4128b0d167b4b17a8cbd421cbbcd87409d689a4fb901b9f7c0fdc7dfceea3f72`
-- `docs/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json` sha256: `95229679b7a9523cec20a991f962fea59240ff85962b84697721b7e07d166b0b`
+- `docs/architecture/runtime/node-compat-evidence/latest/status-summary.json` sha256: `0779ac98a41d2274831aacf07930ee5451f8148eb0ec1de80455653b7dec9779`
+- `docs/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json` sha256: `8cc272800f6486e14de6e7b2cd102e3dbf6a0478fd2fdc6bb01a6b2477ac2ace`
 
 ## Proof Gate
 

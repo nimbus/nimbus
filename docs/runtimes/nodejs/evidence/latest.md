@@ -5,7 +5,7 @@ It is a support summary, not a blanket Node.js compatibility claim.
 
 ## Snapshot
 
-- generated at: `2026-06-01T13:14:54.498846+00:00`
+- generated at: `2026-06-01T15:09:55.591130+00:00`
 - status source: `docs/architecture/runtime/node-compat-evidence/latest/status-summary.json`
 - dashboard source: `docs/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json`
 - trend source: `docs/architecture/runtime/node-compat-evidence/latest/trend-summary.json`

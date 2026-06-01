@@ -57,6 +57,7 @@ Current handoff baseline:
 | --- | --- | --- |
 | Local validation | passed | `cargo fmt --all --check`, strict docs refs, `git diff --check`, fork provenance, and fork upstream policy passed. |
 | Generated evidence | no count change | `make node-compat-status` output matched checked-in `status-summary.md`; default support posture check passed. |
+| Node FaaS generated docs | repaired after CI feedback | PR #11 exposed stale generated Node evidence docs. `publish_docs.py` updated `docs/runtimes/nodejs/evidence/latest.md` to the checked-in status timestamp. `release_train.py publish` updated `node-release-train.{json,md}` to the checked-in dashboard digests and `canary_check_count: 0`, matching `dashboard-summary.json` rather than preserving stale `101` metadata. |
 | PR status | hosted rerun required | PR #11 is open, draft, mergeable, and currently shows three failing checks from the older pushed revision. The updated closeout commit must be pushed so CI can rerun on the DUA6 fixes. |
 | NDS handoff | ready after DUA branch push | NDS plan now records the upstream-aligned baseline and must resume from `v2.8.1-nimbus.1` / `v149.2.0-nimbus.1`. |
 
@@ -68,12 +69,15 @@ Files changed across DUA5-DUA8:
 - `Cargo.lock`
 - `crates/nimbus-runtime/src/runtime/bootstrap/js/node22_runtime_bootstrap.js`
 - `docs/architecture/runtime/deno-fork-bump-ledger.md`
+- `docs/architecture/runtime/node-lts-compat/node-release-train.json`
+- `docs/architecture/runtime/node-lts-compat/node-release-train.md`
 - `docs/plans/deno-rusty-v8-upstream-alignment-plan.md`
 - `docs/plans/node-default-runtime-support-hardening-plan.md`
 - `docs/plans/proof/deno-rusty-v8-upstream-alignment/dua5-nimbus-repin.md`
 - `docs/plans/proof/deno-rusty-v8-upstream-alignment/dua6-node-compat-rebaseline.md`
 - `docs/plans/proof/deno-rusty-v8-upstream-alignment/dua7-docs-and-ledgers.md`
 - `docs/plans/proof/deno-rusty-v8-upstream-alignment/dua8-closeout.md`
+- `docs/runtimes/nodejs/evidence/latest.md`
 - `scripts/verify-deno-fork-provenance.sh`
 - `scripts/verify-deno-fork-upstream-policy.sh`
 
@@ -97,6 +101,9 @@ bash scripts/verify-deno-fork-upstream-policy.sh
 make node-compat-status
 diff -u docs/architecture/runtime/node-compat-evidence/latest/status-summary.md target/node-compat/status/status-summary.md
 python3 scripts/runtime/node/default_support_posture.py --check
+bash scripts/verify-node-lts-docs.sh
+bash scripts/verify-node-release-train.sh
+bash scripts/verify-node-latest-suite-tags.sh
 ```
 
 Observed:
@@ -112,6 +119,12 @@ Observed:
   passed with no output.
 - `python3 scripts/runtime/node/default_support_posture.py --check`:
   `node default support posture: pass`.
+- `bash scripts/verify-node-lts-docs.sh`: Node.js runtime evidence docs are
+  current; Node LTS docs guard passed.
+- `bash scripts/verify-node-release-train.sh`: `Node release-train summary is
+  current: 4 lanes, 0 drift entries`; negative self-tests passed.
+- `bash scripts/verify-node-latest-suite-tags.sh`: `validated Node latest suite
+  tags: 4 lanes, 0 needing fixture sync`; negative self-tests passed.
 
 ## Broad Verification
 
@@ -158,6 +171,14 @@ Observed before pushing the DUA8 closeout commit:
 
 The hosted check state is not treated as green. It is the remote control-surface
 status to revisit after the DUA8 commit is pushed.
+
+After pushing DUA8, PR #11 exposed a real Node FaaS docs drift. The local
+repair regenerated generated Node docs and release-train evidence and reran the
+same three commands from the Node FaaS job successfully. A separate hosted
+Postgres provider failure observed on the same run failed while fetching
+`strsim` from crates.io with `curl [16] Error in the HTTP2 framing layer`, after
+Docker/Postgres startup and before provider tests ran; that is treated as a
+hosted registry/network retry, not as a DUA code change.
 
 ## NDS Handoff
 
