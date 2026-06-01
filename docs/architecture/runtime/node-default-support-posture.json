@@ -50036,8 +50036,8 @@
       }
     },
     "node24": {
-      "current_pass_rate": 0.053097,
-      "current_passed": 276,
+      "current_pass_rate": 0.062139,
+      "current_passed": 323,
       "diagnostic_only_non_isolate": {
         "gaps": 2083
       },
@@ -55236,43 +55236,7 @@
           "source_classification": "requires_unpromoted_node_surface",
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-util-deprecate-invalid-code.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "loader-context/util",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-util-deprecate.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "loader-context/util",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-util-emit-experimental-warning.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "loader-context/util",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-util-format.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -55297,18 +55261,6 @@
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-util-getcallsites.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "loader-context/util",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-util-inherits.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -55393,18 +55345,6 @@
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-util-isDeepStrictEqual.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "loader-context/util",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-util-parse-env.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -55501,30 +55441,6 @@
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-util-styletext.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "loader-context/util",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-util-text-decoder.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "loader-context/util",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-util-types-exists.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -88071,30 +87987,6 @@
           "test_path": "test/parallel/test-microtask-queue-run.js"
         },
         {
-          "docs_cross_check": "visible optional gap; docs must not count it as required support",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture is visible and promotable, but not required for the default Application contract in NDS1",
-          "reason_code": "legacy_unpromoted_optional_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_optional",
-          "test_path": "test/parallel/test-mime-api.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-mime-whatwg.js"
-        },
-        {
           "docs_cross_check": "docs must describe fail-closed diagnostic or service/microVM route",
           "evidence_path": "tests/runtime/node/classifications/node24.json",
           "owner": "node-compat/unpromoted-surface",
@@ -88119,18 +88011,6 @@
           "test_path": "test/parallel/test-navigator.js"
         },
         {
-          "docs_cross_check": "visible optional gap; docs must not count it as required support",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture is visible and promotable, but not required for the default Application contract in NDS1",
-          "reason_code": "legacy_unpromoted_optional_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_optional",
-          "test_path": "test/parallel/test-next-tick-doesnt-hang.js"
-        },
-        {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
           "evidence_path": "tests/runtime/node/classifications/node24.json",
           "owner": "node-compat/unpromoted-surface",
@@ -88143,66 +88023,6 @@
           "test_path": "test/parallel/test-next-tick-domain.js"
         },
         {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-next-tick-errors.js"
-        },
-        {
-          "docs_cross_check": "visible optional gap; docs must not count it as required support",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture is visible and promotable, but not required for the default Application contract in NDS1",
-          "reason_code": "legacy_unpromoted_optional_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_optional",
-          "test_path": "test/parallel/test-next-tick-fixed-queue-regression.js"
-        },
-        {
-          "docs_cross_check": "visible optional gap; docs must not count it as required support",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture is visible and promotable, but not required for the default Application contract in NDS1",
-          "reason_code": "legacy_unpromoted_optional_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_optional",
-          "test_path": "test/parallel/test-next-tick-intentional-starvation.js"
-        },
-        {
-          "docs_cross_check": "visible optional gap; docs must not count it as required support",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture is visible and promotable, but not required for the default Application contract in NDS1",
-          "reason_code": "legacy_unpromoted_optional_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_optional",
-          "test_path": "test/parallel/test-next-tick-ordering.js"
-        },
-        {
-          "docs_cross_check": "visible optional gap; docs must not count it as required support",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture is visible and promotable, but not required for the default Application contract in NDS1",
-          "reason_code": "legacy_unpromoted_optional_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_optional",
-          "test_path": "test/parallel/test-next-tick-ordering2.js"
-        },
-        {
           "docs_cross_check": "visible optional gap; docs must not count it as required support",
           "evidence_path": "tests/runtime/node/classifications/node24.json",
           "owner": "node-compat/unpromoted-surface",
@@ -88213,18 +88033,6 @@
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_optional",
           "test_path": "test/parallel/test-next-tick-when-exiting.js"
-        },
-        {
-          "docs_cross_check": "visible optional gap; docs must not count it as required support",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture is visible and promotable, but not required for the default Application contract in NDS1",
-          "reason_code": "legacy_unpromoted_optional_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_optional",
-          "test_path": "test/parallel/test-next-tick.js"
         },
         {
           "docs_cross_check": "visible optional gap; docs must not count it as required support",
@@ -98652,18 +98460,6 @@
           "source_classification": "requires_unpromoted_node_surface",
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-diagnostics-channel-has-subscribers.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/diagnostics-channel",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-diagnostics-channel-http-server-start.js"
         },
         {
@@ -98988,67 +98784,7 @@
           "source_classification": "requires_unpromoted_node_surface",
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-diagnostics-channel-object-channel-pub-sub.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/diagnostics-channel",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-diagnostics-channel-process.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/diagnostics-channel",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-diagnostics-channel-pub-sub.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/diagnostics-channel",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-diagnostics-channel-safe-subscriber-errors.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/diagnostics-channel",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-diagnostics-channel-symbol-named.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/diagnostics-channel",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-diagnostics-channel-sync-unsubscribe.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -99396,30 +99132,6 @@
           "source_classification": "requires_unpromoted_node_surface",
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-perf-hooks-histogram.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/perf-hooks",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-perf-hooks-resourcetiming.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/perf-hooks",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-perf-hooks-timerify-basic.js"
         },
         {
@@ -99505,18 +99217,6 @@
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-perf-hooks-timerify-return-value.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/perf-hooks",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-perf-hooks-usertiming.js"
         },
         {
           "docs_cross_check": "docs must describe fail-closed diagnostic or service/microVM route",
@@ -99708,18 +99408,6 @@
           "source_classification": "requires_unpromoted_node_surface",
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-process-default.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/process-host",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-process-dlopen-error-message-crash.js"
         },
         {
@@ -99757,18 +99445,6 @@
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-process-emit.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/process-host",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-process-emitwarning.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -99841,18 +99517,6 @@
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-process-env-sideeffects.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/process-host",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-process-env-symbols.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -100188,18 +99852,6 @@
           "source_classification": "requires_unpromoted_node_surface",
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-process-features.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/process-host",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-process-finalization.mjs"
         },
         {
@@ -100392,43 +100044,7 @@
           "source_classification": "requires_unpromoted_node_surface",
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-process-next-tick.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/process-host",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-process-no-deprecation.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/process-host",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-process-ppid.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/process-host",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-process-prototype.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -100489,18 +100105,6 @@
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-process-ref-unref.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/process-host",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-process-release.js"
         },
         {
           "docs_cross_check": "docs must describe fail-closed diagnostic or service/microVM route",
@@ -100632,31 +100236,7 @@
           "source_classification": "requires_unpromoted_node_surface",
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-process-uptime.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/process-host",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-process-versions.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/process-host",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-process-warning.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -100704,79 +100284,7 @@
           "source_classification": "requires_unpromoted_node_surface",
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-timers-api-refs.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/timers",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-timers-args.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/timers",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-timers-clear-null-does-not-throw-error.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/timers",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-timers-clear-object-does-not-throw-error.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/timers",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-timers-clear-timeout-interval-equivalent.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/timers",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-timers-clearImmediate-als.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/timers",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-timers-clearImmediate.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -100885,18 +100393,6 @@
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-timers-immediate-unref.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/timers",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-timers-immediate.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -101052,18 +100548,6 @@
           "source_classification": "requires_unpromoted_node_surface",
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-timers-non-integer-delay.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/timers",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-timers-not-emit-duration-zero.js"
         },
         {
@@ -101208,30 +100692,6 @@
           "source_classification": "requires_unpromoted_node_surface",
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-timers-this.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/timers",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-timers-throw-when-cb-not-function.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/timers",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-timers-timeout-promisified.js"
         },
         {
@@ -101365,30 +100825,6 @@
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-timers-user-call.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/timers",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-timers-zero-timeout.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node24.json",
-          "owner": "process-and-timing/timers",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-timers.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -109109,14 +108545,14 @@
       ],
       "full_official_fixture_corpus": 5198,
       "node24_2000_feasibility": {
-        "current_passed": 276,
+        "current_passed": 323,
         "estimated_reachable_pass_ceiling": 2480,
-        "optional_promotable_gap_count": 434,
-        "required_gap_count": 1770,
+        "optional_promotable_gap_count": 427,
+        "required_gap_count": 1730,
         "target_pass_count": 2000,
         "target_reachable_in_this_plan": true
       },
-      "reclassified_requires_unpromoted_node_surface_count": 4558,
+      "reclassified_requires_unpromoted_node_surface_count": 4511,
       "remaining_requires_unpromoted_node_surface_count": 0,
       "role": "default",
       "source_classification_counts": {
@@ -109124,19 +108560,19 @@
         "requires_pseudo_tty_host_harness": 31,
         "requires_pummel_stress_harness": 64,
         "requires_sequential_host_state_harness": 119,
-        "requires_unpromoted_node_surface": 4558,
+        "requires_unpromoted_node_surface": 4511,
         "requires_wpt_harness": 23,
         "rust_watchpoint_expected_failure": 23,
         "support_fixture_not_top_level_test": 49,
         "upstream_known_issue_or_platform_boundary": 24
       },
-      "source_requires_unpromoted_node_surface_count": 4558,
+      "source_requires_unpromoted_node_surface_count": 4511,
       "support_denominator_counts": {
         "diagnostic_only_non_isolate": 2083,
         "test_harness_only": 611,
         "upstream_or_platform_boundary": 24,
-        "v8_isolate_optional": 434,
-        "v8_isolate_required": 1770
+        "v8_isolate_optional": 427,
+        "v8_isolate_required": 1730
       },
       "test_harness_only": {
         "gaps": 611
@@ -109153,13 +108589,13 @@
         "gaps": 24
       },
       "v8_isolate_optional": {
-        "gaps": 434
+        "gaps": 427
       },
       "v8_isolate_required": {
-        "gaps": 1770,
-        "pass_rate_percent": 13.49,
-        "passed": 276,
-        "total": 2046
+        "gaps": 1730,
+        "pass_rate_percent": 15.73,
+        "passed": 323,
+        "total": 2053
       }
     },
     "node26": {

@@ -16,7 +16,7 @@ matching-lane non-ignored Rust tests that execute official fixtures, then
 promoted the Node24 `core-semantics` broad group from ignored watchpoint to
 regular green coverage.
 
-The row is not done. Node24 is now `276 / 5198` full-corpus official fixtures
+The row is not done. Node24 is now `323 / 5198` full-corpus official fixtures
 passed, and the NDS3 closeout gate remains `>= 2000`.
 
 ## Broad Pre-Run
@@ -89,8 +89,9 @@ Promoted fixes to the canonical Deno fork:
 | --- | --- | --- |
 | `v2.8.0-nimbus.10` | `ae79fb3e4b` | Align `events.addAbortListener` with Node abort-listener propagation semantics. |
 | `v2.8.0-nimbus.11` | `5099d87414` | Align legacy Node URL parsing and `pathToFileURL(..., { windows: true })` error behavior. |
+| `v2.8.0-nimbus.12` | `843e485fb9` | Align ArrayBuffer and SharedArrayBuffer inspect output with Node's non-enumerable `[byteLength]` label. |
 
-Nimbus is repinned to `v2.8.0-nimbus.11` in `Cargo.toml` and `Cargo.lock`.
+Nimbus is repinned to `v2.8.0-nimbus.12` in `Cargo.toml` and `Cargo.lock`.
 
 Focused verification:
 
@@ -131,6 +132,26 @@ Remaining process/timing failures:
 - `test-util-format.js`
 - `test-perf-hooks-resourcetiming.js`
 
+Process/timing focused verification:
+
+```console
+cargo test -p nimbus-runtime node24_util_format_fixture -- --nocapture
+cargo test -p nimbus-runtime node24_perf_hooks_resourcetiming_fixture -- --nocapture
+```
+
+Observed:
+
+- `node24_util_format_fixture`: `1 passed`.
+- `node24_perf_hooks_resourcetiming_fixture`: `1 passed`.
+
+Process/timing broad promoted rerun:
+
+```console
+cargo test -p nimbus-runtime node24_default_lane_executes_process_and_timing_subset -- --nocapture --test-threads=1
+```
+
+Observed: `48 passed, 0 skipped, 0 failed`.
+
 Regenerated evidence after the core promotion:
 
 ```console
@@ -149,16 +170,16 @@ Current generated full-corpus official fixture posture:
 | --- | ---: | ---: | ---: |
 | `node20` | 899 | 1308 | 68.7% |
 | `node22` | 1024 | 4773 | 21.5% |
-| `node24` | 276 | 5198 | 5.3% |
+| `node24` | 323 | 5198 | 6.2% |
 | `node26` | 0 | 5578 | 0.0% |
 
 Current Node24 default-support posture:
 
 | Metric | Count |
 | --- | ---: |
-| Current passed | 276 |
-| Required gaps | 1770 |
-| Optional promotable gaps | 434 |
+| Current passed | 323 |
+| Required gaps | 1730 |
+| Optional promotable gaps | 427 |
 | Diagnostic gaps | 2083 |
 | Harness-only gaps | 611 |
 | Upstream/platform gaps | 24 |
@@ -180,9 +201,9 @@ Current Node24 default-support posture:
 - NDS3 is still far below the `2000` Node24 full-corpus closeout threshold.
 - The next focused waves must continue from the broad failure inventory rather
   than adding isolated green tests disconnected from the official corpus.
-- Remaining Node24 failures are concentrated in loader/context, networking,
-  streams/local IO, and two process/timing fixtures. They must be fixed,
-  reclassified as stricter non-isolate diagnostics, or moved to a documented
-  blocked state with exact fixture ownership.
+- Remaining Node24 failures are concentrated in loader/context, networking, and
+  streams/local IO. They must be fixed, reclassified as stricter non-isolate
+  diagnostics, or moved to a documented blocked state with exact fixture
+  ownership.
 - Node22 parity is not yet proven for the final NDS3 state; the proof must
   include a same-denominator Node22 rerun before NDS3 can close.

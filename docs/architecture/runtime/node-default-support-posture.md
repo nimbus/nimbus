@@ -21,14 +21,14 @@ behavior, test-harness-only, or upstream/platform boundary.
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `node20` | `legacy` | 1308 | 899 | 298 | 1 | 62 | 46 | 2 | 342 | 0 |
 | `node22` | `supported` | 4773 | 1024 | 1291 | 366 | 1670 | 396 | 26 | 3419 | 0 |
-| `node24` | `default` | 5198 | 276 | 1770 | 434 | 2083 | 611 | 24 | 4558 | 0 |
+| `node24` | `default` | 5198 | 323 | 1730 | 427 | 2083 | 611 | 24 | 4511 | 0 |
 | `node26` | `current` | 5578 | 0 | 2085 | 595 | 2245 | 630 | 23 | 5233 | 0 |
 
 ## Node24 Feasibility
 
-- current passed: `276`
-- required gap count: `1770`
-- optional promotable gap count: `434`
+- current passed: `323`
+- required gap count: `1730`
+- optional promotable gap count: `427`
 - estimated reachable pass ceiling: `2480`
 - target reachable in this plan: `true`
 

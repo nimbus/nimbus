@@ -140,11 +140,11 @@ closeout.
   number in this proof is now treated as a source-topology baseline, not an
   execution pass numerator. The corrected execution-only posture before the
   first NDS3 broad promotion was Node22 `1024 / 4773`, Node24 `160 / 5198`, and
-  Node26 `0 / 5578`. After promoting the Node24 `core-semantics` broad group,
-  the generated posture reports Node24 `276 / 5198`, required gaps `1770`,
-  optional promotable gaps `434`, and an estimated reachable ceiling of `2480`.
-  The `2000` target remains reachable on paper but still requires substantial
-  NDS3 implementation work.
+  Node26 `0 / 5578`. After promoting the Node24 `core-semantics` and
+  `process-and-timing` broad groups, the generated posture reports Node24
+  `323 / 5198`, required gaps `1730`, optional promotable gaps `427`, and an
+  estimated reachable ceiling of `2480`. The `2000` target remains reachable on
+  paper but still requires substantial NDS3 implementation work.
 - The denominator overlay is intentionally conservative but heuristic. NDS3 must
   prove it by greening required clusters or moving fixtures to a stricter
   blocked/diagnostic path with proof.

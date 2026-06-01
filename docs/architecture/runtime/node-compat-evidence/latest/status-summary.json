@@ -1,27 +1,27 @@
 {
   "schema_version": 2,
-  "generated_at": "2026-06-01T09:02:55.621092+00:00",
+  "generated_at": "2026-06-01T09:23:52.136897+00:00",
   "report_kind": "node_compat_suite_status",
   "status_contract": "Counts every vendored lane-local test-* JS/CJS/MJS fixture, then compares that denominator to the documented manifested passed subset plus explicit lane classification catalogs. Supported lanes use non-ignored Rust tests that execute node-compat fixtures for the matching lane minus explicit expected-failure, known-gap, and skipped classifications as the passed numerator. Ignored watchpoints never count as passed. Expected failures, known gaps, and skipped/excluded entries are not pass claims; the remaining remainder is intentionally reported as unmanifested_or_unclassified, not as pass or fail.",
   "lane_count": 4,
   "family_count": 5,
-  "rust_ignore_count": 78,
+  "rust_ignore_count": 77,
   "expectation_catalog": {
     "catalog_path": "tests/runtime/node/expectations/rust-watchpoints.json",
     "catalog_present": true,
-    "catalog_entry_count": 78,
+    "catalog_entry_count": 77,
     "by_expectation": {
-      "expected_failure": 78
+      "expected_failure": 77
     },
     "by_classification": {
-      "watchpoint": 78
+      "watchpoint": 77
     },
     "validation_errors": [],
     "observed_results_path": null,
     "unexpected_passes": []
   },
   "total_vendored_test_file_count": 16857,
-  "total_documented_manifested_green_count": 2199,
+  "total_documented_manifested_green_count": 2246,
   "lane_summaries": [
     {
       "lane": "node20",
@@ -33361,24 +33361,24 @@
       "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
       "denominator_kind": "vendored_fixture_root_test_files",
       "vendored_test_file_count": 5198,
-      "documented_manifested_green_count": 276,
+      "documented_manifested_green_count": 323,
       "documented_manifested_green_source": "rust_nonignored_execution_fixture_inventory_minus_classified_red_skip",
-      "documented_family_green_count": 269,
-      "path_owned_manifested_green_count": 276,
-      "classified_red_skip_count": 4922,
-      "classified_total_count": 4922,
-      "known_red_or_gap_count": 4872,
+      "documented_family_green_count": 316,
+      "path_owned_manifested_green_count": 323,
+      "classified_red_skip_count": 4875,
+      "classified_total_count": 4875,
+      "known_red_or_gap_count": 4825,
       "skipped_or_excluded_count": 50,
       "documented_or_classified_count": 5198,
       "unmanifested_or_unclassified_count": 0,
-      "documented_manifested_green_ratio": 0.053097,
+      "documented_manifested_green_ratio": 0.062139,
       "classification_catalog": {
         "catalog_path": "tests/runtime/node/classifications/node24.json",
         "catalog_present": true,
-        "classified_red_skip_count": 4922,
+        "classified_red_skip_count": 4875,
         "by_expectation": {
           "expected_failure": 23,
-          "expected_gap": 4849,
+          "expected_gap": 4802,
           "expected_skip": 50
         },
         "by_classification": {
@@ -33386,7 +33386,7 @@
           "requires_pseudo_tty_host_harness": 31,
           "requires_pummel_stress_harness": 64,
           "requires_sequential_host_state_harness": 119,
-          "requires_unpromoted_node_surface": 4558,
+          "requires_unpromoted_node_surface": 4511,
           "requires_wpt_harness": 23,
           "rust_watchpoint_expected_failure": 23,
           "support_fixture_not_top_level_test": 49,
@@ -36828,31 +36828,7 @@
             "group_id": "node24-requires_unpromoted_node_surface-13"
           },
           {
-            "test_path": "test/parallel/test-util-deprecate-invalid-code.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "loader-context/util",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-13"
-          },
-          {
-            "test_path": "test/parallel/test-util-deprecate.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "loader-context/util",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-13"
-          },
-          {
             "test_path": "test/parallel/test-util-emit-experimental-warning.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "loader-context/util",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-13"
-          },
-          {
-            "test_path": "test/parallel/test-util-format.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "loader-context/util",
@@ -36869,14 +36845,6 @@
           },
           {
             "test_path": "test/parallel/test-util-getcallsites.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "loader-context/util",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-13"
-          },
-          {
-            "test_path": "test/parallel/test-util-inherits.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "loader-context/util",
@@ -36933,14 +36901,6 @@
           },
           {
             "test_path": "test/parallel/test-util-isDeepStrictEqual.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "loader-context/util",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-13"
-          },
-          {
-            "test_path": "test/parallel/test-util-parse-env.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "loader-context/util",
@@ -37005,22 +36965,6 @@
           },
           {
             "test_path": "test/parallel/test-util-styletext.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "loader-context/util",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-13"
-          },
-          {
-            "test_path": "test/parallel/test-util-text-decoder.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "loader-context/util",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-13"
-          },
-          {
-            "test_path": "test/parallel/test-util-types-exists.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "loader-context/util",
@@ -58724,22 +58668,6 @@
             "group_id": "node24-requires_unpromoted_node_surface-24"
           },
           {
-            "test_path": "test/parallel/test-mime-api.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-24"
-          },
-          {
-            "test_path": "test/parallel/test-mime-whatwg.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-24"
-          },
-          {
             "test_path": "test/parallel/test-mock-timers-abortsignal-timeout.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
@@ -58756,14 +58684,6 @@
             "group_id": "node24-requires_unpromoted_node_surface-24"
           },
           {
-            "test_path": "test/parallel/test-next-tick-doesnt-hang.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-24"
-          },
-          {
             "test_path": "test/parallel/test-next-tick-domain.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
@@ -58772,55 +58692,7 @@
             "group_id": "node24-requires_unpromoted_node_surface-24"
           },
           {
-            "test_path": "test/parallel/test-next-tick-errors.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-24"
-          },
-          {
-            "test_path": "test/parallel/test-next-tick-fixed-queue-regression.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-24"
-          },
-          {
-            "test_path": "test/parallel/test-next-tick-intentional-starvation.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-24"
-          },
-          {
-            "test_path": "test/parallel/test-next-tick-ordering.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-24"
-          },
-          {
-            "test_path": "test/parallel/test-next-tick-ordering2.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-24"
-          },
-          {
             "test_path": "test/parallel/test-next-tick-when-exiting.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-24"
-          },
-          {
-            "test_path": "test/parallel/test-next-tick.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "node-compat/unpromoted-surface",
@@ -65772,14 +65644,6 @@
             "group_id": "node24-requires_unpromoted_node_surface-25"
           },
           {
-            "test_path": "test/parallel/test-diagnostics-channel-has-subscribers.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/diagnostics-channel",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-25"
-          },
-          {
             "test_path": "test/parallel/test-diagnostics-channel-http-server-start.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
@@ -65996,47 +65860,7 @@
             "group_id": "node24-requires_unpromoted_node_surface-25"
           },
           {
-            "test_path": "test/parallel/test-diagnostics-channel-object-channel-pub-sub.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/diagnostics-channel",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-25"
-          },
-          {
             "test_path": "test/parallel/test-diagnostics-channel-process.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/diagnostics-channel",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-25"
-          },
-          {
-            "test_path": "test/parallel/test-diagnostics-channel-pub-sub.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/diagnostics-channel",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-25"
-          },
-          {
-            "test_path": "test/parallel/test-diagnostics-channel-safe-subscriber-errors.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/diagnostics-channel",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-25"
-          },
-          {
-            "test_path": "test/parallel/test-diagnostics-channel-symbol-named.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/diagnostics-channel",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-25"
-          },
-          {
-            "test_path": "test/parallel/test-diagnostics-channel-sync-unsubscribe.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "process-and-timing/diagnostics-channel",
@@ -66268,22 +66092,6 @@
             "group_id": "node24-requires_unpromoted_node_surface-27"
           },
           {
-            "test_path": "test/parallel/test-perf-hooks-histogram.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/perf-hooks",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-27"
-          },
-          {
-            "test_path": "test/parallel/test-perf-hooks-resourcetiming.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/perf-hooks",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-27"
-          },
-          {
             "test_path": "test/parallel/test-perf-hooks-timerify-basic.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
@@ -66341,14 +66149,6 @@
           },
           {
             "test_path": "test/parallel/test-perf-hooks-timerify-return-value.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/perf-hooks",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-27"
-          },
-          {
-            "test_path": "test/parallel/test-perf-hooks-usertiming.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "process-and-timing/perf-hooks",
@@ -66476,14 +66276,6 @@
             "group_id": "node24-requires_unpromoted_node_surface-28"
           },
           {
-            "test_path": "test/parallel/test-process-default.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/process-host",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-28"
-          },
-          {
             "test_path": "test/parallel/test-process-dlopen-error-message-crash.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
@@ -66509,14 +66301,6 @@
           },
           {
             "test_path": "test/parallel/test-process-emit.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/process-host",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-28"
-          },
-          {
-            "test_path": "test/parallel/test-process-emitwarning.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "process-and-timing/process-host",
@@ -66565,14 +66349,6 @@
           },
           {
             "test_path": "test/parallel/test-process-env-sideeffects.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/process-host",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-28"
-          },
-          {
-            "test_path": "test/parallel/test-process-env-symbols.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "process-and-timing/process-host",
@@ -66796,14 +66572,6 @@
             "group_id": "node24-requires_unpromoted_node_surface-28"
           },
           {
-            "test_path": "test/parallel/test-process-features.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/process-host",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-28"
-          },
-          {
             "test_path": "test/parallel/test-process-finalization.mjs",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
@@ -66932,31 +66700,7 @@
             "group_id": "node24-requires_unpromoted_node_surface-28"
           },
           {
-            "test_path": "test/parallel/test-process-next-tick.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/process-host",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-28"
-          },
-          {
-            "test_path": "test/parallel/test-process-no-deprecation.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/process-host",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-28"
-          },
-          {
             "test_path": "test/parallel/test-process-ppid.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/process-host",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-28"
-          },
-          {
-            "test_path": "test/parallel/test-process-prototype.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "process-and-timing/process-host",
@@ -66997,14 +66741,6 @@
           },
           {
             "test_path": "test/parallel/test-process-ref-unref.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/process-host",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-28"
-          },
-          {
-            "test_path": "test/parallel/test-process-release.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "process-and-timing/process-host",
@@ -67092,23 +66828,7 @@
             "group_id": "node24-requires_unpromoted_node_surface-28"
           },
           {
-            "test_path": "test/parallel/test-process-uptime.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/process-host",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-28"
-          },
-          {
             "test_path": "test/parallel/test-process-versions.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/process-host",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-28"
-          },
-          {
-            "test_path": "test/parallel/test-process-warning.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "process-and-timing/process-host",
@@ -67140,55 +66860,7 @@
             "group_id": "node24-requires_unpromoted_node_surface-29"
           },
           {
-            "test_path": "test/parallel/test-timers-api-refs.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/timers",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-29"
-          },
-          {
-            "test_path": "test/parallel/test-timers-args.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/timers",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-29"
-          },
-          {
-            "test_path": "test/parallel/test-timers-clear-null-does-not-throw-error.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/timers",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-29"
-          },
-          {
-            "test_path": "test/parallel/test-timers-clear-object-does-not-throw-error.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/timers",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-29"
-          },
-          {
-            "test_path": "test/parallel/test-timers-clear-timeout-interval-equivalent.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/timers",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-29"
-          },
-          {
             "test_path": "test/parallel/test-timers-clearImmediate-als.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/timers",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-29"
-          },
-          {
-            "test_path": "test/parallel/test-timers-clearImmediate.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "process-and-timing/timers",
@@ -67261,14 +66933,6 @@
           },
           {
             "test_path": "test/parallel/test-timers-immediate-unref.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/timers",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-29"
-          },
-          {
-            "test_path": "test/parallel/test-timers-immediate.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "process-and-timing/timers",
@@ -67372,14 +67036,6 @@
             "group_id": "node24-requires_unpromoted_node_surface-29"
           },
           {
-            "test_path": "test/parallel/test-timers-non-integer-delay.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/timers",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-29"
-          },
-          {
             "test_path": "test/parallel/test-timers-not-emit-duration-zero.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
@@ -67476,22 +67132,6 @@
             "group_id": "node24-requires_unpromoted_node_surface-29"
           },
           {
-            "test_path": "test/parallel/test-timers-this.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/timers",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-29"
-          },
-          {
-            "test_path": "test/parallel/test-timers-throw-when-cb-not-function.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/timers",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-29"
-          },
-          {
             "test_path": "test/parallel/test-timers-timeout-promisified.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
@@ -67581,22 +67221,6 @@
           },
           {
             "test_path": "test/parallel/test-timers-user-call.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/timers",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-29"
-          },
-          {
-            "test_path": "test/parallel/test-timers-zero-timeout.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "process-and-timing/timers",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-29"
-          },
-          {
-            "test_path": "test/parallel/test-timers.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "process-and-timing/timers",
@@ -117474,7 +117098,7 @@
       "documented_manifested_green_by_lane": {
         "node20": 46,
         "node22": 48,
-        "node24": 1,
+        "node24": 48,
         "node26": 0
       },
       "has_complete_lane_counts": true,
@@ -117835,133 +117459,127 @@
       "test_name": "node20_fs_stat_watchpoint",
       "reason": "Pinned Node20 divergence: official v20.20.2 test-fs-stat.js still requires the older JSON.stringify(Stats) field shape that the current runtime no longer preserves while matching the newer Node22/Node24 file contract",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 815
+      "source_line": 833
     },
     {
       "test_name": "node24_fs_constants_watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-constants.js expects a newer constant-surface TypeError gate that Nimbus has not adopted into the default lane yet",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 825
+      "source_line": 843
     },
     {
       "test_name": "node24_fs_promises_file_handle_dispose_watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-promises-file-handle-dispose.js now also asserts opendir Dir[Symbol.asyncDispose]() close semantics that the current runtime does not yet match",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 835
+      "source_line": 853
     },
     {
       "test_name": "node24_fs_write_stream_watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-write-stream.js now also requires fs.close() to be observed when destroying WriteStream directly, while the current older Node22-compatible contract still follows the older file semantics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 845
+      "source_line": 863
     },
     {
       "test_name": "node24_fs_write_stream_autoclose_option_watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-write-stream-autoclose-option.js now also asserts ERR_INVALID_THIS when probing WriteStream.prototype.autoClose, while the current older Node22-compatible contract still follows the older surface",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 855
+      "source_line": 873
     },
     {
       "test_name": "node24_fs_symlink_watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-symlink.js still expects the newer invalid-type ERR_INVALID_ARG_VALUE contract, while the current runtime intentionally keeps the older Node22-compatible ERR_FS_INVALID_SYMLINK_TYPE behavior",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 865
+      "source_line": 883
     },
     {
       "test_name": "node24_fs_opendir_watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-opendir.js now also asserts ERR_INVALID_THIS for newer Dir handle receiver checks, while the current runtime intentionally keeps the older Node22-compatible directory-handle surface",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 875
+      "source_line": 893
     },
     {
       "test_name": "node24_fs_promises_watch_watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-promises-watch.js adds maxQueue and overflow option validation that Nimbus has not adopted into the default lane yet",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 885
+      "source_line": 903
     },
     {
       "test_name": "node22_buffer_isascii_watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 895
+      "source_line": 913
     },
     {
       "test_name": "node20_buffer_isascii_watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 905
+      "source_line": 923
     },
     {
       "test_name": "node22_buffer_isutf8_watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 915
+      "source_line": 933
     },
     {
       "test_name": "node20_buffer_isutf8_watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 925
+      "source_line": 943
     },
     {
       "test_name": "node20_buffer_slow_watchpoint",
       "reason": "Pinned Node20 divergence: official v20.20.2 test-buffer-slow.js still exercises SlowBuffer(buffer.kMaxLength), and the embedded runtime hits its 128 MB heap ceiling before Node-style range semantics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 935
+      "source_line": 953
     },
     {
       "test_name": "node22_path_normalize_watchpoint",
       "reason": "Pinned Node22-only path gap: official v22.15.0 expects the post-CVE path.win32.normalize() semantics that preserve the test segment in \\\\\\\\? and \\\\\\\\. device paths",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 945
+      "source_line": 963
     },
     {
       "test_name": "node22_path_makelong_watchpoint",
       "reason": "Pinned Node22 path gap: official v22.15.0 expects path.win32.toNamespacedPath('\\\\\\\\?\\\\\\\\foo') to retain the trailing slash, but the current runtime still returns the older Node20 shape",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 955
+      "source_line": 973
     },
     {
       "test_name": "node22_path_resolve_watchpoint",
       "reason": "Pinned shared path gap: official Node20/Node22 test-path-resolve.js currently fails because win32.resolve rejects drive-letter-less inputs without a CWD",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 965
+      "source_line": 983
     },
     {
       "test_name": "node20_path_resolve_watchpoint",
       "reason": "Pinned shared path gap: official Node20/Node22 test-path-resolve.js currently fails because win32.resolve rejects drive-letter-less inputs without a CWD",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 975
+      "source_line": 993
     },
     {
       "test_name": "node22_url_parse_deprecation_watchpoint",
       "reason": "Pinned vendored fixture tracks post-22 url.parse deprecation semantics; official Node22 v22.15.0 has no counterpart",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 985
-    },
-    {
-      "test_name": "node24_default_lane_process_and_timing_watchpoint",
-      "reason": "Node24 default lane watchpoint: the broad process/timing batch is classified until each carried fixture is replayed and promoted under the default-lane gate",
-      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1040
+      "source_line": 1003
     },
     {
       "test_name": "node24_default_lane_streams_and_local_io_watchpoint",
       "reason": "Node24 default lane watchpoint: the broad streams/local-I/O batch is classified until each carried fixture is replayed and promoted under the default-lane gate",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1068
+      "source_line": 1085
     },
     {
       "test_name": "node24_default_lane_networking_watchpoint",
       "reason": "Node24 default lane watchpoint: the broad networking batch is classified until each carried fixture is replayed and promoted under the default-lane gate",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1088
+      "source_line": 1105
     },
     {
       "test_name": "node24_default_lane_loader_context_watchpoint",
       "reason": "Node24 default lane watchpoint: the broad loader/context batch is classified until each carried fixture is replayed and promoted under the default-lane gate",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1112
+      "source_line": 1129
     }
   ],
   "warnings": []
