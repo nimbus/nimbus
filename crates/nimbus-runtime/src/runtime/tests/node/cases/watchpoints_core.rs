@@ -409,6 +409,60 @@ fn node24_tty_backwards_api_fixture() {
 }
 
 #[test]
+fn node24_console_clear_fixture() {
+    run_node_compat_watchpoint(
+        "test/parallel/test-console-clear.js",
+        "test/parallel/test-console-clear.js",
+        &[],
+    );
+}
+
+#[test]
+fn node24_console_methods_fixture() {
+    run_node_compat_watchpoint(
+        "test/parallel/test-console-methods.js",
+        "test/parallel/test-console-methods.js",
+        &[],
+    );
+}
+
+#[test]
+fn node24_events_add_abort_listener_fixture() {
+    run_node_compat_watchpoint(
+        "test/parallel/test-events-add-abort-listener.mjs",
+        "node24/test/parallel/test-events-add-abort-listener.mjs",
+        NODE24_COMMON_INDEX_MJS_EXTRA_FILES,
+    );
+}
+
+#[test]
+fn node24_url_parse_format_fixture() {
+    run_node_compat_watchpoint(
+        "test/parallel/test-url-parse-format.js",
+        "node24/test/parallel/test-url-parse-format.js",
+        &[],
+    );
+}
+
+#[test]
+fn node24_url_parse_invalid_input_fixture() {
+    run_node_compat_watchpoint(
+        "test/parallel/test-url-parse-invalid-input.js",
+        "node24/test/parallel/test-url-parse-invalid-input.js",
+        &[],
+    );
+}
+
+#[test]
+fn node24_url_path_to_file_url_fixture() {
+    run_node_compat_watchpoint(
+        "test/parallel/test-url-pathtofileurl.js",
+        "node24/test/parallel/test-url-pathtofileurl.js",
+        &[],
+    );
+}
+
+#[test]
 fn node22_readline_csi_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-readline-csi.js",

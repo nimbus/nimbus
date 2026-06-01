@@ -9,7 +9,7 @@
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "core-semantics/assert",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_assert_deep_watchpoint, node22_assert_deep_watchpoint"
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_assert_deep_watchpoint"
     },
     {
       "test_path": "test/parallel/test-assert-partial-deep-equal.js",
@@ -19,39 +19,32 @@
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_assert_partial_deep_equal_watchpoint"
     },
     {
-      "test_path": "test/parallel/test-buffer-isascii.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "core-semantics/buffer",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_buffer_isascii_watchpoint, node22_buffer_isascii_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-buffer-isutf8.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "core-semantics/buffer",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_buffer_isutf8_watchpoint, node22_buffer_isutf8_watchpoint"
-    },
-    {
       "test_path": "test/parallel/test-console-issue-43095.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "core-semantics/console",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_console_issue_43095_watchpoint, node22_console_issue_43095_watchpoint"
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_console_issue_43095_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-crypto-authenticated-stream.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/crypto",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
     },
     {
       "test_path": "test/parallel/test-crypto-authenticated.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "networking/crypto",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node20_loader_context_crypto_authenticated_legacy_watchpoint_batch, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
     },
     {
       "test_path": "test/parallel/test-crypto-des3-wrap.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "networking/crypto",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
     },
     {
       "test_path": "test/parallel/test-dgram-bind-socket-close-before-cluster-reply.js",
@@ -191,7 +184,7 @@
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "loader-context/module",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_followup_module_commonjs_remainder_batch_fixture, node22_loader_context_followup_module_commonjs_remainder_batch_fixture, node24_loader_context_followup_module_commonjs_remainder_batch_fixture"
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_loader_context_followup_module_commonjs_remainder_batch_fixture"
     },
     {
       "test_path": "test/parallel/test-path-makelong.js",
@@ -212,14 +205,14 @@
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "core-semantics/path",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_path_resolve_watchpoint, node22_path_resolve_watchpoint"
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_path_resolve_watchpoint"
     },
     {
       "test_path": "test/parallel/test-process-env-delete.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "process-and-timing/process-host",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_process_env_delete_application_preset_watchpoint, node22_process_env_delete_application_preset_watchpoint"
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_process_env_delete_application_preset_watchpoint"
     },
     {
       "test_path": "test/parallel/test-process-finalization.mjs",
@@ -536,6 +529,8 @@
         "test/parallel/test-buffer-constructor-node-modules-paths.js",
         "test/parallel/test-buffer-constructor-node-modules.js",
         "test/parallel/test-buffer-constructor-outside-node-modules.js",
+        "test/parallel/test-buffer-isascii.js",
+        "test/parallel/test-buffer-isutf8.js",
         "test/parallel/test-buffer-pool-untransferable.js",
         "test/parallel/test-buffer-tostring-4gb.js",
         "test/parallel/test-buffer-write-fast.js",

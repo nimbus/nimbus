@@ -183,9 +183,18 @@ else
 fi
 
 step 9 "Node22/Node24 V8-isolate-required green"
-if [ -f "${POSTURE_JSON}" ] &&
-   grep -q '"node22".*"v8_isolate_required".*"pass_rate".*100' "${POSTURE_JSON}" &&
-   grep -q '"node24".*"v8_isolate_required".*"pass_rate".*100' "${POSTURE_JSON}"; then
+if [ -f "${POSTURE_JSON}" ] && python3 - "${POSTURE_JSON}" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+for lane_name in ("node22", "node24"):
+    required = data["lanes"][lane_name]["v8_isolate_required"]
+    if required.get("gaps") != 0 or required.get("pass_rate_percent") != 100:
+        raise SystemExit(1)
+raise SystemExit(0)
+PY
+then
   pass "Node22 and Node24 V8-isolate-required fixtures are 100%"
 else
   fail "V8-isolate-required fixtures not proven green" "Expected generated posture metrics"
@@ -232,7 +241,16 @@ else
 fi
 
 step 14 "Node24 full-corpus threshold"
-if [ -f "${POSTURE_JSON}" ] && grep -q '"node24".*"full_corpus".*"passed".*2000' "${POSTURE_JSON}"; then
+if [ -f "${POSTURE_JSON}" ] && python3 - "${POSTURE_JSON}" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+if data["lanes"]["node24"].get("current_passed", 0) >= 2000:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+then
   pass "Node24 full-corpus official pass count is at least 2000"
 else
   fail "Node24 full-corpus threshold unmet" "Expected generated metric >= 2000"

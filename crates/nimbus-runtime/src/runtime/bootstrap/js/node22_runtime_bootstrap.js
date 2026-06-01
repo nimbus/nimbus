@@ -2950,6 +2950,26 @@ function upgradeGlobalConsole(nodeProcess) {
     });
   }
 
+  const clearMethod = {
+    clear() {
+      const stream = nodeProcess?.stdout;
+      if (
+        stream?.isTTY &&
+        nodeProcess?.env?.TERM !== "dumb" &&
+        typeof stream.write === "function"
+      ) {
+        stream.write("\x1b[1;1H");
+        stream.write("\x1b[0J");
+      }
+    },
+  }.clear;
+  Object.defineProperty(runtimeConsole, "clear", {
+    value: clearMethod,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+
   Object.defineProperty(runtimeConsole, "Console", {
     value: NodeConsole,
     configurable: true,

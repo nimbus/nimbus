@@ -5896,6 +5896,7 @@
         "test/fixtures/test-nodetiming-uvmetricsinfo.js",
         "test/fixtures/test-resolution-inspect-brk-resolver.js",
         "test/fixtures/test-runner-watch.mjs",
+        "test/fixtures/test-runner/default-behavior/node_modules/test-nm.js",
         "test/fixtures/test-runner/global-setup-teardown/test-file.js",
         "test/fixtures/test-runner/output/test-diagnostic-warning-without-test-only-flag.js",
         "test/fixtures/test-runner/output/test-runner-plan-timeout.js",
