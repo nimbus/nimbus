@@ -77,6 +77,62 @@ This is especially important for Node compatibility. Small green tests can look
 good while the official corpus remains mostly classified as gaps. The control
 plane must force the larger picture back into view on every row.
 
+## Proof Contract
+
+Every NDS row has required proof files. The proof files are not supporting
+notes; they are the resume state and the audit trail for autonomous execution.
+
+| Row | Required proof file |
+| --- | --- |
+| NDS0 | `docs/plans/proof/node-default-runtime-support-hardening/nds0-baseline.md` |
+| NDS0 | `docs/plans/proof/node-default-runtime-support-hardening/nds0-control-plane.md` |
+| NDS1 | `docs/plans/proof/node-default-runtime-support-hardening/nds1-posture-model-and-feasibility.md` |
+| NDS2 | `docs/plans/proof/node-default-runtime-support-hardening/nds2-foundation-slices.md` |
+| NDS3 | `docs/plans/proof/node-default-runtime-support-hardening/nds3-official-fixture-promotion.md` |
+| NDS4 | `docs/plans/proof/node-default-runtime-support-hardening/nds4-node26-current-evidence.md` |
+| NDS5 | `docs/plans/proof/node-default-runtime-support-hardening/nds5-package-canaries.md` |
+| NDS6 | `docs/plans/proof/node-default-runtime-support-hardening/nds6-convex-app-suites.md` |
+| NDS7 | `docs/plans/proof/node-default-runtime-support-hardening/nds7-permissions-and-shim-audit.md` |
+| NDS8 | `docs/plans/proof/node-default-runtime-support-hardening/nds8-generated-docs.md` |
+| NDS9 | `docs/plans/proof/node-default-runtime-support-hardening/nds9-ci-and-nightly-gates.md` |
+| NDS10 | `docs/plans/proof/node-default-runtime-support-hardening/nds10-closeout.md` |
+
+Each row proof must use this template:
+
+1. **Row and status.** Name the row, status, date, branch, PR URL, and
+   verifier version.
+2. **Broad pre-run.** Record the widest relevant command, exact lane/package
+   scope, pass/fail/skipped counts, output artifact paths, and failure
+   inventory.
+3. **Failure grouping.** Group every failure by root cause, classification,
+   owner repository, and intended fix path.
+4. **Focused work.** Record focused tests, fixtures, code/docs changed, and
+   classifications or diagnostics added.
+5. **Broad final rerun.** Rerun the same wide group and compare before/after
+   counts. A row cannot close on focused tests alone.
+6. **Evidence links.** Link generated dashboards, registry rows, fixture
+   reports, shim inventory entries, docs anchors, and CI runs.
+7. **Residual risks.** Name remaining gaps and prove they are allowed by this
+   plan's denominators rather than hidden regressions.
+
+## Canonical Foundation Slice Set
+
+When this plan says "foundation slices," it means this exact five-slice
+denominator from the currently manifested official fixture set:
+
+| Family | Slice |
+| --- | --- |
+| `core-semantics` | `assert-and-buffer-foundation` |
+| `process-and-timing` | `process-foundation` |
+| `streams-and-local-io` | `os-tty-readline-foundation` |
+| `networking` | `dns-net-foundation` |
+| `loader-context` | `module-and-async-foundation` |
+
+NDS0 must record this denominator in the baseline proof. NDS2 must run all five
+slice groups across Node22 and Node24 before and after fixes; the process and
+loader-context rows are called out because they were the historical red cron
+cells, not because the other three slices are optional.
+
 ## Compatibility Ambition And Shim Policy
 
 The Node24 `2000` full-corpus pass gate is a minimum closeout threshold, not the
@@ -151,6 +207,86 @@ annotation in `nimbus-runtime` for Nimbus-owned shims, plus concise source
 comments near the Rust/JS implementation. For fork-owned behavior, use a
 checked-in audit record that points at exact `~/src/github.com/nimbus/deno`
 files and records whether the fix should remain in the fork or move upstream.
+
+## Denominator Rubric And Feasibility Checkpoint
+
+NDS1 must turn the default-support denominator into checked data before any
+large greening row proceeds. The classification is not a free-form judgment
+call. Every official fixture row must carry exactly one support denominator and
+one reason from a schema-controlled vocabulary:
+
+- `v8_isolate_required`: public Node API behavior that can be implemented
+  faithfully inside the Nimbus V8 isolate without claiming host process, port,
+  fd, native-addon, or durable filesystem ownership. Examples include module
+  loading, URL, buffer, assert, events, util, timers, Web APIs, JavaScript
+  crypto/WebCrypto, stream semantics, process metadata that Nimbus can truthfully
+  provide, and explicitly virtualized environment/temp behavior.
+- `v8_isolate_optional`: isolate-safe behavior that is useful but not required
+  for the default FaaS contract in this wave. Optional fixtures remain visible
+  and are promoted whenever a truthful fix is available.
+- `diagnostic_only_non_isolate`: APIs that require host-owned side effects such
+  as child processes, raw listening sockets, signals, native addons, package
+  binaries, pseudo terminals, or durable host filesystem mutation. These require
+  fail-closed diagnostics and never count as positive V8-isolate support.
+- `test_harness_only`: upstream tests that require Node's own test runner,
+  pummel/stress harnesses, pseudo terminal harnesses, WPT harnesses, or
+  sequential host-state orchestration rather than runtime API support.
+- `upstream_or_platform_boundary`: fixtures blocked by upstream bugs,
+  version-specific removals, platform-only behavior, or unsupported host
+  platforms, with a linked source.
+
+The rubric must cross-check public docs: if docs claim an API/package is
+supported for Application runtimes, fixture rows for that API cannot be placed
+outside `v8_isolate_required` without a proof explaining why the fixture tests a
+different host-owned behavior than the documented claim.
+
+NDS1 must also produce an honest feasibility checkpoint for the `2000` Node24
+full-corpus pass gate. The checkpoint estimates the maximum reachable pass count
+in this wave from:
+
+- current passed fixtures,
+- fixtures newly classified as `v8_isolate_required`,
+- fixtures newly classified as promotable `v8_isolate_optional`, and
+- fixtures blocked by `nimbus/deno` or `rusty_v8` owner work that this plan can
+  realistically land through the fork publish/repin flow.
+
+If the checkpoint proves that `2000` cannot be reached truthfully inside this
+plan, the agent must not silently lower the target or reclassify failures to
+close the plan. It must mark the goal blocked, preserve the exact fixture list,
+and create or update a follow-up engine/fork plan whose completion remains a
+blocker for NDS closeout. The NDS plan closes only when the measured targets are
+met.
+
+NDS3 may re-enter the same blocked path if implementation disproves the NDS1
+estimate. A broad/focused greening loop that proves the remaining `2000` gap
+requires engine work outside this plan must stop in a documented blocked state
+instead of grinding indefinitely or weakening the denominator.
+
+## Application Canary Category Rubric
+
+NDS5 must add a schema-controlled `compat_category` field to the package canary
+registry. The initial vocabulary is:
+
+- `ai-sdk`
+- `http-client`
+- `http-framework`
+- `auth-jwt`
+- `validation`
+- `payments`
+- `email`
+- `object-storage`
+- `database-http`
+- `observability`
+- `webhooks-signing`
+- `loader-edge`
+- `request-response-adapter`
+- `convex-use-node`
+- `runtime-builtins`
+
+A canary may have one `compat_family` and many `canary_surfaces`, but exactly
+one `compat_category`. Adding a new category is allowed only by updating the
+schema, docs generation, and NDS5 proof; otherwise category-count support would
+be too easy to inflate.
 
 ## Transferred Lessons
 
@@ -230,12 +366,13 @@ Node24 is a well-supported default only when all of these are true:
    - V8-isolate-required official fixtures
    - V8-isolate-optional official fixtures
    - diagnostic-only non-isolate fixtures
-   - out-of-scope or upstream/platform fixtures
+   - test-harness-only fixtures
+   - upstream/platform boundary fixtures
 2. **No vague default denominator remains.**
    Node24 has zero `Requires Unpromoted Node Surface` entries. Every former
    unpromoted entry is either passed, V8-isolate-required gap,
    V8-isolate-optional gap, diagnostic-only non-isolate, or
-   explicitly out-of-scope with a reason.
+   test-harness-only/upstream-platform boundary with a schema-controlled reason.
 3. **V8-isolate-required fixtures are green.**
    Node24 and Node22 pass 100% of the V8-isolate-required official fixture set.
    Node26 runs the same set where the Current line still exposes the same API,
@@ -253,9 +390,13 @@ Node24 is a well-supported default only when all of these are true:
    remaining gap cannot be promoted in this wave.
 6. **Package evidence is broad enough for realistic apps.**
    Node22 and Node24 pass at least 50 positive Application package/framework
-   claims across at least 12 categories, with zero required canary gaps. Native,
-   binary, child-process, raw-listen, and persistent-filesystem packages remain
-   diagnostic-only non-isolate behavior and do not count as positive support.
+   claims across at least 12 schema-controlled `compat_category` values, with
+   zero required canary gaps. The canary registry must distinguish
+   `compat_family`, `compat_category`, and `canary_surfaces`; a broad `sdk` or
+   `networking` family cannot satisfy multiple category counts by itself.
+   Native, binary, child-process, raw-listen, and persistent-filesystem packages
+   remain diagnostic-only non-isolate behavior and do not count as positive
+   support.
 7. **Convex apps are first-class evidence.**
    At least 5 real Convex-compatible `"use node"` app suites pass on Node22 and
    Node24, including package actions, nested `ctx.run*` calls, ESM/CJS package
@@ -306,27 +447,122 @@ Node24 is a well-supported default only when all of these are true:
   behavior explicit.
 - CI and nightly gates for the new posture.
 
+## Execution Mode And PR Contract
+
+This plan is large enough that the execution surface is part of the control
+plane. Do not execute NDS work directly on `main`.
+
+1. **Dedicated worktree.** Create or reuse a dedicated worktree for this plan,
+   preferably `../nimbus-worktrees/node-default-runtime-support-hardening`, on a
+   `codex/node-default-runtime-support-hardening` branch. If a different path or
+   branch is used, record it in `nds0-control-plane.md`.
+2. **Draft PR as the public review surface.** Open a draft pull request before
+   implementation work proceeds past NDS0. Keep the PR draft while any NDS row
+   is pending. The PR description must link this plan, the active proof
+   directory, the latest dashboard evidence, and the current verifier command.
+3. **Row-owned proof files.** Every NDS row must write or update a proof file
+   under `docs/plans/proof/node-default-runtime-support-hardening/` before the
+   row can move to `done`. Each proof records broad pre-run command output,
+   failure inventory, focused fixes or classifications, broad final rerun,
+   files touched, and residual risks.
+4. **Ledger is progress state.** The plan ledger and proof files are the resume
+   protocol after compaction. A fresh agent resumes the first `in_progress` row,
+   or the first `pending` row if none is in progress, after reading `AGENTS.md`,
+   this plan, `nds0-control-plane.md`, and the draft PR.
+5. **Verifier-first discipline.** NDS0 must create
+   `scripts/verify-node-default-runtime-support-hardening.sh` and make it fail
+   clearly on unimplemented gates. Later rows add checks before marking work
+   done. The final verifier is the local completion gate; green GitHub Actions
+   on the draft PR are the remote completion gate.
+6. **Fork changes are published before Nimbus closeout.** Any `nimbus/deno`
+   owner fix follows the canonical flow: temporarily unpin Nimbus to the local
+   Deno worktree, prove the fix, commit/tag/push the Deno fork, repin Nimbus to
+   the immutable tag, then rerun the relevant Nimbus verifier lanes against the
+   tag.
+7. **No quiet direct-to-main completion.** The PR becomes ready for review only
+   after NDS0..NDS10 are `done`, the final verifier reports zero failed required
+   checks, local required gates pass, and GitHub CI/coverage/nightly-relevant
+   checks are green. Merge or direct `main` updates require explicit developer
+   approval.
+
+### Active Execution Pointer
+
+This active plan is the main-visible pointer for in-flight NDS work. Before
+implementation proceeds past NDS0, these fields must be filled either in this
+section or in a linked `docs/plans/README.md` entry that is discoverable from
+`origin/main`. If the fields are empty, a fresh agent must treat the plan as not
+yet activated and must not create a duplicate worktree without first checking
+GitHub PRs and the local worktree list.
+
+The pointer is satisfied only when the chosen pointer artifact is committed and
+visible from `origin/main`, unless the developer explicitly approves a fallback
+that relies on the draft PR and local goal state. A narrow pointer-only update to
+`main` is allowed only with explicit developer approval and is not plan
+completion.
+
+| Field | Value |
+| --- | --- |
+| Active worktree | `/Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening` |
+| Active branch | `codex/node-default-runtime-support-hardening` |
+| Draft PR | `_pending initial NDS0 scaffold commit/push_` |
+| Active goal objective | `019e7f94-cc55-7862-b9ec-be1103d7aea1` |
+| Last completed row | `_none_` |
+| Current row | `NDS0` |
+| Latest verifier output | `8 passed, 26 failed (NDS0 scaffold; future-row gates failing as expected)` |
+
+## Ledger Status Values
+
+Rows use `pending`, `in_progress`, `done`, or `blocked`.
+
+- `pending`: work has not started.
+- `in_progress`: this is the row a fresh agent should resume first.
+- `done`: row proof, ledger, Active Execution Pointer, and row verifier checks
+  are complete.
+- `blocked`: the row hit a verified blocker that cannot be resolved by more
+  local work in this plan. A blocked row must name the exact fixture/package
+  list, owner repository, follow-up plan, draft PR or issue, and verifier gate
+  that remains unsatisfied. `blocked` is a valid autonomous terminal state for a
+  `/goal`, but it is not NDS completion and the plan must not be archived.
+
 ## Goal Control Plane Objective
 
 When this plan is activated as a goal, use this objective:
 
 Complete `docs/plans/node-default-runtime-support-hardening-plan.md`
-autonomously end to end. Success means Nimbus raises Node24 from bounded
-V8-isolate-compatible default to verifier-backed well-supported default, keeps
-Node22 as a supported LTS peer with comparable evidence, gives Node26 real
-Current-line fixture evidence, expands positive Application package evidence to
-at least 50 claims across at least 12 categories, proves at least 5 realistic
-Convex-compatible `"use node"` app suites, preserves fail-closed diagnostics
-for non-isolate behavior, uses truthful compatibility shims where they improve
-V8-isolate compatibility, documents emulated capabilities and their limits,
-audits `nimbus/nimbus` and `nimbus/deno` for every shim/emulation/stub,
+autonomously end to end in a dedicated worktree and draft PR. Success means
+Nimbus raises Node24 from bounded V8-isolate-compatible default to
+verifier-backed well-supported default, keeps Node22 as a supported LTS peer
+with comparable evidence, gives Node26 real Current-line fixture evidence,
+expands positive Application package evidence to at least 50 claims across at
+least 12 schema-controlled `compat_category` values, proves at least 5
+realistic Convex-compatible `"use node"` app suites, preserves fail-closed
+diagnostics for non-isolate behavior, uses truthful compatibility shims where
+they improve V8-isolate compatibility, documents emulated capabilities and their
+limits, audits `nimbus/nimbus` and `nimbus/deno` for every shim/emulation/stub,
 rejects fake-success stubs, regenerates Deno-style docs from the new posture,
 wires PR/nightly gates, and passes
-`bash scripts/verify-node-default-runtime-support-hardening.sh`. Execution must
-follow the wide-then-focused loop: run broad vendored corpora first to capture
-failure inventory, fix or classify clustered failures with isolated tests, then
-rerun the same broad groups and close rows only on measured coverage gains or
-verified non-isolate diagnostics.
+`bash scripts/verify-node-default-runtime-support-hardening.sh` with zero failed
+required checks. Execution must follow the wide-then-focused loop: run broad
+vendored corpora first to capture failure inventory, fix or classify clustered
+failures with isolated tests, then rerun the same broad groups and close rows
+only on measured coverage gains or verified non-isolate diagnostics. Each NDS
+row must update its required proof file, the plan ledger, and the Active
+Execution Pointer before handoff, and the draft PR must remain the remote
+review/CI control surface until final closeout.
+
+A separate valid terminal state is `blocked`: if NDS1's feasibility checkpoint
+or NDS3 implementation evidence proves the Node24 `2000` full-corpus pass gate
+is unreachable truthfully inside the V8 isolate/runtime/fork scope of this plan,
+stop in a documented blocked state with the exact fixture list preserved, a
+follow-up engine or fork plan created, the blocker recorded in the ledger and
+Active Execution Pointer, and the verifier gate left unsatisfied. Do not loop on
+an unsatisfiable green-verifier objective, and do not lower the target without a
+developer-approved plan revision.
+
+Before setting the goal, create the worktree/branch or record the existing one,
+open the draft PR or record the intended PR bootstrap step in NDS0, and include
+the worktree path plus PR URL in `nds0-control-plane.md` and the Active
+Execution Pointer.
 
 ## Out Of Scope
 
@@ -346,62 +582,91 @@ verified non-isolate diagnostics.
 
 | NDS | Work | Verifiable success criteria | Status |
 | --- | --- | --- | --- |
-| NDS0 | Baseline and verifier scaffold. Capture current Node20/22/24/26 fixture pass rates, package canaries, non-isolate diagnostics, Node26 0-pass posture, transferred lessons, and the NFRC boundary. Mark the older cron-greening plan as subsumed. | `nds0-baseline.md` exists; verifier script exists and fails on every unimplemented gate; baseline records Node24 `1002 / 5198`, Node22 `1000 / 4748`, Node26 `0 / 5578`, current package claim count, the wide-then-focused rule, and the transferred lessons above; docs refs and `git diff --check` pass. | pending |
-| NDS1 | Default-support posture model. Build JSON/Markdown plus schema for full corpus, V8-isolate-required, V8-isolate-optional, diagnostic-only non-isolate, out-of-scope, and upstream/platform denominators. | Posture generator validates schema; Node24 has zero `Requires Unpromoted Node Surface`; every moved fixture has category, reason, evidence path, and shim/emulation classification where relevant; status dashboard reports full-corpus and V8-isolate-required metrics separately; wide pre/post inventories are recorded. | pending |
-| NDS2 | Foundation-slice greening. Complete the useful cron-greening work inside this plan: lane-aware process metadata and module/async loader-context fixes. | Broad foundation slice run across Node22/Node24 is captured before fixes; focused tests name and fix each failing fixture; final broad rerun is green for Node22/Node24; any intentional divergence has an ignored watchpoint plus failure-inventory entry; no silent quarantine. | pending |
-| NDS3 | High-value official fixture promotion. Raise Node24/Node22 support by clusters: module/loader, assert/buffer, events/util, URL/querystring, streams, timers/AbortController, crypto/WebCrypto, DNS/TLS/client networking, selected `fs/promises`, process metadata, and diagnostics_channel. | Each cluster proof has initial broad failure list, focused fixes, and final broad rerun; Node24 full-corpus pass count reaches at least 2000; Node22 stays within 5 percentage points of Node24 or has proven version-specific upstream deltas; V8-isolate-required pass rate is 100% on Node22 and Node24; remaining V8-isolate-optional gaps are inventoried instead of treated as the target. | pending |
-| NDS4 | Node26 Current evidence. Run the same foundation and V8-isolate-required fixture sets against Node26 and fix current-line metadata/bootstrap drift. | Node26 official fixture pass count reaches at least 1000; Node26 passes the V8-isolate-required surface shared with Node24 except fixture-by-fixture proven upstream removals; Node26 no longer blanket-classifies the default-support surface as known gap; Node26 package and fixture docs show observed Current/non-LTS evidence separately from LTS support; final broad Node26 run is recorded. | pending |
-| NDS5 | Package and framework canary expansion. Add positive Application canaries for realistic app packages across AI, HTTP, auth/JWT, validation, payments, email, object storage, HTTP database clients, observability, webhooks/signing, loader edge cases, and request/response adapters. | At least 50 positive Application claims pass on Node22 and Node24 across at least 12 categories; the harness reports all failures in a lane; required canary gaps are 0; Node26 observations are recorded separately; deterministic mocks model real SDK paths; diagnostic-only non-isolate packages are excluded from positive counts. | pending |
+| NDS0 | Baseline, verifier scaffold, and execution control plane. Capture current Node20/22/24/26 fixture pass rates, package canaries, non-isolate diagnostics, Node26 0-pass posture and cause, transferred lessons, and the NFRC boundary. Mark the older cron-greening plan as subsumed. Create the worktree/branch/PR control surface before implementation rows proceed. | `nds0-baseline.md` and `nds0-control-plane.md` exist; `nds0-control-plane.md` records worktree path, branch, draft PR URL or approved bootstrap substitute, current goal objective, resume protocol, and Deno fork publish/repin protocol; the Active Execution Pointer is updated and made visible from `origin/main` or the proof records the developer-approved fallback; verifier script exists and fails on every unimplemented gate; baseline records Node24 `1002 / 5198`, Node22 `1000 / 4748`, Node26 `0 / 5578`, why Node26 currently has zero official passes, the canonical five foundation slices, package/framework canary claims `37`, package/framework canary checks `101`, diagnostic canary claims `11`, required canary gaps `0`, registry split `32` Application / `5` Tooling, the wide-then-focused rule, and the transferred lessons above; docs refs and `git diff --check` pass. | in_progress |
+| NDS1 | Default-support posture model and feasibility checkpoint. Build JSON/Markdown plus schema for full corpus, V8-isolate-required, V8-isolate-optional, diagnostic-only non-isolate, test-harness-only, and upstream/platform denominators. Prove whether the Node24 `2000` pass gate is truthfully reachable inside this plan before large greening work proceeds. | `nds1-posture-model-and-feasibility.md` exists; posture generator validates schema; Node24 has zero `Requires Unpromoted Node Surface`; every moved fixture has denominator, schema-controlled reason, evidence path, public-doc cross-check, and shim/emulation classification where relevant; status dashboard reports full-corpus, V8-isolate-required, and V8-isolate-optional metrics separately; feasibility checkpoint names the reachable Node24 pass ceiling and exact blockers if below `2000`; if the ceiling is below `2000`, the goal is marked blocked instead of rebaselining the target; wide pre/post inventories are recorded. | pending |
+| NDS2 | Foundation-slice greening. Complete the useful cron-greening work inside this plan: lane-aware process metadata and module/async loader-context fixes inherited from archived NCG. | `nds2-foundation-slices.md` exists; broad runs for all five canonical foundation slices across Node22/Node24 are captured before fixes; the proof explicitly covers `process-and-timing:process-foundation` × Node24 `test/parallel/test-process-features.js`; the proof enumerates the 10 `loader-context:module-and-async-foundation` fixtures from NCG and names the 4 failing fixtures from local JSON reports; each failing fixture is classified as `bootstrap-shim`, `runtime-op`, `fork-bump`, or `explicit-divergence`; focused tests fix or justify each fixture; final broad rerun is green for all five canonical foundation slices on Node22/Node24; any intentional divergence has an ignored watchpoint plus failure-inventory entry; no silent quarantine. | pending |
+| NDS3 | High-value official fixture promotion. Raise Node24/Node22 support by clusters: module/loader, assert/buffer, events/util, URL/querystring, streams, timers/AbortController, crypto/WebCrypto, DNS/TLS/client networking, selected `fs/promises`, process metadata, and diagnostics_channel. | Each cluster proof has initial broad failure list, focused fixes, and final broad rerun; Node24 full-corpus pass count reaches at least 2000; Node22 stays within 5 percentage points of Node24 or has proven version-specific upstream deltas; V8-isolate-required pass rate is 100% on Node22 and Node24; remaining V8-isolate-optional gaps are inventoried instead of treated as the target; if implementation disproves the NDS1 feasibility estimate, the row moves to `blocked` with exact fixtures, owner repo, and follow-up engine/fork plan instead of looping or weakening the target. | pending |
+| NDS4 | Node26 Current evidence. Run the same foundation and V8-isolate-required fixture sets against Node26 and fix current-line metadata/bootstrap drift. | `nds4-node26-current-evidence.md` exists; proof explains the NDS0 zero-pass cause and the exact manifest/classification/harness changes that made Node26 runnable; Node26 official fixture pass count reaches at least 1000; Node26 passes the V8-isolate-required surface shared with Node24 except fixture-by-fixture proven upstream removals; Node26 no longer blanket-classifies the default-support surface as known gap; Node26 package and fixture docs show observed Current/non-LTS evidence separately from LTS support; final broad Node26 run is recorded. | pending |
+| NDS5 | Package and framework canary expansion. Add positive Application canaries for realistic app packages across AI, HTTP, auth/JWT, validation, payments, email, object storage, HTTP database clients, observability, webhooks/signing, loader edge cases, and request/response adapters. | `nds5-package-canaries.md` exists; canary registry schema has `compat_family`, exactly one schema-controlled `compat_category` per claim, and `canary_surfaces`; at least 50 positive Application claims pass on Node22 and Node24 across at least 12 distinct `compat_category` values; the harness reports all failures in a lane; required canary gaps are 0; Node26 observations are recorded separately; deterministic mocks model real SDK paths; diagnostic-only non-isolate packages are excluded from positive counts. | pending |
 | NDS6 | Real Convex app suites. Add realistic Convex-compatible `"use node"` app suites beyond single canary actions. | At least 5 app suites pass on Node22 and Node24; suites cover package actions, callee-lane selection for nested runtime calls, `ctx.runQuery`/`ctx.runMutation`/intended `ctx.runAction`, generated APIs, scheduled/background action flow, ESM/CJS/conditional exports, value serialization, and SaaS SDK usage; Convex guidelines are followed. | pending |
 | NDS7 | Permission and non-isolate boundary plus shim audit. Keep unsupported OS-owned behavior explicit while expanding support, and audit every compatibility shim/emulation/stub in `nimbus/nimbus` plus the `nimbus/deno` fork. | Child process, worker threads, raw listen, native addons, package-owned binaries, persistent filesystem assumptions, and CLI/test-runner surfaces fail closed with useful diagnostics inside the V8 isolate runtime unless explicitly classified as truthful shim or documented emulation; diagnostics pass on Node22/Node24/Node26; diagnostics carry `evidence_kind=diagnostic` or equivalent and are not counted as positive support; tests prove fake-success stubs are rejected; `node-isolate-shim-inventory` or equivalent records source locations, capability limits, evidence, documentation anchors, and owner repo for every shim/emulation/stub. | pending |
 | NDS8 | Deno-style docs from posture and shim inventory. Regenerate public compatibility, API, package, evidence, and shim/emulation docs from the new posture. | Docs show per-version full-corpus, V8-isolate-required, package, non-isolate diagnostic metrics, and explicit "native", "shimmed", "emulated", "test-harness-only", and "unsupported" classifications; Node24 says well-supported default only after gates pass; Node26 is Current/non-LTS with real evidence; support numbers and shim claims are generated or guarded against stale prose; `make node-compat-publish-docs CHECK=1`, docs guard, and strict docs refs pass. | pending |
 | NDS9 | PR and nightly gates. Keep the raised support true over time. | PR CI includes the default-support verifier, Node24 posture, Node22 parity, package canaries, docs claims, and non-isolate diagnostics; nightly includes broad official fixture groups, release-train drift from official Node feeds, latest-suite drift, watchpoint validation, Node26 Current evidence, and posture trends; structural verifier proves the workflow wiring. | pending |
-| NDS10 | Closeout and archive. Finish all rows and prove the final state. | Every row is `done`; execution log records commands and counts; final verifier prints `24 passed, 0 failed`; generated docs are current; `cargo fmt --all --check`, strict docs refs, and `git diff --check` pass; plan moves to archive and routing points to the archived baseline. | pending |
+| NDS10 | Closeout and archive. Finish all rows and prove the final state. | `nds10-closeout.md` exists; every row is `done`; execution log records commands and counts; final verifier prints zero failed required checks and an explicit pass count for all checks currently defined by the verifier; generated docs are current; `cargo fmt --all --check`, strict docs refs, and `git diff --check` pass; draft PR checks are green and the PR is ready for review; plan moves to archive and routing points to the archived baseline after merge approval. | pending |
 
 ## Completion Gate
 
 `bash scripts/verify-node-default-runtime-support-hardening.sh` exits 0 with a
-summary line `24 passed, 0 failed`. The verifier must check at least:
+summary line that includes `0 failed` and the actual number of required checks
+passed. The verifier must check at least:
 
 1. Plan is active or archived and every ledger row is `done` at closeout.
 2. Baseline proof exists and records the current low Node24/Node26 posture.
-3. Default-support posture JSON and Markdown exist and validate against schema.
-4. Node24 has zero `Requires Unpromoted Node Surface` entries.
-5. Node24 and Node22 V8-isolate-required official fixture pass rate is 100%.
-6. Node26 has at least 1000 official fixture passes, passes the shared
+3. Control-plane proof and Active Execution Pointer record the dedicated
+   worktree, branch, draft PR URL or approved substitute, active goal objective,
+   resume protocol, Deno fork publish/repin protocol, and main-visible pointer
+   path or developer-approved fallback.
+4. Default-support posture JSON and Markdown exist and validate against schema.
+5. NDS1 feasibility proof records the Node24 `2000` pass-gate ceiling and does
+   not allow target lowering without a blocked goal plus follow-up engine/fork
+   plan.
+6. The denominator schema rejects fixture rows without exactly one support
+   denominator, schema-controlled reason, evidence path, and docs cross-check.
+7. Public support docs and posture rows agree on which APIs/packages are
+   V8-isolate-required.
+8. Node24 has zero `Requires Unpromoted Node Surface` entries.
+9. Node24 and Node22 V8-isolate-required official fixture pass rate is 100%.
+10. Node22 full-corpus pass rate remains within 5 percentage points of Node24
+   or the proof records version-specific upstream deltas.
+11. Node26 has at least 1000 official fixture passes, passes the shared
    V8-isolate-required surface, and has no blanket known-gap treatment for the
    default-support surface.
-7. Foundation slices pass on Node22 and Node24.
-8. Node24 full-corpus official pass count is at least 2000.
-9. Positive Application package claims are at least 50 across at least 12
-   categories on Node22 and Node24.
-10. Required Application package canary gaps are 0.
-11. At least 5 Convex-compatible real app suites pass on Node22 and Node24.
-12. Non-isolate diagnostics pass and are excluded from positive support counts.
-13. Generated public docs match checked-in posture and evidence.
-14. Package reference contains per-version support, not only aggregate support.
-15. API reference contains per-version support and non-isolate boundaries.
-16. Shim/emulation inventory covers `nimbus/nimbus` and `nimbus/deno`, has no
+12. All five canonical foundation slices pass on Node22 and Node24.
+13. NDS2 proof names the Node24 `test-process-features.js` failure, the 10
+   module-and-async foundation fixtures, the 4 failing loader-context fixtures,
+   and each fixture's required classification.
+14. Node24 full-corpus official pass count is at least 2000.
+15. Package registry schema includes `compat_family`, exactly one
+   schema-controlled `compat_category` per claim, and `canary_surfaces`.
+16. Positive Application package claims are at least 50 across at least 12
+   distinct `compat_category` values on Node22 and Node24.
+17. Required Application package canary gaps are 0.
+18. At least 5 Convex-compatible real app suites pass on Node22 and Node24.
+19. Non-isolate diagnostics pass and are excluded from positive support counts.
+20. Generated public docs match checked-in posture and evidence.
+21. Package reference contains per-version support, not only aggregate support.
+22. API reference contains per-version support and non-isolate boundaries.
+23. Shim/emulation inventory covers `nimbus/nimbus` and `nimbus/deno`, has no
     unclassified Node compatibility surfaces, and records source annotations or
     source comments for Nimbus-owned shims where practical.
-17. User-facing docs disclose native, shimmed, emulated, test-harness-only,
+24. User-facing docs disclose native, shimmed, emulated, test-harness-only,
     diagnostic, and unsupported capability classes.
-18. Release-train and latest-suite drift checks pass.
-19. PR CI includes the new default-support gate.
-20. Nightly workflow includes broad fixture, package, and Node26 Current lanes.
-21. `cargo fmt --all --check`, strict docs refs, and `git diff --check` pass.
-22. Every NDS row proof records the wide-then-focused loop: broad pre-run,
+25. Release-train and latest-suite drift checks pass.
+26. PR CI includes the new default-support gate.
+27. Nightly workflow includes broad fixture, package, and Node26 Current lanes.
+28. `cargo fmt --all --check`, strict docs refs, and `git diff --check` pass.
+29. Every required row proof file exists and follows the Proof Contract
+    template.
+30. Every NDS row proof records the wide-then-focused loop: broad pre-run,
     failure inventory, focused fixes/classifications, and broad final rerun.
-23. The verifier rejects diagnostic canaries counted as positive support and
-    fake-success stubs that claim unsupported OS side effects happened.
-24. The verifier rejects stale hand-written support numbers that disagree with
+31. The verifier rejects diagnostic canaries counted as positive support, and
+    the inventory plus targeted tests reject known fake-success stubs that claim
+    unsupported OS side effects happened. This is a registry/test-backed gate,
+    not a promise to prove arbitrary future source code statically.
+32. The verifier rejects stale hand-written support numbers that disagree with
     generated evidence.
+33. Closeout proof records green local verifier output, green draft PR checks,
+    and the explicit approval path used before merge or direct `main` update.
+34. If any row is `blocked`, the verifier rejects archive/closeout and requires
+    exact blockers, owner repo, follow-up plan, Active Execution Pointer update,
+    and unsatisfied verifier gates to be recorded.
 
 ## Execution Log
 
 | Date | NDS | Status | Files touched | Verification | Notes |
 | --- | --- | --- | --- | --- | --- |
 | _pending NDS0_ | NDS0 | _pending_ | | | |
+| 2026-06-01 | NDS0 | in_progress | `docs/plans/node-default-runtime-support-hardening-plan.md`, `docs/plans/proof/node-default-runtime-support-hardening/nds0-baseline.md`, `docs/plans/proof/node-default-runtime-support-hardening/nds0-control-plane.md`, `scripts/verify-node-default-runtime-support-hardening.sh` | `bash scripts/verify-node-default-runtime-support-hardening.sh` -> `8 passed, 26 failed`; `git diff --check` pass; strict docs refs pass | Dedicated worktree/branch created; draft PR still pending. |
 
 ## Risks
 
@@ -411,7 +676,7 @@ summary line `24 passed, 0 failed`. The verifier must check at least:
 | Package canaries overfit mocks and miss real app behavior. | Add multi-package Convex app suites and preserve the official fixture corpus as the broad feedback loop. |
 | Node26 churn consumes default-lane effort. | Node26 is observed for the default-support surface but remains non-LTS and non-default until upstream LTS and lane-local gates pass. |
 | `nimbus/deno` fixes become local shims in Nimbus. | Promote fixes to the fork when they duplicate Node/Deno builtin semantics or would create long-term hot-path shims. |
-| The 2000-pass Node24 target requires lower-level engine work. | Keep the target, preserve failing fixtures as active blockers, and route the implementation to Nimbus runtime, `nimbus/deno`, `rusty_v8`, or a follow-up engine plan. If a fixture requires non-isolate OS ownership, keep the fail-closed diagnostic and full-corpus gap visible. |
+| The 2000-pass Node24 target requires lower-level engine work. | NDS1 must produce the feasibility checkpoint before large greening work proceeds, and NDS3 may re-enter the same blocked path if implementation disproves the estimate. Keep the target, preserve failing fixtures as active blockers, and route the implementation to Nimbus runtime, `nimbus/deno`, `rusty_v8`, or a follow-up engine plan. If a fixture requires non-isolate OS ownership, keep the fail-closed diagnostic and full-corpus gap visible. |
 
 ## References
 
