@@ -126,6 +126,15 @@ def classify_entry(entry: dict[str, Any]) -> tuple[str, str, str, str]:
     owner = entry.get("owner", "")
     haystack = f"{test_path} {owner}".lower().replace("_", "-")
 
+    if source == "rust_watchpoint_expected_failure" and (
+        test_path == "test/parallel/test-v8-serdes.js" and owner == "runtime/v8"
+    ):
+        return (
+            "upstream_or_platform_boundary",
+            "v8_serialization_wire_format_boundary",
+            "unsupported",
+            "fixture asserts Node's exact serialized-byte format, which is tied to Node's embedded V8 release rather than Nimbus's v8_deno_core compatibility contract",
+        )
     if source == "rust_watchpoint_expected_failure":
         return (
             "v8_isolate_required",

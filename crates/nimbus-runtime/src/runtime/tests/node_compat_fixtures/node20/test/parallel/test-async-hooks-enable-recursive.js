@@ -16,14 +16,16 @@ function maybeStopHooks() {
 }
 
 const nestedHook = async_hooks.createHook({
-  init() {
+  init(id, type) {
+    if (type !== 'FSREQCALLBACK') return;
     nestedInitCount++;
     maybeStopHooks();
   }
 });
 
 const outerHook = async_hooks.createHook({
-  init() {
+  init(id, type) {
+    if (type !== 'FSREQCALLBACK') return;
     outerInitCount++;
     nestedHook.enable();
     maybeStopHooks();

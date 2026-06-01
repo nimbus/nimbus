@@ -1233,6 +1233,12 @@ const nimbusScopedNodeSpawnSyncInstalled = Symbol.for(
 const nimbusPromiseAsyncHooksInstalled = Symbol.for(
   "nimbus.promiseAsyncHooksInstalled",
 );
+const nimbusAsyncHooksSuppressionDepth = Symbol.for(
+  "nimbus.asyncHooksSuppressionDepth",
+);
+const nimbusAsyncHooksSuppressedPromises = Symbol.for(
+  "nimbus.asyncHooksSuppressedPromises",
+);
 
 function installScopedNodeSpawnSyncChild() {
   if (
@@ -1284,12 +1290,28 @@ function installPromiseAsyncHooksBridge() {
   const promiseTriggerAsyncIds = new WeakMap();
   const promisesWithActiveInitHooks = new WeakSet();
   const promisesWithBeforeHooks = new WeakSet();
+  const suppressedPromises = new WeakSet();
   const promiseResolveHooks = [];
   const triggerAsyncIdStack = [1];
   let nextPromiseAsyncId = 1;
   let activeInitHookCount = 0;
   let activeAfterHookCount = 0;
   let lateAfterHookBudget = 0;
+  let suppressedPromiseReactionDepth = 0;
+  function isExternallySuppressedPromise(promise) {
+    return !!(
+      promise && typeof promise === "object" &&
+      globalThis[nimbusAsyncHooksSuppressedPromises]?.has?.(promise)
+    );
+  }
+  function isPromiseAsyncHooksSuppressed(promise, parentPromise) {
+    return (globalThis[nimbusAsyncHooksSuppressionDepth] || 0) > 0 ||
+      suppressedPromiseReactionDepth > 0 ||
+      isExternallySuppressedPromise(promise) ||
+      isExternallySuppressedPromise(parentPromise) ||
+      suppressedPromises.has(parentPromise) ||
+      suppressedPromises.has(promise);
+  }
   function promiseAsyncId(promise) {
     let asyncId = promiseAsyncIds.get(promise);
     if (asyncId === undefined) {
@@ -1457,6 +1479,10 @@ function installPromiseAsyncHooksBridge() {
 
   core.setPromiseHooks(
     (promise, parentPromise) => {
+      if (isPromiseAsyncHooksSuppressed(promise, parentPromise)) {
+        suppressedPromises.add(promise);
+        return;
+      }
       const asyncId = promiseAsyncId(promise);
       const triggerAsyncId = parentPromise === undefined || parentPromise === null
         ? asyncHooks.executionAsyncId() || 1
@@ -1470,6 +1496,10 @@ function installPromiseAsyncHooksBridge() {
       asyncHooks.emitInit(asyncId, "PROMISE", triggerAsyncId, promise);
     },
     (promise) => {
+      if (suppressedPromises.has(promise)) {
+        suppressedPromiseReactionDepth += 1;
+        return;
+      }
       const asyncId = promiseAsyncIds.get(promise);
       if (asyncId !== undefined) {
         promisesWithBeforeHooks.add(promise);
@@ -1478,6 +1508,10 @@ function installPromiseAsyncHooksBridge() {
       }
     },
     (promise) => {
+      if (suppressedPromises.has(promise)) {
+        suppressedPromiseReactionDepth = Math.max(0, suppressedPromiseReactionDepth - 1);
+        return;
+      }
       const asyncId = promiseAsyncIds.get(promise);
       if (asyncId !== undefined) {
         try {
@@ -1490,6 +1524,9 @@ function installPromiseAsyncHooksBridge() {
       }
     },
     (promise) => {
+      if (suppressedPromises.has(promise)) {
+        return;
+      }
       const asyncId = promiseAsyncIds.get(promise);
       if (asyncId !== undefined) {
         if (

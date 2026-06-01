@@ -829,17 +829,6 @@
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 1153,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
-    },
-    {
-      "id": "node24_default_lane_loader_context_watchpoint",
-      "test_name": "node24_default_lane_loader_context_watchpoint",
-      "lane": "node24",
-      "expectation": "expected_failure",
-      "classification": "watchpoint",
-      "reason": "Node24 default lane watchpoint: the broad loader/context batch is classified until each carried fixture is replayed and promoted under the default-lane gate",
-      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1367,
-      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     }
   ]
 }

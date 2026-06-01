@@ -5,76 +5,6 @@
   "contract": "Classifies vendored lane-local test files that are not green in the non-ignored Rust compatibility lane. Entries must not be counted as pass claims; they reduce only the unmanifested/unclassified remainder.",
   "entries": [
     {
-      "test_path": "test/fixtures/es-modules/test-esm-ok.mjs",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "node-compat/unpromoted-surface",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_loader_context_followup_module_commonjs_remainder_batch_fixture"
-    },
-    {
-      "test_path": "test/parallel/test-async-hooks-async-await.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "node-compat/unpromoted-surface",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_loader_context_async_hooks_promise_batch_fixture, node24_loader_context_async_hooks_promise_core_batch_fixture"
-    },
-    {
-      "test_path": "test/parallel/test-async-hooks-asyncresource-constructor.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "node-compat/unpromoted-surface",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_loader_context_async_hooks_resource_gap_batch_fixture"
-    },
-    {
-      "test_path": "test/parallel/test-async-hooks-correctly-switch-promise-hook.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "node-compat/unpromoted-surface",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_loader_context_async_hooks_promise_batch_fixture, node24_loader_context_async_hooks_promise_core_batch_fixture"
-    },
-    {
-      "test_path": "test/parallel/test-async-hooks-enable-before-promise-resolve.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "node-compat/unpromoted-surface",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_loader_context_async_hooks_promise_batch_fixture"
-    },
-    {
-      "test_path": "test/parallel/test-async-hooks-enable-disable-enable.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "node-compat/unpromoted-surface",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_loader_context_async_hooks_resource_gap_batch_fixture"
-    },
-    {
-      "test_path": "test/parallel/test-async-hooks-enable-during-promise.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "node-compat/unpromoted-surface",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_loader_context_async_hooks_promise_batch_fixture"
-    },
-    {
-      "test_path": "test/parallel/test-async-hooks-enable-recursive.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "node-compat/unpromoted-surface",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_loader_context_async_hooks_resource_gap_batch_fixture"
-    },
-    {
-      "test_path": "test/parallel/test-async-hooks-promise-enable-disable.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "node-compat/unpromoted-surface",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_loader_context_async_hooks_promise_batch_fixture, node24_loader_context_async_hooks_promise_core_batch_fixture"
-    },
-    {
-      "test_path": "test/parallel/test-async-hooks-recursive-stack-runInAsyncScope.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "node-compat/unpromoted-surface",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_loader_context_async_hooks_resource_gap_batch_fixture"
-    },
-    {
       "test_path": "test/parallel/test-crypto-authenticated-stream.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
@@ -171,6 +101,13 @@
       "classification": "rust_watchpoint_expected_failure",
       "owner": "streams-local-io/stream",
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_stream_pipeline_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-v8-serdes.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "runtime/v8",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_loader_context_v8_serdes_wire_format_watchpoint"
     }
   ],
   "groups": [
@@ -656,37 +593,19 @@
         "test/module-hooks/test-module-hooks-resolve-short-circuit-required-middle.js",
         "test/module-hooks/test-module-hooks-resolve-short-circuit-required-start.js",
         "test/module-hooks/test-module-hooks-resolve-short-circuit.js",
-        "test/parallel/test-module-builtin.js",
-        "test/parallel/test-module-cache.js",
-        "test/parallel/test-module-children.js",
         "test/parallel/test-module-circular-dependency-warning.js",
         "test/parallel/test-module-circular-symlinks.js",
-        "test/parallel/test-module-create-require-multibyte.js",
-        "test/parallel/test-module-create-require.js",
         "test/parallel/test-module-globalpaths-nodepath.js",
-        "test/parallel/test-module-isBuiltin.js",
-        "test/parallel/test-module-loading-deprecated.js",
-        "test/parallel/test-module-loading-globalpaths.js",
-        "test/parallel/test-module-main-extension-lookup.js",
-        "test/parallel/test-module-main-fail.js",
         "test/parallel/test-module-main-preserve-symlinks-fail.js",
-        "test/parallel/test-module-multi-extensions.js",
-        "test/parallel/test-module-nodemodulepaths.js",
         "test/parallel/test-module-parent-deprecation.js",
         "test/parallel/test-module-parent-setter-deprecation.js",
         "test/parallel/test-module-print-timing.mjs",
-        "test/parallel/test-module-prototype-mutation.js",
         "test/parallel/test-module-readonly.js",
-        "test/parallel/test-module-relative-lookup.js",
         "test/parallel/test-module-run-main-monkey-patch.js",
         "test/parallel/test-module-setsourcemapssupport.js",
-        "test/parallel/test-module-stat.js",
         "test/parallel/test-module-strip-types.js",
         "test/parallel/test-module-subpath-import-long-path.js",
-        "test/parallel/test-module-symlinked-peer-modules.js",
-        "test/parallel/test-module-version.js",
-        "test/parallel/test-module-wrap.js",
-        "test/parallel/test-module-wrapper.js"
+        "test/parallel/test-module-symlinked-peer-modules.js"
       ]
     },
     {
@@ -980,8 +899,6 @@
         "test/parallel/test-crypto-argon2.js",
         "test/parallel/test-crypto-async-sign-verify.js",
         "test/parallel/test-crypto-certificate.js",
-        "test/parallel/test-crypto-cipheriv-decipheriv.js",
-        "test/parallel/test-crypto-classes.js",
         "test/parallel/test-crypto-dh-stateless-async.js",
         "test/parallel/test-crypto-domain.js",
         "test/parallel/test-crypto-domains.js",
@@ -989,8 +906,6 @@
         "test/parallel/test-crypto-eddsa-variants.js",
         "test/parallel/test-crypto-encap-decap.js",
         "test/parallel/test-crypto-fips.js",
-        "test/parallel/test-crypto-getcipherinfo.js",
-        "test/parallel/test-crypto-hash.js",
         "test/parallel/test-crypto-key-objects-messageport.js",
         "test/parallel/test-crypto-key-objects-raw.js",
         "test/parallel/test-crypto-key-objects-to-crypto-key.js",
@@ -1032,9 +947,7 @@
         "test/parallel/test-crypto-keygen.js",
         "test/parallel/test-crypto-no-algorithm.js",
         "test/parallel/test-crypto-oaep-zero-length.js",
-        "test/parallel/test-crypto-oneshot-hash.js",
         "test/parallel/test-crypto-op-during-process-exit.js",
-        "test/parallel/test-crypto-padding.js",
         "test/parallel/test-crypto-pqc-key-objects-ml-dsa.js",
         "test/parallel/test-crypto-pqc-key-objects-ml-kem.js",
         "test/parallel/test-crypto-pqc-key-objects-slh-dsa.js",
@@ -1046,7 +959,6 @@
         "test/parallel/test-crypto-private-decrypt-gh32240.js",
         "test/parallel/test-crypto-psychic-signatures.js",
         "test/parallel/test-crypto-publicDecrypt-fails-first-time.js",
-        "test/parallel/test-crypto-random.js",
         "test/parallel/test-crypto-randomuuidv7.js",
         "test/parallel/test-crypto-rsa-dsa.js",
         "test/parallel/test-crypto-rsa-pss-default-salt-length.js",
@@ -2267,7 +2179,6 @@
         "test/client-proxy/test-use-env-proxy-cli-http.mjs",
         "test/client-proxy/test-use-env-proxy-cli-https.mjs",
         "test/client-proxy/test-use-env-proxy-precedence.mjs",
-        "test/common/test-error-reporter.js",
         "test/doctool/test-apilinks.mjs",
         "test/doctool/test-deprecation-codes.js",
         "test/doctool/test-doc-api-json.mjs",
@@ -4387,20 +4298,16 @@
         "test/parallel/test-v8-coverage.js",
         "test/parallel/test-v8-cpu-profile.js",
         "test/parallel/test-v8-flag-pool-size-0.js",
-        "test/parallel/test-v8-flag-type-check.js",
         "test/parallel/test-v8-flags.js",
         "test/parallel/test-v8-getheapsnapshot-twice.js",
         "test/parallel/test-v8-global-setter.js",
         "test/parallel/test-v8-query-objects.js",
-        "test/parallel/test-v8-serdes.js",
         "test/parallel/test-v8-serialize-leak.js",
         "test/parallel/test-v8-startup-snapshot-api.js",
-        "test/parallel/test-v8-stats.js",
         "test/parallel/test-v8-stop-coverage.js",
         "test/parallel/test-v8-string-is-one-byte-representation.js",
         "test/parallel/test-v8-take-coverage-noop.js",
-        "test/parallel/test-v8-take-coverage.js",
-        "test/parallel/test-v8-version-tag.js"
+        "test/parallel/test-v8-take-coverage.js"
       ]
     },
     {
@@ -4758,14 +4665,12 @@
         "test/fixtures/test-nodetiming-uvmetricsinfo.js",
         "test/fixtures/test-resolution-inspect-brk-resolver.js",
         "test/fixtures/test-runner-watch.mjs",
-        "test/fixtures/test-runner/default-behavior/node_modules/test-nm.js",
         "test/fixtures/test-runner/global-setup-teardown/test-file.js",
         "test/fixtures/test-runner/output/test-diagnostic-warning-without-test-only-flag.js",
         "test/fixtures/test-runner/output/test-runner-plan-timeout.js",
         "test/fixtures/test-runner/output/test-runner-plan.js",
         "test/fixtures/test-runner/output/test-runner-watch-spec.mjs",
         "test/fixtures/test-runner/output/test-timeout-flag.js",
-        "test/fixtures/test-runner/test-id-fixture.js",
         "test/fixtures/test-runner/test-runner-global-hooks.mjs",
         "test/fixtures/test-runner/worker-id/test-1.mjs",
         "test/fixtures/test-runner/worker-id/test-2.mjs",

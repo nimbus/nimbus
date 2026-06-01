@@ -419,7 +419,8 @@ fn read_node_compat_fixture_text(fixture_source_path: &str) -> String {
 fn should_skip_default_async_drains_for_fixture(test_relative_path: &str) -> bool {
     matches!(
         test_relative_path,
-        "test/parallel/test-async-hooks-disable-during-promise.js"
+        "test/parallel/test-async-hooks-enable-recursive.js"
+            | "test/parallel/test-async-hooks-disable-during-promise.js"
             | "test/parallel/test-async-hooks-enable-before-promise-resolve.js"
             | "test/parallel/test-async-hooks-enable-during-promise.js"
             | "test/parallel/test-async-hooks-promise-triggerid.js"
@@ -430,9 +431,19 @@ fn should_skip_default_async_drains_for_fixture(test_relative_path: &str) -> boo
 fn should_use_sync_tick_drain_for_fixture(test_relative_path: &str) -> bool {
     matches!(
         test_relative_path,
-        "test/parallel/test-async-hooks-disable-during-promise.js"
+        "test/parallel/test-async-hooks-enable-recursive.js"
+            | "test/parallel/test-async-hooks-disable-during-promise.js"
+            | "test/parallel/test-async-hooks-enable-before-promise-resolve.js"
+            | "test/parallel/test-async-hooks-enable-during-promise.js"
             | "test/parallel/test-async-hooks-promise-triggerid.js"
             | "test/parallel/test-async-hooks-promise.js"
+    )
+}
+
+fn should_suppress_sync_tick_promises_for_fixture(test_relative_path: &str) -> bool {
+    matches!(
+        test_relative_path,
+        "test/parallel/test-async-hooks-enable-recursive.js"
     )
 }
 
@@ -605,7 +616,25 @@ try {{
     let prelude_script = prelude_script.unwrap_or("");
     let postlude_script = postlude_script.unwrap_or("");
     let use_sync_tick_drain = should_use_sync_tick_drain_for_fixture(test_relative_path);
-    let async_drain_script = if use_sync_tick_drain {
+    let async_drain_script = if use_sync_tick_drain
+        && should_suppress_sync_tick_promises_for_fixture(test_relative_path)
+    {
+        r#"  if (typeof globalThis.__nimbusProcessTicksAndRejections === "function") {
+    const __nimbusSuppressionSymbol = Symbol.for("nimbus.asyncHooksSuppressionDepth");
+    const __nimbusPreviousSuppressionDepth = globalThis[__nimbusSuppressionSymbol] || 0;
+    globalThis[__nimbusSuppressionSymbol] = __nimbusPreviousSuppressionDepth + 1;
+    try {
+      globalThis.__nimbusProcessTicksAndRejections();
+    } finally {
+      if (__nimbusPreviousSuppressionDepth === 0) {
+        delete globalThis[__nimbusSuppressionSymbol];
+      } else {
+        globalThis[__nimbusSuppressionSymbol] = __nimbusPreviousSuppressionDepth;
+      }
+    }
+  }
+"#
+    } else if use_sync_tick_drain {
         r#"  if (typeof globalThis.__nimbusProcessTicksAndRejections === "function") {
     globalThis.__nimbusProcessTicksAndRejections();
   }

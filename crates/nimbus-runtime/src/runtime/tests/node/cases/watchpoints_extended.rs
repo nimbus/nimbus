@@ -1364,8 +1364,7 @@ fn node22_supported_lane_executes_manifested_loader_context_subset() {
 }
 
 #[test]
-#[ignore = "Node24 default lane watchpoint: the broad loader/context batch is classified until each carried fixture is replayed and promoted under the default-lane gate"]
-fn node24_default_lane_loader_context_watchpoint() {
+fn node24_default_lane_executes_loader_context_subset() {
     run_manifested_subset_for_lane(
         "loader-context",
         NodeCompatLane::Node24,

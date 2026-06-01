@@ -3952,6 +3952,7 @@
         "test/parallel/test-v8-getheapsnapshot-twice.js",
         "test/parallel/test-v8-global-setter.js",
         "test/parallel/test-v8-query-objects.js",
+        "test/parallel/test-v8-serdes.js",
         "test/parallel/test-v8-serialize-leak.js",
         "test/parallel/test-v8-startup-snapshot-api.js",
         "test/parallel/test-v8-stop-coverage.js",

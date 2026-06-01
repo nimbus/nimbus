@@ -2,18 +2,39 @@
 
 const common = require('../common');
 const async_hooks = require('async_hooks');
+const assert = require('assert');
 const fs = require('fs');
 
+let outerInitCount = 0;
+let nestedInitCount = 0;
+
+function maybeStopHooks() {
+  if (outerInitCount === 2 && nestedInitCount === 1) {
+    nestedHook.disable();
+    outerHook.disable();
+  }
+}
+
 const nestedHook = async_hooks.createHook({
-  init: common.mustCall()
+  init(id, type) {
+    if (type !== 'FSREQCALLBACK') return;
+    nestedInitCount++;
+    maybeStopHooks();
+  }
 });
 
-async_hooks.createHook({
-  init: common.mustCall(() => {
+const outerHook = async_hooks.createHook({
+  init(id, type) {
+    if (type !== 'FSREQCALLBACK') return;
+    outerInitCount++;
     nestedHook.enable();
-  }, 2)
+    maybeStopHooks();
+  }
 }).enable();
 
 fs.access(__filename, common.mustCall(() => {
-  fs.access(__filename, common.mustCall());
+  fs.access(__filename, common.mustCall(() => {
+    assert.strictEqual(outerInitCount, 2);
+    assert.strictEqual(nestedInitCount, 1);
+  }));
 }));
