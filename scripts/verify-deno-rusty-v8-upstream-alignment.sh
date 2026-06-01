@@ -224,13 +224,15 @@ else
   fail "Nimbus repin incomplete" "Expected v2.8.1-nimbus.* Deno and v149.2.0-nimbus.* rusty_v8 git tag/SHAs with no local path overrides"
 fi
 
-step 14 "Fork provenance and upstream policy pass"
+step 14 "Deno release, default branch, provenance, and upstream policy pass"
 if [ -f "${PROOF_DIR}/dua5-nimbus-repin.md" ] &&
+   has 'GitHub release|gh release|release.*v2\.8\.1-nimbus\.[0-9]+' "${PROOF_DIR}/dua5-nimbus-repin.md" &&
+   has 'default branch.*nimbus/v2\.8\.1|nimbus/deno.*default branch.*nimbus/v2\.8\.1' "${PROOF_DIR}/dua5-nimbus-repin.md" &&
    has 'verify-deno-fork-provenance\.sh.*0 failed|verify-deno-fork-provenance\.sh.*passed' "${PROOF_DIR}/dua5-nimbus-repin.md" &&
    has 'verify-deno-fork-upstream-policy\.sh.*0 failed|verify-deno-fork-upstream-policy\.sh.*passed' "${PROOF_DIR}/dua5-nimbus-repin.md"; then
-  pass "DUA5 records green fork provenance and upstream policy verifiers"
+  pass "DUA5 records Deno release, default branch update, and green fork policy verifiers"
 else
-  fail "Fork provenance/upstream-policy proof missing" "Expected DUA5 proof with green verifier output"
+  fail "Deno release/default-branch/provenance proof missing" "Expected DUA5 proof with v2.8.1-nimbus.* release, nimbus/v2.8.1 default branch, and green verifier output"
 fi
 
 step 15 "Focused Node compatibility tests pass for changed behavior"
