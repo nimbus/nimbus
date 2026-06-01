@@ -7,27 +7,27 @@ Baseline proof: `docs/plans/proof/deno-rusty-v8-upstream-alignment/dua0-baseline
 
 ## Active Execution Pointer
 
-Current actionable row: `DUA5`
-Current blocker that pauses DUA5 release work but does not block proof updates:
-DUA5 must still wait for the hardened `rusty_v8` branch CI and a superseding
-`v149.2.0-nimbus.*` tag before Deno release, `nimbus/deno` default-branch
-update, and Nimbus repin, because `v149.2.0-nimbus.1` was public before all
-required prebuilt assets were available and is missing the hardened release
-workflow source.
+Current actionable row: `NDS handoff`
+Current blocker: none. Maintainer decision on 2026-06-01 accepts
+`v149.2.0-nimbus.1` as the DUA5 `rusty_v8` release substrate because the
+release now has the complete required asset set. The later hardened release
+workflow run remains evidence for a future `v149.2.0-nimbus.2`, not a DUA5
+blocker.
 Current DUA draft PR: `https://github.com/nimbus/nimbus/pull/11`
 Current source worktree: `/Users/jack/src/github.com/nimbus/deno`
 Current `rusty_v8` candidate branch: `nimbus/v149.2.0`
-Current `rusty_v8` candidate branch head:
-`83451cd2967ed8467dece09e9c847c2d6d882901`
-Current `rusty_v8` candidate release tag: superseding
-`v149.2.0-nimbus.2` is pending corrected branch CI; do not consume
-`v149.2.0-nimbus.1` for DUA closeout.
+Current accepted `rusty_v8` release tag: `v149.2.0-nimbus.1`
+(`ce6663111a3ff8fde06bc04ba19bbbced60dbc8d`, 16 release assets present).
 Current DUA branch: `codex/deno-rusty-v8-upstream-alignment`
-Next action: wait for corrected `rusty_v8` branch CI run `26769536048`. When
-that run passes, create and push `v149.2.0-nimbus.2`, update the Deno fork pin
-and lockfile to that tag, rerun the focused Deno fork `cargo check`, then tag
-and release `v2.8.1-nimbus.1`, update `nimbus/deno`'s default branch to
-`nimbus/v2.8.1`, and only then repin Nimbus as DUA5 evidence.
+Next action: push the DUA closeout commit to PR #11 and resume NDS3 from the
+upstream-aligned `v2.8.1-nimbus.1` / `v149.2.0-nimbus.1` baseline. DUA6 found
+and fixed two repin regressions (`process.loadEnvFile` and `fs.watch`
+missing-entry semantics), then restored the promoted Node24 foundation groups
+to their pre-DUA posture. DUA7 confirmed generated status evidence did not
+change and updated the fork ledger plus NDS handoff notes. DUA8 local closeout
+validation passed. The remaining loader/context failures are the known
+async_hooks promise-count cluster and the V8 serialization wire-format
+boundary.
 
 ## Why this plan exists
 
@@ -170,10 +170,10 @@ Each proof file must record:
 | DUA2 | Lockstep `rusty_v8` substrate alignment. Before replaying Deno patches, rebase Nimbus `rusty_v8` from `v149.0.0-nimbus.1` to the Deno-compatible upstream `v149.2.0` line and preserve Nimbus locker safety. | `dua2-rusty-v8-alignment.md` proves `denoland/deno@v2.8.1` expects the `v149.2.0` V8 line; direct bump to upstream is rejected if it drops Nimbus locker safety; the expected output is a `v149.2.0-nimbus.*` candidate containing the required `Locker` / `UnenteredIsolate` stack and safety tests. A hold is valid only if the rebase attempt cannot pass build, safety, or runtime verification, and the proof records the exact blocker. "No immediate Node fixture benefit" is not a valid hold reason. | done |
 | DUA3 | Deno fork rebase on the selected V8 substrate. Rebuild the Deno fork from upstream `v2.8.1`, replay only justified patches, and remove upstream-replaced code while consuming the DUA2 `rusty_v8` decision. | Deno fork is on a clean branch based on upstream `v2.8.1`; its `v8` dependency points at the DUA2-selected `v149.2.0-nimbus.*` candidate or the proof records the exact approved hold; dropped patches are absent from the diff; replayed patches carry disposition notes in proof; fork-side format/check commands named in proof pass or any failure is classified with owner and blocker status; a candidate tag name such as `v2.8.1-nimbus.1` is recorded but not consumed by Nimbus until DUA5. | done |
 | DUA4 | Dirty Node compatibility work reevaluation. Re-test current local Deno dirty work against the rebased Deno candidate and carry only the pieces still needed after upstream 2.8.1 and the selected V8 substrate. | `dua4-dirty-work-reevaluation.md` records focused pre/post results for the dirty areas: CommonJS global path resolution, `node:v8` serializer/deserializer and host-object behavior, crypto random/cipher behavior, and any `internal_binding` additions; each dirty change is either dropped, replaced with upstream, or committed with a disposition; no diagnostic-only code is counted as a positive compatibility claim. | done |
-| DUA5 | Deno release and Nimbus repin. Point Nimbus at the published Deno and matching `rusty_v8` fork tags, update lockfile, and remove all temporary local path overrides. | Deno and the Deno-compatible `rusty_v8` candidate tags are committed, tagged, and pushed before Nimbus repin; `nimbus/deno` has a GitHub release for `v2.8.1-nimbus.*`; the `nimbus/deno` default branch is updated from the prior `nimbus/v2.8.0` branch to `nimbus/v2.8.1`; `Cargo.toml` and `Cargo.lock` resolve to immutable `nimbus/deno` and matching `nimbus/rusty_v8` tags and SHAs; `bash scripts/verify-deno-fork-provenance.sh` and `bash scripts/verify-deno-fork-upstream-policy.sh` pass or the proof records the exact missing gate to add before closeout; no `/private/tmp` or local path override remains. | pending |
-| DUA6 | Node compatibility rebaseline. Re-run focused and broad Node compatibility evidence against the repinned upstream-aligned fork stack. | `dua6-node-compat-rebaseline.md` records before/after counts for the relevant NDS3 fixture groups; current loader/context, crypto, V8, async-hooks, networking, and fs/stream outcomes are compared to the pre-DUA baseline; newly green fixtures are promoted only if broad reruns pass; remaining failures are classified as Nimbus runtime, Deno fork, `rusty_v8`, upstream/platform, or non-isolate boundary. | pending |
-| DUA7 | Docs and ledgers. Update operating docs, fork bump ledger, compatibility dashboards, and NDS handoff notes. | `docs/architecture/runtime/deno-fork-bump-ledger.md` records the new fork tag(s), SHAs, upstream bases, dispositions, removal triggers, and verification; generated Node compatibility dashboards and summaries are updated if counts changed; `docs/operating/deno-fork-workflow.md` stays consistent; NDS proof or plan state records the upstream-aligned baseline for the next row. | pending |
-| DUA8 | Closeout and archive readiness. Prove all rows are complete and hand control back to NDS. | `dua8-closeout.md` exists; every DUA row is `done`; verifier exits 0 with `0 failed`; `cargo fmt --all --check`, strict docs refs, fork provenance, fork upstream policy, and `git diff --check` pass; PR checks are green or exact hosted blockers are recorded; DUA is archived after merge approval and NDS resumes from the upstream-aligned baseline. | pending |
+| DUA5 | Deno release and Nimbus repin. Point Nimbus at the published Deno and matching `rusty_v8` fork tags, update lockfile, and remove all temporary local path overrides. | Deno and the Deno-compatible `rusty_v8` candidate tags are committed, tagged, and pushed before Nimbus repin; `nimbus/deno` has a GitHub release for `v2.8.1-nimbus.*`; the `nimbus/deno` default branch is updated from the prior `nimbus/v2.8.0` branch to `nimbus/v2.8.1`; `Cargo.toml` and `Cargo.lock` resolve to immutable `nimbus/deno` and matching `nimbus/rusty_v8` tags and SHAs; `bash scripts/verify-deno-fork-provenance.sh` and `bash scripts/verify-deno-fork-upstream-policy.sh` pass or the proof records the exact missing gate to add before closeout; no `/private/tmp` or local path override remains. | done |
+| DUA6 | Node compatibility rebaseline. Re-run focused and broad Node compatibility evidence against the repinned upstream-aligned fork stack. | `dua6-node-compat-rebaseline.md` records before/after counts for the relevant NDS3 fixture groups; current loader/context, crypto, V8, async-hooks, networking, and fs/stream outcomes are compared to the pre-DUA baseline; newly green fixtures are promoted only if broad reruns pass; remaining failures are classified as Nimbus runtime, Deno fork, `rusty_v8`, upstream/platform, or non-isolate boundary. | done |
+| DUA7 | Docs and ledgers. Update operating docs, fork bump ledger, compatibility dashboards, and NDS handoff notes. | `docs/architecture/runtime/deno-fork-bump-ledger.md` records the new fork tag(s), SHAs, upstream bases, dispositions, removal triggers, and verification; generated Node compatibility dashboards and summaries are updated if counts changed; `docs/operating/deno-fork-workflow.md` stays consistent; NDS proof or plan state records the upstream-aligned baseline for the next row. | done |
+| DUA8 | Closeout and archive readiness. Prove all rows are complete and hand control back to NDS. | `dua8-closeout.md` exists; every DUA row is `done`; verifier exits 0 with `0 failed`; `cargo fmt --all --check`, strict docs refs, fork provenance, fork upstream policy, and `git diff --check` pass; PR checks are green or exact hosted blockers are recorded; DUA is archived after merge approval and NDS resumes from the upstream-aligned baseline. | done |
 
 ## Completion Gate
 

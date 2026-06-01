@@ -1362,12 +1362,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cache_control"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bf2a5fb3207c12b5d208ebc145f967fea5cac41a021c37417ccc31ba40f39ee"
-
-[[package]]
 name = "calendrical_calculations"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2199,13 +2193,12 @@ dependencies = [
 
 [[package]]
 name = "deno_cache_dir"
-version = "0.40.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.41.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
  "boxed_error",
- "cache_control",
  "chrono",
  "data-url",
  "deno_error",
@@ -2226,8 +2219,8 @@ dependencies = [
 
 [[package]]
 name = "deno_config"
-version = "0.98.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.99.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "boxed_error",
  "capacity_builder",
@@ -2252,8 +2245,8 @@ dependencies = [
 
 [[package]]
 name = "deno_core"
-version = "0.401.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.402.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "anyhow",
  "az",
@@ -2294,8 +2287,8 @@ dependencies = [
 
 [[package]]
 name = "deno_crypto"
-version = "0.262.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.263.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -2334,16 +2327,16 @@ dependencies = [
 
 [[package]]
 name = "deno_crypto_provider"
-version = "0.42.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.43.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "aws-lc-sys 0.40.0",
 ]
 
 [[package]]
 name = "deno_dotenv"
-version = "0.17.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.18.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "deno_path_util",
  "sys_traits",
@@ -2377,16 +2370,16 @@ dependencies = [
 
 [[package]]
 name = "deno_features"
-version = "0.45.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.46.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "deno_core",
 ]
 
 [[package]]
 name = "deno_fetch"
-version = "0.272.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.273.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2422,8 +2415,8 @@ dependencies = [
 
 [[package]]
 name = "deno_fs"
-version = "0.158.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.159.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "async-trait",
  "boxed_error",
@@ -2479,8 +2472,8 @@ dependencies = [
 
 [[package]]
 name = "deno_http"
-version = "0.246.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.247.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "async-compression",
  "async-trait",
@@ -2488,7 +2481,6 @@ dependencies = [
  "base64 0.22.1",
  "brotli 6.0.0",
  "bytes",
- "cache_control",
  "deno_core",
  "deno_error",
  "deno_net",
@@ -2518,8 +2510,8 @@ dependencies = [
 
 [[package]]
 name = "deno_inspector_server"
-version = "0.22.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.23.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2536,8 +2528,8 @@ dependencies = [
 
 [[package]]
 name = "deno_io"
-version = "0.158.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.159.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "async-trait",
  "deno_core",
@@ -2560,8 +2552,8 @@ dependencies = [
 
 [[package]]
 name = "deno_lockfile"
-version = "0.50.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.51.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "async-trait",
  "deno_semver",
@@ -2572,8 +2564,8 @@ dependencies = [
 
 [[package]]
 name = "deno_maybe_sync"
-version = "0.35.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.36.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "dashmap",
 ]
@@ -2592,8 +2584,8 @@ dependencies = [
 
 [[package]]
 name = "deno_napi"
-version = "0.179.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.180.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2622,8 +2614,8 @@ dependencies = [
 
 [[package]]
 name = "deno_net"
-version = "0.240.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.241.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2650,8 +2642,8 @@ dependencies = [
 
 [[package]]
 name = "deno_node"
-version = "0.186.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.187.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "base64 0.22.1",
  "boxed_error",
@@ -2706,8 +2698,8 @@ dependencies = [
 
 [[package]]
 name = "deno_node_crypto"
-version = "0.18.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.19.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "aead-gcm-stream",
  "aes",
@@ -2733,6 +2725,7 @@ dependencies = [
  "elliptic-curve 0.13.8",
  "faster-hex",
  "hkdf",
+ "hmac 0.12.1",
  "k256",
  "md-5 0.10.6",
  "md4",
@@ -2767,8 +2760,8 @@ dependencies = [
 
 [[package]]
 name = "deno_node_sqlite"
-version = "0.18.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.19.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2779,8 +2772,8 @@ dependencies = [
 
 [[package]]
 name = "deno_npm"
-version = "0.60.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.61.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "async-trait",
  "capacity_builder",
@@ -2800,8 +2793,8 @@ dependencies = [
 
 [[package]]
 name = "deno_npmrc"
-version = "0.9.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.10.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "log",
  "monch",
@@ -2812,8 +2805,8 @@ dependencies = [
 
 [[package]]
 name = "deno_ops"
-version = "0.277.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.278.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "indexmap 2.13.0",
  "proc-macro2",
@@ -2828,8 +2821,8 @@ dependencies = [
 
 [[package]]
 name = "deno_os"
-version = "0.65.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.66.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2846,8 +2839,8 @@ dependencies = [
 
 [[package]]
 name = "deno_package_json"
-version = "0.50.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.51.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "boxed_error",
  "capacity_builder",
@@ -2878,8 +2871,8 @@ dependencies = [
 
 [[package]]
 name = "deno_permissions"
-version = "0.107.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.108.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "capacity_builder",
  "chrono",
@@ -2907,8 +2900,8 @@ dependencies = [
 
 [[package]]
 name = "deno_process"
-version = "0.63.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.64.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2936,8 +2929,8 @@ dependencies = [
 
 [[package]]
 name = "deno_resolver"
-version = "0.79.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.80.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "anyhow",
  "async-once-cell",
@@ -2998,8 +2991,8 @@ dependencies = [
 
 [[package]]
 name = "deno_signals"
-version = "0.39.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.40.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "libc",
  "signal-hook",
@@ -3010,8 +3003,8 @@ dependencies = [
 
 [[package]]
 name = "deno_subprocess_windows"
-version = "0.43.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.44.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "fastrand",
  "futures-channel",
@@ -3021,8 +3014,8 @@ dependencies = [
 
 [[package]]
 name = "deno_telemetry"
-version = "0.70.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.71.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "async-trait",
  "deno_core",
@@ -3066,8 +3059,8 @@ dependencies = [
 
 [[package]]
 name = "deno_tls"
-version = "0.235.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.236.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -3112,8 +3105,8 @@ dependencies = [
 
 [[package]]
 name = "deno_web"
-version = "0.279.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.280.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "async-trait",
  "brotli 6.0.0",
@@ -3134,16 +3127,16 @@ dependencies = [
 
 [[package]]
 name = "deno_webidl"
-version = "0.248.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.249.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "deno_core",
 ]
 
 [[package]]
 name = "deno_websocket"
-version = "0.253.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.254.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "bytes",
  "deno_core",
@@ -3175,8 +3168,8 @@ dependencies = [
 
 [[package]]
 name = "denort_helper"
-version = "0.46.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.47.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "deno_error",
  "deno_path_util",
@@ -5906,8 +5899,8 @@ dependencies = [
 
 [[package]]
 name = "napi_sym"
-version = "0.178.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.179.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "quote",
  "serde",
@@ -6523,8 +6516,8 @@ dependencies = [
 
 [[package]]
 name = "node_resolver"
-version = "0.86.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.87.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6552,8 +6545,8 @@ dependencies = [
 
 [[package]]
 name = "node_shim"
-version = "0.23.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.24.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "exec",
  "serde_json",
@@ -8806,8 +8799,8 @@ dependencies = [
 
 [[package]]
 name = "serde_v8"
-version = "0.310.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.0-nimbus.15#1f101bf0032a223463507f500ddd236afebd9fcc"
+version = "0.311.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.8.1-nimbus.1#18f76a9a19ab74d49d9a40037733cc4aec983d26"
 dependencies = [
  "deno_error",
  "num-bigint",
@@ -10807,8 +10800,8 @@ dependencies = [
 
 [[package]]
 name = "v8"
-version = "149.0.0"
-source = "git+https://github.com/nimbus/rusty_v8?tag=v149.0.0-nimbus.1#9b77553883f1117ab3df62709b8673b803ed721b"
+version = "149.2.0"
+source = "git+https://github.com/nimbus/rusty_v8?tag=v149.2.0-nimbus.1#ce6663111a3ff8fde06bc04ba19bbbced60dbc8d"
 dependencies = [
  "bindgen 0.72.1",
  "bitflags",
