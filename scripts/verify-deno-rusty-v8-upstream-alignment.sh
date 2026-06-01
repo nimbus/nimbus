@@ -81,9 +81,9 @@ required_proofs=(
   "${PROOF_DIR}/dua0-baseline.md"
   "${PROOF_DIR}/dua0-control-plane.md"
   "${PROOF_DIR}/dua1-deno-overlap-audit.md"
-  "${PROOF_DIR}/dua2-deno-rebase.md"
-  "${PROOF_DIR}/dua3-dirty-work-reevaluation.md"
-  "${PROOF_DIR}/dua4-rusty-v8-alignment.md"
+  "${PROOF_DIR}/dua2-rusty-v8-alignment.md"
+  "${PROOF_DIR}/dua3-deno-rebase.md"
+  "${PROOF_DIR}/dua4-dirty-work-reevaluation.md"
   "${PROOF_DIR}/dua5-nimbus-repin.md"
   "${PROOF_DIR}/dua6-node-compat-rebaseline.md"
   "${PROOF_DIR}/dua7-docs-and-ledgers.md"
@@ -149,73 +149,79 @@ else
   fail "module.enableCompileCache disposition missing" "Expected upstream-replaced/drop or product-specific exception"
 fi
 
-step 6 "Deno candidate is based on upstream v2.8.1"
-if [ -f "${PROOF_DIR}/dua2-deno-rebase.md" ] &&
-   has 'v2\.8\.1|denoland/deno@v2\.8\.1' "${PROOF_DIR}/dua2-deno-rebase.md"; then
-  pass "DUA2 records Deno v2.8.1 rebase"
+step 6 "rusty_v8 substrate is aligned before Deno replay"
+if [ -f "${PROOF_DIR}/dua2-rusty-v8-alignment.md" ] &&
+   has 'Locker|UnenteredIsolate' "${PROOF_DIR}/dua2-rusty-v8-alignment.md" &&
+   has 'v149\.2\.0' "${PROOF_DIR}/dua2-rusty-v8-alignment.md" &&
+   has 'lockstep|compatible runtime stack|Deno-compatible|matching.*V8' "${PROOF_DIR}/dua2-rusty-v8-alignment.md" &&
+   has 'before.*Deno|precede.*Deno|prior to.*Deno|before.*replay' "${PROOF_DIR}/dua2-rusty-v8-alignment.md"; then
+  pass "DUA2 records lockstep V8 substrate alignment before Deno replay"
 else
-  fail "Deno v2.8.1 rebase proof missing" "Expected Deno candidate based on upstream v2.8.1"
+  fail "rusty_v8 substrate alignment proof missing" "Expected Deno-compatible v149.2.0 stack proof before Deno replay"
 fi
 
-step 7 "Upstream-replaced patches are absent after rebase"
-if [ -f "${PROOF_DIR}/dua2-deno-rebase.md" ] &&
-   has 'No upstream-replaced.*remain|upstream-replaced.*absent' "${PROOF_DIR}/dua2-deno-rebase.md"; then
-  pass "DUA2 proves upstream-replaced patches are absent"
+step 7 "rusty_v8 rebase preserves locker APIs or blocks on verification"
+if [ -f "${PROOF_DIR}/dua2-rusty-v8-alignment.md" ] &&
+   { has 'v149\.2\.0-nimbus\.1.*Locker.*UnenteredIsolate' "${PROOF_DIR}/dua2-rusty-v8-alignment.md" ||
+     has 'blocked|hold' "${PROOF_DIR}/dua2-rusty-v8-alignment.md" &&
+     has 'build|safety|runtime verification' "${PROOF_DIR}/dua2-rusty-v8-alignment.md" &&
+     has 'Locker|UnenteredIsolate' "${PROOF_DIR}/dua2-rusty-v8-alignment.md"; }; then
+  pass "DUA2 proves rebase preservation or a verification-blocked hold"
+else
+  fail "rusty_v8 preservation/blocked-hold proof missing" "Expected v149.2.0-nimbus.* with locker APIs or exact build/safety/runtime blocker"
+fi
+
+step 8 "No-benefit hold is rejected"
+if [ -f "${PROOF_DIR}/dua2-rusty-v8-alignment.md" ] &&
+   has 'no immediate Node.*not.*hold|fixture.*gain.*not.*hold|not a valid hold reason|insufficient hold reason' "${PROOF_DIR}/dua2-rusty-v8-alignment.md"; then
+  pass "DUA2 rejects lack of immediate Node fixture gain as a hold reason"
+else
+  fail "rusty_v8 no-benefit hold rejection missing" "Expected proof that lack of fixture gain is not a valid hold reason"
+fi
+
+step 9 "Deno candidate is based on upstream v2.8.1 and selected V8 substrate"
+if [ -f "${PROOF_DIR}/dua3-deno-rebase.md" ] &&
+   has 'v2\.8\.1|denoland/deno@v2\.8\.1' "${PROOF_DIR}/dua3-deno-rebase.md" &&
+   has 'DUA2|v149\.2\.0|rusty_v8|V8 substrate' "${PROOF_DIR}/dua3-deno-rebase.md"; then
+  pass "DUA3 records Deno v2.8.1 rebase on the selected V8 substrate"
+else
+  fail "Deno v2.8.1 rebase proof missing" "Expected Deno candidate based on upstream v2.8.1 and the DUA2 V8 decision"
+fi
+
+step 10 "Upstream-replaced patches are absent after rebase"
+if [ -f "${PROOF_DIR}/dua3-deno-rebase.md" ] &&
+   has 'No upstream-replaced.*remain|upstream-replaced.*absent' "${PROOF_DIR}/dua3-deno-rebase.md"; then
+  pass "DUA3 proves upstream-replaced patches are absent"
 else
   fail "Upstream-replaced patch cleanup unproven" "Expected proof that dropped patches are absent from the diff"
 fi
 
-step 8 "Replay patches have owner, evidence, and triggers"
-if [ -f "${PROOF_DIR}/dua2-deno-rebase.md" ] &&
-   has 'owner repo|source location|focused verification|removal trigger|upstream trigger' "${PROOF_DIR}/dua2-deno-rebase.md"; then
+step 11 "Replay patches have owner, evidence, and triggers"
+if [ -f "${PROOF_DIR}/dua3-deno-rebase.md" ] &&
+   has 'owner repo|source location|focused verification|removal trigger|upstream trigger' "${PROOF_DIR}/dua3-deno-rebase.md"; then
   pass "Replayed Deno patches carry owner/evidence/removal triggers"
 else
   fail "Replayed Deno patch evidence incomplete" "Expected source locations, owner repo, tests, and triggers"
 fi
 
-step 9 "Dirty Deno work reevaluated"
-if [ -f "${PROOF_DIR}/dua3-dirty-work-reevaluation.md" ] &&
-   has 'CommonJS global path|node:v8|crypto random|cipher|internal_binding' "${PROOF_DIR}/dua3-dirty-work-reevaluation.md" &&
-   has 'dropped|upstream-replaced|committed|disposition' "${PROOF_DIR}/dua3-dirty-work-reevaluation.md"; then
-  pass "DUA3 reevaluates current dirty/fresh Node compatibility work"
+step 12 "Dirty Deno work reevaluated"
+if [ -f "${PROOF_DIR}/dua4-dirty-work-reevaluation.md" ] &&
+   has 'CommonJS global path|node:v8|crypto random|cipher|internal_binding' "${PROOF_DIR}/dua4-dirty-work-reevaluation.md" &&
+   has 'dropped|upstream-replaced|committed|disposition' "${PROOF_DIR}/dua4-dirty-work-reevaluation.md"; then
+  pass "DUA4 reevaluates current dirty/fresh Node compatibility work"
 else
-  fail "DUA3 dirty-work reevaluation missing" "Expected loader, V8, crypto, and internal binding disposition proof"
+  fail "DUA4 dirty-work reevaluation missing" "Expected loader, V8, crypto, and internal binding disposition proof"
 fi
 
-step 10 "rusty_v8 direct bump safety decision"
-if [ -f "${PROOF_DIR}/dua4-rusty-v8-alignment.md" ] &&
-   has 'Locker|UnenteredIsolate' "${PROOF_DIR}/dua4-rusty-v8-alignment.md" &&
-   has 'v149\.2\.0' "${PROOF_DIR}/dua4-rusty-v8-alignment.md" &&
-   has 'direct bump.*reject|rebase|hold' "${PROOF_DIR}/dua4-rusty-v8-alignment.md"; then
-  pass "DUA4 records rusty_v8 v149.2.0 decision without dropping locker safety"
-else
-  fail "rusty_v8 alignment decision missing" "Expected direct-bump rejection/rebase/hold proof"
-fi
-
-step 11 "rusty_v8 rebase preserves locker APIs or records hold"
-if [ -f "${PROOF_DIR}/dua4-rusty-v8-alignment.md" ] &&
-   { has 'v149\.2\.0-nimbus\.1.*Locker.*UnenteredIsolate' "${PROOF_DIR}/dua4-rusty-v8-alignment.md" ||
-     has 'hold.*v149\.0\.0-nimbus\.1.*Locker.*UnenteredIsolate' "${PROOF_DIR}/dua4-rusty-v8-alignment.md"; }; then
-  pass "DUA4 proves rebase preservation or hold rationale"
-else
-  fail "rusty_v8 preservation/hold proof missing" "Expected locker API preservation or explicit hold rationale"
-fi
-
-step 12 "Hold decision compares consumed upstream behavior"
-if [ -f "${PROOF_DIR}/dua4-rusty-v8-alignment.md" ] &&
-   has 'annex teardown|consumed runtime benefit|v149\.2\.0' "${PROOF_DIR}/dua4-rusty-v8-alignment.md"; then
-  pass "DUA4 compares consumed rusty_v8 upstream behavior"
-else
-  fail "rusty_v8 consumed-benefit comparison missing" "Expected v149.2.0 benefit/hold analysis"
-fi
-
-step 13 "Nimbus pins immutable published fork tags"
+step 13 "Nimbus pins immutable published lockstep fork tags"
 if grep -Eq 'tag = "v2\.8\.1-nimbus\.[0-9]+"' Cargo.toml 2>/dev/null &&
    grep -Eq 'git\+https://github.com/nimbus/deno\?tag=v2\.8\.1-nimbus\.[0-9]+#[a-f0-9]{40}' Cargo.lock 2>/dev/null &&
-   ! grep -Eq 'path = "|/private/tmp|/Users/jack/src/github.com/nimbus/deno' Cargo.toml Cargo.lock 2>/dev/null; then
-  pass "Nimbus Cargo pins use immutable published upstream-aligned Deno tag"
+   grep -Eq 'v8 = \{ git = "https://github.com/nimbus/rusty_v8", tag = "v149\.2\.0-nimbus\.[0-9]+"' Cargo.toml 2>/dev/null &&
+   grep -Eq 'git\+https://github.com/nimbus/rusty_v8\?tag=v149\.2\.0-nimbus\.[0-9]+#[a-f0-9]{40}' Cargo.lock 2>/dev/null &&
+   ! grep -Eq 'path = "|/private/tmp|/Users/jack/src/github.com/nimbus/(deno|rusty_v8)' Cargo.toml Cargo.lock 2>/dev/null; then
+  pass "Nimbus Cargo pins use immutable published lockstep Deno and rusty_v8 tags"
 else
-  fail "Nimbus repin incomplete" "Expected v2.8.1-nimbus.* git tag/SHA and no local path overrides"
+  fail "Nimbus repin incomplete" "Expected v2.8.1-nimbus.* Deno and v149.2.0-nimbus.* rusty_v8 git tag/SHAs with no local path overrides"
 fi
 
 step 14 "Fork provenance and upstream policy pass"

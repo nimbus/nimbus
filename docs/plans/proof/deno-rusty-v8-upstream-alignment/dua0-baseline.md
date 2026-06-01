@@ -4,7 +4,7 @@ status: in_progress
 date: 2026-06-01
 branch: codex/deno-rusty-v8-upstream-alignment
 worktree: /Users/jack/src/github.com/nimbus/nimbus-worktrees/deno-rusty-v8-upstream-alignment
-pr: pending first push and draft PR creation
+pr: blocked pending GitHub PR creation authority
 verifier: scripts/verify-deno-rusty-v8-upstream-alignment.sh
 
 ## Proof Contract Checklist
@@ -42,7 +42,7 @@ Nimbus control branch:
 | Branch base | `codex/node-default-runtime-support-hardening` |
 | Base commit | `001d3c2dbe199d671184d2c9293c4d47d001c029` |
 | NDS PR | `https://github.com/nimbus/nimbus/pull/10` |
-| DUA draft PR | pending first push and draft PR creation |
+| DUA draft PR | blocked pending GitHub PR creation authority |
 
 Current Nimbus runtime pins:
 
@@ -100,8 +100,8 @@ any dirty fork work, with exactly one allowed disposition:
 | Scope | DUA0 disposition |
 | --- | --- |
 | Deno fork patch stack through `v2.8.0-nimbus.15` | deferred to DUA1 |
-| Deno `.15` loader/crypto/V8 work | deferred to DUA3 reevaluation after upstream 2.8.1 baseline |
-| `rusty_v8` `v149.0.0-nimbus.1` locker/safety stack | deferred to DUA4 |
+| Deno `.15` loader/crypto/V8 work | deferred to DUA4 reevaluation after upstream 2.8.1 and the selected V8 substrate |
+| `rusty_v8` `v149.0.0-nimbus.1` locker/safety stack | deferred to DUA2 before Deno replay; expected output is a Deno-compatible `v149.2.0-nimbus.1` candidate unless build, safety, or runtime verification blocks the rebase |
 
 ## Implementation Evidence
 
@@ -136,10 +136,36 @@ was created:
 bash scripts/verify-deno-rusty-v8-upstream-alignment.sh
 ```
 
-Observed: `3 passed, 20 failed`. The passes prove the scaffold can see the
-DUA0 baseline/control-plane details, fork bump ledger, and DUA docs; the
-failures are expected because DUA0 still needs the draft PR URL and DUA1-DUA8
-are not complete yet.
+Observed at DUA0 start: `3 passed, 20 failed`. After the DUA1 overlap-audit
+evidence and the `rusty_v8`-first order correction, the verifier reports
+`5 passed, 18 failed`. The passes prove the scaffold can see the DUA0
+baseline/control-plane details, fork bump ledger, DUA docs, DUA1 patch
+classification, and compile-cache disposition; the failures are expected
+because DUA0 still needs the draft PR URL and DUA2-DUA8 are not complete yet.
+
+Draft PR creation attempts:
+
+```console
+git push -u origin codex/deno-rusty-v8-upstream-alignment
+gh auth status
+```
+
+Observed:
+
+- Branch pushed to `origin/codex/deno-rusty-v8-upstream-alignment`.
+- `gh auth status` reports invalid stored tokens for the available accounts and
+  instructs re-authentication with `gh auth login -h github.com`.
+
+GitHub connector PR creation was also attempted for:
+
+| Field | Value |
+| --- | --- |
+| Repository | `nimbus/nimbus` |
+| Head | `codex/deno-rusty-v8-upstream-alignment` |
+| Base | `codex/node-default-runtime-support-hardening` |
+| Draft | `true` |
+
+Observed connector result: `403 Resource not accessible by integration`.
 
 ## Broad Verification
 
@@ -162,8 +188,13 @@ after the upstream-aligned fork tags are published and Nimbus is repinned.
 ## Residual Risks
 
 - DUA0 still needs the DUA draft PR URL recorded before it can be marked done.
+  The branch is pushed, but both available autonomous PR creation paths are
+  blocked: `gh` tokens are invalid and the GitHub connector lacks permission to
+  create this PR.
 - DUA1 may find that some `.15` fixes overlap upstream 2.8.1 and should be
   dropped instead of replayed.
-- DUA4 may decide to hold `rusty_v8` at `v149.0.0-nimbus.1` if upstream
-  `v149.2.0` does not add consumed behavior beyond fixes Nimbus already carries
-  or if rebasing would risk the `Locker` / `UnenteredIsolate` safety stack.
+- DUA2 should update `rusty_v8` in lockstep with the selected Deno base before
+  Deno patch replay. A hold at `v149.0.0-nimbus.1` is valid only if the
+  `v149.2.0` rebase cannot preserve build, runtime, or `Locker` /
+  `UnenteredIsolate` safety verification.
+  Lack of immediate Node fixture-count improvement is not a valid hold reason.

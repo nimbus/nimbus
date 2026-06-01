@@ -4,7 +4,7 @@ status: in_progress
 date: 2026-06-01
 branch: codex/deno-rusty-v8-upstream-alignment
 worktree: /Users/jack/src/github.com/nimbus/nimbus-worktrees/deno-rusty-v8-upstream-alignment
-pr: pending first push and draft PR creation
+pr: blocked pending GitHub PR creation authority
 verifier: scripts/verify-deno-rusty-v8-upstream-alignment.sh
 
 ## Proof Contract Checklist
@@ -40,7 +40,7 @@ stale `v2.8.0-nimbus.15` fork stack.
 | Base branch | `codex/node-default-runtime-support-hardening` |
 | Base commit | `001d3c2dbe199d671184d2c9293c4d47d001c029` |
 | NDS draft PR | `https://github.com/nimbus/nimbus/pull/10` |
-| DUA draft PR | pending first push and draft PR creation |
+| DUA draft PR | blocked pending GitHub PR creation authority |
 | Upstream Deno target | `denoland/deno@v2.8.1` |
 | Upstream rusty_v8 target | `denoland/rusty_v8@v149.2.0` |
 
@@ -49,6 +49,11 @@ verifier, and `.15` provenance updates are introduced by that checkpoint. The
 DUA draft PR should therefore use base
 `codex/node-default-runtime-support-hardening` until PR #10 lands, then retarget
 or rebase as needed.
+
+The Deno and `rusty_v8` targets are a lockstep runtime stack. DUA should update
+to the Deno-compatible `rusty_v8` line before rebuilding the Deno fork, even if
+that does not immediately raise Node fixture counts; holding the old V8 fork
+requires an exact build, safety, or runtime verification blocker.
 
 ## Disposition Table
 
@@ -99,6 +104,13 @@ The DUA branch should be pushed and opened as a draft PR with:
 | Draft | yes |
 | Title | `[codex] Align Deno and rusty_v8 upstream baselines` |
 
+The branch was pushed to `origin/codex/deno-rusty-v8-upstream-alignment`, but
+autonomous draft PR creation is currently blocked:
+
+- `gh auth status` reports invalid stored tokens for the available accounts.
+- The GitHub connector returned `403 Resource not accessible by integration`
+  when asked to create the stacked draft PR.
+
 After the PR exists, update this file, `dua0-baseline.md`, and the DUA plan
 ledger with the PR URL, then mark DUA0 `done`.
 
@@ -121,6 +133,7 @@ compatibility groups after the repin.
 
 ## Residual Risks
 
-- DUA0 remains in progress until the DUA draft PR URL is recorded.
+- DUA0 remains in progress until the DUA draft PR URL is recorded. The branch
+  is pushed; only PR creation authority is blocked.
 - The DUA branch is stacked on PR #10; if PR #10 is rebased or retargeted,
   retarget this branch before closeout.
