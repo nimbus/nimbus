@@ -1591,9 +1591,32 @@ function createLoadEnvFileNotFoundError(path) {
 
 function isLoadEnvFileAccessDeniedError(error) {
   return error?.name === "NotCapable"
+    || error?.code === "ERR_ACCESS_DENIED"
+    || error?.permission === "FileSystemRead"
     || (
       typeof error?.message === "string"
-      && error.message.includes("Requires read access to")
+      && (
+        error.message.includes("Requires read access to") ||
+        error.message.includes("Access to this API has been restricted") ||
+        error.message.includes("runtime read capability denied")
+      )
+    );
+}
+
+function isLoadEnvFileNotFoundError(error) {
+  const message = typeof error?.message === "string" ? error.message : "";
+  return error?.name === "NotFound"
+    || error?.code === "ENOENT"
+    || error?.nimbusHostError?.code === "ENOENT"
+    || message.includes("No such file or directory")
+    || message.includes("os error 2");
+}
+
+function isLoadEnvFileInvalidDataError(error) {
+  return error?.name === "InvalidData"
+    || (
+      typeof error?.message === "string"
+      && error.message.includes("stream did not contain valid UTF-8")
     );
 }
 
@@ -1634,12 +1657,15 @@ function seedNodeProcessEnvOverlay(nodeProcess) {
 }
 
 function rememberLoadedEnvFileEntries(nodeProcess, path) {
+  const source = runtimeReadTextFileSync(resolveLoadEnvFilePath(nodeProcess, path));
+  applyLoadedEnvFileEntries(nodeProcess, source);
+}
+
+function applyLoadedEnvFileEntries(nodeProcess, source) {
   const overlayEntries = seedNodeProcessEnvOverlay(nodeProcess);
   if (!overlayEntries) {
     return;
   }
-
-  const source = runtimeReadTextFileSync(resolveLoadEnvFilePath(nodeProcess, path));
 
   for (const [key, value] of Object.entries(runtimeParseEnv(source))) {
     try {
@@ -1651,7 +1677,32 @@ function rememberLoadedEnvFileEntries(nodeProcess, path) {
         continue;
       }
     }
+    try {
+      nodeProcess.env[key] = value;
+    } catch (_error) {
+      // Keep the internal overlay in sync for embedders that expose a
+      // read-only env object while still allowing loadEnvFile visibility.
+    }
     overlayEntries[key] = value;
+  }
+}
+
+function loadEnvFileThroughNimbusHost(nodeProcess, resolvedPath, displayPath) {
+  try {
+    const source = runtimeReadTextFileSync(resolvedPath);
+    applyLoadedEnvFileEntries(nodeProcess, source);
+    return undefined;
+  } catch (fallbackError) {
+    if (isLoadEnvFileAccessDeniedError(fallbackError)) {
+      throw createLoadEnvFileAccessDeniedError(displayPath, fallbackError);
+    }
+    if (isLoadEnvFileNotFoundError(fallbackError)) {
+      throw createLoadEnvFileNotFoundError(displayPath);
+    }
+    if (isLoadEnvFileInvalidDataError(fallbackError)) {
+      throw new TypeError(`Contents of '${displayPath}' should be a valid string.`);
+    }
+    throw fallbackError;
   }
 }
 
@@ -1748,6 +1799,7 @@ function normalizeFsReadLength(buffer, offset, length) {
 
 const nimbusFileHandleGcPatched = Symbol("nimbus.fileHandleGcPatched");
 const nimbusFsPromisesLifecyclePatched = Symbol("nimbus.fsPromisesLifecyclePatched");
+const nimbusFsWatchPatched = Symbol("nimbus.fsWatchPatched");
 const nimbusFsPromisesWatchPatched = Symbol("nimbus.fsPromisesWatchPatched");
 const nimbusOriginalFileHandleFdGetter =
   Object.getOwnPropertyDescriptor(nodeInternalFsFileHandle?.prototype ?? {}, "fd")?.get;
@@ -1820,6 +1872,16 @@ function createFsPromisesWatchAbortError(cause = undefined) {
   if (cause !== undefined) {
     error.cause = cause;
   }
+  return error;
+}
+
+function createFsWatchNotFoundError(path) {
+  const error = new Error(`ENOENT: no such file or directory, watch '${path}'`);
+  error.errno = -2;
+  error.code = "ENOENT";
+  error.syscall = "watch";
+  error.path = path;
+  error.filename = path;
   return error;
 }
 
@@ -2293,6 +2355,37 @@ function patchNodeFsReadSemantics(nodeProcess) {
     nodeFs.truncate = patchedTruncate;
   }
 
+  const originalWatch = nodeFs.watch;
+  if (typeof originalWatch === "function" && originalWatch[nimbusFsWatchPatched] !== true) {
+    const patchedWatch = function (filename, optionsOrListener = undefined, listener = undefined) {
+      const options = optionsOrListener !== null && typeof optionsOrListener === "object"
+        ? optionsOrListener
+        : listener !== null && typeof listener === "object"
+        ? listener
+        : undefined;
+      if (options?.throwIfNoEntry !== false) {
+        const watchPath = nodeFsGetValidatedPathToString(filename);
+        try {
+          nodeFs.statSync(watchPath);
+        } catch (error) {
+          if (error?.code === "ENOENT" || error?.code === "ENOTDIR") {
+            throw createFsWatchNotFoundError(watchPath);
+          }
+          throw error;
+        }
+      }
+      return Reflect.apply(originalWatch, this, arguments);
+    };
+    Object.defineProperties(patchedWatch, Object.getOwnPropertyDescriptors(originalWatch));
+    Object.defineProperty(patchedWatch, nimbusFsWatchPatched, {
+      value: true,
+      configurable: false,
+      enumerable: false,
+      writable: false,
+    });
+    nodeFs.watch = patchedWatch;
+  }
+
   const nodeFsPromiseTargets = getNodeFsPromiseTargets(nodeFs, nodeProcess);
   const nodeFsCloseSync = nodeFs.closeSync;
   if (
@@ -2628,7 +2721,7 @@ function seedNodeProcessLoadEnvFile(nodeProcess) {
     } catch (error) {
       if (error !== undefined) {
         if (isLoadEnvFileAccessDeniedError(error)) {
-          throw createLoadEnvFileAccessDeniedError(displayPath, error);
+          return loadEnvFileThroughNimbusHost(nodeProcess, resolvedPath, displayPath);
         }
         throw error;
       }
