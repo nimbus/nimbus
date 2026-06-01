@@ -27,7 +27,7 @@ verifier: scripts/verify-deno-rusty-v8-upstream-alignment.sh
    assets publicly visible and is missing the hardened release workflow source.
    Local Mac `cargo check` remains blocked until a superseding
    `v149.2.0-nimbus.*` tag from the corrected branch publishes a complete
-   asset set.
+   draft-to-public asset set.
 
 ## Row And Status
 
@@ -44,7 +44,7 @@ to the DUA1 hunk-level map.
 | Candidate head | `e65ddf9dc4a74b0adca7ef1d423dae47afa7caf7` |
 | Selected rusty_v8 tag | `v149.2.0-nimbus.1` currently pinned; superseding `v149.2.0-nimbus.2` required before closeout consumption |
 | rusty_v8 tag SHA | `ce6663111a3ff8fde06bc04ba19bbbced60dbc8d` |
-| Corrected rusty_v8 branch head | `2adb5eff72e2a7b62d0546f282b5c40f27ac9678` |
+| Corrected rusty_v8 branch head | `83451cd2967ed8467dece09e9c847c2d6d882901` |
 
 ## Input Baseline
 
@@ -185,9 +185,10 @@ Observed:
   Mac job: each matrix job published directly to the public GitHub release, so
   downstream Cargo could observe a partial release. The corrected
   `nimbus/v149.2.0` branch head `2adb5ef` moves publishing into a final
-  tag-only job after an explicit 16-file asset check. DUA3 should not close on
-  `.1`; DUA5 must tag and consume a superseding release from the hardened
-  branch.
+  tag-only job after an explicit 16-file asset check, and `83451cd` keeps the
+  GitHub release as a draft until all verified assets upload. DUA3 should not
+  close on `.1`; DUA5 must tag and consume a superseding release from the
+  hardened branch.
 - `bash scripts/verify-deno-rusty-v8-upstream-alignment.sh` reports
   `11 passed, 12 failed`. The remaining failures are DUA4 through DUA8 plus
   closeout and repin gates that have not run yet.
@@ -213,7 +214,7 @@ fork tags.
   the changed crates. The current blocker is release-artifact trust for
   `rusty_v8`, not a Deno source conflict.
 - DUA5 must use a superseding `v149.2.0-nimbus.*` tag from corrected branch
-  head `2adb5eff72e2a7b62d0546f282b5c40f27ac9678` or later; do not consume
+  head `83451cd2967ed8467dece09e9c847c2d6d882901` or later; do not consume
   `.1` for closeout.
 - DUA4 still needs focused behavioral reevaluation for CommonJS global path
   resolution, `node:v8` serializer/deserializer and host-object behavior,

@@ -18,12 +18,12 @@ Current DUA draft PR: `https://github.com/nimbus/nimbus/pull/11`
 Current source worktree: `/Users/jack/src/github.com/nimbus/deno`
 Current `rusty_v8` candidate branch: `nimbus/v149.2.0`
 Current `rusty_v8` candidate branch head:
-`2adb5eff72e2a7b62d0546f282b5c40f27ac9678`
+`83451cd2967ed8467dece09e9c847c2d6d882901`
 Current `rusty_v8` candidate release tag: superseding
 `v149.2.0-nimbus.2` is pending corrected branch CI; do not consume
 `v149.2.0-nimbus.1` for DUA closeout.
 Current DUA branch: `codex/deno-rusty-v8-upstream-alignment`
-Next action: wait for corrected `rusty_v8` branch CI run `26769336904`; if it
+Next action: wait for corrected `rusty_v8` branch CI run `26769536048`; if it
 passes, create and push `v149.2.0-nimbus.2`, update the Deno fork pin and
 lockfile to that tag, then rerun the focused Deno fork `cargo check`.
 
