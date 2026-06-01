@@ -204,6 +204,10 @@ Observed:
   assets while the `aarch64-apple-darwin` job was still in progress and no Mac
   assets were present. That partial-publication window is not acceptable for
   DUA closeout.
+- The `.1` tag workflow later completed successfully and the release reached
+  the full 16-asset set. That makes `.1` usable for diagnostic fork checks, but
+  does not fix the fact that it was publicly partial and its immutable source
+  lacks the hardened draft-release workflow required for DUA5 consumption.
 
 ## Broad Verification
 
