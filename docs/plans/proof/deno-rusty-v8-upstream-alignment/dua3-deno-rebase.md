@@ -23,9 +23,11 @@ verifier: scripts/verify-deno-rusty-v8-upstream-alignment.sh
    below, including the current release-artifact blocker.
 6. **Broad verification.** DUA3 does not claim broad Node compatibility moves.
    DUA6 owns the post-repin broad rebaseline.
-7. **Residual risks.** Missing Mac prebuilt assets for
-   `v149.2.0-nimbus.1` block local Mac `cargo check`; DUA5 must validate or
-   supersede the release tag before Nimbus repin.
+7. **Residual risks.** The initial `v149.2.0-nimbus.1` release made partial
+   assets publicly visible and is missing the hardened release workflow source.
+   Local Mac `cargo check` remains blocked until a superseding
+   `v149.2.0-nimbus.*` tag from the corrected branch publishes a complete
+   asset set.
 
 ## Row And Status
 
@@ -40,9 +42,9 @@ to the DUA1 hunk-level map.
 | Remote branch | `origin/nimbus/v2.8.1` |
 | Upstream base | `v2.8.1` / `3e2030bc01776ce6b4ca355b1e78c4cb98c82dca` |
 | Candidate head | `e65ddf9dc4a74b0adca7ef1d423dae47afa7caf7` |
-| Selected rusty_v8 tag | `v149.2.0-nimbus.1` |
+| Selected rusty_v8 tag | `v149.2.0-nimbus.1` currently pinned; superseding `v149.2.0-nimbus.2` required before closeout consumption |
 | rusty_v8 tag SHA | `ce6663111a3ff8fde06bc04ba19bbbced60dbc8d` |
-| Corrected rusty_v8 branch head | `d247474e613e8050fef0348cf11f5e01bd94cdfd` |
+| Corrected rusty_v8 branch head | `2adb5eff72e2a7b62d0546f282b5c40f27ac9678` |
 
 ## Input Baseline
 
@@ -179,6 +181,13 @@ Observed:
   showed Linux and Windows assets present, but no `aarch64-apple-darwin`
   assets yet. The matching tag workflow's `release aarch64-apple-darwin` job
   was still `in_progress`.
+- Review of the tag workflow showed the deeper problem was not only a slow
+  Mac job: each matrix job published directly to the public GitHub release, so
+  downstream Cargo could observe a partial release. The corrected
+  `nimbus/v149.2.0` branch head `2adb5ef` moves publishing into a final
+  tag-only job after an explicit 16-file asset check. DUA3 should not close on
+  `.1`; DUA5 must tag and consume a superseding release from the hardened
+  branch.
 - `bash scripts/verify-deno-rusty-v8-upstream-alignment.sh` reports
   `11 passed, 12 failed`. The remaining failures are DUA4 through DUA8 plus
   closeout and repin gates that have not run yet.
@@ -201,11 +210,11 @@ fork tags.
 ## Residual Risks
 
 - DUA3 cannot close until the focused Deno `cargo check` reaches and verifies
-  the changed crates. The current blocker is a missing Mac prebuilt asset on
-  the immutable `v149.2.0-nimbus.1` release, not a source conflict.
-- If the `v149.2.0-nimbus.1` Mac job fails or never publishes the missing
-  assets, DUA5 must use a superseding `v149.2.0-nimbus.*` tag from corrected
-  branch head `d247474e613e8050fef0348cf11f5e01bd94cdfd`.
+  the changed crates. The current blocker is release-artifact trust for
+  `rusty_v8`, not a Deno source conflict.
+- DUA5 must use a superseding `v149.2.0-nimbus.*` tag from corrected branch
+  head `2adb5eff72e2a7b62d0546f282b5c40f27ac9678` or later; do not consume
+  `.1` for closeout.
 - DUA4 still needs focused behavioral reevaluation for CommonJS global path
   resolution, `node:v8` serializer/deserializer and host-object behavior,
   crypto random/cipher behavior, and `internal_binding` additions.
