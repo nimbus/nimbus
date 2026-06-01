@@ -22,6 +22,7 @@ RUST_EXECUTION_MARKERS = {
     "run_node_compat_watchpoint_batch(",
     "run_node_compat_watchpoint_entry_batch(",
     "run_node_compat_watchpoint_for_lane(",
+    "run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(",
 }
 FORCED_LANE_CLASSIFICATIONS: dict[str, dict[str, dict[str, str]]] = {
     "node24": {

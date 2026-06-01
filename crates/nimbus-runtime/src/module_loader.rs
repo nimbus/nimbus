@@ -3,6 +3,9 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::Arc;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+
 use crate::backends::v8::embedder::{
     JsErrorBox, ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader,
     ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, RequestedModuleType,
@@ -85,6 +88,9 @@ impl RestrictedModuleLoader {
         if specifier.scheme() == "ext" {
             return Ok(());
         }
+        if specifier.scheme() == "data" && self.compatibility_target.is_node() {
+            return Ok(());
+        }
         if specifier.scheme() != "file" {
             return Err(JsErrorBox::generic(format!(
                 "runtime bundle imports must stay within approved runtime roots, unsupported scheme: {}",
@@ -113,6 +119,9 @@ impl RestrictedModuleLoader {
                 module_specifier,
                 None,
             ));
+        }
+        if module_specifier.scheme() == "data" && self.compatibility_target.is_node() {
+            return load_data_url_module_source(module_specifier, options);
         }
         let path = module_specifier.to_file_path().map_err(|_| {
             JsErrorBox::generic(format!("invalid file module specifier: {module_specifier}"))
@@ -265,6 +274,134 @@ impl ModuleLoader for RestrictedModuleLoader {
     }
 }
 
+fn load_data_url_module_source(
+    module_specifier: &ModuleSpecifier,
+    options: ModuleLoadOptions,
+) -> Result<ModuleSource, JsErrorBox> {
+    let (module_type, code) = data_url_module_source_bytes(module_specifier, &options)?;
+    Ok(ModuleSource::new(
+        module_type,
+        ModuleSourceCode::Bytes(code.into_boxed_slice().into()),
+        module_specifier,
+        None,
+    ))
+}
+
+fn data_url_module_source_bytes(
+    module_specifier: &ModuleSpecifier,
+    options: &ModuleLoadOptions,
+) -> Result<(ModuleType, Vec<u8>), JsErrorBox> {
+    let specifier = module_specifier.as_str();
+    let payload = specifier.strip_prefix("data:").ok_or_else(|| {
+        JsErrorBox::generic(format!("invalid data module specifier: {module_specifier}"))
+    })?;
+    let (media_type, encoded_data) = payload.split_once(',').ok_or_else(|| {
+        JsErrorBox::generic(format!("invalid data module specifier: {module_specifier}"))
+    })?;
+    let module_type = module_type_from_data_url_media_type(media_type, module_specifier, options)?;
+    let decoded = percent_decode_data_url_bytes(encoded_data, module_specifier)?;
+    let bytes = if data_url_media_type_is_base64(media_type) {
+        let encoded = std::str::from_utf8(&decoded).map_err(|error| {
+            JsErrorBox::generic(format!(
+                "invalid base64 data module specifier {module_specifier}: {error}"
+            ))
+        })?;
+        BASE64_STANDARD.decode(encoded).map_err(|error| {
+            JsErrorBox::generic(format!(
+                "invalid base64 data module specifier {module_specifier}: {error}"
+            ))
+        })?
+    } else {
+        decoded
+    };
+    Ok((module_type, bytes))
+}
+
+fn module_type_from_data_url_media_type(
+    media_type: &str,
+    module_specifier: &ModuleSpecifier,
+    options: &ModuleLoadOptions,
+) -> Result<ModuleType, JsErrorBox> {
+    let mime_type = data_url_mime_type(media_type);
+    let module_type = match mime_type.as_str() {
+        "text/javascript"
+        | "application/javascript"
+        | "text/ecmascript"
+        | "application/ecmascript" => ModuleType::JavaScript,
+        "application/json" => ModuleType::Json,
+        "application/wasm" => ModuleType::Wasm,
+        _ => {
+            return Err(JsErrorBox::generic(format!(
+                "Unknown module format: {mime_type} for URL {module_specifier}"
+            )));
+        }
+    };
+    ensure_json_import_attribute(&module_type, options)?;
+    Ok(module_type)
+}
+
+fn data_url_mime_type(media_type: &str) -> String {
+    media_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn data_url_media_type_is_base64(media_type: &str) -> bool {
+    media_type
+        .split(';')
+        .skip(1)
+        .any(|parameter| parameter.trim().eq_ignore_ascii_case("base64"))
+}
+
+fn percent_decode_data_url_bytes(
+    encoded_data: &str,
+    module_specifier: &ModuleSpecifier,
+) -> Result<Vec<u8>, JsErrorBox> {
+    let bytes = encoded_data.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let Some(high) = bytes.get(index + 1).copied() else {
+                return Err(invalid_percent_encoded_data_url(module_specifier));
+            };
+            let Some(low) = bytes.get(index + 2).copied() else {
+                return Err(invalid_percent_encoded_data_url(module_specifier));
+            };
+            let Some(high) = hex_digit_value(high) else {
+                return Err(invalid_percent_encoded_data_url(module_specifier));
+            };
+            let Some(low) = hex_digit_value(low) else {
+                return Err(invalid_percent_encoded_data_url(module_specifier));
+            };
+            decoded.push((high << 4) | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    Ok(decoded)
+}
+
+fn invalid_percent_encoded_data_url(module_specifier: &ModuleSpecifier) -> JsErrorBox {
+    JsErrorBox::generic(format!(
+        "invalid percent-encoded data module specifier: {module_specifier}"
+    ))
+}
+
+fn hex_digit_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
 fn module_type_from_path(
     path: &Path,
     options: &ModuleLoadOptions,
@@ -287,14 +424,23 @@ fn module_type_from_path(
         ModuleType::JavaScript
     };
 
-    if module_type == ModuleType::Json && options.requested_module_type != RequestedModuleType::Json
+    ensure_json_import_attribute(&module_type, options)?;
+    Ok(module_type)
+}
+
+fn ensure_json_import_attribute(
+    module_type: &ModuleType,
+    options: &ModuleLoadOptions,
+) -> Result<(), JsErrorBox> {
+    if module_type == &ModuleType::Json
+        && options.requested_module_type != RequestedModuleType::Json
     {
         return Err(JsErrorBox::generic(
             "Attempted to load JSON module without specifying \"type\": \"json\" attribute in the import statement.",
         ));
     }
 
-    Ok(module_type)
+    Ok(())
 }
 
 fn hash_module_source_bytes(bytes: &[u8]) -> u64 {
@@ -333,5 +479,73 @@ mod tests {
         assert!(!is_bare_package_specifier("data:text/javascript,export{}"));
         assert!(is_bare_package_specifier("@scope/pkg/subpath"));
         assert!(is_bare_package_specifier("minimatch"));
+    }
+
+    #[test]
+    fn data_url_module_source_decodes_percent_encoded_javascript() {
+        let specifier =
+            ModuleSpecifier::parse("data:text/javascript,export%20default%202").unwrap();
+        let options = ModuleLoadOptions {
+            requested_module_type: RequestedModuleType::None,
+            is_dynamic_import: false,
+            is_synchronous: false,
+        };
+
+        let (module_type, source) = data_url_module_source_bytes(&specifier, &options).unwrap();
+
+        assert_eq!(module_type, ModuleType::JavaScript);
+        assert_eq!(source, b"export default 2");
+    }
+
+    #[test]
+    fn data_url_module_source_decodes_base64_javascript() {
+        let specifier =
+            ModuleSpecifier::parse("data:text/javascript;base64,ZXhwb3J0IGRlZmF1bHQgNw==").unwrap();
+        let options = ModuleLoadOptions {
+            requested_module_type: RequestedModuleType::None,
+            is_dynamic_import: false,
+            is_synchronous: false,
+        };
+
+        let (module_type, source) = data_url_module_source_bytes(&specifier, &options).unwrap();
+
+        assert_eq!(module_type, ModuleType::JavaScript);
+        assert_eq!(source, b"export default 7");
+    }
+
+    #[test]
+    fn data_url_json_requires_import_attribute() {
+        let specifier = ModuleSpecifier::parse("data:application/json,{\"ok\":true}").unwrap();
+        let options = ModuleLoadOptions {
+            requested_module_type: RequestedModuleType::None,
+            is_dynamic_import: false,
+            is_synchronous: false,
+        };
+
+        let error = data_url_module_source_bytes(&specifier, &options).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("Attempted to load JSON module without specifying")
+        );
+    }
+
+    #[test]
+    fn data_url_unknown_mime_type_is_rejected() {
+        let specifier = ModuleSpecifier::parse("data:text/plain,export default 1").unwrap();
+        let options = ModuleLoadOptions {
+            requested_module_type: RequestedModuleType::None,
+            is_dynamic_import: false,
+            is_synchronous: false,
+        };
+
+        let error = data_url_module_source_bytes(&specifier, &options).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("Unknown module format: text/plain")
+        );
     }
 }

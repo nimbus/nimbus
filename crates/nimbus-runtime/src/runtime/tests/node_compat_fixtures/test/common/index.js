@@ -422,6 +422,28 @@ function expectsError(validator, exact) {
   }, exact);
 }
 
+function expectRequiredModule(mod, expectation, checkESModule = true) {
+  const { isModuleNamespaceObject } = require('util/types');
+  const clone = { ...mod };
+  if (Object.hasOwn(mod, 'default') && checkESModule) {
+    assert.strictEqual(mod.__esModule, true);
+    delete clone.__esModule;
+  }
+  assert(isModuleNamespaceObject(mod));
+  assert.deepStrictEqual(clone, { ...expectation });
+}
+
+function expectRequiredTLAError(err) {
+  const message = /require\(\) cannot be used on an ESM graph with top-level await/;
+  if (typeof err === 'string') {
+    assert.match(err, /ERR_REQUIRE_ASYNC_MODULE/);
+    assert.match(err, message);
+  } else {
+    assert.strictEqual(err.code, 'ERR_REQUIRE_ASYNC_MODULE');
+    assert.match(err.message, message);
+  }
+}
+
 function getArrayBufferViews(buf) {
   const { buffer, byteOffset, byteLength } = buf;
 
@@ -1849,6 +1871,8 @@ module.exports = {
   invalidArgTypeHelper,
   expectWarning,
   expectsError,
+  expectRequiredModule,
+  expectRequiredTLAError,
   getArrayBufferViews,
   getBufferSources,
   allowGlobals,

@@ -166,6 +166,23 @@ struct NodeCompatFixtureExecutionDiagnostic<'a> {
     exit_criterion: &'static str,
 }
 
+#[derive(serde::Serialize)]
+struct NodeCompatPathBatchExecutionSummary<'a> {
+    schema_version: u32,
+    report_kind: &'static str,
+    generated_at_unix_ms: u64,
+    batch_name: &'a str,
+    lane: &'a str,
+    selected: usize,
+    passed: usize,
+    skipped: usize,
+    failed: usize,
+    selected_paths: &'a [String],
+    passed_paths: &'a [String],
+    skipped_paths: &'a [String],
+    failed_paths: &'a [String],
+}
+
 #[derive(Debug)]
 pub(super) struct NodeCompatSeededFixtureObservedOutcome {
     pub(super) state: node_compat_manifest_report::NodeCompatObservedFixtureState,
@@ -391,6 +408,49 @@ fn write_node_compat_fixture_diagnostic(
     Some(path)
 }
 
+fn write_node_compat_path_batch_summary(
+    batch_name: &str,
+    lane_name: &str,
+    selected_paths: &[String],
+    passed_paths: &[String],
+    skipped_paths: &[String],
+    failed_paths: &[String],
+) -> Option<PathBuf> {
+    let generated_at_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(duration_millis_u64)
+        .unwrap_or_default();
+    let summary = NodeCompatPathBatchExecutionSummary {
+        schema_version: 1,
+        report_kind: "node_compat_path_batch_execution_summary",
+        generated_at_unix_ms,
+        batch_name,
+        lane: lane_name,
+        selected: selected_paths.len(),
+        passed: passed_paths.len(),
+        skipped: skipped_paths.len(),
+        failed: failed_paths.len(),
+        selected_paths,
+        passed_paths,
+        skipped_paths,
+        failed_paths,
+    };
+    let path = node_compat_diagnostic_root().join("batch").join(format!(
+        "{}__{}__summary.json",
+        lane_name,
+        sanitize_node_compat_artifact_stem(batch_name)
+    ));
+    if let Some(parent) = path.parent()
+        && std::fs::create_dir_all(parent).is_err()
+    {
+        return None;
+    }
+    let bytes = serde_json::to_vec_pretty(&summary).ok()?;
+    std::fs::write(&path, bytes).ok()?;
+    Some(path)
+}
+
 fn read_node_compat_fixture_bytes(fixture_source_path: &str) -> Vec<u8> {
     let path = node_compat_fixture_root().join(fixture_source_path);
     std::fs::read(&path).unwrap_or_else(|error| {
@@ -410,6 +470,111 @@ fn read_node_compat_fixture_text(fixture_source_path: &str) -> String {
             fixture_source_path
         )
     })
+}
+
+fn read_node_compat_extra_fixture_entries(
+    extra_files: &[NodeCompatExtraFixtureEntry],
+) -> Vec<(String, Vec<u8>)> {
+    extra_files
+        .iter()
+        .map(|entry| {
+            (
+                entry.runtime_path.to_string(),
+                read_node_compat_fixture_bytes(entry.fixture_source_path),
+            )
+        })
+        .collect()
+}
+
+const NODE_COMPAT_SYNTHETIC_COMMON_RUNTIME_PATHS: &[&str] = &[
+    "test/common/index.js",
+    "test/common/fixtures.js",
+    "test/common/tmpdir.js",
+];
+
+fn append_lane_extra_fixture_file(
+    owned_extra_files: &mut Vec<(String, Vec<u8>)>,
+    lane: NodeCompatLane,
+    runtime_path: &str,
+) {
+    let lane_name = node_compat_lane_name(lane);
+    let source_path = node_compat_fixture_root()
+        .join(lane_name)
+        .join(runtime_path);
+    let bytes = std::fs::read(&source_path).unwrap_or_else(|error| {
+        panic!(
+            "node_compat extra fixture `{}` should read: {error}",
+            source_path.display()
+        )
+    });
+    owned_extra_files.push((runtime_path.to_string(), bytes));
+}
+
+fn append_lane_extra_fixture_directory(
+    owned_extra_files: &mut Vec<(String, Vec<u8>)>,
+    lane: NodeCompatLane,
+    runtime_dir: &str,
+) {
+    let lane_name = node_compat_lane_name(lane);
+    let lane_root = node_compat_fixture_root().join(lane_name);
+    let source_dir = lane_root.join(runtime_dir);
+    let mut pending = vec![source_dir.clone()];
+    let mut files = Vec::new();
+    while let Some(dir) = pending.pop() {
+        let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "node_compat extra fixture directory `{}` should read: {error}",
+                    dir.display()
+                )
+            })
+            .map(|entry| {
+                entry
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "node_compat extra fixture directory `{}` entry should read: {error}",
+                            dir.display()
+                        )
+                    })
+                    .path()
+            })
+            .collect();
+        entries.sort();
+        for path in entries.into_iter().rev() {
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    for source_path in files {
+        let runtime_path = source_path
+            .strip_prefix(&lane_root)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "node_compat extra fixture `{}` should live under `{}`: {error}",
+                    source_path.display(),
+                    lane_root.display()
+                )
+            })
+            .to_string_lossy()
+            .into_owned();
+        if NODE_COMPAT_SYNTHETIC_COMMON_RUNTIME_PATHS
+            .iter()
+            .any(|path| path == &runtime_path)
+        {
+            continue;
+        }
+        let bytes = std::fs::read(&source_path).unwrap_or_else(|error| {
+            panic!(
+                "node_compat extra fixture `{}` should read: {error}",
+                source_path.display()
+            )
+        });
+        owned_extra_files.push((runtime_path, bytes));
+    }
 }
 
 // Some async_hooks promise-enable fixtures intentionally count promise hook
@@ -1219,15 +1384,7 @@ fn execute_manifested_node_compat_test(
     postlude_script: Option<&str>,
 ) -> std::result::Result<NodeCompatFixtureOutcome, String> {
     let test_source = read_node_compat_fixture_text(fixture_source_path);
-    let owned_extra_files: Vec<(String, Vec<u8>)> = extra_files
-        .iter()
-        .map(|entry| {
-            (
-                entry.runtime_path.to_string(),
-                read_node_compat_fixture_bytes(entry.fixture_source_path),
-            )
-        })
-        .collect();
+    let owned_extra_files = read_node_compat_extra_fixture_entries(extra_files);
     let borrowed_extra_files: Vec<(&str, &[u8])> = owned_extra_files
         .iter()
         .map(|(runtime_path, source)| (runtime_path.as_str(), source.as_slice()))
@@ -1247,6 +1404,79 @@ fn execute_manifested_node_compat_test(
         prelude_script.or_else(|| resolved_prelude_behavior.map(|behavior| behavior.script())),
         postlude_script.or_else(|| resolved_postlude_behavior.map(|behavior| behavior.script())),
     )
+}
+
+fn execute_manifested_node_compat_test_with_lane_extra_dirs(
+    test_relative_path: &str,
+    fixture_source_path: &str,
+    extra_files: &[NodeCompatExtraFixtureEntry],
+    extra_runtime_files: &[&str],
+    extra_dirs: &[&str],
+    lane: NodeCompatLane,
+) -> std::result::Result<NodeCompatFixtureOutcome, String> {
+    let test_source = read_node_compat_fixture_text(fixture_source_path);
+    let mut owned_extra_files = read_node_compat_extra_fixture_entries(extra_files);
+    for extra_runtime_file in extra_runtime_files {
+        append_lane_extra_fixture_file(&mut owned_extra_files, lane, extra_runtime_file);
+    }
+    for extra_dir in extra_dirs {
+        append_lane_extra_fixture_directory(&mut owned_extra_files, lane, extra_dir);
+    }
+    let borrowed_extra_files: Vec<(&str, &[u8])> = owned_extra_files
+        .iter()
+        .map(|(runtime_path, source)| (runtime_path.as_str(), source.as_slice()))
+        .collect();
+    let resolved_prelude_behavior = default_prelude_behavior_for_fixture(test_relative_path);
+    let resolved_postlude_behavior = default_postlude_behavior_for_fixture(test_relative_path);
+    execute_upstream_node_compat_test_with_extra_files(
+        test_relative_path,
+        &test_source,
+        &borrowed_extra_files,
+        true,
+        Some(lane),
+        resolved_prelude_behavior.map(|behavior| behavior.script()),
+        resolved_postlude_behavior.map(NodeCompatNamedPostludeBehavior::script),
+    )
+}
+
+fn node_compat_required_gap_paths_for_selector(
+    lane: NodeCompatLane,
+    selector: fn(&str) -> bool,
+) -> Vec<String> {
+    let lane_name = node_compat_lane_name(lane);
+    let posture_path =
+        node_compat_repo_root().join("docs/architecture/runtime/node-default-support-posture.json");
+    let posture: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&posture_path).unwrap_or_else(|error| {
+            panic!(
+                "node_compat posture `{}` should read: {error}",
+                posture_path.display()
+            )
+        }))
+        .unwrap_or_else(|error| {
+            panic!(
+                "node_compat posture `{}` should parse: {error}",
+                posture_path.display()
+            )
+        });
+    let mut paths: Vec<String> = posture["lanes"][lane_name]["entries"]
+        .as_array()
+        .unwrap_or_else(|| panic!("node_compat posture lane `{lane_name}` entries should be array"))
+        .iter()
+        .filter(|entry| entry["support_denominator"] == "v8_isolate_required")
+        .filter_map(|entry| entry["test_path"].as_str())
+        .filter(|test_path| selector(test_path))
+        .map(str::to_string)
+        .collect();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn esm_module_loader_required_gap_path(test_path: &str) -> bool {
+    test_path.starts_with("test/es-module/")
+        || test_path.starts_with("test/parallel/test-module")
+        || test_path.starts_with("test/parallel/test-require")
 }
 
 fn resolve_seeded_fixture_context(
@@ -1743,6 +1973,96 @@ fn run_node_compat_watchpoint_batch(
                 panic_payload_to_string(payload)
             ));
         }
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "node_compat {batch_name} {lane_name} had {} failing fixtures:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+}
+
+fn run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+    batch_name: &str,
+    lane: NodeCompatLane,
+    fixture_paths: &[String],
+    extra_runtime_files: &[&str],
+    extra_dirs: &[&str],
+) {
+    let lane_name = node_compat_lane_name(lane);
+    let mut failures = Vec::new();
+    let mut passed_paths = Vec::new();
+    let mut skipped_paths = Vec::new();
+    let mut failed_paths = Vec::new();
+
+    eprintln!(
+        "node_compat {batch_name} {lane_name} selected fixtures: {}",
+        fixture_paths.len()
+    );
+    for test_relative_path in fixture_paths {
+        eprintln!("node_compat {batch_name} {lane_name} -> {test_relative_path}");
+        let fixture_source_path = format!("{lane_name}/{test_relative_path}");
+        let snapshot = NodeCompatHostProcessSnapshot::capture();
+        let execution = panic::catch_unwind(AssertUnwindSafe(|| {
+            execute_manifested_node_compat_test_with_lane_extra_dirs(
+                test_relative_path,
+                &fixture_source_path,
+                &[],
+                extra_runtime_files,
+                extra_dirs,
+                lane,
+            )
+        }));
+        snapshot.restore();
+        match execution {
+            Ok(Ok(outcome)) => {
+                if outcome.skipped {
+                    skipped_paths.push(test_relative_path.clone());
+                } else {
+                    passed_paths.push(test_relative_path.clone());
+                }
+            }
+            Ok(Err(error)) => {
+                failed_paths.push(test_relative_path.clone());
+                failures.push(format!("{test_relative_path}: {error}"));
+            }
+            Err(payload) => {
+                failed_paths.push(test_relative_path.clone());
+                failures.push(format!(
+                    "{test_relative_path}: {}",
+                    panic_payload_to_string(payload)
+                ));
+            }
+        }
+    }
+
+    eprintln!(
+        "node_compat {batch_name} {lane_name} summary: selected={}, passed={}, skipped={}, failed={}",
+        fixture_paths.len(),
+        passed_paths.len(),
+        skipped_paths.len(),
+        failures.len()
+    );
+    if !skipped_paths.is_empty() {
+        eprintln!(
+            "node_compat {batch_name} {lane_name} skipped fixtures:\n{}",
+            skipped_paths.join("\n")
+        );
+    }
+    if let Some(summary_path) = write_node_compat_path_batch_summary(
+        batch_name,
+        lane_name,
+        fixture_paths,
+        &passed_paths,
+        &skipped_paths,
+        &failed_paths,
+    ) {
+        eprintln!(
+            "node_compat {batch_name} {lane_name} summary artifact: {}",
+            summary_path.display()
+        );
     }
 
     if !failures.is_empty() {

@@ -988,6 +988,243 @@ fn node24_default_lane_executes_fs_cp_batch_fixture() {
     );
 }
 
+const ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES: &[&str] = &[
+    "test/fixtures/baz.js",
+    "test/fixtures/empty.cjs",
+    "test/fixtures/empty.js",
+    "test/fixtures/empty.json",
+    "test/fixtures/experimental.json",
+    "test/fixtures/invalid.json",
+    "test/fixtures/is-object.js",
+    "test/fixtures/module-loading-error.node",
+    "test/fixtures/out-of-bound.wasm",
+    "test/fixtures/pkgexports.mjs",
+    "test/fixtures/primitive-42.json",
+    "test/fixtures/recursive-a.cjs",
+    "test/fixtures/recursive-b.cjs",
+    "test/fixtures/simple.wasm",
+];
+
+const ESM_MODULE_LOADER_EXTRA_DIRS: &[&str] = &[
+    "test/common",
+    "test/es-module",
+    "test/fixtures/cycles",
+    "test/fixtures/es-module-loaders",
+    "test/fixtures/es-module-require-cache",
+    "test/fixtures/es-module-specifiers",
+    "test/fixtures/es-modules",
+    "test/fixtures/import-require-cycle",
+    "test/fixtures/module-hooks",
+    "test/fixtures/module-require-symlink",
+    "test/fixtures/node_modules",
+    "test/fixtures/packages",
+    "test/fixtures/test-module-loading-globalpaths",
+    "test/fixtures/typescript",
+];
+
+const ESM_DATA_URL_CLUSTER_PATHS: &[&str] = &[
+    "test/es-module/test-cjs-prototype-pollution.js",
+    "test/es-module/test-esm-data-urls.js",
+    "test/es-module/test-esm-import-assertion-warning.mjs",
+    "test/es-module/test-esm-import-meta.mjs",
+    "test/es-module/test-esm-invalid-data-urls.js",
+    "test/es-module/test-esm-prototype-pollution.mjs",
+    "test/es-module/test-esm-undefined-cjs-global-like-variables.js",
+];
+
+const ESM_MODULE_LOADER_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/es-module/test-esm-assert-strict.mjs",
+    "test/es-module/test-esm-cjs-builtins.js",
+    "test/es-module/test-esm-cjs-main.js",
+    "test/es-module/test-esm-cyclic-dynamic-import.mjs",
+    "test/es-module/test-esm-default-type.mjs",
+    "test/es-module/test-esm-dns-promises.mjs",
+    "test/es-module/test-esm-double-encoding.mjs",
+    "test/es-module/test-esm-dynamic-import-mutating-fs.js",
+    "test/es-module/test-esm-encoded-path.mjs",
+    "test/es-module/test-esm-example-loader.mjs",
+    "test/es-module/test-esm-forbidden-globals.mjs",
+    "test/es-module/test-esm-fs-promises.mjs",
+    "test/es-module/test-esm-import-attributes-1.mjs",
+    "test/es-module/test-esm-import-attributes-2.mjs",
+    "test/es-module/test-esm-import-attributes-3.mjs",
+    "test/es-module/test-esm-import-json-named-export.mjs",
+    "test/es-module/test-esm-in-require-cache-2.mjs",
+    "test/es-module/test-esm-in-require-cache.js",
+    "test/es-module/test-esm-json.mjs",
+    "test/es-module/test-esm-loader-cache-clearing.js",
+    "test/es-module/test-esm-loader-dependency.mjs",
+    "test/es-module/test-esm-loader-event-loop.mjs",
+    "test/es-module/test-esm-namespace.mjs",
+    "test/es-module/test-esm-path-posix.mjs",
+    "test/es-module/test-esm-path-win32.mjs",
+    "test/es-module/test-esm-recursive-cjs-dependencies.mjs",
+    "test/es-module/test-esm-require-cache.mjs",
+    "test/es-module/test-esm-scope-node-modules.mjs",
+    "test/es-module/test-esm-shared-loader-dep.mjs",
+    "test/es-module/test-esm-shebang.mjs",
+    "test/es-module/test-esm-symlink.js",
+    "test/es-module/test-esm-syntax-error.mjs",
+    "test/es-module/test-esm-throw-undefined.mjs",
+    "test/es-module/test-esm-tla.mjs",
+    "test/es-module/test-esm-type-field.mjs",
+    "test/es-module/test-esm-type-main.mjs",
+    "test/es-module/test-esm-util-types.mjs",
+    "test/es-module/test-esm-windows.js",
+    "test/es-module/test-loaders-hidden-from-users.js",
+    "test/es-module/test-require-as-esm-interop.mjs",
+    "test/es-module/test-require-module-cached-tla.js",
+    "test/es-module/test-require-module-conditional-exports.js",
+    "test/es-module/test-require-module-cycle-cjs-esm-esm.js",
+    "test/es-module/test-require-module-defined-esmodule.js",
+    "test/es-module/test-require-module-detect-entry-point-aou.js",
+    "test/es-module/test-require-module-detect-entry-point.js",
+    "test/es-module/test-require-module-dont-detect-cjs.js",
+    "test/es-module/test-require-module-dynamic-import-3.js",
+    "test/es-module/test-require-module-dynamic-import-4.js",
+    "test/es-module/test-require-module-instantiated.mjs",
+    "test/es-module/test-require-module-retry-import-errored.js",
+    "test/es-module/test-require-module-retry-import-evaluating.js",
+    "test/es-module/test-require-module-synchronous-rejection-handling.js",
+    "test/es-module/test-require-module-tla-execution.js",
+    "test/es-module/test-require-module-tla-nested.js",
+    "test/es-module/test-require-module-tla-rejected.js",
+    "test/es-module/test-require-module-tla-resolved.js",
+    "test/es-module/test-require-module-tla-retry-import-2.js",
+    "test/es-module/test-require-module-tla-retry-import.js",
+    "test/es-module/test-require-module-tla-retry-require.js",
+    "test/es-module/test-require-module-tla-unresolved.js",
+    "test/es-module/test-require-module-with-detection.js",
+    "test/es-module/test-vm-compile-function-leak.js",
+    "test/es-module/test-vm-compile-function-lineoffset.js",
+    "test/es-module/test-vm-contextified-script-leak.js",
+    "test/es-module/test-vm-source-text-module-leak.js",
+    "test/es-module/test-vm-synthetic-module-leak.js",
+    "test/es-module/test-wasm-memory-out-of-bound.js",
+    "test/es-module/test-wasm-simple.js",
+    "test/parallel/test-module-circular-dependency-warning.js",
+    "test/parallel/test-module-circular-symlinks.js",
+    "test/parallel/test-module-globalpaths-nodepath.js",
+    "test/parallel/test-require-resolve-invalid-paths.js",
+];
+
+const ESM_MODULE_LOADER_PROMOTED_NODE22_ONLY_PATHS: &[&str] = &[
+    "test/es-module/test-esm-preserve-symlinks.js",
+    "test/es-module/test-esm-symlink-main.js",
+    "test/es-module/test-require-module-twice.js",
+    "test/es-module/test-require-module.js",
+];
+
+const ESM_MODULE_LOADER_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
+    "test/es-module/test-esm-cjs-exports.js",
+    "test/es-module/test-esm-wasm-escape-import-names.mjs",
+    "test/es-module/test-esm-wasm-load-exports.mjs",
+    "test/es-module/test-esm-wasm-source-phase-static.mjs",
+    "test/parallel/test-require-resolve-opts-paths-relative.js",
+];
+
+fn esm_module_loader_promoted_fixture_paths(groups: &[&[&str]]) -> Vec<String> {
+    groups
+        .iter()
+        .flat_map(|group| group.iter().copied())
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn node22_supported_lane_executes_esm_module_loader_promoted_batch_fixture() {
+    let fixture_paths = esm_module_loader_promoted_fixture_paths(&[
+        ESM_MODULE_LOADER_PROMOTED_COMMON_PATHS,
+        ESM_MODULE_LOADER_PROMOTED_NODE22_ONLY_PATHS,
+    ]);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-esm-module-loader-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_esm_module_loader_promoted_batch_fixture() {
+    let fixture_paths = esm_module_loader_promoted_fixture_paths(&[
+        ESM_MODULE_LOADER_PROMOTED_COMMON_PATHS,
+        ESM_MODULE_LOADER_PROMOTED_NODE24_ONLY_PATHS,
+    ]);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-esm-module-loader-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked ESM/module-loader required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified"]
+fn node22_supported_lane_esm_module_loader_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node22,
+        esm_module_loader_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-esm-module-loader-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked ESM/module-loader required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified"]
+fn node24_default_lane_esm_module_loader_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node24,
+        esm_module_loader_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-esm-module-loader-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 focused root-cause closure: data URL ESM imports; promote only after the broad ESM batch confirms the cluster is green"]
+fn node22_supported_lane_esm_data_url_cluster_watchpoint() {
+    let fixture_paths: Vec<String> = ESM_DATA_URL_CLUSTER_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-esm-data-url-cluster-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 focused root-cause closure: data URL ESM imports; promote only after the broad ESM batch confirms the cluster is green"]
+fn node24_default_lane_esm_data_url_cluster_watchpoint() {
+    let fixture_paths: Vec<String> = ESM_DATA_URL_CLUSTER_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-esm-data-url-cluster-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
 #[test]
 fn node22_fs_rmdir_recursive_fixture() {
     run_node_compat_watchpoint(
