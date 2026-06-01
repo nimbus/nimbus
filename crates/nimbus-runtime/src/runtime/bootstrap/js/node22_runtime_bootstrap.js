@@ -110,6 +110,12 @@ const {
 const denoProcessModule = core.loadExtScript("ext:deno_process/40_process.js");
 
 Object.defineProperties(globalThis, windowOrWorkerGlobalScope);
+Object.defineProperty(globalThis, Symbol.toStringTag, {
+  value: "global",
+  configurable: true,
+  enumerable: false,
+  writable: false,
+});
 const nimbusInternalFsBinding = getNodeInternalBinding("fs");
 const {
   ArrayIsArray,
@@ -834,6 +840,13 @@ function seedNodeProcessPlatformMetadata(nodeProcess) {
     return;
   }
 
+  Object.defineProperty(nodeProcess, Symbol.toStringTag, {
+    value: "process",
+    configurable: false,
+    enumerable: false,
+    writable: true,
+  });
+
   const nodePlatform = runtimeNodePlatform();
   if (nodePlatform.length > 0 && nodeProcess.platform !== nodePlatform) {
     Object.defineProperty(nodeProcess, "platform", {
@@ -910,12 +923,12 @@ function seedNodeProcessFeatures(nodeProcess) {
   features.tls_sni = features.tls_sni === true;
   features.tls_ocsp = features.tls_ocsp === true;
   features.tls = features.tls === true;
+  features.openssl_is_boringssl = features.openssl_is_boringssl === true;
   features.cached_builtins = features.cached_builtins === true;
   features.require_module = features.require_module === true;
   if (!Object.prototype.hasOwnProperty.call(features, "typescript")) {
     features.typescript = false;
   }
-  delete features.openssl_is_boringssl;
   delete features.quic;
 }
 
