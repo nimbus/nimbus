@@ -1,18 +1,18 @@
 # NDS0 Baseline Proof
 
-status: in_progress
+status: done
 date: 2026-06-01
 branch: codex/node-default-runtime-support-hardening
 worktree: /Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening
-pr: _pending initial NDS0 scaffold commit/push_
+pr: https://github.com/nimbus/nimbus/pull/10
 verifier: scripts/verify-node-default-runtime-support-hardening.sh
 
 ## Row And Status
 
-NDS0 is in progress. The dedicated worktree and branch exist, the NDS-only plan
-hardening has been carried into the worktree, and the verifier/proof scaffold is
-being created. NDS0 is not `done` until the branch is pushed, the draft PR or
-approved substitute is recorded, and the Active Execution Pointer is updated.
+NDS0 is done. The dedicated worktree and branch exist, the NDS-only plan
+hardening has been carried into the worktree, the verifier/proof scaffold exists,
+the branch is pushed, the draft PR is recorded, and the Active Execution Pointer
+has moved to NDS1.
 
 ## Broad Pre-Run
 
@@ -154,10 +154,8 @@ future-row gates.
 
 ## Residual Risks
 
-- The draft PR is not open yet. NDS0 remains `in_progress` until the branch is
-  pushed and the PR URL or developer-approved substitute is recorded.
-- The main-visible Active Execution Pointer requires a narrow pointer update to
-  `main` or an explicit fallback. Until that is recorded, the worktree/branch
-  plus active goal are the operational pointer.
+- The initial NDS0 scaffold is main-visible at
+  `677c77bcadbbbf8525b14e8f2f300d5ff9b2efb8`; follow-on work continues through
+  draft PR `https://github.com/nimbus/nimbus/pull/10`.
 - The Node24 `2000` gate is intentionally not rebaselined here. NDS1 must prove
   feasibility or stop in the documented blocked state.

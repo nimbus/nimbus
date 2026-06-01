@@ -1,16 +1,16 @@
 # NDS0 Control Plane Proof
 
-status: in_progress
+status: done
 date: 2026-06-01
 branch: codex/node-default-runtime-support-hardening
 worktree: /Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening
-pr: _pending initial NDS0 scaffold commit/push_
+pr: https://github.com/nimbus/nimbus/pull/10
 verifier: scripts/verify-node-default-runtime-support-hardening.sh
 
 ## Row And Status
 
-NDS0 is in progress. This proof records the execution surface that survives
-context compaction.
+NDS0 is done. This proof records the execution surface that survives context
+compaction.
 
 ## Broad Pre-Run
 
@@ -38,10 +38,10 @@ Observed:
 
 Control-plane gaps remaining before NDS0 can close:
 
-- Draft PR URL is pending until the initial NDS0 scaffold commit is pushed.
-- Main-visible pointer is pending. The plan requires either a pointer artifact
-  visible from `origin/main` or a developer-approved fallback that relies on the
-  draft PR plus local goal state.
+- Draft PR is open at `https://github.com/nimbus/nimbus/pull/10`.
+- Main-visible scaffold pointer exists at
+  `677c77bcadbbbf8525b14e8f2f300d5ff9b2efb8`; implementation continues on the
+  draft PR branch.
 - Final verifier will fail while NDS1-NDS10 are pending by design.
 
 ## Focused Work
@@ -111,15 +111,12 @@ and baseline checks pass.
 - Branch: `codex/node-default-runtime-support-hardening`
 - Remote branch: `origin/codex/node-default-runtime-support-hardening`
 - Main-visible scaffold commit: `677c77bcadbbbf8525b14e8f2f300d5ff9b2efb8`
-- Draft PR: `_pending draft PR creation from remote branch_`
+- Draft PR: `https://github.com/nimbus/nimbus/pull/10`
 - Plan: `docs/plans/node-default-runtime-support-hardening-plan.md`
 - Baseline proof: `docs/plans/proof/node-default-runtime-support-hardening/nds0-baseline.md`
 - Verifier: `scripts/verify-node-default-runtime-support-hardening.sh`
 
 ## Residual Risks
 
-- NDS0 remains `in_progress` until the draft PR URL or approved substitute is
-  recorded.
-- A direct main-visible pointer update requires explicit developer approval.
-  Without that approval, the draft PR plus active goal must be recorded as the
-  fallback.
+- NDS1 now owns the next substantive work: the posture model and feasibility
+  checkpoint.
