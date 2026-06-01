@@ -504,7 +504,7 @@ completion.
 | --- | --- |
 | Active worktree | `/Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening` |
 | Active branch | `codex/node-default-runtime-support-hardening` |
-| Draft PR | `_pending initial NDS0 scaffold commit/push_` |
+| Draft PR | `_pending draft PR creation from origin/codex/node-default-runtime-support-hardening_` |
 | Active goal objective | `019e7f94-cc55-7862-b9ec-be1103d7aea1` |
 | Last completed row | `_none_` |
 | Current row | `NDS0` |

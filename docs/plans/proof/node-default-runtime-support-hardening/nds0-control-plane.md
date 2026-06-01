@@ -27,7 +27,12 @@ Observed:
 
 - branch: `codex/node-default-runtime-support-hardening`
 - base commit: `db30ddac8776c0105ae8ebdefcd85541a6d11fc2`
+- scaffold commit: `677c77bcadbbbf8525b14e8f2f300d5ff9b2efb8`
 - worktree: `/Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening`
+- remote branch: `origin/codex/node-default-runtime-support-hardening`
+- main-visible pointer: initial NDS0 scaffold is visible on `origin/main` at
+  `677c77bcadbbbf8525b14e8f2f300d5ff9b2efb8`; subsequent implementation work
+  continues on the explicit feature branch and draft PR.
 
 ## Failure Grouping
 
@@ -104,7 +109,9 @@ and baseline checks pass.
 
 - Worktree: `/Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening`
 - Branch: `codex/node-default-runtime-support-hardening`
-- Draft PR: `_pending initial NDS0 scaffold commit/push_`
+- Remote branch: `origin/codex/node-default-runtime-support-hardening`
+- Main-visible scaffold commit: `677c77bcadbbbf8525b14e8f2f300d5ff9b2efb8`
+- Draft PR: `_pending draft PR creation from remote branch_`
 - Plan: `docs/plans/node-default-runtime-support-hardening-plan.md`
 - Baseline proof: `docs/plans/proof/node-default-runtime-support-hardening/nds0-baseline.md`
 - Verifier: `scripts/verify-node-default-runtime-support-hardening.sh`
