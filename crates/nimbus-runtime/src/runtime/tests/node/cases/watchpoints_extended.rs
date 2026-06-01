@@ -971,6 +971,24 @@ fn node24_fs_glob_fixture() {
 }
 
 #[test]
+fn node22_supported_lane_executes_fs_cp_batch_fixture() {
+    run_node_compat_watchpoint_entry_batch(
+        "node22-supported-lane-executes-fs-cp-batch",
+        NodeCompatLane::Node22,
+        FS_CP_BATCH,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_fs_cp_batch_fixture() {
+    run_node_compat_watchpoint_entry_batch(
+        "node24-default-lane-executes-fs-cp-batch",
+        NodeCompatLane::Node24,
+        FS_CP_BATCH,
+    );
+}
+
+#[test]
 fn node22_fs_rmdir_recursive_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-rmdir-recursive.js",
