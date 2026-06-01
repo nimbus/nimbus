@@ -19,7 +19,11 @@ import {
 } from "ext:deno_node/internal/fs/utils.mjs";
 import { getBinding as getNodeInternalBinding } from "ext:deno_node/internal_binding/mod.ts";
 import { Buffer as nodeBuffer } from "node:buffer";
-import { relative as nodePathRelative, resolve as nodePathResolve } from "node:path";
+import {
+  isAbsolute as nodePathIsAbsolute,
+  relative as nodePathRelative,
+  resolve as nodePathResolve,
+} from "node:path";
 import nodeProcessBuiltin from "node:process";
 import { StringDecoder as nodeStringDecoder } from "node:string_decoder";
 import * as nodeTimersBuiltin from "node:timers";
@@ -137,13 +141,48 @@ if (!Object.getOwnPropertyDescriptor(nodeFsDirent.prototype, "path")) {
   });
 }
 
+function runtimeFsAssertExistingCwd(cwd) {
+  try {
+    const value = globalThis.__nimbusSyncHostValue("op_nimbus_runtime_stat_sync", {
+      path: cwd,
+      follow_symlink: true,
+    });
+    return toFileInfo(value);
+  } catch (error) {
+    throw runtimeFsMapThrownError(error);
+  }
+}
+
 function runtimeFsPathToString(path) {
+  if (typeof path === "string") {
+    if (nodePathIsAbsolute(path)) {
+      return path;
+    }
+    const cwd = nodeProcessBuiltin?.cwd?.() ??
+      globalThis.process?.cwd?.() ??
+      nimbusRuntimeCurrentCwd ??
+      ".";
+    if (nodePathIsAbsolute(cwd)) {
+      runtimeFsAssertExistingCwd(cwd);
+    }
+    return nodePathResolve(cwd, path);
+  }
+  if (path instanceof URL) {
+    if (path.protocol !== "file:") {
+      throw new TypeError(`Nimbus only supports file: URLs for Deno fs APIs; received ${path.href}`);
+    }
+    return decodeURIComponent(path.pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+  }
+  return String(path);
+}
+
+function runtimeFsSymlinkTargetToString(path) {
   if (typeof path === "string") {
     return path;
   }
   if (path instanceof URL) {
     if (path.protocol !== "file:") {
-      throw new TypeError(`Nimbus only supports file: URLs for Deno fs APIs; received ${path.href}`);
+      throw new TypeError(`Nimbus only supports file: URLs for symlink targets; received ${path.href}`);
     }
     return decodeURIComponent(path.pathname.replace(/^\/([A-Za-z]:)/, "$1"));
   }
@@ -354,7 +393,7 @@ function runtimeFsDiffWatchSnapshots(previousSnapshot, nextSnapshot, recursive =
   }
 
   if (previousSnapshot.signature !== nextSnapshot.signature) {
-    return { kind: "modify", paths: [nextSnapshot.path], flag: null };
+    return { kind: "modify", paths: [null], flag: null };
   }
   return null;
 }
@@ -696,7 +735,7 @@ function runtimeFsSymlinkFileType(options) {
 async function runtimeFsSymlink(oldpath, newpath, options = undefined) {
   try {
     await globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_symlink", {
-      oldpath: runtimeFsPathToString(oldpath),
+      oldpath: runtimeFsSymlinkTargetToString(oldpath),
       newpath: runtimeFsPathToString(newpath),
       file_type: runtimeFsSymlinkFileType(options),
     });
@@ -708,7 +747,7 @@ async function runtimeFsSymlink(oldpath, newpath, options = undefined) {
 function runtimeFsSymlinkSync(oldpath, newpath, options = undefined) {
   try {
     globalThis.__nimbusSyncHostValue("op_nimbus_runtime_symlink_sync", {
-      oldpath: runtimeFsPathToString(oldpath),
+      oldpath: runtimeFsSymlinkTargetToString(oldpath),
       newpath: runtimeFsPathToString(newpath),
       file_type: runtimeFsSymlinkFileType(options),
     });
@@ -833,6 +872,61 @@ function runtimeNodePlatform() {
     default:
       return buildOs;
   }
+}
+
+const nimbusProcessCwdPatched = Symbol("nimbus.processCwdPatched");
+let nimbusRuntimeCurrentCwd = null;
+
+function seedNodeProcessCwd(nodeProcess) {
+  if (
+    !nodeProcess ||
+    typeof nodeProcess !== "object" ||
+    nodeProcess[nimbusProcessCwdPatched] === true
+  ) {
+    return;
+  }
+
+  const originalCwd = typeof nodeProcess.cwd === "function"
+    ? nodeProcess.cwd.bind(nodeProcess)
+    : null;
+  const originalChdir = typeof nodeProcess.chdir === "function"
+    ? nodeProcess.chdir.bind(nodeProcess)
+    : typeof nodeProcessBuiltin?.chdir === "function"
+    ? nodeProcessBuiltin.chdir.bind(nodeProcessBuiltin)
+    : null;
+  let currentCwd = originalCwd !== null ? originalCwd() : "/";
+  nimbusRuntimeCurrentCwd = currentCwd;
+
+  Object.defineProperty(nodeProcess, "cwd", {
+    value() {
+      return currentCwd;
+    },
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+
+  if (originalChdir !== null) {
+    Object.defineProperty(nodeProcess, "chdir", {
+      value(directory) {
+        const nextCwd = nodePathResolve(currentCwd, String(directory));
+        const result = originalChdir(directory);
+        currentCwd = nextCwd;
+        nimbusRuntimeCurrentCwd = currentCwd;
+        return result;
+      },
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+  }
+
+  Object.defineProperty(nodeProcess, nimbusProcessCwdPatched, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
 }
 
 function seedNodeProcessPlatformMetadata(nodeProcess) {
@@ -2155,6 +2249,48 @@ function patchNodeFsReadSemantics(nodeProcess) {
       writable: false,
     });
     nodeInternalFsFileHandle.prototype.read = patchedFileHandleRead;
+  }
+
+  const originalTruncate = nodeFs.truncate;
+  if (typeof originalTruncate === "function" && originalTruncate.__nimbusOpenErrorPath !== true) {
+    const patchedTruncate = function (path, lenOrCallback = 0, maybeCallback = undefined) {
+      const callback = typeof lenOrCallback === "function" ? lenOrCallback : maybeCallback;
+      if (typeof callback !== "function") {
+        return Reflect.apply(originalTruncate, this, arguments);
+      }
+      const wrappedCallback = function (error, ...rest) {
+        if (error && error.path === undefined) {
+          const message = String(error.message ?? "");
+          if (
+            error.code === "ENOENT" ||
+            message.includes("ENOENT") ||
+            message.includes("os error 2")
+          ) {
+            const normalizedError = new Error(
+              `ENOENT: no such file or directory, open '${path}'`,
+            );
+            normalizedError.code = "ENOENT";
+            normalizedError.errno = -2;
+            normalizedError.syscall = "open";
+            normalizedError.path = path;
+            return callback.call(this, normalizedError, ...rest);
+          }
+        }
+        return callback.call(this, error, ...rest);
+      };
+      if (typeof lenOrCallback === "function") {
+        return Reflect.apply(originalTruncate, this, [path, wrappedCallback]);
+      }
+      return Reflect.apply(originalTruncate, this, [path, lenOrCallback, wrappedCallback]);
+    };
+    Object.defineProperties(patchedTruncate, Object.getOwnPropertyDescriptors(originalTruncate));
+    Object.defineProperty(patchedTruncate, "__nimbusOpenErrorPath", {
+      value: true,
+      configurable: true,
+      enumerable: false,
+      writable: false,
+    });
+    nodeFs.truncate = patchedTruncate;
   }
 
   const nodeFsPromiseTargets = getNodeFsPromiseTargets(nodeFs, nodeProcess);
@@ -3704,6 +3840,8 @@ if (
 ) {
   globalThis.process = nodeProcessBuiltin;
 }
+seedNodeProcessCwd(nodeProcessBuiltin);
+seedNodeProcessCwd(internals.nodeGlobals?.process);
 seedNodeProcessPlatformMetadata(internals.nodeGlobals?.process);
 seedNodeProcessStdio(internals.nodeGlobals?.process);
 seedNodeProcessExecPath(internals.nodeGlobals?.process);
@@ -3712,6 +3850,7 @@ seedNodeProcessBuiltinModuleLoader(internals.nodeGlobals?.process);
 seedNodeProcessFinalization(internals.nodeGlobals?.process);
 installNimbusProcessDlopenErrorMapping(internals.nodeGlobals?.process);
 installNimbusNativeExtensionErrorMapping(internals.nodeGlobals?.process);
+seedNodeProcessCwd(globalThis.process);
 seedNodeProcessPlatformMetadata(globalThis.process);
 seedNodeProcessStdio(globalThis.process);
 seedNodeProcessExecPath(globalThis.process);

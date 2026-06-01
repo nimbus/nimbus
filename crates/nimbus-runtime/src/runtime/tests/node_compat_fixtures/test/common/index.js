@@ -30,12 +30,41 @@ const nimbusOriginalProcessChdir = typeof process.chdir === 'function'
   ? process.chdir.bind(process)
   : null;
 if (nimbusOriginalProcessChdir) {
-  process.chdir = function nimbusHarnessChdir(directory) {
+  const nimbusHarnessCwd = function nimbusHarnessCwd() {
+    return nimbusForkCurrentCwd;
+  };
+  const nimbusHarnessChdir = function nimbusHarnessChdir(directory) {
     const nextCwd = path.resolve(nimbusForkCurrentCwd, String(directory));
     const result = nimbusOriginalProcessChdir(directory);
     nimbusForkCurrentCwd = nextCwd;
     return result;
   };
+  Object.defineProperty(process, 'cwd', {
+    value: nimbusHarnessCwd,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+  Object.defineProperty(process, 'chdir', {
+    value: nimbusHarnessChdir,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+  if (globalThis.process && globalThis.process !== process) {
+    Object.defineProperty(globalThis.process, 'cwd', {
+      value: nimbusHarnessCwd,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+    Object.defineProperty(globalThis.process, 'chdir', {
+      value: nimbusHarnessChdir,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+  }
 }
 const PIPE = (() => {
   const pipeName = `n.${process.pid}.sock`;

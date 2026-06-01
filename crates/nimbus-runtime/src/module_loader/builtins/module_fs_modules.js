@@ -81,7 +81,11 @@ function createNimbusFsModule(fsPromisesModule) {
       || normalizedFlags.includes("+");
   }
   function validateOpenPath(path, flags) {
-    const validatedPath = getValidatedPathToString(path);
+    let validatedPath = getValidatedPathToString(path);
+    if (typeof validatedPath === "string" && !pathModule.isAbsolute(validatedPath)) {
+      const cwd = typeof processModule?.cwd === "function" ? processModule.cwd() : ".";
+      validatedPath = pathModule.resolve(cwd, validatedPath);
+    }
     return globalThis.__nimbusSyncHostValue("op_nimbus_runtime_validate_open_path", {
       path: validatedPath,
       write: openFlagsNeedWrite(flags),
