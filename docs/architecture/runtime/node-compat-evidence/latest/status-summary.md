@@ -32,15 +32,15 @@ Counts every vendored lane-local test-* JS/CJS/MJS fixture, then compares that d
 
 ## Rust Ignored Test Inventory
 
-- ignored Rust node_compat tests: 75
+- ignored Rust node_compat tests: 76
 - source: `crates/nimbus-runtime/src/runtime/tests/node/`
 
 ## Expectation Catalog
 
 - catalog: `tests/runtime/node/expectations/rust-watchpoints.json`
-- entries: 75
-- by expectation: `{"Expected failure": 75}`
-- by classification: `{"Watchpoint": 75}`
+- entries: 76
+- by expectation: `{"Expected failure": 76}`
+- by classification: `{"Watchpoint": 76}`
 - unexpected passes: 0
 
 ## Warnings

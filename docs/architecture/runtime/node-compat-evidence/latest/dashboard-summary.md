@@ -9,7 +9,7 @@
 
 ## Suite Status
 - source: `target/node-compat/status/status-summary.json`
-- rust ignored tests: `75`
+- rust ignored tests: `76`
 
 | Lane | Upstream | Role | Passed | Expected failure / known gap | Skipped / excluded | Classified total | Classified coverage count | Vendored | Unclassified | Pass rate |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |

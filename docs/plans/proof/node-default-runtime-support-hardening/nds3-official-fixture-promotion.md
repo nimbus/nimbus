@@ -93,8 +93,9 @@ Promoted fixes to the canonical Deno fork:
 | `v2.8.0-nimbus.12` | `843e485fb9` | Align ArrayBuffer and SharedArrayBuffer inspect output with Node's non-enumerable `[byteLength]` label. |
 | `v2.8.0-nimbus.13` | `663306f565` | Improve Node stream duplex lifecycle and local filesystem compatibility for statfs, appendFile validation, cwd-relative path handling, watch behavior, symlink target handling, and async open error normalization. |
 | `v2.8.0-nimbus.14` | `d1c53e4315` | Improve Node24 networking compatibility: abort-listener observability, raw `writeHead` header validation, invalid status-code errors, `NODE_TLS_REJECT_UNAUTHORIZED`, PFX extraction, TLS keylog events, HTTP/2 state buffers, SNI preservation, `https.globalAgent` reassignment, and SecureContext ticket callback shape. |
+| `v2.8.0-nimbus.15` | `1f101bf003` | Improve CommonJS global path/local precedence, standalone subprocess command materialization, crypto random/cipher compatibility, and the functional `node:v8` helper subset. |
 
-Nimbus is repinned to `v2.8.0-nimbus.14` in `Cargo.toml` and `Cargo.lock`.
+Nimbus is repinned to `v2.8.0-nimbus.15` in `Cargo.toml` and `Cargo.lock`.
 
 Focused verification:
 
@@ -289,6 +290,60 @@ cargo test -p nimbus-runtime node24_default_lane_networking_watchpoint -- --noca
 
 Observed: `268 passed, 0 skipped, 0 failed`.
 
+Loader/context broad rerun after the focused `.15` fixes:
+
+```console
+cargo test -p nimbus-runtime node24_default_lane_loader_context_watchpoint -- --ignored --nocapture --test-threads=1
+```
+
+Observed: `173 passed, 0 skipped, 4 failed`. This improves the same broad
+loader/context group from the earlier `167 passed, 0 skipped, 10 failed`
+inventory without pretending the group is closed.
+
+Fixed loader/context clusters:
+
+- CommonJS global path resolution now preserves local `node_modules`
+  precedence over `NODE_PATH`, home global paths, and Deno fallback paths.
+- Standalone fixture subprocesses now materialize absolute `process.execPath`
+  commands into the child bundle root when there is no source bundle root,
+  which keeps `test-module-main-fail.js` on a Node-shaped command path.
+- `crypto.randomFill()` and callback `randomInt()` now settle callbacks through
+  `process.nextTick` in the embedded runtime; pending-deprecation
+  `pseudoRandomBytes` warnings are observed through `--pending-deprecation`,
+  `NODE_OPTIONS`, and `process.execArgv`.
+- Cipher compatibility now covers AES wrap aliases, ECB IV rejection,
+  `undefined` IV type errors, and unknown-cipher error shaping.
+- The functional `node:v8` helper subset is green for version tags,
+  deserializing Buffer-backed payloads, lane-aware heap-space/stat output, and
+  flag type validation.
+
+Focused loader/context verification on the repinned `.15` tag:
+
+```console
+cargo test -p nimbus-runtime node24_loader_context_global_paths_preserve_local_precedence_regression -- --nocapture --test-threads=1
+cargo test -p nimbus-runtime loader_context_followup_v8_green_batch_fixture -- --nocapture --test-threads=1
+```
+
+Observed:
+
+- `node24_loader_context_global_paths_preserve_local_precedence_regression`:
+  `1 passed`.
+- `loader_context_followup_v8_green_batch_fixture`: `3 passed` across the
+  Node20, Node22, and Node24 lanes.
+
+Remaining loader/context broad failures:
+
+- `test-async-hooks-enable-recursive.js`
+- `test-async-hooks-enable-before-promise-resolve.js`
+- `test-async-hooks-enable-during-promise.js`
+- `test-v8-serdes.js`
+
+The three `async_hooks` files still fail exact resource/promise count
+assertions in the embedded runner. `test-v8-serdes.js` stays a pinned
+wire-format boundary because Nimbus runs on the `v8_deno_core` V8 build: the
+functional V8 helper subset is green, but exact Node serialized bytes are not a
+portable support claim.
+
 Evidence generator correction:
 
 - Promoting the networking batch exposed an overcount: the status generator
@@ -302,7 +357,8 @@ Evidence generator correction:
   runner output. This also corrected historical Node20/Node22 totals where
   lane-disabled entries had been counted as green.
 
-Regenerated evidence after the networking promotion and generator correction:
+Regenerated evidence after the networking promotion, loader/context checkpoint,
+and generator correction:
 
 ```console
 python3 scripts/runtime/node/classifications.py sync --lane all
@@ -356,13 +412,21 @@ Current Node24 default-support posture:
 - `crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs`
 - `crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs`
 - `crates/nimbus-runtime/src/runtime/bootstrap/js/node22_runtime_bootstrap.js`
-- Deno fork tag `v2.8.0-nimbus.14` (`d1c53e4315fff77c279db3c68933fab6ec2e84d5`)
+- `crates/nimbus-runtime/src/runtime/bootstrap/ops/test_runtime/bundle.rs`
+- `crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs`
+- Deno fork tag `v2.8.0-nimbus.15` (`1f101bf0032a223463507f500ddd236afebd9fcc`)
 
 ## Residual Risks
 
 - NDS3 is still far below the `2000` Node24 full-corpus closeout threshold.
 - The next focused waves must continue from the broad failure inventory rather
   than adding isolated green tests disconnected from the official corpus.
+- The Deno fork has accumulated a substantial `v2.8.0-nimbus.*` delta while
+  upstream Deno 2.8.1 and `rusty_v8` 149.2.0 contain overlapping runtime work.
+  Before deeper NDS3 fixture promotion, pause to execute
+  `docs/plans/deno-rusty-v8-upstream-alignment-plan.md` in its own
+  worktree/PR so the next greening wave starts from an upstream-aligned fork
+  baseline.
 - Remaining NDS3 work is concentrated in loader/context plus additional
   non-foundation fixture clusters outside the promoted Node24 networking
   manifest.

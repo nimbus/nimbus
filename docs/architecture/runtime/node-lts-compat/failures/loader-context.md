@@ -10,9 +10,9 @@ work is in progress.
 
 - Status: `carried_forward`
 - Current measured subset:
-  - `239` official Node22 files passed
-  - `175` official Node20 files passed
-  - `179` official Node24 files passed in the supported lane
+  - `233` official Node22 files passed in the latest generated evidence
+  - `156` official Node20 files passed in the latest generated evidence
+  - `139` official Node24 files passed in the latest generated evidence
   - `4` explicit Node20 legacy watchpoints
   - `2` explicit Node24 default watchpoints
   - the staged `node:domain`, `node:constants`, and `node:trace_events`
@@ -83,6 +83,31 @@ work is in progress.
     percentile` because the current bundled SQLCipher sqlite source does not
     contain the percentile family even after the Node-style URI/open,
     `SQLTagStore`, `gc.js`, and checked-in build-flag fixes
+- `test/parallel/test-async-hooks-enable-recursive.js` *(Node24 default lane)*
+  - classification: `embedded_runner_async_hooks_exact_count_drift`
+  - reason: the latest NDS3 loader/context broad checkpoint observes extra
+    embedded-runner async resources after the Node-visible recursive init
+    assertion path. This remains a real exact-count failure rather than a
+    hidden pass claim or fixture rewrite.
+- `test/parallel/test-async-hooks-enable-before-promise-resolve.js`
+  *(Node24 default lane)*
+  - classification: `embedded_runner_async_hooks_exact_count_drift`
+  - reason: promise/timer resource counts still include embedded-runner
+    lifecycle noise. The earlier sync-require harness work is retained where it
+    is truthful, but this file is not promoted until the public async-hooks
+    contract can be proven without count masking.
+- `test/parallel/test-async-hooks-enable-during-promise.js`
+  *(Node24 default lane)*
+  - classification: `embedded_runner_async_hooks_exact_count_drift`
+  - reason: enabling hooks during the promise path still over-observes
+    resource counts under the embedded runtime. The failing official fixture is
+    preserved as an active NDS3 blocker.
+- `test/parallel/test-v8-serdes.js` *(Node24 default lane)*
+  - classification: `v8_wire_format_boundary`
+  - reason: the functional `node:v8` helper subset is green, but this fixture
+    asserts exact serialized bytes from Node's V8 build. Nimbus runs on the
+    `v8_deno_core` V8 build, so exact Node wire-format parity is recorded as a
+    platform boundary instead of being counted as portable support.
 ## Remaining Work
 
 - The broader `node:module` corpus is not exhausted yet; this inventory now
@@ -226,21 +251,23 @@ work is in progress.
   `test-crypto-scrypt.js` drift, one Node24 default-only
   `test-crypto-dh-stateless.js` derivation-error drift, and one Node20-only
   DH validation-message divergence.
-  The handed-off `async_hooks` promise pocket is now fully promoted under
-  loader-context coverage after the bundle writer moved the official CommonJS promise fixtures
-  off the embedder-only ESM evaluation path and back onto a Node-shaped sync
-  require envelope. The widened pure `node:v8` helper wave is now fully
-  promoted, including the lane-aware heap-space contract in
-  `test-v8-stats.js`. The first `worker_threads` basics contract is promoted
-  too: constructor invalid-filename shaping, simple `new Worker(...)`
+  The handed-off `async_hooks` promise pocket is only partially promoted under
+  the latest loader/context evidence: the sync require envelope still removes
+  module-evaluation promise noise for the fixtures it owns, while the three
+  Node24 exact-count files above remain active failures. The widened
+  functional `node:v8` helper subset is promoted, including the lane-aware
+  heap-space contract in `test-v8-stats.js`, while `test-v8-serdes.js` stays
+  explicit as a V8 wire-format boundary. The first `worker_threads` basics
+  contract is promoted too: constructor invalid-filename shaping, simple `new Worker(...)`
   bootstrap, `MessageChannel` / `MessagePort`, `onmessage`, and
   ref/unref/hasRef behavior are green across Node22, Node20, and Node24, and
   the staged CommonJS loader pocket is now fully closed after the invalid
   native addon path learned to surface Node-shaped format errors for obviously
   non-library `.node` payloads without weakening the real FFI gate for valid
   addons. The inspector front-edge contract is now fully promoted too, so the
-  current loader-context remainder is therefore cleaner than the first classification
-  map: only the lane-only drifts remain explicit. The former shared
+  current loader-context remainder is cleaner than the first classification
+  map but not closed: lane-only drifts, the three async_hooks exact-count
+  failures, and the V8 wire-format boundary remain explicit. The former shared
   `test-zlib-invalid-input-memory.js` gap is now promoted after the generic
   tick-payload retention fix in `../deno/libs/core/01_core.js`.
 

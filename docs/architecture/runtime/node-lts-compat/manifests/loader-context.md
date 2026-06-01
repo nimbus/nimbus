@@ -28,11 +28,30 @@ the current green denominator resumable without rereading the Rust batch table.
 
 Current manifested batch counts:
 
-- Node22 supported lane: `239` official files
-- Node20 legacy lane: `175` official files
-- Node24 default lane: `179` staged official files
+- Node22 supported lane: `233` official files in the latest generated
+  execution evidence
+- Node20 legacy lane: `156` official files in the latest generated execution
+  evidence
+- Node24 default lane: `139` official files in the latest generated execution
+  evidence
 
-Family breakdown for the current manifested subset:
+NDS3 correction: the generated status summary is the current authority for
+positive support counts. The historical carried-denominator notes below remain
+useful for resume context, but they must not be read as a new pass claim when
+they conflict with
+`docs/architecture/runtime/node-compat-evidence/latest/status-summary.md`.
+In particular, the functional `node:v8` helper subset is green, but
+`test-v8-serdes.js` is a pinned V8 serialized-byte wire-format boundary, and
+the Node24 loader/context broad checkpoint still has three async_hooks
+exact-count failures.
+
+Current generated family breakdown:
+
+| Family | Node22 | Node20 | Node24 default | Notes |
+| --- | ---: | ---: | ---: | --- |
+| `loader-context` | `233` | `156` | `139` | Generated from non-ignored, lane-local Rust tests that execute official fixtures. Ignored watchpoints and classified gaps are excluded from positive pass counts. |
+
+Historical carried-denominator map, superseded by the generated evidence above:
 
 | Family | Node22 green | Node20 green | Node24 default staged | Notes |
 | --- | ---: | ---: | ---: | --- |
@@ -180,7 +199,8 @@ Current staged official files:
 - `test/parallel/test-crypto-oneshot-hash-xof.js` *(Node24 only; Node20 and Node22 upstream do not ship official files)*
 - `test/parallel/test-v8-version-tag.js`
 - `test/parallel/test-v8-deserialize-buffer.js`
-- `test/parallel/test-v8-serdes.js`
+- `test/parallel/test-v8-serdes.js` *(Node24 remains an explicit V8
+  wire-format watchpoint; not counted in the functional V8 helper subset)*
 - `test/parallel/test-v8-stats.js`
 - `test/parallel/test-v8-flag-type-check.js`
 - `test/parallel/test-vm-basic.js`
@@ -295,38 +315,19 @@ Current staged official files:
   JavaScript `_propagate` hook; Node22 and Node24 already match the newer
   implementation shape, so that file stays out of the Node20 denominator as a
   Node20 legacy-lane watchpoint.
-- The first staged `async_hooks` wave is now green on the published
-  `nimbus/deno v2.7.14-locker.39` baseline after the canonical Deno
-  owner fixes restored Node-style `AsyncResource` validation, execution async
-  resource tracking, trigger async id semantics, and promise-hook propagation.
-  The next promise-hook expansion is also green: `test-async-hooks-async-await.js`,
-  `test-async-hooks-correctly-switch-promise-hook.js`,
-  `test-async-hooks-enable-before-promise-resolve.js`,
-  `test-async-hooks-enable-during-promise.js`,
-  `test-async-hooks-disable-during-promise.js`,
-  `test-async-hooks-promise-triggerid.js`, and
-  `test-async-hooks-promise-enable-disable.js` all promote on the current
-  canonical local Deno baseline. The harness side still stays narrow:
-  Nimbus-local fixture isolation disables the hook immediately after the
-  user-visible `nextTick` assertion in `test-async-hooks-enable-during-promise.js`,
-  while the promise-hook batch now quiesces startup Promise noise before
-  synchronously requiring the CommonJS fixture for
-  `test-async-hooks-disable-during-promise.js`,
-  while the Deno-owner timer wrapper now emits the current callback's `after`
-  when hooks become enabled mid-timeout callback in
-  `test-async-hooks-enable-before-promise-resolve.js`. The staged recursive
-  init case is now green too: the lane-local fixture copies disable the outer
-  and nested hooks as soon as the official Node-visible `2` / `1` init counts
-  are observed, which isolates the intended recursive contract from later
-  embedded-runner `Immediate` tail activity without changing the public
-  runtime semantics.
-- The handed-off async_hooks promise pocket from the crypto-compression closeout is now
-  fully promoted under loader-context coverage. The decisive harness-owner fix was to stop
-  evaluating the official CommonJS promise fixtures at ESM top level and
-  instead require them synchronously inside the sync invoke envelope after
-  module evaluation has already completed. That removes the embedder-only
-  module-evaluation promise from the observable hook contract without
-  changing the upstream fixture assertions or the runtime's public semantics.
+- The first staged `async_hooks` execution-context wave remains useful resume
+  context, but the latest NDS3 Node24 broad checkpoint no longer claims the
+  whole promise-lifecycle pocket as green. `test-async-hooks-enable-recursive.js`,
+  `test-async-hooks-enable-before-promise-resolve.js`, and
+  `test-async-hooks-enable-during-promise.js` still fail exact resource or
+  promise count assertions in the embedded runner. Those are active
+  loader/context failures, not hidden pass claims or fixture quarantines.
+- The handed-off async_hooks promise pocket from the crypto-compression
+  closeout is therefore only partially promoted under the latest
+  loader/context evidence. The sync require envelope still removes
+  module-evaluation promise noise for the fixtures it owns, but the three
+  exact-count residuals above must be fixed or classified before the broader
+  pocket can be called closed again.
 - The first `worker_threads` basics contract is now promoted too. The current
   manifested subset now includes `test-worker-type-check.js`,
   `test-worker.js`, `test-worker-message-channel.js`,
@@ -341,17 +342,19 @@ Current staged official files:
   honestly after ref/unref transitions. The explicit remainder is therefore
   sharper now: broader `worker_threads` APIs beyond this verified basics
   batch remain held out unless they are staged and proven later.
-- The widened pure `node:v8` helper wave is now fully promoted. The canonical
-  local Deno proof path now treats `internalBinding('js_stream')` as a real
-  host-object seam instead of a fake plain-object serialization path, the
-  exported `v8.Serializer` / `v8.Deserializer` constructors now surface the
-  Node-shaped `ERR_CONSTRUCT_CALL_REQUIRED` contract, and the compat harness
-  now injects the real Node20/Node22/Node24 lane into the bundle so `v8.ts`
-  can shape heap-space filtering against the executed corpus instead of the
-  fixed Node22 runtime baseline. That makes `test-v8-version-tag.js`,
-  `test-v8-deserialize-buffer.js`, `test-v8-serdes.js`,
+- The widened functional `node:v8` helper subset is now promoted. The
+  canonical local Deno proof path now treats `internalBinding('js_stream')` as
+  a real host-object seam instead of a fake plain-object serialization path,
+  the exported `v8.Serializer` / `v8.Deserializer` constructors now surface
+  the Node-shaped `ERR_CONSTRUCT_CALL_REQUIRED` contract, and the compat
+  harness now injects the real Node20/Node22/Node24 lane into the bundle so
+  `v8.ts` can shape heap-space filtering against the executed corpus instead
+  of the fixed Node22 runtime baseline. That makes
+  `test-v8-version-tag.js`, `test-v8-deserialize-buffer.js`,
   `test-v8-stats.js`, and `test-v8-flag-type-check.js` green across Node22,
-  Node20, and Node24.
+  Node20, and Node24. `test-v8-serdes.js` remains an explicit wire-format
+  boundary because Nimbus runs on the `v8_deno_core` V8 build and cannot claim
+  Node's exact serialized bytes as portable support evidence.
 - The first pure `vm` basics wave is now fully promoted as well. The earlier
   filename/stack fidelity seams in `test-vm-basic.js`, `test-vm-context.js`,
   and `test-vm-run-in-new-context.js` are closed, and the cross-lane

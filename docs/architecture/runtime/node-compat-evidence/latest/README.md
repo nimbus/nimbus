@@ -2,7 +2,7 @@
 
 This directory is the checked-in latest snapshot of the generated Node.js runtime support evidence outputs.
 
-- evidence_generated_at: `2026-06-01T13:14:54.498846+00:00`
+- evidence_generated_at: `2026-06-01T15:09:55.591130+00:00`
 - publish_root: `docs/architecture/runtime/node-compat-evidence/latest`
 - status source: `target/node-compat/status/status-summary.json`
 - dashboard source: `target/node-compat/dashboard/dashboard-summary.json`
@@ -18,8 +18,8 @@ This directory is the checked-in latest snapshot of the generated Node.js runtim
 
 ## Expectation Coverage
 
-- Rust ignored tests: 75
-- catalog entries: 75
+- Rust ignored tests: 76
+- catalog entries: 76
 - catalog path: `tests/runtime/node/expectations/rust-watchpoints.json`
 - unexpected passes: 0
 

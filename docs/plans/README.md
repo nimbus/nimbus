@@ -17,7 +17,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - active Node runtime default-quality plan (NDS0..NDS10). Starts from
     the completed NFRC baseline where Node24 is the product default,
     Node22 is supported LTS, Node26 is Current/non-LTS, and package
-    canaries pass, but treats the current Node24 19.3% official
+    canaries pass, but treats the current Node24 17.2% official
     full-corpus pass rate and Node26 0 official fixture passes as
     insufficient for a "well-supported default" claim. Introduces a
     V8-isolate-only default-support posture with explicit full-corpus,
@@ -29,6 +29,18 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Node24/Node22 fixture and package evidence; adds real Convex app
     suites; gives Node26 real Current-line fixture evidence; and gates
     docs/CI on the stricter posture.
+- `docs/plans/deno-rusty-v8-upstream-alignment-plan.md`
+  - ready upstream-alignment plan for the Deno-family runtime forks before the
+    next serious NDS3 fixture-promotion wave. Rebuilds the `nimbus/deno` fork
+    on upstream `denoland/deno@v2.8.1`, classifies every carried and dirty
+    Deno patch as upstream-replaced, upstream-adjacent,
+    Nimbus-embedding-specific, still-needed-node-gap, or obsolete; drops
+    duplicate local logic such as upstream-reverted `module.enableCompileCache`
+    unless product-specific proof exists; audits `nimbus/rusty_v8` against
+    upstream `v149.2.0` without losing Nimbus `Locker` / `UnenteredIsolate`
+    safety; republishes immutable fork tags, repins Nimbus, reruns focused and
+    broad Node compatibility evidence, and hands the upstream-aligned baseline
+    back to NDS.
 - `docs/plans/nimbus-sandbox-plan.md`
   - proposed unified sandbox plan for every Nimbus workload on the
     `nimbus-libkrun` fork via capability profiles (lambda / desktop / gpu).
