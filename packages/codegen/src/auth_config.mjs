@@ -1,7 +1,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { build } from "esbuild";
+import { evaluateModuleDefaultExport } from "./compile_time_interpreter.mjs";
+
+// auth.config is evaluated in-binary by the compile-time TypeScript AST
+// interpreter — the same path used for schema/server extraction. It statically
+// evaluates the module's `export default` (object/array/string/number/boolean
+// literals, hoisted `const`s, template strings, and `process.env.*` reads via
+// the opt-in global below) without esbuild bundling or a dynamic `import()`, so
+// default Convex codegen — including auth.config — runs in the in-binary V8
+// tooling runtime with no external Node (BPD4/BPD7).
 
 const EMPTY_AUTH_CONFIG = Object.freeze({ providers: [] });
 const AUTH_CONFIG_CANDIDATES = ["auth.config.ts", "auth.config.js"];
@@ -12,10 +20,23 @@ async function loadAuthConfig(convexDir) {
     return EMPTY_AUTH_CONFIG;
   }
 
-  const bundledSource = await bundleAuthConfig(authConfigPath);
-  const moduleUrl = `data:text/javascript;base64,${Buffer.from(bundledSource).toString("base64")}`;
-  const module = await import(moduleUrl);
-  return normalizeAuthConfig(module.default, authConfigPath);
+  const source = await fs.readFile(authConfigPath, "utf8");
+  const evaluated = evaluateAuthConfigDefaultExport(source, authConfigPath);
+  return normalizeAuthConfig(evaluated, authConfigPath);
+}
+
+function evaluateAuthConfigDefaultExport(source, filePath) {
+  try {
+    return evaluateModuleDefaultExport(source, {
+      filePath: relativeForDisplay(filePath),
+      // Mirror the prior esbuild+import behavior: `process.env.*` reads resolve
+      // against the codegen process environment at codegen time.
+      globals: { process: { env: { ...process.env } } },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`failed to evaluate ${relativeForDisplay(filePath)}: ${message}`);
+  }
 }
 
 async function findAuthConfigPath(convexDir) {
@@ -39,41 +60,6 @@ async function findAuthConfigPath(convexDir) {
     );
   }
   return foundPaths[0] ?? null;
-}
-
-async function bundleAuthConfig(authConfigPath) {
-  const result = await build({
-    entryPoints: [authConfigPath],
-    bundle: true,
-    write: false,
-    format: "esm",
-    platform: "node",
-    target: "node20",
-    logLevel: "silent",
-    plugins: [
-      {
-        name: "convex-auth-config-stubs",
-        setup(build) {
-          build.onResolve({ filter: /^(convex|nimbus)\/server$/ }, () => ({
-            path: "convex-server-stub",
-            namespace: "convex-auth-config",
-          }));
-          build.onLoad(
-            { filter: /^convex-server-stub$/, namespace: "convex-auth-config" },
-            () => ({
-              contents: "export {};",
-              loader: "js",
-            }),
-          );
-        },
-      },
-    ],
-  });
-  const outputFile = result.outputFiles?.[0];
-  if (!outputFile) {
-    throw new Error(`failed to bundle ${relativeForDisplay(authConfigPath)}`);
-  }
-  return outputFile.text;
 }
 
 function normalizeAuthConfig(rawConfig, filePath) {

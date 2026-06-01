@@ -3,8 +3,8 @@
 A drop-in `convex` package that points an existing
 [Convex](https://convex.dev) app at a [Nimbus](../../README.md) backend with
 no source changes. It exposes the familiar `convex/react`, `convex/browser`,
-`convex/server`, and `convex/values` import surfaces and the `convex codegen`
-CLI.
+`convex/server`, and `convex/values` import surfaces. Codegen is run through the
+Nimbus CLI (`nimbus codegen`), not a package-installed `convex` binary.
 
 Under the hood this is a thin compatibility wrapper over the first-party
 [`nimbus`](../nimbus/README.md) SDK — `ConvexReactClient` extends
@@ -67,15 +67,19 @@ export const list = query({
 });
 ```
 
-## CLI
+## Codegen
+
+Codegen runs through the Nimbus CLI:
 
 ```bash
-convex codegen --app <dir>   # generate _generated/* and the runtime bundle
-convex help
+nimbus codegen --app <dir>   # generate _generated/* and the runtime bundle
 ```
 
-`convex codegen` delegates to [`@nimbus/codegen`](../codegen/README.md). It uses
-the `nimbus/` source root when present, otherwise `convex/`.
+It runs in-binary — the codegen engine ([`@nimbus/codegen`](../codegen/README.md))
+is embedded in the `nimbus` binary, not installed into your app. It uses the
+`nimbus/` source root when present, otherwise `convex/`. The generated files
+import from the matching package namespace (`convex/server`, `convex/values`, …),
+so they line up with the import surfaces above.
 
 ## Scripts
 
@@ -89,5 +93,5 @@ npm run test:differential --workspace convex # compare behavior against upstream
 ## Related
 
 - [`nimbus`](../nimbus/README.md) — the native SDK this package wraps
-- [`@nimbus/codegen`](../codegen/README.md) — the codegen engine behind `convex codegen`
+- [`@nimbus/codegen`](../codegen/README.md) — the codegen engine, embedded in the `nimbus` binary and run via `nimbus codegen`
 - [Convex adapter docs](../../docs/adapters/convex/README.md)

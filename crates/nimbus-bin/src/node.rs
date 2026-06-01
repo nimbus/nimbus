@@ -41,6 +41,18 @@ impl Adapter {
             Self::Convex | Self::CloudFunctions => true,
         }
     }
+
+    /// The embedded-package provision target for this adapter's scaffold, or
+    /// `None` when the scaffold declares no binary-provisioned Nimbus packages.
+    /// Convex apps depend on the `file:`-provisioned `convex` closure; Cloud
+    /// Functions uses developer-supplied Firebase SDKs from the registry, so
+    /// it has nothing to provision from the binary.
+    pub(crate) fn provision_target(self) -> Option<&'static str> {
+        match self {
+            Self::Convex => Some("convex"),
+            Self::CloudFunctions => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -337,6 +349,18 @@ fn node_dependency_state_path(app_dir: &Path) -> std::path::PathBuf {
         .fold(app_dir.to_path_buf(), |path, segment| path.join(segment))
 }
 
+/// Clear the persisted dependency-install fingerprint so the next
+/// `auto_install_node_dependencies` re-evaluates from scratch. Used after a
+/// package re-provision (BPD5) to avoid a stale-`node_modules` Skip.
+pub(crate) fn clear_node_dependency_state(app_dir: &Path) -> io::Result<()> {
+    let path = node_dependency_state_path(app_dir);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 fn load_node_dependency_state(app_dir: &Path) -> io::Result<Option<NodeDependencyState>> {
     let path = node_dependency_state_path(app_dir);
     if !path.is_file() {
@@ -630,10 +654,10 @@ mod tests {
             temp.path().join("package.json"),
             r#"{
   "dependencies": {
-    "convex": "^1.0.0"
+    "convex": "file:./.nimbus/packages/convex"
   },
   "devDependencies": {
-    "@nimbus/codegen": "^1.0.0"
+    "@nimbus/codegen": "file:./.nimbus/packages/codegen"
   }
 }"#,
         )
@@ -654,10 +678,10 @@ mod tests {
             temp.path().join("package.json"),
             r#"{
   "dependencies": {
-    "convex": "^1.0.0"
+    "convex": "file:./.nimbus/packages/convex"
   },
   "devDependencies": {
-    "@nimbus/codegen": "^1.0.0"
+    "@nimbus/codegen": "file:./.nimbus/packages/codegen"
   }
 }"#,
         )
@@ -687,7 +711,7 @@ mod tests {
             temp.path().join("package.json"),
             r#"{
   "dependencies": {
-    "convex": "^1.0.0"
+    "convex": "file:./.nimbus/packages/convex"
   }
 }"#,
         )
@@ -719,7 +743,7 @@ mod tests {
             temp.path().join("package.json"),
             r#"{
   "dependencies": {
-    "convex": "^1.0.0"
+    "convex": "file:./.nimbus/packages/convex"
   }
 }"#,
         )
@@ -742,7 +766,7 @@ mod tests {
             temp.path().join("package.json"),
             r#"{
   "dependencies": {
-    "convex": "^1.0.0"
+    "convex": "file:./.nimbus/packages/convex"
   }
 }"#,
         )
@@ -777,7 +801,7 @@ mod tests {
             temp.path().join("package.json"),
             r#"{
   "dependencies": {
-    "convex": "^1.0.0"
+    "convex": "file:./.nimbus/packages/convex"
   }
 }"#,
         )

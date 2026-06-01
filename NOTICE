@@ -27,3 +27,21 @@ same revision. Each retains its Apache-2.0 SPDX header; modified files carry a
   crates/nimbus-dynamodb/src/auth/sigv4/canonical.rs    (modified: axum::http -> http)
   crates/nimbus-dynamodb/src/auth/sigv4/verify.rs       (modified: axum::http -> http)
 ================================================================================
+@bufbuild/protobuf — https://github.com/bufbuild/protobuf-es
+Copyright 2021-2026 Buf Technologies, Inc.
+Licensed under the Apache License, Version 2.0, with portions under the
+3-Clause BSD License (code derived from google/protobuf). A copy of the Apache
+License is available at http://www.apache.org/licenses/LICENSE-2.0.
+
+@connectrpc/connect — https://github.com/connectrpc/connect-es
+@connectrpc/connect-web — https://github.com/connectrpc/connect-es
+Copyright 2021-2025 The Connect Authors
+Licensed under the Apache License, Version 2.0; a copy is available at
+http://www.apache.org/licenses/LICENSE-2.0.
+
+The nimbus binary embeds these three packages (their published `dist/`) to
+provision the @nimbus/firebase client offline without a registry fetch. Each
+embedded JavaScript file retains its original Apache-2.0 SPDX/copyright header.
+See docs/plans/archive/binary-embedded-package-distribution-plan.md (BPD1) and
+scripts/stage-embedded-packages.mjs.
+================================================================================

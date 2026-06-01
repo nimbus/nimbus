@@ -6,6 +6,7 @@ use clap::{Args, ValueEnum};
 
 use crate::cli_ux;
 use crate::node;
+use crate::provision;
 use crate::start::run_start_command;
 
 mod adapter;
@@ -124,6 +125,15 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
         && !skip_codegen
         && adapter.needs_node_dependencies()
     {
+        // Provision the adapter's embedded packages before installing so the
+        // `file:` specifiers resolve — on a fresh clone `.nimbus/` is gitignored
+        // and absent, and after a binary upgrade the payload must be refreshed
+        // (which also forces a Node dependency reinstall so copies can't go stale).
+        if let Some(target) = adapter.adapter().provision_target() {
+            let selection = provision::Selection::parse(target)
+                .expect("adapter provision target must be a known selection");
+            provision::ensure(&plan.app_dir, &selection)?;
+        }
         for install_dir in adapter.npm_install_dirs(&plan.app_dir) {
             node::auto_install_node_dependencies(&install_dir).await?;
         }
