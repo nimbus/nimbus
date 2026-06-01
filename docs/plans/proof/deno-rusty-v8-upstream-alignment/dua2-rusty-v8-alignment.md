@@ -8,8 +8,8 @@ verifier: scripts/verify-deno-rusty-v8-upstream-alignment.sh
 
 ## Proof Contract Checklist
 
-1. **Row and status.** DUA2 is done. The DUA branch is pushed, but PR
-   creation remains blocked by GitHub authority. The source candidate lives in
+1. **Row and status.** DUA2 is done. The DUA branch is pushed and tracked by
+   draft PR #11. The source candidate lives in
    `/Users/jack/src/github.com/nimbus/rusty_v8` on `nimbus/v149.2.0`.
 2. **Input baseline.** Upstream Deno `v2.8.1` expects `v8 = "149.2.0"`;
    Nimbus previously consumed `nimbus/rusty_v8@v149.0.0-nimbus.1`.
@@ -24,15 +24,17 @@ verifier: scripts/verify-deno-rusty-v8-upstream-alignment.sh
 6. **Broad verification.** DUA2 does not claim broad Node compatibility. DUA6
    owns post-repin Node compatibility evidence.
 7. **Residual risks.** DUA5 still owns Nimbus repin and release-artifact
-   consumption; DUA2 proves the source candidate and immutable tag only.
+   consumption. The `v149.2.0-nimbus.1` tag proves the locker source
+   candidate; a follow-up branch commit corrected release metadata and may
+   require a superseding tag if DUA5 needs that metadata inside the immutable
+   artifact source.
 
 ## Row And Status
 
 DUA2 is done because `denoland/deno@v2.8.1` pins
 `v8 = { version = "149.2.0", default-features = false, features = ["simdutf"] }`.
 That makes a matching `rusty_v8` substrate a prerequisite for rebuilding the
-Deno fork. DUA0 remains open only because autonomous PR creation is blocked by
-GitHub authority; the DUA branch itself is pushed, so source work continues.
+Deno fork. DUA0 is now closed because draft PR #11 records the control surface.
 This is the lockstep compatible runtime stack decision: align
 `rusty_v8@v149.2.0` before Deno replay, while preserving Nimbus `Locker` and
 `UnenteredIsolate` safety.
@@ -45,8 +47,9 @@ Current candidate:
 | Candidate branch | `nimbus/v149.2.0` |
 | Upstream base | `denoland/rusty_v8@v149.2.0` |
 | Upstream base SHA | `5d0e31e` |
-| Candidate head | `ce6663111a3ff8fde06bc04ba19bbbced60dbc8d` |
+| Candidate branch head | `d247474e613e8050fef0348cf11f5e01bd94cdfd` |
 | Candidate tag | `v149.2.0-nimbus.1` |
+| Candidate tag SHA | `ce6663111a3ff8fde06bc04ba19bbbced60dbc8d` |
 | Candidate remote | pushed to `origin nimbus/v149.2.0` and `origin v149.2.0-nimbus.1` |
 
 ## Input Baseline
@@ -92,6 +95,7 @@ candidate or record a real source/build/safety/runtime blocker.
 | `2e885b5` | `rename: agentstation -> nimbus` | `nimbus-embedding-specific` | Keeps fork branding/release metadata under the Nimbus fork. |
 | `e1c1895` | `style: apply rustfmt to nimbus v149 port` | `nimbus-embedding-specific` | Formatting for the replayed Nimbus fork delta. |
 | `9b77553` | `build: restore nimbus release contract` | `nimbus-embedding-specific` | Restores Nimbus release URLs/workflow metadata for the fork artifact contract. |
+| `d247474` | `Fix Nimbus v149.2 CI release metadata` | `nimbus-embedding-specific` | Corrects the release branch trigger from the stale `nimbus/v149.0.0` branch, restores Rust/C++ format checks, documents the narrower Nimbus prebuilt surface, and makes `RUSTY_V8_VERSION` invalidate Cargo's build-script cache. This commit is on the branch head after tag `.1`; DUA5 must decide whether artifact consumption needs a superseding tag. |
 
 No-benefit hold rejection: lack of immediate Node fixture gain is not a valid
 hold reason. The Deno `v2.8.1` base requires the `v149.2.0` V8 line, and
@@ -113,6 +117,9 @@ git -C /Users/jack/src/github.com/nimbus/rusty_v8 log --oneline --decorate --max
 git -C /Users/jack/src/github.com/nimbus/rusty_v8 diff --stat v149.2.0..HEAD
 git -C /Users/jack/src/github.com/nimbus/rusty_v8 tag -a v149.2.0-nimbus.1 -m "Nimbus rusty_v8 v149.2.0-nimbus.1"
 git -C /Users/jack/src/github.com/nimbus/rusty_v8 push origin nimbus/v149.2.0 v149.2.0-nimbus.1
+git -C /Users/jack/src/github.com/nimbus/rusty_v8 commit -m "Fix Nimbus v149.2 CI release metadata"
+git -C /Users/jack/src/github.com/nimbus/rusty_v8 push origin nimbus/v149.2.0
+gh run list --repo nimbus/rusty_v8 --branch nimbus/v149.2.0 --limit 10
 ```
 
 Observed:
@@ -120,8 +127,15 @@ Observed:
 - Candidate branch `nimbus/v149.2.0` was created from raw upstream
   `v149.2.0`.
 - The replayed Nimbus locker stack cherry-picked without conflicts.
-- Candidate head is `ce66631`.
+- Candidate tag head is `ce66631`.
 - Candidate tag `v149.2.0-nimbus.1` was created and pushed.
+- Candidate branch head is `d247474`, which fixes the stale branch trigger and
+  documentation discovered during review of `ce66631`.
+- GitHub branch CI started for `d247474` as run `26767133504`; the job graph
+  includes the restored `Check Rust formatting` and `Check C++ formatting`
+  steps. On the `release x86_64-unknown-linux-gnu` job, both formatting steps
+  completed successfully; the source build/test steps were still in progress at
+  this checkpoint.
 - The candidate diff from `v149.2.0` restores `Locker`,
   `UnenteredIsolate`, raw `v8::Locker` bindings, trybuild safety tests, weak
   teardown tests, Nimbus fork metadata, and release-contract wiring.
@@ -136,6 +150,8 @@ cargo check
 cargo test locker -- --nocapture
 V8_FROM_SOURCE=1 cargo test locker -- --nocapture
 V8_FROM_SOURCE=1 cargo test --test test_locker --test test_ui -- --nocapture
+git diff --check HEAD~1..HEAD
+cargo fmt --check
 ```
 
 Observed:
@@ -159,6 +175,8 @@ Observed:
   reported `1 passed, 0 failed` and all 15 compile-fail fixtures passed,
   including `locker_double_borrow`, `locker_not_send`, and
   `locker_scope_outlives`.
+- Post-review release metadata fix `d247474`: `git diff --check HEAD~1..HEAD`
+  passes and `cargo fmt --check` passes.
 
 ## Broad Verification
 
@@ -178,4 +196,7 @@ produce published fork tags and Nimbus consumes them.
 - The `v149.2.0-nimbus.1` release artifact may not exist until the pushed tag's
   release workflow publishes it. DUA5 must verify immutable artifact
   consumption before Nimbus repin.
-- DUA0 still needs the draft PR URL once GitHub PR creation authority is fixed.
+- The branch head after tag `.1` corrects CI/docs/build-script metadata. If
+  DUA5 needs those metadata fixes in the immutable source consumed by Nimbus,
+  create and verify a superseding `v149.2.0-nimbus.*` tag from `d247474` or
+  later.

@@ -1,16 +1,16 @@
 # DUA0 Baseline
 
-status: in_progress
+status: done
 date: 2026-06-01
 branch: codex/deno-rusty-v8-upstream-alignment
 worktree: /Users/jack/src/github.com/nimbus/nimbus-worktrees/deno-rusty-v8-upstream-alignment
-pr: blocked pending GitHub PR creation authority
+pr: https://github.com/nimbus/nimbus/pull/11
 verifier: scripts/verify-deno-rusty-v8-upstream-alignment.sh
 
 ## Proof Contract Checklist
 
-1. **Row and status.** DUA0 is in progress in the dedicated DUA worktree on
-   `codex/deno-rusty-v8-upstream-alignment`.
+1. **Row and status.** DUA0 is done in the dedicated DUA worktree on
+   `codex/deno-rusty-v8-upstream-alignment` with draft PR #11 open.
 2. **Input baseline.** Current fork SHAs, dirty files, Nimbus pins, upstream
    targets, and Node compatibility counts are recorded below.
 3. **Disposition table.** DUA0 does not classify patches; DUA1 owns the full
@@ -21,15 +21,14 @@ verifier: scripts/verify-deno-rusty-v8-upstream-alignment.sh
    recorded below.
 6. **Broad verification.** DUA0 has no broad runtime rerun; broad pre/post
    reruns begin in DUA6 after fork alignment.
-7. **Residual risks.** The branch must record a draft PR URL before DUA0 can
-   move to done.
+7. **Residual risks.** The DUA branch remains stacked on PR #10 until the NDS
+   branch lands or this PR is retargeted.
 
 ## Row And Status
 
 DUA0 bootstraps the Deno/rusty_v8 upstream-alignment plan that NDS3 now treats
-as the pause gate before further serious fixture promotion. This row is not
-closed until the draft PR URL is recorded in both DUA0 proof files and the plan
-ledger.
+as the pause gate before further serious fixture promotion. This row is closed
+because both DUA0 proof files and the plan ledger now record the draft PR URL.
 
 ## Input Baseline
 
@@ -42,7 +41,7 @@ Nimbus control branch:
 | Branch base | `codex/node-default-runtime-support-hardening` |
 | Base commit | `001d3c2dbe199d671184d2c9293c4d47d001c029` |
 | NDS PR | `https://github.com/nimbus/nimbus/pull/10` |
-| DUA draft PR | blocked pending GitHub PR creation authority |
+| DUA draft PR | `https://github.com/nimbus/nimbus/pull/11` |
 
 Current Nimbus runtime pins:
 
@@ -140,8 +139,10 @@ Observed at DUA0 start: `3 passed, 20 failed`. After the DUA1 overlap-audit
 evidence and the `rusty_v8`-first order correction, the verifier reports
 `5 passed, 18 failed`. The passes prove the scaffold can see the DUA0
 baseline/control-plane details, fork bump ledger, DUA docs, DUA1 patch
-classification, and compile-cache disposition; the failures are expected
-because DUA0 still needs the draft PR URL and DUA2-DUA8 are not complete yet.
+classification, and compile-cache disposition. After DUA0 PR closeout and DUA2
+rusty_v8 proof updates, the verifier reports `8 passed, 15 failed`; the
+remaining failures are expected because DUA3-DUA8 are not complete yet and the
+plan is not at closeout.
 
 Draft PR creation attempts:
 
@@ -167,6 +168,15 @@ GitHub connector PR creation was also attempted for:
 
 Observed connector result: `403 Resource not accessible by integration`.
 
+The sandbox diagnosis was wrong for `gh`: elevated GitHub CLI access succeeded
+with the existing token and created the stacked draft PR:
+
+```console
+gh pr create --repo nimbus/nimbus --base codex/node-default-runtime-support-hardening --head codex/deno-rusty-v8-upstream-alignment --draft --title "[codex] Align Deno and rusty_v8 upstream baselines"
+```
+
+Observed: `https://github.com/nimbus/nimbus/pull/11`.
+
 ## Broad Verification
 
 DUA0 is a baseline/control-plane row and does not claim a broad runtime
@@ -187,10 +197,6 @@ after the upstream-aligned fork tags are published and Nimbus is repinned.
 
 ## Residual Risks
 
-- DUA0 still needs the DUA draft PR URL recorded before it can be marked done.
-  The branch is pushed, but both available autonomous PR creation paths are
-  blocked: `gh` tokens are invalid and the GitHub connector lacks permission to
-  create this PR.
 - DUA1 may find that some `.15` fixes overlap upstream 2.8.1 and should be
   dropped instead of replayed.
 - DUA2 should update `rusty_v8` in lockstep with the selected Deno base before

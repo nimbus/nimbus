@@ -1,16 +1,16 @@
 # DUA0 Control Plane
 
-status: in_progress
+status: done
 date: 2026-06-01
 branch: codex/deno-rusty-v8-upstream-alignment
 worktree: /Users/jack/src/github.com/nimbus/nimbus-worktrees/deno-rusty-v8-upstream-alignment
-pr: blocked pending GitHub PR creation authority
+pr: https://github.com/nimbus/nimbus/pull/11
 verifier: scripts/verify-deno-rusty-v8-upstream-alignment.sh
 
 ## Proof Contract Checklist
 
-1. **Row and status.** DUA0 is the active row for the Deno/rusty_v8 upstream
-   alignment pause gate.
+1. **Row and status.** DUA0 is done; the Deno/rusty_v8 upstream-alignment
+   pause gate has a dedicated worktree, branch, verifier, and draft PR.
 2. **Input baseline.** Baseline fork pins and NDS handoff are recorded in
    `dua0-baseline.md`.
 3. **Disposition table.** Patch classification begins in DUA1; DUA0 records
@@ -21,12 +21,12 @@ verifier: scripts/verify-deno-rusty-v8-upstream-alignment.sh
    in the baseline proof.
 6. **Broad verification.** DUA0 has no broad runtime rerun; DUA6 owns the
    broad pre/post compatibility rebaseline.
-7. **Residual risks.** The control plane remains in progress until the draft PR
-   URL is recorded.
+7. **Residual risks.** The DUA branch remains stacked on PR #10 until the NDS
+   branch lands or this PR is retargeted.
 
 ## Row And Status
 
-DUA0 is in progress. This control plane exists so a future context-compacted
+DUA0 is done. This control plane exists so a future context-compacted
 agent can resume from the upstream-alignment pause gate without rediscovering
 the branch topology or accidentally continuing NDS fixture greening on the
 stale `v2.8.0-nimbus.15` fork stack.
@@ -40,7 +40,7 @@ stale `v2.8.0-nimbus.15` fork stack.
 | Base branch | `codex/node-default-runtime-support-hardening` |
 | Base commit | `001d3c2dbe199d671184d2c9293c4d47d001c029` |
 | NDS draft PR | `https://github.com/nimbus/nimbus/pull/10` |
-| DUA draft PR | blocked pending GitHub PR creation authority |
+| DUA draft PR | `https://github.com/nimbus/nimbus/pull/11` |
 | Upstream Deno target | `denoland/deno@v2.8.1` |
 | Upstream rusty_v8 target | `denoland/rusty_v8@v149.2.0` |
 
@@ -104,15 +104,22 @@ The DUA branch should be pushed and opened as a draft PR with:
 | Draft | yes |
 | Title | `[codex] Align Deno and rusty_v8 upstream baselines` |
 
-The branch was pushed to `origin/codex/deno-rusty-v8-upstream-alignment`, but
-autonomous draft PR creation is currently blocked:
+The branch was pushed to `origin/codex/deno-rusty-v8-upstream-alignment`.
+Initial sandboxed PR creation attempts looked like credential failures, but the
+token was valid when the same GitHub CLI operation was retried with elevated
+permissions:
 
 - `gh auth status` reports invalid stored tokens for the available accounts.
 - The GitHub connector returned `403 Resource not accessible by integration`
   when asked to create the stacked draft PR.
+- Elevated `gh pr create --repo nimbus/nimbus --base
+  codex/node-default-runtime-support-hardening --head
+  codex/deno-rusty-v8-upstream-alignment --draft` succeeded and created
+  `https://github.com/nimbus/nimbus/pull/11`.
 
-After the PR exists, update this file, `dua0-baseline.md`, and the DUA plan
-ledger with the PR URL, then mark DUA0 `done`.
+The repo-level AGENTS guidance now records the sandbox lesson: do not diagnose
+`gh` credentials as broken until the same operation fails with elevated
+permissions too.
 
 ## Focused Verification
 
@@ -133,7 +140,5 @@ compatibility groups after the repin.
 
 ## Residual Risks
 
-- DUA0 remains in progress until the DUA draft PR URL is recorded. The branch
-  is pushed; only PR creation authority is blocked.
 - The DUA branch is stacked on PR #10; if PR #10 is rebased or retargeted,
   retarget this branch before closeout.

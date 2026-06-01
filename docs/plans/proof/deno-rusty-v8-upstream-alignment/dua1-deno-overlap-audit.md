@@ -4,13 +4,13 @@ status: in_progress
 date: 2026-06-01
 branch: codex/deno-rusty-v8-upstream-alignment
 worktree: /Users/jack/src/github.com/nimbus/nimbus-worktrees/deno-rusty-v8-upstream-alignment
-pr: blocked pending GitHub PR creation authority
+pr: https://github.com/nimbus/nimbus/pull/11
 verifier: scripts/verify-deno-rusty-v8-upstream-alignment.sh
 
 ## Proof Contract Checklist
 
-1. **Row and status.** DUA1 is in progress. It was started while DUA0's only
-   remaining gap is draft PR creation authority.
+1. **Row and status.** DUA1 is in progress. DUA0 is now done and draft PR #11
+   is the remote review/CI control surface for this row.
 2. **Input baseline.** The Deno fork patch stack, upstream `v2.8.1` target,
    fetched tags, and current dirty-file state are recorded below.
 3. **Disposition table.** Every local Deno commit through

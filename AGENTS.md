@@ -392,6 +392,13 @@ improved later."
 
 ## Common Repo Gotchas
 
+### GitHub CLI auth under sandbox
+
+If `gh` reports an invalid token or auth failure inside the sandbox, retry the
+same GitHub CLI operation with elevated permissions before treating credentials
+as broken. Record a real credential blocker only after the elevated command
+fails too.
+
 ### Crate dependency rules
 
 These are architecture invariants — do not violate them:
