@@ -118,12 +118,14 @@ step 3 "Control-plane proof and Active Execution Pointer"
 if [ -f "${CONTROL_PROOF}" ] &&
    grep -q 'codex/node-default-runtime-support-hardening' "${CONTROL_PROOF}" &&
    grep -q '/Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening' "${CONTROL_PROOF}" &&
+   grep -q 'https://github.com/nimbus/nimbus/pull/10' "${CONTROL_PROOF}" &&
    grep -q 'Deno fork publish/repin protocol' "${CONTROL_PROOF}" &&
    grep -q 'Resume protocol' "${CONTROL_PROOF}" &&
    [ -n "${PLAN_FILE}" ] &&
    grep -q 'Active worktree | `/Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening`' "${PLAN_FILE}" &&
    grep -q 'Active branch | `codex/node-default-runtime-support-hardening`' "${PLAN_FILE}" &&
-   grep -Eq 'Current row \| `NDS(0|1)`' "${PLAN_FILE}"; then
+   grep -q 'Draft PR | `https://github.com/nimbus/nimbus/pull/10`' "${PLAN_FILE}" &&
+   grep -Eq 'Current row \| `NDS[0-9]+`' "${PLAN_FILE}"; then
   pass "Control-plane proof and Active Execution Pointer are populated"
 else
   fail "Control-plane proof or Active Execution Pointer incomplete" "Draft PR/main-visible pointer may still be pending"
@@ -165,10 +167,19 @@ else
 fi
 
 step 8 "Node24 unpromoted surface eliminated"
-if [ -f "${STATUS_SUMMARY}" ] && ! grep -q '`node24`.*Requires Unpromoted Node Surface' "${STATUS_SUMMARY}"; then
-  pass "Node24 has no unpromoted surface entries"
+if [ -f "${POSTURE_JSON}" ] && python3 - "${POSTURE_JSON}" <<'PY'
+import json
+import sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+node24 = data["lanes"]["node24"]
+if node24.get("remaining_requires_unpromoted_node_surface_count") == 0:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+then
+  pass "Node24 has no remaining unpromoted surface entries in the default-support posture"
 else
-  fail "Node24 still has Requires Unpromoted Node Surface" "NDS1/NDS3 must eliminate or reclassify them"
+  fail "Node24 still has Requires Unpromoted Node Surface" "NDS1/NDS3 must eliminate or reclassify them in the posture"
 fi
 
 step 9 "Node22/Node24 V8-isolate-required green"

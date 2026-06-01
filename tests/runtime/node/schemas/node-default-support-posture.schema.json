@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nimbus/nimbus/blob/main/tests/runtime/node/schemas/node-default-support-posture.schema.json",
+  "title": "Node default support posture",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "report_kind",
+    "generated_from",
+    "denominator_vocabulary",
+    "shim_classification_vocabulary",
+    "reason_vocabulary",
+    "lanes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "report_kind": {
+      "const": "node_default_support_posture"
+    },
+    "generated_from": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "denominator_vocabulary": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "v8_isolate_required",
+          "v8_isolate_optional",
+          "diagnostic_only_non_isolate",
+          "test_harness_only",
+          "upstream_or_platform_boundary"
+        ]
+      }
+    },
+    "shim_classification_vocabulary": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "native_isolate",
+          "compatibility_shim",
+          "isolate_emulation",
+          "test_harness_emulation",
+          "diagnostic_stub",
+          "unsupported"
+        ]
+      }
+    },
+    "reason_vocabulary": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "lanes": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}
