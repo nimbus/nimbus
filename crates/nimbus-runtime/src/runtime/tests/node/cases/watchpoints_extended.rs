@@ -785,6 +785,24 @@ fn node24_process_load_env_file_fixture() {
 }
 
 #[test]
+fn node24_util_format_fixture() {
+    run_node_compat_watchpoint(
+        "test/parallel/test-util-format.js",
+        "node24/test/parallel/test-util-format.js",
+        &[],
+    );
+}
+
+#[test]
+fn node24_perf_hooks_resourcetiming_fixture() {
+    run_node_compat_watchpoint(
+        "test/parallel/test-perf-hooks-resourcetiming.js",
+        "node24/test/parallel/test-perf-hooks-resourcetiming.js",
+        &[],
+    );
+}
+
+#[test]
 fn node22_fs_glob_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-glob.mjs",
@@ -1037,8 +1055,7 @@ fn node22_supported_lane_executes_manifested_process_and_timing_subset() {
 }
 
 #[test]
-#[ignore = "Node24 default lane watchpoint: the broad process/timing batch is classified until each carried fixture is replayed and promoted under the default-lane gate"]
-fn node24_default_lane_process_and_timing_watchpoint() {
+fn node24_default_lane_executes_process_and_timing_subset() {
     run_manifested_subset_for_lane(
         "process-and-timing",
         NodeCompatLane::Node24,

@@ -17,7 +17,6 @@ const {
   PerformanceMeasure,
   PerformanceObserver: WebPerformanceObserver,
   PerformanceObserverEntryList,
-  PerformanceResourceTiming,
 } = core.loadExtScript("ext:deno_web/15_performance.js");
 
 const {
@@ -479,11 +478,17 @@ function createHistogram(options = kEmptyObject) {
 
 // Node-compatible PerformanceObserver that throws proper Node.js errors
 class PerformanceObserver extends WebPerformanceObserver {
+  #resourceCallback = null;
+  #resourceBuffer = [];
+  #resourceScheduled = false;
+  #observesResource = false;
+
   constructor(callback) {
     if (typeof callback !== "function") {
       throw new ERR_INVALID_ARG_TYPE("callback", "Function", callback);
     }
     super(callback);
+    this.#resourceCallback = callback;
   }
 
   observe(options) {
@@ -499,11 +504,75 @@ class PerformanceObserver extends WebPerformanceObserver {
         options.entryTypes,
       );
     }
-    return super.observe(options);
+    const requestedTypes = options.entryTypes !== undefined
+      ? options.entryTypes
+      : options.type !== undefined
+      ? [options.type]
+      : [];
+    const observesResource = requestedTypes.includes("resource");
+    const webEntryTypes = options.entryTypes !== undefined
+      ? options.entryTypes.filter((entryType) => entryType !== "resource")
+      : requestedTypes.filter((entryType) => entryType !== "resource");
+
+    if (webEntryTypes.length > 0) {
+      if (options.entryTypes !== undefined) {
+        super.observe({ entryTypes: webEntryTypes, buffered: options.buffered });
+      } else {
+        super.observe(options);
+      }
+    }
+
+    if (observesResource) {
+      this.#observesResource = true;
+      if (!resourceTimingObservers.includes(this)) {
+        resourceTimingObservers.push(this);
+      }
+    }
+  }
+
+  disconnect() {
+    super.disconnect();
+    const index = resourceTimingObservers.indexOf(this);
+    if (index !== -1) {
+      resourceTimingObservers.splice(index, 1);
+    }
+    this.#resourceBuffer = [];
+    this.#observesResource = false;
+  }
+
+  takeRecords() {
+    const records = super.takeRecords();
+    if (this.#resourceBuffer.length === 0) {
+      return records;
+    }
+    const resourceRecords = this.#resourceBuffer;
+    this.#resourceBuffer = [];
+    return records.concat(resourceRecords);
+  }
+
+  [Symbol.for("nimbus.perf_hooks.enqueueResourceTiming")](entry) {
+    if (!this.#observesResource) {
+      return;
+    }
+    this.#resourceBuffer.push(entry);
+    if (this.#resourceScheduled) {
+      return;
+    }
+    this.#resourceScheduled = true;
+    queueMicrotask(() => {
+      this.#resourceScheduled = false;
+      const entries = this.#resourceBuffer;
+      this.#resourceBuffer = [];
+      if (entries.length === 0) {
+        return;
+      }
+      this.#resourceCallback(createPerformanceEntryList(entries), this);
+    });
   }
 
   static get supportedEntryTypes() {
-    return WebPerformanceObserver.supportedEntryTypes;
+    const entryTypes = WebPerformanceObserver.supportedEntryTypes;
+    return entryTypes.includes("resource") ? entryTypes : [...entryTypes, "resource"];
   }
 }
 
@@ -528,6 +597,196 @@ const seedNodeTimingMarks = () => {
 
 performance.nodeTiming = nodeTiming;
 seedNodeTimingMarks();
+
+const kResourceTiming = Symbol("kResourceTiming");
+const enqueueResourceTimingSymbol = Symbol.for("nimbus.perf_hooks.enqueueResourceTiming");
+const denoPrivateCustomInspectSymbol = Symbol.for("Deno.privateCustomInspect");
+const resourceTimingEntries = [];
+const resourceTimingObservers = [];
+
+function createPerformanceEntryList(entries) {
+  return {
+    getEntries() {
+      return entries.slice();
+    },
+    getEntriesByType(type) {
+      return entries.filter((entry) => entry.entryType === type);
+    },
+    getEntriesByName(name, type = undefined) {
+      return entries.filter((entry) =>
+        entry.name === name && (type === undefined || entry.entryType === type)
+      );
+    },
+  };
+}
+
+function resourceTimingFields(entry) {
+  return {
+    name: entry.name,
+    entryType: entry.entryType,
+    startTime: entry.startTime,
+    duration: entry.duration,
+    initiatorType: entry.initiatorType,
+    nextHopProtocol: entry.nextHopProtocol,
+    workerStart: entry.workerStart,
+    redirectStart: entry.redirectStart,
+    redirectEnd: entry.redirectEnd,
+    fetchStart: entry.fetchStart,
+    domainLookupStart: entry.domainLookupStart,
+    domainLookupEnd: entry.domainLookupEnd,
+    connectStart: entry.connectStart,
+    connectEnd: entry.connectEnd,
+    secureConnectionStart: entry.secureConnectionStart,
+    requestStart: entry.requestStart,
+    responseStart: entry.responseStart,
+    responseEnd: entry.responseEnd,
+    transferSize: entry.transferSize,
+    encodedBodySize: entry.encodedBodySize,
+    decodedBodySize: entry.decodedBodySize,
+    deliveryType: entry.deliveryType,
+    responseStatus: entry.responseStatus,
+  };
+}
+
+function normalizeResourceConnectionTiming(connection) {
+  return {
+    domainLookupStartTime: connection?.domainLookupStartTime ?? 0,
+    domainLookupEndTime: connection?.domainLookupEndTime ?? 0,
+    connectionStartTime: connection?.connectionStartTime ?? 0,
+    connectionEndTime: connection?.connectionEndTime ?? 0,
+    secureConnectionStartTime: connection?.secureConnectionStartTime ?? 0,
+    ALPNNegotiatedProtocol: connection?.ALPNNegotiatedProtocol ?? [],
+  };
+}
+
+class PerformanceResourceTiming {
+  constructor(resourceTiming = undefined) {
+    if (resourceTiming === undefined) {
+      throw new ERR_ILLEGAL_CONSTRUCTOR();
+    }
+    this[kResourceTiming] = resourceTiming;
+  }
+
+  get name() {
+    return this[kResourceTiming].name;
+  }
+
+  get entryType() {
+    return "resource";
+  }
+
+  get startTime() {
+    return this[kResourceTiming].startTime;
+  }
+
+  get duration() {
+    return Math.max(0, this.responseEnd - this.startTime);
+  }
+
+  get initiatorType() {
+    return this[kResourceTiming].initiatorType;
+  }
+
+  get workerStart() {
+    return this[kResourceTiming].finalServiceWorkerStartTime;
+  }
+
+  get redirectStart() {
+    return this[kResourceTiming].redirectStartTime;
+  }
+
+  get redirectEnd() {
+    return this[kResourceTiming].redirectEndTime;
+  }
+
+  get fetchStart() {
+    return this[kResourceTiming].postRedirectStartTime;
+  }
+
+  get domainLookupStart() {
+    return this[kResourceTiming].connection.domainLookupStartTime;
+  }
+
+  get domainLookupEnd() {
+    return this[kResourceTiming].connection.domainLookupEndTime;
+  }
+
+  get connectStart() {
+    return this[kResourceTiming].connection.connectionStartTime;
+  }
+
+  get connectEnd() {
+    return this[kResourceTiming].connection.connectionEndTime;
+  }
+
+  get secureConnectionStart() {
+    return this[kResourceTiming].connection.secureConnectionStartTime;
+  }
+
+  get nextHopProtocol() {
+    return this[kResourceTiming].connection.ALPNNegotiatedProtocol;
+  }
+
+  get requestStart() {
+    return this[kResourceTiming].finalNetworkRequestStartTime;
+  }
+
+  get responseStart() {
+    return this[kResourceTiming].finalNetworkResponseStartTime;
+  }
+
+  get responseEnd() {
+    return this[kResourceTiming].endTime;
+  }
+
+  get encodedBodySize() {
+    return this[kResourceTiming].encodedBodySize;
+  }
+
+  get decodedBodySize() {
+    return this[kResourceTiming].decodedBodySize;
+  }
+
+  get transferSize() {
+    if (this[kResourceTiming].cacheMode === "local") {
+      return 0;
+    }
+    return this.encodedBodySize === 0 ? 0 : this.encodedBodySize + 300;
+  }
+
+  get deliveryType() {
+    return this[kResourceTiming].deliveryType;
+  }
+
+  get responseStatus() {
+    return this[kResourceTiming].responseStatus;
+  }
+
+  toJSON() {
+    return resourceTimingFields(this);
+  }
+
+  [customInspectSymbol](depth, options) {
+    if (depth < 0) {
+      return "[PerformanceResourceTiming]";
+    }
+    const inspectOptions = {
+      ...options,
+      depth: options?.depth == null ? null : options.depth - 1,
+    };
+    return `PerformanceResourceTiming ${inspect(resourceTimingFields(this), inspectOptions)}`;
+  }
+
+  [denoPrivateCustomInspectSymbol](inspectValue, inspectOptions) {
+    return `PerformanceResourceTiming ${inspectValue(resourceTimingFields(this), inspectOptions)}`;
+  }
+}
+
+Object.setPrototypeOf(PerformanceResourceTiming.prototype, PerformanceEntry.prototype);
+Object.defineProperty(PerformanceResourceTiming.prototype, Symbol.toStringTag, {
+  value: "PerformanceResourceTiming",
+  configurable: true,
+});
 
 const nodeTimingMarkNames = new Set(["nodeStart", "bootstrapComplete"]);
 const isVisiblePerformanceEntry = (entry) =>
@@ -579,15 +838,64 @@ performance.clearMarks = (markName = undefined) => {
 };
 
 const originalGetEntries = performance.getEntries.bind(performance);
-performance.getEntries = () => filterVisiblePerformanceEntries(originalGetEntries());
+performance.getEntries = () =>
+  filterVisiblePerformanceEntries(originalGetEntries()).concat(resourceTimingEntries);
 
 const originalGetEntriesByType = performance.getEntriesByType.bind(performance);
-performance.getEntriesByType = (type) =>
-  filterVisiblePerformanceEntries(originalGetEntriesByType(type));
+performance.getEntriesByType = (type) => {
+  if (type === "resource") {
+    return resourceTimingEntries.slice();
+  }
+  return filterVisiblePerformanceEntries(originalGetEntriesByType(type));
+};
 
 const originalGetEntriesByName = performance.getEntriesByName.bind(performance);
-performance.getEntriesByName = (name, type = undefined) =>
-  filterVisiblePerformanceEntries(originalGetEntriesByName(name, type));
+performance.getEntriesByName = (name, type = undefined) => {
+  const webEntries = filterVisiblePerformanceEntries(originalGetEntriesByName(name, type));
+  if (type !== undefined && type !== "resource") {
+    return webEntries;
+  }
+  return webEntries.concat(resourceTimingEntries.filter((entry) => entry.name === name));
+};
+
+performance.clearResourceTimings = () => {
+  resourceTimingEntries.length = 0;
+};
+
+performance.markResourceTiming = (
+  timingInfo,
+  requestedUrl,
+  initiatorType,
+  _global,
+  cacheMode,
+  _bodyInfo,
+  responseStatus = 0,
+  deliveryType = "",
+) => {
+  const resourceTiming = new PerformanceResourceTiming({
+    name: `${requestedUrl}`,
+    startTime: timingInfo?.startTime ?? 0,
+    redirectStartTime: timingInfo?.redirectStartTime ?? 0,
+    redirectEndTime: timingInfo?.redirectEndTime ?? 0,
+    postRedirectStartTime: timingInfo?.postRedirectStartTime ?? 0,
+    finalServiceWorkerStartTime: timingInfo?.finalServiceWorkerStartTime ?? 0,
+    finalNetworkRequestStartTime: timingInfo?.finalNetworkRequestStartTime ?? 0,
+    finalNetworkResponseStartTime: timingInfo?.finalNetworkResponseStartTime ?? 0,
+    endTime: timingInfo?.endTime ?? 0,
+    encodedBodySize: timingInfo?.encodedBodySize ?? 0,
+    decodedBodySize: timingInfo?.decodedBodySize ?? 0,
+    connection: normalizeResourceConnectionTiming(timingInfo?.finalConnectionTimingInfo),
+    initiatorType: `${initiatorType}`,
+    cacheMode,
+    responseStatus,
+    deliveryType,
+  });
+  resourceTimingEntries.push(resourceTiming);
+  for (const observer of resourceTimingObservers) {
+    observer[enqueueResourceTimingSymbol](resourceTiming);
+  }
+  return resourceTiming;
+};
 
 const recordHistogramDuration = (histogram, startTime) => {
   if (!histogram || typeof histogram.record !== "function") {

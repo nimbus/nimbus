@@ -190,7 +190,7 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
                 ),
                 (
                     "node24",
-                    "runtime::tests::node_compat::node24_default_lane_process_and_timing_watchpoint",
+                    "runtime::tests::node_compat::node24_default_lane_executes_process_and_timing_subset",
                 ),
             ],
         ),
