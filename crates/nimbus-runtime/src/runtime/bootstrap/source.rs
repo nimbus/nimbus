@@ -727,6 +727,91 @@ function __nimbusCreateProcessEnvProxy() {
   });
 }
 
+function __nimbusDefineNodeFeature(target, property, value) {
+  Object.defineProperty(target, property, {
+    value,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+}
+
+function __nimbusNodeFeatureBoolean(source, property) {
+  return source && typeof source === "object" && source[property] === true;
+}
+
+function __nimbusCreateNodeProcessFeatures(source, nodeMajor) {
+  const features = {};
+  __nimbusDefineNodeFeature(
+    features,
+    "inspector",
+    __nimbusNodeFeatureBoolean(source, "inspector"),
+  );
+  __nimbusDefineNodeFeature(
+    features,
+    "debug",
+    __nimbusNodeFeatureBoolean(source, "debug"),
+  );
+  __nimbusDefineNodeFeature(features, "uv", __nimbusNodeFeatureBoolean(source, "uv"));
+  __nimbusDefineNodeFeature(features, "ipv6", __nimbusNodeFeatureBoolean(source, "ipv6"));
+  if (nodeMajor === "20") {
+    __nimbusDefineNodeFeature(
+      features,
+      "require_module",
+      __nimbusNodeFeatureBoolean(source, "require_module"),
+    );
+  } else {
+    __nimbusDefineNodeFeature(
+      features,
+      "openssl_is_boringssl",
+      __nimbusNodeFeatureBoolean(source, "openssl_is_boringssl"),
+    );
+    if (nodeMajor === "24" || nodeMajor === "26") {
+      __nimbusDefineNodeFeature(
+        features,
+        "quic",
+        source && typeof source === "object" ? source.quic : undefined,
+      );
+    }
+  }
+  __nimbusDefineNodeFeature(
+    features,
+    "tls_alpn",
+    __nimbusNodeFeatureBoolean(source, "tls_alpn"),
+  );
+  __nimbusDefineNodeFeature(
+    features,
+    "tls_sni",
+    __nimbusNodeFeatureBoolean(source, "tls_sni"),
+  );
+  __nimbusDefineNodeFeature(
+    features,
+    "tls_ocsp",
+    __nimbusNodeFeatureBoolean(source, "tls_ocsp"),
+  );
+  __nimbusDefineNodeFeature(features, "tls", __nimbusNodeFeatureBoolean(source, "tls"));
+  __nimbusDefineNodeFeature(
+    features,
+    "cached_builtins",
+    __nimbusNodeFeatureBoolean(source, "cached_builtins"),
+  );
+  if (nodeMajor !== "20") {
+    __nimbusDefineNodeFeature(
+      features,
+      "require_module",
+      __nimbusNodeFeatureBoolean(source, "require_module"),
+    );
+    const sourceTypescript =
+      source && typeof source === "object" ? source.typescript : undefined;
+    __nimbusDefineNodeFeature(
+      features,
+      "typescript",
+      typeof sourceTypescript === "string" ? sourceTypescript : sourceTypescript === true,
+    );
+  }
+  return features;
+}
+
 function __nimbusInstallRuntimeContractGlobals(contract) {
   if (!contract || typeof contract !== "object") {
     return;
@@ -831,6 +916,7 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
       if (
         property === "cwd" ||
         property === "env" ||
+        property === "features" ||
         property === "version" ||
         property === "versions" ||
         property === "release"
@@ -868,6 +954,10 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
       nextRelease.lts = nodeReleaseLts;
     }
     const release = Object.freeze(nextRelease);
+    const features = __nimbusCreateNodeProcessFeatures(
+      processBase.features,
+      nodeMajor,
+    );
     Object.defineProperty(processValue, "cwd", {
       value() {
         return cwd;
@@ -879,6 +969,12 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
     Object.defineProperty(processValue, "env", {
       value: env,
       configurable: true,
+      enumerable: true,
+      writable: false,
+    });
+    Object.defineProperty(processValue, "features", {
+      value: features,
+      configurable: false,
       enumerable: true,
       writable: false,
     });
@@ -900,6 +996,26 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
       enumerable: true,
       writable: false,
     });
+    Object.defineProperty(processValue, Symbol.toStringTag, {
+      value: "process",
+      configurable: false,
+      enumerable: false,
+      writable: true,
+    });
+    if (processBase && typeof processBase === "object") {
+      const baseFeaturesDescriptor =
+        Object.getOwnPropertyDescriptor(processBase, "features");
+      if (!baseFeaturesDescriptor || baseFeaturesDescriptor.configurable === true) {
+        try {
+          Reflect.defineProperty(processBase, "features", {
+            value: features,
+            configurable: true,
+            enumerable: true,
+            writable: false,
+          });
+        } catch (_error) {}
+      }
+    }
     Object.defineProperty(globalThis, "process", {
       value: processValue,
       configurable: true,
