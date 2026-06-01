@@ -161,6 +161,7 @@ cargo fmt --check
 rg -n "enableCompileCache|flushCompileCache|getCompileCacheDir|compileCache|internal/compile_cache|compile_cache" ext/node/polyfills/01_require.js ext/node/lib.rs ext/node/polyfills
 cargo check -p deno_core -p deno_node -p deno_node_crypto -p deno_fetch --locked
 env CARGO_ENCODED_RUSTFLAGS= cargo check -p deno_core -p deno_node -p deno_node_crypto -p deno_fetch --locked
+bash scripts/verify-deno-rusty-v8-upstream-alignment.sh
 ```
 
 Observed:
@@ -178,6 +179,9 @@ Observed:
   showed Linux and Windows assets present, but no `aarch64-apple-darwin`
   assets yet. The matching tag workflow's `release aarch64-apple-darwin` job
   was still `in_progress`.
+- `bash scripts/verify-deno-rusty-v8-upstream-alignment.sh` reports
+  `11 passed, 12 failed`. The remaining failures are DUA4 through DUA8 plus
+  closeout and repin gates that have not run yet.
 
 ## Broad Verification
 
