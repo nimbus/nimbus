@@ -180,6 +180,20 @@ historical execution detail.
     public support docs, added release-train drift automation, and wired
     PR/nightly CI gates. `/goal` control plane gated on
     `bash scripts/verify-node-faas-runtime-compatibility.sh`.
+- `docs/plans/archive/binary-embedded-package-distribution-plan.md`
+  - completed binary-embedded package distribution wave (BPD0-BPD8, closed
+    2026-05-31). Keeps every `packages/*` workspace package `"private": true`
+    and distributes the JS surfaces through the `nimbus` binary instead of npm:
+    `rust-embed` embeds dependency-closed `dist/` payloads (version-locked via
+    `build.rs`, checksummed), provisioned into apps under a gitignored
+    `.nimbus/packages/*` via `file:` specifiers; the whole default Convex
+    codegen surface (schema/server/http/auth.config) runs in-binary and offline
+    (auth.config via the compile-time AST interpreter, not esbuild), while
+    Cloud Functions is the one out-of-contract surface on the external-Node
+    runner; an explicit `nimbus packages provision` command serves existing
+    client apps. `/goal` control plane gated on
+    `BPD_FULL=1 bash scripts/verify-binary-embedded-package-distribution.sh`
+    (27 conditions). Rides under `docs/plans/distribution-plan.md`.
 - `docs/plans/archive/node-dbus-client-binding-plan.md`
   - completed Node-side systemd D-Bus binding wave (NDB0-NDB7, closed
     2026-05-29 via PR #3). Attached `lucab/zbus_systemd` (pin `=0.26000.0`)

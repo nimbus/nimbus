@@ -42,6 +42,9 @@ __pycache__
 .nimbus
 **/.nimbus
 
+# Staged JS package payloads embedded into the nimbus binary (build output; BPD)
+crates/nimbus-bin/embedded-packages/
+
 # playwright-cli snapshots/screenshots/traces (per-session artifacts)
 **/.playwright-cli/*
 # UL3 screencast is a committed deliverable referenced from the update-lifecycle plan.

@@ -139,6 +139,7 @@ pub(crate) async fn run_deploy_command(
     let app_dir = resolve_deploy_app_dir(command.app_dir.as_deref(), &cwd)?;
 
     emit_deploy_phase(format!("Preparing Nimbus app from {}", app_dir.display()));
+    crate::provision::ensure_known_app_packages(&app_dir)?;
     if command.skip_codegen {
         emit_deploy_phase("Using existing generated artifacts because --skip-codegen is set");
     } else {
@@ -278,7 +279,7 @@ fn detect_app_dir(cwd: &Path) -> PathBuf {
     cwd.to_path_buf()
 }
 
-fn package_declares_functions_framework(package_json_path: &Path) -> bool {
+pub(crate) fn package_declares_functions_framework(package_json_path: &Path) -> bool {
     let Ok(contents) = fs::read_to_string(package_json_path) else {
         return false;
     };

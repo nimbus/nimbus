@@ -25,8 +25,10 @@ Write TypeScript functions, run `nimbus dev`, and your frontend gets reactive
 queries, mutations, and real-time subscriptions -- all running on your own
 machine. ~3 minutes from install to live data in the browser.
 
-Node.js with `npm` is required for this authoring flow. `nimbus dev` runs
-codegen through `node` and auto-runs `npm install` when declared packages are
+`nimbus dev` runs the whole Convex codegen surface (schema, server, http,
+`auth.config`) **in-binary** — no external `node` is needed for codegen. Node.js
+with `npm` is still used only to `npm install` the scaffold's `file:`
+dependencies, which `nimbus dev` runs automatically when declared packages are
 missing locally.
 
 ## Quick start

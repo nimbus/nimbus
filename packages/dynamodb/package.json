@@ -6,7 +6,7 @@
   "type": "module",
   "sideEffects": false,
   "scripts": {
-    "build": "node ./src/selftest.mjs --build-only",
+    "build": "node ../../scripts/build-js-package.mjs dynamodb",
     "test": "node ./src/selftest.mjs",
     "typecheck": "node ./src/selftest.mjs --typecheck-only"
   },

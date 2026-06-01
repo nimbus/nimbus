@@ -55,10 +55,11 @@ Common Firestore helpers keep the same names on the Nimbus package:
 
 ## Quick Start
 
-Install the package:
+Provision the package (the `nimbus` binary materializes `@nimbus/firebase`
+under `.nimbus/packages/`; no registry access required):
 
 ```bash
-npm install @nimbus/firebase
+nimbus packages provision firebase
 ```
 
 Initialize the app and connect it to a local Nimbus server:

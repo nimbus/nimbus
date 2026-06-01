@@ -27,10 +27,11 @@ the import from `firebase` to `@nimbus/firebase`. ~3 minutes from install to que
 nimbus start --port 8080
 ```
 
-**2. Install the SDK:**
+**2. Provision the SDK** (the `nimbus` binary materializes `@nimbus/firebase`
+under `.nimbus/packages/` — nothing is fetched from npm):
 
 ```bash
-npm install @nimbus/firebase
+nimbus packages provision firebase
 ```
 
 **3. Write your app** (shown at the top of this page).

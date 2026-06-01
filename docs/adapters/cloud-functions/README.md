@@ -22,9 +22,24 @@ Your existing `firebase-functions/v2` handlers run on Nimbus unchanged --
 with at-least-once delivery, durable retry, and Firestore document triggers.
 ~5 minutes from install to a working trigger.
 
-Node.js with `npm` is required for this authoring flow. `nimbus dev` runs
-codegen through `node` and auto-runs `npm install` when declared packages are
-missing locally.
+The scaffold does not declare `@nimbus/codegen` (the codegen engine is embedded
+in the `nimbus` binary). Cloud Functions is the one authoring surface **out of
+the in-binary / offline contract**: its codegen runs on the **external Node.js
+runner** — the *supported* path for this surface, not a temporary fallback.
+That external process still runs the binary-materialized embedded codegen
+bundle; developer apps do not install `@nimbus/codegen`. The external process is
+needed because CF runtime bundling uses esbuild plugins that do not run in the
+in-binary V8 tooling runtime today. (The default Convex surface, by contrast,
+runs codegen entirely in-binary.)
+
+Cloud Functions also sits *outside* Nimbus's offline (no-network) guarantee: its
+`firebase-admin` and `firebase-functions` server SDKs are developer-supplied
+registry dependencies, so this scaffold needs registry access (or a preinstalled
+`node_modules`) to install them. That is by design — see the "Offline contract
+boundaries" section of
+`docs/plans/archive/binary-embedded-package-distribution-plan.md`. The Convex scaffold,
+by contrast, installs fully offline because its Nimbus packages are
+binary-provisioned under `.nimbus/packages/`.
 
 ## Quick start
 

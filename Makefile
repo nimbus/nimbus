@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: all build build-ui release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-release-version-contract verify-release-archive-layout-helper verify-release-oci-image-helper verify-release-oci-image-build-helper verify-release-oci-image-live verify-release-oci-image-live-helper verify-desktop-ui verify-tenant-isolation-conformance verify-enterprise-policy-egress verify-artifact-provenance verify-bun-jsc-runtime-contract verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime node-compat-report node-compat-dashboard node-compat-status node-compat-inventory node-compat-classifications node-compat-sync node-compat-refresh node-compat-publish-evidence node-compat-publish-docs node-compat-release-train node-compat-trends node-compat-sync-watchpoints node-compat-validate-watchpoints node-compat-oracle node-compat-canaries-bootstrap node-compat-canaries node-compat-validate-claims check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-nimbus-machine-diagnostics collect-nimbus-machine-cli-proof collect-nimbus-machine-guest-proof collect-nimbus-machine-service-proof collect-nimbus-homebrew-cask-proof collect-sqlcipher-proof-bundles collect-encryption-benchmark-evidence build-nimbus-machine-guest-binary build-linux-release-packages build-apt-repository build-fedora-release-srpms check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-nimbus-machine prepare-linux-vmm-validation-bundle verify-build-nimbus-machine-guest-binary-helper verify-build-linux-release-packages-helper verify-build-apt-repository-helper verify-build-fedora-release-srpms-helper verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-nimbus-machine-diagnostics-helper verify-nimbus-machine-recreate-helper verify-nimbus-machine-cli-proof-helper verify-nimbus-machine-guest-proof-helper verify-nimbus-homebrew-cask-proof-helper verify-collect-sqlcipher-proof-bundles-helper verify-install-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
+.PHONY: all build build-ui build-packages release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-release-version-contract verify-release-archive-layout-helper verify-release-oci-image-helper verify-release-oci-image-build-helper verify-release-oci-image-live verify-release-oci-image-live-helper verify-desktop-ui verify-tenant-isolation-conformance verify-enterprise-policy-egress verify-artifact-provenance verify-bun-jsc-runtime-contract verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime node-compat-report node-compat-dashboard node-compat-status node-compat-inventory node-compat-classifications node-compat-sync node-compat-refresh node-compat-publish-evidence node-compat-publish-docs node-compat-release-train node-compat-trends node-compat-sync-watchpoints node-compat-validate-watchpoints node-compat-oracle node-compat-canaries-bootstrap node-compat-canaries node-compat-validate-claims check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-nimbus-machine-diagnostics collect-nimbus-machine-cli-proof collect-nimbus-machine-guest-proof collect-nimbus-machine-service-proof collect-nimbus-homebrew-cask-proof collect-sqlcipher-proof-bundles collect-encryption-benchmark-evidence build-nimbus-machine-guest-binary build-linux-release-packages build-apt-repository build-fedora-release-srpms check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-nimbus-machine prepare-linux-vmm-validation-bundle verify-build-nimbus-machine-guest-binary-helper verify-build-linux-release-packages-helper verify-build-apt-repository-helper verify-build-fedora-release-srpms-helper verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-nimbus-machine-diagnostics-helper verify-nimbus-machine-recreate-helper verify-nimbus-machine-cli-proof-helper verify-nimbus-machine-guest-proof-helper verify-nimbus-homebrew-cask-proof-helper verify-collect-sqlcipher-proof-bundles-helper verify-install-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
 .PHONY: test-rust-runtime test-rust-workspace test-rust-docs test-external-providers proof-helpers ci-required prove-linux-cgroup-memory-limit verify-bun-jsc-linked-adapter verify-bun-jsc-adapter-package verify-bun-jsc-release-assets verify-bun-jsc-installed-package-proof
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
@@ -60,6 +60,38 @@ $(UI_DIST_INDEX): $(UI_CODEGEN_SENTINEL) $(UI_SPA_SOURCES)
 	npm run build -w $(UI_PKG)
 # ===========================================================================
 
+# === Embedded JS package payload dependency graph =========================
+# nimbus-bin embeds the dependency-closed package payloads via rust-embed
+# (#[folder = "$CARGO_MANIFEST_DIR/embedded-packages/"]). These recipes build
+# each provisioned package's dist and stage them + a checksummed manifest, so a
+# fresh clone running `make build` / `check` / `test` walks the graph and
+# produces the payload before cargo compiles nimbus-bin.
+# See docs/plans/archive/binary-embedded-package-distribution-plan.md (BPD1).
+
+# Provisioned (app-facing) package dirs. `codegen` is build-time tooling
+# (prebundled + embedded as a tooling run target), tracked here for sources.
+EMBEDDED_PKG_DIRS := convex nimbus firebase mongodb dynamodb codegen
+EMBEDDED_PKG_BUILD_SCRIPTS := $(shell find $(addprefix packages/,$(EMBEDDED_PKG_DIRS)) -maxdepth 1 -name build.mjs -type f 2>/dev/null)
+EMBEDDED_PKG_SOURCES := \
+  $(shell find $(addprefix packages/,$(EMBEDDED_PKG_DIRS)) -path '*/src/*' -type f 2>/dev/null) \
+  $(addsuffix /package.json,$(addprefix packages/,$(EMBEDDED_PKG_DIRS))) \
+  $(EMBEDDED_PKG_BUILD_SCRIPTS) \
+  package.json \
+  package-lock.json \
+  scripts/build-js-package.mjs \
+  scripts/check-package-closure.mjs \
+  scripts/stage-embedded-packages.mjs
+
+# Sentinel for the staged payload — stage-embedded-packages.mjs writes
+# manifest.json last, so its mtime is a faithful stamp for the whole tree.
+EMBEDDED_PKG_MANIFEST := crates/nimbus-bin/embedded-packages/manifest.json
+
+$(EMBEDDED_PKG_MANIFEST): $(EMBEDDED_PKG_SOURCES)
+	npm run build:embedded-packages
+
+build-packages: $(EMBEDDED_PKG_MANIFEST)
+# ===========================================================================
+
 # Default target
 all: check
 
@@ -69,15 +101,15 @@ all: check
 build-ui: $(UI_DIST_INDEX)
 
 # Debug build
-build: build-ui
+build: build-ui build-packages
 	cargo build --workspace
 
 # Release build (binary only)
-release: build-ui
+release: build-ui build-packages
 	cargo build --release -p nimbus-bin
 
 # Check compilation without producing artifacts
-check: $(UI_DIST_INDEX)
+check: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
 	$(SINGLE_FLIGHT) --key cargo-check-workspace -- cargo check --workspace
 
 # Format all Rust code
@@ -89,11 +121,11 @@ fmt-check:
 	cargo fmt --all --check
 
 # Run clippy lints
-clippy: $(UI_DIST_INDEX)
+clippy: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
 	$(SINGLE_FLIGHT) --key cargo-clippy-workspace -- cargo clippy --workspace --all-targets -- -D warnings
 
 # Run Rust tests
-test: $(UI_DIST_INDEX)
+test: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
 	$(SINGLE_FLIGHT) --key cargo-test-workspace -- cargo test --workspace
 
 # Run the CI runtime Rust test bucket. No UI prereq: nimbus-runtime has
@@ -115,11 +147,11 @@ NEXTEST_PARTITION_ARGS := --partition hash:$(NIMBUS_NEXTEST_PARTITION)
 NEXTEST_SINGLE_FLIGHT_SUFFIX := -$(subst /,-of-,$(NIMBUS_NEXTEST_PARTITION))
 endif
 
-test-rust-workspace: $(UI_DIST_INDEX)
+test-rust-workspace: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
 	NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 $(SINGLE_FLIGHT) --key cargo-nextest-workspace-ci$(NEXTEST_SINGLE_FLIGHT_SUFFIX) -- cargo nextest run --workspace --exclude nimbus-runtime $(NEXTEST_PARTITION_ARGS)
 
 # Run the CI workspace doctest bucket
-test-rust-docs: $(UI_DIST_INDEX)
+test-rust-docs: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
 	$(SINGLE_FLIGHT) --key cargo-doc-tests-workspace-ci -- cargo test --workspace --exclude nimbus-runtime --doc
 
 # Run explicit service-backed storage/engine provider integration tests
@@ -593,8 +625,8 @@ convex-demo: convex-demo-stop
 	@test -n "$(DEMO)" || (echo "Usage: make convex-demo DEMO=node|html|http" && exit 1)
 	@overlay_dir="$$(node ./scripts/convex-demo-overlay.mjs "$(CONVEX_DEMOS_DIR)" "$(DEMO)")"; \
 	echo "Prepared overlay at $$overlay_dir"; \
-	npx convex codegen --app "$$overlay_dir"; \
-	cargo run -p nimbus-bin -- serve --port 8080 --app-dir "$$overlay_dir"
+	cargo run -p nimbus-bin -- codegen --app "$$overlay_dir"; \
+	cargo run -p nimbus-bin -- start --port 8080 --app-dir "$$overlay_dir"
 
 convex-demo-node: DEMO=node
 convex-demo-node: convex-demo

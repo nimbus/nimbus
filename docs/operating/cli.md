@@ -187,7 +187,8 @@ cargo run -p nimbus-bin -- start [flags]
 Current command taxonomy:
 
 - `nimbus dev`
-  shipped local development server with Node.js-backed codegen, auto
+  shipped local development server with in-binary Convex codegen, Cloud
+  Functions external-Node codegen, auto
   `npm install` when declared packages are missing locally, auto-tenant
   creation (`demo`), one-shot startup codegen, debounced watched codegen
   reruns, local generation activation, and development persistence defaults
@@ -481,10 +482,15 @@ open it from a different host.
 `nimbus dev` is the local development happy path. In the current watch-loop
 slice it:
 
-- requires Node.js 22 with `npm` for Convex and Cloud Functions authoring
-  because startup codegen still runs through external `node` by default, and
-  the external authoring path verifies the `node --version` baseline before it
-  executes
+- runs the entire default Convex authoring surface — schema, server, http, and
+  `auth.config.{ts,js}` — **in-binary** by default (the `nimbus` binary's
+  embedded V8 tooling runtime), so a default Convex scaffold needs no external
+  Node.js toolchain. Cloud Functions is the one out-of-contract surface: its
+  codegen runs on the external Node.js runner (requiring Node.js 22 with `npm`,
+  whose `node --version` baseline is verified before it executes), but the
+  external process still runs the binary-materialized embedded codegen bundle
+  rather than an app-installed `@nimbus/codegen`; see
+  `docs/adapters/convex/compatibility.md` for the runner contract
 - auto-detects the app directory by walking ancestors from the current
   directory, looking at each level for a `nimbus/` or `convex/` source root,
   `firebase.json`, or `@google-cloud/functions-framework` in `package.json`.
@@ -520,12 +526,16 @@ slice it:
   guidance
 - starts the same local server path as `nimbus start`
 
-The embedded codegen runner exists only as an experimental pilot behind
-`NIMBUS_EXPERIMENTAL_EMBEDDED_CODEGEN`. Convex-compatible Node action runtime
-execution supports configured Node20, Node22, Node24, and Node26 targets through
-`convex.json`, with Node24 as the default. Firebase / Cloud Functions package
-layouts still fall back to the external Node.js runner; the embedded pilot does
-not yet support that structure.
+The whole default Convex authoring surface — schema, server, http, and
+`auth.config.{ts,js}` — runs codegen **in-binary** (auth.config is evaluated by
+the compile-time AST interpreter, not esbuild). The external Node.js runner has
+two roles: it is the *supported* runner for **Cloud Functions** (the one
+out-of-contract surface, auto-selected for detected CF apps), and a
+diagnostic/transition-only opt-out for the in-contract Convex surface via
+`NIMBUS_CODEGEN_RUNNER=external-node` (never the supported Convex path).
+Convex-compatible Node action runtime execution supports configured Node20,
+Node22, Node24, and Node26 targets through `convex.json`, with Node24 as the
+default.
 - watches the selected `nimbus/` or `convex/` source root for source changes
   and reruns codegen after a short debounce
 - validates and locally activates regenerated artifacts through the deploy
@@ -573,14 +583,18 @@ dependencies immediately.
 
 - `convex/schema.ts` — messages table with author/body fields and a `by_author` index
 - `convex/messages.ts` — list query and send mutation
-- `package.json` — project dependencies (`convex`, `@nimbus/codegen`)
+- `package.json` — declares only `convex` via `file:./.nimbus/packages/convex`
+  (the binary provisions it; no `@nimbus/codegen` dependency — codegen is
+  in-binary)
 - `tsconfig.json` — TypeScript configuration for ESNext/bundler
 - `.gitignore` — ignores `.nimbus/` and `node_modules/`
 
 **Cloud Functions adapter** (`nimbus init cloud-functions`):
 
 - `firebase.json` — Firebase project config pointing to `functions/`
-- `functions/package.json` — dependencies (`firebase-functions`, `firebase-admin`, `@nimbus/codegen`)
+- `functions/package.json` — developer-supplied Firebase SDK dependencies
+  (`firebase-functions`, `firebase-admin`) plus a `typescript` devDependency; no
+  `@nimbus/codegen` dependency
 - `functions/tsconfig.json` — TypeScript configuration for Node.js
 - `functions/src/index.ts` — starter HTTP and Firestore trigger handlers
 - `.gitignore` — ignores `.nimbus/`, `node_modules/`, and `lib/`
@@ -634,15 +648,17 @@ directory:
   `.nimbus/convex/node_external_packages.json` plus staged package roots under
   `.nimbus/convex/node_modules/` when `node.externalPackages` is used
 
-Equivalent entrypoints:
+Codegen entrypoint:
 
 - `nimbus codegen --app ./my-app`
-- `npx convex codegen --app ./my-app`
-- `npx nimbus-codegen --app ./my-app`
 
-The shared pipeline still expects generated files to be checked into version
-control for stable typechecking and frontend workflows. The start-side
-preflight described below is a startup convenience, not a watched `dev` loop.
+This is the only codegen entrypoint. There is no `npx convex codegen` /
+`npx nimbus-codegen` step — `@nimbus/codegen` is embedded in the `nimbus` binary
+and is not installed into the app.
+
+The pipeline still expects generated files to be checked into version control for
+stable typechecking and frontend workflows. The start-side preflight described
+below is a startup convenience, not a watched `dev` loop.
 
 From the repo root, the canonical JS verification entrypoints are now:
 

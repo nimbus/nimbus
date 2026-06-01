@@ -674,6 +674,12 @@ jobs:
       - name: Build nimbus-ui artifacts
         run: make build-ui
 
+      - name: Stage embedded JS package payloads
+        # The embedded-packages tree is gitignored and required at compile time
+        # by nimbus-bin's rust-embed. Stage it here so warm-sccache (which has no
+        # Node toolchain) can consume it as an artifact, mirroring coverage.yml.
+        run: make build-packages
+
       - name: Upload nimbus-ui artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -681,6 +687,14 @@ jobs:
           path: |
             packages/nimbus-ui/.nimbus/convex
             packages/nimbus-ui/dist
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload embedded-packages artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: embedded-packages
+          path: crates/nimbus-bin/embedded-packages
           if-no-files-found: error
           retention-days: 1
 
@@ -728,6 +742,15 @@ jobs:
 
       - name: Refresh nimbus-ui artifact mtimes
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Download embedded package payload
+        uses: actions/download-artifact@v8
+        with:
+          name: embedded-packages
+          path: crates/nimbus-bin/embedded-packages
+
+      - name: Refresh embedded package payload mtimes
+        run: find crates/nimbus-bin/embedded-packages -exec touch {} +
 
       - name: Warm sccache via workspace check
         run: cargo check --workspace
