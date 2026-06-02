@@ -1510,6 +1510,11 @@ fn esm_module_loader_required_gap_path(test_path: &str) -> bool {
         || test_path.starts_with("test/parallel/test-require")
 }
 
+fn async_hooks_required_gap_path(test_path: &str) -> bool {
+    test_path.starts_with("test/async-hooks/")
+        || test_path.starts_with("test/parallel/test-async-hooks")
+}
+
 fn resolve_seeded_fixture_context(
     lane_name: &str,
     test_relative_path: &str,

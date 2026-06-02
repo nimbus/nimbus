@@ -1737,6 +1737,105 @@ fn node24_default_lane_esm_data_url_cluster_watchpoint() {
     );
 }
 
+const ASYNC_HOOKS_REQUIRED_GAP_EXTRA_RUNTIME_FILES: &[&str] =
+    &["test/fixtures/person-large.jpg"];
+
+const ASYNC_HOOKS_REQUIRED_GAP_EXTRA_DIRS: &[&str] = &[
+    "test/common",
+    "test/async-hooks",
+    "test/fixtures/keys",
+];
+
+const ASYNC_HOOKS_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/async-hooks/test-async-local-storage-args.js",
+    "test/async-hooks/test-async-local-storage-async-await.js",
+    "test/async-hooks/test-async-local-storage-enable-disable.js",
+    "test/async-hooks/test-async-local-storage-enter-with.js",
+    "test/async-hooks/test-async-local-storage-http-agent.js",
+    "test/async-hooks/test-async-local-storage-http.js",
+    "test/async-hooks/test-async-local-storage-misc-stores.js",
+    "test/async-hooks/test-async-local-storage-nested.js",
+    "test/async-hooks/test-async-local-storage-no-mix-contexts.js",
+    "test/async-hooks/test-async-local-storage-promises.js",
+    "test/async-hooks/test-async-local-storage-thenable.js",
+    "test/async-hooks/test-embedder.api.async-resource.runInAsyncScope.js",
+    "test/async-hooks/test-no-assert-when-disabled.js",
+    "test/parallel/test-async-hooks-close-during-destroy.js",
+    "test/parallel/test-async-hooks-destroy-on-gc.js",
+    "test/parallel/test-async-hooks-disable-gc-tracking.js",
+    "test/parallel/test-async-hooks-http-agent-destroy.js",
+    "test/parallel/test-async-hooks-http-agent.js",
+    "test/parallel/test-async-hooks-prevent-double-destroy.js",
+    "test/parallel/test-async-hooks-run-in-async-scope-caught-exception.js",
+    "test/parallel/test-async-hooks-vm-gc.js",
+];
+
+const ASYNC_HOOKS_PROMOTED_NODE24_ONLY_PATHS: &[&str] =
+    &["test/parallel/test-async-hooks-enabledhooksexits.js"];
+
+#[test]
+fn node22_supported_lane_executes_async_hooks_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = ASYNC_HOOKS_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-async-hooks-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_async_hooks_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = ASYNC_HOOKS_PROMOTED_COMMON_PATHS
+        .iter()
+        .chain(ASYNC_HOOKS_PROMOTED_NODE24_ONLY_PATHS.iter())
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-async-hooks-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked async_hooks required-gap inventory; classify AsyncLocalStorage, promise hooks, provider lifecycle, graph/network, timer/task, GC, and host-owned failures after the first wide run"]
+fn node22_supported_lane_async_hooks_required_gap_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node22,
+        async_hooks_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-async-hooks-required-gap-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked async_hooks required-gap inventory; classify AsyncLocalStorage, promise hooks, provider lifecycle, graph/network, timer/task, GC, and host-owned failures after the first wide run"]
+fn node24_default_lane_async_hooks_required_gap_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node24,
+        async_hooks_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-async-hooks-required-gap-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
 const FS_HOST_IO_EXTRA_RUNTIME_FILES: &[&str] = &[
     "test/fixtures/a.js",
     "test/fixtures/baz.js",
