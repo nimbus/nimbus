@@ -1030,6 +1030,176 @@ fn node24_default_lane_process_diagnostics_channel_watchpoint() {
     );
 }
 
+const STREAMS_WEB_PLATFORM_EXTRA_DIRS: &[&str] = &["test/common"];
+
+const STREAMS_WEB_PLATFORM_LOW_ROI_PATHS: &[&str] =
+    &[
+        "test/parallel/test-stream-base-typechecking.js",
+        "test/parallel/test-webstreams-clone-unref.js",
+        "test/parallel/test-whatwg-webstreams-transform-stream-members.js",
+    ];
+
+const STREAMS_WEB_PLATFORM_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/async-hooks/test-async-local-storage-stream-finished.js",
+    "test/parallel/test-file-write-stream.js",
+    "test/parallel/test-file-write-stream2.js",
+    "test/parallel/test-file-write-stream3.js",
+    "test/parallel/test-file-write-stream4.js",
+    "test/parallel/test-filehandle-readablestream.js",
+    "test/parallel/test-js-stream-call-properties.js",
+    "test/parallel/test-stream-iterator-helpers-test262-tests.mjs",
+    "test/parallel/test-stream-readable-async-iterators.js",
+    "test/parallel/test-stream-readable-to-web.mjs",
+    "test/parallel/test-stream-readableListening-state.js",
+    "test/parallel/test-stream-some-find-every.mjs",
+    "test/parallel/test-stream-toWeb-allows-server-response.js",
+    "test/parallel/test-stream-transform-destroy.js",
+    "test/parallel/test-stream-wrap-drain.js",
+    "test/parallel/test-stream-wrap-encoding.js",
+    "test/parallel/test-stream-wrap.js",
+    "test/parallel/test-stream2-base64-single-char-read-end.js",
+    "test/parallel/test-stream2-basic.js",
+    "test/parallel/test-stream2-compatibility.js",
+    "test/parallel/test-stream2-decode-partial.js",
+    "test/parallel/test-stream2-httpclient-response-end.js",
+    "test/parallel/test-stream2-large-read-stall.js",
+    "test/parallel/test-stream2-objects.js",
+    "test/parallel/test-stream2-push.js",
+    "test/parallel/test-stream2-read-correct-num-bytes-in-utf8.js",
+    "test/parallel/test-stream2-read-sync-stack.js",
+    "test/parallel/test-stream2-readable-empty-buffer-no-eof.js",
+    "test/parallel/test-stream2-readable-legacy-drain.js",
+    "test/parallel/test-stream2-readable-non-empty-end.js",
+    "test/parallel/test-stream2-readable-wrap-destroy.js",
+    "test/parallel/test-stream2-readable-wrap-empty.js",
+    "test/parallel/test-stream2-readable-wrap-error.js",
+    "test/parallel/test-stream2-readable-wrap.js",
+    "test/parallel/test-stream2-set-encoding.js",
+    "test/parallel/test-stream2-transform.js",
+    "test/parallel/test-stream2-writable.js",
+    "test/parallel/test-stream3-cork-end.js",
+    "test/parallel/test-stream3-cork-uncork.js",
+    "test/parallel/test-stream3-pause-then-read.js",
+    "test/parallel/test-streams-highwatermark.js",
+    "test/parallel/test-webstream-string-tag.js",
+    "test/parallel/test-webstream-structured-clone-no-leftovers.mjs",
+    "test/parallel/test-webstreams-compose.js",
+    "test/parallel/test-webstreams-finished.js",
+    "test/parallel/test-wrap-js-stream-destroy.js",
+    "test/parallel/test-wrap-js-stream-duplex.js",
+    "test/parallel/test-wrap-js-stream-read-stop.js",
+];
+
+const STREAMS_WEB_PLATFORM_PROMOTED_NODE22_EXTRA_PATHS: &[&str] =
+    &["test/parallel/test-stream-destroy.js"];
+
+const STREAMS_WEB_PLATFORM_PROMOTED_NODE24_EXTRA_PATHS: &[&str] = &[
+    "test/parallel/test-fastutf8stream-destroy.js",
+    "test/parallel/test-fastutf8stream-end.js",
+    "test/parallel/test-fastutf8stream-flush-mocks.js",
+    "test/parallel/test-fastutf8stream-flush-sync.js",
+    "test/parallel/test-fastutf8stream-flush.js",
+    "test/parallel/test-fastutf8stream-fsync.js",
+    "test/parallel/test-fastutf8stream-minlength.js",
+    "test/parallel/test-fastutf8stream-mode.js",
+    "test/parallel/test-fastutf8stream-partial-write-utf8.js",
+    "test/parallel/test-fastutf8stream-periodicflush.js",
+    "test/parallel/test-fastutf8stream-reopen.js",
+    "test/parallel/test-fastutf8stream-retry.js",
+    "test/parallel/test-fastutf8stream-write.js",
+    "test/parallel/test-stream-readable-to-web-byob.js",
+    "test/parallel/test-webstreams-adapters-sync-write-error.js",
+    "test/parallel/test-webstreams-decompression-reject-trailing.js",
+];
+
+fn streams_web_platform_unpromoted_surface_path(path: &str) -> bool {
+    path.contains("stream")
+}
+
+fn streams_web_platform_required_fixture_paths(lane: NodeCompatLane) -> Vec<String> {
+    let mut fixture_paths =
+        node_compat_required_gap_paths_for_owner(lane, "streams-local-io/stream");
+    fixture_paths.extend(
+        node_compat_required_gap_paths_for_owner(lane, "node-compat/unpromoted-surface")
+            .into_iter()
+            .filter(|path| streams_web_platform_unpromoted_surface_path(path)),
+    );
+    fixture_paths.retain(|path| {
+        !STREAMS_WEB_PLATFORM_LOW_ROI_PATHS
+            .iter()
+            .any(|low_roi_path| path == low_roi_path)
+    });
+    fixture_paths.sort();
+    fixture_paths.dedup();
+    fixture_paths
+}
+
+#[test]
+fn node22_supported_lane_executes_streams_web_platform_promoted_batch_fixture() {
+    let mut fixture_paths: Vec<String> = STREAMS_WEB_PLATFORM_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    fixture_paths.extend(
+        STREAMS_WEB_PLATFORM_PROMOTED_NODE22_EXTRA_PATHS
+            .iter()
+            .map(|path| (*path).to_string()),
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-streams-web-platform-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        STREAMS_WEB_PLATFORM_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_streams_web_platform_promoted_batch_fixture() {
+    let mut fixture_paths: Vec<String> = STREAMS_WEB_PLATFORM_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    fixture_paths.extend(
+        STREAMS_WEB_PLATFORM_PROMOTED_NODE24_EXTRA_PATHS
+            .iter()
+            .map(|path| (*path).to_string()),
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-streams-web-platform-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        STREAMS_WEB_PLATFORM_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked streams/WebStreams required-gap inventory; excludes pinned hang diagnostics for stream-base-typechecking, webstreams-clone-unref, and WHATWG transform-stream-members"]
+fn node22_supported_lane_streams_web_platform_watchpoint() {
+    let fixture_paths = streams_web_platform_required_fixture_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-streams-web-platform-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        STREAMS_WEB_PLATFORM_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked streams/WebStreams required-gap inventory; excludes pinned hang diagnostics for stream-base-typechecking, webstreams-clone-unref, and WHATWG transform-stream-members"]
+fn node24_default_lane_streams_web_platform_watchpoint() {
+    let fixture_paths = streams_web_platform_required_fixture_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-streams-web-platform-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        STREAMS_WEB_PLATFORM_EXTRA_DIRS,
+    );
+}
+
 #[test]
 #[ignore = "Pinned later-family dependency: test-stream-writable-samecb-singletick.js asserts async_hooks TickObject allocation counts, which are owned by the broader async_hooks/task-accounting family rather than the current pure-stream contract"]
 fn node22_stream_writable_samecb_singletick_watchpoint() {
