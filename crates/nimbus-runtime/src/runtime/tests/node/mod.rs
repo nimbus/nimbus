@@ -1515,6 +1515,14 @@ fn async_hooks_required_gap_path(test_path: &str) -> bool {
         || test_path.starts_with("test/parallel/test-async-hooks")
 }
 
+fn webcrypto_required_gap_path(test_path: &str) -> bool {
+    test_path.starts_with("test/parallel/test-webcrypto")
+}
+
+fn event_required_gap_path(test_path: &str) -> bool {
+    test_path.starts_with("test/parallel/test-event")
+}
+
 fn resolve_seeded_fixture_context(
     lane_name: &str,
     test_relative_path: &str,

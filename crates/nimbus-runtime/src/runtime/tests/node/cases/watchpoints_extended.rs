@@ -1836,6 +1836,148 @@ fn node24_default_lane_async_hooks_required_gap_watchpoint() {
     );
 }
 
+const WEBCRYPTO_REQUIRED_GAP_COMMON_EXTRA_DIRS: &[&str] = &[
+    "test/common",
+    "test/fixtures/crypto",
+    "test/fixtures/keys",
+];
+
+const WEBCRYPTO_REQUIRED_GAP_NODE24_EXTRA_DIRS: &[&str] = &[
+    "test/common",
+    "test/fixtures/crypto",
+    "test/fixtures/keys",
+    "test/fixtures/webcrypto",
+];
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked WebCrypto required-gap inventory; classify algorithms, key import/export, error shape, host-policy, and Node24-only fixtures after the first wide run"]
+fn node22_supported_lane_webcrypto_required_gap_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node22,
+        webcrypto_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-webcrypto-required-gap-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        WEBCRYPTO_REQUIRED_GAP_COMMON_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked WebCrypto required-gap inventory; classify algorithms, key import/export, error shape, host-policy, and Node24-only fixtures after the first wide run"]
+fn node24_default_lane_webcrypto_required_gap_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node24,
+        webcrypto_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-webcrypto-required-gap-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        WEBCRYPTO_REQUIRED_GAP_NODE24_EXTRA_DIRS,
+    );
+}
+
+const EVENT_REQUIRED_GAP_EXTRA_DIRS: &[&str] = &["test/common"];
+
+const EVENT_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-event-capture-rejections.js",
+    "test/parallel/test-event-emitter-add-listeners.js",
+    "test/parallel/test-event-emitter-check-listener-leaks.js",
+    "test/parallel/test-event-emitter-emit-context.js",
+    "test/parallel/test-event-emitter-error-monitor.js",
+    "test/parallel/test-event-emitter-errors.js",
+    "test/parallel/test-event-emitter-get-max-listeners.js",
+    "test/parallel/test-event-emitter-invalid-listener.js",
+    "test/parallel/test-event-emitter-listener-count.js",
+    "test/parallel/test-event-emitter-listeners-side-effects.js",
+    "test/parallel/test-event-emitter-listeners.js",
+    "test/parallel/test-event-emitter-max-listeners-warning-for-null.js",
+    "test/parallel/test-event-emitter-max-listeners-warning-for-symbol.js",
+    "test/parallel/test-event-emitter-max-listeners-warning.js",
+    "test/parallel/test-event-emitter-max-listeners.js",
+    "test/parallel/test-event-emitter-method-names.js",
+    "test/parallel/test-event-emitter-modify-in-emit.js",
+    "test/parallel/test-event-emitter-no-error-provided-to-error-event.js",
+    "test/parallel/test-event-emitter-num-args.js",
+    "test/parallel/test-event-emitter-once.js",
+    "test/parallel/test-event-emitter-prepend.js",
+    "test/parallel/test-event-emitter-remove-all-listeners.js",
+    "test/parallel/test-event-emitter-remove-listeners.js",
+    "test/parallel/test-event-emitter-set-max-listeners-side-effects.js",
+    "test/parallel/test-event-emitter-special-event-names.js",
+    "test/parallel/test-event-emitter-subclass.js",
+    "test/parallel/test-event-emitter-symbols.js",
+    "test/parallel/test-event-target.js",
+    "test/parallel/test-events-customevent.js",
+    "test/parallel/test-events-on-async-iterator.js",
+    "test/parallel/test-eventsource.js",
+    "test/parallel/test-eventtarget-brandcheck.js",
+    "test/parallel/test-eventtarget-custom-inspect-does-not-throw.js",
+    "test/parallel/test-eventtarget-once-twice.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_event_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = EVENT_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-event-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        EVENT_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_event_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = EVENT_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-event-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        EVENT_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked EventEmitter/EventTarget/EventSource required-gap inventory; classify clean event semantics, async resource context, web event targets, and host-only EventSource cases after the first wide run"]
+fn node22_supported_lane_event_required_gap_watchpoint() {
+    let fixture_paths =
+        node_compat_required_gap_paths_for_selector(NodeCompatLane::Node22, event_required_gap_path);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-event-required-gap-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        EVENT_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked EventEmitter/EventTarget/EventSource required-gap inventory; classify clean event semantics, async resource context, web event targets, and host-only EventSource cases after the first wide run"]
+fn node24_default_lane_event_required_gap_watchpoint() {
+    let fixture_paths =
+        node_compat_required_gap_paths_for_selector(NodeCompatLane::Node24, event_required_gap_path);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-event-required-gap-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        EVENT_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
 const FS_HOST_IO_EXTRA_RUNTIME_FILES: &[&str] = &[
     "test/fixtures/a.js",
     "test/fixtures/baz.js",
