@@ -1978,6 +1978,47 @@ fn node24_default_lane_event_required_gap_watchpoint() {
     );
 }
 
+const NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_RUNTIME_FILES: &[&str] =
+    &["test/fixtures/aead-vectors.js"];
+
+const NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_DIRS: &[&str] = &[
+    "test/common",
+    "test/fixtures/crypto",
+    "test/fixtures/keys",
+];
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked networking/crypto required-gap inventory; classify clean crypto semantics, host-provider boundaries, Node24-only algorithms, async callbacks, worker/messageport behavior, and error-shape failures after the first wide run"]
+fn node22_supported_lane_networking_crypto_required_gap_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node22,
+        networking_crypto_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-networking-crypto-required-gap-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
+        NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked networking/crypto required-gap inventory; classify clean crypto semantics, host-provider boundaries, Node24-only algorithms, async callbacks, worker/messageport behavior, and error-shape failures after the first wide run"]
+fn node24_default_lane_networking_crypto_required_gap_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node24,
+        networking_crypto_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-networking-crypto-required-gap-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
+        NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
 const FS_HOST_IO_EXTRA_RUNTIME_FILES: &[&str] = &[
     "test/fixtures/a.js",
     "test/fixtures/baz.js",

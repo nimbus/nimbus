@@ -1523,6 +1523,11 @@ fn event_required_gap_path(test_path: &str) -> bool {
     test_path.starts_with("test/parallel/test-event")
 }
 
+fn networking_crypto_required_gap_path(test_path: &str) -> bool {
+    test_path.starts_with("test/parallel/test-crypto")
+        || test_path.starts_with("test/async-hooks/test-crypto")
+}
+
 fn resolve_seeded_fixture_context(
     lane_name: &str,
     test_relative_path: &str,
