@@ -3439,6 +3439,32 @@ fn node24_default_lane_unpromoted_parallel_discovery_watchpoint() {
     );
 }
 
+#[test]
+#[ignore = "NDS3 post-2000 broad pre-run: internal helper/module/process/WebIDL slice from node-compat/unpromoted-surface; classify internal helper failures before focused fixes"]
+fn node22_supported_lane_unpromoted_internal_helper_watchpoint() {
+    let fixture_paths = unpromoted_internal_helper_required_gap_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-unpromoted-internal-helper-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        UNPROMOTED_PARALLEL_DISCOVERY_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 post-2000 broad pre-run: internal helper/module/process/WebIDL slice from node-compat/unpromoted-surface; classify internal helper failures before focused fixes"]
+fn node24_default_lane_unpromoted_internal_helper_watchpoint() {
+    let fixture_paths = unpromoted_internal_helper_required_gap_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-unpromoted-internal-helper-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        UNPROMOTED_PARALLEL_DISCOVERY_EXTRA_DIRS,
+    );
+}
+
 const CORE_SEMANTICS_UTIL_REQUIRED_GAP_EXTRA_DIRS: &[&str] = &["test/common", "test/fixtures"];
 
 const CORE_SEMANTICS_UTIL_REQUIRED_GAP_OWNERS: &[&str] = &[

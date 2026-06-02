@@ -240,7 +240,8 @@ else
   fail "NDS2 fixture fidelity missing" "Expected process fixture, 10 module fixtures, 4 failures, and classification taxonomy"
 fi
 
-step 14 "Node24 full-corpus threshold"
+step 14 "Node24 full-corpus threshold and post-2000 proof"
+node24_threshold_ok=0
 if [ -f "${POSTURE_JSON}" ] && python3 - "${POSTURE_JSON}" <<'PY'
 import json
 import sys
@@ -251,9 +252,26 @@ if data["lanes"]["node24"].get("current_passed", 0) >= 2000:
 raise SystemExit(1)
 PY
 then
-  pass "Node24 full-corpus official pass count is at least 2000"
+  node24_threshold_ok=1
+fi
+if [ "${node24_threshold_ok}" -eq 1 ] &&
+   [ -f "${PROOF_DIR}/nds3-official-fixture-promotion.md" ] &&
+   has 'post-`2000`|post-2000' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'required-surface burn-down' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Selected post-`2000` bucket|Selected post-2000 bucket' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Node24 required gaps' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Node22 required gaps' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Node24 optional gaps' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Node22 optional gaps' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Broad pre-run counts' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Owner repos' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'ROI' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Deno (fork|tag|repin|worktree)|no Deno tag' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Checkpoint regeneration|checkpoint-only|generated evidence' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'kill-rule|Kill-rule' "${PROOF_DIR}/nds3-official-fixture-promotion.md"; then
+  pass "Node24 full-corpus threshold and post-2000 proof are present"
 else
-  fail "Node24 full-corpus threshold unmet" "Expected generated metric >= 2000"
+  fail "Node24 full-corpus threshold or post-2000 proof unmet" "Expected generated metric >= 2000 and NDS3 burn-down/throughput proof markers"
 fi
 
 step 15 "Package registry category schema"

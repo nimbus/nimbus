@@ -1748,6 +1748,28 @@ fn unpromoted_parallel_discovery_fixture_paths(lane: NodeCompatLane) -> Vec<Stri
     fixture_paths
 }
 
+fn unpromoted_internal_helper_required_gap_path(test_path: &str) -> bool {
+    test_path == "test/parallel/test-abortcontroller-internal.js"
+        || test_path == "test/parallel/test-require-process.js"
+        || test_path.starts_with("test/parallel/test-internal-")
+}
+
+fn unpromoted_internal_helper_required_gap_paths(lane: NodeCompatLane) -> Vec<String> {
+    let fixture_paths = node_compat_posture_paths_for_selector(lane, |entry| {
+        entry["support_denominator"] == "v8_isolate_required"
+            && entry["owner"] == "node-compat/unpromoted-surface"
+            && entry["test_path"]
+                .as_str()
+                .is_some_and(unpromoted_internal_helper_required_gap_path)
+    });
+    assert!(
+        (15..=60).contains(&fixture_paths.len()),
+        "unpromoted internal-helper selector should stay reviewable; selected {} fixtures",
+        fixture_paths.len()
+    );
+    fixture_paths
+}
+
 fn resolve_seeded_fixture_context(
     lane_name: &str,
     test_relative_path: &str,
