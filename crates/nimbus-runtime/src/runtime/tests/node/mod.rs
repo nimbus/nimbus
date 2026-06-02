@@ -1503,37 +1503,22 @@ fn node_compat_required_gap_paths_for_selector(
     lane: NodeCompatLane,
     selector: fn(&str) -> bool,
 ) -> Vec<String> {
-    let lane_name = node_compat_lane_name(lane);
-    let posture_path =
-        node_compat_repo_root().join("docs/architecture/runtime/node-default-support-posture.json");
-    let posture: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&posture_path).unwrap_or_else(|error| {
-            panic!(
-                "node_compat posture `{}` should read: {error}",
-                posture_path.display()
-            )
-        }))
-        .unwrap_or_else(|error| {
-            panic!(
-                "node_compat posture `{}` should parse: {error}",
-                posture_path.display()
-            )
-        });
-    let mut paths: Vec<String> = posture["lanes"][lane_name]["entries"]
-        .as_array()
-        .unwrap_or_else(|| panic!("node_compat posture lane `{lane_name}` entries should be array"))
-        .iter()
-        .filter(|entry| entry["support_denominator"] == "v8_isolate_required")
-        .filter_map(|entry| entry["test_path"].as_str())
-        .filter(|test_path| selector(test_path))
-        .map(str::to_string)
-        .collect();
-    paths.sort();
-    paths.dedup();
-    paths
+    node_compat_posture_paths_for_selector(lane, |entry| {
+        entry["support_denominator"] == "v8_isolate_required"
+            && entry["test_path"].as_str().is_some_and(selector)
+    })
 }
 
 fn node_compat_required_gap_paths_for_owner(lane: NodeCompatLane, owner: &str) -> Vec<String> {
+    node_compat_posture_paths_for_selector(lane, |entry| {
+        entry["support_denominator"] == "v8_isolate_required" && entry["owner"] == owner
+    })
+}
+
+fn node_compat_posture_paths_for_selector(
+    lane: NodeCompatLane,
+    selector: impl Fn(&serde_json::Value) -> bool,
+) -> Vec<String> {
     let lane_name = node_compat_lane_name(lane);
     let posture_path =
         node_compat_repo_root().join("docs/architecture/runtime/node-default-support-posture.json");
@@ -1554,8 +1539,7 @@ fn node_compat_required_gap_paths_for_owner(lane: NodeCompatLane, owner: &str) -
         .as_array()
         .unwrap_or_else(|| panic!("node_compat posture lane `{lane_name}` entries should be array"))
         .iter()
-        .filter(|entry| entry["support_denominator"] == "v8_isolate_required")
-        .filter(|entry| entry["owner"] == owner)
+        .filter(|entry| selector(entry))
         .filter_map(|entry| entry["test_path"].as_str())
         .map(str::to_string)
         .collect();

@@ -2237,6 +2237,158 @@ fn node24_default_lane_networking_crypto_required_gap_watchpoint() {
     );
 }
 
+const HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS: &[&str] = &["test/common"];
+
+const HTTP_CLIENT_AGENT_DIAGNOSTIC_LOW_ROI_PATHS: &[&str] = &[
+    "test/parallel/test-http-agent-domain-reused-gc.js",
+    "test/parallel/test-http-agent-reuse-drained-socket-only.js",
+    "test/parallel/test-http-client-leaky-with-double-response.js",
+];
+
+fn http_client_agent_diagnostic_path(path: &str) -> bool {
+    path.starts_with("test/parallel/test-http-client")
+        || path.starts_with("test/parallel/test-http-agent")
+}
+
+fn http_client_agent_diagnostic_paths(lane: NodeCompatLane) -> Vec<String> {
+    let mut fixture_paths = node_compat_posture_paths_for_selector(lane, |entry| {
+        entry["support_denominator"] == "diagnostic_only_non_isolate"
+            && entry["owner"] == "networking/http"
+            && entry["test_path"]
+                .as_str()
+                .is_some_and(http_client_agent_diagnostic_path)
+    });
+    fixture_paths.retain(|path| {
+        !HTTP_CLIENT_AGENT_DIAGNOSTIC_LOW_ROI_PATHS
+            .iter()
+            .any(|low_roi_path| path == low_roi_path)
+    });
+    assert!(
+        (50..=100).contains(&fixture_paths.len()),
+        "HTTP client/agent diagnostic selector should stay reviewable; selected {} fixtures",
+        fixture_paths.len()
+    );
+    fixture_paths
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked diagnostic-only HTTP client/agent core inventory; leak/GC lifecycle paths are excluded by the kill rule and remain diagnostics"]
+fn node22_supported_lane_http_client_agent_diagnostic_watchpoint() {
+    let fixture_paths = http_client_agent_diagnostic_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-http-client-agent-diagnostic-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked diagnostic-only HTTP client/agent core inventory; leak/GC lifecycle paths are excluded by the kill rule and remain diagnostics"]
+fn node24_default_lane_http_client_agent_diagnostic_watchpoint() {
+    let fixture_paths = http_client_agent_diagnostic_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-http-client-agent-diagnostic-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
+const HTTP_CLIENT_AGENT_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-http-agent-keep-alive-timeout-buffer.js",
+    "test/parallel/test-http-agent.js",
+    "test/parallel/test-http-client-abort-destroy.js",
+    "test/parallel/test-http-client-abort-event.js",
+    "test/parallel/test-http-client-abort-keep-alive-destroy-res.js",
+    "test/parallel/test-http-client-abort-keep-alive-queued-tcp-socket.js",
+    "test/parallel/test-http-client-abort-keep-alive-queued-unix-socket.js",
+    "test/parallel/test-http-client-abort-no-agent.js",
+    "test/parallel/test-http-client-abort-response-event.js",
+    "test/parallel/test-http-client-abort-unix-socket.js",
+    "test/parallel/test-http-client-abort.js",
+    "test/parallel/test-http-client-abort2.js",
+    "test/parallel/test-http-client-abort3.js",
+    "test/parallel/test-http-client-aborted-event.js",
+    "test/parallel/test-http-client-agent-abort-close-event.js",
+    "test/parallel/test-http-client-agent-end-close-event.js",
+    "test/parallel/test-http-client-agent.js",
+    "test/parallel/test-http-client-check-http-token.js",
+    "test/parallel/test-http-client-close-with-default-agent.js",
+    "test/parallel/test-http-client-default-headers-exist.js",
+    "test/parallel/test-http-client-encoding.js",
+    "test/parallel/test-http-client-error-rawbytes.js",
+    "test/parallel/test-http-client-finished.js",
+    "test/parallel/test-http-client-headers-array.js",
+    "test/parallel/test-http-client-headers-host-array.js",
+    "test/parallel/test-http-client-immediate-error.js",
+    "test/parallel/test-http-client-incomingmessage-destroy.js",
+    "test/parallel/test-http-client-input-function.js",
+    "test/parallel/test-http-client-insecure-http-parser-error.js",
+    "test/parallel/test-http-client-invalid-path.js",
+    "test/parallel/test-http-client-keep-alive-hint.js",
+    "test/parallel/test-http-client-keep-alive-release-before-finish.js",
+    "test/parallel/test-http-client-override-global-agent.js",
+    "test/parallel/test-http-client-parse-error.js",
+    "test/parallel/test-http-client-pipe-end.js",
+    "test/parallel/test-http-client-race-2.js",
+    "test/parallel/test-http-client-race.js",
+    "test/parallel/test-http-client-read-in-error.js",
+    "test/parallel/test-http-client-readable.js",
+    "test/parallel/test-http-client-reject-chunked-with-content-length.js",
+    "test/parallel/test-http-client-reject-cr-no-lf.js",
+    "test/parallel/test-http-client-reject-unexpected-agent.js",
+    "test/parallel/test-http-client-req-error-dont-double-fire.js",
+    "test/parallel/test-http-client-res-destroyed.js",
+    "test/parallel/test-http-client-response-domain.js",
+    "test/parallel/test-http-client-set-timeout-after-end.js",
+    "test/parallel/test-http-client-spurious-aborted.js",
+    "test/parallel/test-http-client-timeout-agent.js",
+    "test/parallel/test-http-client-timeout-connect-listener.js",
+    "test/parallel/test-http-client-timeout-event.js",
+    "test/parallel/test-http-client-timeout-on-connect.js",
+    "test/parallel/test-http-client-timeout-option-listeners.js",
+    "test/parallel/test-http-client-timeout-option-with-agent.js",
+    "test/parallel/test-http-client-timeout-with-data.js",
+    "test/parallel/test-http-client-timeout.js",
+    "test/parallel/test-http-client-unescaped-path.js",
+    "test/parallel/test-http-client-with-create-connection.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_http_client_agent_promoted_batch_fixture() {
+    let fixture_paths = HTTP_CLIENT_AGENT_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-http-client-agent-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_http_client_agent_promoted_batch_fixture() {
+    let fixture_paths = HTTP_CLIENT_AGENT_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-http-client-agent-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
 #[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked module-hooks required-gap inventory; classify Node24-only hooks, shared loader-hook semantics, error-shape failures, and harness topology after the first wide run"]
 fn node22_supported_lane_module_hooks_required_gap_watchpoint() {
