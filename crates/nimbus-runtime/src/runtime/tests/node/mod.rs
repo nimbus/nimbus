@@ -1570,6 +1570,89 @@ fn esm_module_loader_required_gap_path(test_path: &str) -> bool {
         || test_path.starts_with("test/parallel/test-require")
 }
 
+fn esm_inprocess_module_loader_required_gap_path(test_path: &str) -> bool {
+    let in_scope = test_path.starts_with("test/es-module/")
+        || test_path.starts_with("test/parallel/test-module")
+        || test_path == "test/parallel/test-require-process.js";
+    if !in_scope {
+        return false;
+    }
+
+    const LOW_ROI_FRAGMENTS: &[&str] = &[
+        "cjs-esm-warn",
+        "loader",
+        "long-path",
+        "module-loading-error",
+        "no-addons",
+        "nowarn-exports",
+        "preload",
+        "print-timing",
+        "readonly",
+        "setsourcemap",
+        "source-map",
+        "spawn",
+        "symlinked-peer",
+        "type-flag",
+        "typescript",
+        "vm-",
+        "wasm",
+    ];
+    if LOW_ROI_FRAGMENTS
+        .iter()
+        .any(|fragment| test_path.contains(fragment))
+    {
+        return false;
+    }
+
+    const INPROCESS_FRAGMENTS: &[&str] = &[
+        "assertion",
+        "basic-imports",
+        "cjs",
+        "conditional",
+        "data-url",
+        "detect",
+        "dynamic-import",
+        "error-cache",
+        "exports",
+        "extension",
+        "import-attributes",
+        "import-meta",
+        "imports",
+        "initialization",
+        "json",
+        "live-binding",
+        "main-lookup",
+        "module-not-found",
+        "named-exports",
+        "package",
+        "pkg",
+        "process",
+        "prototype-pollution",
+        "require-module",
+        "resolve",
+        "type-field",
+        "unknown-extension",
+        "url-extname",
+        "virtual-json",
+    ];
+    INPROCESS_FRAGMENTS
+        .iter()
+        .any(|fragment| test_path.contains(fragment))
+}
+
+fn esm_inprocess_module_loader_required_gap_paths(lane: NodeCompatLane) -> Vec<String> {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        lane,
+        esm_inprocess_module_loader_required_gap_path,
+    );
+    assert!(
+        (50..=100).contains(&fixture_paths.len()),
+        "ESM in-process module-loader selector should stay reviewable; selected {} fixtures",
+        fixture_paths.len()
+    );
+    fixture_paths
+}
+
 fn async_hooks_required_gap_path(test_path: &str) -> bool {
     test_path.starts_with("test/async-hooks/")
         || test_path.starts_with("test/parallel/test-async-hooks")

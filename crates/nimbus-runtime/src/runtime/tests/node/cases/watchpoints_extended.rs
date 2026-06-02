@@ -1896,6 +1896,34 @@ fn node24_default_lane_esm_module_loader_watchpoint() {
 }
 
 #[test]
+#[ignore = "NDS3 diagnostic: refined ESM/package-semantics inventory; keep ignored until a real module-loader implementation wave is selected"]
+fn node22_supported_lane_esm_inprocess_module_loader_watchpoint() {
+    let fixture_paths =
+        esm_inprocess_module_loader_required_gap_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-esm-inprocess-module-loader-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 diagnostic: refined ESM/package-semantics inventory; keep ignored until a real module-loader implementation wave is selected"]
+fn node24_default_lane_esm_inprocess_module_loader_watchpoint() {
+    let fixture_paths =
+        esm_inprocess_module_loader_required_gap_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-esm-inprocess-module-loader-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
+#[test]
 #[ignore = "NDS3 focused root-cause closure: data URL ESM imports; promote only after the broad ESM batch confirms the cluster is green"]
 fn node22_supported_lane_esm_data_url_cluster_watchpoint() {
     let fixture_paths: Vec<String> = ESM_DATA_URL_CLUSTER_PATHS
