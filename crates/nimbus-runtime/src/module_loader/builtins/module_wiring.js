@@ -227,5 +227,6 @@ export {
   isBuiltin,
   Module,
   register,
+  registerHooks,
 };
 export default Module;

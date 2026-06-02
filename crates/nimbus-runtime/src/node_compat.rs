@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use deno_core::FastString;
 use deno_fs::sync::MaybeArc;
+use deno_node::ops::module_hooks::LoaderHookRegistry;
 use deno_node::{NodeExtInitServices, NodeRequireLoader};
 use deno_permissions::{OpenAccessKind, PermissionsContainer};
 use deno_resolver::cache::ParsedSourceCache;
@@ -223,18 +224,52 @@ pub(crate) fn build_node_resolver(
     path_policy: &RuntimePathPolicy,
     package_json_resolver: Arc<LocalPackageJsonResolver>,
 ) -> LocalNodeResolver {
+    build_node_resolver_with_options(
+        path_policy,
+        package_json_resolver,
+        NodeResolverOptions::default(),
+    )
+}
+
+fn build_node_resolver_with_options(
+    path_policy: &RuntimePathPolicy,
+    package_json_resolver: Arc<LocalPackageJsonResolver>,
+    options: NodeResolverOptions,
+) -> LocalNodeResolver {
     NodeResolver::new(
         ScopedInNpmPackageChecker,
         DenoIsBuiltInNodeModuleChecker,
         ScopedNodeModulesResolver::new(path_policy),
         package_json_resolver,
         NodeResolutionSys::new(RealSys, None),
-        NodeResolverOptions::default(),
+        options,
     )
+}
+
+fn build_node_resolver_with_condition_override(
+    path_policy: &RuntimePathPolicy,
+    package_json_resolver: Arc<LocalPackageJsonResolver>,
+    resolution_mode: NodeResolutionMode,
+    conditions: Option<Vec<String>>,
+) -> LocalNodeResolver {
+    let mut options = NodeResolverOptions::default();
+    if let Some(conditions) = conditions {
+        let conditions = conditions.into_iter().map(Cow::Owned).collect();
+        match resolution_mode {
+            NodeResolutionMode::Import => {
+                options.conditions.import_conditions_override = Some(conditions);
+            }
+            NodeResolutionMode::Require => {
+                options.conditions.require_conditions_override = Some(conditions);
+            }
+        }
+    }
+    build_node_resolver_with_options(path_policy, package_json_resolver, options)
 }
 
 pub(crate) fn build_node_init_services(
     path_policy: &RuntimePathPolicy,
+    loader_hook_registry: Option<LoaderHookRegistry>,
 ) -> NodeExtInitServices<ScopedInNpmPackageChecker, ScopedNodeModulesResolver, RealSys> {
     let package_json_resolver = build_package_json_resolver();
     let node_resolver = build_node_resolver(path_policy, package_json_resolver.clone());
@@ -245,6 +280,7 @@ pub(crate) fn build_node_init_services(
         )),
         node_resolver: MaybeArc::new(node_resolver),
         pkg_json_resolver: package_json_resolver,
+        loader_hook_registry,
         sys: RealSys,
     }
 }
@@ -255,8 +291,23 @@ pub(crate) fn resolve_node_target(
     referrer: &str,
     resolution_mode: NodeResolutionMode,
 ) -> Result<ResolvedNodeTarget, JsErrorBox> {
+    resolve_node_target_with_conditions(path_policy, specifier, referrer, resolution_mode, None)
+}
+
+pub(crate) fn resolve_node_target_with_conditions(
+    path_policy: &RuntimePathPolicy,
+    specifier: &str,
+    referrer: &str,
+    resolution_mode: NodeResolutionMode,
+    conditions: Option<Vec<String>>,
+) -> Result<ResolvedNodeTarget, JsErrorBox> {
     let package_json_resolver = build_package_json_resolver();
-    let node_resolver = build_node_resolver(path_policy, package_json_resolver.clone());
+    let node_resolver = build_node_resolver_with_condition_override(
+        path_policy,
+        package_json_resolver.clone(),
+        resolution_mode,
+        conditions,
+    );
     let referrer_url = normalize_referrer(referrer)?;
     let resolved = match node_resolver.resolve(
         specifier,

@@ -123,8 +123,17 @@ impl NimbusRuntime {
         worker_bootstrap_state: InstalledRuntimeWorkerBootstrapState,
     ) -> Result<RuntimeOptions> {
         let path_policy = RuntimePathPolicy::for_bundle(bundle, self.policy.limits())?;
-        let mut extensions =
-            execution_extensions(self.policy.limits().compatibility_target, &path_policy);
+        let loader_hook_registry = self
+            .policy
+            .limits()
+            .compatibility_target
+            .is_node()
+            .then(deno_node::ops::module_hooks::LoaderHookRegistry::default);
+        let mut extensions = execution_extensions(
+            self.policy.limits().compatibility_target,
+            &path_policy,
+            loader_hook_registry.clone(),
+        );
         extensions.push(worker_threads_state_extension(worker_bootstrap_state));
         let startup_snapshot_bytes = startup_snapshot.map(V8StartupSnapshot::as_startup_snapshot);
         let residual_lazy_js_sources = startup_snapshot
@@ -139,6 +148,7 @@ impl NimbusRuntime {
                 path_policy.clone(),
                 self.policy.limits().compatibility_target,
                 bundle.module_code_cache(self.policy.limits()),
+                loader_hook_registry,
             ))),
             extensions,
             extension_transpiler: extension_transpiler_for_target(

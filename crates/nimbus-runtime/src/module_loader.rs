@@ -1,6 +1,8 @@
+use std::borrow::Cow;
 use std::future::Future;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use base64::Engine as _;
@@ -9,14 +11,15 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use crate::backends::v8::embedder::{
     JsErrorBox, ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader,
     ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, RequestedModuleType,
-    ResolutionKind, SourceCodeCacheInfo, resolve_import,
+    ResolutionKind, SourceCodeCacheInfo, resolve_import, v8,
 };
 use crate::limits::RuntimeCompatibilityTarget;
 use crate::node_compat::{
     ResolvedNodeModuleKind, ResolvedNodeTarget, build_package_json_resolver,
-    classify_resolved_module_kind, resolve_node_target, translate_commonjs_to_esm,
+    classify_resolved_module_kind, resolve_node_target_with_conditions, translate_commonjs_to_esm,
 };
 use crate::runtime_capabilities::RuntimePathPolicy;
+use deno_node::ops::module_hooks::LoaderHookRegistry;
 use twox_hash::XxHash64;
 
 mod code_cache;
@@ -30,11 +33,12 @@ use embedded_builtins::{
     source_for_supported_node_builtin, supports_extension_backed_node_builtin,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RestrictedModuleLoader {
     path_policy: RuntimePathPolicy,
     compatibility_target: RuntimeCompatibilityTarget,
     code_cache: Arc<BundleModuleCodeCache>,
+    loader_hook_registry: Option<LoaderHookRegistry>,
 }
 
 impl RestrictedModuleLoader {
@@ -42,12 +46,29 @@ impl RestrictedModuleLoader {
         path_policy: RuntimePathPolicy,
         compatibility_target: RuntimeCompatibilityTarget,
         code_cache: Arc<BundleModuleCodeCache>,
+        loader_hook_registry: Option<LoaderHookRegistry>,
     ) -> Self {
-        Self {
+        let loader = Self {
             path_policy,
             compatibility_target,
             code_cache,
+            loader_hook_registry,
+        };
+        if let Some(registry) = loader.loader_hook_registry.clone() {
+            let loader_for_default_resolve = loader.clone();
+            registry.set_default_resolve(Rc::new(move |specifier, referrer, conditions| {
+                loader_for_default_resolve
+                    .resolve_unhooked_with_conditions(
+                        specifier,
+                        referrer,
+                        ResolutionKind::Import,
+                        conditions,
+                    )
+                    .map(|specifier| specifier.to_string())
+                    .map_err(|error| JsErrorBox::generic(error.to_string()))
+            }));
         }
+        loader
     }
 
     fn unsupported_node_builtin_error(&self, specifier: &str) -> JsErrorBox {
@@ -170,16 +191,18 @@ impl RestrictedModuleLoader {
         supports_extension_backed_node_builtin(specifier, self.compatibility_target.is_node())
     }
 
-    fn resolve_bare_package_specifier(
+    fn resolve_bare_package_specifier_with_conditions(
         &self,
         specifier: &str,
         referrer: &str,
+        conditions: Option<Vec<String>>,
     ) -> Result<ModuleSpecifier, JsErrorBox> {
-        match resolve_node_target(
+        match resolve_node_target_with_conditions(
             &self.path_policy,
             specifier,
             referrer,
             node_resolver::ResolutionMode::Import,
+            conditions,
         )? {
             ResolvedNodeTarget::BuiltIn { module_name } => {
                 ModuleSpecifier::parse(&format!("node:{module_name}")).map_err(JsErrorBox::from_err)
@@ -198,14 +221,22 @@ impl RestrictedModuleLoader {
             }
         }
     }
-}
 
-impl ModuleLoader for RestrictedModuleLoader {
-    fn resolve(
+    fn resolve_unhooked(
         &self,
         specifier: &str,
         referrer: &str,
         kind: ResolutionKind,
+    ) -> Result<ModuleSpecifier, JsErrorBox> {
+        self.resolve_unhooked_with_conditions(specifier, referrer, kind, None)
+    }
+
+    fn resolve_unhooked_with_conditions(
+        &self,
+        specifier: &str,
+        referrer: &str,
+        kind: ResolutionKind,
+        conditions: Option<Vec<String>>,
     ) -> Result<ModuleSpecifier, JsErrorBox> {
         if specifier.starts_with("node:") {
             if specifier == NODE_FS_SPECIFIER {
@@ -232,7 +263,8 @@ impl ModuleLoader for RestrictedModuleLoader {
                 .map_err(JsErrorBox::from_err);
         }
         if is_bare_package_specifier(specifier) {
-            return self.resolve_bare_package_specifier(specifier, referrer);
+            return self
+                .resolve_bare_package_specifier_with_conditions(specifier, referrer, conditions);
         }
         let resolved = resolve_import(specifier, referrer).map_err(JsErrorBox::from_err)?;
         match kind {
@@ -243,12 +275,88 @@ impl ModuleLoader for RestrictedModuleLoader {
         Ok(resolved)
     }
 
+    fn is_commonjs_module(&self, module_specifier: &ModuleSpecifier) -> bool {
+        let Ok(path) = module_specifier.to_file_path() else {
+            return false;
+        };
+        classify_resolved_module_kind(&path, build_package_json_resolver().as_ref())
+            .is_ok_and(|kind| kind == ResolvedNodeModuleKind::CommonJs)
+    }
+
+    fn is_synthetic_commonjs_wrapper_import(&self, specifier: &str, referrer: &str) -> bool {
+        if specifier != NODE_MODULE_SPECIFIER {
+            return false;
+        }
+        ModuleSpecifier::parse(referrer).is_ok_and(|referrer| self.is_commonjs_module(&referrer))
+    }
+}
+
+impl ModuleLoader for RestrictedModuleLoader {
+    fn resolve(
+        &self,
+        specifier: &str,
+        referrer: &str,
+        kind: ResolutionKind,
+    ) -> Result<ModuleSpecifier, JsErrorBox> {
+        self.resolve_unhooked(specifier, referrer, kind)
+    }
+
+    fn resolve_with_scope(
+        &self,
+        scope: &mut v8::PinScope,
+        specifier: &str,
+        referrer: &str,
+        kind: ResolutionKind,
+    ) -> Result<ModuleSpecifier, JsErrorBox> {
+        if !self.is_synthetic_commonjs_wrapper_import(specifier, referrer)
+            && let Some(registry) = &self.loader_hook_registry
+            && let Some(url) = registry.resolve(scope, specifier, referrer)?
+        {
+            return ModuleSpecifier::parse(&url).map_err(JsErrorBox::from_err);
+        }
+        self.resolve_unhooked(specifier, referrer, kind)
+    }
+
     fn load(
         &self,
         module_specifier: &ModuleSpecifier,
         _maybe_referrer: Option<&ModuleLoadReferrer>,
         options: ModuleLoadOptions,
     ) -> ModuleLoadResponse {
+        if let Some(registry) = &self.loader_hook_registry
+            && registry.load_active.get()
+            && !options.is_synchronous
+            && !self.is_commonjs_module(module_specifier)
+        {
+            let receiver = registry.push_load(module_specifier.to_string());
+            let loader = self.clone();
+            let module_specifier = module_specifier.clone();
+            return ModuleLoadResponse::Async(Box::pin(async move {
+                match receiver.await {
+                    Ok(Ok((Some(source), format))) => Ok(ModuleSource::new(
+                        module_type_from_hook_format(format.as_deref()),
+                        ModuleSourceCode::String(source.into()),
+                        &module_specifier,
+                        None,
+                    )),
+                    Ok(Ok((None, Some(format))))
+                        if format == "builtin" && module_specifier.scheme() == "node" =>
+                    {
+                        Ok(ModuleSource::new(
+                            ModuleType::JavaScript,
+                            ModuleSourceCode::String(String::new().into()),
+                            &module_specifier,
+                            None,
+                        ))
+                    }
+                    Ok(Ok((None, _))) => {
+                        loader.load_module_source(&module_specifier, options).await
+                    }
+                    Ok(Err(error)) => Err(JsErrorBox::generic(error)),
+                    Err(_) => Err(JsErrorBox::generic("module load hook cancelled")),
+                }
+            }));
+        }
         if let Err(error) = self.ensure_allowed_specifier(module_specifier) {
             return ModuleLoadResponse::Sync(Err(error));
         }
@@ -271,6 +379,21 @@ impl ModuleLoader for RestrictedModuleLoader {
 
     fn purge_and_prevent_code_cache(&self, module_specifier: &str) {
         self.code_cache.purge_and_prevent(module_specifier);
+    }
+
+    fn should_load_synthetic_esm(&self, specifier: &str) -> bool {
+        self.loader_hook_registry
+            .as_ref()
+            .is_some_and(|registry| registry.load_active.get() && specifier.starts_with("node:"))
+    }
+}
+
+fn module_type_from_hook_format(format: Option<&str>) -> ModuleType {
+    match format {
+        Some("json") => ModuleType::Json,
+        Some("wasm") => ModuleType::Wasm,
+        Some("module") | Some("commonjs") | None => ModuleType::JavaScript,
+        Some(other) => ModuleType::Other(Cow::Owned(other.to_string())),
     }
 }
 

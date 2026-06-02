@@ -34,6 +34,7 @@ const {
   findSourceMap,
   globalPaths,
   register,
+  registerHooks,
 } = Module;
 
 const denoCreateRequire = Module.createRequire.bind(Module);

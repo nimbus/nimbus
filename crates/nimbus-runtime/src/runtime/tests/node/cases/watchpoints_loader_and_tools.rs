@@ -182,6 +182,164 @@ fn node24_loader_context_global_paths_preserve_local_precedence_regression() {
     );
 }
 
+const LOADER_CONTEXT_MODULE_EXTRA_RUNTIME_FILES: &[&str] = &[
+    "test/fixtures/baz.js",
+    "test/fixtures/empty.js",
+    "test/fixtures/pkgexports.mjs",
+    "test/fixtures/simple.wasm",
+    "test/fixtures/value.cjs",
+];
+
+const LOADER_CONTEXT_MODULE_EXTRA_DIRS: &[&str] = &[
+    "test/common",
+    "test/module-hooks",
+    "test/fixtures/es-module-loaders",
+    "test/fixtures/es-module-specifiers",
+    "test/fixtures/es-modules",
+    "test/fixtures/internal-modules",
+    "test/fixtures/module-extension-over-directory",
+    "test/fixtures/module-hooks",
+    "test/fixtures/module-require",
+    "test/fixtures/module-require-symlink",
+    "test/fixtures/node_modules",
+    "test/fixtures/packages",
+    "test/fixtures/snapshot",
+    "test/fixtures/typescript",
+    "test/fixtures/wpt/wasm",
+];
+
+const LOADER_CONTEXT_MODULE_LOW_ROI_PATHS: &[&str] = &[
+    "test/module-hooks/test-module-hooks-load-async-and-sync.js",
+    "test/module-hooks/test-module-hooks-preload.js",
+    "test/module-hooks/test-module-hooks-require-esm.js",
+    "test/parallel/test-module-loading-error.js",
+    "test/parallel/test-module-main-preserve-symlinks-fail.js",
+    "test/parallel/test-module-print-timing.mjs",
+    "test/parallel/test-module-run-main-monkey-patch.js",
+];
+
+fn loader_context_module_runnable_fixture_paths(lane: NodeCompatLane) -> Vec<String> {
+    let mut fixture_paths = node_compat_required_gap_paths_for_owner(lane, "loader-context/module");
+    fixture_paths.retain(|path| {
+        !LOADER_CONTEXT_MODULE_LOW_ROI_PATHS
+            .iter()
+            .any(|low_roi_path| path == low_roi_path)
+    });
+    fixture_paths
+}
+
+const LOADER_CONTEXT_MODULE_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/module-hooks/test-module-hooks-custom-conditions-cjs.js",
+    "test/module-hooks/test-module-hooks-custom-conditions.mjs",
+    "test/module-hooks/test-module-hooks-import-wasm.mjs",
+    "test/module-hooks/test-module-hooks-load-buffers.js",
+    "test/module-hooks/test-module-hooks-load-builtin-override-commonjs.js",
+    "test/module-hooks/test-module-hooks-load-builtin-override-json.js",
+    "test/module-hooks/test-module-hooks-load-builtin-override-module.js",
+    "test/module-hooks/test-module-hooks-load-builtin-require.js",
+    "test/module-hooks/test-module-hooks-load-chained.js",
+    "test/module-hooks/test-module-hooks-load-context-merged-esm.mjs",
+    "test/module-hooks/test-module-hooks-load-context-merged.js",
+    "test/module-hooks/test-module-hooks-load-context-optional-esm.mjs",
+    "test/module-hooks/test-module-hooks-load-context-optional.js",
+    "test/module-hooks/test-module-hooks-load-detection.js",
+    "test/module-hooks/test-module-hooks-load-esm-mock.js",
+    "test/module-hooks/test-module-hooks-load-esm.js",
+    "test/module-hooks/test-module-hooks-load-import-cjs.js",
+    "test/module-hooks/test-module-hooks-load-invalid.js",
+    "test/module-hooks/test-module-hooks-load-mock.js",
+    "test/module-hooks/test-module-hooks-load-short-circuit-required-middle.js",
+    "test/module-hooks/test-module-hooks-load-short-circuit-required-start.js",
+    "test/module-hooks/test-module-hooks-load-short-circuit.js",
+    "test/module-hooks/test-module-hooks-load-url-change-import.mjs",
+    "test/module-hooks/test-module-hooks-load-url-change-require.js",
+    "test/module-hooks/test-module-hooks-resolve-builtin-builtin-import.mjs",
+    "test/module-hooks/test-module-hooks-resolve-builtin-builtin-require.js",
+    "test/module-hooks/test-module-hooks-resolve-builtin-on-disk-import.mjs",
+    "test/module-hooks/test-module-hooks-resolve-context-merged-esm.mjs",
+    "test/module-hooks/test-module-hooks-resolve-context-merged.js",
+    "test/module-hooks/test-module-hooks-resolve-context-optional-esm.mjs",
+    "test/module-hooks/test-module-hooks-resolve-context-optional.js",
+    "test/module-hooks/test-module-hooks-resolve-import-cjs.js",
+    "test/module-hooks/test-module-hooks-resolve-invalid.js",
+    "test/module-hooks/test-module-hooks-resolve-short-circuit-required-middle.js",
+    "test/module-hooks/test-module-hooks-resolve-short-circuit-required-start.js",
+    "test/module-hooks/test-module-hooks-resolve-short-circuit.js",
+];
+
+const LOADER_CONTEXT_MODULE_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-builtin.js",
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-consistency.js",
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-create-require.js",
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-fallthrough.js",
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-imported-cjs.js",
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-loaded-with-source.js",
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-paths.js",
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-redirect.js",
+];
+
+fn loader_context_module_promoted_fixture_paths(groups: &[&[&str]]) -> Vec<String> {
+    groups
+        .iter()
+        .flat_map(|group| group.iter().copied())
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn node22_supported_lane_executes_loader_context_module_promoted_batch_fixture() {
+    let fixture_paths =
+        loader_context_module_promoted_fixture_paths(&[LOADER_CONTEXT_MODULE_PROMOTED_COMMON_PATHS]);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-loader-context-module-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        LOADER_CONTEXT_MODULE_EXTRA_RUNTIME_FILES,
+        LOADER_CONTEXT_MODULE_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_loader_context_module_promoted_batch_fixture() {
+    let fixture_paths = loader_context_module_promoted_fixture_paths(&[
+        LOADER_CONTEXT_MODULE_PROMOTED_COMMON_PATHS,
+        LOADER_CONTEXT_MODULE_PROMOTED_NODE24_ONLY_PATHS,
+    ]);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-loader-context-module-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        LOADER_CONTEXT_MODULE_EXTRA_RUNTIME_FILES,
+        LOADER_CONTEXT_MODULE_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked loader-context/module required-gap inventory; native/self-exec CLI paths are excluded by the kill rule and remain gaps"]
+fn node22_supported_lane_loader_context_module_watchpoint() {
+    let fixture_paths = loader_context_module_runnable_fixture_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-loader-context-module-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        LOADER_CONTEXT_MODULE_EXTRA_RUNTIME_FILES,
+        LOADER_CONTEXT_MODULE_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked loader-context/module required-gap inventory; native/self-exec CLI paths are excluded by the kill rule and remain gaps"]
+fn node24_default_lane_loader_context_module_watchpoint() {
+    let fixture_paths = loader_context_module_runnable_fixture_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-loader-context-module-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        LOADER_CONTEXT_MODULE_EXTRA_RUNTIME_FILES,
+        LOADER_CONTEXT_MODULE_EXTRA_DIRS,
+    );
+}
+
 #[test]
 fn node22_loader_context_followup_inspector_front_edge_batch_fixture() {
     run_node_compat_watchpoint_entry_batch(
