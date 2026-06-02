@@ -3488,8 +3488,6 @@
         "test/parallel/test-whatwg-url-custom-inspect.js",
         "test/parallel/test-whatwg-url-custom-parsing.js",
         "test/parallel/test-whatwg-url-custom-properties.js",
-        "test/parallel/test-whatwg-url-custom-searchparams.js",
-        "test/parallel/test-whatwg-url-custom-setters.js",
         "test/parallel/test-whatwg-url-invalidthis.js",
         "test/parallel/test-whatwg-webstreams-adapters-streambase.js",
         "test/parallel/test-whatwg-webstreams-adapters-to-readablewritablepair.js",

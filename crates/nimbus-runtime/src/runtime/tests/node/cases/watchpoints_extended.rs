@@ -1134,6 +1134,76 @@ fn streams_web_platform_required_fixture_paths(lane: NodeCompatLane) -> Vec<Stri
     fixture_paths
 }
 
+const WEB_PLATFORM_RESIDUAL_PREFIXES: &[&str] = &[
+    "test/parallel/test-blob",
+    "test/parallel/test-compression-decompression-stream",
+    "test/parallel/test-global-customevent",
+    "test/parallel/test-global-domexception",
+    "test/parallel/test-global-setters",
+    "test/parallel/test-urlpattern",
+    "test/parallel/test-webstream",
+    "test/parallel/test-webstreams-compression",
+    "test/parallel/test-whatwg-encoding",
+    "test/parallel/test-whatwg-url",
+    "test/parallel/test-whatwg-webstreams",
+];
+
+const WEB_PLATFORM_RESIDUAL_LOW_ROI_PATHS: &[&str] = &[
+    "test/parallel/test-whatwg-encoding-encodeinto-large.js",
+    "test/parallel/test-webstreams-clone-unref.js",
+    "test/parallel/test-whatwg-webstreams-transform-stream-members.js",
+];
+
+const WEB_PLATFORM_RESIDUAL_EXTRA_DIRS: &[&str] =
+    &["test/common", "test/fixtures", "test/fixtures/wpt"];
+
+fn web_platform_residual_required_gap_path(path: &str) -> bool {
+    WEB_PLATFORM_RESIDUAL_PREFIXES
+        .iter()
+        .any(|prefix| path.starts_with(prefix))
+}
+
+fn web_platform_residual_required_fixture_paths(lane: NodeCompatLane) -> Vec<String> {
+    let mut fixture_paths = node_compat_required_gap_paths_for_selector(
+        lane,
+        web_platform_residual_required_gap_path,
+    );
+    fixture_paths.retain(|path| {
+        !WEB_PLATFORM_RESIDUAL_LOW_ROI_PATHS
+            .iter()
+            .any(|low_roi_path| path == low_roi_path)
+    });
+    fixture_paths.sort();
+    fixture_paths.dedup();
+    fixture_paths
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked WHATWG/web-platform residual inventory; prior hang/stress paths are excluded by the kill rule"]
+fn node22_supported_lane_web_platform_residual_watchpoint() {
+    let fixture_paths = web_platform_residual_required_fixture_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-web-platform-residual-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        WEB_PLATFORM_RESIDUAL_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked WHATWG/web-platform residual inventory; prior hang/stress paths are excluded by the kill rule"]
+fn node24_default_lane_web_platform_residual_watchpoint() {
+    let fixture_paths = web_platform_residual_required_fixture_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-web-platform-residual-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        WEB_PLATFORM_RESIDUAL_EXTRA_DIRS,
+    );
+}
+
 #[test]
 fn node22_supported_lane_executes_streams_web_platform_promoted_batch_fixture() {
     let mut fixture_paths: Vec<String> = STREAMS_WEB_PLATFORM_PROMOTED_COMMON_PATHS

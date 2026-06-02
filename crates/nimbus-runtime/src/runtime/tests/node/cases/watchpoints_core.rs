@@ -88,7 +88,8 @@ fn node20_process_features_watchpoint() {
     );
 }
 
-const WHATWG_WEB_PLATFORM_COMMON_EXTRA_DIRS: &[&str] = &["test/common", "test/fixtures/wpt"];
+const WHATWG_WEB_PLATFORM_COMMON_EXTRA_DIRS: &[&str] =
+    &["test/common", "test/fixtures", "test/fixtures/wpt"];
 
 const WHATWG_WEB_PLATFORM_ENCODING_EXTRA_DIRS: &[&str] =
     &["test/common", "test/fixtures/encoding"];
@@ -114,6 +115,7 @@ const WHATWG_WEB_PLATFORM_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-whatwg-url-custom-deepequal.js",
     "test/parallel/test-whatwg-url-custom-global.js",
     "test/parallel/test-whatwg-url-custom-href-side-effect.js",
+    "test/parallel/test-whatwg-url-custom-searchparams.js",
     "test/parallel/test-whatwg-url-custom-searchparams-append.js",
     "test/parallel/test-whatwg-url-custom-searchparams-constructor.js",
     "test/parallel/test-whatwg-url-custom-searchparams-delete.js",
@@ -128,6 +130,7 @@ const WHATWG_WEB_PLATFORM_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-whatwg-url-custom-searchparams-sort.js",
     "test/parallel/test-whatwg-url-custom-searchparams-stringifier.js",
     "test/parallel/test-whatwg-url-custom-searchparams-values.js",
+    "test/parallel/test-whatwg-url-custom-setters.js",
     "test/parallel/test-whatwg-url-custom-tostringtag.js",
     "test/parallel/test-whatwg-url-override-hostname.js",
     "test/parallel/test-whatwg-url-properties.js",
