@@ -242,6 +242,10 @@ fn node_compat_supported_node_options_flag(token: &str) -> bool {
     token == "--pending-deprecation"
         || token == "--no-warnings"
         || token == "--trace-warnings"
+        || token == "--experimental-require-module"
+        || token == "--require-module"
+        || token == "--no-experimental-require-module"
+        || token == "--no-require-module"
         || token.starts_with("--unhandled-rejections=")
 }
 
@@ -282,11 +286,29 @@ pub(super) fn fixture_requested_node_options(test_source: &str) -> Vec<String> {
 }
 
 fn fixture_requested_node_conditions(flags: &[String]) -> Vec<String> {
-    flags
+    let require_module = flags
+        .iter()
+        .any(|flag| flag == "--experimental-require-module" || flag == "--require-module")
+        && !flags.iter().any(|flag| {
+            flag == "--no-experimental-require-module" || flag == "--no-require-module"
+        });
+    let mut conditions = Vec::new();
+    if require_module {
+        push_node_condition(&mut conditions, "module-sync");
+    }
+    for condition in flags
         .iter()
         .filter_map(|flag| flag.strip_prefix("--conditions="))
-        .map(ToOwned::to_owned)
-        .collect()
+    {
+        push_node_condition(&mut conditions, condition);
+    }
+    conditions
+}
+
+fn push_node_condition(conditions: &mut Vec<String>, condition: &str) {
+    if !condition.is_empty() && !conditions.iter().any(|existing| existing == condition) {
+        conditions.push(condition.to_string());
+    }
 }
 
 pub(super) fn fixture_requests_pending_deprecation(test_source: &str) -> bool {
@@ -319,6 +341,30 @@ fn fixture_requested_node_options_filters_and_preserves_order() {
         vec!["custom".to_string(), "another".to_string()]
     );
     assert!(fixture_requests_pending_deprecation(source));
+}
+
+#[test]
+fn fixture_requested_node_conditions_include_module_sync_when_require_module_is_enabled() {
+    let flags = fixture_requested_node_options(
+        "// Flags: --conditions=custom --experimental-require-module -C another",
+    );
+
+    assert_eq!(
+        fixture_requested_node_conditions(&flags),
+        vec![
+            "module-sync".to_string(),
+            "custom".to_string(),
+            "another".to_string(),
+        ]
+    );
+
+    let disabled = fixture_requested_node_options(
+        "// Flags: --experimental-require-module --no-experimental-require-module --conditions=custom",
+    );
+    assert_eq!(
+        fixture_requested_node_conditions(&disabled),
+        vec!["custom".to_string()]
+    );
 }
 
 fn scoped_node_options_flags(flags: &[String]) -> ScopedProcessEnvVar {

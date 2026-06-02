@@ -280,7 +280,9 @@ impl RestrictedModuleLoader {
             return self
                 .resolve_bare_package_specifier_with_conditions(specifier, referrer, conditions);
         }
-        let resolved = resolve_import(specifier, referrer).map_err(JsErrorBox::from_err)?;
+        let resolved = normalize_file_module_specifier(
+            resolve_import(specifier, referrer).map_err(JsErrorBox::from_err)?,
+        )?;
         match kind {
             ResolutionKind::MainModule | ResolutionKind::Import | ResolutionKind::DynamicImport => {
                 self.ensure_allowed_specifier(&resolved)?
@@ -586,6 +588,23 @@ fn hash_module_source_bytes(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
+fn normalize_file_module_specifier(
+    module_specifier: ModuleSpecifier,
+) -> Result<ModuleSpecifier, JsErrorBox> {
+    if module_specifier.scheme() != "file" {
+        return Ok(module_specifier);
+    }
+    let path = module_specifier.to_file_path().map_err(|_| {
+        JsErrorBox::generic(format!("invalid file module specifier: {module_specifier}"))
+    })?;
+    ModuleSpecifier::from_file_path(&path).map_err(|_| {
+        JsErrorBox::generic(format!(
+            "file module path cannot be represented as a URL: {}",
+            path.display()
+        ))
+    })
+}
+
 fn is_bare_package_specifier(specifier: &str) -> bool {
     !specifier.is_empty()
         && !specifier.starts_with("./")
@@ -648,6 +667,21 @@ mod tests {
 
         assert_eq!(module_type, ModuleType::JavaScript);
         assert_eq!(source, b"export default 7");
+    }
+
+    #[test]
+    fn file_module_specifier_normalization_decodes_percent_encoded_path_segments() {
+        let path = std::env::temp_dir().join("test-esm-shebang.mjs");
+        let expected = ModuleSpecifier::from_file_path(&path).unwrap();
+        let encoded = expected
+            .as_str()
+            .replace("test-esm-shebang.mjs", "test-esm-shebang%2emjs");
+        assert_ne!(encoded, expected.as_str());
+
+        let normalized =
+            normalize_file_module_specifier(ModuleSpecifier::parse(&encoded).unwrap()).unwrap();
+
+        assert_eq!(normalized, expected);
     }
 
     #[test]
