@@ -822,6 +822,40 @@ const PROCESS_TIMERS_EXTRA_RUNTIME_FILES: &[&str] = &[
 
 const PROCESS_TIMERS_EXTRA_DIRS: &[&str] = &["test/common"];
 
+const PROCESS_TIMING_RUNTIME_RESIDUAL_OWNERS: &[&str] = &[
+    "process-and-timing/timers",
+    "process-and-timing/diagnostics-channel",
+    "process-and-timing/perf-hooks",
+    "process-and-timing/os",
+];
+
+const PROCESS_TIMING_RUNTIME_RESIDUAL_PREFIXES: &[&str] = &[
+    "test/parallel/test-promise-",
+    "test/parallel/test-promises-",
+    "test/parallel/test-track-promises-",
+    "test/parallel/test-queue-microtask",
+    "test/parallel/test-abortcontroller",
+    "test/parallel/test-aborted-util",
+    "test/parallel/test-trace-events-",
+];
+
+const PROCESS_TIMING_RUNTIME_RESIDUAL_EXTRA_DIRS: &[&str] = &["test/common"];
+
+fn process_timing_runtime_residual_fixture_paths(lane: NodeCompatLane) -> Vec<String> {
+    let mut fixture_paths: Vec<String> = PROCESS_TIMING_RUNTIME_RESIDUAL_OWNERS
+        .iter()
+        .flat_map(|owner| node_compat_required_gap_paths_for_owner(lane, owner))
+        .collect();
+    fixture_paths.extend(node_compat_required_gap_paths_for_selector(lane, |path| {
+        PROCESS_TIMING_RUNTIME_RESIDUAL_PREFIXES
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
+    }));
+    fixture_paths.sort();
+    fixture_paths.dedup();
+    fixture_paths
+}
+
 fn process_timers_runnable_fixture_paths(lane: NodeCompatLane) -> Vec<String> {
     node_compat_required_gap_paths_for_owner(lane, "process-and-timing/timers")
 }
@@ -862,6 +896,35 @@ const PROCESS_TIMERS_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
     "test/parallel/test-timers-negative-duration-warning.js",
     "test/parallel/test-timers-not-emit-duration-zero.js",
     "test/parallel/test-timers-unenroll-unref-interval.js",
+];
+
+const PROCESS_TIMING_RUNTIME_RESIDUAL_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-perf-gc-crash.js",
+    "test/parallel/test-trace-events-all.js",
+    "test/parallel/test-trace-events-async-hooks.js",
+    "test/parallel/test-trace-events-file-pattern.js",
+    "test/parallel/test-trace-events-get-category-enabled-buffer.js",
+    "test/parallel/test-trace-events-http.js",
+    "test/parallel/test-trace-events-v8.js",
+];
+
+const PROCESS_TIMING_RUNTIME_RESIDUAL_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
+    "test/parallel/test-perf-hooks-timerify-basic.js",
+    "test/parallel/test-perf-hooks-timerify-constructor.js",
+    "test/parallel/test-perf-hooks-timerify-error.js",
+    "test/parallel/test-perf-hooks-timerify-histogram-async.mjs",
+    "test/parallel/test-perf-hooks-timerify-invalid-args.js",
+    "test/parallel/test-perf-hooks-timerify-multiple-wrapping.js",
+    "test/parallel/test-perf-hooks-timerify-return-value.js",
+    "test/parallel/test-trace-events-api.js",
+    "test/parallel/test-trace-events-binding.js",
+    "test/parallel/test-trace-events-bootstrap.js",
+    "test/parallel/test-trace-events-category-used.js",
+    "test/parallel/test-trace-events-console.js",
+    "test/parallel/test-trace-events-environment.js",
+    "test/parallel/test-trace-events-metadata.js",
+    "test/parallel/test-trace-events-none.js",
+    "test/parallel/test-trace-events-process-exit.js",
 ];
 
 fn process_timers_promoted_fixture_paths(groups: &[&[&str]]) -> Vec<String> {
@@ -923,6 +986,63 @@ fn node24_default_lane_process_timers_watchpoint() {
         &fixture_paths,
         PROCESS_TIMERS_EXTRA_RUNTIME_FILES,
         PROCESS_TIMERS_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node22_supported_lane_executes_process_timing_runtime_residual_promoted_batch_fixture() {
+    let fixture_paths = process_timers_promoted_fixture_paths(&[
+        PROCESS_TIMING_RUNTIME_RESIDUAL_PROMOTED_COMMON_PATHS,
+    ]);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-process-timing-runtime-residual-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        PROCESS_TIMERS_EXTRA_RUNTIME_FILES,
+        PROCESS_TIMING_RUNTIME_RESIDUAL_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_process_timing_runtime_residual_promoted_batch_fixture() {
+    let fixture_paths = process_timers_promoted_fixture_paths(&[
+        PROCESS_TIMING_RUNTIME_RESIDUAL_PROMOTED_COMMON_PATHS,
+        PROCESS_TIMING_RUNTIME_RESIDUAL_PROMOTED_NODE24_ONLY_PATHS,
+    ]);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-process-timing-runtime-residual-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        PROCESS_TIMERS_EXTRA_RUNTIME_FILES,
+        PROCESS_TIMING_RUNTIME_RESIDUAL_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked process/timing runtime residual inventory; classify timers, diagnostics_channel, perf_hooks, promise tracking, trace_events, os, and microtask root causes before focused fixes"]
+fn node22_supported_lane_process_timing_runtime_residual_watchpoint() {
+    let fixture_paths =
+        process_timing_runtime_residual_fixture_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-process-timing-runtime-residual-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        PROCESS_TIMERS_EXTRA_RUNTIME_FILES,
+        PROCESS_TIMING_RUNTIME_RESIDUAL_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked process/timing runtime residual inventory; classify timers, diagnostics_channel, perf_hooks, promise tracking, trace_events, os, and microtask root causes before focused fixes"]
+fn node24_default_lane_process_timing_runtime_residual_watchpoint() {
+    let fixture_paths =
+        process_timing_runtime_residual_fixture_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-process-timing-runtime-residual-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        PROCESS_TIMERS_EXTRA_RUNTIME_FILES,
+        PROCESS_TIMING_RUNTIME_RESIDUAL_EXTRA_DIRS,
     );
 }
 
