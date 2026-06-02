@@ -48,16 +48,29 @@ const constants = {
   NODE_PERFORMANCE_ENTRY_TYPE_HTTP: 6,
   NODE_PERFORMANCE_ENTRY_TYPE_DNS: 7,
   NODE_PERFORMANCE_ENTRY_TYPE_NET: 8,
+  NODE_PERFORMANCE_GC_MAJOR: 4,
+  NODE_PERFORMANCE_GC_MINOR: 1,
+  NODE_PERFORMANCE_GC_INCREMENTAL: 8,
+  NODE_PERFORMANCE_GC_WEAKCB: 16,
+  NODE_PERFORMANCE_GC_FLAGS_NO: 0,
+  NODE_PERFORMANCE_GC_FLAGS_CONSTRUCT_RETAINED: 2,
+  NODE_PERFORMANCE_GC_FLAGS_FORCED: 4,
+  NODE_PERFORMANCE_GC_FLAGS_SYNCHRONOUS_PHANTOM_PROCESSING: 8,
+  NODE_PERFORMANCE_GC_FLAGS_ALL_AVAILABLE_GARBAGE: 16,
+  NODE_PERFORMANCE_GC_FLAGS_ALL_EXTERNAL_MEMORY: 32,
+  NODE_PERFORMANCE_GC_FLAGS_SCHEDULE_IDLE: 64,
 };
 
 const EMPTY_HISTOGRAM_MIN_BIGINT = 9_223_372_036_854_775_807n;
 const EMPTY_HISTOGRAM_MIN_NUMBER = Number(EMPTY_HISTOGRAM_MIN_BIGINT);
 const INTERVAL_HISTOGRAM_CLONE_TYPE = "NimbusIntervalHistogramSnapshot";
 const RECORDABLE_HISTOGRAM_CLONE_TYPE = "NimbusRecordableHistogram";
+const NODE_ENTRY_TYPES = ["function", "gc", "http2", "http", "dns", "net"];
 const kHistogramStateId = Symbol("kHistogramStateId");
 const kHistogramRecordable = Symbol("kHistogramRecordable");
 const kHistogramSkipThrow = Symbol("kHistogramSkipThrow");
 const histogramStateRegistry = new Map();
+const nodePerformanceObservers = [];
 let nextHistogramStateId = 1;
 const histogramStateFinalizer = new FinalizationRegistry((stateId) => {
   const state = histogramStateRegistry.get(stateId);
@@ -476,8 +489,56 @@ function createHistogram(options = kEmptyObject) {
   return createRecordableHistogramFromState(createHistogramState(options));
 }
 
+class NodePerformanceEntry {
+  constructor({
+    name,
+    entryType,
+    startTime,
+    duration,
+    detail = null,
+    args = [],
+    kind = undefined,
+    flags = undefined,
+  }) {
+    this.name = name;
+    this.entryType = entryType;
+    this.startTime = startTime;
+    this.duration = duration;
+    this.detail = detail;
+    if (kind !== undefined) {
+      this.kind = kind;
+    }
+    if (flags !== undefined) {
+      this.flags = flags;
+    }
+    for (let index = 0; index < args.length; index += 1) {
+      this[index] = args[index];
+    }
+  }
+
+  toJSON() {
+    return {
+      name: this.name,
+      entryType: this.entryType,
+      startTime: this.startTime,
+      duration: this.duration,
+      detail: this.detail,
+    };
+  }
+}
+
+function enqueueNodePerformanceEntry(entry) {
+  for (const observer of nodePerformanceObservers) {
+    observer[Symbol.for("nimbus.perf_hooks.enqueueNodeEntry")](entry);
+  }
+}
+
 // Node-compatible PerformanceObserver that throws proper Node.js errors
 class PerformanceObserver extends WebPerformanceObserver {
+  #nodeCallback = null;
+  #nodeTypes = [];
+  #nodeBuffer = [];
+  #nodeScheduled = false;
   #resourceCallback = null;
   #resourceBuffer = [];
   #resourceScheduled = false;
@@ -488,6 +549,7 @@ class PerformanceObserver extends WebPerformanceObserver {
       throw new ERR_INVALID_ARG_TYPE("callback", "Function", callback);
     }
     super(callback);
+    this.#nodeCallback = callback;
     this.#resourceCallback = callback;
   }
 
@@ -509,16 +571,37 @@ class PerformanceObserver extends WebPerformanceObserver {
       : options.type !== undefined
       ? [options.type]
       : [];
+    const nodeEntryTypes = requestedTypes.filter((entryType) =>
+      NODE_ENTRY_TYPES.includes(entryType)
+    );
     const observesResource = requestedTypes.includes("resource");
     const webEntryTypes = options.entryTypes !== undefined
-      ? options.entryTypes.filter((entryType) => entryType !== "resource")
-      : requestedTypes.filter((entryType) => entryType !== "resource");
+      ? options.entryTypes.filter((entryType) =>
+        entryType !== "resource" && !NODE_ENTRY_TYPES.includes(entryType)
+      )
+      : requestedTypes.filter((entryType) =>
+        entryType !== "resource" && !NODE_ENTRY_TYPES.includes(entryType)
+      );
 
     if (webEntryTypes.length > 0) {
       if (options.entryTypes !== undefined) {
         super.observe({ entryTypes: webEntryTypes, buffered: options.buffered });
       } else {
-        super.observe(options);
+        super.observe({
+          type: webEntryTypes[0],
+          buffered: options.buffered,
+        });
+      }
+    }
+
+    if (nodeEntryTypes.length > 0) {
+      if (nodeEntryTypes.includes("gc")) {
+        installGcPerformanceHook();
+      }
+      this.#nodeTypes = nodeEntryTypes;
+      this.#nodeBuffer = [];
+      if (!nodePerformanceObservers.includes(this)) {
+        nodePerformanceObservers.push(this);
       }
     }
 
@@ -532,22 +615,50 @@ class PerformanceObserver extends WebPerformanceObserver {
 
   disconnect() {
     super.disconnect();
+    const nodeIndex = nodePerformanceObservers.indexOf(this);
+    if (nodeIndex !== -1) {
+      nodePerformanceObservers.splice(nodeIndex, 1);
+    }
     const index = resourceTimingObservers.indexOf(this);
     if (index !== -1) {
       resourceTimingObservers.splice(index, 1);
     }
+    this.#nodeBuffer = [];
+    this.#nodeTypes = [];
     this.#resourceBuffer = [];
     this.#observesResource = false;
   }
 
   takeRecords() {
     const records = super.takeRecords();
-    if (this.#resourceBuffer.length === 0) {
+    const nodeRecords = this.#nodeBuffer;
+    this.#nodeBuffer = [];
+    if (this.#resourceBuffer.length === 0 && nodeRecords.length === 0) {
       return records;
     }
     const resourceRecords = this.#resourceBuffer;
     this.#resourceBuffer = [];
-    return records.concat(resourceRecords);
+    return records.concat(nodeRecords, resourceRecords);
+  }
+
+  [Symbol.for("nimbus.perf_hooks.enqueueNodeEntry")](entry) {
+    if (!this.#nodeTypes.includes(entry.entryType)) {
+      return;
+    }
+    this.#nodeBuffer.push(entry);
+    if (this.#nodeScheduled) {
+      return;
+    }
+    this.#nodeScheduled = true;
+    queueMicrotask(() => {
+      this.#nodeScheduled = false;
+      const entries = this.#nodeBuffer;
+      this.#nodeBuffer = [];
+      if (entries.length === 0) {
+        return;
+      }
+      this.#nodeCallback(createPerformanceEntryList(entries), this);
+    });
   }
 
   [Symbol.for("nimbus.perf_hooks.enqueueResourceTiming")](entry) {
@@ -571,8 +682,13 @@ class PerformanceObserver extends WebPerformanceObserver {
   }
 
   static get supportedEntryTypes() {
-    const entryTypes = WebPerformanceObserver.supportedEntryTypes;
-    return entryTypes.includes("resource") ? entryTypes : [...entryTypes, "resource"];
+    const entryTypes = [...WebPerformanceObserver.supportedEntryTypes];
+    for (const entryType of [...NODE_ENTRY_TYPES, "resource"]) {
+      if (!entryTypes.includes(entryType)) {
+        entryTypes.push(entryType);
+      }
+    }
+    return entryTypes;
   }
 }
 
@@ -583,9 +699,53 @@ const eventLoopUtilization = () => {
 
 performance.eventLoopUtilization = eventLoopUtilization;
 
+const bootstrapTime = performance.now();
+let nodeTimingLoopStart = -1;
+let nodeTimingLoopStartArmed = false;
+let nodeTimingLoopExit = -1;
 const nodeTiming = {
+  name: "node",
+  entryType: "node",
+  startTime: 0,
   nodeStart: 0,
-  bootstrapComplete: performance.now(),
+  v8Start: Math.max(1, bootstrapTime / 4),
+  environment: Math.max(2, bootstrapTime / 2),
+  bootstrapComplete: Math.max(3, bootstrapTime),
+  idleTime: 0,
+  get loopStart() {
+    if (nodeTimingLoopStart < 0 && nodeTimingLoopStartArmed) {
+      nodeTimingLoopStart = Math.max(this.bootstrapComplete, performance.now());
+    }
+    nodeTimingLoopStartArmed = true;
+    return nodeTimingLoopStart;
+  },
+  get loopExit() {
+    if (nodeTimingLoopStart < 0) {
+      return -1;
+    }
+    if (nodeTimingLoopExit < 0) {
+      nodeTimingLoopExit = performance.now();
+    }
+    return nodeTimingLoopExit;
+  },
+  get duration() {
+    return Math.max(performance.now(), this.loopExit, this.bootstrapComplete);
+  },
+  toJSON() {
+    return {
+      name: this.name,
+      entryType: this.entryType,
+      startTime: this.startTime,
+      duration: this.duration,
+      nodeStart: this.nodeStart,
+      v8Start: this.v8Start,
+      environment: this.environment,
+      bootstrapComplete: this.bootstrapComplete,
+      loopStart: this.loopStart,
+      loopExit: this.loopExit,
+      idleTime: this.idleTime,
+    };
+  },
 };
 
 const seedNodeTimingMarks = () => {
@@ -597,6 +757,46 @@ const seedNodeTimingMarks = () => {
 
 performance.nodeTiming = nodeTiming;
 seedNodeTimingMarks();
+
+function installGcPerformanceHook() {
+  const originalGc = globalThis.gc;
+  if (
+    typeof originalGc !== "function" ||
+    originalGc[Symbol.for("nimbus.perf_hooks.gcWrapped")] === true
+  ) {
+    return;
+  }
+  function performanceGc(...args) {
+    const startTime = performance.now();
+    const result = originalGc.apply(this, args);
+    const duration = Math.max(0, performance.now() - startTime);
+    enqueueNodePerformanceEntry(new NodePerformanceEntry({
+      name: "gc",
+      entryType: "gc",
+      startTime,
+      duration,
+      detail: {
+        kind: constants.NODE_PERFORMANCE_GC_MAJOR,
+        flags: constants.NODE_PERFORMANCE_GC_FLAGS_FORCED,
+      },
+      kind: constants.NODE_PERFORMANCE_GC_MAJOR,
+      flags: constants.NODE_PERFORMANCE_GC_FLAGS_FORCED,
+    }));
+    return result;
+  }
+  Object.defineProperty(performanceGc, Symbol.for("nimbus.perf_hooks.gcWrapped"), {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+  globalThis.gc = performanceGc;
+  if (globalThis.global && globalThis.global.gc === originalGc) {
+    globalThis.global.gc = performanceGc;
+  }
+}
+
+installGcPerformanceHook();
 
 const kResourceTiming = Symbol("kResourceTiming");
 const enqueueResourceTimingSymbol = Symbol.for("nimbus.perf_hooks.enqueueResourceTiming");
@@ -937,7 +1137,15 @@ const timerify = (fn, options = {}) => {
     const startTime = performance.now();
     if (new.target) {
       try {
-        return new fn(...args);
+        const result = new fn(...args);
+        enqueueNodePerformanceEntry(new NodePerformanceEntry({
+          name: fn.name,
+          entryType: "function",
+          startTime,
+          duration: Math.max(0, performance.now() - startTime),
+          args,
+        }));
+        return result;
       } finally {
         recordHistogramDuration(options?.histogram, startTime);
       }
@@ -948,9 +1156,23 @@ const timerify = (fn, options = {}) => {
       if (result && typeof result.then === "function") {
         return Promise.resolve(result).finally(() => {
           recordHistogramDuration(options?.histogram, startTime);
+          enqueueNodePerformanceEntry(new NodePerformanceEntry({
+            name: fn.name,
+            entryType: "function",
+            startTime,
+            duration: Math.max(0, performance.now() - startTime),
+            args,
+          }));
         });
       }
       recordHistogramDuration(options?.histogram, startTime);
+      enqueueNodePerformanceEntry(new NodePerformanceEntry({
+        name: fn.name,
+        entryType: "function",
+        startTime,
+        duration: Math.max(0, performance.now() - startTime),
+        args,
+      }));
       return result;
     } catch (error) {
       recordHistogramDuration(options?.histogram, startTime);

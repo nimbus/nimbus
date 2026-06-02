@@ -2067,8 +2067,11 @@ const PARALLEL_JS_PLATFORM_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-global-console-exists.js",
     "test/parallel/test-global-encoder.js",
     "test/parallel/test-global-webcrypto.js",
+    "test/parallel/test-performance-function-async.js",
+    "test/parallel/test-performance-global.js",
     "test/parallel/test-performance-measure-detail.js",
     "test/parallel/test-performance-measure.js",
+    "test/parallel/test-performance-nodetiming.js",
     "test/parallel/test-performanceobserver-gc.js",
     "test/parallel/test-performanceobserver.js",
     "test/parallel/test-promise-handled-rejection-no-warning.js",
@@ -2086,12 +2089,20 @@ const PARALLEL_JS_PLATFORM_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-util-stripvtcontrolcharacters.js",
 ];
 
+const PARALLEL_JS_PLATFORM_PROMOTED_NODE22_EXTRA_PATHS: &[&str] =
+    &["test/parallel/test-performance-function.js"];
+
 #[test]
 fn node22_supported_lane_executes_parallel_js_platform_promoted_batch_fixture() {
-    let fixture_paths: Vec<String> = PARALLEL_JS_PLATFORM_PROMOTED_COMMON_PATHS
+    let mut fixture_paths: Vec<String> = PARALLEL_JS_PLATFORM_PROMOTED_COMMON_PATHS
         .iter()
         .map(|path| (*path).to_string())
         .collect();
+    fixture_paths.extend(
+        PARALLEL_JS_PLATFORM_PROMOTED_NODE22_EXTRA_PATHS
+            .iter()
+            .map(|path| (*path).to_string()),
+    );
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node22-supported-lane-executes-parallel-js-platform-promoted-batch",
         NodeCompatLane::Node22,

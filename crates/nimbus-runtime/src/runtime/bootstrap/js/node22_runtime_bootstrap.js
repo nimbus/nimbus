@@ -3165,7 +3165,7 @@ function seedGlobalPerformance() {
     value: webPerformance,
     configurable: true,
     enumerable: false,
-    writable: false,
+    writable: true,
   });
 }
 
