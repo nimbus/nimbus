@@ -926,6 +926,110 @@ fn node24_default_lane_process_timers_watchpoint() {
     );
 }
 
+const PROCESS_DIAGNOSTICS_CHANNEL_EXTRA_DIRS: &[&str] = &["test/common"];
+
+fn process_diagnostics_channel_runnable_fixture_paths(lane: NodeCompatLane) -> Vec<String> {
+    node_compat_required_gap_paths_for_owner(lane, "process-and-timing/diagnostics-channel")
+}
+
+const PROCESS_DIAGNOSTICS_CHANNEL_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-diagnostics-channel-bind-store.js",
+    "test/parallel/test-diagnostics-channel-gc-maintains-subcriptions.js",
+    "test/parallel/test-diagnostics-channel-gc-race-condition.js",
+    "test/parallel/test-diagnostics-channel-http-server-start.js",
+    "test/parallel/test-diagnostics-channel-http.js",
+    "test/parallel/test-diagnostics-channel-http2-client-stream-body-multiple-buffers-and-strings.js",
+    "test/parallel/test-diagnostics-channel-http2-client-stream-body-multiple-buffers.js",
+    "test/parallel/test-diagnostics-channel-http2-client-stream-body-no-chunks.js",
+    "test/parallel/test-diagnostics-channel-http2-client-stream-body-single-buffer.js",
+    "test/parallel/test-diagnostics-channel-http2-client-stream-body-single-string.js",
+    "test/parallel/test-diagnostics-channel-http2-client-stream-close-error.js",
+    "test/parallel/test-diagnostics-channel-http2-client-stream-close.js",
+    "test/parallel/test-diagnostics-channel-http2-client-stream-error.js",
+    "test/parallel/test-diagnostics-channel-http2-client-stream-finish.js",
+    "test/parallel/test-diagnostics-channel-http2-server-stream-close-error.js",
+    "test/parallel/test-diagnostics-channel-http2-server-stream-close.js",
+    "test/parallel/test-diagnostics-channel-http2-server-stream-created-start-timing.js",
+    "test/parallel/test-diagnostics-channel-http2-server-stream-created.js",
+    "test/parallel/test-diagnostics-channel-http2-server-stream-error.js",
+    "test/parallel/test-diagnostics-channel-http2-server-stream-finish.js",
+    "test/parallel/test-diagnostics-channel-http2-server-stream-start.js",
+    "test/parallel/test-diagnostics-channel-memory-leak.js",
+    "test/parallel/test-diagnostics-channel-tracing-channel-args-types.js",
+    "test/parallel/test-diagnostics-channel-tracing-channel-callback-early-exit.js",
+    "test/parallel/test-diagnostics-channel-tracing-channel-callback-error.js",
+    "test/parallel/test-diagnostics-channel-tracing-channel-callback-run-stores.js",
+    "test/parallel/test-diagnostics-channel-tracing-channel-callback.js",
+    "test/parallel/test-diagnostics-channel-tracing-channel-has-subscribers.js",
+    "test/parallel/test-diagnostics-channel-tracing-channel-promise-early-exit.js",
+    "test/parallel/test-diagnostics-channel-tracing-channel-promise-error.js",
+    "test/parallel/test-diagnostics-channel-tracing-channel-promise-run-stores.js",
+    "test/parallel/test-diagnostics-channel-tracing-channel-promise-unhandled.js",
+    "test/parallel/test-diagnostics-channel-tracing-channel-promise.js",
+    "test/parallel/test-diagnostics-channel-tracing-channel-sync-early-exit.js",
+    "test/parallel/test-diagnostics-channel-tracing-channel-sync-error.js",
+    "test/parallel/test-diagnostics-channel-tracing-channel-sync-run-stores.js",
+    "test/parallel/test-diagnostics-channel-tracing-channel-sync.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_process_diagnostics_channel_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = PROCESS_DIAGNOSTICS_CHANNEL_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| path.to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-process-diagnostics-channel-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        PROCESS_DIAGNOSTICS_CHANNEL_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_process_diagnostics_channel_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = PROCESS_DIAGNOSTICS_CHANNEL_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| path.to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-process-diagnostics-channel-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        PROCESS_DIAGNOSTICS_CHANNEL_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked process-and-timing/diagnostics-channel required-gap inventory; classify async_hooks, subscriber lifecycle, http/http2/net instrumentation, and test-harness root causes after the first wide run"]
+fn node22_supported_lane_process_diagnostics_channel_watchpoint() {
+    let fixture_paths =
+        process_diagnostics_channel_runnable_fixture_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-process-diagnostics-channel-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        PROCESS_DIAGNOSTICS_CHANNEL_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked process-and-timing/diagnostics-channel required-gap inventory; classify async_hooks, subscriber lifecycle, http/http2/net instrumentation, and test-harness root causes after the first wide run"]
+fn node24_default_lane_process_diagnostics_channel_watchpoint() {
+    let fixture_paths =
+        process_diagnostics_channel_runnable_fixture_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-process-diagnostics-channel-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        PROCESS_DIAGNOSTICS_CHANNEL_EXTRA_DIRS,
+    );
+}
+
 #[test]
 #[ignore = "Pinned later-family dependency: test-stream-writable-samecb-singletick.js asserts async_hooks TickObject allocation counts, which are owned by the broader async_hooks/task-accounting family rather than the current pure-stream contract"]
 fn node22_stream_writable_samecb_singletick_watchpoint() {
