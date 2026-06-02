@@ -996,6 +996,28 @@
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
+      "id": "node22_supported_lane_core_semantics_util_required_gap_watchpoint",
+      "test_name": "node22_supported_lane_core_semantics_util_required_gap_watchpoint",
+      "lane": "node22",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "NDS3 broad pre-run: ROI-ranked core semantics and util required-gap inventory; classify assert, buffer, path, URL, and util failures before focused fixes",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
+      "source_line": 2250,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node24_default_lane_core_semantics_util_required_gap_watchpoint",
+      "test_name": "node24_default_lane_core_semantics_util_required_gap_watchpoint",
+      "lane": "node24",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "NDS3 broad pre-run: ROI-ranked core semantics and util required-gap inventory; classify assert, buffer, path, URL, and util failures before focused fixes",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
+      "source_line": 2263,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
       "id": "node22_supported_lane_fs_host_io_watchpoint",
       "test_name": "node22_supported_lane_fs_host_io_watchpoint",
       "lane": "node22",
@@ -1003,7 +1025,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked fs-host-io required-gap inventory; watch/stress/crash paths are excluded by the kill rule and remain gaps",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2283,
+      "source_line": 2396,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1014,7 +1036,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked fs-host-io required-gap inventory; watch/stress/crash paths are excluded by the kill rule and remain gaps",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2296,
+      "source_line": 2409,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1025,7 +1047,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node20 divergence: official v20.20.2 test-fs-stat.js still requires the older JSON.stringify(Stats) field shape that the current runtime no longer preserves while matching the newer Node22/Node24 file contract",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2318,
+      "source_line": 2431,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1036,7 +1058,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-constants.js expects a newer constant-surface TypeError gate that Nimbus has not adopted into the default lane yet",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2328,
+      "source_line": 2441,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1047,7 +1069,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-promises-file-handle-dispose.js now also asserts opendir Dir[Symbol.asyncDispose]() close semantics that the current runtime does not yet match",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2338,
+      "source_line": 2451,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1058,7 +1080,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-write-stream.js now also requires fs.close() to be observed when destroying WriteStream directly, while the current older Node22-compatible contract still follows the older file semantics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2348,
+      "source_line": 2461,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1069,7 +1091,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-write-stream-autoclose-option.js now also asserts ERR_INVALID_THIS when probing WriteStream.prototype.autoClose, while the current older Node22-compatible contract still follows the older surface",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2358,
+      "source_line": 2471,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1080,7 +1102,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-symlink.js still expects the newer invalid-type ERR_INVALID_ARG_VALUE contract, while the current runtime intentionally keeps the older Node22-compatible ERR_FS_INVALID_SYMLINK_TYPE behavior",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2368,
+      "source_line": 2481,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1091,7 +1113,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-opendir.js now also asserts ERR_INVALID_THIS for newer Dir handle receiver checks, while the current runtime intentionally keeps the older Node22-compatible directory-handle surface",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2378,
+      "source_line": 2491,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1102,7 +1124,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-promises-watch.js adds maxQueue and overflow option validation that Nimbus has not adopted into the default lane yet",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2388,
+      "source_line": 2501,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1113,7 +1135,7 @@
       "classification": "watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2398,
+      "source_line": 2511,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1124,7 +1146,7 @@
       "classification": "watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2408,
+      "source_line": 2521,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1135,7 +1157,7 @@
       "classification": "watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2418,
+      "source_line": 2531,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1146,7 +1168,7 @@
       "classification": "watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2428,
+      "source_line": 2541,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1157,7 +1179,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node20 divergence: official v20.20.2 test-buffer-slow.js still exercises SlowBuffer(buffer.kMaxLength), and the embedded runtime hits its 128 MB heap ceiling before Node-style range semantics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2438,
+      "source_line": 2551,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1168,7 +1190,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node22-only path gap: official v22.15.0 expects the post-CVE path.win32.normalize() semantics that preserve the test segment in \\\\\\\\? and \\\\\\\\. device paths",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2448,
+      "source_line": 2561,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1179,7 +1201,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node22 path gap: official v22.15.0 expects path.win32.toNamespacedPath('\\\\\\\\?\\\\\\\\foo') to retain the trailing slash, but the current runtime still returns the older Node20 shape",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2458,
+      "source_line": 2571,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1190,7 +1212,7 @@
       "classification": "watchpoint",
       "reason": "Pinned shared path gap: official Node20/Node22 test-path-resolve.js currently fails because win32.resolve rejects drive-letter-less inputs without a CWD",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2468,
+      "source_line": 2581,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1201,7 +1223,7 @@
       "classification": "watchpoint",
       "reason": "Pinned shared path gap: official Node20/Node22 test-path-resolve.js currently fails because win32.resolve rejects drive-letter-less inputs without a CWD",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2478,
+      "source_line": 2591,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1212,7 +1234,7 @@
       "classification": "watchpoint",
       "reason": "Pinned vendored fixture tracks post-22 url.parse deprecation semantics; official Node22 v22.15.0 has no counterpart",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2488,
+      "source_line": 2601,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     }
   ]

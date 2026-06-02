@@ -2159,6 +2159,119 @@ fn node24_default_lane_parallel_js_platform_required_gap_watchpoint() {
     );
 }
 
+const CORE_SEMANTICS_UTIL_REQUIRED_GAP_EXTRA_DIRS: &[&str] = &["test/common", "test/fixtures"];
+
+const CORE_SEMANTICS_UTIL_REQUIRED_GAP_OWNERS: &[&str] = &[
+    "core-semantics/assert",
+    "core-semantics/buffer",
+    "core-semantics/path",
+    "core-semantics/url",
+    "loader-context/util",
+];
+
+fn core_semantics_util_required_gap_paths(lane: NodeCompatLane) -> Vec<String> {
+    let mut fixture_paths: Vec<String> = CORE_SEMANTICS_UTIL_REQUIRED_GAP_OWNERS
+        .iter()
+        .flat_map(|owner| node_compat_required_gap_paths_for_owner(lane, owner))
+        .collect();
+    fixture_paths.sort();
+    fixture_paths.dedup();
+    fixture_paths
+}
+
+const CORE_SEMANTICS_UTIL_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-assert-class.js",
+    "test/parallel/test-assert-esm-cjs-message-verify.js",
+    "test/parallel/test-assert-myers-diff.js",
+    "test/parallel/test-assert-partial-deep-equal.js",
+    "test/parallel/test-buffer-constructor-outside-node-modules.js",
+    "test/parallel/test-buffer-isascii.js",
+    "test/parallel/test-buffer-isutf8.js",
+    "test/parallel/test-buffer-pool-untransferable.js",
+    "test/parallel/test-buffer-zero-fill-reset.js",
+    "test/parallel/test-buffer-zero-fill.js",
+    "test/parallel/test-path-resolve.js",
+    "test/parallel/test-url-is-url-internal.js",
+];
+
+const CORE_SEMANTICS_UTIL_PROMOTED_NODE22_EXTRA_PATHS: &[&str] = &[
+    "test/parallel/test-path-makelong.js",
+    "test/parallel/test-path-normalize.js",
+    "test/parallel/test-util-log.js",
+];
+
+const CORE_SEMANTICS_UTIL_PROMOTED_NODE24_EXTRA_PATHS: &[&str] = &[
+    "test/parallel/test-assert.js",
+    "test/parallel/test-buffer-generic-methods.js",
+    "test/parallel/test-util.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_core_semantics_util_promoted_batch_fixture() {
+    let mut fixture_paths: Vec<String> = CORE_SEMANTICS_UTIL_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    fixture_paths.extend(
+        CORE_SEMANTICS_UTIL_PROMOTED_NODE22_EXTRA_PATHS
+            .iter()
+            .map(|path| (*path).to_string()),
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-core-semantics-util-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        CORE_SEMANTICS_UTIL_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_core_semantics_util_promoted_batch_fixture() {
+    let mut fixture_paths: Vec<String> = CORE_SEMANTICS_UTIL_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    fixture_paths.extend(
+        CORE_SEMANTICS_UTIL_PROMOTED_NODE24_EXTRA_PATHS
+            .iter()
+            .map(|path| (*path).to_string()),
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-core-semantics-util-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        CORE_SEMANTICS_UTIL_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked core semantics and util required-gap inventory; classify assert, buffer, path, URL, and util failures before focused fixes"]
+fn node22_supported_lane_core_semantics_util_required_gap_watchpoint() {
+    let fixture_paths = core_semantics_util_required_gap_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-core-semantics-util-required-gap-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        CORE_SEMANTICS_UTIL_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked core semantics and util required-gap inventory; classify assert, buffer, path, URL, and util failures before focused fixes"]
+fn node24_default_lane_core_semantics_util_required_gap_watchpoint() {
+    let fixture_paths = core_semantics_util_required_gap_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-core-semantics-util-required-gap-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        CORE_SEMANTICS_UTIL_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
 const FS_HOST_IO_EXTRA_RUNTIME_FILES: &[&str] = &[
     "test/fixtures/a.js",
     "test/fixtures/baz.js",

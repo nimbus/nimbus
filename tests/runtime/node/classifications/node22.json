@@ -61,13 +61,6 @@
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_assert_deep_watchpoint"
     },
     {
-      "test_path": "test/parallel/test-assert-partial-deep-equal.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "core-semantics/assert",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_assert_partial_deep_equal_watchpoint"
-    },
-    {
       "test_path": "test/parallel/test-console-issue-43095.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
@@ -227,27 +220,6 @@
       "classification": "rust_watchpoint_expected_failure",
       "owner": "loader-context/module",
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_loader_context_followup_module_commonjs_remainder_batch_fixture"
-    },
-    {
-      "test_path": "test/parallel/test-path-makelong.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "core-semantics/path",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_path_makelong_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-path-normalize.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "core-semantics/path",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_path_normalize_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-path-resolve.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "core-semantics/path",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_path_resolve_watchpoint"
     },
     {
       "test_path": "test/parallel/test-process-finalization.mjs",
@@ -545,9 +517,6 @@
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
         "test/parallel/test-assert-calltracker-calls.js",
-        "test/parallel/test-assert-class.js",
-        "test/parallel/test-assert-esm-cjs-message-verify.js",
-        "test/parallel/test-assert-myers-diff.js",
         "test/parallel/test-assert.js"
       ]
     },
@@ -563,15 +532,9 @@
         "test/parallel/test-buffer-backing-arraybuffer.js",
         "test/parallel/test-buffer-constructor-node-modules-paths.js",
         "test/parallel/test-buffer-constructor-node-modules.js",
-        "test/parallel/test-buffer-constructor-outside-node-modules.js",
-        "test/parallel/test-buffer-isascii.js",
-        "test/parallel/test-buffer-isutf8.js",
-        "test/parallel/test-buffer-pool-untransferable.js",
         "test/parallel/test-buffer-tostring-4gb.js",
         "test/parallel/test-buffer-write-fast.js",
-        "test/parallel/test-buffer-zero-fill-cli.js",
-        "test/parallel/test-buffer-zero-fill-reset.js",
-        "test/parallel/test-buffer-zero-fill.js"
+        "test/parallel/test-buffer-zero-fill-cli.js"
       ]
     },
     {
@@ -610,16 +573,6 @@
       "id": "node22-requires_unpromoted_node_surface-10",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
-      "owner": "core-semantics/url",
-      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-      "test_paths": [
-        "test/parallel/test-url-is-url-internal.js"
-      ]
-    },
-    {
-      "id": "node22-requires_unpromoted_node_surface-11",
-      "expectation": "expected_gap",
-      "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/domain",
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
@@ -647,7 +600,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-12",
+      "id": "node22-requires_unpromoted_node_surface-11",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/module",
@@ -682,7 +635,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-13",
+      "id": "node22-requires_unpromoted_node_surface-12",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/util",
@@ -695,7 +648,6 @@
         "test/parallel/test-util-inspect-proxy.js",
         "test/parallel/test-util-inspect.js",
         "test/parallel/test-util-internal.js",
-        "test/parallel/test-util-log.js",
         "test/parallel/test-util-promisify-custom-names.mjs",
         "test/parallel/test-util-promisify.js",
         "test/parallel/test-util-sigint-watchdog.js",
@@ -706,7 +658,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-14",
+      "id": "node22-requires_unpromoted_node_surface-13",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/vm",
@@ -756,7 +708,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-15",
+      "id": "node22-requires_unpromoted_node_surface-14",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/workers",
@@ -892,7 +844,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-16",
+      "id": "node22-requires_unpromoted_node_surface-15",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/crypto",
@@ -965,7 +917,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-17",
+      "id": "node22-requires_unpromoted_node_surface-16",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/dgram",
@@ -983,7 +935,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-18",
+      "id": "node22-requires_unpromoted_node_surface-17",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/http",
@@ -1344,7 +1296,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-19",
+      "id": "node22-requires_unpromoted_node_surface-18",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/http2",
@@ -1559,7 +1511,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-20",
+      "id": "node22-requires_unpromoted_node_surface-19",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/https",
@@ -1601,7 +1553,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-21",
+      "id": "node22-requires_unpromoted_node_surface-20",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/net",
@@ -1747,7 +1699,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-22",
+      "id": "node22-requires_unpromoted_node_surface-21",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/tls",
@@ -1968,7 +1920,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-23",
+      "id": "node22-requires_unpromoted_node_surface-22",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/zlib",
@@ -1990,7 +1942,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-24",
+      "id": "node22-requires_unpromoted_node_surface-23",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "node-compat/unpromoted-surface",
@@ -3401,7 +3353,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-25",
+      "id": "node22-requires_unpromoted_node_surface-24",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/diagnostics-channel",
@@ -3421,7 +3373,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-26",
+      "id": "node22-requires_unpromoted_node_surface-25",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/os",
@@ -3435,7 +3387,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-27",
+      "id": "node22-requires_unpromoted_node_surface-26",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/perf-hooks",
@@ -3446,7 +3398,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-28",
+      "id": "node22-requires_unpromoted_node_surface-27",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/process-host",
@@ -3524,7 +3476,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-29",
+      "id": "node22-requires_unpromoted_node_surface-28",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/timers",
@@ -3557,7 +3509,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-30",
+      "id": "node22-requires_unpromoted_node_surface-29",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "runtime/v8",
@@ -3582,7 +3534,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-31",
+      "id": "node22-requires_unpromoted_node_surface-30",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/fs-host-io",
@@ -3641,7 +3593,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-32",
+      "id": "node22-requires_unpromoted_node_surface-31",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/readline-tty",
@@ -3662,7 +3614,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-33",
+      "id": "node22-requires_unpromoted_node_surface-32",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/stream",
@@ -3688,7 +3640,7 @@
       ]
     },
     {
-      "id": "node22-requires_wpt_harness-34",
+      "id": "node22-requires_wpt_harness-33",
       "expectation": "expected_gap",
       "classification": "requires_wpt_harness",
       "owner": "node-compat/wpt-harness",
@@ -3719,7 +3671,7 @@
       ]
     },
     {
-      "id": "node22-upstream_known_issue_or_platform_boundary-35",
+      "id": "node22-upstream_known_issue_or_platform_boundary-34",
       "expectation": "expected_gap",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "node-compat/platform-boundary",
@@ -3754,7 +3706,7 @@
       ]
     },
     {
-      "id": "node22-support_fixture_not_top_level_test-36",
+      "id": "node22-support_fixture_not_top_level_test-35",
       "expectation": "expected_skip",
       "classification": "support_fixture_not_top_level_test",
       "owner": "node-compat-denominator/fixture-sync",

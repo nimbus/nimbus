@@ -442,12 +442,7 @@
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
         "test/parallel/test-assert-calltracker-calls.js",
-        "test/parallel/test-assert-class.js",
-        "test/parallel/test-assert-deep.js",
-        "test/parallel/test-assert-esm-cjs-message-verify.js",
-        "test/parallel/test-assert-myers-diff.js",
-        "test/parallel/test-assert-partial-deep-equal.js",
-        "test/parallel/test-assert.js"
+        "test/parallel/test-assert-deep.js"
       ]
     },
     {
@@ -462,17 +457,10 @@
         "test/parallel/test-buffer-backing-arraybuffer.js",
         "test/parallel/test-buffer-constructor-node-modules-paths.js",
         "test/parallel/test-buffer-constructor-node-modules.js",
-        "test/parallel/test-buffer-constructor-outside-node-modules.js",
-        "test/parallel/test-buffer-generic-methods.js",
-        "test/parallel/test-buffer-isascii.js",
-        "test/parallel/test-buffer-isutf8.js",
-        "test/parallel/test-buffer-pool-untransferable.js",
         "test/parallel/test-buffer-swap-fast.js",
         "test/parallel/test-buffer-tostring-4gb.js",
         "test/parallel/test-buffer-write-fast.js",
-        "test/parallel/test-buffer-zero-fill-cli.js",
-        "test/parallel/test-buffer-zero-fill-reset.js",
-        "test/parallel/test-buffer-zero-fill.js"
+        "test/parallel/test-buffer-zero-fill-cli.js"
       ]
     },
     {
@@ -506,7 +494,6 @@
       "owner": "core-semantics/path",
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
-        "test/parallel/test-path-resolve.js",
         "test/parallel/test-path-win32-normalize-device-names.js"
       ]
     },
@@ -517,7 +504,6 @@
       "owner": "core-semantics/url",
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
-        "test/parallel/test-url-is-url-internal.js",
         "test/parallel/test-url-parse-deprecation.js"
       ]
     },
@@ -608,8 +594,7 @@
         "test/parallel/test-util-sleep.js",
         "test/parallel/test-util-styletext-hex.js",
         "test/parallel/test-util-styletext.js",
-        "test/parallel/test-util-types.js",
-        "test/parallel/test-util.js"
+        "test/parallel/test-util-types.js"
       ]
     },
     {
