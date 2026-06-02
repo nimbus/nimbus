@@ -1528,6 +1528,10 @@ fn networking_crypto_required_gap_path(test_path: &str) -> bool {
         || test_path.starts_with("test/async-hooks/test-crypto")
 }
 
+fn module_hooks_required_gap_path(test_path: &str) -> bool {
+    test_path.starts_with("test/module-hooks/")
+}
+
 fn resolve_seeded_fixture_context(
     lane_name: &str,
     test_relative_path: &str,

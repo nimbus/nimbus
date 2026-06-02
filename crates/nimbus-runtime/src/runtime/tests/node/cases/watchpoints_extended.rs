@@ -2019,6 +2019,38 @@ fn node24_default_lane_networking_crypto_required_gap_watchpoint() {
     );
 }
 
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked module-hooks required-gap inventory; classify Node24-only hooks, shared loader-hook semantics, error-shape failures, and harness topology after the first wide run"]
+fn node22_supported_lane_module_hooks_required_gap_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node22,
+        module_hooks_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-module-hooks-required-gap-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked module-hooks required-gap inventory; classify Node24-only hooks, shared loader-hook semantics, error-shape failures, and harness topology after the first wide run"]
+fn node24_default_lane_module_hooks_required_gap_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node24,
+        module_hooks_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-module-hooks-required-gap-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
 const FS_HOST_IO_EXTRA_RUNTIME_FILES: &[&str] = &[
     "test/fixtures/a.js",
     "test/fixtures/baz.js",
