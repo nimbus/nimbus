@@ -1532,6 +1532,24 @@ fn module_hooks_required_gap_path(test_path: &str) -> bool {
     test_path.starts_with("test/module-hooks/")
 }
 
+fn parallel_js_platform_required_gap_path(test_path: &str) -> bool {
+    const PREFIXES: &[&str] = &[
+        "test/parallel/test-abort-controller",
+        "test/parallel/test-abortcontroller",
+        "test/parallel/test-aborted-util",
+        "test/parallel/test-error",
+        "test/parallel/test-errors",
+        "test/parallel/test-eventtarget",
+        "test/parallel/test-global",
+        "test/parallel/test-performance",
+        "test/parallel/test-performanceobserver",
+        "test/parallel/test-promise",
+        "test/parallel/test-promises",
+        "test/parallel/test-util",
+    ];
+    PREFIXES.iter().any(|prefix| test_path.starts_with(prefix))
+}
+
 fn resolve_seeded_fixture_context(
     lane_name: &str,
     test_relative_path: &str,

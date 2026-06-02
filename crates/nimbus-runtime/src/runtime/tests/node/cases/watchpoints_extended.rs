@@ -2051,6 +2051,103 @@ fn node24_default_lane_module_hooks_required_gap_watchpoint() {
     );
 }
 
+const PARALLEL_JS_PLATFORM_REQUIRED_GAP_EXTRA_DIRS: &[&str] = &["test/common"];
+
+const PARALLEL_JS_PLATFORM_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-abort-controller-any-timeout.js",
+    "test/parallel/test-error-aggregateTwoErrors.js",
+    "test/parallel/test-errors-aborterror.js",
+    "test/parallel/test-errors-hide-stack-frames.js",
+    "test/parallel/test-errors-systemerror-frozen-intrinsics.js",
+    "test/parallel/test-errors-systemerror-stackTraceLimit-custom-setter.js",
+    "test/parallel/test-errors-systemerror-stackTraceLimit-deleted-and-Error-sealed.js",
+    "test/parallel/test-errors-systemerror-stackTraceLimit-deleted.js",
+    "test/parallel/test-errors-systemerror-stackTraceLimit-has-only-a-getter.js",
+    "test/parallel/test-errors-systemerror-stackTraceLimit-not-writable.js",
+    "test/parallel/test-global-console-exists.js",
+    "test/parallel/test-global-encoder.js",
+    "test/parallel/test-global-webcrypto.js",
+    "test/parallel/test-performance-measure-detail.js",
+    "test/parallel/test-performance-measure.js",
+    "test/parallel/test-performanceobserver-gc.js",
+    "test/parallel/test-performanceobserver.js",
+    "test/parallel/test-promise-handled-rejection-no-warning.js",
+    "test/parallel/test-promise-unhandled-default.js",
+    "test/parallel/test-promise-unhandled-issue-43655.js",
+    "test/parallel/test-promise-unhandled-silent.js",
+    "test/parallel/test-promise-unhandled-throw-handler.js",
+    "test/parallel/test-promise-unhandled-throw.js",
+    "test/parallel/test-util-emit-experimental-warning.js",
+    "test/parallel/test-util-getcallsites-preparestacktrace.js",
+    "test/parallel/test-util-inspect-getters-accessing-this.js",
+    "test/parallel/test-util-inspect-namespace.js",
+    "test/parallel/test-util-isDeepStrictEqual.js",
+    "test/parallel/test-util-primordial-monkeypatching.js",
+    "test/parallel/test-util-stripvtcontrolcharacters.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_parallel_js_platform_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = PARALLEL_JS_PLATFORM_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-parallel-js-platform-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        PARALLEL_JS_PLATFORM_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_parallel_js_platform_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = PARALLEL_JS_PLATFORM_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-parallel-js-platform-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        PARALLEL_JS_PLATFORM_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked parallel JS platform required-gap inventory; classify util, global, errors, promises, performance, abort, and EventTarget failures before focused fixes"]
+fn node22_supported_lane_parallel_js_platform_required_gap_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node22,
+        parallel_js_platform_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-parallel-js-platform-required-gap-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        PARALLEL_JS_PLATFORM_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked parallel JS platform required-gap inventory; classify util, global, errors, promises, performance, abort, and EventTarget failures before focused fixes"]
+fn node24_default_lane_parallel_js_platform_required_gap_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node24,
+        parallel_js_platform_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-parallel-js-platform-required-gap-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        PARALLEL_JS_PLATFORM_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
 const FS_HOST_IO_EXTRA_RUNTIME_FILES: &[&str] = &[
     "test/fixtures/a.js",
     "test/fixtures/baz.js",
