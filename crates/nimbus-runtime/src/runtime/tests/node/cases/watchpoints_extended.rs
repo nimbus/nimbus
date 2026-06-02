@@ -2297,6 +2297,186 @@ fn node24_default_lane_http_client_agent_diagnostic_watchpoint() {
     );
 }
 
+fn http_server_request_response_diagnostic_path(path: &str) -> bool {
+    path.starts_with("test/parallel/test-http-server")
+        || path.starts_with("test/parallel/test-http-request")
+        || path.starts_with("test/parallel/test-http-res-")
+        || path.starts_with("test/parallel/test-http-incoming")
+        || path.starts_with("test/parallel/test-http-outgoing")
+        || path == "test/parallel/test-http-allow-content-length-304.js"
+        || path == "test/parallel/test-http-allow-req-after-204-res.js"
+        || path == "test/parallel/test-http-extra-response.js"
+        || path == "test/parallel/test-http-flush-response-headers.js"
+        || path == "test/parallel/test-http-full-response.js"
+        || path == "test/parallel/test-http-information-headers.js"
+        || path == "test/parallel/test-http-information-processing.js"
+}
+
+const HTTP_SERVER_REQUEST_RESPONSE_DIAGNOSTIC_LOW_ROI_PATHS: &[&str] = &[
+    "test/parallel/test-http-server-connections-checking-leak.js",
+    "test/parallel/test-http-server-drop-connections-in-cluster.js",
+    "test/parallel/test-http-server-keepalive-req-gc.js",
+];
+
+fn http_server_request_response_diagnostic_paths(lane: NodeCompatLane) -> Vec<String> {
+    let mut fixture_paths = node_compat_posture_paths_for_selector(lane, |entry| {
+        entry["support_denominator"] == "diagnostic_only_non_isolate"
+            && entry["owner"] == "networking/http"
+            && entry["test_path"]
+                .as_str()
+                .is_some_and(http_server_request_response_diagnostic_path)
+    });
+    fixture_paths.retain(|path| {
+        !HTTP_SERVER_REQUEST_RESPONSE_DIAGNOSTIC_LOW_ROI_PATHS
+            .iter()
+            .any(|low_roi_path| path == low_roi_path)
+    });
+    assert!(
+        (50..=150).contains(&fixture_paths.len()),
+        "HTTP server/request/response diagnostic selector should stay reviewable; selected {} fixtures",
+        fixture_paths.len()
+    );
+    fixture_paths
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked diagnostic-only HTTP server/request/response inventory; cluster, leak, and GC lifecycle paths are excluded by the kill rule"]
+fn node22_supported_lane_http_server_request_response_diagnostic_watchpoint() {
+    let fixture_paths = http_server_request_response_diagnostic_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-http-server-request-response-diagnostic-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked diagnostic-only HTTP server/request/response inventory; cluster, leak, and GC lifecycle paths are excluded by the kill rule"]
+fn node24_default_lane_http_server_request_response_diagnostic_watchpoint() {
+    let fixture_paths = http_server_request_response_diagnostic_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-http-server-request-response-diagnostic-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
+const HTTP_SERVER_REQUEST_RESPONSE_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-http-allow-content-length-304.js",
+    "test/parallel/test-http-allow-req-after-204-res.js",
+    "test/parallel/test-http-extra-response.js",
+    "test/parallel/test-http-flush-response-headers.js",
+    "test/parallel/test-http-incoming-matchKnownFields.js",
+    "test/parallel/test-http-incoming-message-connection-setter.js",
+    "test/parallel/test-http-incoming-message-destroy.js",
+    "test/parallel/test-http-incoming-message-options.js",
+    "test/parallel/test-http-incoming-pipelined-socket-destroy.js",
+    "test/parallel/test-http-information-headers.js",
+    "test/parallel/test-http-information-processing.js",
+    "test/parallel/test-http-outgoing-buffer.js",
+    "test/parallel/test-http-outgoing-destroy.js",
+    "test/parallel/test-http-outgoing-end-cork.js",
+    "test/parallel/test-http-outgoing-end-types.js",
+    "test/parallel/test-http-outgoing-finish-writable.js",
+    "test/parallel/test-http-outgoing-finish.js",
+    "test/parallel/test-http-outgoing-finished.js",
+    "test/parallel/test-http-outgoing-first-chunk-singlebyte-encoding.js",
+    "test/parallel/test-http-outgoing-message-capture-rejection.js",
+    "test/parallel/test-http-outgoing-message-inheritance.js",
+    "test/parallel/test-http-outgoing-message-write-callback.js",
+    "test/parallel/test-http-outgoing-properties.js",
+    "test/parallel/test-http-outgoing-proto.js",
+    "test/parallel/test-http-outgoing-renderHeaders.js",
+    "test/parallel/test-http-outgoing-settimeout.js",
+    "test/parallel/test-http-outgoing-writableFinished.js",
+    "test/parallel/test-http-outgoing-write-types.js",
+    "test/parallel/test-http-request-arguments.js",
+    "test/parallel/test-http-request-dont-override-options.js",
+    "test/parallel/test-http-request-end-twice.js",
+    "test/parallel/test-http-request-end.js",
+    "test/parallel/test-http-request-host-header.js",
+    "test/parallel/test-http-request-invalid-method-error.js",
+    "test/parallel/test-http-request-join-authorization-headers.js",
+    "test/parallel/test-http-request-large-payload.js",
+    "test/parallel/test-http-request-method-delete-payload.js",
+    "test/parallel/test-http-request-methods.js",
+    "test/parallel/test-http-request-smuggling-content-length.js",
+    "test/parallel/test-http-res-write-after-end.js",
+    "test/parallel/test-http-res-write-end-dont-take-array.js",
+    "test/parallel/test-http-server-async-dispose.js",
+    "test/parallel/test-http-server-clear-timer.js",
+    "test/parallel/test-http-server-close-all.js",
+    "test/parallel/test-http-server-close-destroy-timeout.js",
+    "test/parallel/test-http-server-close-idle-wait-response.js",
+    "test/parallel/test-http-server-close-idle.js",
+    "test/parallel/test-http-server-connection-list-when-close.js",
+    "test/parallel/test-http-server-consumed-timeout.js",
+    "test/parallel/test-http-server-de-chunked-trailer.js",
+    "test/parallel/test-http-server-delete-parser.js",
+    "test/parallel/test-http-server-headers-timeout-delayed-headers.js",
+    "test/parallel/test-http-server-headers-timeout-interrupted-headers.js",
+    "test/parallel/test-http-server-headers-timeout-pipelining.js",
+    "test/parallel/test-http-server-incomingmessage-destroy.js",
+    "test/parallel/test-http-server-keep-alive-defaults.js",
+    "test/parallel/test-http-server-keep-alive-max-requests-null.js",
+    "test/parallel/test-http-server-keep-alive-timeout.js",
+    "test/parallel/test-http-server-method.query.js",
+    "test/parallel/test-http-server-multiheaders.js",
+    "test/parallel/test-http-server-multiheaders2.js",
+    "test/parallel/test-http-server-multiple-client-error.js",
+    "test/parallel/test-http-server-options-highwatermark.js",
+    "test/parallel/test-http-server-reject-chunked-with-content-length.js",
+    "test/parallel/test-http-server-reject-cr-no-lf.js",
+    "test/parallel/test-http-server-request-timeout-delayed-body.js",
+    "test/parallel/test-http-server-request-timeout-delayed-headers.js",
+    "test/parallel/test-http-server-request-timeout-interrupted-body.js",
+    "test/parallel/test-http-server-request-timeout-interrupted-headers.js",
+    "test/parallel/test-http-server-request-timeout-pipelining.js",
+    "test/parallel/test-http-server-request-timeout-upgrade.js",
+    "test/parallel/test-http-server-response-standalone.js",
+    "test/parallel/test-http-server-timeouts-validation.js",
+    "test/parallel/test-http-server-unconsume-consume.js",
+    "test/parallel/test-http-server-write-after-end.js",
+    "test/parallel/test-http-server-write-end-after-end.js",
+    "test/parallel/test-http-server.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_http_server_request_response_promoted_batch_fixture() {
+    let fixture_paths = HTTP_SERVER_REQUEST_RESPONSE_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-http-server-request-response-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_http_server_request_response_promoted_batch_fixture() {
+    let fixture_paths = HTTP_SERVER_REQUEST_RESPONSE_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-http-server-request-response-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
 const HTTP_CLIENT_AGENT_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-http-agent-keep-alive-timeout-buffer.js",
     "test/parallel/test-http-agent.js",
