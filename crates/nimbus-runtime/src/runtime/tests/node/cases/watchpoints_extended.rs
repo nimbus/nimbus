@@ -2989,6 +2989,196 @@ fn node24_default_lane_executes_http2_diagnostic_core_promoted_batch_fixture() {
     );
 }
 
+fn net_diagnostic_core_candidate_path(path: &str) -> bool {
+    path.starts_with("test/parallel/test-net-")
+}
+
+fn net_diagnostic_core_excluded_path(path: &str) -> bool {
+    path.contains("internet/")
+        || path.contains("async-hooks/")
+        || path.contains("autoselect")
+        || path.contains("child-process")
+        || path.contains("cluster")
+        || path.contains("fd")
+        || path.contains("pipe")
+        || path.contains("path")
+        || path.contains("ipv6")
+        || path.contains("large")
+        || path.contains("memleak")
+        || path.contains("reuseport")
+        || path.ends_with("test-net-connect-keepalive.js")
+        || path.ends_with("test-net-server-keepalive.js")
+        || path.ends_with("test-net-server-nodelay.js")
+        || path.contains("perf_hooks")
+        || path.contains("stdin")
+        || path.contains("exclusive-random")
+        || path.contains("try-ports")
+        || path.contains("remote-address")
+        || path.contains("local-address")
+        || path.contains("eaddrinuse")
+        || path.contains("dns")
+        || path.contains("lookup")
+        || path.contains("blocklist")
+        || path.contains("listen-handle")
+        || path.contains("ipc")
+        || path.contains("simultaneous")
+        || path.contains("deprecated")
+        || path.contains("tos")
+        || path.contains("drop-connections")
+        || path.contains("max-connections")
+}
+
+fn net_diagnostic_core_paths(lane: NodeCompatLane) -> Vec<String> {
+    let mut fixture_paths = node_compat_posture_paths_for_selector(lane, |entry| {
+        entry["support_denominator"] == "diagnostic_only_non_isolate"
+            && entry["owner"] == "networking/net"
+            && entry["test_path"]
+                .as_str()
+                .is_some_and(net_diagnostic_core_candidate_path)
+    });
+    fixture_paths.retain(|path| !net_diagnostic_core_excluded_path(path));
+    assert!(
+        (50..=120).contains(&fixture_paths.len()),
+        "net diagnostic-core selector should stay broad but reviewable; selected {} fixtures",
+        fixture_paths.len()
+    );
+    fixture_paths
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked net diagnostic core inventory; internet/autoselect/DNS/cluster/fd/path/pipe/multi-address/large/stress host-topology paths are excluded"]
+fn node22_supported_lane_net_diagnostic_core_watchpoint() {
+    let fixture_paths = net_diagnostic_core_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-net-diagnostic-core-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked net diagnostic core inventory; internet/autoselect/DNS/cluster/fd/path/pipe/multi-address/large/stress host-topology paths are excluded"]
+fn node24_default_lane_net_diagnostic_core_watchpoint() {
+    let fixture_paths = net_diagnostic_core_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-net-diagnostic-core-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
+const NET_DIAGNOSTIC_CORE_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-net-access-byteswritten.js",
+    "test/parallel/test-net-allow-half-open.js",
+    "test/parallel/test-net-better-error-messages-port-hostname.js",
+    "test/parallel/test-net-binary.js",
+    "test/parallel/test-net-bind-twice.js",
+    "test/parallel/test-net-buffersize.js",
+    "test/parallel/test-net-bytes-stats.js",
+    "test/parallel/test-net-client-bind-twice.js",
+    "test/parallel/test-net-connect-after-destroy.js",
+    "test/parallel/test-net-connect-buffer.js",
+    "test/parallel/test-net-connect-buffer2.js",
+    "test/parallel/test-net-connect-call-socket-connect.js",
+    "test/parallel/test-net-connect-destroy.js",
+    "test/parallel/test-net-connect-immediate-destroy.js",
+    "test/parallel/test-net-connect-immediate-finish.js",
+    "test/parallel/test-net-connect-nodelay.js",
+    "test/parallel/test-net-connect-options-allowhalfopen.js",
+    "test/parallel/test-net-connect-options-port.js",
+    "test/parallel/test-net-connect-paused-connection.js",
+    "test/parallel/test-net-connect-reset-after-destroy.js",
+    "test/parallel/test-net-connect-reset-before-connected.js",
+    "test/parallel/test-net-connect-reset-until-connected.js",
+    "test/parallel/test-net-connect-reset.js",
+    "test/parallel/test-net-end-close.js",
+    "test/parallel/test-net-end-destroyed.js",
+    "test/parallel/test-net-error-twice.js",
+    "test/parallel/test-net-keepalive.js",
+    "test/parallel/test-net-listen-close-server-callback-is-not-function.js",
+    "test/parallel/test-net-listen-invalid-port.js",
+    "test/parallel/test-net-listen-twice.js",
+    "test/parallel/test-net-localerror.js",
+    "test/parallel/test-net-normalize-args.js",
+    "test/parallel/test-net-onread-static-buffer.js",
+    "test/parallel/test-net-pause-resume-connecting.js",
+    "test/parallel/test-net-persistent-keepalive.js",
+    "test/parallel/test-net-persistent-nodelay.js",
+    "test/parallel/test-net-persistent-ref-unref.js",
+    "test/parallel/test-net-pingpong.js",
+    "test/parallel/test-net-reconnect.js",
+    "test/parallel/test-net-server-capture-rejection.js",
+    "test/parallel/test-net-server-listen-remove-callback.js",
+    "test/parallel/test-net-server-options.js",
+    "test/parallel/test-net-server-pause-on-connect.js",
+    "test/parallel/test-net-server-reset.js",
+    "test/parallel/test-net-server-unref.js",
+    "test/parallel/test-net-socket-byteswritten.js",
+    "test/parallel/test-net-socket-connect-without-cb.js",
+    "test/parallel/test-net-socket-destroy-send.js",
+    "test/parallel/test-net-socket-destroy-twice.js",
+    "test/parallel/test-net-socket-end-before-connect.js",
+    "test/parallel/test-net-socket-end-callback.js",
+    "test/parallel/test-net-socket-no-halfopen-enforcer.js",
+    "test/parallel/test-net-socket-ready-without-cb.js",
+    "test/parallel/test-net-socket-reset-send.js",
+    "test/parallel/test-net-socket-reset-twice.js",
+    "test/parallel/test-net-socket-setnodelay.js",
+    "test/parallel/test-net-socket-timeout-unref.js",
+    "test/parallel/test-net-socket-timeout.js",
+    "test/parallel/test-net-socket-write-after-close.js",
+    "test/parallel/test-net-socket-write-error.js",
+    "test/parallel/test-net-stream.js",
+    "test/parallel/test-net-sync-cork.js",
+    "test/parallel/test-net-throttle.js",
+    "test/parallel/test-net-timeout-no-handle.js",
+    "test/parallel/test-net-writable.js",
+    "test/parallel/test-net-write-after-close.js",
+    "test/parallel/test-net-write-after-end-nt.js",
+    "test/parallel/test-net-write-arguments.js",
+    "test/parallel/test-net-write-cb-on-destroy-before-connect.js",
+    "test/parallel/test-net-write-connect-write.js",
+    "test/parallel/test-net-write-fully-async-buffer.js",
+    "test/parallel/test-net-write-fully-async-hex-string.js",
+    "test/parallel/test-net-write-slow.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_net_diagnostic_core_promoted_batch_fixture() {
+    let fixture_paths = NET_DIAGNOSTIC_CORE_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-net-diagnostic-core-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_net_diagnostic_core_promoted_batch_fixture() {
+    let fixture_paths = NET_DIAGNOSTIC_CORE_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-net-diagnostic-core-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
 const HTTP_CLIENT_AGENT_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-http-agent-keep-alive-timeout-buffer.js",
     "test/parallel/test-http-agent.js",
