@@ -716,6 +716,84 @@ fn node24_default_lane_loader_context_vm_watchpoint() {
     );
 }
 
+const LOADER_CONTEXT_DOMAIN_EXTRA_DIRS: &[&str] = &["test/common", "test/fixtures/keys"];
+
+const LOADER_CONTEXT_DOMAIN_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-domain-crypto.js",
+    "test/parallel/test-domain-error-types.js",
+    "test/parallel/test-domain-fs-enoent-stream.js",
+    "test/parallel/test-domain-http-server.js",
+    "test/parallel/test-domain-implicit-fs.js",
+    "test/parallel/test-domain-multi.js",
+    "test/parallel/test-domain-nested-throw.js",
+    "test/parallel/test-domain-safe-exit.js",
+    "test/parallel/test-domain-stack.js",
+    "test/parallel/test-domain-thrown-error-handler-stack.js",
+    "test/parallel/test-domain-timers-uncaught-exception.js",
+    "test/parallel/test-domain-top-level-error-handler-clears-stack.js",
+    "test/parallel/test-domain-vm-promise-isolation.js",
+];
+
+fn loader_context_domain_required_fixture_paths(lane: NodeCompatLane) -> Vec<String> {
+    node_compat_required_gap_paths_for_owner(lane, "loader-context/domain")
+}
+
+#[test]
+fn node22_supported_lane_executes_loader_context_domain_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = LOADER_CONTEXT_DOMAIN_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-loader-context-domain-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        LOADER_CONTEXT_DOMAIN_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_loader_context_domain_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = LOADER_CONTEXT_DOMAIN_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-loader-context-domain-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        LOADER_CONTEXT_DOMAIN_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked loader-context/domain required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified"]
+fn node22_supported_lane_loader_context_domain_watchpoint() {
+    let fixture_paths = loader_context_domain_required_fixture_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-loader-context-domain-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        LOADER_CONTEXT_DOMAIN_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked loader-context/domain required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified"]
+fn node24_default_lane_loader_context_domain_watchpoint() {
+    let fixture_paths = loader_context_domain_required_fixture_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-loader-context-domain-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        LOADER_CONTEXT_DOMAIN_EXTRA_DIRS,
+    );
+}
+
 #[test]
 fn node22_loader_context_followup_v8_helper_batch_fixture() {
     run_node_compat_watchpoint_entry_batch(
