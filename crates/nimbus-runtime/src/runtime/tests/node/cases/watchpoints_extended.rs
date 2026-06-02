@@ -934,6 +934,133 @@ fn node24_process_load_env_file_fixture() {
     );
 }
 
+const PROCESS_HOST_EXTRA_DIRS: &[&str] = &["test/common"];
+
+const PROCESS_HOST_LOW_ROI_PATHS: &[&str] = &[
+    "test/abort/test-process-abort-exitcode.js",
+    "test/parallel/test-process-argv-0.js",
+    "test/parallel/test-process-dlopen-error-message-crash.js",
+    "test/parallel/test-process-dlopen-undefined-exports.js",
+    "test/parallel/test-process-euid-egid.js",
+    "test/parallel/test-process-external-stdio-close-spawn.js",
+    "test/parallel/test-process-external-stdio-close.js",
+    "test/parallel/test-process-finalization.mjs",
+    "test/parallel/test-process-getactivehandles.js",
+    "test/parallel/test-process-getactiverequests.js",
+    "test/parallel/test-process-getactiveresources-track-active-handles.js",
+    "test/parallel/test-process-getactiveresources-track-active-requests.js",
+    "test/parallel/test-process-getactiveresources-track-interval-lifetime.js",
+    "test/parallel/test-process-getactiveresources-track-multiple-timers.js",
+    "test/parallel/test-process-getactiveresources-track-timer-lifetime.js",
+    "test/parallel/test-process-getactiveresources.js",
+    "test/parallel/test-process-getgroups.js",
+    "test/parallel/test-process-initgroups.js",
+    "test/parallel/test-process-kill-null.js",
+    "test/parallel/test-process-kill-pid.js",
+    "test/parallel/test-process-ppid.js",
+    "test/parallel/test-process-raw-debug.js",
+    "test/parallel/test-process-really-exit.js",
+    "test/parallel/test-process-redirect-warnings-env.js",
+    "test/parallel/test-process-redirect-warnings.js",
+    "test/parallel/test-process-setgroups.js",
+    "test/parallel/test-process-title-cli.js",
+    "test/parallel/test-process-uid-gid.js",
+    "test/parallel/test-process-uncaught-exception-monitor.js",
+    "test/parallel/test-process-versions.js",
+    "test/parallel/test-process-warnings.mjs",
+];
+
+const PROCESS_HOST_LOW_ROI_PREFIXES: &[&str] = &["test/parallel/test-process-execve"];
+
+fn process_host_runnable_fixture_paths(lane: NodeCompatLane) -> Vec<String> {
+    let mut fixture_paths =
+        node_compat_required_gap_paths_for_owner(lane, "process-and-timing/process-host");
+    fixture_paths.retain(|path| {
+        !PROCESS_HOST_LOW_ROI_PATHS
+            .iter()
+            .any(|low_roi_path| path == low_roi_path)
+            && !PROCESS_HOST_LOW_ROI_PREFIXES
+                .iter()
+                .any(|low_roi_prefix| path.starts_with(low_roi_prefix))
+    });
+    fixture_paths
+}
+
+const PROCESS_HOST_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-process-abort.js",
+    "test/parallel/test-process-binding-internalbinding-allowlist.js",
+    "test/parallel/test-process-binding.js",
+    "test/parallel/test-process-constrained-memory.js",
+    "test/parallel/test-process-domain-segfault.js",
+    "test/parallel/test-process-env-allowed-flags.js",
+    "test/parallel/test-process-env-delete.js",
+    "test/parallel/test-process-env-sideeffects.js",
+    "test/parallel/test-process-env-windows-error-reset.js",
+    "test/parallel/test-process-exception-capture-errors.js",
+    "test/parallel/test-process-exit-handler.js",
+    "test/parallel/test-process-exit.js",
+    "test/parallel/test-process-setsourcemapsenabled.js",
+    "test/parallel/test-process-threadCpuUsage-main-thread.js",
+    "test/parallel/test-process-umask-mask.js",
+    "test/parallel/test-process-umask.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_process_host_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = PROCESS_HOST_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| path.to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-process-host-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        PROCESS_HOST_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_process_host_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = PROCESS_HOST_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| path.to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-process-host-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        PROCESS_HOST_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked process-host required-gap inventory; host/native/subprocess-only paths are excluded by the kill rule and remain gaps"]
+fn node22_supported_lane_process_host_watchpoint() {
+    let fixture_paths = process_host_runnable_fixture_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-process-host-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        PROCESS_HOST_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked process-host required-gap inventory; host/native/subprocess-only paths are excluded by the kill rule and remain gaps"]
+fn node24_default_lane_process_host_watchpoint() {
+    let fixture_paths = process_host_runnable_fixture_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-process-host-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        PROCESS_HOST_EXTRA_DIRS,
+    );
+}
+
 #[test]
 fn node24_util_format_fixture() {
     run_node_compat_watchpoint(
