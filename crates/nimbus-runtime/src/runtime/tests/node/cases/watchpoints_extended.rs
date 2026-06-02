@@ -2741,6 +2741,254 @@ fn node24_default_lane_executes_http_remaining_promoted_batch_fixture() {
     );
 }
 
+fn http2_diagnostic_core_candidate_path(path: &str) -> bool {
+    path.starts_with("test/parallel/test-http2-")
+}
+
+fn http2_diagnostic_core_excluded_path(path: &str) -> bool {
+    path.contains("internet/")
+        || path.contains("https")
+        || path.contains("tls")
+        || path.contains("secure")
+        || path.contains("alpn")
+        || path.contains("fallback")
+        || path.contains("allow-http1")
+        || path.contains("http1")
+        || path.contains("respond-file")
+        || path.contains("respond-with-file")
+        || path.contains("serve-file")
+        || path.contains("sendfile")
+        || path.contains("filehandle")
+        || path.contains("respond-with-fd")
+        || path.contains("fd-")
+        || path.contains("fd.js")
+        || path.contains("large")
+        || path.contains("leak")
+        || path.contains("gc")
+        || path.contains("heapdump")
+        || path.contains("flood")
+        || path.contains("info-headers")
+        || path.contains("pack-end-stream-flag")
+        || path.contains("pipe-named-pipe")
+        || path.contains("debug")
+        || path.contains("proxy")
+        || path.contains("port-80")
+        || path.contains("ip-address-host")
+        || path.contains("autoselect")
+        || path.contains("worker")
+        || path.contains("benchmark")
+        || path.contains("sequential")
+        || path.contains("pummel")
+        || path.contains("wpt")
+}
+
+fn http2_diagnostic_core_paths(lane: NodeCompatLane) -> Vec<String> {
+    let mut fixture_paths = node_compat_posture_paths_for_selector(lane, |entry| {
+        entry["support_denominator"] == "diagnostic_only_non_isolate"
+            && entry["owner"] == "networking/http2"
+            && entry["test_path"]
+                .as_str()
+                .is_some_and(http2_diagnostic_core_candidate_path)
+    });
+    fixture_paths.retain(|path| !http2_diagnostic_core_excluded_path(path));
+    assert!(
+        (50..=200).contains(&fixture_paths.len()),
+        "HTTP/2 diagnostic-core selector should stay broad but reviewable; selected {} fixtures",
+        fixture_paths.len()
+    );
+    fixture_paths
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked HTTP/2 diagnostic core inventory; internet/TLS/secure/file-serving/leak/stress/host-topology paths are excluded"]
+fn node22_supported_lane_http2_diagnostic_core_watchpoint() {
+    let fixture_paths = http2_diagnostic_core_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-http2-diagnostic-core-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked HTTP/2 diagnostic core inventory; internet/TLS/secure/file-serving/leak/stress/host-topology paths are excluded"]
+fn node24_default_lane_http2_diagnostic_core_watchpoint() {
+    let fixture_paths = http2_diagnostic_core_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-http2-diagnostic-core-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
+const HTTP2_DIAGNOSTIC_CORE_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-http2-altsvc.js",
+    "test/parallel/test-http2-async-local-storage.js",
+    "test/parallel/test-http2-backpressure.js",
+    "test/parallel/test-http2-binding.js",
+    "test/parallel/test-http2-buffersize.js",
+    "test/parallel/test-http2-byteswritten-server.js",
+    "test/parallel/test-http2-clean-output.js",
+    "test/parallel/test-http2-client-data-end.js",
+    "test/parallel/test-http2-client-destroy.js",
+    "test/parallel/test-http2-client-onconnect-errors.js",
+    "test/parallel/test-http2-client-priority-before-connect.js",
+    "test/parallel/test-http2-client-promisify-connect-error.js",
+    "test/parallel/test-http2-client-promisify-connect.js",
+    "test/parallel/test-http2-client-request-listeners-warning.js",
+    "test/parallel/test-http2-client-request-options-errors.js",
+    "test/parallel/test-http2-client-rststream-before-connect.js",
+    "test/parallel/test-http2-client-setLocalWindowSize.js",
+    "test/parallel/test-http2-client-setNextStreamID-errors.js",
+    "test/parallel/test-http2-client-settings-before-connect.js",
+    "test/parallel/test-http2-client-shutdown-before-connect.js",
+    "test/parallel/test-http2-client-socket-destroy.js",
+    "test/parallel/test-http2-client-stream-destroy-before-connect.js",
+    "test/parallel/test-http2-client-unescaped-path.js",
+    "test/parallel/test-http2-client-write-before-connect.js",
+    "test/parallel/test-http2-client-write-empty-string.js",
+    "test/parallel/test-http2-compat-write-head-after-close.js",
+    "test/parallel/test-http2-connect-method-extended-cant-turn-off.js",
+    "test/parallel/test-http2-connect-method-extended.js",
+    "test/parallel/test-http2-connect-method.js",
+    "test/parallel/test-http2-cookies.js",
+    "test/parallel/test-http2-create-client-session.js",
+    "test/parallel/test-http2-createserver-options.js",
+    "test/parallel/test-http2-createwritereq.js",
+    "test/parallel/test-http2-date-header.js",
+    "test/parallel/test-http2-destroy-after-write.js",
+    "test/parallel/test-http2-dont-lose-data.js",
+    "test/parallel/test-http2-dont-override.js",
+    "test/parallel/test-http2-endafterheaders.js",
+    "test/parallel/test-http2-error-order.js",
+    "test/parallel/test-http2-exceeds-server-trailer-size.js",
+    "test/parallel/test-http2-forget-closed-streams.js",
+    "test/parallel/test-http2-generic-streams.js",
+    "test/parallel/test-http2-goaway-delayed-request.js",
+    "test/parallel/test-http2-goaway-opaquedata.js",
+    "test/parallel/test-http2-head-request.js",
+    "test/parallel/test-http2-invalid-last-stream-id.js",
+    "test/parallel/test-http2-invalidargtypes-errors.js",
+    "test/parallel/test-http2-invalidheaderfield.js",
+    "test/parallel/test-http2-invalidheaderfields-client.js",
+    "test/parallel/test-http2-malformed-altsvc.js",
+    "test/parallel/test-http2-many-writes-and-destroy.js",
+    "test/parallel/test-http2-max-concurrent-streams.js",
+    "test/parallel/test-http2-max-invalid-frames.js",
+    "test/parallel/test-http2-max-settings.js",
+    "test/parallel/test-http2-methods.js",
+    "test/parallel/test-http2-misbehaving-flow-control-paused.js",
+    "test/parallel/test-http2-misbehaving-flow-control.js",
+    "test/parallel/test-http2-misbehaving-multiplex.js",
+    "test/parallel/test-http2-misused-pseudoheaders.js",
+    "test/parallel/test-http2-multiplex.js",
+    "test/parallel/test-http2-no-more-streams.js",
+    "test/parallel/test-http2-no-wanttrailers-listener.js",
+    "test/parallel/test-http2-onping.js",
+    "test/parallel/test-http2-options-max-headers-block-length.js",
+    "test/parallel/test-http2-options-max-headers-exceeds-nghttp2.js",
+    "test/parallel/test-http2-options-max-reserved-streams.js",
+    "test/parallel/test-http2-padding-aligned.js",
+    "test/parallel/test-http2-perform-server-handshake.js",
+    "test/parallel/test-http2-ping-unsolicited-ack.js",
+    "test/parallel/test-http2-ping.js",
+    "test/parallel/test-http2-premature-close.js",
+    "test/parallel/test-http2-priority-cycle-.js",
+    "test/parallel/test-http2-propagate-session-destroy-code.js",
+    "test/parallel/test-http2-raw-headers-defaults.js",
+    "test/parallel/test-http2-raw-headers.js",
+    "test/parallel/test-http2-removed-header-stays-removed.js",
+    "test/parallel/test-http2-request-remove-connect-listener.js",
+    "test/parallel/test-http2-request-response-proto.js",
+    "test/parallel/test-http2-res-corked.js",
+    "test/parallel/test-http2-respond-errors.js",
+    "test/parallel/test-http2-respond-nghttperrors.js",
+    "test/parallel/test-http2-respond-no-data.js",
+    "test/parallel/test-http2-sensitive-headers.js",
+    "test/parallel/test-http2-sent-headers.js",
+    "test/parallel/test-http2-server-async-dispose.js",
+    "test/parallel/test-http2-server-close-callback.js",
+    "test/parallel/test-http2-server-errors.js",
+    "test/parallel/test-http2-server-push-disabled.js",
+    "test/parallel/test-http2-server-push-stream-errors-args.js",
+    "test/parallel/test-http2-server-push-stream-errors.js",
+    "test/parallel/test-http2-server-push-stream-head.js",
+    "test/parallel/test-http2-server-push-stream.js",
+    "test/parallel/test-http2-server-rfc-9113-client.js",
+    "test/parallel/test-http2-server-rfc-9113-server.js",
+    "test/parallel/test-http2-server-rst-before-respond.js",
+    "test/parallel/test-http2-server-rst-stream.js",
+    "test/parallel/test-http2-server-session-destroy.js",
+    "test/parallel/test-http2-server-sessionerror.js",
+    "test/parallel/test-http2-server-set-header.js",
+    "test/parallel/test-http2-server-setLocalWindowSize.js",
+    "test/parallel/test-http2-server-settimeout-no-callback.js",
+    "test/parallel/test-http2-server-shutdown-before-respond.js",
+    "test/parallel/test-http2-server-shutdown-options-errors.js",
+    "test/parallel/test-http2-server-shutdown-redundant.js",
+    "test/parallel/test-http2-server-socket-destroy.js",
+    "test/parallel/test-http2-server-stream-session-destroy.js",
+    "test/parallel/test-http2-server-timeout.js",
+    "test/parallel/test-http2-session-graceful-close.js",
+    "test/parallel/test-http2-session-settings.js",
+    "test/parallel/test-http2-session-stream-state.js",
+    "test/parallel/test-http2-session-timeout.js",
+    "test/parallel/test-http2-settings-unsolicited-ack.js",
+    "test/parallel/test-http2-short-stream-client-server.js",
+    "test/parallel/test-http2-stream-client.js",
+    "test/parallel/test-http2-stream-destroy-event-order.js",
+    "test/parallel/test-http2-stream-removelisteners-after-close.js",
+    "test/parallel/test-http2-timeouts.js",
+    "test/parallel/test-http2-too-many-headers.js",
+    "test/parallel/test-http2-too-many-settings.js",
+    "test/parallel/test-http2-too-many-streams.js",
+    "test/parallel/test-http2-trailers-after-session-close.js",
+    "test/parallel/test-http2-trailers.js",
+    "test/parallel/test-http2-update-settings.js",
+    "test/parallel/test-http2-window-size.js",
+    "test/parallel/test-http2-window-update-overflow.js",
+    "test/parallel/test-http2-write-callbacks.js",
+    "test/parallel/test-http2-write-empty-string.js",
+    "test/parallel/test-http2-write-finishes-after-stream-destroy.js",
+    "test/parallel/test-http2-zero-length-write.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_http2_diagnostic_core_promoted_batch_fixture() {
+    let fixture_paths = HTTP2_DIAGNOSTIC_CORE_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-http2-diagnostic-core-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_http2_diagnostic_core_promoted_batch_fixture() {
+    let fixture_paths = HTTP2_DIAGNOSTIC_CORE_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-http2-diagnostic-core-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
 const HTTP_CLIENT_AGENT_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-http-agent-keep-alive-timeout-buffer.js",
     "test/parallel/test-http-agent.js",
