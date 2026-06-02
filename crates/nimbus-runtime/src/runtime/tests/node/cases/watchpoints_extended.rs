@@ -1352,6 +1352,152 @@ fn node24_default_lane_esm_data_url_cluster_watchpoint() {
     );
 }
 
+const FS_HOST_IO_EXTRA_RUNTIME_FILES: &[&str] = &[
+    "test/fixtures/a.js",
+    "test/fixtures/baz.js",
+    "test/fixtures/empty.js",
+    "test/fixtures/x.txt",
+    "test/fixtures/empty.txt",
+    "test/fixtures/elipses.txt",
+    "test/fixtures/loop.js",
+    "test/fixtures/utf8_test_text.txt",
+];
+
+const FS_HOST_IO_EXTRA_DIRS: &[&str] = &["test/common"];
+
+const FS_HOST_IO_LOW_ROI_PATHS: &[&str] = &[
+    "test/parallel/test-fs-existssync-memleak-longpath.js",
+    "test/parallel/test-fs-sir-writes-alot.js",
+    "test/parallel/test-fs-write-buffer-large.js",
+    "test/parallel/test-fs-write-sigxfsz.js",
+    "test/parallel/test-fs-writesync-crash.js",
+];
+
+const FS_HOST_IO_LOW_ROI_PREFIXES: &[&str] = &["test/parallel/test-fs-promises-watch"];
+
+fn fs_host_io_runnable_fixture_paths(lane: NodeCompatLane) -> Vec<String> {
+    let mut fixture_paths =
+        node_compat_required_gap_paths_for_owner(lane, "streams-local-io/fs-host-io");
+    fixture_paths.retain(|path| {
+        !FS_HOST_IO_LOW_ROI_PATHS
+            .iter()
+            .any(|low_roi_path| path == low_roi_path)
+            && !FS_HOST_IO_LOW_ROI_PREFIXES
+                .iter()
+                .any(|low_roi_prefix| path.starts_with(low_roi_prefix))
+    });
+    fixture_paths
+}
+
+const FS_HOST_IO_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-fs-fchown-negative-one.js",
+    "test/parallel/test-fs-filehandle-use-after-close.js",
+    "test/parallel/test-fs-fmap.js",
+    "test/parallel/test-fs-internal-assertencoding.js",
+    "test/parallel/test-fs-lchown-negative-one.js",
+    "test/parallel/test-fs-make-callback.js",
+    "test/parallel/test-fs-makeStatsCallback.js",
+    "test/parallel/test-fs-mkdir-recursive-eaccess.js",
+    "test/parallel/test-fs-promises-statfs-validate-path.js",
+    "test/parallel/test-fs-read-stream-concurrent-reads.js",
+    "test/parallel/test-fs-read-stream-err.js",
+    "test/parallel/test-fs-read-stream-fd-leak.js",
+    "test/parallel/test-fs-read-stream-patch-open.js",
+    "test/parallel/test-fs-read-stream-resume.js",
+    "test/parallel/test-fs-readdir-recursive.js",
+    "test/parallel/test-fs-readdir-stack-overflow.js",
+    "test/parallel/test-fs-readdir-types-symlinks.js",
+    "test/parallel/test-fs-stat-bigint.js",
+    "test/parallel/test-fs-stream-destroy-emit-error.js",
+    "test/parallel/test-fs-stream-double-close.js",
+    "test/parallel/test-fs-stream-options.js",
+    "test/parallel/test-fs-symlink-dir.js",
+    "test/parallel/test-fs-symlink-longpath.js",
+    "test/parallel/test-fs-write-reuse-callback.js",
+    "test/parallel/test-fs-write-stream-change-open.js",
+    "test/parallel/test-fs-write-stream-close-without-callback.js",
+    "test/parallel/test-fs-write-stream-err.js",
+    "test/parallel/test-fs-write-stream-file-handle-2.js",
+    "test/parallel/test-fs-writestream-open-write.js",
+];
+
+const FS_HOST_IO_PROMOTED_NODE22_ONLY_PATHS: &[&str] = &[
+    "test/parallel/test-fs-read-position-validation.mjs",
+    "test/parallel/test-fs-read-promises-position-validation.mjs",
+    "test/parallel/test-fs-readSync-position-validation.mjs",
+    "test/parallel/test-fs-utils-get-dirents.js",
+];
+
+const FS_HOST_IO_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
+    "test/parallel/test-fs-glob-throw.mjs",
+    "test/parallel/test-fs-rmSync-special-char.js",
+    "test/parallel/test-fs-write-stream.js",
+];
+
+fn fs_host_io_promoted_fixture_paths(groups: &[&[&str]]) -> Vec<String> {
+    groups
+        .iter()
+        .flat_map(|group| group.iter().copied())
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn node22_supported_lane_executes_fs_host_io_promoted_batch_fixture() {
+    let fixture_paths = fs_host_io_promoted_fixture_paths(&[
+        FS_HOST_IO_PROMOTED_COMMON_PATHS,
+        FS_HOST_IO_PROMOTED_NODE22_ONLY_PATHS,
+    ]);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-fs-host-io-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        FS_HOST_IO_EXTRA_RUNTIME_FILES,
+        FS_HOST_IO_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_fs_host_io_promoted_batch_fixture() {
+    let fixture_paths = fs_host_io_promoted_fixture_paths(&[
+        FS_HOST_IO_PROMOTED_COMMON_PATHS,
+        FS_HOST_IO_PROMOTED_NODE24_ONLY_PATHS,
+    ]);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-fs-host-io-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        FS_HOST_IO_EXTRA_RUNTIME_FILES,
+        FS_HOST_IO_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked fs-host-io required-gap inventory; watch/stress/crash paths are excluded by the kill rule and remain gaps"]
+fn node22_supported_lane_fs_host_io_watchpoint() {
+    let fixture_paths = fs_host_io_runnable_fixture_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-fs-host-io-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        FS_HOST_IO_EXTRA_RUNTIME_FILES,
+        FS_HOST_IO_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked fs-host-io required-gap inventory; watch/stress/crash paths are excluded by the kill rule and remain gaps"]
+fn node24_default_lane_fs_host_io_watchpoint() {
+    let fixture_paths = fs_host_io_runnable_fixture_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-fs-host-io-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        FS_HOST_IO_EXTRA_RUNTIME_FILES,
+        FS_HOST_IO_EXTRA_DIRS,
+    );
+}
+
 #[test]
 fn node22_fs_rmdir_recursive_fixture() {
     run_node_compat_watchpoint(
