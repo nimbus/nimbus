@@ -333,7 +333,7 @@ def collect_const_blocks(lines: list[str]) -> dict[str, str]:
                 - line.count("}")
                 - line.count(")")
             )
-            if ";" in line and index > start and depth <= 0:
+            if ";" in line and depth <= 0:
                 break
             index += 1
         blocks[name] = "\n".join(block)

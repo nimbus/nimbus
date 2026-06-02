@@ -416,6 +416,148 @@ fn node22_loader_context_followup_vm_multi_context_plus_proxy_watchpoint() {
     );
 }
 
+const LOADER_CONTEXT_VM_EXTRA_DIRS: &[&str] = &[
+    "test/common",
+    "test/fixtures/es-modules",
+    "test/fixtures/keys",
+];
+
+const LOADER_CONTEXT_VM_FATAL_ABORT_PATHS: &[&str] =
+    &["test/parallel/test-vm-module-evaluate-while-evaluating.js"];
+const LOADER_CONTEXT_VM_FATAL_ABORT_PREFIXES: &[&str] = &["test/parallel/test-vm-module-"];
+
+fn loader_context_vm_runnable_fixture_paths(lane: NodeCompatLane) -> Vec<String> {
+    let mut fixture_paths = node_compat_required_gap_paths_for_owner(lane, "loader-context/vm");
+    fixture_paths.retain(|path| {
+        !LOADER_CONTEXT_VM_FATAL_ABORT_PATHS
+            .iter()
+            .any(|fatal_path| path == fatal_path)
+            && !LOADER_CONTEXT_VM_FATAL_ABORT_PREFIXES
+                .iter()
+                .any(|fatal_prefix| path.starts_with(fatal_prefix))
+    });
+    fixture_paths
+}
+
+const LOADER_CONTEXT_VM_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-vm-attributes-property-not-on-sandbox.js",
+    "test/parallel/test-vm-codegen.js",
+    "test/parallel/test-vm-context-async-script.js",
+    "test/parallel/test-vm-context-dont-contextify.js",
+    "test/parallel/test-vm-context-property-forwarding.js",
+    "test/parallel/test-vm-create-and-run-in-context.js",
+    "test/parallel/test-vm-create-context-accessors.js",
+    "test/parallel/test-vm-create-context-circular-reference.js",
+    "test/parallel/test-vm-createcacheddata.js",
+    "test/parallel/test-vm-cross-context.js",
+    "test/parallel/test-vm-data-property-writable.js",
+    "test/parallel/test-vm-deleting-property.js",
+    "test/parallel/test-vm-function-declaration.js",
+    "test/parallel/test-vm-function-redefinition.js",
+    "test/parallel/test-vm-getters.js",
+    "test/parallel/test-vm-global-assignment.js",
+    "test/parallel/test-vm-global-configurable-properties.js",
+    "test/parallel/test-vm-global-define-property.js",
+    "test/parallel/test-vm-global-get-own.js",
+    "test/parallel/test-vm-global-identity.js",
+    "test/parallel/test-vm-global-non-writable-properties.js",
+    "test/parallel/test-vm-global-setter.js",
+    "test/parallel/test-vm-harmony-symbols.js",
+    "test/parallel/test-vm-indexed-properties.js",
+    "test/parallel/test-vm-inherited_properties.js",
+    "test/parallel/test-vm-is-context.js",
+    "test/parallel/test-vm-low-stack-space.js",
+    "test/parallel/test-vm-new-script-new-context.js",
+    "test/parallel/test-vm-new-script-this-context.js",
+    "test/parallel/test-vm-options-validation.js",
+    "test/parallel/test-vm-ownkeys.js",
+    "test/parallel/test-vm-ownpropertynames.js",
+    "test/parallel/test-vm-ownpropertysymbols.js",
+    "test/parallel/test-vm-parse-abort-on-uncaught-exception.js",
+    "test/parallel/test-vm-preserves-property.js",
+    "test/parallel/test-vm-property-not-on-sandbox.js",
+    "test/parallel/test-vm-proxies.js",
+    "test/parallel/test-vm-proxy-failure-CP.js",
+    "test/parallel/test-vm-script-throw-in-tostring.js",
+    "test/parallel/test-vm-set-property-proxy.js",
+    "test/parallel/test-vm-set-proto-null-on-globalthis.js",
+    "test/parallel/test-vm-source-map-url.js",
+    "test/parallel/test-vm-static-this.js",
+    "test/parallel/test-vm-strict-assign.js",
+    "test/parallel/test-vm-symbols.js",
+    "test/parallel/test-vm-timeout-escape-promise-2.js",
+    "test/parallel/test-vm-timeout-escape-promise.js",
+    "test/parallel/test-vm-timeout.js",
+    "test/parallel/test-vm-util-lazy-properties.js",
+];
+
+const LOADER_CONTEXT_VM_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
+    "test/parallel/test-vm-context.js",
+    "test/parallel/test-vm-global-contextual-store.js",
+];
+
+fn loader_context_vm_promoted_fixture_paths(groups: &[&[&str]]) -> Vec<String> {
+    groups
+        .iter()
+        .flat_map(|group| group.iter().copied())
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn node22_supported_lane_executes_loader_context_vm_promoted_batch_fixture() {
+    let fixture_paths =
+        loader_context_vm_promoted_fixture_paths(&[LOADER_CONTEXT_VM_PROMOTED_COMMON_PATHS]);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-loader-context-vm-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        LOADER_CONTEXT_VM_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_loader_context_vm_promoted_batch_fixture() {
+    let fixture_paths = loader_context_vm_promoted_fixture_paths(&[
+        LOADER_CONTEXT_VM_PROMOTED_COMMON_PATHS,
+        LOADER_CONTEXT_VM_PROMOTED_NODE24_ONLY_PATHS,
+    ]);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-loader-context-vm-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        LOADER_CONTEXT_VM_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked loader-context/vm required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified"]
+fn node22_supported_lane_loader_context_vm_watchpoint() {
+    let fixture_paths = loader_context_vm_runnable_fixture_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-loader-context-vm-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        LOADER_CONTEXT_VM_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked loader-context/vm required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified"]
+fn node24_default_lane_loader_context_vm_watchpoint() {
+    let fixture_paths = loader_context_vm_runnable_fixture_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-loader-context-vm-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        LOADER_CONTEXT_VM_EXTRA_DIRS,
+    );
+}
+
 #[test]
 fn node22_loader_context_followup_v8_helper_batch_fixture() {
     run_node_compat_watchpoint_entry_batch(

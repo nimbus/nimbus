@@ -1473,6 +1473,37 @@ fn node_compat_required_gap_paths_for_selector(
     paths
 }
 
+fn node_compat_required_gap_paths_for_owner(lane: NodeCompatLane, owner: &str) -> Vec<String> {
+    let lane_name = node_compat_lane_name(lane);
+    let posture_path =
+        node_compat_repo_root().join("docs/architecture/runtime/node-default-support-posture.json");
+    let posture: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&posture_path).unwrap_or_else(|error| {
+            panic!(
+                "node_compat posture `{}` should read: {error}",
+                posture_path.display()
+            )
+        }))
+        .unwrap_or_else(|error| {
+            panic!(
+                "node_compat posture `{}` should parse: {error}",
+                posture_path.display()
+            )
+        });
+    let mut paths: Vec<String> = posture["lanes"][lane_name]["entries"]
+        .as_array()
+        .unwrap_or_else(|| panic!("node_compat posture lane `{lane_name}` entries should be array"))
+        .iter()
+        .filter(|entry| entry["support_denominator"] == "v8_isolate_required")
+        .filter(|entry| entry["owner"] == owner)
+        .filter_map(|entry| entry["test_path"].as_str())
+        .map(str::to_string)
+        .collect();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
 fn esm_module_loader_required_gap_path(test_path: &str) -> bool {
     test_path.starts_with("test/es-module/")
         || test_path.starts_with("test/parallel/test-module")
