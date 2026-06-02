@@ -2477,6 +2477,270 @@ fn node24_default_lane_executes_http_server_request_response_promoted_batch_fixt
     );
 }
 
+fn http_remaining_diagnostic_candidate_path(path: &str) -> bool {
+    path == "test/abort/test-http-parser-consume.js"
+        || path.starts_with("test/parallel/test-http-")
+}
+
+const HTTP_REMAINING_DIAGNOSTIC_EXCLUDED_PATHS: &[&str] = &[
+    "test/parallel/test-http-agent-domain-reused-gc.js",
+    "test/parallel/test-http-agent-reuse-drained-socket-only.js",
+    "test/parallel/test-http-client-leaky-with-double-response.js",
+    "test/parallel/test-http-client-null-prototype-options.js",
+    "test/parallel/test-http-client-request-listeners-leak.js",
+    "test/parallel/test-http-full-response.js",
+    "test/parallel/test-http-outgoing-destroyed.js",
+    "test/parallel/test-http-outgoing-drain-writable-length.js",
+    "test/parallel/test-http-outgoing-end-multiple.js",
+    "test/parallel/test-http-request-agent.js",
+    "test/parallel/test-http-request-signal.js",
+    "test/parallel/test-http-server-capture-rejections.js",
+    "test/parallel/test-http-server-client-error.js",
+    "test/parallel/test-http-server-connections-checking-leak.js",
+    "test/parallel/test-http-server-destroy-socket-on-client-error.js",
+    "test/parallel/test-http-server-drop-connections-in-cluster.js",
+    "test/parallel/test-http-server-headers-timeout-keepalive.js",
+    "test/parallel/test-http-server-keepalive-end.js",
+    "test/parallel/test-http-server-keepalive-req-gc.js",
+    "test/parallel/test-http-server-non-utf8-header.js",
+    "test/parallel/test-http-server-request-timeout-keepalive.js",
+    "test/parallel/test-http-server-stale-close.js",
+    "test/parallel/test-http-server-unconsume.js",
+];
+
+fn http_remaining_diagnostic_excluded_path(path: &str) -> bool {
+    path.contains("client-proxy/")
+        || path.contains("internet/")
+        || path.contains("https")
+        || path.contains("proxy")
+        || path.contains("unix-socket")
+        || path.contains("test-http-client")
+        || path.contains("test-http-agent")
+        || path.contains("cluster")
+        || path.contains("leak")
+        || path.contains("gc")
+        || HTTP_REMAINING_DIAGNOSTIC_EXCLUDED_PATHS
+            .iter()
+            .any(|excluded_path| path == *excluded_path)
+}
+
+fn http_remaining_diagnostic_paths(lane: NodeCompatLane) -> Vec<String> {
+    let mut fixture_paths = node_compat_posture_paths_for_selector(lane, |entry| {
+        entry["support_denominator"] == "diagnostic_only_non_isolate"
+            && entry["owner"] == "networking/http"
+            && entry["test_path"]
+                .as_str()
+                .is_some_and(http_remaining_diagnostic_candidate_path)
+    });
+    fixture_paths.retain(|path| !http_remaining_diagnostic_excluded_path(path));
+    assert!(
+        (50..=200).contains(&fixture_paths.len()),
+        "remaining HTTP diagnostic selector should stay broad but reviewable; selected {} fixtures",
+        fixture_paths.len()
+    );
+    fixture_paths
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked remaining HTTP diagnostic core inventory; prior client/agent/server residuals and proxy/internet/TLS/Unix/cluster/leak/GC paths are excluded"]
+fn node22_supported_lane_http_remaining_diagnostic_watchpoint() {
+    let fixture_paths = http_remaining_diagnostic_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-http-remaining-diagnostic-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: ROI-ranked remaining HTTP diagnostic core inventory; prior client/agent/server residuals and proxy/internet/TLS/Unix/cluster/leak/GC paths are excluded"]
+fn node24_default_lane_http_remaining_diagnostic_watchpoint() {
+    let fixture_paths = http_remaining_diagnostic_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-http-remaining-diagnostic-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
+const HTTP_REMAINING_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-http-1.0-keep-alive.js",
+    "test/parallel/test-http-1.0.js",
+    "test/parallel/test-http-abort-before-end.js",
+    "test/parallel/test-http-abort-client.js",
+    "test/parallel/test-http-abort-queued.js",
+    "test/parallel/test-http-abort-stream-end.js",
+    "test/parallel/test-http-aborted.js",
+    "test/parallel/test-http-addrequest-localaddress.js",
+    "test/parallel/test-http-after-connect.js",
+    "test/parallel/test-http-bind-twice.js",
+    "test/parallel/test-http-blank-header.js",
+    "test/parallel/test-http-buffer-sanity.js",
+    "test/parallel/test-http-byteswritten.js",
+    "test/parallel/test-http-catch-uncaughtexception.js",
+    "test/parallel/test-http-chunked-304.js",
+    "test/parallel/test-http-chunked-smuggling.js",
+    "test/parallel/test-http-chunked.js",
+    "test/parallel/test-http-common.js",
+    "test/parallel/test-http-conn-reset.js",
+    "test/parallel/test-http-connect-req-res.js",
+    "test/parallel/test-http-connect.js",
+    "test/parallel/test-http-content-length-mismatch.js",
+    "test/parallel/test-http-content-length.js",
+    "test/parallel/test-http-correct-hostname.js",
+    "test/parallel/test-http-createConnection.js",
+    "test/parallel/test-http-date-header.js",
+    "test/parallel/test-http-decoded-auth.js",
+    "test/parallel/test-http-default-encoding.js",
+    "test/parallel/test-http-destroyed-socket-write2.js",
+    "test/parallel/test-http-dns-error.js",
+    "test/parallel/test-http-dont-set-default-headers-with-set-header.js",
+    "test/parallel/test-http-dont-set-default-headers-with-setHost.js",
+    "test/parallel/test-http-dont-set-default-headers.js",
+    "test/parallel/test-http-dummy-characters-smuggling.js",
+    "test/parallel/test-http-early-hints.js",
+    "test/parallel/test-http-end-throw-socket-handling.js",
+    "test/parallel/test-http-eof-on-connect.js",
+    "test/parallel/test-http-expect-continue-reuse-race.js",
+    "test/parallel/test-http-expect-continue.js",
+    "test/parallel/test-http-expect-handling.js",
+    "test/parallel/test-http-flush-headers.js",
+    "test/parallel/test-http-header-badrequest.js",
+    "test/parallel/test-http-header-obstext.js",
+    "test/parallel/test-http-header-owstext.js",
+    "test/parallel/test-http-header-read.js",
+    "test/parallel/test-http-header-validators.js",
+    "test/parallel/test-http-headers-distinct-proto.js",
+    "test/parallel/test-http-hex-write.js",
+    "test/parallel/test-http-highwatermark.js",
+    "test/parallel/test-http-host-header-ipv6-fail.js",
+    "test/parallel/test-http-host-headers.js",
+    "test/parallel/test-http-hostname-typechecking.js",
+    "test/parallel/test-http-insecure-parser-per-stream.js",
+    "test/parallel/test-http-invalid-path-chars.js",
+    "test/parallel/test-http-invalid-te.js",
+    "test/parallel/test-http-invalid-urls.js",
+    "test/parallel/test-http-invalidheaderfield.js",
+    "test/parallel/test-http-invalidheaderfield2.js",
+    "test/parallel/test-http-keep-alive-close-on-header.js",
+    "test/parallel/test-http-keep-alive-drop-requests.js",
+    "test/parallel/test-http-keep-alive-empty-line.mjs",
+    "test/parallel/test-http-keep-alive-max-requests.js",
+    "test/parallel/test-http-keep-alive-pipeline-max-requests.js",
+    "test/parallel/test-http-keep-alive-timeout-buffer.js",
+    "test/parallel/test-http-keep-alive-timeout-custom.js",
+    "test/parallel/test-http-keep-alive-timeout-race-condition.js",
+    "test/parallel/test-http-keep-alive-timeout.js",
+    "test/parallel/test-http-keep-alive.js",
+    "test/parallel/test-http-keepalive-client.js",
+    "test/parallel/test-http-keepalive-free.js",
+    "test/parallel/test-http-keepalive-override.js",
+    "test/parallel/test-http-keepalive-request.js",
+    "test/parallel/test-http-listening.js",
+    "test/parallel/test-http-malformed-request.js",
+    "test/parallel/test-http-many-ended-pipelines.js",
+    "test/parallel/test-http-max-header-size-per-stream.js",
+    "test/parallel/test-http-max-headers-count.js",
+    "test/parallel/test-http-max-http-headers.js",
+    "test/parallel/test-http-max-sockets.js",
+    "test/parallel/test-http-methods.js",
+    "test/parallel/test-http-missing-header-separator-cr.js",
+    "test/parallel/test-http-missing-header-separator-lf.js",
+    "test/parallel/test-http-multi-line-headers.js",
+    "test/parallel/test-http-mutable-headers.js",
+    "test/parallel/test-http-no-content-length.js",
+    "test/parallel/test-http-nodelay.js",
+    "test/parallel/test-http-parser-bad-ref.js",
+    "test/parallel/test-http-parser-free.js",
+    "test/parallel/test-http-parser-freed-before-upgrade.js",
+    "test/parallel/test-http-parser-multiple-execute.js",
+    "test/parallel/test-http-parser-timeout-reset.js",
+    "test/parallel/test-http-parser.js",
+    "test/parallel/test-http-pause-no-dump.js",
+    "test/parallel/test-http-pause-resume-one-end.js",
+    "test/parallel/test-http-pause.js",
+    "test/parallel/test-http-pipe-fs.js",
+    "test/parallel/test-http-pipeline-assertionerror-finish.js",
+    "test/parallel/test-http-pipeline-socket-parser-typeerror.js",
+    "test/parallel/test-http-raw-headers.js",
+    "test/parallel/test-http-rawheaders-limit.js",
+    "test/parallel/test-http-readable-data-event.js",
+    "test/parallel/test-http-remove-connection-header-persists-connection.js",
+    "test/parallel/test-http-remove-header-stays-removed.js",
+    "test/parallel/test-http-req-close-robust-from-tampering.js",
+    "test/parallel/test-http-req-res-close.js",
+    "test/parallel/test-http-same-map.js",
+    "test/parallel/test-http-set-cookies.js",
+    "test/parallel/test-http-set-header-chain.js",
+    "test/parallel/test-http-set-max-idle-http-parser.js",
+    "test/parallel/test-http-set-timeout-server.js",
+    "test/parallel/test-http-set-trailers.js",
+    "test/parallel/test-http-should-keep-alive.js",
+    "test/parallel/test-http-socket-encoding-error.js",
+    "test/parallel/test-http-sync-write-error-during-continue.js",
+    "test/parallel/test-http-timeout-client-warning.js",
+    "test/parallel/test-http-timeout-overflow.js",
+    "test/parallel/test-http-timeout.js",
+    "test/parallel/test-http-transfer-encoding-repeated-chunked.js",
+    "test/parallel/test-http-transfer-encoding-smuggling.js",
+    "test/parallel/test-http-uncaught-from-request-callback.js",
+    "test/parallel/test-http-upgrade-advertise.js",
+    "test/parallel/test-http-upgrade-agent.js",
+    "test/parallel/test-http-upgrade-binary.js",
+    "test/parallel/test-http-upgrade-client.js",
+    "test/parallel/test-http-upgrade-client2.js",
+    "test/parallel/test-http-upgrade-reconsume-stream.js",
+    "test/parallel/test-http-upgrade-server.js",
+    "test/parallel/test-http-url.parse-auth-with-header-in-request.js",
+    "test/parallel/test-http-url.parse-auth.js",
+    "test/parallel/test-http-url.parse-basic.js",
+    "test/parallel/test-http-url.parse-path.js",
+    "test/parallel/test-http-url.parse-post.js",
+    "test/parallel/test-http-url.parse-search.js",
+    "test/parallel/test-http-wget.js",
+    "test/parallel/test-http-writable-true-after-close.js",
+    "test/parallel/test-http-write-callbacks.js",
+    "test/parallel/test-http-write-empty-string.js",
+    "test/parallel/test-http-zero-length-write.js",
+    "test/parallel/test-http-zerolengthbuffer.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_http_remaining_promoted_batch_fixture() {
+    let fixture_paths = HTTP_REMAINING_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-http-remaining-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_http_remaining_promoted_batch_fixture() {
+    let fixture_paths = HTTP_REMAINING_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-http-remaining-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
 const HTTP_CLIENT_AGENT_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-http-agent-keep-alive-timeout-buffer.js",
     "test/parallel/test-http-agent.js",
