@@ -245,21 +245,48 @@ fn node_compat_supported_node_options_flag(token: &str) -> bool {
         || token.starts_with("--unhandled-rejections=")
 }
 
+fn push_node_options_flag(flags: &mut Vec<String>, flag: String) {
+    if !flags.iter().any(|existing| existing == &flag) {
+        flags.push(flag);
+    }
+}
+
+fn push_node_conditions_flag(flags: &mut Vec<String>, condition: &str) {
+    if !condition.is_empty() {
+        push_node_options_flag(flags, format!("--conditions={condition}"));
+    }
+}
+
 pub(super) fn fixture_requested_node_options(test_source: &str) -> Vec<String> {
     let mut flags = Vec::new();
     for line in test_source.lines().take(40) {
         let Some((_, raw_flags)) = line.split_once("Flags:") else {
             continue;
         };
-        for token in raw_flags.split_whitespace() {
-            if node_compat_supported_node_options_flag(token)
-                && !flags.iter().any(|flag| flag == token)
-            {
-                flags.push(token.to_string());
+        let mut tokens = raw_flags.split_whitespace();
+        while let Some(token) = tokens.next() {
+            if token == "--conditions" || token == "-C" {
+                if let Some(condition) = tokens.next() {
+                    push_node_conditions_flag(&mut flags, condition);
+                }
+            } else if let Some(condition) = token.strip_prefix("--conditions=") {
+                push_node_conditions_flag(&mut flags, condition);
+            } else if let Some(condition) = token.strip_prefix("-C") {
+                push_node_conditions_flag(&mut flags, condition);
+            } else if node_compat_supported_node_options_flag(token) {
+                push_node_options_flag(&mut flags, token.to_string());
             }
         }
     }
     flags
+}
+
+fn fixture_requested_node_conditions(flags: &[String]) -> Vec<String> {
+    flags
+        .iter()
+        .filter_map(|flag| flag.strip_prefix("--conditions="))
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 pub(super) fn fixture_requests_pending_deprecation(test_source: &str) -> bool {
@@ -271,18 +298,25 @@ pub(super) fn fixture_requests_pending_deprecation(test_source: &str) -> bool {
 #[test]
 fn fixture_requested_node_options_filters_and_preserves_order() {
     let source = r#"
-// Flags: --trace-warnings --inspect --unhandled-rejections=warn
-// Flags: --no-warnings --trace-warnings --pending-deprecation
+// Flags: --trace-warnings --inspect --conditions=custom --unhandled-rejections=warn
+// Flags: --no-warnings -C another --trace-warnings --pending-deprecation
 "#;
 
+    let flags = fixture_requested_node_options(source);
     assert_eq!(
-        fixture_requested_node_options(source),
+        flags,
         vec![
             "--trace-warnings".to_string(),
+            "--conditions=custom".to_string(),
             "--unhandled-rejections=warn".to_string(),
             "--no-warnings".to_string(),
+            "--conditions=another".to_string(),
             "--pending-deprecation".to_string(),
         ]
+    );
+    assert_eq!(
+        fixture_requested_node_conditions(&flags),
+        vec!["custom".to_string(), "another".to_string()]
     );
     assert!(fixture_requests_pending_deprecation(source));
 }
@@ -1064,6 +1098,7 @@ fn execute_upstream_node_compat_test_with_extra_files(
         mode: NodeCompatBundleMode::Runtime,
     });
     let mut limits = runtime_limits_for_node_compat_fixture(test_relative_path, lane);
+    limits.node_conditions = fixture_requested_node_conditions(&fixture_node_options);
     if !fixture_node_options.is_empty() {
         grant_node_options_read_for_fixture_flags(&mut limits);
     }
@@ -1663,6 +1698,63 @@ fn module_loader_required_surface_blocker_paths(lane: NodeCompatLane) -> Vec<Str
     assert!(
         (50..=260).contains(&fixture_paths.len()),
         "module-loader required-surface blocker selector should stay broad but reviewable; selected {} fixtures",
+        fixture_paths.len()
+    );
+    fixture_paths
+}
+
+fn module_loader_package_core_required_surface_entry(entry: &serde_json::Value) -> bool {
+    if !module_loader_required_surface_blocker_entry(entry) {
+        return false;
+    }
+    let Some(test_path) = entry["test_path"].as_str() else {
+        return false;
+    };
+    let host_or_adjacent_scope = test_path.starts_with("test/module-hooks/")
+        || test_path.contains("wasm")
+        || test_path.contains("preload")
+        || test_path.contains("print-execution")
+        || test_path.contains("warning")
+        || test_path.contains("warn.js")
+        || test_path.contains("nowarn")
+        || test_path.contains("preserve-symlinks-main")
+        || test_path.contains("feature-detect")
+        || test_path.contains("import-require-tla-twice")
+        || test_path.contains("legacyMainResolve")
+        || test_path.contains("loader-http-imports")
+        || test_path.contains("require-module-cycle")
+        || test_path.contains("require-module-errors")
+        || test_path.contains("require-esm-from-imported-cjs")
+        || test_path.contains("transpiled");
+    if host_or_adjacent_scope {
+        return false;
+    }
+
+    test_path.contains("cjs-esm")
+        || test_path.contains("disable-require-module")
+        || test_path.contains("dynamic-import-commonjs")
+        || test_path.contains("legacyMainResolve")
+        || test_path.contains("module-not-found")
+        || test_path.contains("pkg")
+        || test_path.contains("preserve-symlinks")
+        || test_path.contains("require-esm")
+        || test_path.contains("require-module")
+        || test_path.contains("symlink")
+        || test_path.contains("tla")
+        || test_path.contains("type-field")
+        || test_path.contains("conditional-exports")
+        || test_path.contains("exports")
+        || test_path.contains("imports")
+}
+
+fn module_loader_package_core_required_surface_paths(lane: NodeCompatLane) -> Vec<String> {
+    let fixture_paths = node_compat_posture_paths_for_selector(
+        lane,
+        module_loader_package_core_required_surface_entry,
+    );
+    assert!(
+        (25..=60).contains(&fixture_paths.len()),
+        "module-loader package/CJS/ESM core selector should stay focused but broad enough to matter; selected {} fixtures",
         fixture_paths.len()
     );
     fixture_paths

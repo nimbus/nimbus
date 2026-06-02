@@ -3,7 +3,9 @@ use std::path::Path;
 use deno_permissions::OpenAccessKind;
 
 use crate::backends::v8::embedder::{JsErrorBox, OpState, op2};
-use crate::node_compat::{ResolvedNodeModuleKind, ResolvedNodeTarget, resolve_node_target};
+use crate::node_compat::{
+    ResolvedNodeModuleKind, ResolvedNodeTarget, resolve_node_target_with_user_conditions,
+};
 use crate::runtime::bootstrap::payloads::RuntimeHostCallEnvelope;
 use crate::runtime::bootstrap::state::InstalledRuntimeCapabilityPolicy;
 
@@ -18,18 +20,18 @@ pub(in super::super) fn op_nimbus_runtime_require_resolve(
     state: &mut OpState,
     #[serde] payload: RuntimeRequireResolvePayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    let path_policy = state
-        .borrow::<InstalledRuntimeCapabilityPolicy>()
-        .paths
-        .clone();
+    let capability_policy = state.borrow::<InstalledRuntimeCapabilityPolicy>();
+    let path_policy = capability_policy.paths.clone();
+    let node_conditions = capability_policy.node_conditions.clone();
     let referrer = payload
         .referrer
         .unwrap_or_else(|| path_policy.cwd().display().to_string());
-    let resolved = resolve_node_target(
+    let resolved = resolve_node_target_with_user_conditions(
         &path_policy,
         &payload.specifier,
         &referrer,
         node_resolver::ResolutionMode::Require,
+        &node_conditions,
     )?;
     let response = match resolved {
         ResolvedNodeTarget::BuiltIn { module_name } => {

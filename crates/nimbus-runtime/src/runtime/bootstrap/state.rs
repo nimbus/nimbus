@@ -72,6 +72,7 @@ pub(super) struct InstalledRuntimeCapabilityPolicy {
     pub(super) paths: RuntimePathPolicy,
     pub(super) env: RuntimeEnvPolicy,
     pub(super) permissions: PermissionsContainer,
+    pub(super) node_conditions: Vec<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -241,6 +242,7 @@ fn install_runtime_contract(
         permissions: build_permissions_container(&paths, &env, &limits)?,
         paths,
         env,
+        node_conditions: limits.node_conditions.clone(),
     };
     let op_state = runtime.op_state();
     let mut state = op_state.borrow_mut();

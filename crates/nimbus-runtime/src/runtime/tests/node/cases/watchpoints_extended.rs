@@ -3329,6 +3329,32 @@ fn node24_default_lane_module_loader_required_surface_blocker_watchpoint() {
     );
 }
 
+#[test]
+#[ignore = "NDS3 focused implementation wave: package/CJS/ESM loader core; run after exact broad pre-run and before focused fixes"]
+fn node22_supported_lane_module_loader_package_core_watchpoint() {
+    let fixture_paths = module_loader_package_core_required_surface_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-module-loader-package-core-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 focused implementation wave: package/CJS/ESM loader core; run after exact broad pre-run and before focused fixes"]
+fn node24_default_lane_module_loader_package_core_watchpoint() {
+    let fixture_paths = module_loader_package_core_required_surface_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-module-loader-package-core-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
 const PARALLEL_JS_PLATFORM_REQUIRED_GAP_EXTRA_DIRS: &[&str] = &["test/common"];
 
 const PARALLEL_JS_PLATFORM_PROMOTED_COMMON_PATHS: &[&str] = &[

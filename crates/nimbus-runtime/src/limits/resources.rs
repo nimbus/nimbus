@@ -22,6 +22,7 @@ pub struct RuntimeLimits {
     pub bundle_content_kind: RuntimeBundleContentKind,
     pub javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat,
     pub compatibility_target: RuntimeCompatibilityTarget,
+    pub node_conditions: Vec<String>,
     pub execution_model: RuntimeExecutionModel,
     pub mode: RuntimeMode,
     pub language: RuntimeLanguage,
@@ -304,6 +305,13 @@ impl RuntimeLimits {
             );
         }
 
+        if !self.node_conditions.is_empty() && !self.compatibility_target.is_node() {
+            panic!(
+                "runtime Node package conditions require a Node compatibility target, got {:?}",
+                self.compatibility_target
+            );
+        }
+
         if self
             .grants
             .run
@@ -364,6 +372,7 @@ impl RuntimeLimits {
             bundle_content_kind: self.bundle_content_kind,
             javascript_evaluation_format: self.javascript_evaluation_format,
             compatibility_target: self.compatibility_target,
+            node_conditions: self.node_conditions.clone(),
             execution_model: self.execution_model,
             mode: self.mode,
             language: self.language,
@@ -430,6 +439,7 @@ impl Default for RuntimeLimits {
             bundle_content_kind: RuntimeBundleContentKind::JavaScript,
             javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::EsModule,
             compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
+            node_conditions: Vec::new(),
             execution_model: RuntimeExecutionModel::CooperativeLocker,
             mode: RuntimeMode::Standard,
             language: RuntimeLanguage::JavaScript,

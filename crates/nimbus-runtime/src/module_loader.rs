@@ -16,7 +16,8 @@ use crate::backends::v8::embedder::{
 use crate::limits::RuntimeCompatibilityTarget;
 use crate::node_compat::{
     ResolvedNodeModuleKind, ResolvedNodeTarget, build_package_json_resolver,
-    classify_resolved_module_kind, resolve_node_target_with_conditions, translate_commonjs_to_esm,
+    classify_resolved_module_kind, resolve_node_target_with_conditions,
+    resolve_node_target_with_user_conditions, translate_commonjs_to_esm,
 };
 use crate::runtime_capabilities::RuntimePathPolicy;
 use deno_node::ops::module_hooks::LoaderHookRegistry;
@@ -37,6 +38,7 @@ use embedded_builtins::{
 pub struct RestrictedModuleLoader {
     path_policy: RuntimePathPolicy,
     compatibility_target: RuntimeCompatibilityTarget,
+    node_conditions: Vec<String>,
     code_cache: Arc<BundleModuleCodeCache>,
     loader_hook_registry: Option<LoaderHookRegistry>,
 }
@@ -45,12 +47,14 @@ impl RestrictedModuleLoader {
     pub fn new(
         path_policy: RuntimePathPolicy,
         compatibility_target: RuntimeCompatibilityTarget,
+        node_conditions: Vec<String>,
         code_cache: Arc<BundleModuleCodeCache>,
         loader_hook_registry: Option<LoaderHookRegistry>,
     ) -> Self {
         let loader = Self {
             path_policy,
             compatibility_target,
+            node_conditions,
             code_cache,
             loader_hook_registry,
         };
@@ -197,13 +201,23 @@ impl RestrictedModuleLoader {
         referrer: &str,
         conditions: Option<Vec<String>>,
     ) -> Result<ModuleSpecifier, JsErrorBox> {
-        match resolve_node_target_with_conditions(
-            &self.path_policy,
-            specifier,
-            referrer,
-            node_resolver::ResolutionMode::Import,
-            conditions,
-        )? {
+        let resolved = match conditions {
+            Some(conditions) => resolve_node_target_with_conditions(
+                &self.path_policy,
+                specifier,
+                referrer,
+                node_resolver::ResolutionMode::Import,
+                Some(conditions),
+            )?,
+            None => resolve_node_target_with_user_conditions(
+                &self.path_policy,
+                specifier,
+                referrer,
+                node_resolver::ResolutionMode::Import,
+                &self.node_conditions,
+            )?,
+        };
+        match resolved {
             ResolvedNodeTarget::BuiltIn { module_name } => {
                 ModuleSpecifier::parse(&format!("node:{module_name}")).map_err(JsErrorBox::from_err)
             }

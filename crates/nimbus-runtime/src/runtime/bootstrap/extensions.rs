@@ -65,6 +65,7 @@ pub(crate) fn execution_extensions(
     target: RuntimeCompatibilityTarget,
     path_policy: &RuntimePathPolicy,
     loader_hook_registry: Option<LoaderHookRegistry>,
+    node_conditions: &[String],
 ) -> Vec<Extension> {
     let mut extensions = Vec::new();
     if target.is_node() {
@@ -97,7 +98,11 @@ pub(crate) fn execution_extensions(
                 ScopedNodeModulesResolver,
                 RealSys,
             >(
-                Some(build_node_init_services(path_policy, loader_hook_registry)),
+                Some(build_node_init_services(
+                    path_policy,
+                    loader_hook_registry,
+                    node_conditions,
+                )),
                 fs,
             ),
             node22_runtime_bootstrap_extension(),

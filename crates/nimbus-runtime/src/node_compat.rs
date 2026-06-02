@@ -220,15 +220,14 @@ pub(crate) fn build_package_json_resolver() -> Arc<LocalPackageJsonResolver> {
     Arc::new(PackageJsonResolver::new(RealSys, None))
 }
 
-pub(crate) fn build_node_resolver(
+fn build_node_resolver_with_user_conditions(
     path_policy: &RuntimePathPolicy,
     package_json_resolver: Arc<LocalPackageJsonResolver>,
+    conditions: &[String],
 ) -> LocalNodeResolver {
-    build_node_resolver_with_options(
-        path_policy,
-        package_json_resolver,
-        NodeResolverOptions::default(),
-    )
+    let mut options = NodeResolverOptions::default();
+    options.conditions.conditions = conditions.iter().cloned().map(Cow::Owned).collect();
+    build_node_resolver_with_options(path_policy, package_json_resolver, options)
 }
 
 fn build_node_resolver_with_options(
@@ -270,9 +269,14 @@ fn build_node_resolver_with_condition_override(
 pub(crate) fn build_node_init_services(
     path_policy: &RuntimePathPolicy,
     loader_hook_registry: Option<LoaderHookRegistry>,
+    node_conditions: &[String],
 ) -> NodeExtInitServices<ScopedInNpmPackageChecker, ScopedNodeModulesResolver, RealSys> {
     let package_json_resolver = build_package_json_resolver();
-    let node_resolver = build_node_resolver(path_policy, package_json_resolver.clone());
+    let node_resolver = build_node_resolver_with_user_conditions(
+        path_policy,
+        package_json_resolver.clone(),
+        node_conditions,
+    );
     NodeExtInitServices {
         node_require_loader: Rc::new(ScopedNodeRequireLoader::new(
             path_policy.clone(),
@@ -285,13 +289,27 @@ pub(crate) fn build_node_init_services(
     }
 }
 
-pub(crate) fn resolve_node_target(
+pub(crate) fn resolve_node_target_with_user_conditions(
     path_policy: &RuntimePathPolicy,
     specifier: &str,
     referrer: &str,
     resolution_mode: NodeResolutionMode,
+    conditions: &[String],
 ) -> Result<ResolvedNodeTarget, JsErrorBox> {
-    resolve_node_target_with_conditions(path_policy, specifier, referrer, resolution_mode, None)
+    let package_json_resolver = build_package_json_resolver();
+    let node_resolver = build_node_resolver_with_user_conditions(
+        path_policy,
+        package_json_resolver.clone(),
+        conditions,
+    );
+    resolve_node_target_with_resolver(
+        path_policy,
+        specifier,
+        referrer,
+        resolution_mode,
+        package_json_resolver,
+        node_resolver,
+    )
 }
 
 pub(crate) fn resolve_node_target_with_conditions(
@@ -308,6 +326,24 @@ pub(crate) fn resolve_node_target_with_conditions(
         resolution_mode,
         conditions,
     );
+    resolve_node_target_with_resolver(
+        path_policy,
+        specifier,
+        referrer,
+        resolution_mode,
+        package_json_resolver,
+        node_resolver,
+    )
+}
+
+fn resolve_node_target_with_resolver(
+    path_policy: &RuntimePathPolicy,
+    specifier: &str,
+    referrer: &str,
+    resolution_mode: NodeResolutionMode,
+    package_json_resolver: Arc<LocalPackageJsonResolver>,
+    node_resolver: LocalNodeResolver,
+) -> Result<ResolvedNodeTarget, JsErrorBox> {
     let referrer_url = normalize_referrer(referrer)?;
     let resolved = match node_resolver.resolve(
         specifier,
@@ -607,11 +643,12 @@ mod tests {
         let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
             .expect("policy should build");
 
-        let resolved = resolve_node_target(
+        let resolved = resolve_node_target_with_user_conditions(
             &policy,
             "@esbuild/darwin-arm64/bin/esbuild",
             &referrer_dir.join("main.js").display().to_string(),
             node_resolver::ResolutionMode::Require,
+            &[],
         )
         .expect("package subpath should resolve");
 
@@ -623,6 +660,85 @@ mod tests {
                     .canonicalize()
                     .expect("resolved binary path should canonicalize"),
                 kind: ResolvedNodeModuleKind::CommonJs,
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_node_target_user_conditions_precede_default_conditions() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let functions_root = app_root.join("functions");
+        let package_root = functions_root.join("node_modules/conditional-pkg");
+        std::fs::create_dir_all(&package_root).expect("package root should build");
+        std::fs::write(
+            package_root.join("package.json"),
+            r#"{
+              "name": "conditional-pkg",
+              "type": "module",
+              "exports": {
+                ".": {
+                  "custom-condition": "./custom.js",
+                  "import": "./import.js",
+                  "default": "./default.js"
+                }
+              }
+            }"#,
+        )
+        .expect("package manifest should write");
+        std::fs::write(package_root.join("custom.js"), "export default 'custom';\n")
+            .expect("custom condition file should write");
+        std::fs::write(package_root.join("import.js"), "export default 'import';\n")
+            .expect("import condition file should write");
+        std::fs::write(
+            package_root.join("default.js"),
+            "export default 'default';\n",
+        )
+        .expect("default condition file should write");
+
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
+            .expect("policy should build");
+        let referrer = functions_root.join("main.mjs").display().to_string();
+
+        let default_resolved = resolve_node_target_with_user_conditions(
+            &policy,
+            "conditional-pkg",
+            &referrer,
+            node_resolver::ResolutionMode::Import,
+            &[],
+        )
+        .expect("package should resolve with default import conditions");
+        assert_eq!(
+            default_resolved,
+            ResolvedNodeTarget::Module {
+                path: package_root
+                    .join("import.js")
+                    .canonicalize()
+                    .expect("import path should canonicalize"),
+                kind: ResolvedNodeModuleKind::EsModule,
+            }
+        );
+
+        let custom_conditions = vec!["custom-condition".to_string()];
+        let custom_resolved = resolve_node_target_with_user_conditions(
+            &policy,
+            "conditional-pkg",
+            &referrer,
+            node_resolver::ResolutionMode::Import,
+            &custom_conditions,
+        )
+        .expect("package should resolve with configured user conditions");
+        assert_eq!(
+            custom_resolved,
+            ResolvedNodeTarget::Module {
+                path: package_root
+                    .join("custom.js")
+                    .canonicalize()
+                    .expect("custom path should canonicalize"),
+                kind: ResolvedNodeModuleKind::EsModule,
             }
         );
     }
