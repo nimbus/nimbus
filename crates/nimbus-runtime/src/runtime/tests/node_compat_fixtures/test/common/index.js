@@ -485,6 +485,19 @@ function getBufferSources(buf) {
   return [...getArrayBufferViews(buf), new Uint8Array(buf).buffer];
 }
 
+function getTTYfd() {
+  const tty = require('node:tty');
+  const ttyFd = [1, 2, 4, 5].find(tty.isatty);
+  if (ttyFd !== undefined) {
+    return ttyFd;
+  }
+  try {
+    return fs.openSync('/dev/tty');
+  } catch {
+    return -1;
+  }
+}
+
 function canCreateSymLink() {
   if (process.platform !== 'win32') {
     return true;
@@ -1875,6 +1888,7 @@ module.exports = {
   expectRequiredTLAError,
   getArrayBufferViews,
   getBufferSources,
+  getTTYfd,
   allowGlobals,
   canCreateSymLink,
   runWithInvalidFD,
