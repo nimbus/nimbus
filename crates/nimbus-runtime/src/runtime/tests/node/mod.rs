@@ -1637,6 +1637,37 @@ fn esm_inprocess_module_loader_required_gap_paths(lane: NodeCompatLane) -> Vec<S
     fixture_paths
 }
 
+fn module_loader_required_surface_blocker_entry(entry: &serde_json::Value) -> bool {
+    if entry["support_denominator"] != "v8_isolate_required" {
+        return false;
+    }
+    let owner = entry["owner"].as_str();
+    let Some(test_path) = entry["test_path"].as_str() else {
+        return false;
+    };
+
+    owner == Some("loader-context/module")
+        || owner == Some("loader-context/util")
+        || test_path.starts_with("test/es-module/")
+        || test_path.starts_with("test/module-hooks/")
+        || test_path.contains("test-require-module")
+        || test_path.contains("test-import-module")
+        || test_path.contains("test-typescript")
+        || test_path.contains("test-loaders-")
+        || test_path.contains("test-data-url")
+}
+
+fn module_loader_required_surface_blocker_paths(lane: NodeCompatLane) -> Vec<String> {
+    let fixture_paths =
+        node_compat_posture_paths_for_selector(lane, module_loader_required_surface_blocker_entry);
+    assert!(
+        (50..=260).contains(&fixture_paths.len()),
+        "module-loader required-surface blocker selector should stay broad but reviewable; selected {} fixtures",
+        fixture_paths.len()
+    );
+    fixture_paths
+}
+
 fn async_hooks_required_gap_path(test_path: &str) -> bool {
     test_path.starts_with("test/async-hooks/")
         || test_path.starts_with("test/parallel/test-async-hooks")
