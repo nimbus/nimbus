@@ -2349,6 +2349,34 @@ fn node24_default_lane_parallel_js_platform_required_gap_watchpoint() {
     );
 }
 
+const UNPROMOTED_PARALLEL_DISCOVERY_EXTRA_DIRS: &[&str] = &["test/common", "test/fixtures"];
+
+#[test]
+#[ignore = "NDS3 broad pre-run: generated-posture discovery for remaining unpromoted test/parallel required gaps after excluding already killed host/native/CLI/stress/fatal families"]
+fn node22_supported_lane_unpromoted_parallel_discovery_watchpoint() {
+    let fixture_paths = unpromoted_parallel_discovery_fixture_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-unpromoted-parallel-discovery-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        UNPROMOTED_PARALLEL_DISCOVERY_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 broad pre-run: generated-posture discovery for remaining unpromoted test/parallel required gaps after excluding already killed host/native/CLI/stress/fatal families"]
+fn node24_default_lane_unpromoted_parallel_discovery_watchpoint() {
+    let fixture_paths = unpromoted_parallel_discovery_fixture_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-unpromoted-parallel-discovery-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        UNPROMOTED_PARALLEL_DISCOVERY_EXTRA_DIRS,
+    );
+}
+
 const CORE_SEMANTICS_UTIL_REQUIRED_GAP_EXTRA_DIRS: &[&str] = &["test/common", "test/fixtures"];
 
 const CORE_SEMANTICS_UTIL_REQUIRED_GAP_OWNERS: &[&str] = &[

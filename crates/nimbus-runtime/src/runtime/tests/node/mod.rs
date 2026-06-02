@@ -42,6 +42,7 @@ struct NodeCompatBundleWriteOptions<'a> {
     lane: Option<NodeCompatLane>,
     prelude_script: Option<&'a str>,
     postlude_script: Option<&'a str>,
+    node_options: &'a [String],
     mode: NodeCompatBundleMode,
 }
 
@@ -237,19 +238,70 @@ impl Drop for ScopedProcessEnvVar {
     }
 }
 
-pub(super) fn fixture_requests_pending_deprecation(test_source: &str) -> bool {
-    test_source
-        .lines()
-        .take(40)
-        .any(|line| line.contains("Flags:") && line.contains("--pending-deprecation"))
+fn node_compat_supported_node_options_flag(token: &str) -> bool {
+    token == "--pending-deprecation"
+        || token == "--no-warnings"
+        || token == "--trace-warnings"
+        || token.starts_with("--unhandled-rejections=")
 }
 
-fn scoped_node_options_flag(flag: &str) -> ScopedProcessEnvVar {
+pub(super) fn fixture_requested_node_options(test_source: &str) -> Vec<String> {
+    let mut flags = Vec::new();
+    for line in test_source.lines().take(40) {
+        let Some((_, raw_flags)) = line.split_once("Flags:") else {
+            continue;
+        };
+        for token in raw_flags.split_whitespace() {
+            if node_compat_supported_node_options_flag(token)
+                && !flags.iter().any(|flag| flag == token)
+            {
+                flags.push(token.to_string());
+            }
+        }
+    }
+    flags
+}
+
+pub(super) fn fixture_requests_pending_deprecation(test_source: &str) -> bool {
+    fixture_requested_node_options(test_source)
+        .iter()
+        .any(|flag| flag == "--pending-deprecation")
+}
+
+#[test]
+fn fixture_requested_node_options_filters_and_preserves_order() {
+    let source = r#"
+// Flags: --trace-warnings --inspect --unhandled-rejections=warn
+// Flags: --no-warnings --trace-warnings --pending-deprecation
+"#;
+
+    assert_eq!(
+        fixture_requested_node_options(source),
+        vec![
+            "--trace-warnings".to_string(),
+            "--unhandled-rejections=warn".to_string(),
+            "--no-warnings".to_string(),
+            "--pending-deprecation".to_string(),
+        ]
+    );
+    assert!(fixture_requests_pending_deprecation(source));
+}
+
+fn scoped_node_options_flags(flags: &[String]) -> ScopedProcessEnvVar {
     let next_value = match std::env::var("NODE_OPTIONS").ok() {
-        Some(existing) if existing.split_whitespace().any(|token| token == flag) => existing,
-        Some(existing) if existing.trim().is_empty() => flag.to_string(),
-        Some(existing) => format!("{existing} {flag}"),
-        None => flag.to_string(),
+        Some(existing) => {
+            let mut tokens: Vec<String> = existing
+                .split_whitespace()
+                .map(|token| token.to_string())
+                .collect();
+            for flag in flags {
+                if !tokens.iter().any(|token| token == flag) {
+                    tokens.push(flag.clone());
+                }
+            }
+            tokens.join(" ")
+        }
+        None => flags.join(" "),
     };
     ScopedProcessEnvVar::set("NODE_OPTIONS", &next_value)
 }
@@ -644,6 +696,7 @@ fn write_node_compat_bundle(
         lane,
         prelude_script,
         postlude_script,
+        node_options,
         mode,
     } = options;
     let tempdir = if std::path::Path::new("/private/tmp").is_dir() {
@@ -780,6 +833,7 @@ try {{
         .unwrap_or_default();
     let prelude_script = prelude_script.unwrap_or("");
     let postlude_script = postlude_script.unwrap_or("");
+    let node_options_exec_argv = format!("{node_options:?}");
     let use_sync_tick_drain = should_use_sync_tick_drain_for_fixture(test_relative_path);
     let async_drain_script = if use_sync_tick_drain
         && should_suppress_sync_tick_promises_for_fixture(test_relative_path)
@@ -872,6 +926,8 @@ const __nimbusProcessExitCodeFromError = (error) => {{
 {gc_setup_script}
 if (typeof globalThis.process === "object" && globalThis.process !== null) {{
   globalThis.process.execPath = __nimbusCompatExecPath;
+  const __nimbusNodeCompatExecArgv = {node_options_exec_argv};
+  globalThis.process.execArgv = Array.from(__nimbusNodeCompatExecArgv);
   if (Array.isArray(globalThis.process.argv)) {{
     if (globalThis.process.argv.length === 0) {{
       globalThis.process.argv.push(__nimbusCompatExecPath);
@@ -975,7 +1031,10 @@ fn execute_upstream_node_compat_test_with_extra_files(
     postlude_script: Option<&str>,
 ) -> std::result::Result<NodeCompatFixtureOutcome, String> {
     let _guard = acquire_runtime_suite_lock();
-    let fixture_needs_pending_deprecation = fixture_requests_pending_deprecation(test_source);
+    let fixture_node_options = fixture_requested_node_options(test_source);
+    let fixture_needs_pending_deprecation = fixture_node_options
+        .iter()
+        .any(|flag| flag == "--pending-deprecation");
     let resolved_prelude_behavior =
         prelude_script.and_then(NodeCompatNamedPreludeBehavior::from_script);
     let _interactive_term_guard = matches!(
@@ -983,8 +1042,8 @@ fn execute_upstream_node_compat_test_with_extra_files(
         Some(NodeCompatNamedPreludeBehavior::InteractiveTerminal)
     )
     .then(|| ScopedProcessEnvVar::set("TERM", "xterm-256color"));
-    let _pending_deprecation_guard = fixture_needs_pending_deprecation
-        .then(|| scoped_node_options_flag("--pending-deprecation"));
+    let _node_options_guard = (!fixture_node_options.is_empty())
+        .then(|| scoped_node_options_flags(&fixture_node_options));
     let effective_prelude = if fixture_needs_pending_deprecation {
         format!(
             "{PENDING_DEPRECATION_PRELUDE}\n{}",
@@ -1001,10 +1060,11 @@ fn execute_upstream_node_compat_test_with_extra_files(
         lane,
         prelude_script: Some(effective_prelude.as_str()),
         postlude_script,
+        node_options: &fixture_node_options,
         mode: NodeCompatBundleMode::Runtime,
     });
     let mut limits = runtime_limits_for_node_compat_fixture(test_relative_path, lane);
-    if fixture_needs_pending_deprecation {
+    if !fixture_node_options.is_empty() {
         grant_node_options_read_for_fixture_flags(&mut limits);
     }
     let wall_clock_timeout = node_compat_fixture_wall_clock_timeout(&limits);
@@ -1550,6 +1610,77 @@ fn parallel_js_platform_required_gap_path(test_path: &str) -> bool {
     PREFIXES.iter().any(|prefix| test_path.starts_with(prefix))
 }
 
+const UNPROMOTED_PARALLEL_DISCOVERY_EXCLUDED_PREFIXES: &[&str] = &[
+    "test/parallel/test-abort-controller",
+    "test/parallel/test-abortcontroller",
+    "test/parallel/test-aborted-util",
+    "test/parallel/test-async-hooks",
+    "test/parallel/test-blob",
+    "test/parallel/test-cli",
+    "test/parallel/test-compression-decompression-stream",
+    "test/parallel/test-crypto",
+    "test/parallel/test-debug",
+    "test/parallel/test-diagnostic-channel",
+    "test/parallel/test-diagnostics-channel",
+    "test/parallel/test-dns",
+    "test/parallel/test-domain",
+    "test/parallel/test-double-tls",
+    "test/parallel/test-error",
+    "test/parallel/test-errors",
+    "test/parallel/test-eslint",
+    "test/parallel/test-eventtarget",
+    "test/parallel/test-fs",
+    "test/parallel/test-gc",
+    "test/parallel/test-global",
+    "test/parallel/test-heapdump",
+    "test/parallel/test-http",
+    "test/parallel/test-https",
+    "test/parallel/test-module",
+    "test/parallel/test-node-output",
+    "test/parallel/test-performance",
+    "test/parallel/test-performanceobserver",
+    "test/parallel/test-permission",
+    "test/parallel/test-preload",
+    "test/parallel/test-promise",
+    "test/parallel/test-promises",
+    "test/parallel/test-quic",
+    "test/parallel/test-set-process-debug",
+    "test/parallel/test-snapshot",
+    "test/parallel/test-strace",
+    "test/parallel/test-stream",
+    "test/parallel/test-tick-processor",
+    "test/parallel/test-timers",
+    "test/parallel/test-trace",
+    "test/parallel/test-url",
+    "test/parallel/test-urlpattern",
+    "test/parallel/test-util",
+    "test/parallel/test-v8",
+    "test/parallel/test-webcrypto",
+    "test/parallel/test-webstream",
+    "test/parallel/test-webstreams",
+    "test/parallel/test-whatwg",
+    "test/parallel/test-windows",
+];
+
+fn unpromoted_parallel_discovery_fixture_paths(lane: NodeCompatLane) -> Vec<String> {
+    let mut fixture_paths =
+        node_compat_required_gap_paths_for_owner(lane, "node-compat/unpromoted-surface");
+    fixture_paths.retain(|path| {
+        path.starts_with("test/parallel/")
+            && !UNPROMOTED_PARALLEL_DISCOVERY_EXCLUDED_PREFIXES
+                .iter()
+                .any(|prefix| path.starts_with(prefix))
+    });
+    fixture_paths.sort();
+    fixture_paths.dedup();
+    assert!(
+        (50..=200).contains(&fixture_paths.len()),
+        "unpromoted parallel discovery selector should stay reviewable; selected {} fixtures",
+        fixture_paths.len()
+    );
+    fixture_paths
+}
+
 fn resolve_seeded_fixture_context(
     lane_name: &str,
     test_relative_path: &str,
@@ -1719,11 +1850,10 @@ pub(super) fn materialize_seeded_fixture_bundle_for_lane(
         .collect();
     let resolved_prelude_behavior = default_prelude_behavior_for_fixture(test_relative_path);
     let resolved_postlude_behavior = default_postlude_behavior_for_fixture(test_relative_path);
-    let fixture_needs_pending_deprecation = fixture_requests_pending_deprecation(&test_source);
-    let mut startup_flags = Vec::new();
-    if fixture_needs_pending_deprecation {
-        startup_flags.push("--pending-deprecation".to_string());
-    }
+    let mut startup_flags = fixture_requested_node_options(&test_source);
+    let fixture_needs_pending_deprecation = startup_flags
+        .iter()
+        .any(|flag| flag == "--pending-deprecation");
     if matches!(
         resolved_prelude_behavior,
         Some(NodeCompatNamedPreludeBehavior::ExposeGc)
@@ -1751,6 +1881,7 @@ pub(super) fn materialize_seeded_fixture_bundle_for_lane(
         lane: Some(lane),
         prelude_script: Some(effective_prelude.as_str()),
         postlude_script: resolved_postlude_behavior.map(NodeCompatNamedPostludeBehavior::script),
+        node_options: &startup_flags,
         mode: NodeCompatBundleMode::Oracle,
     });
     Ok(NodeCompatMaterializedSeededFixtureBundle {
