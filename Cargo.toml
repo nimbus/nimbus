@@ -170,26 +170,36 @@ strip = true
 # Keep the public dependency surface aligned with upstream crate versions while
 # selecting the fork implementation immutably at the workspace root.
 [patch.crates-io]
-deno_core = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_crypto = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_fetch = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_fs = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_http = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_io = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_napi = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_net = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_node = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_node_sqlite = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_node_crypto = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_os = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_package_json = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_permissions = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_process = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_resolver = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_telemetry = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_tls = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_web = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_webidl = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-deno_websocket = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
-node_resolver = { git = "https://github.com/nimbus/deno", tag = "v2.8.1-nimbus.4" }
+deno_core = { path = "/Users/jack/src/github.com/nimbus/deno/libs/core" }
+deno_crypto = { path = "/Users/jack/src/github.com/nimbus/deno/ext/crypto" }
+deno_crypto_provider = { path = "/Users/jack/src/github.com/nimbus/deno/libs/crypto" }
+deno_dotenv = { path = "/Users/jack/src/github.com/nimbus/deno/libs/dotenv" }
+deno_features = { path = "/Users/jack/src/github.com/nimbus/deno/runtime/features" }
+deno_fetch = { path = "/Users/jack/src/github.com/nimbus/deno/ext/fetch" }
+deno_fs = { path = "/Users/jack/src/github.com/nimbus/deno/ext/fs" }
+deno_http = { path = "/Users/jack/src/github.com/nimbus/deno/ext/http" }
+deno_inspector_server = { path = "/Users/jack/src/github.com/nimbus/deno/libs/inspector_server" }
+deno_io = { path = "/Users/jack/src/github.com/nimbus/deno/ext/io" }
+deno_maybe_sync = { path = "/Users/jack/src/github.com/nimbus/deno/libs/maybe_sync" }
+deno_napi = { path = "/Users/jack/src/github.com/nimbus/deno/ext/napi" }
+deno_net = { path = "/Users/jack/src/github.com/nimbus/deno/ext/net" }
+deno_node = { path = "/Users/jack/src/github.com/nimbus/deno/ext/node" }
+deno_node_crypto = { path = "/Users/jack/src/github.com/nimbus/deno/ext/node_crypto" }
+deno_node_sqlite = { path = "/Users/jack/src/github.com/nimbus/deno/ext/node_sqlite" }
+deno_ops = { path = "/Users/jack/src/github.com/nimbus/deno/libs/ops" }
+deno_os = { path = "/Users/jack/src/github.com/nimbus/deno/ext/os" }
+deno_package_json = { path = "/Users/jack/src/github.com/nimbus/deno/libs/package_json" }
+deno_permissions = { path = "/Users/jack/src/github.com/nimbus/deno/runtime/permissions" }
+deno_process = { path = "/Users/jack/src/github.com/nimbus/deno/ext/process" }
+deno_resolver = { path = "/Users/jack/src/github.com/nimbus/deno/libs/resolver" }
+deno_signals = { path = "/Users/jack/src/github.com/nimbus/deno/ext/signals" }
+deno_subprocess_windows = { path = "/Users/jack/src/github.com/nimbus/deno/runtime/subprocess_windows" }
+deno_telemetry = { path = "/Users/jack/src/github.com/nimbus/deno/ext/telemetry" }
+deno_tls = { path = "/Users/jack/src/github.com/nimbus/deno/ext/tls" }
+deno_web = { path = "/Users/jack/src/github.com/nimbus/deno/ext/web" }
+deno_webidl = { path = "/Users/jack/src/github.com/nimbus/deno/ext/webidl" }
+deno_websocket = { path = "/Users/jack/src/github.com/nimbus/deno/ext/websocket" }
+node_resolver = { path = "/Users/jack/src/github.com/nimbus/deno/libs/node_resolver" }
+node_shim = { path = "/Users/jack/src/github.com/nimbus/deno/libs/node_shim" }
+serde_v8 = { path = "/Users/jack/src/github.com/nimbus/deno/libs/serde_v8" }
 v8 = { git = "https://github.com/nimbus/rusty_v8", tag = "v149.2.0-nimbus.1" }

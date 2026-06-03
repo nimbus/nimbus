@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tarfile
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from fixture_provenance import registry_lanes_by_name, validate_lane_manifest
+from fixture_provenance import configured_source_root
 from schema import default_schema_path, validate_payload_against_schema
 
 
@@ -76,13 +78,34 @@ def file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+def git_blob_oid(data: bytes) -> str:
+    digest = hashlib.sha1()
+    digest.update(f"blob {len(data)}\0".encode("ascii"))
+    digest.update(data)
+    return digest.hexdigest()
+
+
+def git_identity(path: Path) -> str:
+    metadata = path.lstat()
+    if path.is_symlink():
+        data = os.readlink(path).encode("utf-8")
+        mode = "120000"
+    elif path.is_file():
+        data = path.read_bytes()
+        mode = "100755" if metadata.st_mode & 0o111 else "100644"
+    else:
+        mode = "040000"
+        data = b""
+    return f"{mode}:{git_blob_oid(data)}"
+
+
 def tree_snapshot(root: Path) -> dict[str, str]:
     if not root.is_dir():
         return {}
     return {
-        str(path.relative_to(root)): file_digest(path)
+        str(path.relative_to(root)): git_identity(path)
         for path in sorted(root.rglob("*"))
-        if path.is_file()
+        if path.is_file() or path.is_symlink()
     }
 
 
@@ -176,7 +199,7 @@ def sync_apply(local_root: Path, upstream_root: Path, force: bool) -> None:
         )
     if local_root.exists():
         shutil.rmtree(local_root)
-    shutil.copytree(upstream_root, local_root)
+    shutil.copytree(upstream_root, local_root, symlinks=True)
 
 
 def command_plan(lane: dict[str, Any]) -> dict[str, Any]:
@@ -261,7 +284,9 @@ def lane_with_overrides(args: argparse.Namespace) -> dict[str, Any]:
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     lane = lane_with_overrides(args)
     local_root = repo_root() / lane["vendored_fixture_root"]
-    source_root = Path(args.source_root).resolve() if args.source_root else None
+    source_root = configured_source_root(
+        Path(args.source_root) if args.source_root else None
+    )
     mode = "apply" if args.apply else "compare" if args.compare_upstream else "dry_run"
     report: dict[str, Any] = {
         "schema_version": 1,

@@ -169,9 +169,14 @@ impl RestrictedModuleLoader {
                         path.display()
                     ))
                 })?;
-                code = translate_commonjs_to_esm(&self.path_policy, module_specifier, &source)
-                    .await?
-                    .into_bytes();
+                code = translate_commonjs_to_esm(
+                    &self.path_policy,
+                    module_specifier,
+                    &source,
+                    self.compatibility_target,
+                )
+                .await?
+                .into_bytes();
             }
         }
         let hash = hash_module_source_bytes(&code);
@@ -594,15 +599,20 @@ fn normalize_file_module_specifier(
     if module_specifier.scheme() != "file" {
         return Ok(module_specifier);
     }
+    let query = module_specifier.query().map(str::to_owned);
+    let fragment = module_specifier.fragment().map(str::to_owned);
     let path = module_specifier.to_file_path().map_err(|_| {
         JsErrorBox::generic(format!("invalid file module specifier: {module_specifier}"))
     })?;
-    ModuleSpecifier::from_file_path(&path).map_err(|_| {
+    let mut normalized = ModuleSpecifier::from_file_path(&path).map_err(|_| {
         JsErrorBox::generic(format!(
             "file module path cannot be represented as a URL: {}",
             path.display()
         ))
-    })
+    })?;
+    normalized.set_query(query.as_deref());
+    normalized.set_fragment(fragment.as_deref());
+    Ok(normalized)
 }
 
 fn is_bare_package_specifier(specifier: &str) -> bool {
@@ -682,6 +692,25 @@ mod tests {
             normalize_file_module_specifier(ModuleSpecifier::parse(&encoded).unwrap()).unwrap();
 
         assert_eq!(normalized, expected);
+    }
+
+    #[test]
+    fn file_module_specifier_normalization_preserves_query_and_fragment() {
+        let path = std::env::temp_dir().join("test-esm-json.mjs");
+        let expected = ModuleSpecifier::from_file_path(&path).unwrap();
+        let encoded = format!(
+            "{}?cache=1#section",
+            expected
+                .as_str()
+                .replace("test-esm-json.mjs", "test-esm-json%2emjs")
+        );
+
+        let normalized =
+            normalize_file_module_specifier(ModuleSpecifier::parse(&encoded).unwrap()).unwrap();
+
+        assert_eq!(normalized.path(), expected.path());
+        assert_eq!(normalized.query(), Some("cache=1"));
+        assert_eq!(normalized.fragment(), Some("section"));
     }
 
     #[test]

@@ -29,6 +29,7 @@ use sys_traits::impls::RealSys;
 use url::Url;
 
 use crate::backends::v8::embedder::{JsErrorBox, ModuleSpecifier};
+use crate::limits::RuntimeCompatibilityTarget;
 use crate::runtime_capabilities::RuntimePathPolicy;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -190,6 +191,7 @@ impl NodeRequireLoader for ScopedNodeRequireLoader {
                 let package_json = self.package_json_resolver.get_closest_package_json(&path)?;
                 package_json
                     .as_deref()
+                    .filter(|package_json| package_json_applies_to_path(&path, &package_json.path))
                     .map(|package_json| package_json.typ.as_str() != "module")
                     .unwrap_or(true)
             }
@@ -384,6 +386,7 @@ pub(crate) async fn translate_commonjs_to_esm(
     path_policy: &RuntimePathPolicy,
     specifier: &ModuleSpecifier,
     source: &str,
+    compatibility_target: RuntimeCompatibilityTarget,
 ) -> Result<String, JsErrorBox> {
     let package_json_resolver = build_package_json_resolver();
     let in_npm_package_checker = DenoInNpmPackageChecker::new(CreateInNpmPkgCheckerOptions::Byonm);
@@ -418,7 +421,7 @@ pub(crate) async fn translate_commonjs_to_esm(
             package_json_resolver,
             RealSys,
         )),
-        NodeCodeTranslatorMode::ModuleLoader,
+        node_code_translator_mode_for_target(compatibility_target),
     );
     translator
         .translate_cjs_to_esm(specifier, Some(Cow::Borrowed(source)))
@@ -429,6 +432,22 @@ pub(crate) async fn translate_commonjs_to_esm(
                 "failed to translate runtime CommonJS module {specifier}: {error}"
             ))
         })
+}
+
+fn node_code_translator_mode_for_target(
+    target: RuntimeCompatibilityTarget,
+) -> NodeCodeTranslatorMode {
+    match target {
+        RuntimeCompatibilityTarget::Node20 | RuntimeCompatibilityTarget::Node22 => {
+            NodeCodeTranslatorMode::ModuleLoaderWithoutModuleExports
+        }
+        RuntimeCompatibilityTarget::Node24 | RuntimeCompatibilityTarget::Node26 => {
+            NodeCodeTranslatorMode::ModuleLoader
+        }
+        RuntimeCompatibilityTarget::WebStandardIsolate | RuntimeCompatibilityTarget::BunJsc => {
+            NodeCodeTranslatorMode::ModuleLoader
+        }
+    }
 }
 
 fn try_resolve_package_subpath_without_exports(
@@ -506,6 +525,7 @@ pub(crate) fn classify_resolved_module_kind(
                 })?;
             let package_type = package_json
                 .as_deref()
+                .filter(|package_json| package_json_applies_to_path(path, &package_json.path))
                 .map(|package_json| package_json.typ.as_str())
                 .unwrap_or("none");
             if package_type == "module" {
@@ -556,6 +576,34 @@ pub(crate) fn resolution_search_directories(start_dir: &Path, roots: &[PathBuf])
 pub(crate) fn path_has_node_modules_segment(path: &Path) -> bool {
     path.components()
         .any(|component| matches!(component, Component::Normal(part) if part == "node_modules"))
+}
+
+fn find_package_root_from_node_modules(path: &Path) -> Option<PathBuf> {
+    let components: Vec<_> = path.components().collect();
+    let node_modules_index = components.iter().rposition(
+        |component| matches!(component, Component::Normal(part) if *part == "node_modules"),
+    )?;
+    let package_name_index = node_modules_index + 1;
+    let package_name = components.get(package_name_index)?;
+    let mut package_root = PathBuf::new();
+    for component in &components[..=node_modules_index] {
+        package_root.push(component);
+    }
+    package_root.push(package_name);
+    if matches!(package_name, Component::Normal(part) if part.to_string_lossy().starts_with('@')) {
+        package_root.push(components.get(package_name_index + 1)?);
+    }
+    Some(package_root)
+}
+
+fn package_json_applies_to_path(path: &Path, package_json_path: &Path) -> bool {
+    let Some(package_json_dir) = package_json_path.parent() else {
+        return false;
+    };
+    let Some(package_root) = find_package_root_from_node_modules(path) else {
+        return true;
+    };
+    package_json_dir.starts_with(package_root)
 }
 
 fn canonicalize_existing_path(path: PathBuf) -> Option<PathBuf> {
@@ -618,6 +666,90 @@ mod tests {
         assert_eq!(package_name_from_specifier("es-errors/type"), "es-errors");
         assert_eq!(package_name_from_specifier("@scope/pkg"), "@scope/pkg");
         assert_eq!(package_name_from_specifier("express"), "express");
+    }
+
+    #[test]
+    fn cjs_translator_mode_matches_node_namespace_version() {
+        assert!(matches!(
+            node_code_translator_mode_for_target(RuntimeCompatibilityTarget::Node22),
+            NodeCodeTranslatorMode::ModuleLoaderWithoutModuleExports
+        ));
+        assert!(matches!(
+            node_code_translator_mode_for_target(RuntimeCompatibilityTarget::Node24),
+            NodeCodeTranslatorMode::ModuleLoader
+        ));
+    }
+
+    #[test]
+    fn scoped_require_loader_does_not_inherit_module_type_across_node_modules_root() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let package_root = app_root.join("package-type-module");
+        let dependency_root = package_root.join("node_modules/dep-without-package-json");
+        std::fs::create_dir_all(&dependency_root).expect("dependency dir should build");
+        std::fs::write(package_root.join("package.json"), r#"{"type":"module"}"#)
+            .expect("parent package manifest should write");
+        let dependency_file = dependency_root.join("dep.js");
+        std::fs::write(&dependency_file, "module.exports = 42;\n")
+            .expect("dependency file should write");
+
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
+            .expect("policy should build");
+        let package_json_resolver = build_package_json_resolver();
+        let loader = ScopedNodeRequireLoader::new(policy, package_json_resolver.clone());
+        let specifier =
+            Url::from_file_path(&dependency_file).expect("dependency path should become a url");
+
+        assert!(
+            loader
+                .is_maybe_cjs(&specifier)
+                .expect("dependency should classify")
+        );
+        assert_eq!(
+            classify_resolved_module_kind(&dependency_file, package_json_resolver.as_ref())
+                .expect("dependency module kind should classify"),
+            ResolvedNodeModuleKind::CommonJs
+        );
+    }
+
+    #[test]
+    fn scoped_require_loader_respects_dependency_package_module_type() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let package_root = app_root.join("package-type-module");
+        let dependency_root = package_root.join("node_modules/dep-with-package-json");
+        std::fs::create_dir_all(&dependency_root).expect("dependency dir should build");
+        std::fs::write(package_root.join("package.json"), r#"{"type":"commonjs"}"#)
+            .expect("parent package manifest should write");
+        std::fs::write(dependency_root.join("package.json"), r#"{"type":"module"}"#)
+            .expect("dependency package manifest should write");
+        let dependency_file = dependency_root.join("dep.js");
+        std::fs::write(&dependency_file, "export default 42;\n")
+            .expect("dependency file should write");
+
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
+            .expect("policy should build");
+        let package_json_resolver = build_package_json_resolver();
+        let loader = ScopedNodeRequireLoader::new(policy, package_json_resolver.clone());
+        let specifier =
+            Url::from_file_path(&dependency_file).expect("dependency path should become a url");
+
+        assert!(
+            !loader
+                .is_maybe_cjs(&specifier)
+                .expect("dependency should classify")
+        );
+        assert_eq!(
+            classify_resolved_module_kind(&dependency_file, package_json_resolver.as_ref())
+                .expect("dependency module kind should classify"),
+            ResolvedNodeModuleKind::EsModule
+        );
     }
 
     #[test]

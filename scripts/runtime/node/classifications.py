@@ -13,11 +13,12 @@ from typing import Any
 from fixture_discovery import discover_fixture_files as discover_git_fixture_files
 
 RUST_NODE_COMPAT_ROOT = Path("crates/nimbus-runtime/src/runtime/tests/node")
-RUST_EXECUTED_FIXTURE_LANES = {"node20", "node22", "node24"}
+RUST_EXECUTED_FIXTURE_LANES = {"node20", "node22", "node24", "node26"}
 RUST_EXECUTION_MARKERS = {
     "execute_manifested_node_compat_test(",
     "execute_upstream_node_compat_test_with_extra_files(",
     "run_manifested_subset_for_lane(",
+    "run_manifested_subset_for_lane_excluding(",
     "run_node_compat_watchpoint(",
     "run_node_compat_watchpoint_batch(",
     "run_node_compat_watchpoint_entry_batch(",
@@ -32,6 +33,51 @@ FORCED_LANE_CLASSIFICATIONS: dict[str, dict[str, dict[str, str]]] = {
             "owner": "core-semantics/buffer",
             "reason": "The official Node24 fixture self-skips at runtime due to host memory requirements, so it is excluded from green support claims even when the containing core-semantics batch passes.",
         },
+    },
+    "node26": {
+        path: {
+            "expectation": "expected_failure",
+            "classification": "node26_current_broad_pre_run_residual",
+            "owner": "node-compat/current-lane",
+            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
+        }
+        for path in {
+            "test/parallel/test-async-hooks-enable-recursive.js",
+            "test/parallel/test-buffer-indexof.js",
+            "test/parallel/test-buffer-tostring-rangeerror.js",
+            "test/parallel/test-crypto-default-shake-lengths-oneshot.js",
+            "test/parallel/test-crypto-dh-group-setters.js",
+            "test/parallel/test-crypto-dh-modp2-views.js",
+            "test/parallel/test-crypto-dh-modp2.js",
+            "test/parallel/test-crypto-dh.js",
+            "test/parallel/test-crypto-gcm-implicit-short-tag.js",
+            "test/parallel/test-crypto-oneshot-hash-xof.js",
+            "test/parallel/test-crypto-scrypt.js",
+            "test/parallel/test-fs-glob.mjs",
+            "test/parallel/test-fs-opendir.js",
+            "test/parallel/test-fs-promises-file-handle-dispose.js",
+            "test/parallel/test-fs-promises-file-handle-readLines.mjs",
+            "test/parallel/test-fs-symlink.js",
+            "test/parallel/test-fs-write-stream-autoclose-option.js",
+            "test/parallel/test-http2-misbehaving-flow-control-paused.js",
+            "test/parallel/test-http2-misbehaving-flow-control.js",
+            "test/parallel/test-http2-options-max-headers-exceeds-nghttp2.js",
+            "test/parallel/test-https-agent-session-reuse.js",
+            "test/parallel/test-module-multi-extensions.js",
+            "test/parallel/test-process-load-env-file.js",
+            "test/parallel/test-readline-promises-csi.mjs",
+            "test/parallel/test-runner-get-test-context.js",
+            "test/parallel/test-stream-compose.js",
+            "test/parallel/test-stream-duplex.js",
+            "test/parallel/test-stream-pipeline.js",
+            "test/parallel/test-stream-readable-emittedReadable.js",
+            "test/parallel/test-stream-readable-infinite-read.js",
+            "test/parallel/test-stream-typedarray.js",
+            "test/parallel/test-stream-uint8array.js",
+            "test/parallel/test-trace-events-dynamic-enable.js",
+            "test/parallel/test-url-parse-invalid-input.js",
+            "test/parallel/test-util-parse-env.js",
+        }
     },
 }
 LANE_AWARE_BATCH_MACROS = {
@@ -234,14 +280,14 @@ def lane_fixture_literals(text: str, lane: str) -> set[str]:
         if name in {"shared_batch_case", "shared_batch_case_with_extra"}:
             if lane in {"node20", "node22"} and has_fixture_source_path:
                 add(test_relative_path)
-            elif lane == "node24":
+            elif lane in {"node24", "node26"}:
                 add(test_relative_path)
         elif name == "split_batch_case":
             if lane == "node20" and has_node20_fixture_source_path:
                 add(test_relative_path)
             elif lane == "node22" and has_node22_fixture_source_path:
                 add(test_relative_path)
-            elif lane == "node24":
+            elif lane in {"node24", "node26"}:
                 add(test_relative_path)
         elif name == "shared_lane_fixture_batch_case":
             if has_fixture_source_path:
@@ -249,15 +295,15 @@ def lane_fixture_literals(text: str, lane: str) -> set[str]:
         elif name == "node20_only_batch_case":
             if lane == "node20" and has_fixture_source_path:
                 add(test_relative_path)
-            elif lane == "node24":
+            elif lane in {"node24", "node26"}:
                 add(test_relative_path)
         elif name == "node22_only_batch_case":
             if lane == "node22" and has_fixture_source_path:
                 add(test_relative_path)
-            elif lane == "node24":
+            elif lane in {"node24", "node26"}:
                 add(test_relative_path)
         elif name == "node22_exclusive_batch_case":
-            if lane == "node22" and has_fixture_source_path:
+            if (lane == "node22" and has_fixture_source_path) or lane == "node26":
                 add(test_relative_path)
         elif name in {
             "shared_official_batch_case",
@@ -267,6 +313,8 @@ def lane_fixture_literals(text: str, lane: str) -> set[str]:
             add(test_relative_path)
         elif name == "shared_node20_node22_with_node24_override_case_with_extra":
             if lane == "node24" and has_node24_fixture_source_path:
+                add(test_relative_path)
+            elif lane == "node26":
                 add(test_relative_path)
             else:
                 add(test_relative_path)
@@ -295,7 +343,7 @@ def inferred_test_function_lane(name: str, body: str) -> str | None:
         if re.search(rf"(^|_){lane}($|_)", name):
             lanes.add(lane)
 
-    for major in ("20", "22", "24"):
+    for major in ("20", "22", "24", "26"):
         if f"NodeCompatLane::Node{major}" in body:
             lanes.add(f"node{major}")
 

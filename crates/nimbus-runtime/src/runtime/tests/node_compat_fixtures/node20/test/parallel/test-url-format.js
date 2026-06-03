@@ -134,6 +134,7 @@ test('format slightly wonky content to a valid URL', { skip: !hasIntl }, () => {
       protocol: 'dot.test:',
       pathname: '/bar'
     },
+    // IPv6 support
     'coap:u:p@[::1]:61616/.well-known/r?n=Temperature': {
       href: 'coap:u:p@[::1]:61616/.well-known/r?n=Temperature',
       protocol: 'coap:',
@@ -155,6 +156,12 @@ test('format slightly wonky content to a valid URL', { skip: !hasIntl }, () => {
       hostname: '[::]',
       pathname: '/'
     },
+
+    // Encode context-specific delimiters in path and query, but do not touch
+    // other non-delimiter chars like `%`.
+    // <https://github.com/nodejs/node-v0.x-archive/issues/4082>
+
+    // `#`,`?` in path
     '/path/to/%%23%3F+=&.txt?foo=theA1#bar': {
       href: '/path/to/%%23%3F+=&.txt?foo=theA1#bar',
       pathname: '/path/to/%#?+=&.txt',
@@ -163,6 +170,8 @@ test('format slightly wonky content to a valid URL', { skip: !hasIntl }, () => {
       },
       hash: '#bar'
     },
+
+    // `#`,`?` in path + `#` in query
     '/path/to/%%23%3F+=&.txt?foo=the%231#bar': {
       href: '/path/to/%%23%3F+=&.txt?foo=the%231#bar',
       pathname: '/path/to/%#?+=&.txt',
@@ -171,6 +180,8 @@ test('format slightly wonky content to a valid URL', { skip: !hasIntl }, () => {
       },
       hash: '#bar'
     },
+
+    // `#` in path end + `#` in query
     '/path/to/%%23?foo=the%231#bar': {
       href: '/path/to/%%23?foo=the%231#bar',
       pathname: '/path/to/%#',
@@ -179,6 +190,8 @@ test('format slightly wonky content to a valid URL', { skip: !hasIntl }, () => {
       },
       hash: '#bar'
     },
+
+    // `?` and `#` in path and search
     'http://ex.com/foo%3F100%m%23r?abc=the%231?&foo=bar#frag': {
       href: 'http://ex.com/foo%3F100%m%23r?abc=the%231?&foo=bar#frag',
       protocol: 'http:',
@@ -187,6 +200,8 @@ test('format slightly wonky content to a valid URL', { skip: !hasIntl }, () => {
       search: '?abc=the#1?&foo=bar',
       pathname: '/foo?100%m#r',
     },
+
+    // `?` and `#` in search only
     'http://ex.com/fooA100%mBr?abc=the%231?&foo=bar#frag': {
       href: 'http://ex.com/fooA100%mBr?abc=the%231?&foo=bar#frag',
       protocol: 'http:',
@@ -195,6 +210,8 @@ test('format slightly wonky content to a valid URL', { skip: !hasIntl }, () => {
       search: '?abc=the#1?&foo=bar',
       pathname: '/fooA100%mBr',
     },
+
+    // Multiple `#` in search
     'http://example.com/?foo=bar%231%232%233&abc=%234%23%235#frag': {
       href: 'http://example.com/?foo=bar%231%232%233&abc=%234%23%235#frag',
       protocol: 'http:',
@@ -206,6 +223,8 @@ test('format slightly wonky content to a valid URL', { skip: !hasIntl }, () => {
       query: {},
       pathname: '/'
     },
+
+    // More than 255 characters in hostname which exceeds the limit
     [`http://${'a'.repeat(255)}.com/node`]: {
       href: 'http:///node',
       protocol: 'http:',
@@ -215,6 +234,8 @@ test('format slightly wonky content to a valid URL', { skip: !hasIntl }, () => {
       pathname: '/node',
       path: '/node'
     },
+
+    // Greater than or equal to 63 characters after `.` in hostname
     [`http://www.${'z'.repeat(63)}example.com/node`]: {
       href: `http://www.${'z'.repeat(63)}example.com/node`,
       protocol: 'http:',
@@ -224,12 +245,16 @@ test('format slightly wonky content to a valid URL', { skip: !hasIntl }, () => {
       pathname: '/node',
       path: '/node'
     },
+
+    // https://github.com/nodejs/node/issues/3361
     'file:///home/user': {
       href: 'file:///home/user',
       protocol: 'file',
       pathname: '/home/user',
       path: '/home/user'
     },
+
+    // surrogate in auth
     'http://%F0%9F%98%80@www.example.com/': {
       href: 'http://%F0%9F%98%80@www.example.com/',
       protocol: 'http:',

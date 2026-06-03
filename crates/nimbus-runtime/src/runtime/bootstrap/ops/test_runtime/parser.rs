@@ -34,6 +34,8 @@ pub(super) fn runtime_test_spawn_mode(
     let mut permission_restricted = false;
     let mut process_title = None;
     let mut exec_argv = Vec::new();
+    let mut preload_imports = Vec::new();
+    let mut preload_requires = Vec::new();
     let mut expose_gc = false;
     let mut inspector_open = None;
     let mut test_mode = false;
@@ -120,6 +122,24 @@ pub(super) fn runtime_test_spawn_mode(
             "--expose-gc" => {
                 expose_gc = true;
                 index += 1;
+            }
+            "--import" | "--require" | "-r" => {
+                let value = payload.args.get(index + 1).ok_or_else(|| {
+                    JsErrorBox::generic(format!(
+                        "missing source argument for node_compat subprocess flag `{arg}`"
+                    ))
+                })?;
+                exec_argv.push(arg.to_string());
+                exec_argv.push(value.clone());
+                if arg == "--import" {
+                    preload_imports.push(value.clone());
+                } else {
+                    preload_requires.push(value.clone());
+                }
+                if source_bundle_root.is_none() {
+                    source_bundle_root = runtime_test_bundle_root_from_argument(value);
+                }
+                index += 2;
             }
             "--test" => {
                 test_mode = true;
@@ -223,9 +243,18 @@ pub(super) fn runtime_test_spawn_mode(
                 index += 2;
             }
             "--expose-internals"
+            | "--experimental-print-required-tla"
+            | "--experimental-require-module"
+            | "--experimental-vm-modules"
+            | "--no-experimental-require-module"
             | "--no-experimental-sqlite"
+            | "--no-require-module"
             | "--no-warnings"
             | "--no-turbo-fast-api-calls"
+            | "--preserve-symlinks"
+            | "--preserve-symlinks-main"
+            | "--require-module"
+            | "--trace-warnings"
             | "--trace-events-enabled" => {
                 exec_argv.push(arg.to_string());
                 index += 1;
@@ -256,6 +285,8 @@ pub(super) fn runtime_test_spawn_mode(
                     env: payload.env,
                     stdin_bytes,
                     exec_argv,
+                    preload_imports,
+                    preload_requires,
                     source_bundle_root,
                     preload_env_file,
                     permission_restricted,
@@ -309,6 +340,7 @@ pub(super) fn runtime_test_spawn_mode(
             }
             _ if arg.starts_with("--trace-event-categories=")
                 || arg.starts_with("--trace-event-file-pattern=")
+                || arg.starts_with("--trace-require-module=")
                 || arg.starts_with("--title=") =>
             {
                 exec_argv.push(arg.to_string());
@@ -322,6 +354,33 @@ pub(super) fn runtime_test_spawn_mode(
                     Path::new(&arg["--env-file=".len()..]),
                     cwd.as_deref(),
                 ));
+                index += 1;
+            }
+            _ if arg.starts_with("--import=") => {
+                let value = arg["--import=".len()..].to_string();
+                exec_argv.push(arg.to_string());
+                preload_imports.push(value.clone());
+                if source_bundle_root.is_none() {
+                    source_bundle_root = runtime_test_bundle_root_from_argument(&value);
+                }
+                index += 1;
+            }
+            _ if arg.starts_with("--require=") => {
+                let value = arg["--require=".len()..].to_string();
+                exec_argv.push(arg.to_string());
+                preload_requires.push(value.clone());
+                if source_bundle_root.is_none() {
+                    source_bundle_root = runtime_test_bundle_root_from_argument(&value);
+                }
+                index += 1;
+            }
+            _ if arg.starts_with("-r") && arg.len() > 2 => {
+                let value = arg["-r".len()..].to_string();
+                exec_argv.push(arg.to_string());
+                preload_requires.push(value.clone());
+                if source_bundle_root.is_none() {
+                    source_bundle_root = runtime_test_bundle_root_from_argument(&value);
+                }
                 index += 1;
             }
             _ if arg.starts_with("--input-type=") => {
@@ -454,7 +513,14 @@ pub(super) fn runtime_test_spawn_mode(
         if source_bundle_root.is_none() {
             source_bundle_root = runtime_test_bundle_root_from_path(&script_path);
         }
-        let (relative_path, source) = if script_path.is_file() {
+        let is_symlink = std::fs::symlink_metadata(&script_path)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false);
+        let (relative_path, source) = if is_symlink {
+            let relative_path =
+                relative_test_path(&script_path).map(|path| path.to_string_lossy().into_owned());
+            (relative_path, None)
+        } else if script_path.is_file() {
             let source = std::fs::read_to_string(&script_path).map_err(|error| {
                 JsErrorBox::generic(format!(
                     "failed to read node_compat subprocess script {}: {error}",
@@ -487,6 +553,8 @@ pub(super) fn runtime_test_spawn_mode(
         env: payload.env,
         stdin_bytes,
         exec_argv,
+        preload_imports,
+        preload_requires,
         source_bundle_root,
         preload_env_file,
         permission_restricted,

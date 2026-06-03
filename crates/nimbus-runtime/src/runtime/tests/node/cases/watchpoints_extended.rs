@@ -378,16 +378,6 @@ fn node24_loader_context_crypto_kdf_and_stream_batch_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned Node24 default-lane divergence: test-crypto-scrypt.js expects ERR_INCOMPATIBLE_OPTION_PAIR for duplicate short/long option pairs, while the current runtime still throws the older ERR_CRYPTO_SCRYPT_INVALID_PARAMETER shape used by the verified Node22 baseline"]
-fn node24_loader_context_crypto_scrypt_watchpoint() {
-    run_node_compat_watchpoint(
-        "test/parallel/test-crypto-scrypt.js",
-        "node24/test/parallel/test-crypto-scrypt.js",
-        COMMON_CRYPTO_HASH_EXTRA_FILES,
-    );
-}
-
-#[test]
 fn node22_loader_context_crypto_cipher_and_padding_batch_fixture() {
     run_node_compat_watchpoint_entry_batch(
         "node22-loader-context-crypto-cipher-and-padding-batch",
@@ -492,16 +482,6 @@ fn node24_loader_context_crypto_dh_safe_prime_batch_fixture() {
         "node24-loader-context-crypto-dh-safe-prime-batch",
         NodeCompatLane::Node24,
         NODE22_LOADER_CONTEXT_CRYPTO_DH_SAFE_PRIME_BATCH,
-    );
-}
-
-#[test]
-#[ignore = "Pinned Node24 default-lane drift: test-crypto-dh-stateless.js still expects ERR_OSSL_FAILED_DURING_DERIVATION on the invalid X25519 public-key case"]
-fn node24_loader_context_crypto_dh_stateless_supported_watchpoint_batch() {
-    run_node_compat_watchpoint_entry_batch(
-        "node24-loader-context-crypto-dh-stateless-supported-watchpoints",
-        NodeCompatLane::Node24,
-        NODE24_LOADER_CONTEXT_CRYPTO_DH_STATELESS_SUPPORTED_WATCHPOINT_BATCH,
     );
 }
 
@@ -1701,6 +1681,7 @@ const ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES: &[&str] = &[
     "test/fixtures/module-loading-error.node",
     "test/fixtures/out-of-bound.wasm",
     "test/fixtures/pkgexports.mjs",
+    "test/fixtures/printA.js",
     "test/fixtures/primitive-42.json",
     "test/fixtures/recursive-a.cjs",
     "test/fixtures/recursive-b.cjs",
@@ -1720,6 +1701,7 @@ const ESM_MODULE_LOADER_EXTRA_DIRS: &[&str] = &[
     "test/fixtures/module-require-symlink",
     "test/fixtures/node_modules",
     "test/fixtures/packages",
+    "test/fixtures/snapshot",
     "test/fixtures/test-module-loading-globalpaths",
     "test/fixtures/typescript",
 ];
@@ -1754,6 +1736,10 @@ const ESM_MODULE_LOADER_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/es-module/test-esm-in-require-cache-2.mjs",
     "test/es-module/test-esm-in-require-cache.js",
     "test/es-module/test-esm-json.mjs",
+    "test/es-module/test-disable-require-module-with-detection.js",
+    "test/es-module/test-esm-basic-imports.mjs",
+    "test/es-module/test-esm-cjs-exports.js",
+    "test/es-module/test-esm-custom-exports.mjs",
     "test/es-module/test-esm-loader-cache-clearing.js",
     "test/es-module/test-esm-loader-dependency.mjs",
     "test/es-module/test-esm-loader-event-loop.mjs",
@@ -1765,7 +1751,10 @@ const ESM_MODULE_LOADER_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/es-module/test-esm-scope-node-modules.mjs",
     "test/es-module/test-esm-shared-loader-dep.mjs",
     "test/es-module/test-esm-shebang.mjs",
+    "test/es-module/test-esm-preserve-symlinks.js",
     "test/es-module/test-esm-symlink.js",
+    "test/es-module/test-esm-symlink-main.js",
+    "test/es-module/test-esm-symlink-type.js",
     "test/es-module/test-esm-syntax-error.mjs",
     "test/es-module/test-esm-throw-undefined.mjs",
     "test/es-module/test-esm-tla.mjs",
@@ -1773,19 +1762,31 @@ const ESM_MODULE_LOADER_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/es-module/test-esm-type-main.mjs",
     "test/es-module/test-esm-util-types.mjs",
     "test/es-module/test-esm-windows.js",
+    "test/es-module/test-import-module-conditional-exports-module.mjs",
+    "test/es-module/test-import-module-retry-require-errored.js",
+    "test/es-module/test-import-preload-require-cycle.js",
     "test/es-module/test-loaders-hidden-from-users.js",
     "test/es-module/test-require-as-esm-interop.mjs",
+    "test/es-module/test-require-esm-from-imported-cjs.js",
     "test/es-module/test-require-module-cached-tla.js",
     "test/es-module/test-require-module-conditional-exports.js",
+    "test/es-module/test-require-module-conditional-exports-module.js",
     "test/es-module/test-require-module-cycle-cjs-esm-esm.js",
     "test/es-module/test-require-module-defined-esmodule.js",
     "test/es-module/test-require-module-detect-entry-point-aou.js",
     "test/es-module/test-require-module-detect-entry-point.js",
     "test/es-module/test-require-module-dont-detect-cjs.js",
+    "test/es-module/test-require-module-default-extension.js",
+    "test/es-module/test-require-module-dynamic-import-1.js",
+    "test/es-module/test-require-module-dynamic-import-2.js",
     "test/es-module/test-require-module-dynamic-import-3.js",
     "test/es-module/test-require-module-dynamic-import-4.js",
+    "test/es-module/test-require-module-implicit.js",
     "test/es-module/test-require-module-instantiated.mjs",
+    "test/es-module/test-require-module.js",
+    "test/es-module/test-require-module-preload.js",
     "test/es-module/test-require-module-retry-import-errored.js",
+    "test/es-module/test-require-module-retry-import-errored-2.js",
     "test/es-module/test-require-module-retry-import-evaluating.js",
     "test/es-module/test-require-module-synchronous-rejection-handling.js",
     "test/es-module/test-require-module-tla-execution.js",
@@ -1796,6 +1797,8 @@ const ESM_MODULE_LOADER_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/es-module/test-require-module-tla-retry-import.js",
     "test/es-module/test-require-module-tla-retry-require.js",
     "test/es-module/test-require-module-tla-unresolved.js",
+    "test/es-module/test-require-module-transpiled.js",
+    "test/es-module/test-require-module-twice.js",
     "test/es-module/test-require-module-with-detection.js",
     "test/es-module/test-vm-compile-function-leak.js",
     "test/es-module/test-vm-compile-function-lineoffset.js",
@@ -1807,22 +1810,20 @@ const ESM_MODULE_LOADER_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-module-circular-dependency-warning.js",
     "test/parallel/test-module-circular-symlinks.js",
     "test/parallel/test-module-globalpaths-nodepath.js",
+    "test/parallel/test-module-main-preserve-symlinks-fail.js",
+    "test/parallel/test-module-parent-setter-deprecation.js",
+    "test/parallel/test-module-symlinked-peer-modules.js",
     "test/parallel/test-require-resolve-invalid-paths.js",
+    "test/parallel/test-require-resolve-opts-paths-relative.js",
 ];
 
-const ESM_MODULE_LOADER_PROMOTED_NODE22_ONLY_PATHS: &[&str] = &[
-    "test/es-module/test-esm-preserve-symlinks.js",
-    "test/es-module/test-esm-symlink-main.js",
-    "test/es-module/test-require-module-twice.js",
-    "test/es-module/test-require-module.js",
-];
+const ESM_MODULE_LOADER_PROMOTED_NODE22_ONLY_PATHS: &[&str] = &[];
 
 const ESM_MODULE_LOADER_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
-    "test/es-module/test-esm-cjs-exports.js",
     "test/es-module/test-esm-wasm-escape-import-names.mjs",
     "test/es-module/test-esm-wasm-load-exports.mjs",
     "test/es-module/test-esm-wasm-source-phase-static.mjs",
-    "test/parallel/test-require-resolve-opts-paths-relative.js",
+    "test/es-module/test-import-require-tla-twice.js",
 ];
 
 fn esm_module_loader_promoted_fixture_paths(groups: &[&[&str]]) -> Vec<String> {
@@ -1955,6 +1956,34 @@ fn node24_default_lane_esm_data_url_cluster_watchpoint() {
     );
 }
 
+#[test]
+#[ignore = "NDS3 focused pre-run: JSON/data URL/import-attributes required-surface slice; promote only after the broad module-loader batch confirms the pass delta"]
+fn node22_supported_lane_esm_json_data_import_attributes_required_surface_watchpoint() {
+    let fixture_paths =
+        module_loader_json_data_import_attributes_required_surface_paths(NodeCompatLane::Node22);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-esm-json-data-import-attributes-required-surface-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 focused pre-run: JSON/data URL/import-attributes required-surface slice; promote only after the broad module-loader batch confirms the pass delta"]
+fn node24_default_lane_esm_json_data_import_attributes_required_surface_watchpoint() {
+    let fixture_paths =
+        module_loader_json_data_import_attributes_required_surface_paths(NodeCompatLane::Node24);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-esm-json-data-import-attributes-required-surface-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
 const ASYNC_HOOKS_REQUIRED_GAP_EXTRA_RUNTIME_FILES: &[&str] =
     &["test/fixtures/person-large.jpg"];
 
@@ -1976,8 +2005,25 @@ const ASYNC_HOOKS_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/async-hooks/test-async-local-storage-no-mix-contexts.js",
     "test/async-hooks/test-async-local-storage-promises.js",
     "test/async-hooks/test-async-local-storage-thenable.js",
+    "test/async-hooks/test-embedder.api.async-resource-no-type.js",
     "test/async-hooks/test-embedder.api.async-resource.runInAsyncScope.js",
+    "test/async-hooks/test-emit-after-on-destroyed.js",
+    "test/async-hooks/test-emit-before-after.js",
+    "test/async-hooks/test-emit-before-on-destroyed.js",
+    "test/async-hooks/test-filehandle-no-reuse.js",
+    "test/async-hooks/test-fseventwrap.js",
+    "test/async-hooks/test-fsreqcallback-access.js",
+    "test/async-hooks/test-graph.fsreq-readFile.js",
+    "test/async-hooks/test-graph.intervals.js",
+    "test/async-hooks/test-graph.statwatcher.js",
+    "test/async-hooks/test-graph.timeouts.js",
+    "test/async-hooks/test-immediate.js",
+    "test/async-hooks/test-improper-order.js",
+    "test/async-hooks/test-improper-unwind.js",
     "test/async-hooks/test-no-assert-when-disabled.js",
+    "test/async-hooks/test-promise.chain-promise-before-init-hooks.js",
+    "test/async-hooks/test-timers.setTimeout.js",
+    "test/async-hooks/test-unhandled-exception-valid-ids.js",
     "test/parallel/test-async-hooks-close-during-destroy.js",
     "test/parallel/test-async-hooks-destroy-on-gc.js",
     "test/parallel/test-async-hooks-disable-gc-tracking.js",
@@ -1990,6 +2036,26 @@ const ASYNC_HOOKS_PROMOTED_COMMON_PATHS: &[&str] = &[
 
 const ASYNC_HOOKS_PROMOTED_NODE24_ONLY_PATHS: &[&str] =
     &["test/parallel/test-async-hooks-enabledhooksexits.js"];
+
+#[test]
+fn node22_async_hooks_enable_recursive_fsreqcallback_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-async-hooks-enable-recursive-fsreqcallback-regression.js",
+        "regression/async-hooks/test-async-hooks-enable-recursive-fsreqcallback.js",
+        &[],
+        NodeCompatLane::Node22,
+    );
+}
+
+#[test]
+fn node24_async_hooks_enable_recursive_fsreqcallback_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-async-hooks-enable-recursive-fsreqcallback-regression.js",
+        "regression/async-hooks/test-async-hooks-enable-recursive-fsreqcallback.js",
+        &[],
+        NodeCompatLane::Node24,
+    );
+}
 
 #[test]
 fn node22_supported_lane_executes_async_hooks_promoted_batch_fixture() {
@@ -2066,6 +2132,43 @@ const WEBCRYPTO_REQUIRED_GAP_NODE24_EXTRA_DIRS: &[&str] = &[
     "test/fixtures/keys",
     "test/fixtures/webcrypto",
 ];
+
+const WEBCRYPTO_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-webcrypto-derivebits.js",
+    "test/parallel/test-webcrypto-getRandomValues.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_webcrypto_promoted_batch_fixture() {
+    let fixture_paths = WEBCRYPTO_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-webcrypto-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        WEBCRYPTO_REQUIRED_GAP_COMMON_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_webcrypto_promoted_batch_fixture() {
+    let fixture_paths = WEBCRYPTO_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-webcrypto-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        WEBCRYPTO_REQUIRED_GAP_NODE24_EXTRA_DIRS,
+    );
+}
 
 #[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked WebCrypto required-gap inventory; classify algorithms, key import/export, error shape, host-policy, and Node24-only fixtures after the first wide run"]
@@ -2204,6 +2307,45 @@ const NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_DIRS: &[&str] = &[
     "test/fixtures/crypto",
     "test/fixtures/keys",
 ];
+
+const NETWORKING_CRYPTO_PROMOTED_COMMON_PATHS: &[&str] =
+    &["test/parallel/test-crypto-authenticated-stream.js"];
+
+const NETWORKING_CRYPTO_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
+    "test/parallel/test-crypto-dh-stateless.js",
+    "test/parallel/test-crypto-scrypt.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_networking_crypto_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NETWORKING_CRYPTO_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-networking-crypto-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
+        NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_networking_crypto_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NETWORKING_CRYPTO_PROMOTED_COMMON_PATHS
+        .iter()
+        .chain(NETWORKING_CRYPTO_PROMOTED_NODE24_ONLY_PATHS.iter())
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-networking-crypto-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
+        NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
 
 #[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked networking/crypto required-gap inventory; classify clean crypto semantics, host-provider boundaries, Node24-only algorithms, async callbacks, worker/messageport behavior, and error-shape failures after the first wide run"]
@@ -2989,6 +3131,33 @@ fn node24_default_lane_executes_http2_diagnostic_core_promoted_batch_fixture() {
     );
 }
 
+fn node26_current_http2_promoted_residual_paths() -> &'static [&'static str] {
+    &[
+        "test/parallel/test-http2-misbehaving-flow-control-paused.js",
+        "test/parallel/test-http2-misbehaving-flow-control.js",
+        "test/parallel/test-http2-options-max-headers-exceeds-nghttp2.js",
+    ]
+}
+
+#[test]
+fn node26_current_lane_executes_http2_diagnostic_core_promoted_batch_fixture() {
+    let mut fixture_paths = HTTP2_DIAGNOSTIC_CORE_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    fixture_paths.retain(|path| {
+        !node26_current_http2_promoted_residual_paths().contains(&path.as_str())
+    });
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-http2-diagnostic-core-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        HTTP_CLIENT_AGENT_DIAGNOSTIC_EXTRA_DIRS,
+    );
+}
+
 fn net_diagnostic_core_candidate_path(path: &str) -> bool {
     path.starts_with("test/parallel/test-net-")
 }
@@ -3465,6 +3634,61 @@ fn node24_default_lane_parallel_js_platform_required_gap_watchpoint() {
 
 const UNPROMOTED_PARALLEL_DISCOVERY_EXTRA_DIRS: &[&str] = &["test/common", "test/fixtures"];
 
+const UNPROMOTED_PARALLEL_DISCOVERY_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-async-local-storage-http-agent.js",
+    "test/parallel/test-async-local-storage-http-multiclients.js",
+    "test/parallel/test-async-wrap-constructor.js",
+    "test/parallel/test-handle-wrap-close-abort.js",
+    "test/parallel/test-icu-stringwidth.js",
+    "test/parallel/test-internal-modules.js",
+    "test/parallel/test-internal-util-normalizeencoding.js",
+    "test/parallel/test-internal-util-weakreference.js",
+    "test/parallel/test-next-tick-domain.js",
+    "test/parallel/test-nodeeventtarget.js",
+    "test/parallel/test-queue-microtask-uncaught-asynchooks.js",
+    "test/parallel/test-stringbytes-external.js",
+];
+
+const UNPROMOTED_PARALLEL_DISCOVERY_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
+    "test/parallel/test-async-local-storage-enter-with.js",
+    "test/parallel/test-async-local-storage-weak-asyncwrap-leak.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_unpromoted_parallel_discovery_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = UNPROMOTED_PARALLEL_DISCOVERY_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-unpromoted-parallel-discovery-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        UNPROMOTED_PARALLEL_DISCOVERY_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_unpromoted_parallel_discovery_promoted_batch_fixture() {
+    let mut fixture_paths: Vec<String> = UNPROMOTED_PARALLEL_DISCOVERY_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    fixture_paths.extend(
+        UNPROMOTED_PARALLEL_DISCOVERY_PROMOTED_NODE24_ONLY_PATHS
+            .iter()
+            .map(|path| (*path).to_string()),
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-unpromoted-parallel-discovery-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        UNPROMOTED_PARALLEL_DISCOVERY_EXTRA_DIRS,
+    );
+}
+
 #[test]
 #[ignore = "NDS3 broad pre-run: generated-posture discovery for remaining unpromoted test/parallel required gaps after excluding already killed host/native/CLI/stress/fatal families"]
 fn node22_supported_lane_unpromoted_parallel_discovery_watchpoint() {
@@ -3546,6 +3770,8 @@ const CORE_SEMANTICS_UTIL_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-buffer-isascii.js",
     "test/parallel/test-buffer-isutf8.js",
     "test/parallel/test-buffer-pool-untransferable.js",
+    "test/parallel/test-buffer-tostring-4gb.js",
+    "test/parallel/test-buffer-zero-fill-cli.js",
     "test/parallel/test-buffer-zero-fill-reset.js",
     "test/parallel/test-buffer-zero-fill.js",
     "test/parallel/test-path-resolve.js",
@@ -3562,6 +3788,7 @@ const CORE_SEMANTICS_UTIL_PROMOTED_NODE24_EXTRA_PATHS: &[&str] = &[
     "test/parallel/test-assert.js",
     "test/parallel/test-buffer-generic-methods.js",
     "test/parallel/test-util.js",
+    "test/parallel/test-util-styletext-hex.js",
 ];
 
 #[test]
@@ -3992,6 +4219,53 @@ fn node24_default_lane_executes_core_semantics_subset() {
     );
 }
 
+fn node26_current_broad_residual_paths() -> &'static [&'static str] {
+    &[
+        "test/parallel/test-async-hooks-enable-recursive.js",
+        "test/parallel/test-buffer-indexof.js",
+        "test/parallel/test-buffer-tostring-rangeerror.js",
+        "test/parallel/test-crypto-default-shake-lengths-oneshot.js",
+        "test/parallel/test-crypto-dh-group-setters.js",
+        "test/parallel/test-crypto-dh-modp2-views.js",
+        "test/parallel/test-crypto-dh-modp2.js",
+        "test/parallel/test-crypto-dh.js",
+        "test/parallel/test-crypto-gcm-implicit-short-tag.js",
+        "test/parallel/test-crypto-oneshot-hash-xof.js",
+        "test/parallel/test-crypto-scrypt.js",
+        "test/parallel/test-fs-glob.mjs",
+        "test/parallel/test-fs-opendir.js",
+        "test/parallel/test-fs-promises-file-handle-dispose.js",
+        "test/parallel/test-fs-promises-file-handle-readLines.mjs",
+        "test/parallel/test-fs-symlink.js",
+        "test/parallel/test-fs-write-stream-autoclose-option.js",
+        "test/parallel/test-https-agent-session-reuse.js",
+        "test/parallel/test-module-multi-extensions.js",
+        "test/parallel/test-process-load-env-file.js",
+        "test/parallel/test-readline-promises-csi.mjs",
+        "test/parallel/test-runner-get-test-context.js",
+        "test/parallel/test-stream-compose.js",
+        "test/parallel/test-stream-duplex.js",
+        "test/parallel/test-stream-pipeline.js",
+        "test/parallel/test-stream-readable-emittedReadable.js",
+        "test/parallel/test-stream-readable-infinite-read.js",
+        "test/parallel/test-stream-typedarray.js",
+        "test/parallel/test-stream-uint8array.js",
+        "test/parallel/test-trace-events-dynamic-enable.js",
+        "test/parallel/test-url-parse-invalid-input.js",
+        "test/parallel/test-util-parse-env.js",
+    ]
+}
+
+#[test]
+fn node26_current_lane_executes_manifested_core_semantics_subset() {
+    run_manifested_subset_for_lane_excluding(
+        "core-semantics",
+        NodeCompatLane::Node26,
+        CORE_SEMANTICS_BATCH,
+        node26_current_broad_residual_paths(),
+    );
+}
+
 #[test]
 fn node20_legacy_lane_executes_official_process_and_timing_subset() {
     run_manifested_subset_for_lane(
@@ -4016,6 +4290,16 @@ fn node24_default_lane_executes_process_and_timing_subset() {
         "process-and-timing",
         NodeCompatLane::Node24,
         PROCESS_AND_TIMING_BATCH,
+    );
+}
+
+#[test]
+fn node26_current_lane_executes_manifested_process_and_timing_subset() {
+    run_manifested_subset_for_lane_excluding(
+        "process-and-timing",
+        NodeCompatLane::Node26,
+        PROCESS_AND_TIMING_BATCH,
+        node26_current_broad_residual_paths(),
     );
 }
 
@@ -4137,6 +4421,16 @@ fn node24_default_lane_executes_streams_and_local_io_subset() {
 }
 
 #[test]
+fn node26_current_lane_executes_manifested_streams_and_local_io_subset() {
+    run_manifested_subset_for_lane_excluding(
+        "streams-and-local-io",
+        NodeCompatLane::Node26,
+        STREAMS_AND_LOCAL_IO_BATCH,
+        node26_current_broad_residual_paths(),
+    );
+}
+
+#[test]
 fn node20_legacy_lane_executes_official_networking_subset() {
     run_manifested_subset_for_lane("networking", NodeCompatLane::Node20, NETWORKING_BATCH);
 }
@@ -4149,6 +4443,16 @@ fn node22_supported_lane_executes_manifested_networking_subset() {
 #[test]
 fn node24_default_lane_networking_watchpoint() {
     run_manifested_subset_for_lane("networking", NodeCompatLane::Node24, NETWORKING_BATCH);
+}
+
+#[test]
+fn node26_current_lane_executes_manifested_networking_subset() {
+    run_manifested_subset_for_lane_excluding(
+        "networking",
+        NodeCompatLane::Node26,
+        NETWORKING_BATCH,
+        node26_current_broad_residual_paths(),
+    );
 }
 
 #[test]
@@ -4175,6 +4479,16 @@ fn node24_default_lane_executes_loader_context_subset() {
         "loader-context",
         NodeCompatLane::Node24,
         LOADER_CONTEXT_BATCH,
+    );
+}
+
+#[test]
+fn node26_current_lane_executes_manifested_loader_context_subset() {
+    run_manifested_subset_for_lane_excluding(
+        "loader-context",
+        NodeCompatLane::Node26,
+        LOADER_CONTEXT_BATCH,
+        node26_current_broad_residual_paths(),
     );
 }
 

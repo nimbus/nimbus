@@ -371,7 +371,7 @@ fn node24_loader_context_followup_inspector_front_edge_batch_fixture() {
 fn node22_loader_context_followup_module_wrapper_regression_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-module-wrapper-regression.js",
-        "node22/test/parallel/test-module-wrapper-regression.js",
+        "regression/node22/parallel/test-module-wrapper-regression.js",
         &[],
     );
 }
@@ -380,7 +380,7 @@ fn node22_loader_context_followup_module_wrapper_regression_fixture() {
 fn node22_loader_context_followup_module_wrapper_identity_regression_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-module-wrapper-identity-regression.js",
-        "node22/test/parallel/test-module-wrapper-identity-regression.js",
+        "regression/node22/parallel/test-module-wrapper-identity-regression.js",
         &[],
     );
 }
@@ -389,7 +389,7 @@ fn node22_loader_context_followup_module_wrapper_identity_regression_fixture() {
 fn node22_loader_context_followup_module_wrapper_direct_regression_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-module-wrapper-direct-regression.js",
-        "node22/test/parallel/test-module-wrapper-direct-regression.js",
+        "regression/node22/parallel/test-module-wrapper-direct-regression.js",
         MODULE_COMMONJS_FIXTURES_EXTRA_FILES,
     );
 }
@@ -398,7 +398,7 @@ fn node22_loader_context_followup_module_wrapper_direct_regression_fixture() {
 fn node22_loader_context_followup_module_wrapper_direct_no_common_regression_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-module-wrapper-direct-no-common-regression.js",
-        "node22/test/parallel/test-module-wrapper-direct-no-common-regression.js",
+        "regression/node22/parallel/test-module-wrapper-direct-no-common-regression.js",
         MODULE_COMMONJS_FIXTURES_EXTRA_FILES,
     );
 }
@@ -407,7 +407,7 @@ fn node22_loader_context_followup_module_wrapper_direct_no_common_regression_fix
 fn node22_loader_context_followup_module_wrapper_spawn_regression_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-module-wrapper-spawn-regression.js",
-        "node22/test/parallel/test-module-wrapper-spawn-regression.js",
+        "regression/node22/parallel/test-module-wrapper-spawn-regression.js",
         MODULE_COMMONJS_FIXTURES_EXTRA_FILES,
     );
 }
@@ -416,7 +416,7 @@ fn node22_loader_context_followup_module_wrapper_spawn_regression_fixture() {
 fn node22_loader_context_followup_module_wrapper_spawn_require_regression_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-module-wrapper-spawn-require-regression.js",
-        "node22/test/parallel/test-module-wrapper-spawn-require-regression.js",
+        "regression/node22/parallel/test-module-wrapper-spawn-require-regression.js",
         MODULE_COMMONJS_FIXTURES_EXTRA_FILES,
     );
 }
@@ -425,7 +425,7 @@ fn node22_loader_context_followup_module_wrapper_spawn_require_regression_fixtur
 fn node22_loader_context_followup_module_wrapper_spawn_wrap_call_regression_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-module-wrapper-spawn-wrap-call-regression.js",
-        "node22/test/parallel/test-module-wrapper-spawn-wrap-call-regression.js",
+        "regression/node22/parallel/test-module-wrapper-spawn-wrap-call-regression.js",
         MODULE_COMMONJS_FIXTURES_EXTRA_FILES,
     );
 }
@@ -434,7 +434,7 @@ fn node22_loader_context_followup_module_wrapper_spawn_wrap_call_regression_fixt
 fn node22_loader_context_followup_module_wrapper_spawn_node_shape_regression_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-module-wrapper-spawn-node-shape-regression.js",
-        "node22/test/parallel/test-module-wrapper-spawn-node-shape-regression.js",
+        "regression/node22/parallel/test-module-wrapper-spawn-node-shape-regression.js",
         MODULE_COMMONJS_FIXTURES_EXTRA_FILES,
     );
 }
@@ -443,7 +443,7 @@ fn node22_loader_context_followup_module_wrapper_spawn_node_shape_regression_fix
 fn node22_loader_context_followup_module_wrapper_spawn_newline_wrap_regression_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-module-wrapper-spawn-newline-wrap-regression.js",
-        "node22/test/parallel/test-module-wrapper-spawn-newline-wrap-regression.js",
+        "regression/node22/parallel/test-module-wrapper-spawn-newline-wrap-regression.js",
         MODULE_COMMONJS_FIXTURES_EXTRA_FILES,
     );
 }
@@ -506,7 +506,7 @@ fn node22_loader_context_followup_vm_context_remainder_regression_batch_fixture(
 fn node22_loader_context_followup_vm_shared_context_errors_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-vm-context-regression-shared-context-errors.js",
-        "node22/test/parallel/test-vm-context-regression-shared-context-errors.js",
+        "regression/node22/parallel/test-vm-context-regression-shared-context-errors.js",
         &[],
     );
 }
@@ -515,7 +515,7 @@ fn node22_loader_context_followup_vm_shared_context_errors_watchpoint() {
 fn node22_loader_context_followup_vm_remainder_combined_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-vm-context-regression-remainder-combined.js",
-        "node22/test/parallel/test-vm-context-regression-remainder-combined.js",
+        "regression/node22/parallel/test-vm-context-regression-remainder-combined.js",
         &[],
     );
 }
@@ -524,7 +524,7 @@ fn node22_loader_context_followup_vm_remainder_combined_watchpoint() {
 fn node22_loader_context_followup_vm_official_minus_proxy_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-vm-context-regression-official-minus-proxy.js",
-        "node22/test/parallel/test-vm-context-regression-official-minus-proxy.js",
+        "regression/node22/parallel/test-vm-context-regression-official-minus-proxy.js",
         &[],
     );
 }
@@ -533,7 +533,7 @@ fn node22_loader_context_followup_vm_official_minus_proxy_watchpoint() {
 fn node22_loader_context_followup_vm_preamble_plus_proxy_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-vm-context-regression-preamble-plus-proxy.js",
-        "node22/test/parallel/test-vm-context-regression-preamble-plus-proxy.js",
+        "regression/node22/parallel/test-vm-context-regression-preamble-plus-proxy.js",
         &[],
     );
 }
@@ -542,7 +542,7 @@ fn node22_loader_context_followup_vm_preamble_plus_proxy_watchpoint() {
 fn node22_loader_context_followup_vm_delete_then_proxy_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-vm-context-regression-delete-then-proxy.js",
-        "node22/test/parallel/test-vm-context-regression-delete-then-proxy.js",
+        "regression/node22/parallel/test-vm-context-regression-delete-then-proxy.js",
         &[],
     );
 }
@@ -551,7 +551,7 @@ fn node22_loader_context_followup_vm_delete_then_proxy_watchpoint() {
 fn node22_loader_context_followup_vm_shared_errors_plus_proxy_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-vm-context-regression-shared-errors-plus-proxy.js",
-        "node22/test/parallel/test-vm-context-regression-shared-errors-plus-proxy.js",
+        "regression/node22/parallel/test-vm-context-regression-shared-errors-plus-proxy.js",
         &[],
     );
 }
@@ -560,7 +560,7 @@ fn node22_loader_context_followup_vm_shared_errors_plus_proxy_watchpoint() {
 fn node22_loader_context_followup_vm_remainder_plus_proxy_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-vm-context-regression-remainder-plus-proxy.js",
-        "node22/test/parallel/test-vm-context-regression-remainder-plus-proxy.js",
+        "regression/node22/parallel/test-vm-context-regression-remainder-plus-proxy.js",
         &[],
     );
 }
@@ -569,7 +569,7 @@ fn node22_loader_context_followup_vm_remainder_plus_proxy_watchpoint() {
 fn node22_loader_context_followup_vm_multi_context_plus_proxy_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-vm-context-regression-multi-context-plus-proxy.js",
-        "node22/test/parallel/test-vm-context-regression-multi-context-plus-proxy.js",
+        "regression/node22/parallel/test-vm-context-regression-multi-context-plus-proxy.js",
         &[],
     );
 }

@@ -1,2 +1,1 @@
-this file is part of the WASI tests. it exists outside of the sandbox, and
-should be inaccessible from the WASI tests.
+../../outside.txt

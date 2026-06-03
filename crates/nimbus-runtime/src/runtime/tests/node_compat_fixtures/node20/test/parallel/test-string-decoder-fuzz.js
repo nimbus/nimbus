@@ -6,7 +6,7 @@ const assert = require('assert');
 
 // Tests that, for random sequences of bytes, our StringDecoder gives the
 // same result as a direction conversion using Buffer.toString().
-// In particular, it checks that StringDecoder aligns with V8's own output.
+// In particular, it checks that StringDecoder aligns with V8’s own output.
 
 function rand(max) {
   return Math.floor(Math.random() * max);

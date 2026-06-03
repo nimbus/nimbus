@@ -268,10 +268,11 @@ if [ "${node24_threshold_ok}" -eq 1 ] &&
    has 'ROI' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
    has 'Deno (fork|tag|repin|worktree)|no Deno tag' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
    has 'Checkpoint regeneration|checkpoint-only|generated evidence' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
-   has 'kill-rule|Kill-rule' "${PROOF_DIR}/nds3-official-fixture-promotion.md"; then
+   has 'kill-rule|Kill-rule' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   python3 scripts/runtime/node/required_surface_blockers.py --check >/dev/null; then
   pass "Node24 full-corpus threshold and post-2000 proof are present"
 else
-  fail "Node24 full-corpus threshold or post-2000 proof unmet" "Expected generated metric >= 2000 and NDS3 burn-down/throughput proof markers"
+  fail "Node24 full-corpus threshold or post-2000 proof unmet" "Expected generated metric >= 2000, NDS3 burn-down/throughput proof markers, and fresh required-surface blocker inventory"
 fi
 
 step 15 "Package registry category schema"

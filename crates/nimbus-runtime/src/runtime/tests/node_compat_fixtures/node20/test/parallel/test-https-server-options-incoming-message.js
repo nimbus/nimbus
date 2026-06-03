@@ -34,18 +34,18 @@ const server = https.createServer({
 }));
 server.listen();
 
-server.on('listening', common.mustCall(function makeRequest() {
+server.on('listening', function makeRequest() {
   https.get({
     port: this.address().port,
     rejectUnauthorized: false,
     headers: {
       'User-Agent': 'node-test'
     }
-  }, common.mustCall((res) => {
+  }, (res) => {
     assert.strictEqual(res.statusCode, 200);
     res.on('end', () => {
       server.close();
     });
     res.resume();
-  }));
-}));
+  });
+});

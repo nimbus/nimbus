@@ -76,6 +76,8 @@ pub(super) struct RuntimeTestSpawnPlan {
     pub(super) env: Option<BTreeMap<String, String>>,
     pub(super) stdin_bytes: Option<Vec<u8>>,
     pub(super) exec_argv: Vec<String>,
+    pub(super) preload_imports: Vec<String>,
+    pub(super) preload_requires: Vec<String>,
     pub(super) source_bundle_root: Option<PathBuf>,
     pub(super) preload_env_file: Option<PathBuf>,
     pub(super) permission_restricted: bool,

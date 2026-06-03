@@ -150,38 +150,38 @@ const LOADER_CONTEXT_FOLLOWUP_VM_BASIC_BATCH: &[NodeCompatBatchEntry] = &[
 const LOADER_CONTEXT_FOLLOWUP_VM_CONTEXT_REGRESSION_BATCH: &[NodeCompatBatchEntry] = &[
     shared_batch_case!(
         "test/parallel/test-vm-context-regression-script.js",
-        "node22/test/parallel/test-vm-context-regression-script.js"
+        "regression/node22/parallel/test-vm-context-regression-script.js"
     ),
     shared_batch_case!(
         "test/parallel/test-vm-context-regression-gh1140.js",
-        "node22/test/parallel/test-vm-context-regression-gh1140.js"
+        "regression/node22/parallel/test-vm-context-regression-gh1140.js"
     ),
     shared_batch_case!(
         "test/parallel/test-vm-context-regression-first-line-stack.js",
-        "node22/test/parallel/test-vm-context-regression-first-line-stack.js"
+        "regression/node22/parallel/test-vm-context-regression-first-line-stack.js"
     ),
     shared_batch_case!(
         "test/parallel/test-vm-context-regression-proxy.js",
-        "node22/test/parallel/test-vm-context-regression-proxy.js"
+        "regression/node22/parallel/test-vm-context-regression-proxy.js"
     ),
 ];
 
 const LOADER_CONTEXT_FOLLOWUP_VM_CONTEXT_REMAINDER_REGRESSION_BATCH: &[NodeCompatBatchEntry] = &[
     shared_batch_case!(
         "test/parallel/test-vm-context-regression-null-context.js",
-        "node22/test/parallel/test-vm-context-regression-null-context.js"
+        "regression/node22/parallel/test-vm-context-regression-null-context.js"
     ),
     shared_batch_case!(
         "test/parallel/test-vm-context-regression-invalid-context-args.js",
-        "node22/test/parallel/test-vm-context-regression-invalid-context-args.js"
+        "regression/node22/parallel/test-vm-context-regression-invalid-context-args.js"
     ),
     shared_batch_case!(
         "test/parallel/test-vm-context-regression-regexp-throws.js",
-        "node22/test/parallel/test-vm-context-regression-regexp-throws.js"
+        "regression/node22/parallel/test-vm-context-regression-regexp-throws.js"
     ),
     shared_batch_case!(
         "test/parallel/test-vm-context-regression-delete.js",
-        "node22/test/parallel/test-vm-context-regression-delete.js"
+        "regression/node22/parallel/test-vm-context-regression-delete.js"
     ),
 ];
 

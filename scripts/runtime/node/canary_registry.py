@@ -22,6 +22,15 @@ def load_registry() -> dict:
         return json.load(handle)
 
 
+SUPPORTED_STATUS = "supported"
+POSITIVE_SUPPORT_KIND = "positive_support"
+DIAGNOSTIC_KIND = "diagnostic"
+HOST_HEAVY_FAMILY = "host-heavy"
+HOST_HEAVY_SUPPORT_STATUS = "service_microvm_required"
+KNOWN_EVIDENCE_KINDS = {POSITIVE_SUPPORT_KIND, DIAGNOSTIC_KIND}
+KNOWN_SUPPORT_STATUSES = {SUPPORTED_STATUS, HOST_HEAVY_SUPPORT_STATUS}
+
+
 def active_canaries(registry: dict, preset: str | None = None) -> list[dict]:
     canaries = [
         canary
@@ -58,8 +67,10 @@ def load_lane_metadata_map() -> dict[str, dict]:
     return metadata_by_lane
 
 
-def canary_report_path(output_root: Path, preset: str) -> Path:
+def canary_report_path(output_root: Path, preset: str, lane: str | None = None) -> Path:
     slug = preset.lower().replace(" ", "-")
+    if lane:
+        return output_root / f"preset-{slug}-{lane}.json"
     return output_root / f"preset-{slug}.json"
 
 
@@ -209,7 +220,7 @@ def command_run(args: argparse.Namespace) -> None:
         else default_report_output_root()
     )
     output_root.mkdir(parents=True, exist_ok=True)
-    report_path = canary_report_path(output_root, args.preset)
+    report_path = canary_report_path(output_root, args.preset, args.lane)
     report = {
         "schema_version": 1,
         "runtime_preset": canaries[0]["runtime_preset"],
@@ -232,39 +243,131 @@ def command_run(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
+def validate_evidence_support_boundary(kind: str, status: str, label: str) -> None:
+    if kind not in KNOWN_EVIDENCE_KINDS:
+        raise SystemExit(
+            f"{label} uses unknown evidence_kind {kind}; expected one of {sorted(KNOWN_EVIDENCE_KINDS)}"
+        )
+    if status not in KNOWN_SUPPORT_STATUSES:
+        raise SystemExit(
+            f"{label} uses unknown support_status {status}; expected one of {sorted(KNOWN_SUPPORT_STATUSES)}"
+        )
+    if kind == DIAGNOSTIC_KIND and status == SUPPORTED_STATUS:
+        raise SystemExit(f"diagnostic {label} must not use supported support_status")
+    if kind == POSITIVE_SUPPORT_KIND and status != SUPPORTED_STATUS:
+        raise SystemExit(
+            f"{label} with non-supported support_status must not be counted as positive_support"
+        )
+
+
+def validate_host_heavy_boundary(
+    *, kind: str, status: str, family: str | None, label: str
+) -> None:
+    if family == HOST_HEAVY_FAMILY and (
+        kind != DIAGNOSTIC_KIND or status != HOST_HEAVY_SUPPORT_STATUS
+    ):
+        raise SystemExit(
+            f"host-heavy {label} must be diagnostic with support_status={HOST_HEAVY_SUPPORT_STATUS}"
+        )
+
+
 def command_validate_claims(_: argparse.Namespace) -> None:
     registry = load_registry()
     claims = registry["claims"]
     canaries = registry["canaries"]
-    active_claim_ids = {claim["id"] for claim in claims}
+    allowed_categories = registry.get("compat_category_values")
+    if (
+        not isinstance(allowed_categories, list)
+        or not allowed_categories
+        or any(not isinstance(category, str) or not category for category in allowed_categories)
+    ):
+        raise SystemExit("compat_category_values must be a non-empty string list")
+    if len(set(allowed_categories)) != len(allowed_categories):
+        raise SystemExit("compat_category_values must not contain duplicates")
+    allowed_category_set = set(allowed_categories)
+    claims_by_id = {claim["id"]: claim for claim in claims}
+    active_claim_ids = set(claims_by_id)
     mapped_claim_ids = {
         claim_id
         for canary in canaries
         if canary.get("status") == "active"
         for claim_id in canary["claim_ids"]
     }
+    unknown = sorted(mapped_claim_ids - active_claim_ids)
+    if unknown:
+        raise SystemExit(f"canaries map unknown claim ids: {', '.join(unknown)}")
     missing = sorted(active_claim_ids - mapped_claim_ids)
     if missing:
         raise SystemExit(f"claims missing active canary mappings: {', '.join(missing)}")
 
     for claim in claims:
-        evidence_kind = claim.get("evidence_kind", "positive_support")
-        support_status = claim.get("support_status", "supported")
-        if evidence_kind == "diagnostic" and support_status == "supported":
+        claim_id = claim["id"]
+        compat_family = claim.get("compat_family")
+        if not isinstance(compat_family, str) or not compat_family:
+            raise SystemExit(f"claim {claim_id} must define compat_family")
+        compat_category = claim.get("compat_category")
+        if not isinstance(compat_category, str) or not compat_category:
+            raise SystemExit(f"claim {claim_id} must define exactly one compat_category")
+        if compat_category not in allowed_category_set:
             raise SystemExit(
-                f"diagnostic claim {claim['id']} must not use supported support_status"
+                f"claim {claim_id} uses unknown compat_category {compat_category}"
             )
+        canary_surfaces = claim.get("canary_surfaces")
+        if (
+            not isinstance(canary_surfaces, list)
+            or not canary_surfaces
+            or any(not isinstance(surface, str) or not surface for surface in canary_surfaces)
+        ):
+            raise SystemExit(f"claim {claim_id} must define non-empty canary_surfaces")
+        evidence_kind = claim.get("evidence_kind", POSITIVE_SUPPORT_KIND)
+        support_status = claim.get("support_status", SUPPORTED_STATUS)
+        validate_evidence_support_boundary(
+            evidence_kind,
+            support_status,
+            f"claim {claim_id}",
+        )
+        validate_host_heavy_boundary(
+            kind=evidence_kind,
+            status=support_status,
+            family=compat_family,
+            label=f"claim {claim_id}",
+        )
         doc_path = repo_root() / claim["doc_path"]
         if not doc_path.is_file():
-            raise SystemExit(f"missing doc path for claim {claim['id']}: {doc_path}")
+            raise SystemExit(f"missing doc path for claim {claim_id}: {doc_path}")
         doc_text = doc_path.read_text(encoding="utf-8")
         if claim["package"] not in doc_text:
             raise SystemExit(
-                f"doc path for claim {claim['id']} does not mention package {claim['package']}"
+                f"doc path for claim {claim_id} does not mention package {claim['package']}"
             )
 
+    for canary in canaries:
+        canary_id = canary["id"]
+        evidence_kind = canary.get("evidence_kind", POSITIVE_SUPPORT_KIND)
+        support_status = canary.get("support_status", SUPPORTED_STATUS)
+        validate_evidence_support_boundary(
+            evidence_kind,
+            support_status,
+            f"canary {canary_id}",
+        )
+        validate_host_heavy_boundary(
+            kind=evidence_kind,
+            status=support_status,
+            family=canary.get("compat_family_dependency"),
+            label=f"canary {canary_id}",
+        )
+        for claim_id in canary["claim_ids"]:
+            claim = claims_by_id[claim_id]
+            claim_kind = claim.get("evidence_kind", POSITIVE_SUPPORT_KIND)
+            claim_status = claim.get("support_status", SUPPORTED_STATUS)
+            if evidence_kind != claim_kind or support_status != claim_status:
+                raise SystemExit(
+                    f"canary {canary_id} boundary {evidence_kind}/{support_status} "
+                    f"does not match claim {claim_id} boundary {claim_kind}/{claim_status}"
+                )
+
     print(
-        f"validated {len(claims)} active claim mappings against {len(canaries)} registered canaries"
+        f"validated {len(claims)} active claim mappings across {len(allowed_category_set)} compat categories against {len(canaries)} registered canaries"
     )
 
 

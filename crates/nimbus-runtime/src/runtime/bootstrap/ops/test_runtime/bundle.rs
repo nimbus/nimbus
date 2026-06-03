@@ -8,7 +8,69 @@ use crate::backends::v8::embedder::JsErrorBox;
 use super::render::render_runtime_test_spawn_bundle_source;
 use super::types::{RuntimeTestSpawnMode, RuntimeTestSpawnPlan};
 
-fn copy_dir_recursive(source: &Path, destination: &Path) -> std::result::Result<(), JsErrorBox> {
+#[cfg(unix)]
+fn create_bundle_symlink(
+    target: &Path,
+    link: &Path,
+    _target_is_dir: bool,
+) -> std::result::Result<(), std::io::Error> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn create_bundle_symlink(
+    target: &Path,
+    link: &Path,
+    target_is_dir: bool,
+) -> std::result::Result<(), std::io::Error> {
+    if target_is_dir {
+        std::os::windows::fs::symlink_dir(target, link)
+    } else {
+        std::os::windows::fs::symlink_file(target, link)
+    }
+}
+
+fn copy_symlink(
+    source: &Path,
+    destination: &Path,
+    source_root: &Path,
+    target_root: &Path,
+) -> std::result::Result<(), JsErrorBox> {
+    let link_target = std::fs::read_link(source).map_err(|error| {
+        JsErrorBox::generic(format!(
+            "node_compat subprocess copy should read symlink {}: {error}",
+            source.display()
+        ))
+    })?;
+    let source_target = if link_target.is_absolute() {
+        link_target.clone()
+    } else {
+        source
+            .parent()
+            .unwrap_or(source_root)
+            .join(link_target.as_path())
+    };
+    let target_is_dir = source_target.is_dir();
+    let rendered_target = if link_target.is_absolute() {
+        rewrite_bundle_path(&link_target, source_root, target_root)
+    } else {
+        link_target
+    };
+    create_bundle_symlink(&rendered_target, destination, target_is_dir).map_err(|error| {
+        JsErrorBox::generic(format!(
+            "node_compat subprocess copy should symlink {} -> {}: {error}",
+            destination.display(),
+            rendered_target.display()
+        ))
+    })
+}
+
+fn copy_dir_recursive(
+    source: &Path,
+    destination: &Path,
+    source_root: &Path,
+    target_root: &Path,
+) -> std::result::Result<(), JsErrorBox> {
     std::fs::create_dir_all(destination).map_err(|error| {
         JsErrorBox::generic(format!(
             "node_compat subprocess copy should create {}: {error}",
@@ -36,8 +98,10 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> std::result::Result<
                 entry_path.display()
             ))
         })?;
-        if file_type.is_dir() {
-            copy_dir_recursive(&entry_path, &target_path)?;
+        if file_type.is_symlink() {
+            copy_symlink(&entry_path, &target_path, source_root, target_root)?;
+        } else if file_type.is_dir() {
+            copy_dir_recursive(&entry_path, &target_path, source_root, target_root)?;
         } else if file_type.is_file() {
             std::fs::copy(&entry_path, &target_path).map_err(|error| {
                 JsErrorBox::generic(format!(
@@ -261,7 +325,12 @@ pub(super) fn write_runtime_test_spawn_bundle(
     };
 
     if let Some(source_bundle_root) = plan.source_bundle_root.as_deref() {
-        copy_dir_recursive(source_bundle_root, &bundle_dir)?;
+        copy_dir_recursive(
+            source_bundle_root,
+            &bundle_dir,
+            source_bundle_root,
+            &bundle_dir,
+        )?;
     }
 
     if let Some(cwd) = plan.cwd.as_deref() {
@@ -272,7 +341,12 @@ pub(super) fn write_runtime_test_spawn_bundle(
             // The compat subprocess bundle executes from its own temp root, so
             // mirror the caller's node_modules tree when present to preserve
             // that package-resolution contract.
-            copy_dir_recursive(&cwd_node_modules, &bundle_node_modules)?;
+            copy_dir_recursive(
+                &cwd_node_modules,
+                &bundle_node_modules,
+                &cwd_node_modules,
+                &bundle_node_modules,
+            )?;
         }
     }
 

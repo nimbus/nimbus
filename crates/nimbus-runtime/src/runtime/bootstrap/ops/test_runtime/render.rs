@@ -776,8 +776,9 @@ if (
         source,
         cli_args,
     } => {
-        let main_script_path =
-            if let (Some(relative_path), Some(source)) = (relative_path, source) {
+        let main_script_path = if let Some(relative_path) = relative_path {
+            let bundle_script_path = bundle_dir.join(relative_path);
+            if let Some(source) = source {
                 let bundle_script_path = bundle_dir.join(relative_path);
                 std::fs::create_dir_all(
                     bundle_script_path
@@ -794,10 +795,11 @@ if (
                         "node_compat subprocess script should write: {error}"
                     ))
                 })?;
-                bundle_script_path
-            } else {
-                script_path.clone()
-            };
+            }
+            bundle_script_path
+        } else {
+            script_path.clone()
+        };
         let rendered_main_script_path = main_script_path.to_string_lossy().into_owned();
         format!(
             r#"
@@ -957,6 +959,73 @@ if (Array.isArray(process.execArgv)) {{
 "#,
         serde_json::to_string(&plan.exec_argv).expect("exec argv should serialize")
     );
+    let rewrite_spawn_string = |value: &str| {
+        if let Some(source_bundle_root) = plan.source_bundle_root.as_deref() {
+            if plan.permission_restricted {
+                value.to_string()
+            } else {
+                rewrite_bundle_string(value, source_bundle_root, bundle_dir)
+            }
+        } else {
+            value.to_string()
+        }
+    };
+    let rendered_preload_imports = plan
+        .preload_imports
+        .iter()
+        .map(|specifier| rewrite_spawn_string(specifier))
+        .collect::<Vec<_>>();
+    let rendered_preload_requires = plan
+        .preload_requires
+        .iter()
+        .map(|specifier| rewrite_spawn_string(specifier))
+        .collect::<Vec<_>>();
+    let preload_setup =
+        if rendered_preload_imports.is_empty() && rendered_preload_requires.is_empty() {
+            String::new()
+        } else {
+            format!(
+                r#"
+const __nimbusPreloadRequires = {};
+const __nimbusPreloadImports = {};
+const __nimbusPath = require("node:path");
+const __nimbusUrl = require("node:url");
+function __nimbusResolveCliImportSpecifier(specifier) {{
+  if (
+    specifier.startsWith("node:") ||
+    specifier.startsWith("data:") ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(specifier)
+  ) {{
+    return specifier;
+  }}
+  if (__nimbusPath.isAbsolute(specifier)) {{
+    return __nimbusUrl.pathToFileURL(specifier).href;
+  }}
+  if (
+    specifier.startsWith("./") ||
+    specifier.startsWith("../") ||
+    specifier === "." ||
+    specifier === ".."
+  ) {{
+    return __nimbusUrl.pathToFileURL(
+      __nimbusPath.resolve(process.cwd(), specifier),
+    ).href;
+  }}
+  return specifier;
+}}
+if (__nimbusPreloadRequires.length > 0) {{
+  require("node:module").Module._preloadModules(__nimbusPreloadRequires);
+}}
+for (const __nimbusPreloadImport of __nimbusPreloadImports) {{
+  await import(__nimbusResolveCliImportSpecifier(__nimbusPreloadImport));
+}}
+"#,
+                serde_json::to_string(&rendered_preload_requires)
+                    .expect("preload requires should serialize"),
+                serde_json::to_string(&rendered_preload_imports)
+                    .expect("preload imports should serialize")
+            )
+        };
     let process_title_setup = if let Some(title) = plan.process_title.as_ref() {
         format!(
             "process.title = {};",
@@ -1555,6 +1624,7 @@ if (Array.isArray(process.argv) && process.argv.length > 0) {{
 {env_setup}
 {preload_env_setup}
 require("node:module").Module._initPaths?.();
+{preload_setup}
 {inspector_setup}
 {execution}
 if (typeof process.nextTick === "function") {{

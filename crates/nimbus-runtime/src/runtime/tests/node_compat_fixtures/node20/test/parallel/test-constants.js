@@ -15,16 +15,16 @@ assert.ok(binding.fs);
 assert.ok(binding.crypto);
 
 ['os', 'fs', 'crypto'].forEach((l) => {
-  for (const k of Object.keys(binding[l])) {
+  Object.keys(binding[l]).forEach((k) => {
     if (typeof binding[l][k] === 'object') { // errno and signals
-      for (const j of Object.keys(binding[l][k])) {
+      Object.keys(binding[l][k]).forEach((j) => {
         assert.strictEqual(binding[l][k][j], constants[j]);
-      }
+      });
     }
     if (l !== 'os') { // Top level os constant isn't currently copied
       assert.strictEqual(binding[l][k], constants[k]);
     }
-  }
+  });
 });
 
 assert.ok(Object.isFrozen(constants));

@@ -482,6 +482,7 @@ jobs:
           bash scripts/verify-node-lts-docs.sh
           bash scripts/verify-node-release-train.sh
           bash scripts/verify-node-latest-suite-tags.sh
+          make node-compat-validate-fixtures
 
       - name: Download nimbus-ui artifacts
         uses: actions/download-artifact@v8
@@ -495,16 +496,50 @@ jobs:
       - name: Bootstrap application canaries
         run: make node-compat-canaries-bootstrap PRESET=application
 
+      - name: Bootstrap tooling canaries
+        run: make node-compat-canaries-bootstrap PRESET=tooling
+
       - name: Gate supported-LTS application canaries
         run: |
           make node-compat-validate-claims
           make node-compat-canaries PRESET=application LANE=node22
           make node-compat-canaries PRESET=application LANE=node24
 
+      - name: Gate supported-LTS tooling canaries
+        run: |
+          make node-compat-canaries PRESET=tooling LANE=node22
+          make node-compat-canaries PRESET=tooling LANE=node24
+
+      - name: Set up Node.js 22 for oracle sample
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Emit Node22 oracle evidence
+        run: |
+          make node-compat-oracle LANE=node22 SAMPLE=test/parallel/test-buffer-alloc.js NODE_BIN="$(which node)"
+
+      - name: Set up Node.js 24 for oracle sample
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Emit Node24 oracle evidence
+        run: |
+          make node-compat-oracle LANE=node24 SAMPLE=test/parallel/test-buffer-alloc.js NODE_BIN="$(which node)"
+
+      - name: Build Node compatibility dashboard for PR gates
+        run: make node-compat-dashboard
+
       - name: Verify checked-in canary support boundaries
+        env:
+          NIMBUS_NODE_COMPAT_DASHBOARD_PATH: target/node-compat/dashboard/dashboard-summary.json
         run: |
           bash scripts/verify-node-lts-canaries-and-oracles.sh
           bash scripts/verify-node-host-heavy-diagnostics.sh
+
+      - name: Verify Node default runtime support hardening gate
+        run: bash scripts/verify-node-default-runtime-support-hardening.sh
 
   node-dbus-integration:
     name: Node D-Bus Integration

@@ -103,6 +103,105 @@ CATEGORY_KEYWORDS = {
     ],
 }
 
+HOST_PROCESS_CONTROL_PATHS = {
+    "test/abort/test-process-abort-exitcode.js",
+    "test/parallel/test-process-dlopen-error-message-crash.js",
+    "test/parallel/test-process-dlopen-undefined-exports.js",
+    "test/parallel/test-process-euid-egid.js",
+    "test/parallel/test-process-external-stdio-close-spawn.js",
+    "test/parallel/test-process-external-stdio-close.js",
+    "test/parallel/test-process-getgroups.js",
+    "test/parallel/test-process-initgroups.js",
+    "test/parallel/test-process-kill-null.js",
+    "test/parallel/test-process-kill-pid.js",
+    "test/parallel/test-process-raw-debug.js",
+    "test/parallel/test-process-really-exit.js",
+    "test/parallel/test-process-redirect-warnings-env.js",
+    "test/parallel/test-process-redirect-warnings.js",
+    "test/parallel/test-process-setgroups.js",
+    "test/parallel/test-process-title-cli.js",
+    "test/parallel/test-process-uid-gid.js",
+    "test/parallel/test-windows-abort-exitcode.js",
+}
+
+HOST_PROCESS_CONTROL_PREFIXES = (
+    "test/abort/",
+    "test/parallel/test-process-execve",
+)
+
+NODE_CLI_TOPOLOGY_PATHS = {
+    "test/client-proxy/test-use-env-proxy-cli-http.mjs",
+    "test/client-proxy/test-use-env-proxy-cli-https.mjs",
+    "test/parallel/test-cli-eval-event.js",
+    "test/parallel/test-cli-print-promise.mjs",
+    "test/parallel/test-debug-process.js",
+    "test/parallel/test-preload-print-process-argv.js",
+    "test/parallel/test-set-process-debug-port.js",
+    "test/parallel/test-stream-preprocess.js",
+    "test/parallel/test-tick-processor-arguments.js",
+    "test/parallel/test-tick-processor-version-check.js",
+}
+
+NODE_CLI_TOPOLOGY_PREFIXES = (
+    "test/tick-processor/",
+)
+
+# NDS3 post-2000 required-surface denominator cleanup. The keyword catch-all in
+# classify_entry lands any path containing "process", "module", "util", "async",
+# etc. in v8_isolate_required, which over-counts fixtures that are categorically
+# not public Application API. Each set below was confirmed by reading the fixture
+# source: node-api fixtures load build/<type>/*.node native addons; test-eslint-*
+# drive tools/eslint-rules RuleTester via skipIfEslintMissing; test-snapshot-*
+# build a V8 startup snapshot through the common/snapshot CLI subprocess;
+# test-bootstrap-modules asserts Node's exact internal moduleLoadList; node:sqlite
+# is a native-backed builtin; and the expose-internals set carries
+# `// Flags: --expose-internals` + require('internal/*'). test-internal-process-
+# binding.js is deliberately NOT listed: it has no --expose-internals flag and
+# asserts public process.binding() throw behavior, so it stays a promotable
+# v8_isolate_required gap rather than a private-internals reclassification.
+NATIVE_ADDON_NODE_API_PREFIXES = (
+    "test/node-api/",
+    "test/js-native-api/",
+)
+
+NODE_LINT_RULE_HARNESS_PREFIX = "test/parallel/test-eslint-"
+
+STARTUP_SNAPSHOT_CLI_PATHS = {
+    "test/parallel/test-snapshot-console.js",
+    "test/parallel/test-snapshot-dns-lookup-localhost-promise.js",
+    "test/parallel/test-snapshot-dns-resolve-localhost-promise.js",
+    "test/parallel/test-snapshot-stack-trace-limit-mutation.js",
+    "test/parallel/test-snapshot-stack-trace-limit.js",
+}
+
+INTERNAL_BOOTSTRAP_TOPOLOGY_PATHS = {
+    "test/parallel/test-bootstrap-modules.js",
+}
+
+NATIVE_BACKED_OPTIONAL_BUILTIN_PATHS = {
+    "test/parallel/test-sqlite.js",
+}
+
+EXPOSE_INTERNALS_PRIVATE_MODULE_PATHS = {
+    "test/parallel/test-internal-assert.js",
+    "test/parallel/test-internal-async-context-frame-disable.js",
+    "test/parallel/test-internal-async-context-frame-enabled.js",
+    "test/parallel/test-internal-encoding-binding.js",
+    "test/parallel/test-internal-errors.js",
+    "test/parallel/test-internal-fs-syncwritestream.js",
+    "test/parallel/test-internal-module-require.js",
+    "test/parallel/test-internal-module-wrap.js",
+    "test/parallel/test-internal-util-assertCrypto.js",
+    "test/parallel/test-internal-util-classwrapper.js",
+    "test/parallel/test-internal-util-construct-sab.js",
+    "test/parallel/test-internal-util-decorate-error-stack.js",
+    "test/parallel/test-internal-util-getCIDR.js",
+    "test/parallel/test-internal-util-helpers.js",
+    "test/parallel/test-internal-util-isinsidenodemodules.js",
+    "test/parallel/test-internal-util-objects.js",
+    "test/parallel/test-internal-webidl-buffer-source.js",
+}
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
@@ -171,6 +270,13 @@ def classify_entry(entry: dict[str, Any]) -> tuple[str, str, str, str]:
             "unsupported",
             "fixture is blocked by upstream, version-specific, or host-platform behavior",
         )
+    if source == "node26_current_broad_pre_run_residual":
+        return (
+            "v8_isolate_required",
+            "node26_current_required_residual",
+            "unsupported",
+            "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
+        )
     if source == "vendored_non_official_placeholder":
         return (
             "test_harness_only",
@@ -179,6 +285,68 @@ def classify_entry(entry: dict[str, Any]) -> tuple[str, str, str, str]:
             "vendored placeholder is not a top-level Application runtime API claim",
         )
     if source == "requires_unpromoted_node_surface":
+        if test_path in HOST_PROCESS_CONTROL_PATHS or any(
+            test_path.startswith(prefix) for prefix in HOST_PROCESS_CONTROL_PREFIXES
+        ):
+            return (
+                "diagnostic_only_non_isolate",
+                "exact_host_process_control_surface",
+                "diagnostic_stub",
+                "fixture requires host process replacement, abort/fatal-exit behavior, native dlopen, raw stdio, signal delivery, uid/gid/group mutation, or warning-file side effects and must fail closed inside the V8 isolate",
+            )
+        if test_path in NODE_CLI_TOPOLOGY_PATHS or any(
+            test_path.startswith(prefix) for prefix in NODE_CLI_TOPOLOGY_PREFIXES
+        ):
+            return (
+                "test_harness_only",
+                "exact_node_cli_or_tooling_topology",
+                "test_harness_emulation",
+                "fixture exercises Node CLI, debug-port, preload-print, proxy CLI, tick-processor, or upstream tooling topology rather than Application runtime API support",
+            )
+        if any(
+            test_path.startswith(prefix) for prefix in NATIVE_ADDON_NODE_API_PREFIXES
+        ):
+            return (
+                "diagnostic_only_non_isolate",
+                "native_addon_node_api_surface",
+                "diagnostic_stub",
+                "fixture loads a compiled Node-API native addon (build/<type>/*.node) through dlopen, which runs host-native machine code outside the V8 isolate and must fail closed unless a host-capable backend is selected",
+            )
+        if test_path in NATIVE_BACKED_OPTIONAL_BUILTIN_PATHS:
+            return (
+                "v8_isolate_optional",
+                "non_required_native_backed_builtin",
+                "unsupported",
+                "fixture exercises the non-required node:sqlite native-backed builtin, which is isolate-safe-capable through a runtime-provided implementation but is not part of the default Application contract in this wave",
+            )
+        if test_path.startswith(NODE_LINT_RULE_HARNESS_PREFIX):
+            return (
+                "test_harness_only",
+                "node_lint_rule_harness",
+                "test_harness_emulation",
+                "fixture drives Node's own ESLint custom-rule harness (tools/eslint-rules with RuleTester and skipIfEslintMissing) rather than Application runtime API behavior",
+            )
+        if test_path in STARTUP_SNAPSHOT_CLI_PATHS:
+            return (
+                "test_harness_only",
+                "startup_snapshot_cli_topology",
+                "test_harness_emulation",
+                "fixture builds and restores a V8 startup snapshot through the common/snapshot CLI subprocess (--build-snapshot/--snapshot-blob) rather than in-isolate Application API behavior",
+            )
+        if test_path in INTERNAL_BOOTSTRAP_TOPOLOGY_PATHS:
+            return (
+                "test_harness_only",
+                "internal_bootstrap_module_topology",
+                "test_harness_emulation",
+                "fixture asserts Node's exact internal bootstrap moduleLoadList rather than a public Application API contract",
+            )
+        if test_path in EXPOSE_INTERNALS_PRIVATE_MODULE_PATHS:
+            return (
+                "v8_isolate_optional",
+                "expose_internals_private_module_surface",
+                "unsupported",
+                "fixture is gated behind --expose-internals and exercises private require('internal/*') modules outside the public Application API surface; isolate-safe but intentionally not exposed, so it is a visible optional gap rather than required support",
+            )
         for keyword in CATEGORY_KEYWORDS["diagnostic_only_non_isolate"]:
             if keyword in haystack:
                 return (
@@ -311,11 +479,19 @@ def build_posture(repo: Path) -> dict[str, Any]:
         "reason_vocabulary": sorted(
             {
                 "host_owned_non_isolate_harness",
+                "exact_host_process_control_surface",
+                "exact_node_cli_or_tooling_topology",
+                "expose_internals_private_module_surface",
+                "internal_bootstrap_module_topology",
                 "legacy_unpromoted_harness_surface",
                 "legacy_unpromoted_host_owned_surface",
                 "legacy_unpromoted_optional_surface",
                 "legacy_unpromoted_required_api_surface",
+                "native_addon_node_api_surface",
+                "node_lint_rule_harness",
+                "non_required_native_backed_builtin",
                 "official_harness_or_support_file",
+                "startup_snapshot_cli_topology",
                 "unknown_legacy_classification",
                 "upstream_or_platform_boundary",
                 "vendored_placeholder",

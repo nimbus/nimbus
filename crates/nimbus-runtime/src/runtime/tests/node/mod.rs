@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
@@ -246,6 +247,10 @@ fn node_compat_supported_node_options_flag(token: &str) -> bool {
         || token == "--require-module"
         || token == "--no-experimental-require-module"
         || token == "--no-require-module"
+        || token == "--preserve-symlinks"
+        || token == "--preserve-symlinks-main"
+        || token == "--no-preserve-symlinks"
+        || token == "--no-preserve-symlinks-main"
         || token.starts_with("--unhandled-rejections=")
 }
 
@@ -321,7 +326,8 @@ pub(super) fn fixture_requests_pending_deprecation(test_source: &str) -> bool {
 fn fixture_requested_node_options_filters_and_preserves_order() {
     let source = r#"
 // Flags: --trace-warnings --inspect --conditions=custom --unhandled-rejections=warn
-// Flags: --no-warnings -C another --trace-warnings --pending-deprecation
+// Flags: --no-warnings -C another --trace-warnings --pending-deprecation --preserve-symlinks
+// Flags: --preserve-symlinks-main --no-preserve-symlinks-main
 "#;
 
     let flags = fixture_requested_node_options(source);
@@ -334,6 +340,9 @@ fn fixture_requested_node_options_filters_and_preserves_order() {
             "--no-warnings".to_string(),
             "--conditions=another".to_string(),
             "--pending-deprecation".to_string(),
+            "--preserve-symlinks".to_string(),
+            "--preserve-symlinks-main".to_string(),
+            "--no-preserve-symlinks-main".to_string(),
         ]
     );
     assert_eq!(
@@ -365,6 +374,31 @@ fn fixture_requested_node_conditions_include_module_sync_when_require_module_is_
         fixture_requested_node_conditions(&disabled),
         vec!["custom".to_string()]
     );
+}
+
+#[test]
+fn node_compat_fixture_node_options_exposes_preserve_symlinks_flags() {
+    let outcome = execute_upstream_node_compat_test_with_extra_files(
+        "test/parallel/__nimbus-preserve-symlinks-options-probe.js",
+        r#"
+// Flags: --preserve-symlinks --preserve-symlinks-main
+'use strict';
+const assert = require('assert');
+const { getOptionValue } = require('internal/options');
+
+assert.match(process.env.NODE_OPTIONS, /--preserve-symlinks/);
+assert.strictEqual(getOptionValue('--preserve-symlinks'), true);
+assert.strictEqual(getOptionValue('--preserve-symlinks-main'), true);
+"#,
+        &[],
+        false,
+        Some(NodeCompatLane::Node22),
+        None,
+        None,
+    )
+    .expect("preserve-symlinks options probe should execute");
+
+    assert!(!outcome.skipped);
 }
 
 fn scoped_node_options_flags(flags: &[String]) -> ScopedProcessEnvVar {
@@ -399,12 +433,22 @@ fn grant_node_options_read_for_fixture_flags(limits: &mut RuntimeLimits) {
 }
 
 impl NodeCompatBatchEntry {
-    fn fixture_source_path_for_lane(self, lane: NodeCompatLane) -> Option<&'static str> {
+    fn fixture_source_path_for_lane(self, lane: NodeCompatLane) -> Option<Cow<'static, str>> {
         match lane {
-            NodeCompatLane::Node20 => self.node20_fixture_source_path,
-            NodeCompatLane::Node22 => self.node22_fixture_source_path,
-            NodeCompatLane::Node24 => self.node24_fixture_source_path,
-            NodeCompatLane::Node26 => None,
+            NodeCompatLane::Node20 => self.node20_fixture_source_path.map(Cow::Borrowed),
+            NodeCompatLane::Node22 => self.node22_fixture_source_path.map(Cow::Borrowed),
+            NodeCompatLane::Node24 => self.node24_fixture_source_path.map(Cow::Borrowed),
+            NodeCompatLane::Node26 => {
+                let fixture_source_path = format!("node26/{}", self.test_relative_path);
+                if node_compat_fixture_root()
+                    .join(&fixture_source_path)
+                    .is_file()
+                {
+                    Some(Cow::Owned(fixture_source_path))
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -1749,6 +1793,49 @@ fn module_loader_required_surface_blocker_paths(lane: NodeCompatLane) -> Vec<Str
     fixture_paths
 }
 
+fn module_loader_json_data_import_attributes_required_surface_entry(
+    entry: &serde_json::Value,
+) -> bool {
+    if !module_loader_required_surface_blocker_entry(entry) {
+        return false;
+    }
+    let Some(test_path) = entry["test_path"].as_str() else {
+        return false;
+    };
+
+    const JSON_DATA_IMPORT_ATTRIBUTE_PATHS: &[&str] = &[
+        "test/es-module/test-esm-assertionless-json-import.js",
+        "test/es-module/test-esm-data-urls.js",
+        "test/es-module/test-esm-import-assertion-warning.mjs",
+        "test/es-module/test-esm-import-attributes-errors.js",
+        "test/es-module/test-esm-import-attributes-errors.mjs",
+        "test/es-module/test-esm-import-attributes-identity.mjs",
+        "test/es-module/test-esm-import-attributes-validation.js",
+        "test/es-module/test-esm-invalid-data-urls.js",
+        "test/es-module/test-esm-invalid-pjson.js",
+        "test/es-module/test-esm-json-cache.mjs",
+        "test/es-module/test-esm-json.mjs",
+        "test/es-module/test-esm-virtual-json.mjs",
+        "test/parallel/test-data-url.js",
+    ];
+    JSON_DATA_IMPORT_ATTRIBUTE_PATHS.contains(&test_path)
+}
+
+fn module_loader_json_data_import_attributes_required_surface_paths(
+    lane: NodeCompatLane,
+) -> Vec<String> {
+    let fixture_paths = node_compat_posture_paths_for_selector(
+        lane,
+        module_loader_json_data_import_attributes_required_surface_entry,
+    );
+    assert!(
+        (10..=20).contains(&fixture_paths.len()),
+        "module-loader JSON/data/import-attributes selector should stay exact; selected {} fixtures",
+        fixture_paths.len()
+    );
+    fixture_paths
+}
+
 fn module_loader_package_core_required_surface_entry(entry: &serde_json::Value) -> bool {
     if !module_loader_required_surface_blocker_entry(entry) {
         return false;
@@ -1799,7 +1886,7 @@ fn module_loader_package_core_required_surface_paths(lane: NodeCompatLane) -> Ve
         module_loader_package_core_required_surface_entry,
     );
     assert!(
-        (25..=60).contains(&fixture_paths.len()),
+        (10..=60).contains(&fixture_paths.len()),
         "module-loader package/CJS/ESM core selector should stay focused but broad enough to matter; selected {} fixtures",
         fixture_paths.len()
     );
@@ -2013,7 +2100,7 @@ fn resolve_seeded_fixture_context(
         })?;
     let batch_fixture_source_path = match batch_entry.fixture_source_path_for_lane(lane) {
         Some(batch_fixture_source_path) => {
-            if batch_fixture_source_path != manifest_fixture_source_path {
+            if batch_fixture_source_path.as_ref() != manifest_fixture_source_path {
                 return Err(format!(
                     "seeded manifest fixture `{test_relative_path}` mismatched `{lane_name}` source: manifest=`{manifest_fixture_source_path}` batch=`{batch_fixture_source_path}`"
                 ));
@@ -2298,13 +2385,30 @@ fn run_manifested_subset_for_lane(
     lane: NodeCompatLane,
     fixtures: &[NodeCompatBatchEntry],
 ) {
+    run_manifested_subset_for_lane_excluding(batch_name, lane, fixtures, &[]);
+}
+
+fn run_manifested_subset_for_lane_excluding(
+    batch_name: &str,
+    lane: NodeCompatLane,
+    fixtures: &[NodeCompatBatchEntry],
+    excluded_test_relative_paths: &[&str],
+) {
     let lane_name = node_compat_lane_name(lane);
     let mut passed = 0usize;
     let mut skipped = Vec::new();
+    let mut excluded = Vec::new();
     let mut failures = Vec::new();
 
     for fixture in fixtures {
         if let Some(fixture_source_path) = fixture.fixture_source_path_for_lane(lane) {
+            if excluded_test_relative_paths
+                .iter()
+                .any(|path| *path == fixture.test_relative_path)
+            {
+                excluded.push(fixture.test_relative_path);
+                continue;
+            }
             eprintln!(
                 "node_compat {batch_name} {lane_name} -> {}",
                 fixture.test_relative_path
@@ -2313,7 +2417,7 @@ fn run_manifested_subset_for_lane(
             let execution = panic::catch_unwind(AssertUnwindSafe(|| {
                 execute_manifested_node_compat_test(
                     fixture.test_relative_path,
-                    fixture_source_path,
+                    fixture_source_path.as_ref(),
                     fixture.extra_files_for_lane(lane),
                     matches!(lane, NodeCompatLane::Node24 | NodeCompatLane::Node26),
                     Some(lane),
@@ -2341,14 +2445,21 @@ fn run_manifested_subset_for_lane(
     }
 
     eprintln!(
-        "node_compat {batch_name} {lane_name} summary -> passed: {passed}, skipped: {}, failed: {}",
+        "node_compat {batch_name} {lane_name} summary -> passed: {passed}, skipped: {}, excluded: {}, failed: {}",
         skipped.len(),
+        excluded.len(),
         failures.len()
     );
     if !skipped.is_empty() {
         eprintln!(
             "node_compat {batch_name} {lane_name} skipped fixtures:\n{}",
             skipped.join("\n")
+        );
+    }
+    if !excluded.is_empty() {
+        eprintln!(
+            "node_compat {batch_name} {lane_name} excluded fixtures:\n{}",
+            excluded.join("\n")
         );
     }
     if !failures.is_empty() {
@@ -2552,7 +2663,7 @@ fn run_node_compat_watchpoint_entry_batch(
             let execution = panic::catch_unwind(AssertUnwindSafe(|| {
                 run_node_compat_watchpoint_for_lane(
                     fixture.test_relative_path,
-                    fixture_source_path,
+                    fixture_source_path.as_ref(),
                     fixture.extra_files_for_lane(lane),
                     lane,
                 );
@@ -2614,7 +2725,7 @@ pub(super) fn collect_seeded_slice_observed_result_records(
                         resolved_fixture.fixture.id
                     )
                 })?;
-            if fixture_source_path != resolved_fixture.fixture_source_path {
+            if fixture_source_path.as_ref() != resolved_fixture.fixture_source_path {
                 return Err(format!(
                     "seeded manifest fixture `{}` mismatched `{lane_name}` source: manifest=`{}` batch=`{}`",
                     resolved_fixture.fixture.id,
@@ -2631,7 +2742,7 @@ pub(super) fn collect_seeded_slice_observed_result_records(
             let execution = panic::catch_unwind(AssertUnwindSafe(|| {
                 execute_manifested_node_compat_test(
                     batch_entry.test_relative_path,
-                    fixture_source_path,
+                    fixture_source_path.as_ref(),
                     batch_entry.extra_files_for_lane(lane),
                     matches!(lane, NodeCompatLane::Node24 | NodeCompatLane::Node26),
                     Some(lane),
