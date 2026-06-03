@@ -12,8 +12,8 @@ LOCK_TABLE="/tmp/nimbus-deno-fork-lock-table.tsv"
 RUNTIME_CRATES="/tmp/nimbus-deno-fork-runtime-crates.txt"
 
 EXPECTED_DENO_REPO="https://github.com/nimbus/deno"
-EXPECTED_DENO_TAG="v2.8.1-nimbus.4"
-EXPECTED_DENO_SHA="a763686522ed525d5cc115bfaa407482cc40dbad"
+EXPECTED_DENO_TAG="v2.8.2-nimbus.1"
+EXPECTED_DENO_SHA="d7befe8b02b4334100e879ed5b8d46b1a9406313"
 EXPECTED_DENO_SOURCE="git+${EXPECTED_DENO_REPO}?tag=${EXPECTED_DENO_TAG}#${EXPECTED_DENO_SHA}"
 
 EXPECTED_V8_REPO="https://github.com/nimbus/rusty_v8"
@@ -24,26 +24,36 @@ EXPECTED_V8_SOURCE="git+${EXPECTED_V8_REPO}?tag=${EXPECTED_V8_TAG}#${EXPECTED_V8
 PATCHED_DENO_CRATES="
 deno_core
 deno_crypto
+deno_crypto_provider
+deno_dotenv
+deno_features
 deno_fetch
 deno_fs
 deno_http
+deno_inspector_server
 deno_io
+deno_maybe_sync
 deno_napi
 deno_net
 deno_node
 deno_node_crypto
 deno_node_sqlite
+deno_ops
 deno_os
 deno_package_json
 deno_permissions
 deno_process
 deno_resolver
+deno_signals
+deno_subprocess_windows
 deno_telemetry
 deno_tls
 deno_web
 deno_webidl
 deno_websocket
 node_resolver
+node_shim
+serde_v8
 "
 
 PASS=0

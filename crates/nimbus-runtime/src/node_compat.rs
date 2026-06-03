@@ -198,6 +198,35 @@ impl NodeRequireLoader for ScopedNodeRequireLoader {
             Some(_) => false,
         })
     }
+
+    fn is_maybe_cjs_from_require(
+        &self,
+        specifier: &Url,
+    ) -> Result<bool, node_resolver::errors::PackageJsonLoadError> {
+        if specifier.scheme() != "file" {
+            return Ok(false);
+        }
+        let Ok(path) = specifier.to_file_path() else {
+            return Ok(false);
+        };
+        let extension = path
+            .extension()
+            .map(|ext| ext.to_string_lossy().to_ascii_lowercase());
+        Ok(match extension.as_deref() {
+            Some("cjs") | Some("cts") => true,
+            Some("mjs") | Some("mts") | Some("json") | Some("wasm") => false,
+            _ => {
+                let Some(package_json) =
+                    self.package_json_resolver.get_closest_package_json(&path)?
+                else {
+                    return Ok(true);
+                };
+                !(package_json_applies_to_path(&path, &package_json.path)
+                    && package_json.typ.as_str() == "module"
+                    && path.extension().is_some())
+            }
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -749,6 +778,62 @@ mod tests {
             classify_resolved_module_kind(&dependency_file, package_json_resolver.as_ref())
                 .expect("dependency module kind should classify"),
             ResolvedNodeModuleKind::EsModule
+        );
+    }
+
+    #[test]
+    fn scoped_require_loader_from_require_respects_package_module_type() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        std::fs::create_dir_all(&app_root).expect("app dir should build");
+        std::fs::write(app_root.join("package.json"), r#"{"type":"module"}"#)
+            .expect("package manifest should write");
+        let module_file = app_root.join("dep.js");
+        std::fs::write(&module_file, "export default 42;\n").expect("module file should write");
+
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
+            .expect("policy should build");
+        let package_json_resolver = build_package_json_resolver();
+        let loader = ScopedNodeRequireLoader::new(policy, package_json_resolver);
+        let specifier = Url::from_file_path(&module_file).expect("module path should become a url");
+
+        assert!(
+            !loader
+                .is_maybe_cjs_from_require(&specifier)
+                .expect("module should classify")
+        );
+    }
+
+    #[test]
+    fn scoped_require_loader_from_require_does_not_inherit_parent_module_type() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let package_root = app_root.join("package-type-module");
+        let dependency_root = package_root.join("node_modules/dep-without-package-json");
+        std::fs::create_dir_all(&dependency_root).expect("dependency dir should build");
+        std::fs::write(package_root.join("package.json"), r#"{"type":"module"}"#)
+            .expect("parent package manifest should write");
+        let dependency_file = dependency_root.join("dep.js");
+        std::fs::write(&dependency_file, "module.exports = 42;\n")
+            .expect("dependency file should write");
+
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
+            .expect("policy should build");
+        let package_json_resolver = build_package_json_resolver();
+        let loader = ScopedNodeRequireLoader::new(policy, package_json_resolver);
+        let specifier =
+            Url::from_file_path(&dependency_file).expect("dependency path should become a url");
+
+        assert!(
+            loader
+                .is_maybe_cjs_from_require(&specifier)
+                .expect("dependency should classify")
         );
     }
 
