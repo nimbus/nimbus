@@ -204,9 +204,14 @@ EXPOSE_INTERNALS_PRIVATE_MODULE_PATHS = {
 
 # NDS3 second denominator cleanup wave (workflow wf_54971f1d-74d): per-fixture
 # evidence-classified, adversarially verified, and lead spot-checked. Each path
-# below was confirmed in source as non-public-isolate Application API
-# (top-level require('internal/*'), spawned execPath child, --permission gate,
-# --allow-natives-syntax/platform skip, native addon, SEA, or doc harness).
+# below carries a confirmed BLOCKING signal that prevents the whole fixture from
+# running as default-isolate public Application API (top-level
+# require('internal/*'), spawned execPath child, --permission gate,
+# --allow-natives-syntax/platform skip, native addon, SEA, or doc harness). Some
+# are MIXED fixtures (e.g. test-process-env, test-blob, test-eventtarget,
+# test-esm-import-meta-resolve) that also contain public-API assertions; reclassi-
+# fying the whole fixture is defensible only because the blocking tail gates the
+# file and the related public surfaces remain visible elsewhere as required gaps.
 # Keyed by (support_denominator, reason_code, shim_classification).
 NDS3_WAVE2_RECLASSIFICATIONS = {
     ('diagnostic_only_non_isolate', 'child_process_host_output_topology', 'diagnostic_stub'): frozenset({
