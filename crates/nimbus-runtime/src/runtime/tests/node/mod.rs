@@ -1898,6 +1898,35 @@ fn async_hooks_required_gap_path(test_path: &str) -> bool {
         || test_path.starts_with("test/parallel/test-async-hooks")
 }
 
+/// async_hooks required-gap fixtures that bind a real TCP/UDP/TLS socket or
+/// drive an HTTP parser over a live connection. In a FaaS isolate these park
+/// the single-threaded executor on the blocking bind, so the in-process soft
+/// wall-clock can never fire and the whole batch hangs (the summary writes only
+/// at batch end, so one park suppresses the summary for every fixture). They
+/// are the structural-networking tension owned separately from the promise/
+/// timer/resource lifecycle closure; excluding them lets the non-blocking batch
+/// complete and emit an honest summary.
+const ASYNC_HOOKS_SOCKET_BIND_BLOCKING_PATHS: &[&str] = &[
+    "test/async-hooks/test-async-exec-resource-http-32060.js",
+    "test/async-hooks/test-async-exec-resource-http-agent.js",
+    "test/async-hooks/test-async-exec-resource-http.js",
+    "test/async-hooks/test-graph.http.js",
+    "test/async-hooks/test-graph.tcp.js",
+    "test/async-hooks/test-graph.tls-write-12.js",
+    "test/async-hooks/test-graph.tls-write.js",
+    "test/async-hooks/test-httpparser-reuse.js",
+    "test/async-hooks/test-httpparser.request.js",
+    "test/async-hooks/test-httpparser.response.js",
+    "test/async-hooks/test-tcpwrap.js",
+    "test/async-hooks/test-tlswrap.js",
+    "test/parallel/test-async-hooks-http-parser-destroy.js",
+];
+
+fn async_hooks_nonblocking_required_gap_path(test_path: &str) -> bool {
+    async_hooks_required_gap_path(test_path)
+        && !ASYNC_HOOKS_SOCKET_BIND_BLOCKING_PATHS.contains(&test_path)
+}
+
 fn webcrypto_required_gap_path(test_path: &str) -> bool {
     test_path.starts_with("test/parallel/test-webcrypto")
 }

@@ -2120,6 +2120,38 @@ fn node24_default_lane_async_hooks_required_gap_watchpoint() {
     );
 }
 
+#[test]
+#[ignore = "NDS3 P3 measure: async_hooks required-gap fixtures with the socket-bind networking subset excluded, so the batch completes and writes an honest summary on the v2.8.2-nimbus.2 promise-lifecycle wiring; the excluded networking fixtures are the structural-networking tension owned separately"]
+fn node22_supported_lane_async_hooks_nonblocking_required_gap_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node22,
+        async_hooks_nonblocking_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-async-hooks-nonblocking-required-gap-watchpoint",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 P3 measure: async_hooks required-gap fixtures with the socket-bind networking subset excluded, so the batch completes and writes an honest summary on the v2.8.2-nimbus.2 promise-lifecycle wiring; the excluded networking fixtures are the structural-networking tension owned separately"]
+fn node24_default_lane_async_hooks_nonblocking_required_gap_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node24,
+        async_hooks_nonblocking_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-async-hooks-nonblocking-required-gap-watchpoint",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
 const WEBCRYPTO_REQUIRED_GAP_COMMON_EXTRA_DIRS: &[&str] = &[
     "test/common",
     "test/fixtures/crypto",
