@@ -875,6 +875,7 @@ function runtimeNodePlatform() {
 }
 
 const nimbusProcessCwdPatched = Symbol("nimbus.processCwdPatched");
+const nimbusProcessStdioPatched = Symbol("nimbus.processStdioPatched");
 let nimbusRuntimeCurrentCwd = null;
 
 function seedNodeProcessCwd(nodeProcess) {
@@ -971,18 +972,37 @@ function seedNodeProcessStdio(nodeProcess) {
   if (!nodeProcess || typeof nodeProcess !== "object") {
     return;
   }
-
-  if (nodeProcess.stdin === undefined) {
-    nodeProcess.stdin = initStdin(false);
+  if (nodeProcess[nimbusProcessStdioPatched] === true) {
+    return;
   }
 
-  if (nodeProcess.stdout === undefined) {
-    nodeProcess.stdout = createWritableStdioStream(io.stdout, "stdout");
-  }
+  // The deno_node `node:process` polyfill installs self-delegating Proxy
+  // placeholders for stdin/stdout/stderr (`makeStreamDelegate`) as plain data
+  // properties at module top-level, and expects
+  // `internals.__bootstrapNodeProcess` to replace them with real lazy-stream
+  // accessors (`defineLazyStream`). Nimbus's FaaS bootstrap does not run
+  // `__bootstrapNodeProcess`, so we materialize the real streams here,
+  // mirroring that bootstrap's warmup branch.
+  //
+  // The overwrite MUST be unconditional. The placeholder is a data property
+  // holding the Proxy (never `undefined`, so the previous `=== undefined`
+  // guard never fired), and the Proxy's `get` trap reads `process[name]` and
+  // `ReflectGet`s on it. While the property still points at the Proxy, any
+  // `process.stdout.write(...)` re-enters the trap forever (`RangeError:
+  // Maximum call stack size exceeded`). Pointing the property at the real
+  // stream fixes both `process.stdout` and the exported `stdout` binding (the
+  // latter delegates through `process[name]` in a single, terminating hop).
+  // The marker keeps the two call sites (nodeGlobals + globalThis) idempotent
+  // so we construct each stream once.
+  nodeProcess.stdin = initStdin(false);
+  nodeProcess.stdout = createWritableStdioStream(io.stdout, "stdout");
+  nodeProcess.stderr = createWritableStdioStream(io.stderr, "stderr");
 
-  if (nodeProcess.stderr === undefined) {
-    nodeProcess.stderr = createWritableStdioStream(io.stderr, "stderr");
-  }
+  Object.defineProperty(nodeProcess, nimbusProcessStdioPatched, {
+    value: true,
+    enumerable: false,
+    configurable: true,
+  });
 }
 
 function seedNodeProcessExecPath(nodeProcess) {
