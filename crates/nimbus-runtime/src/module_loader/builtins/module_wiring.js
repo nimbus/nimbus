@@ -167,32 +167,11 @@ function _resolveFilename(...args) {
   return Module._resolveFilename(...args);
 }
 
-function maybeEmitDeprecatedBuiltinWarning(specifier) {
-  if (typeof specifier !== "string") {
-    return;
-  }
-
-  const normalizedSpecifier = specifier.startsWith("node:")
-    ? specifier.slice(5)
-    : specifier;
-  const warning = DEPRECATED_REQUIRE_WARNINGS[normalizedSpecifier];
-  if (!warning) {
-    return;
-  }
-
-  globalThis.process?.emitWarning?.(
-    warning.message,
-    "DeprecationWarning",
-    warning.code,
-  );
-}
-
 function createRequire(filenameOrUrl) {
   const require = denoCreateRequire(filenameOrUrl);
   return new Proxy(require, {
     apply(target, thisArg, args) {
       const request = args[0];
-      maybeEmitDeprecatedBuiltinWarning(request);
       if (isPerfHooksSpecifier(request)) {
         return globalThis.__nimbusPerfHooksBuiltin;
       }

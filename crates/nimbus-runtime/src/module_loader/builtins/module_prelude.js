@@ -7,14 +7,6 @@ import {
 } from "ext:deno_node/internal/fs/streams.mjs";
 import { getBinding as getNodeInternalBinding } from "ext:deno_node/internal_binding/mod.ts";
 
-const DEPRECATED_REQUIRE_WARNINGS = Object.freeze({
-  punycode: Object.freeze({
-    code: "DEP0040",
-    message:
-      "The `punycode` module is deprecated. Please use a userland alternative instead.",
-  }),
-});
-
 const processModule = globalThis.process;
 const Module = processModule?.getBuiltinModule?.("module");
 if (!Module) {
