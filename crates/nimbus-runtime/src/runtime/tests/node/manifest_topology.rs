@@ -169,7 +169,7 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
                 ),
                 (
                     "node24",
-                    "runtime::tests::node_compat::node24_default_lane_core_semantics_watchpoint",
+                    "runtime::tests::node_compat::node24_default_lane_executes_core_semantics_subset",
                 ),
             ],
         ),
@@ -211,7 +211,7 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
                 ),
                 (
                     "node24",
-                    "runtime::tests::node_compat::node24_default_lane_streams_and_local_io_watchpoint",
+                    "runtime::tests::node_compat::node24_default_lane_executes_streams_and_local_io_subset",
                 ),
             ],
         ),
@@ -253,7 +253,7 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
                 ),
                 (
                     "node24",
-                    "runtime::tests::node_compat::node24_default_lane_loader_context_watchpoint",
+                    "runtime::tests::node_compat::node24_default_lane_executes_loader_context_subset",
                 ),
             ],
         ),
@@ -641,6 +641,11 @@ fn node_compat_named_preludes_catalog_matches_default_behavior_registry() {
         (
             "test/parallel/test-worker-ref.js",
             Some(NodeCompatNamedPostludeBehavior::ProcessBeforeExitReentry),
+        ),
+        // `.on('beforeExit')` against an already-settled loop -> emit once.
+        (
+            "test/async-hooks/test-async-await.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
         ),
         ("test/parallel/test-buffer-equals.js", None),
     ];

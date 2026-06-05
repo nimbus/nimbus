@@ -16,7 +16,7 @@
     },
     {
       "lane": "node24",
-      "subset_test": "runtime::tests::node_compat::node24_default_lane_loader_context_watchpoint"
+      "subset_test": "runtime::tests::node_compat::node24_default_lane_executes_loader_context_subset"
     }
   ],
   "manifest_doc": "docs/architecture/runtime/node-lts-compat/manifests/loader-context.md",

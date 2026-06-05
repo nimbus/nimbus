@@ -3,6 +3,24 @@ use crate::error::{NimbusRuntimeError, Result};
 
 const DENO_HOST_CALL_TRANSPORT_SOURCE: &str = r#"
 const __nimbusCoreOps = Deno.core.ops;
+// Capture Deno.core.runImmediates before POST_BOOTSTRAP_SOURCE deletes
+// globalThis.Deno. The spawn-emulation postlude (render.rs) uses this to
+// drain async_hooks' deferred destroy queue: a GC'd AsyncResource enqueues an
+// unref'd, hook-suppressed "destroy drain" immediate via a FinalizationRegistry,
+// and runImmediates() runs drainDestroyAsyncIds() at the top of its body plus
+// that suppressed immediate. Because the harness synthesizes the process "exit"
+// / mustCall check synchronously, the deferred destroy hooks must be flushed
+// here before that check fires. runImmediates() creates no new hooked async
+// resource (the drain immediate's before/after/destroy are suppressed), so this
+// is a no-op when nothing is pending and never pollutes strict hook accounting.
+Object.defineProperty(globalThis, "__nimbusDrainImmediates", {
+  value: typeof Deno.core.runImmediates === "function"
+    ? Deno.core.runImmediates
+    : null,
+  configurable: true,
+  enumerable: false,
+  writable: true,
+});
 globalThis.__nimbusSyncHostValue = function(opName, payload) {
   const operation = __nimbusCoreOps[opName];
   if (typeof operation !== "function") {

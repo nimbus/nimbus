@@ -2693,9 +2693,7 @@ fn http_remaining_diagnostic_excluded_path(path: &str) -> bool {
         || path.contains("cluster")
         || path.contains("leak")
         || path.contains("gc")
-        || HTTP_REMAINING_DIAGNOSTIC_EXCLUDED_PATHS
-            .iter()
-            .any(|excluded_path| path == *excluded_path)
+        || HTTP_REMAINING_DIAGNOSTIC_EXCLUDED_PATHS.contains(&path)
 }
 
 fn http_remaining_diagnostic_paths(lane: NodeCompatLane) -> Vec<String> {

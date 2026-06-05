@@ -1534,11 +1534,19 @@ globalThis.__nimbusInvoke = async function () {{
   let __nimbusOriginalCwdDescriptor = null;
   const __nimbusProcessExitCodeFromError = (error) => {{
 const marker = "__NIMBUS_NODE_COMPAT_PROCESS_EXIT__:";
-if (error?.code !== "NIMBUS_NODE_COMPAT_PROCESS_EXIT") {{
-  return null;
-}}
 const rendered =
   typeof error?.message === "string" ? error.message : String(error);
+// A nested-async process.exit() can surface the sentinel as a re-thrown
+// wrapper whose `.code` was lost across the await boundary, while the
+// marker survives in the message. Accept either the code tag or the
+// message marker so the exit code still routes instead of dropping to a
+// generic failure. This only WIDENS detection.
+if (
+  error?.code !== "NIMBUS_NODE_COMPAT_PROCESS_EXIT" &&
+  !rendered.includes(marker)
+) {{
+  return null;
+}}
 const markerIndex = rendered.indexOf(marker);
 if (markerIndex < 0) {{
   return Number(process.exitCode ?? 0);
@@ -1578,6 +1586,18 @@ if (error && __nimbusLastAsyncFatalError === error) {{
   return;
 }}
 __nimbusLastAsyncFatalError = error;
+const __nimbusAsyncExitCode = __nimbusProcessExitCodeFromError(error);
+if (__nimbusAsyncExitCode !== null) {{
+  // A `process.exit()` routed through our reallyExit override throws the
+  // `__NIMBUS_NODE_COMPAT_PROCESS_EXIT__` sentinel. When the exit happens
+  // inside an async continuation (e.g. a child fixture exiting after a
+  // caught stack overflow) the throw surfaces here as an uncaught
+  // exception rather than at the synchronous try/catch below. Honor the
+  // requested exit code instead of treating our own sentinel as a fatal
+  // error and writing its stack to stderr.
+  code = __nimbusAsyncExitCode;
+  return;
+}}
 if (__nimbusReporterFailureArmed) {{
   __nimbusAppendAsyncReporterFatalError(error);
   return;
@@ -1616,6 +1636,28 @@ globalThis.url = require("node:url");
 process.execPath = {process_exec_path};
 if (Array.isArray(process.argv) && process.argv.length > 0) {{
   process.argv[0] = {process_exec_path};
+}}
+if (
+  typeof process === "object" &&
+  process !== null &&
+  typeof process.reallyExit === "function"
+) {{
+  // deno_node's `process.reallyExit` calls `Deno.exit`, which the Nimbus
+  // runtime does not expose, so any code path that reaches the native exit
+  // (e.g. a child fixture calling `process.exit()` after its assertions, or
+  // the post-handler exit) throws "Deno.exit is not a function" and the child
+  // exits 1 instead of its intended code. Route reallyExit through the same
+  // `__NIMBUS_NODE_COMPAT_PROCESS_EXIT__` marker the harness already consumes
+  // so the intended exit code is preserved.
+  process.reallyExit = (reallyExitCode) => {{
+    const resolvedExitCode = reallyExitCode ?? process.exitCode ?? 0;
+    process.exitCode = resolvedExitCode;
+    const exitError = new Error(
+      `__NIMBUS_NODE_COMPAT_PROCESS_EXIT__:${{resolvedExitCode}}`,
+    );
+    exitError.code = "NIMBUS_NODE_COMPAT_PROCESS_EXIT";
+    throw exitError;
+  }};
 }}
 {exec_argv_setup}
 {process_title_setup}

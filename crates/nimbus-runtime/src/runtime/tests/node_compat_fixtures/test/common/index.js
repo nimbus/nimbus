@@ -600,6 +600,24 @@ const nimbusForkWorkers = new Set();
 const nimbusForkWorkerCompletions = new Set();
 const nimbusAsyncChildProcessCompletions = new Set();
 
+// Harness-internal drain resources (a resolved promise, a queueMicrotask
+// promise, a nextTick TickObject, a setTimeout(0)) created while waiting for
+// child/fork completions must stay invisible to fixture async-hooks. Bracket
+// each resource CREATION in an incPromiseHooksSuppressed window so the fork's
+// emitInitNative records the id in suppressedAsyncIds and then skips its whole
+// before/after/destroy lifecycle. The `await` stays OUTSIDE the window so the
+// event loop still pumps. Mirrors the post-exec drain script in
+// crates/nimbus-runtime/src/runtime/tests/node/mod.rs.
+const __nimbusSuppressDrainInit = (make) => {
+  const core = globalThis.Deno?.core;
+  core?.incPromiseHooksSuppressed?.();
+  try {
+    return make();
+  } finally {
+    core?.decPromiseHooksSuppressed?.();
+  }
+};
+
 async function flushNimbusChildProcesses() {
   const deadline = Date.now() + 1000;
 
@@ -608,10 +626,14 @@ async function flushNimbusChildProcesses() {
       nimbusForkWorkerCompletions.size === 0 &&
       nimbusAsyncChildProcessCompletions.size === 0
     ) {
-      await Promise.resolve();
-      await new Promise((resolve) => queueMicrotask(resolve));
+      await __nimbusSuppressDrainInit(() => Promise.resolve());
+      await __nimbusSuppressDrainInit(
+        () => new Promise((resolve) => queueMicrotask(resolve)),
+      );
       if (typeof process.nextTick === 'function') {
-        await new Promise((resolve) => process.nextTick(resolve));
+        await __nimbusSuppressDrainInit(
+          () => new Promise((resolve) => process.nextTick(resolve)),
+        );
       }
       if (
         nimbusForkWorkerCompletions.size === 0 &&
@@ -628,7 +650,9 @@ async function flushNimbusChildProcesses() {
     if (Date.now() >= deadline) {
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await __nimbusSuppressDrainInit(
+      () => new Promise((resolve) => setTimeout(resolve, 0)),
+    );
   }
 }
 
@@ -657,7 +681,16 @@ function canUseNimbusSpawnSync(command, args = [], options = {}) {
     (options == null || typeof options === 'object') &&
     (options.stdio === undefined || options.stdio === 'pipe') &&
     options.shell !== true &&
-    options.timeout === undefined &&
+    // A positive finite timeout is an upper bound the in-process host op (which
+    // runs synchronously to completion and carries no timeout field) can never
+    // reach, so it is safe to ignore and still route in-process. Fixtures that
+    // pass `timeout: 30000` to spawnSync(process.execPath, ...) (e.g. the
+    // async-hooks stack-overflow trio) must not fall through to the real,
+    // unsupported runtime spawn that returns `status: undefined`.
+    (options.timeout === undefined ||
+      (typeof options.timeout === 'number' &&
+        Number.isFinite(options.timeout) &&
+        options.timeout > 0)) &&
     options.uid === undefined &&
     options.gid === undefined;
 }
@@ -748,6 +781,108 @@ function runNimbusSpawnSync(command, args = [], options = {}) {
       error,
     };
   }
+}
+
+// Case 3 of test/async-hooks/test-callback-error.js (and the abort-shell
+// fixtures) re-exec `process.execPath` through a POSIX shell wrapper of the
+// shape `ulimit -c 0 && exec "<exe>" <args...>` with `options.shell === true`,
+// passing `--abort-on-uncaught-exception` so Node aborts with SIGABRT on the
+// child's uncaught throw. The in-process host op cannot abort the V8 isolate,
+// so the harness recovers the real exec target + argv from the shell string,
+// runs the child in-process (minus the abort flag, which the Rust arg parser
+// does not accept), and reinterprets the resulting non-zero exit as the
+// SIGABRT signal Node would have raised. Returns the spawnSync-shaped result,
+// or null when the command is not this execPath abort-shell shape (callers
+// then fall through to the real shell spawn, e.g. `echo`/`does-not-exist`).
+function tryRunNimbusAbortShell(command, args, options) {
+  if (
+    typeof globalThis.__nimbusSyncHostValue !== 'function' ||
+    options == null ||
+    typeof options !== 'object' ||
+    options.shell !== true ||
+    typeof command !== 'string' ||
+    (Array.isArray(args) && args.length > 0)
+  ) {
+    return null;
+  }
+
+  // Substitute ${VAR} / $VAR tokens from options.env (escapePOSIXShell stores
+  // the real, unescaped argument values there as ESCAPED_n entries).
+  const shellEnv =
+    options.env && typeof options.env === 'object' ? options.env : {};
+  const substituted = command.replace(
+    /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
+    (match, braced, bare) => {
+      const name = braced ?? bare;
+      const value = shellEnv[name];
+      return typeof value === 'string' ? value : '';
+    },
+  );
+
+  // Tokenize the shell string honoring single/double quotes; this is a
+  // deliberately small parser scoped to the `ulimit ... && exec "..." ...`
+  // shape, not a general shell.
+  const tokens = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  let sawToken = false;
+  for (let i = 0; i < substituted.length; i += 1) {
+    const ch = substituted[i];
+    if (inSingle) {
+      if (ch === "'") { inSingle = false; } else { current += ch; }
+      continue;
+    }
+    if (inDouble) {
+      if (ch === '"') { inDouble = false; } else { current += ch; }
+      continue;
+    }
+    if (ch === "'") { inSingle = true; sawToken = true; continue; }
+    if (ch === '"') { inDouble = true; sawToken = true; continue; }
+    if (ch === ' ' || ch === '\t' || ch === '\n') {
+      if (sawToken) { tokens.push(current); current = ''; sawToken = false; }
+      continue;
+    }
+    current += ch;
+    sawToken = true;
+  }
+  if (sawToken) { tokens.push(current); }
+  if (inSingle || inDouble) {
+    return null;
+  }
+
+  // Drop a leading `ulimit -c 0` clause and any `&&` / `;` separators, then a
+  // leading `exec`, to reach `<exe> <args...>`.
+  let index = 0;
+  if (tokens[index] === 'ulimit') {
+    while (index < tokens.length && tokens[index] !== '&&' && tokens[index] !== ';') {
+      index += 1;
+    }
+    if (index < tokens.length) { index += 1; }
+  }
+  if (tokens[index] === 'exec') { index += 1; }
+  const execTarget = tokens[index];
+  if (typeof execTarget !== 'string' || !isNimbusNodeCompatCommand(execTarget)) {
+    return null;
+  }
+  const execArgs = tokens.slice(index + 1);
+
+  // The abort flag is the SIGABRT trigger; strip it (the Rust arg parser
+  // rejects it) and route the remaining script invocation in-process.
+  const abortMode = execArgs.includes('--abort-on-uncaught-exception');
+  const childArgs = execArgs.filter(
+    (value) => value !== '--abort-on-uncaught-exception',
+  );
+
+  const inProcessOptions = { ...options };
+  delete inProcessOptions.shell;
+  const result = runNimbusSpawnSync(execTarget, childArgs, inProcessOptions);
+
+  if (abortMode && typeof result.status === 'number' && result.status !== 0) {
+    result.status = null;
+    result.signal = 'SIGABRT';
+  }
+  return result;
 }
 
 function encodeNimbusAsyncSpawnEnv(options = {}) {
@@ -1704,6 +1839,10 @@ function installChildProcessShim() {
     if (canUseNimbusSpawnSync(command, args, options)) {
       return runNimbusSpawnSync(command, args, options);
     }
+    const abortShellResult = tryRunNimbusAbortShell(command, args, options);
+    if (abortShellResult !== null) {
+      return abortShellResult;
+    }
     return originalSpawnSync.apply(this, arguments);
   };
   childProcess.execFileSync = function nimbusHarnessExecFileSync(command, args, options) {
@@ -1848,7 +1987,32 @@ function spawnPromisified(command, args = [], options = {}) {
   });
 }
 
+// Escapes command line arguments for a POSIX shell (or returns the string
+// unchanged on Windows). Used as a tagged template; returns an array
+// `[command, options?]` suitable to spread into `exec`/`execSync`/`spawnSync`.
+// Ported verbatim from upstream test/common/index.js, referencing the local
+// `isWindows` binding instead of `common.isWindows` (this synthetic harness
+// exports a plain object rather than the upstream Proxy form).
+function escapePOSIXShell(cmdParts, ...args) {
+  if (isWindows) {
+    // On Windows, paths cannot contain `"`, so we can return the string unchanged.
+    return [String.raw({ raw: cmdParts }, ...args)];
+  }
+  // On POSIX shells, we can pass values via the env, as there's a standard way
+  // for referencing a variable.
+  const env = { ...process.env };
+  let cmd = cmdParts[0];
+  for (let i = 0; i < args.length; i++) {
+    const envVarName = `ESCAPED_${i}`;
+    env[envVarName] = args[i];
+    cmd += '${' + envVarName + '}' + cmdParts[i + 1];
+  }
+
+  return [cmd, { env }];
+}
+
 module.exports = {
+  escapePOSIXShell,
   hasCrypto,
   hasOpenSSL,
   hasSQLite,

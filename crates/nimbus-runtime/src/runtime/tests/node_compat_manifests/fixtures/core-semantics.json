@@ -16,7 +16,7 @@
     },
     {
       "lane": "node24",
-      "subset_test": "runtime::tests::node_compat::node24_default_lane_core_semantics_watchpoint"
+      "subset_test": "runtime::tests::node_compat::node24_default_lane_executes_core_semantics_subset"
     }
   ],
   "manifest_doc": "docs/architecture/runtime/node-lts-compat/manifests/core-semantics.md",

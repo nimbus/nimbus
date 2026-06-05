@@ -16,7 +16,7 @@
     },
     {
       "lane": "node24",
-      "subset_test": "runtime::tests::node_compat::node24_default_lane_streams_and_local_io_watchpoint"
+      "subset_test": "runtime::tests::node_compat::node24_default_lane_executes_streams_and_local_io_subset"
     }
   ],
   "manifest_doc": "docs/architecture/runtime/node-lts-compat/manifests/streams-and-local-io.md",

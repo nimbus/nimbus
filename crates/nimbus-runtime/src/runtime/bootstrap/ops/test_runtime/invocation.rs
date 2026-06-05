@@ -84,13 +84,26 @@ pub(super) fn runtime_test_spawn_result_from_value(
                 "node_compat subprocess result should deserialize: {error}"
             ))
         }),
-        Err(error) => Ok(RuntimeTestSpawnResult {
-            pid: 0,
-            code: 1,
-            stdout: String::new(),
-            stderr: format!("{error}\n"),
-            signal: None,
-        }),
+        Err(error) => {
+            // A child runtime that throws an uncaught JS exception must surface
+            // Node-identical stderr (`Error: <msg>`), not the Nimbus-internal
+            // `runtime JavaScript error: ` Display prefix that engine/host trace
+            // snapshots and `classify_runtime_error` rely on. Strip the prefix
+            // for the JavaScript variant only, by formatting its inner message;
+            // every other variant keeps its full Display so timeout / heap /
+            // capability / integrity diagnostics are unchanged.
+            let stderr = match error {
+                crate::error::NimbusRuntimeError::JavaScript(message) => format!("{message}\n"),
+                other => format!("{other}\n"),
+            };
+            Ok(RuntimeTestSpawnResult {
+                pid: 0,
+                code: 1,
+                stdout: String::new(),
+                stderr,
+                signal: None,
+            })
+        }
     }
 }
 
@@ -101,4 +114,55 @@ pub(super) fn runtime_test_spawn_envelope(
         value: serde_json::to_value(result)
             .map_err(|error| JsErrorBox::generic(error.to_string()))?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::NimbusRuntimeError;
+    use std::time::Duration;
+
+    #[test]
+    fn javascript_error_stderr_matches_node_uncaught_shape() {
+        // A thrown `Error: test_callback` in the child must surface as Node does
+        // (`Error: test_callback`), without the Nimbus `runtime JavaScript error: `
+        // Display prefix — this is what test/async-hooks/test-callback-error.js
+        // asserts on `child.stderr.split(/[\r\n]+/g)[0]`.
+        let result = runtime_test_spawn_result_from_value(Err(NimbusRuntimeError::JavaScript(
+            "Error: test_callback".to_string(),
+        )))
+        .expect("error arm always yields a spawn result");
+        let first_line = result.stderr.split(['\r', '\n']).next().unwrap_or_default();
+        assert_eq!(first_line, "Error: test_callback");
+        assert_eq!(result.code, 1);
+    }
+
+    #[test]
+    fn non_javascript_error_stderr_keeps_full_display() {
+        // Non-JS variants must retain their full Display so timeout / heap /
+        // capability / integrity diagnostics are not silently truncated.
+        let result = runtime_test_spawn_result_from_value(Err(
+            NimbusRuntimeError::ExecutionTimeout(Duration::from_secs(5)),
+        ))
+        .expect("error arm always yields a spawn result");
+        assert!(
+            result
+                .stderr
+                .starts_with("runtime execution timed out after"),
+            "timeout diagnostic must keep its prefix, got: {:?}",
+            result.stderr
+        );
+    }
+
+    #[test]
+    fn javascript_error_message_containing_prefix_phrase_is_untouched() {
+        // Variant-matched, not a blind string trim: a user message that happens
+        // to contain the phrase keeps its own text verbatim after the strip.
+        let result = runtime_test_spawn_result_from_value(Err(NimbusRuntimeError::JavaScript(
+            "Error: runtime JavaScript error: nested".to_string(),
+        )))
+        .expect("error arm always yields a spawn result");
+        let first_line = result.stderr.split(['\r', '\n']).next().unwrap_or_default();
+        assert_eq!(first_line, "Error: runtime JavaScript error: nested");
+    }
 }
