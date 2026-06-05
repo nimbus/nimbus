@@ -2032,10 +2032,53 @@ const ASYNC_HOOKS_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-async-hooks-prevent-double-destroy.js",
     "test/parallel/test-async-hooks-run-in-async-scope-caught-exception.js",
     "test/parallel/test-async-hooks-vm-gc.js",
+    // NDS3 v2.8.2-nimbus.4 promotion wave (ground-truth verified on the repinned
+    // fork plus the op_nimbus_runtime_test_force_gc `reentrant` fix that unblocks
+    // GC-destroy hooks creating async ids). Each path below passed the node22 AND
+    // node24 nonblocking async-hooks required-gap watchpoint.
+    "test/async-hooks/test-async-await.js",
+    "test/async-hooks/test-async-exec-resource-match.js",
+    "test/async-hooks/test-async-local-storage-async-functions.js",
+    "test/async-hooks/test-async-local-storage-errors.js",
+    "test/async-hooks/test-async-local-storage-gcable.js",
+    "test/async-hooks/test-async-wrap-providers.js",
+    "test/async-hooks/test-callback-error.js",
+    "test/async-hooks/test-destroy-not-blocked.js",
+    "test/async-hooks/test-disable-in-init.js",
+    "test/async-hooks/test-embedder.api.async-resource.js",
+    "test/async-hooks/test-emit-init.js",
+    "test/async-hooks/test-enable-disable.js",
+    "test/async-hooks/test-enable-in-init.js",
+    "test/async-hooks/test-fsreqcallback-readFile.js",
+    "test/async-hooks/test-getaddrinforeqwrap.js",
+    "test/async-hooks/test-getnameinforeqwrap.js",
+    "test/async-hooks/test-late-hook-enable.js",
+    "test/async-hooks/test-nexttick-default-trigger.js",
+    "test/async-hooks/test-promise.js",
+    "test/async-hooks/test-promise.promise-before-init-hooks.js",
+    "test/async-hooks/test-querywrap.js",
+    "test/async-hooks/test-queue-microtask.js",
+    "test/async-hooks/test-shutdownwrap.js",
+    "test/async-hooks/test-statwatcher.js",
+    "test/async-hooks/test-timers.setInterval.js",
+    "test/async-hooks/test-unhandled-rejection-context.js",
+    "test/async-hooks/test-writewrap.js",
+    "test/parallel/test-async-hooks-fatal-error.js",
+    "test/parallel/test-async-hooks-stack-overflow-nested-async.js",
+    "test/parallel/test-async-hooks-stack-overflow.js",
+    "test/parallel/test-async-hooks-top-level-clearimmediate.js",
 ];
 
-const ASYNC_HOOKS_PROMOTED_NODE24_ONLY_PATHS: &[&str] =
-    &["test/parallel/test-async-hooks-enabledhooksexits.js"];
+const ASYNC_HOOKS_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
+    "test/parallel/test-async-hooks-enabledhooksexits.js",
+    // NDS3 v2.8.2-nimbus.4 promotion wave: Node24-line promise-tracking surface,
+    // ground-truth verified on the node24 nonblocking async-hooks watchpoint.
+    "test/async-hooks/test-track-promises-default.js",
+    "test/async-hooks/test-track-promises-false-check.js",
+    "test/async-hooks/test-track-promises-false.js",
+    "test/async-hooks/test-track-promises-true.js",
+    "test/async-hooks/test-track-promises-validation.js",
+];
 
 #[test]
 fn node22_async_hooks_enable_recursive_fsreqcallback_regression() {

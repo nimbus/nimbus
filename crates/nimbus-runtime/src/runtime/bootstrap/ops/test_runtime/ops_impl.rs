@@ -49,7 +49,15 @@ pub(in super::super) fn op_nimbus_runtime_test_spawn_sync(
     runtime_test_spawn_envelope(result?)
 }
 
-#[op2]
+// Marked `reentrant` because the body drives `run_foreground_tasks` and
+// `perform_microtask_checkpoint`, which run JS that legitimately re-enters
+// other ops -- notably `op_node_new_async_id` when async-hooks GC-destroy
+// registries fire and allocate new async resources during destroy callbacks.
+// Without this, deno_core's op-reentrancy guard hits a non-unwinding panic
+// (-> SIGABRT) the moment a destroy hook creates an async id, which is exactly
+// what the async-hooks GC fixtures (e.g. test-async-local-storage-gcable.js)
+// exercise.
+#[op2(reentrant)]
 #[serde]
 pub(in super::super) fn op_nimbus_runtime_test_force_gc(
     scope: &mut v8::PinScope,
