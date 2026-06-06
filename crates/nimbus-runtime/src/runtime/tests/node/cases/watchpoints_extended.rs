@@ -2339,6 +2339,80 @@ fn node24_default_lane_executes_nds3_lifecycle_promoted_batch_fixture() {
     );
 }
 
+// NDS3 fork-cycle-1 promotion wave (nimbus/deno v2.8.2-nimbus.6). The fork tag
+// adds process.getActiveResourcesInfo() request/handle/timer tracking with Node
+// provider names (process.ts + internal/process/active_resources.ts + net.ts +
+// internal/timers.mjs), legacy timers enroll/unenroll/active/_unrefActive with
+// DEP0095/0096/0126/0127 via lazy util.deprecate (timers.ts), the process.binding
+// util allowlist (process.ts + 01_require.js), process.emit ReflectApply/unshift
+// hardening, and a <Revoked Proxy> console inspect path (ext/web/01_console.js).
+// Each fixture below is a genuine Application-API required gap that produced a
+// clean PASS in the process-isolated fork-cycle-1 census on the repinned tag AND
+// is re-verified here as a non-ignored in-batch pass, so it is promoted from a
+// required gap to measured default-lane support. Common = passes on both lines;
+// node22-only = legacy-timers fixtures that exist (and pass) only on the node22
+// line (the node24 corpus does not vendor them).
+const NDS3_FORK_CYCLE1_PROMOTED_EXTRA_DIRS: &[&str] = &[
+    "test/common",
+    "test/async-hooks",
+    "test/es-module",
+    "test/fixtures/es-modules",
+    "test/fixtures/keys",
+];
+
+const NDS3_FORK_CYCLE1_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-console-issue-43095.js",
+    "test/parallel/test-internal-process-binding.js",
+    "test/parallel/test-process-binding-util.js",
+    "test/parallel/test-process-emit.js",
+    "test/parallel/test-process-getactiveresources-track-active-handles.js",
+    "test/parallel/test-process-getactiveresources-track-active-requests.js",
+    "test/parallel/test-process-getactiveresources-track-multiple-timers.js",
+    "test/parallel/test-process-getactiveresources-track-timer-lifetime.js",
+];
+
+const NDS3_FORK_CYCLE1_PROMOTED_NODE22_ONLY_PATHS: &[&str] = &[
+    "test/parallel/test-timers-active.js",
+    "test/parallel/test-timers-enroll-invalid-msecs.js",
+    "test/parallel/test-timers-enroll-second-time.js",
+    "test/parallel/test-timers-max-duration-warning.js",
+    "test/parallel/test-timers-unenroll-unref-interval.js",
+    "test/parallel/test-timers-unref-active.js",
+    "test/parallel/test-timers-unref-remove-other-unref-timers-only-one-fires.js",
+    "test/parallel/test-timers-unref-remove-other-unref-timers.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_nds3_fork_cycle1_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NDS3_FORK_CYCLE1_PROMOTED_COMMON_PATHS
+        .iter()
+        .chain(NDS3_FORK_CYCLE1_PROMOTED_NODE22_ONLY_PATHS.iter())
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-nds3-fork-cycle1-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        NDS3_FORK_CYCLE1_PROMOTED_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_nds3_fork_cycle1_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NDS3_FORK_CYCLE1_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-nds3-fork-cycle1-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        NDS3_FORK_CYCLE1_PROMOTED_EXTRA_DIRS,
+    );
+}
+
 #[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked async_hooks required-gap inventory; classify AsyncLocalStorage, promise hooks, provider lifecycle, graph/network, timer/task, GC, and host-owned failures after the first wide run"]
 fn node22_supported_lane_async_hooks_required_gap_watchpoint() {

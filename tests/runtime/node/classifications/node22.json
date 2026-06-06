@@ -61,13 +61,6 @@
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_assert_deep_watchpoint"
     },
     {
-      "test_path": "test/parallel/test-console-issue-43095.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "core-semantics/console",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_console_issue_43095_watchpoint"
-    },
-    {
       "test_path": "test/parallel/test-crypto-authenticated.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
@@ -2156,7 +2149,6 @@
         "test/parallel/test-internal-module-wrap.js",
         "test/parallel/test-internal-net-isLoopback.js",
         "test/parallel/test-internal-only-binding.js",
-        "test/parallel/test-internal-process-binding.js",
         "test/parallel/test-internal-socket-list-receive.js",
         "test/parallel/test-internal-socket-list-send.js",
         "test/parallel/test-internal-util-assertCrypto.js",
@@ -2786,14 +2778,12 @@
         "test/parallel/test-process-argv-0.js",
         "test/parallel/test-process-available-memory.js",
         "test/parallel/test-process-beforeexit.js",
-        "test/parallel/test-process-binding-util.js",
         "test/parallel/test-process-chdir-errormessage.js",
         "test/parallel/test-process-chdir.js",
         "test/parallel/test-process-config.js",
         "test/parallel/test-process-cpuUsage.js",
         "test/parallel/test-process-dlopen-error-message-crash.js",
         "test/parallel/test-process-dlopen-undefined-exports.js",
-        "test/parallel/test-process-emit.js",
         "test/parallel/test-process-env-allowed-flags-are-documented.js",
         "test/parallel/test-process-env-deprecation.js",
         "test/parallel/test-process-env-ignore-getter-setter.js",
@@ -2821,10 +2811,6 @@
         "test/parallel/test-process-get-builtin.mjs",
         "test/parallel/test-process-getactivehandles.js",
         "test/parallel/test-process-getactiverequests.js",
-        "test/parallel/test-process-getactiveresources-track-active-handles.js",
-        "test/parallel/test-process-getactiveresources-track-active-requests.js",
-        "test/parallel/test-process-getactiveresources-track-multiple-timers.js",
-        "test/parallel/test-process-getactiveresources-track-timer-lifetime.js",
         "test/parallel/test-process-getgroups.js",
         "test/parallel/test-process-hrtime-bigint.js",
         "test/parallel/test-process-hrtime.js",
@@ -2853,9 +2839,6 @@
       "owner": "process-and-timing/timers",
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
-        "test/parallel/test-timers-active.js",
-        "test/parallel/test-timers-enroll-invalid-msecs.js",
-        "test/parallel/test-timers-enroll-second-time.js",
         "test/parallel/test-timers-fast-calls.js",
         "test/parallel/test-timers-immediate-promisified.js",
         "test/parallel/test-timers-immediate-queue-throw.js",
@@ -2864,16 +2847,11 @@
         "test/parallel/test-timers-immediate-unref.js",
         "test/parallel/test-timers-interval-promisified.js",
         "test/parallel/test-timers-linked-list.js",
-        "test/parallel/test-timers-max-duration-warning.js",
         "test/parallel/test-timers-now.js",
         "test/parallel/test-timers-process-tampering.js",
         "test/parallel/test-timers-reset-process-domain-on-throw.js",
         "test/parallel/test-timers-socket-timeout-removes-other-socket-unref-timer.js",
-        "test/parallel/test-timers-timeout-promisified.js",
-        "test/parallel/test-timers-unenroll-unref-interval.js",
-        "test/parallel/test-timers-unref-active.js",
-        "test/parallel/test-timers-unref-remove-other-unref-timers-only-one-fires.js",
-        "test/parallel/test-timers-unref-remove-other-unref-timers.js"
+        "test/parallel/test-timers-timeout-promisified.js"
       ]
     },
     {
