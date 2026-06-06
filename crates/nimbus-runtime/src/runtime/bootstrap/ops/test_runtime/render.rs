@@ -1649,6 +1649,16 @@ if (
   // exits 1 instead of its intended code. Route reallyExit through the same
   // `__NIMBUS_NODE_COMPAT_PROCESS_EXIT__` marker the harness already consumes
   // so the intended exit code is preserved.
+  //
+  // NOTE: this override does not reach every caller. The `test/common` harness
+  // (installNimbusForkExitCleanup) captures `process.reallyExit` and calls
+  // through to the captured reference; when that capture predates this override
+  // it reaches deno_node's native `reallyExit` -> `Deno.exit` (undefined,
+  // because POST_BOOTSTRAP deletes `globalThis.Deno` and deno_node binds the
+  // internal `ext_node_denoGlobals` substrate, which has no `exit`). The
+  // complete fix belongs in the deno fork's exit substrate and is tracked as a
+  // FIX-backlog item alongside the domain/signal/timer gaps those fixtures also
+  // exhibit; this Nimbus-local override remains correct for the direct path.
   process.reallyExit = (reallyExitCode) => {{
     const resolvedExitCode = reallyExitCode ?? process.exitCode ?? 0;
     process.exitCode = resolvedExitCode;

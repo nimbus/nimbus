@@ -405,6 +405,27 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         'test/parallel/test-perf-hooks-histogram-fast-calls.js',
         'test/parallel/test-timers-fast-calls.js',
         'test/parallel/test-timers-now.js',
+        # NDS3 gap-taxonomy wave (2026-06-05): consistency follow-up to the
+        # fast-calls cluster directly above. Source-confirmed identical structural
+        # gate — each requires a private debug/native-build surface that cannot
+        # exist inside the public V8 isolate, so it can never run as Application API:
+        #   test-buffer-write-fast / test-buffer-swap-fast: header is
+        #     `// Flags: --expose-internals --no-warnings --allow-natives-syntax`
+        #     with require('internal/test/binding') + %-prefixed V8 intrinsics; the
+        #     file is unparseable as normal JS without the --allow-natives-syntax flag
+        #     (the recorded gap detail is literally `SyntaxError: Unexpected token '%'`).
+        #     Exact siblings test-timers-fast-calls / test-perf-hooks-histogram-fast-calls
+        #     were already reclassified here on identical grounds.
+        #   test-buffer-alloc-unsafe-is-uninitialized / ...-is-initialized-with-zero-fill-flag:
+        #     `if (!common.isDebug) common.skip('Only works in debug mode')` plus
+        #     internalBinding('debug').getGenericUsageCount('NodeArrayBufferAllocator.*')
+        #     — debug-build-only native allocator instrumentation counters that the
+        #     isolate does not expose; the public Buffer.allocUnsafe surface they wrap
+        #     remains a visible required gap elsewhere.
+        'test/parallel/test-buffer-write-fast.js',
+        'test/parallel/test-buffer-swap-fast.js',
+        'test/parallel/test-buffer-alloc-unsafe-is-uninitialized.js',
+        'test/parallel/test-buffer-alloc-unsafe-is-initialized-with-zero-fill-flag.js',
         'test/parallel/test-fs-long-path.js',
         'test/parallel/test-fs-promises-watch-ignore-function.mjs',
         'test/parallel/test-fs-promises-watch-ignore-glob.mjs',
