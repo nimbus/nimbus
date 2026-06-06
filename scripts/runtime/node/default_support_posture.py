@@ -215,6 +215,8 @@ EXPOSE_INTERNALS_PRIVATE_MODULE_PATHS = {
 # Keyed by (support_denominator, reason_code, shim_classification).
 NDS3_WAVE2_RECLASSIFICATIONS = {
     ('diagnostic_only_non_isolate', 'child_process_host_output_topology', 'diagnostic_stub'): frozenset({
+        # NDS3 census wave (2026-06-05): source-confirmed + adversarially verified (analyze+refute).
+        'test/parallel/test-trace-events-promises.js',
         'test/parallel/test-domain-top-level-error-handler-throw.js',
         'test/parallel/test-domain-uncaught-exception.js',
         'test/parallel/test-trace-atomic-deprecation.js',
@@ -231,6 +233,24 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         'test/v8-updates/test-trace-gc-flag.js',
     }),
     ('diagnostic_only_non_isolate', 'exact_host_process_control_surface', 'diagnostic_stub'): frozenset({
+        # NDS3 census wave (2026-06-05): source-confirmed + adversarially verified (analyze+refute).
+        'test/es-module/test-esm-no-addons.mjs',
+        'test/parallel/test-async-wrap-pop-id-during-load.js',
+        'test/parallel/test-buffer-constructor-node-modules-paths.js',
+        'test/parallel/test-dgram-bind-socket-close-before-cluster-reply.js',
+        'test/parallel/test-dgram-cluster-bind-error.js',
+        'test/parallel/test-dgram-cluster-close-during-bind.js',
+        'test/parallel/test-dgram-exclusive-implicit-bind.js',
+        'test/parallel/test-diagnostics-channel-process.js',
+        'test/parallel/test-os-userinfo-handles-getter-errors.js',
+        'test/parallel/test-process-chdir-errormessage.js',
+        'test/parallel/test-promise-reject-callback-exception.js',
+        'test/parallel/test-promise-unhandled-flag.js',
+        'test/parallel/test-set-http-max-http-headers.js',
+        'test/parallel/test-trace-events-async-hooks-dynamic.js',
+        'test/parallel/test-trace-events-fs-async.js',
+        'test/parallel/test-trace-events-fs-sync.js',
+        'test/parallel/test-trace-exit.js',
         'test/es-module/test-vm-main-context-default-loader-eval.js',
         'test/es-module/test-vm-main-context-default-loader.js',
         'test/parallel/test-domain-abort-on-uncaught.js',
@@ -262,6 +282,8 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         'test/parallel/test-vm-sigint.js',
     }),
     ('diagnostic_only_non_isolate', 'host_owned_non_isolate_harness', 'diagnostic_stub'): frozenset({
+        # NDS3 census wave (2026-06-05): source-confirmed + adversarially verified (analyze+refute).
+        'test/parallel/test-trace-events-threadpool.js',
         'test/parallel/test-domain-dep0097.js',
         'test/parallel/test-module-print-timing.mjs',
     }),
@@ -378,6 +400,11 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         'test/parallel/test-process-env-allowed-flags-are-documented.js',
     }),
     ('upstream_or_platform_boundary', 'upstream_or_platform_boundary', 'unsupported'): frozenset({
+        # NDS3 census wave (2026-06-05): source-confirmed + adversarially verified (analyze+refute).
+        # V8 native-syntax intrinsics (--allow-natives-syntax) + internalBinding('debug') fast-API counters.
+        'test/parallel/test-perf-hooks-histogram-fast-calls.js',
+        'test/parallel/test-timers-fast-calls.js',
+        'test/parallel/test-timers-now.js',
         'test/parallel/test-fs-long-path.js',
         'test/parallel/test-fs-promises-watch-ignore-function.mjs',
         'test/parallel/test-fs-promises-watch-ignore-glob.mjs',
@@ -408,6 +435,25 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         'test/v8-updates/test-linux-perf.js',
     }),
     ('v8_isolate_optional', 'expose_internals_private_module_surface', 'unsupported'): frozenset({
+        # NDS3 census wave (2026-06-05): source-confirmed + adversarially verified (analyze+refute).
+        # Assertion target is a private internal module/binding (require('_http_common'),
+        # internalBinding('async_wrap'|'util'|'cares_wrap'|'trace_events'),
+        # require('internal/{errors,linkedlist,crypto/webcrypto,crypto/util,crypto/webidl,js_stream_socket,test/binding}')),
+        # not a public Application API surface.
+        'test/async-hooks/test-httpparser.request.js',
+        'test/async-hooks/test-httpparser.response.js',
+        'test/parallel/test-async-wrap-destroyid.js',
+        'test/parallel/test-buffer-backing-arraybuffer.js',
+        'test/parallel/test-dns-resolve-promises.js',
+        'test/parallel/test-errors-systemerror.js',
+        'test/parallel/test-global-webcrypto-classes.js',
+        'test/parallel/test-primordials-promise.js',
+        'test/parallel/test-timers-linked-list.js',
+        'test/parallel/test-trace-events-dynamic-enable.js',
+        'test/parallel/test-warn-stream-wrap.js',
+        'test/parallel/test-webcrypto-util.js',
+        'test/parallel/test-webcrypto-webidl.js',
+        'test/parallel/test-wrap-js-stream-exceptions.js',
         'test/es-module/test-cjs-legacyMainResolve.js',
         'test/es-module/test-esm-import-attributes-validation.js',
         'test/es-module/test-esm-loader-modulemap.js',

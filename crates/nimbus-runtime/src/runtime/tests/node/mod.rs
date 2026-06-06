@@ -2195,9 +2195,17 @@ fn module_loader_json_data_import_attributes_required_surface_paths(
         lane,
         module_loader_json_data_import_attributes_required_surface_entry,
     );
+    // Floor lowered from 10 -> 1 after the cumulative NDS3 census promotion +
+    // wave-2 reclassification burn-down genuinely shrank the JSON/data/import-
+    // attributes required surface to 8 residual gaps (5 of the 13 tracked
+    // fixtures are now promoted or reclassified out of v8_isolate_required).
+    // This is a "stay reviewable" sanity bound on the discovery selector
+    // (non-empty, not runaway), not a behavioral assertion; it tracks the live
+    // gap population, which is supposed to shrink as fixtures are
+    // promoted/reclassified.
     assert!(
-        (10..=20).contains(&fixture_paths.len()),
-        "module-loader JSON/data/import-attributes selector should stay exact; selected {} fixtures",
+        (1..=20).contains(&fixture_paths.len()),
+        "module-loader JSON/data/import-attributes selector should stay reviewable; selected {} fixtures",
         fixture_paths.len()
     );
     fixture_paths
@@ -2252,9 +2260,15 @@ fn module_loader_package_core_required_surface_paths(lane: NodeCompatLane) -> Ve
         lane,
         module_loader_package_core_required_surface_entry,
     );
+    // Floor lowered from 10 -> 1 after the cumulative NDS3 census promotion +
+    // wave-2 reclassification burn-down genuinely shrank the package/CJS/ESM
+    // loader-core required surface to 9 residual gaps. This is a "stay
+    // reviewable" sanity bound on the discovery selector (non-empty, not
+    // runaway), not a behavioral assertion; it tracks the live gap population,
+    // which is supposed to shrink as fixtures are promoted/reclassified.
     assert!(
-        (10..=60).contains(&fixture_paths.len()),
-        "module-loader package/CJS/ESM core selector should stay focused but broad enough to matter; selected {} fixtures",
+        (1..=60).contains(&fixture_paths.len()),
+        "module-loader package/CJS/ESM core selector should stay reviewable; selected {} fixtures",
         fixture_paths.len()
     );
     fixture_paths
@@ -2392,8 +2406,13 @@ fn unpromoted_parallel_discovery_fixture_paths(lane: NodeCompatLane) -> Vec<Stri
     });
     fixture_paths.sort();
     fixture_paths.dedup();
+    // Floor lowered from 50 -> 20 after the async-hooks burn-down (commit
+    // 92131253) genuinely shrank the residual unpromoted parallel-discovery
+    // surface to 35. This is a "stay reviewable" sanity bound on the discovery
+    // selector, not a behavioral assertion; it tracks the live gap population,
+    // which is supposed to shrink as fixtures are promoted/reclassified.
     assert!(
-        (50..=200).contains(&fixture_paths.len()),
+        (20..=200).contains(&fixture_paths.len()),
         "unpromoted parallel discovery selector should stay reviewable; selected {} fixtures",
         fixture_paths.len()
     );
@@ -2414,8 +2433,13 @@ fn unpromoted_internal_helper_required_gap_paths(lane: NodeCompatLane) -> Vec<St
                 .as_str()
                 .is_some_and(unpromoted_internal_helper_required_gap_path)
     });
+    // Floor lowered from 15 -> 1 after the async-hooks burn-down (commit
+    // 92131253) reclassified/promoted nearly the whole internal-helper surface,
+    // leaving 2 genuine residual gaps. This bound just keeps the discovery
+    // selector reviewable (non-empty, not runaway); it is expected to shrink to
+    // a handful as the surface is burned down.
     assert!(
-        (15..=60).contains(&fixture_paths.len()),
+        (1..=60).contains(&fixture_paths.len()),
         "unpromoted internal-helper selector should stay reviewable; selected {} fixtures",
         fixture_paths.len()
     );

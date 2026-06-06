@@ -2131,6 +2131,110 @@ fn node24_default_lane_executes_async_hooks_promoted_batch_fixture() {
     );
 }
 
+// NDS3 census promotion wave (workflow-independent empirical census of every
+// node22 + node24 required-gap path, run one-fixture-per-process under a hard
+// timeout with cluster-appropriate support dirs). Each path below produced a
+// clean PASS verdict in process-isolated census AND is re-verified here as an
+// in-batch pass by the non-ignored batch tests, so it is promoted from a
+// required gap to measured default-lane support. Split common (passes on both
+// lines) vs lane-only to mirror the census's per-lane verdicts exactly.
+const NDS3_CENSUS_PROMOTED_EXTRA_DIRS: &[&str] = &[
+    "test/common",
+    "test/async-hooks",
+    "test/es-module",
+    "test/fixtures/es-modules",
+    "test/fixtures/keys",
+];
+
+const NDS3_CENSUS_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/async-hooks/test-async-exec-resource-http-agent.js",
+    "test/async-hooks/test-async-exec-resource-http.js",
+    "test/es-module/test-dynamic-import-script-lifetime.js",
+    "test/parallel/test-async-local-storage-isolation.js",
+    "test/parallel/test-async-wrap-promise-after-enabled.js",
+    "test/parallel/test-async-wrap-trigger-id.js",
+    "test/parallel/test-console-diagnostics-channels.js",
+    "test/parallel/test-console-with-frozen-intrinsics.js",
+    "test/parallel/test-diagnostic-channel-http-request-created.js",
+    "test/parallel/test-diagnostic-channel-http-response-created.js",
+    "test/parallel/test-dns-channel-cancel-promise.js",
+    "test/parallel/test-dns-lookup-promises-options-deprecated.js",
+    "test/parallel/test-dns-lookup-promises.js",
+    "test/parallel/test-dns-perf_hooks.js",
+    "test/parallel/test-dns-promises-exists.js",
+    "test/parallel/test-fs-sir-writes-alot.js",
+    "test/parallel/test-fs-write-buffer-large.js",
+    "test/parallel/test-gc-tls-external-memory.js",
+    "test/parallel/test-process-getactiveresources-track-interval-lifetime.js",
+    "test/parallel/test-process-getactiveresources.js",
+    "test/parallel/test-v8-collect-gc-profile-exit-before-stop.js",
+    "test/parallel/test-v8-collect-gc-profile.js",
+    "test/parallel/test-v8-getheapsnapshot-twice.js",
+    "test/parallel/test-v8-global-setter.js",
+    "test/parallel/test-vm-module-dynamic-import-promise.js",
+    "test/parallel/test-vm-module-dynamic-namespace.js",
+    "test/parallel/test-vm-module-evaluate-source-text-module.js",
+    "test/parallel/test-vm-module-evaluate-synthethic-module-rejection.js",
+    "test/parallel/test-vm-module-evaluate-synthethic-module.js",
+    "test/parallel/test-vm-module-instantiate.js",
+    "test/parallel/test-vm-module-link-shared-deps.js",
+    "test/parallel/test-vm-module-link.js",
+    "test/parallel/test-vm-module-linkmodulerequests-circular.js",
+    "test/parallel/test-vm-module-linkmodulerequests-deep.js",
+    "test/parallel/test-vm-module-linkmodulerequests.js",
+    "test/parallel/test-vm-module-reevaluate.js",
+    "test/parallel/test-vm-no-dynamic-import-callback.js",
+];
+
+const NDS3_CENSUS_PROMOTED_NODE22_ONLY_PATHS: &[&str] = &[
+    "test/parallel/test-dgram-cluster-close-in-listening.js",
+    "test/parallel/test-dgram-unref-in-cluster.js",
+    "test/parallel/test-performance-gc.js",
+    "test/parallel/test-webcrypto-encrypt-decrypt.js",
+    "test/parallel/test-whatwg-encoding-encodeinto-large.js",
+];
+
+const NDS3_CENSUS_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
+    "test/parallel/test-async-local-storage-http-parser-leak.js",
+    "test/parallel/test-console.js",
+    "test/parallel/test-fs-promises-watch-ignore-invalid.mjs",
+    "test/parallel/test-fs-promises-watch.js",
+    "test/parallel/test-v8-collect-gc-profile-using.js",
+    "test/parallel/test-vm-module-modulerequests.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_nds3_census_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NDS3_CENSUS_PROMOTED_COMMON_PATHS
+        .iter()
+        .chain(NDS3_CENSUS_PROMOTED_NODE22_ONLY_PATHS.iter())
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-nds3-census-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        NDS3_CENSUS_PROMOTED_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_nds3_census_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NDS3_CENSUS_PROMOTED_COMMON_PATHS
+        .iter()
+        .chain(NDS3_CENSUS_PROMOTED_NODE24_ONLY_PATHS.iter())
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-nds3-census-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        NDS3_CENSUS_PROMOTED_EXTRA_DIRS,
+    );
+}
+
 #[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked async_hooks required-gap inventory; classify AsyncLocalStorage, promise hooks, provider lifecycle, graph/network, timer/task, GC, and host-owned failures after the first wide run"]
 fn node22_supported_lane_async_hooks_required_gap_watchpoint() {
