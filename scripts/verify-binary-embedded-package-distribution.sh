@@ -21,11 +21,12 @@ cd "${REPO_ROOT}"
 PLAN_ACTIVE="docs/plans/binary-embedded-package-distribution-plan.md"
 PLAN_ARCHIVED="docs/plans/archive/binary-embedded-package-distribution-plan.md"
 PROOF_DIR="docs/plans/proof/binary-embedded-package-distribution"
-CONVEX_TMPL="crates/nimbus-bin/templates/convex/package.json.tmpl"
-CF_TMPL="crates/nimbus-bin/templates/cloud-functions/functions/package.json.tmpl"
+CONVEX_TMPL="crates/nimbus-assets/embedded/templates/convex/package.json.tmpl"
+CF_TMPL="crates/nimbus-assets/embedded/templates/cloud-functions/functions/package.json.tmpl"
 CODEGEN_RS="crates/nimbus-bin/src/codegen.rs"
 NODE_RS="crates/nimbus-bin/src/node.rs"
 CARGO_BIN="crates/nimbus-bin/Cargo.toml"
+CARGO_ASSETS="crates/nimbus-assets/Cargo.toml"
 LAUNCH_PLAN="docs/private/managed-service-launch-plan.md"
 
 if [ -f "${PLAN_ACTIVE}" ]; then
@@ -105,10 +106,10 @@ check "4. no npm-publish workflow or publishConfig" c4
 
 # ---- 5: binary embeds packages version-locked (rust-embed + manifest) [BPD1] --
 c5() {
-  has 'rust-embed' "${CARGO_BIN}" &&
-    has 'embedded.?package|EmbeddedPackage|packages/[a-z-]+/dist' crates/nimbus-bin/src
+  has 'rust-embed' "${CARGO_ASSETS}" &&
+    has 'embedded.?package|EmbeddedPackage|packages/[a-z-]+/dist' crates/nimbus-assets/src
 }
-check "5. binary embeds packages version-locked (rust-embed + manifest)" c5
+check "5. binary embeds packages version-locked through nimbus-assets (rust-embed + manifest)" c5
 
 # ---- 6: provisioned manifests dependency-closed (sanitized) [BPD1] ------------
 c6() {
@@ -190,7 +191,7 @@ c12() {
   # not the generic word "provision" (which appears in machine-config code).
   has 'fn provision_packages|fn provision_app|PackagesProvision|nimbus packages provision' \
     crates/nimbus-bin/src &&
-    has '\.nimbus/' crates/nimbus-bin/templates/convex/gitignore
+    has '\.nimbus/' crates/nimbus-assets/embedded/templates/convex/gitignore
 }
 check "12. provisioning writes .nimbus/packages/* + .version; scaffold gitignores it" c12
 
@@ -349,13 +350,13 @@ check "20. no Nimbus-package registry-install/publish instructions in docs" c20
 
 # ---- 21: provisioned bytes checksum-verified + tamper negative test [BPD7] ----
 c21() {
-  # The embed-side checksum + tamper mechanism exists now (embedded_packages.rs),
+  # The embed-side checksum + tamper mechanism exists in nimbus-assets,
   # but C21 is about *provisioned* bytes verified end-to-end, proven in BPD7.
   # Require package + tooling checksum verification, provisioned-byte checking,
   # and the BPD7 offline-integrity proof.
-  has 'fn verify_digest' crates/nimbus-bin/src/embedded_packages.rs &&
-    has 'manifest\.tooling' crates/nimbus-bin/src/embedded_packages.rs &&
-    has 'materialize_tooling' crates/nimbus-bin/src/embedded_packages.rs &&
+  has 'fn verify_digest' crates/nimbus-assets/src/js_packages.rs &&
+    has 'manifest\.tooling' crates/nimbus-assets/src/js_packages.rs &&
+    has 'materialize_tooling' crates/nimbus-assets/src/js_packages.rs &&
     has 'verify_package_dirs' crates/nimbus-bin/src/provision.rs &&
     [ -f "${PROOF_DIR}/bpd7-offline-integrity.md" ]
 }

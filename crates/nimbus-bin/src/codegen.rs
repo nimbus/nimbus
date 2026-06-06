@@ -13,8 +13,8 @@ use nimbus::{
 };
 use tokio::process::Command;
 
-use crate::embedded_packages;
 use crate::node;
+use nimbus_assets::js_packages;
 
 /// Selects the codegen runner. Default (unset) is the in-binary V8 tooling
 /// runner; set to `external-node` for the diagnostic/transition-only external
@@ -394,7 +394,7 @@ fn materialize_codegen_tooling(
     let tooling_dir = tempfile::Builder::new()
         .prefix(prefix)
         .tempdir_in(&tooling_parent)?;
-    let codegen_bundle = embedded_packages::materialize_tooling(tooling_dir.path())?;
+    let codegen_bundle = js_packages::materialize_tooling(tooling_dir.path())?;
     Ok((tooling_dir, codegen_bundle))
 }
 
@@ -412,7 +412,7 @@ fn embedded_codegen_cli_args(context: &CodegenExecutionContext) -> Vec<String> {
 // (Obsolete) The embedded runner no longer requires a staged
 // `node_modules/@nimbus/codegen` in the app: it materializes the codegen
 // prebundle + esbuild tooling closure from the embedded payload
-// (`embedded_packages::materialize_tooling`). Removed in the BPD4 runner-flip.
+// (`js_packages::materialize_tooling`). Removed in the BPD4 runner-flip.
 
 fn ensure_embedded_codegen_layout_supported(context: &CodegenExecutionContext) -> io::Result<()> {
     if context.package_install_dirs.len() == 1
@@ -494,7 +494,7 @@ mod tests {
         // The embedded runner sources its tooling closure (codegen prebundle +
         // esbuild + platform @esbuild binary) from the embedded payload, staged
         // by `make build-packages`. Skip if the binary was built without it.
-        !crate::embedded_packages::manifest().tooling.is_empty()
+        !js_packages::manifest().tooling.is_empty()
     }
 
     // (Removed `copy_dir_recursive` + `stage_workspace_codegen_package`: the

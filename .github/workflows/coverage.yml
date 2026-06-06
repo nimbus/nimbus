@@ -68,7 +68,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      # nimbus-bin embeds the dependency-closed JS package payload via
+      # nimbus-assets embeds the dependency-closed JS package payload via
       # rust-embed; build + stage it once and pass it to the compile jobs (BPD1).
       - name: Build embedded package payload
         run: make build-packages
@@ -77,7 +77,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: embedded-packages
-          path: crates/nimbus-bin/embedded-packages
+          path: crates/nimbus-assets/embedded/packages
           if-no-files-found: error
           retention-days: 1
 
@@ -112,10 +112,10 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: embedded-packages
-          path: crates/nimbus-bin/embedded-packages
+          path: crates/nimbus-assets/embedded/packages
 
       - name: Refresh embedded package payload mtimes
-        run: find crates/nimbus-bin/embedded-packages -exec touch {} +
+        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       - name: Warm sccache via workspace check
         run: cargo check --workspace
@@ -213,10 +213,10 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: embedded-packages
-          path: crates/nimbus-bin/embedded-packages
+          path: crates/nimbus-assets/embedded/packages
 
       - name: Refresh embedded package payload mtimes
-        run: find crates/nimbus-bin/embedded-packages -exec touch {} +
+        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       # PW1: pin libsql image + cache docker layer.
       - name: Restore cached libsql docker image
@@ -319,10 +319,10 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: embedded-packages
-          path: crates/nimbus-bin/embedded-packages
+          path: crates/nimbus-assets/embedded/packages
 
       - name: Refresh embedded package payload mtimes
-        run: find crates/nimbus-bin/embedded-packages -exec touch {} +
+        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       - name: Rebuild instrumented workspace (no run)
         # cargo-llvm-cov's `report` subcommand needs the instrumented

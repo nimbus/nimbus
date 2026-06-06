@@ -2,7 +2,7 @@
 // that the `nimbus` binary embeds via rust-embed (BPD1, condition 5).
 //
 // Reads each `packages/<dir>/dist` (produced by `scripts/build-js-package.mjs`)
-// and copies it under `crates/nimbus-bin/embedded-packages/<dir>/`, then writes
+// and copies it under `crates/nimbus-assets/embedded/packages/<dir>/`, then writes
 // a `manifest.json` recording each package's logical name, version, and a
 // SHA-256 per file. The binary version-locks against this manifest and
 // checksum-verifies provisioned bytes (conditions 5 + 21).
@@ -15,7 +15,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const OUT_DIR = path.join(REPO_ROOT, "crates", "nimbus-bin", "embedded-packages");
+const OUT_DIR = path.join(REPO_ROOT, "crates", "nimbus-assets", "embedded", "packages");
 
 // Package source dirs whose `dist/` is provisioned into developer apps.
 const PROVISIONED = ["convex", "nimbus", "firebase", "mongodb", "dynamodb"];

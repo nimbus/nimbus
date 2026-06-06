@@ -8,7 +8,6 @@ mod credentials;
 mod deploy;
 mod dev;
 mod dirs;
-mod embedded_packages;
 mod encryption;
 mod init;
 mod local_server_client;

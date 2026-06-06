@@ -1,26 +1,26 @@
-//! Embedded, dependency-closed JS package payloads (BPD1).
+//! Embedded, dependency-closed JS package payloads (BPD).
 //!
 //! `scripts/stage-embedded-packages.mjs` stages each built `packages/<dir>/dist`
-//! under `crates/nimbus-bin/embedded-packages/<dir>/` with a checksummed
-//! `manifest.json`. This module embeds that tree into the binary (rust-embed)
-//! and exposes version-locked, checksum-verified access. The provisioning
-//! reconciler (BPD2) consumes these accessors to materialize
-//! `<app>/.nimbus/packages/*`.
+//! under `crates/nimbus-assets/embedded/packages/<dir>/` with a checksummed
+//! `manifest.json`. This module embeds that tree into Nimbus binaries and
+//! exposes version-locked, checksum-verified package bytes. Consumer crates own
+//! provisioning decisions, filesystem writes, CLI output, and app reconciliation.
 
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::{fs, io};
 
 use rust_embed::Embed;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
+
+use crate::integrity::sha256_hex;
 
 /// The staged package payload tree, version-locked to this binary build.
 #[derive(Embed)]
-#[folder = "$CARGO_MANIFEST_DIR/embedded-packages/"]
+#[folder = "$CARGO_MANIFEST_DIR/embedded/packages/"]
 struct EmbeddedPackages;
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct EmbeddedManifest {
+pub struct EmbeddedPackageManifest {
     pub schema: u32,
     pub packages: Vec<EmbeddedPackage>,
     /// Build-time tooling closure for the in-binary V8 codegen runner (the
@@ -31,14 +31,14 @@ pub(crate) struct EmbeddedManifest {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct EmbeddedTooling {
+pub struct EmbeddedTooling {
     /// `codegen` (the prebundle), `esbuild`, or `@esbuild/<platform>`.
     pub name: String,
     pub files: Vec<EmbeddedFile>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct EmbeddedPackage {
+pub struct EmbeddedPackage {
     /// Staging directory name (e.g. `convex`, `mongodb`, `@connectrpc/connect`).
     pub dir: String,
     /// Logical npm package name (e.g. `convex`, `@nimbus/mongodb`).
@@ -51,36 +51,78 @@ pub(crate) struct EmbeddedPackage {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct EmbeddedFile {
+pub struct EmbeddedFile {
     pub path: String,
     pub sha256: String,
 }
 
-/// Lowercase hex SHA-256 of `bytes`.
-pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+#[derive(Debug)]
+pub struct EmbeddedAsset {
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub struct EmbeddedPackageFile {
+    pub path: String,
+    pub bytes: Vec<u8>,
+    pub sha256: String,
 }
 
 /// Parse the embedded manifest. Panics only if the binary was built without a
 /// staged payload, which the Makefile build graph prevents.
-pub(crate) fn manifest() -> EmbeddedManifest {
+pub fn manifest() -> EmbeddedPackageManifest {
     let raw = EmbeddedPackages::get("manifest.json")
-        .expect("embedded-packages/manifest.json must be embedded at build time");
+        .expect("embedded/packages/manifest.json must be embedded at build time");
     serde_json::from_slice(&raw.data).expect("embedded manifest must be valid JSON")
 }
 
-/// Bytes of an embedded file at `<dir>/<rel>`.
-pub(crate) fn file_bytes(dir: &str, rel: &str) -> Option<Vec<u8>> {
-    EmbeddedPackages::get(&format!("{dir}/{rel}")).map(|f| f.data.into_owned())
+/// SHA-256 of the embedded manifest. This is the version-lock stamp value
+/// written into a provisioned app's `.nimbus/packages/.version`.
+pub fn manifest_digest() -> String {
+    let raw = EmbeddedPackages::get("manifest.json")
+        .expect("embedded/packages/manifest.json must be embedded at build time");
+    sha256_hex(&raw.data)
 }
 
-/// SHA-256 of the embedded manifest — the version-lock stamp value written into
-/// a provisioned app's `.nimbus/packages/.version`. Changes whenever any
-/// embedded package's bytes or version change, so it detects binary upgrades.
-pub(crate) fn manifest_digest() -> String {
-    let raw = EmbeddedPackages::get("manifest.json")
-        .expect("embedded-packages/manifest.json must be embedded at build time");
-    sha256_hex(&raw.data)
+pub fn package_names() -> Vec<String> {
+    manifest()
+        .packages
+        .into_iter()
+        .map(|package| package.name)
+        .collect()
+}
+
+pub fn file(path: &str) -> Option<EmbeddedAsset> {
+    EmbeddedPackages::get(path).map(|embedded| EmbeddedAsset {
+        data: embedded.data.into_owned(),
+    })
+}
+
+/// Bytes of an embedded package file at `<dir>/<rel>`.
+pub fn file_bytes(dir: &str, rel: &str) -> Option<Vec<u8>> {
+    file(&format!("{dir}/{rel}")).map(|asset| asset.data)
+}
+
+pub fn package_files(dir: &str) -> Result<Vec<EmbeddedPackageFile>, String> {
+    let manifest = manifest();
+    let package = manifest
+        .packages
+        .iter()
+        .find(|package| package.dir == dir)
+        .ok_or_else(|| format!("no embedded package {dir}"))?;
+    package
+        .files
+        .iter()
+        .map(|file| {
+            let bytes = file_bytes(dir, &file.path)
+                .ok_or_else(|| format!("missing embedded file {dir}/{}", file.path))?;
+            Ok(EmbeddedPackageFile {
+                path: file.path.clone(),
+                bytes,
+                sha256: file.sha256.clone(),
+            })
+        })
+        .collect()
 }
 
 /// Materialize the embedded codegen tooling closure into `dest`, laid out so the
@@ -90,14 +132,14 @@ pub(crate) fn manifest_digest() -> String {
 /// platform `@esbuild/<platform>` package under `<dest>/node_modules/`. The
 /// `@esbuild` native binary is made executable. Returns the path to the codegen
 /// bundle (the runner's `codegenSpecifier`).
-pub(crate) fn materialize_tooling(dest: &Path) -> io::Result<PathBuf> {
+pub fn materialize_tooling(dest: &Path) -> std::io::Result<PathBuf> {
     let manifest = manifest();
     let mut codegen_bundle: Option<PathBuf> = None;
     for tool in &manifest.tooling {
         for file in &tool.files {
             let bytes = tooling_file_bytes(&tool.name, &file.path).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
                     format!("missing embedded tooling file {}/{}", tool.name, file.path),
                 )
             })?;
@@ -106,9 +148,7 @@ pub(crate) fn materialize_tooling(dest: &Path) -> io::Result<PathBuf> {
                 &bytes,
                 file,
             )
-            .map_err(io::Error::other)?;
-            // codegen bundle sits at the run-dir root; everything else is a
-            // node_modules package so bare `import("esbuild")` resolves.
+            .map_err(std::io::Error::other)?;
             let out = if tool.name == "codegen" {
                 dest.join(&file.path)
             } else {
@@ -121,7 +161,6 @@ pub(crate) fn materialize_tooling(dest: &Path) -> io::Result<PathBuf> {
             if tool.name == "codegen" && file.path == "codegen.bundle.mjs" {
                 codegen_bundle = Some(out.clone());
             }
-            // The @esbuild native binary must be executable to spawn.
             #[cfg(unix)]
             if tool.name.starts_with("@esbuild/") && file.path.starts_with("bin/") {
                 use std::os::unix::fs::PermissionsExt;
@@ -130,20 +169,15 @@ pub(crate) fn materialize_tooling(dest: &Path) -> io::Result<PathBuf> {
         }
     }
     codegen_bundle.ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
             "embedded tooling closure is missing the codegen bundle",
         )
     })
 }
 
-/// Bytes of an embedded tooling file at `.tooling/<name>/<rel>`.
-fn tooling_file_bytes(name: &str, rel: &str) -> Option<Vec<u8>> {
-    EmbeddedPackages::get(&format!(".tooling/{name}/{rel}")).map(|f| f.data.into_owned())
-}
-
 /// Verify every manifest-listed file is present and matches its checksum.
-pub(crate) fn verify_integrity() -> Result<(), String> {
+pub fn verify_manifest_integrity() -> Result<(), String> {
     let manifest = manifest();
     if manifest.schema != 1 {
         return Err(format!(
@@ -151,23 +185,23 @@ pub(crate) fn verify_integrity() -> Result<(), String> {
             manifest.schema
         ));
     }
-    for pkg in &manifest.packages {
-        if pkg.version.trim().is_empty() {
+    for package in &manifest.packages {
+        if package.version.trim().is_empty() {
             return Err(format!(
                 "embedded package {} has an empty version",
-                pkg.name
+                package.name
             ));
         }
-        if pkg.third_party && pkg.dir != pkg.name {
+        if package.third_party && package.dir != package.name {
             return Err(format!(
                 "third-party embedded package {} must use its package name as the staging dir",
-                pkg.name
+                package.name
             ));
         }
-        for file in &pkg.files {
-            let bytes = file_bytes(&pkg.dir, &file.path)
-                .ok_or_else(|| format!("missing embedded file {}/{}", pkg.dir, file.path))?;
-            verify_digest(&format!("{}/{}", pkg.dir, file.path), &bytes, file)?;
+        for file in &package.files {
+            let bytes = file_bytes(&package.dir, &file.path)
+                .ok_or_else(|| format!("missing embedded file {}/{}", package.dir, file.path))?;
+            verify_digest(&format!("{}/{}", package.dir, file.path), &bytes, file)?;
         }
     }
     for tool in &manifest.tooling {
@@ -185,6 +219,17 @@ pub(crate) fn verify_integrity() -> Result<(), String> {
     Ok(())
 }
 
+/// Backwards-compatible name for callers that only need the manifest checksum
+/// gate. New code should prefer `verify_manifest_integrity`.
+pub fn verify_integrity() -> Result<(), String> {
+    verify_manifest_integrity()
+}
+
+/// Bytes of an embedded tooling file at `.tooling/<name>/<rel>`.
+fn tooling_file_bytes(name: &str, rel: &str) -> Option<Vec<u8>> {
+    EmbeddedPackages::get(&format!(".tooling/{name}/{rel}")).map(|f| f.data.into_owned())
+}
+
 fn verify_digest(label: &str, bytes: &[u8], file: &EmbeddedFile) -> Result<(), String> {
     let digest = sha256_hex(bytes);
     if digest != file.sha256 {
@@ -200,26 +245,31 @@ fn verify_digest(label: &str, bytes: &[u8], file: &EmbeddedFile) -> Result<(), S
 mod tests {
     use super::*;
 
+    const EXPECTED: &[&str] = &[
+        "convex",
+        "nimbus",
+        "@nimbus/firebase",
+        "@nimbus/mongodb",
+        "@nimbus/dynamodb",
+    ];
+
     #[test]
     fn materialize_tooling_lays_out_codegen_bundle_and_esbuild_closure() {
         let temp = tempfile::tempdir().unwrap();
         let bundle = materialize_tooling(temp.path()).expect("tooling materializes");
-        // codegen prebundle is co-located at the run-dir root.
         assert_eq!(bundle, temp.path().join("codegen.bundle.mjs"));
         assert!(bundle.is_file(), "codegen bundle must be written");
-        // esbuild JS wrapper resolves as a node_modules package.
         assert!(
             temp.path()
                 .join("node_modules/esbuild/package.json")
                 .is_file(),
             "esbuild must be staged under node_modules"
         );
-        // the platform @esbuild native binary is present and executable.
         let manifest = manifest();
         let platform = manifest
             .tooling
             .iter()
-            .find(|t| t.name.starts_with("@esbuild/"))
+            .find(|tool| tool.name.starts_with("@esbuild/"))
             .expect("a platform @esbuild tooling root is staged");
         let binary_rel = platform
             .files
@@ -252,19 +302,15 @@ mod tests {
         }
     }
 
-    const EXPECTED: &[&str] = &[
-        "convex",
-        "nimbus",
-        "@nimbus/firebase",
-        "@nimbus/mongodb",
-        "@nimbus/dynamodb",
-    ];
-
     #[test]
     fn manifest_lists_all_provisioned_packages() {
         let manifest = manifest();
         assert_eq!(manifest.schema, 1);
-        let names: Vec<&str> = manifest.packages.iter().map(|p| p.name.as_str()).collect();
+        let names: Vec<&str> = manifest
+            .packages
+            .iter()
+            .map(|package| package.name.as_str())
+            .collect();
         for expected in EXPECTED {
             assert!(
                 names.contains(expected),
@@ -276,32 +322,30 @@ mod tests {
     #[test]
     fn embedded_versions_match_source_package_json() {
         let manifest = manifest();
-        for pkg in &manifest.packages {
-            // Third-party roots have no `packages/<dir>` source; their version is
-            // pinned by node_modules at stage time, not a Nimbus source manifest.
-            if pkg.third_party {
+        for package in &manifest.packages {
+            if package.third_party {
                 continue;
             }
             let src_path = format!(
                 "{}/../../packages/{}/package.json",
                 env!("CARGO_MANIFEST_DIR"),
-                pkg.dir
+                package.dir
             );
             let src = std::fs::read_to_string(&src_path)
-                .unwrap_or_else(|e| panic!("read {src_path}: {e}"));
+                .unwrap_or_else(|error| panic!("read {src_path}: {error}"));
             let json: serde_json::Value = serde_json::from_str(&src).unwrap();
             assert_eq!(
                 json["version"].as_str().unwrap(),
-                pkg.version,
+                package.version,
                 "embedded {} version is not locked to source",
-                pkg.dir
+                package.dir
             );
         }
     }
 
     #[test]
     fn embedded_bytes_match_manifest_checksums() {
-        verify_integrity().expect("embedded package integrity");
+        verify_manifest_integrity().expect("embedded package integrity");
     }
 
     #[test]
@@ -310,17 +354,15 @@ mod tests {
         let mongodb = manifest
             .packages
             .iter()
-            .find(|p| p.dir == "mongodb")
+            .find(|package| package.dir == "mongodb")
             .expect("mongodb staged");
         let uri = mongodb
             .files
             .iter()
-            .find(|f| f.path == "uri.js")
+            .find(|file| file.path == "uri.js")
             .expect("uri.js listed");
         let bytes = file_bytes("mongodb", "uri.js").expect("uri.js present");
-        // Positive: real bytes match the recorded checksum.
         assert_eq!(sha256_hex(&bytes), uri.sha256);
-        // Negative: any modification is detected.
         let mut tampered = bytes.clone();
         tampered.push(b'X');
         assert_ne!(

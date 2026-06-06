@@ -1,0 +1,26 @@
+[package]
+name = "nimbus-assets"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+repository.workspace = true
+license-file.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+ui = ["dep:rust-embed"]
+js-packages = ["dep:rust-embed", "dep:serde", "dep:serde_json", "dep:sha2"]
+templates = []
+all = ["ui", "js-packages", "templates"]
+
+[dependencies]
+rust-embed = { version = "=8.11.0", features = ["interpolate-folder-path"], optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
