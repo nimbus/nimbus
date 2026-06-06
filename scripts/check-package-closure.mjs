@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const EMBED_DIR = path.join(REPO_ROOT, "crates", "nimbus-bin", "embedded-packages");
+const EMBED_DIR = path.join(REPO_ROOT, "crates", "nimbus-assets", "embedded", "packages");
 const MANIFEST = path.join(EMBED_DIR, "manifest.json");
 
 // Out-of-contract, developer-supplied peers documented in the plan's Offline

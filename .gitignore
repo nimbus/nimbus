@@ -42,8 +42,8 @@ __pycache__
 .nimbus
 **/.nimbus
 
-# Staged JS package payloads embedded into the nimbus binary (build output; BPD)
-crates/nimbus-bin/embedded-packages/
+# Staged JS package payloads embedded by nimbus-assets (build output; BPD)
+crates/nimbus-assets/embedded/packages/
 
 # playwright-cli snapshots/screenshots/traces (per-session artifacts)
 **/.playwright-cli/*
