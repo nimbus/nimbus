@@ -122,6 +122,12 @@ HOST_PROCESS_CONTROL_PATHS = {
     "test/parallel/test-process-title-cli.js",
     "test/parallel/test-process-uid-gid.js",
     "test/parallel/test-windows-abort-exitcode.js",
+    # NDS3 wave-3 disposition (2026-06-06): the only observable for the http.Agent
+    # drained-socket reuse assertion is process.report.getReport().libuv handle
+    # introspection (a host-process diagnostic surface that leaks host libuv
+    # state), followed by process.exit(). The isolate does not own process.report,
+    # so the assertion mechanism is host process control, not in-isolate API.
+    "test/parallel/test-http-agent-reuse-drained-socket-only.js",
 }
 
 HOST_PROCESS_CONTROL_PREFIXES = (
@@ -140,6 +146,32 @@ NODE_CLI_TOPOLOGY_PATHS = {
     "test/parallel/test-stream-preprocess.js",
     "test/parallel/test-tick-processor-arguments.js",
     "test/parallel/test-tick-processor-version-check.js",
+    # NDS3 wave-3 disposition (2026-06-06): each fixture below runs its core
+    # assertion in a SPAWNED Node child process (spawn/spawnSync/spawnPromisified/
+    # execFile/fork) or a cluster.fork worker, or asserts a spawned child's
+    # stdout/stderr/exit-code snapshot. A multi-tenant V8 isolate has no ambient
+    # subprocess execution, so the assertion is not in-isolate Application API.
+    # Source-confirmed per-fixture (// Flags, require lines, spawn call sites);
+    # the workflow's adversarial skeptic upheld and the lead re-read each source.
+    "test/parallel/test-async-context-frame.mjs",
+    "test/parallel/test-async-hooks-stack-overflow-try-catch.js",
+    "test/parallel/test-buffer-constructor-node-modules.js",
+    "test/parallel/test-fs-readfile-error.js",
+    "test/parallel/test-fs-write-stream-patch-open.js",
+    "test/parallel/test-inspect-async-hook-setup-at-inspect.js",
+    "test/parallel/test-node-output-console.mjs",
+    "test/parallel/test-node-output-errors.mjs",
+    "test/parallel/test-performance-nodetiming-uvmetricsinfo.js",
+    "test/parallel/test-process-exec-argv.js",
+    "test/parallel/test-process-exit-code-validation.js",
+    "test/parallel/test-process-finalization.mjs",
+    "test/parallel/test-process-uncaught-exception-monitor.js",
+    "test/parallel/test-throw-error-with-getter-throw-traced.mjs",
+    "test/parallel/test-throw-undefined-or-null-traced.mjs",
+    "test/parallel/test-trace-env-stack.js",
+    "test/parallel/test-trace-env.js",
+    "test/parallel/test-trace-exit-stack-limit.js",
+    "test/parallel/test-v8-startup-snapshot-api.js",
 }
 
 NODE_CLI_TOPOLOGY_PREFIXES = (
@@ -200,6 +232,11 @@ EXPOSE_INTERNALS_PRIVATE_MODULE_PATHS = {
     "test/parallel/test-internal-util-isinsidenodemodules.js",
     "test/parallel/test-internal-util-objects.js",
     "test/parallel/test-internal-webidl-buffer-source.js",
+    # NDS3 wave-3 disposition (2026-06-06): // Flags: --expose-internals, with a
+    # top-level require('internal/event_target') for NodeEventTarget. The isolate
+    # intentionally does not expose private internal/* modules to tenant code, so
+    # the fixture cannot run as-is; isolate-safe but a visible optional gap.
+    "test/parallel/test-timers-immediate-promisified.js",
 }
 
 # NDS3 second denominator cleanup wave (workflow wf_54971f1d-74d): per-fixture
@@ -407,7 +444,7 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         'test/parallel/test-timers-now.js',
         # NDS3 gap-taxonomy wave (2026-06-05): consistency follow-up to the
         # fast-calls cluster directly above. Source-confirmed identical structural
-        # gate — each requires a private debug/native-build surface that cannot
+        # gate - each requires a private debug/native-build surface that cannot
         # exist inside the public V8 isolate, so it can never run as Application API:
         #   test-buffer-write-fast / test-buffer-swap-fast: header is
         #     `// Flags: --expose-internals --no-warnings --allow-natives-syntax`
@@ -419,7 +456,7 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         #   test-buffer-alloc-unsafe-is-uninitialized / ...-is-initialized-with-zero-fill-flag:
         #     `if (!common.isDebug) common.skip('Only works in debug mode')` plus
         #     internalBinding('debug').getGenericUsageCount('NodeArrayBufferAllocator.*')
-        #     — debug-build-only native allocator instrumentation counters that the
+        #     - debug-build-only native allocator instrumentation counters that the
         #     isolate does not expose; the public Buffer.allocUnsafe surface they wrap
         #     remains a visible required gap elsewhere.
         'test/parallel/test-buffer-write-fast.js',
@@ -454,6 +491,51 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         'test/parallel/test-whatwg-url-canparse.js',
         'test/v8-updates/test-linux-perf-logger.js',
         'test/v8-updates/test-linux-perf.js',
+        # NDS3 wave-3 disposition (2026-06-06): each fixture's CORE assertion is
+        # gated by a CLI flag the multi-tenant isolate cannot honor or asserts
+        # Node's exact native build / experimental-protocol composition, so it
+        # cannot run as public Application API. Source-confirmed per-fixture:
+        #   test-esm-type-field-errors-2: `// Flags: --no-experimental-require-module`
+        #     asserts require(esm) THROWS; the isolate enables require(esm) and
+        #     cannot toggle the flag, so the throw is unreproducible.
+        #   test-eval-disallow-code-generation-from-strings: `// Flags:
+        #     --disallow-code-generation-from-strings` asserts eval/new Function
+        #     throw EvalError under an isolate code-gen policy flag the runtime
+        #     does not expose per-invocation.
+        #   test-global-webcrypto-disbled: `// Flags:
+        #     --no-experimental-global-webcrypto` asserts globalThis.crypto ===
+        #     undefined; the isolate always exposes global webcrypto and cannot
+        #     toggle the flag.
+        #   test-process-config: asserts process.config deepEquals the build's
+        #     config.gypi (Node's exact native build composition).
+        #   test-process-exception-capture* (x3): `--abort-on-uncaught-exception`
+        #     (or v8.setFlagsFromString of it) gating host abort/fatal-exit
+        #     behavior the isolate must fail closed on.
+        #   test-quic-session-stream-lifecycle: `// Flags: --experimental-quic`
+        #     imports node:quic, an experimental native UDP+TLS QUIC stack.
+        #   test-require-long-path: `if (!common.isWindows) common.skip(...)` -
+        #     Windows-only MAX_PATH semantics; the Linux CI target self-skips.
+        'test/es-module/test-esm-type-field-errors-2.js',
+        'test/parallel/test-eval-disallow-code-generation-from-strings.js',
+        'test/parallel/test-global-webcrypto-disbled.js',
+        'test/parallel/test-process-config.js',
+        'test/parallel/test-process-exception-capture-should-abort-on-uncaught-setflagsfromstring.js',
+        'test/parallel/test-process-exception-capture-should-abort-on-uncaught.js',
+        'test/parallel/test-process-exception-capture.js',
+        'test/parallel/test-quic-session-stream-lifecycle.mjs',
+        'test/parallel/test-require-long-path.js',
+    }),
+    ('upstream_or_platform_boundary', 'pending_deprecation_flag_gated_warning_emission', 'unsupported'): frozenset({
+        # NDS3 wave-3 disposition (2026-06-06): `// Flags: --pending-deprecation`
+        # gates emission of a pending (DEP0xxx) deprecation warning that Node does
+        # NOT emit by default. The fixture's CORE assertion is that the warning
+        # fires; the multi-tenant isolate does not expose the --pending-deprecation
+        # opt-in flag, so the warning is intentionally never emitted and the
+        # assertion is unreproducible. Source-confirmed (each carries the flag
+        # header and asserts a process 'warning' event / deprecation code).
+        'test/es-module/test-esm-exports-deprecations.mjs',
+        'test/es-module/test-esm-imports-deprecations.mjs',
+        'test/parallel/test-module-parent-deprecation.js',
     }),
     ('v8_isolate_optional', 'expose_internals_private_module_surface', 'unsupported'): frozenset({
         # NDS3 census wave (2026-06-05): source-confirmed + adversarially verified (analyze+refute).
@@ -536,7 +618,67 @@ WAVE2_REASON_TEXT = {
     'host_owned_non_isolate_harness': 'fixture depends on a host-owned diagnostic surface (inspector debugging port or NODE_DEBUG child timing) and must fail closed unless a host-capable backend is selected',
     'host_owned_permission_policy': 'fixture is gated behind the host --permission model (--allow-fs-*/--allow-child-process) and asserts permission-model side effects the V8 isolate does not own',
     'official_harness_or_support_file': 'fixture exercises upstream Node harness or documentation-consistency topology rather than the Application runtime support contract',
+    'pending_deprecation_flag_gated_warning_emission': 'fixture is gated by --pending-deprecation and asserts emission of a pending (DEPxxxx) deprecation warning that Node does not emit by default; the multi-tenant isolate does not expose the opt-in flag, so the warning is intentionally never emitted and the assertion cannot run as default Application API behavior',
     'upstream_or_platform_boundary': "fixture is gated by V8 native-syntax intrinsics, host-platform skips, host-specific filesystem/watch backends, or Node's exact native build/dependency composition, so it cannot run as public Application API behavior inside the Nimbus V8 isolate",
+}
+
+
+# Canonical (denominator, reason, shim, text) tuples reused verbatim from the
+# requires_unpromoted classification arms below, so a watchpoint-pinned lane
+# resolves byte-for-byte identically to the opposite lane that already routes the
+# same fixture through requires_unpromoted.
+_WP_CLI_TOPOLOGY = (
+    "test_harness_only",
+    "exact_node_cli_or_tooling_topology",
+    "test_harness_emulation",
+    "fixture exercises Node CLI, debug-port, preload-print, proxy CLI, tick-processor, or upstream tooling topology rather than Application runtime API support",
+)
+_WP_HOST_PROCESS_CONTROL = (
+    "diagnostic_only_non_isolate",
+    "exact_host_process_control_surface",
+    "diagnostic_stub",
+    "fixture spawns or controls a host process (execPath child asserting exit code/env/argv/ppid, process.chdir, or raw host process state) and must fail closed inside the V8 isolate",
+)
+_WP_NATIVE_ADDON = (
+    "diagnostic_only_non_isolate",
+    "native_addon_node_api_surface",
+    "diagnostic_stub",
+    "fixture loads a compiled Node-API native addon (build/<type>/*.node) through dlopen, which runs host-native machine code outside the V8 isolate and must fail closed unless a host-capable backend is selected",
+)
+_WP_NATIVE_BACKED_OPTIONAL = (
+    "v8_isolate_optional",
+    "non_required_native_backed_builtin",
+    "unsupported",
+    "fixture exercises the non-required node:sqlite native-backed builtin, which is isolate-safe-capable through a runtime-provided implementation but is not part of the default Application contract in this wave",
+)
+
+# Watchpoint-pinned fixtures whose CORE assertion is structurally outside the
+# multi-tenant V8 isolate contract on the lane where the catalog records a
+# rust_watchpoint expected-failure. The opposite lane already reclassifies the
+# same fixture through requires_unpromoted; these entries mirror that exact tuple
+# so both lanes agree. The Rust #[ignore] watchpoint stays in place as a tripwire
+# (its unexpected_pass_action fires if the fixture ever goes green), but the
+# posture counts the fixture under its honest non-required denominator rather than
+# v8_isolate_required. This is the test-v8-serdes special-case generalized.
+# NDS3 wave-3 (2026-06-06); each entry source-confirmed against the fixture:
+#   test-module-loading-error.js: gating assertion is
+#     require('../fixtures/module-loading-error.node'), a native .node addon
+#     dlopen asserting host platform linker error text (both lanes pinned).
+#   test-esm-import-assertion-warning.mjs: spawnPromisified + execPath drive a
+#     spawned Node child with custom resolve/load loader hooks asserting the
+#     importAssertions deprecation-warning topology (both lanes pinned).
+#   test-sqlite.js: require('node:sqlite') native-backed optional builtin
+#     (node24 lane already optional via requires_unpromoted; node22 pinned).
+#   test-dgram-*: cluster.fork() ambient-subprocess topology (node24 lanes
+#     already diagnostic via requires_unpromoted; node22 lanes pinned).
+WATCHPOINT_STRUCTURAL_RECLASSIFICATIONS = {
+    "test/parallel/test-module-loading-error.js": _WP_NATIVE_ADDON,
+    "test/es-module/test-esm-import-assertion-warning.mjs": _WP_CLI_TOPOLOGY,
+    "test/parallel/test-sqlite.js": _WP_NATIVE_BACKED_OPTIONAL,
+    "test/parallel/test-dgram-cluster-bind-error.js": _WP_HOST_PROCESS_CONTROL,
+    "test/parallel/test-dgram-cluster-close-during-bind.js": _WP_HOST_PROCESS_CONTROL,
+    "test/parallel/test-dgram-exclusive-implicit-bind.js": _WP_HOST_PROCESS_CONTROL,
+    "test/parallel/test-dgram-bind-socket-close-before-cluster-reply.js": _WP_HOST_PROCESS_CONTROL,
 }
 
 
@@ -571,6 +713,11 @@ def classify_entry(entry: dict[str, Any]) -> tuple[str, str, str, str]:
             "unsupported",
             "fixture asserts Node's exact serialized-byte format, which is tied to Node's embedded V8 release rather than Nimbus's v8_deno_core compatibility contract",
         )
+    if (
+        source == "rust_watchpoint_expected_failure"
+        and test_path in WATCHPOINT_STRUCTURAL_RECLASSIFICATIONS
+    ):
+        return WATCHPOINT_STRUCTURAL_RECLASSIFICATIONS[test_path]
     if source == "rust_watchpoint_expected_failure":
         return (
             "v8_isolate_required",
@@ -838,6 +985,7 @@ def build_posture(repo: Path) -> dict[str, Any]:
                 "node_lint_rule_harness",
                 "non_required_native_backed_builtin",
                 "official_harness_or_support_file",
+                "pending_deprecation_flag_gated_warning_emission",
                 "startup_snapshot_cli_topology",
                 "unknown_legacy_classification",
                 "upstream_or_platform_boundary",
