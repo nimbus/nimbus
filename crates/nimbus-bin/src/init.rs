@@ -2,6 +2,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use clap::Args;
+use nimbus_assets::templates::{cloud_functions, convex};
 
 use crate::cli_ux;
 
@@ -99,21 +100,6 @@ pub(crate) async fn run_init_command(
     Ok(())
 }
 
-const CONVEX_SCHEMA_TS: &str = include_str!("../templates/convex/convex/schema.ts");
-const CONVEX_MESSAGES_TS: &str = include_str!("../templates/convex/convex/messages.ts");
-const CONVEX_GITIGNORE: &str = include_str!("../templates/convex/gitignore");
-const CONVEX_TSCONFIG_JSON: &str = include_str!("../templates/convex/tsconfig.json");
-const CONVEX_PACKAGE_JSON_TMPL: &str = include_str!("../templates/convex/package.json.tmpl");
-
-const CF_FIREBASE_JSON: &str = include_str!("../templates/cloud-functions/firebase.json");
-const CF_FUNCTIONS_PACKAGE_JSON_TMPL: &str =
-    include_str!("../templates/cloud-functions/functions/package.json.tmpl");
-const CF_FUNCTIONS_TSCONFIG_JSON: &str =
-    include_str!("../templates/cloud-functions/functions/tsconfig.json");
-const CF_FUNCTIONS_INDEX_TS: &str =
-    include_str!("../templates/cloud-functions/functions/src/index.ts");
-const CF_GITIGNORE: &str = include_str!("../templates/cloud-functions/gitignore");
-
 pub(crate) fn render_template(template: &str, project_name: &str) -> String {
     template
         .replace("{{PROJECT_NAME}}", project_name)
@@ -134,46 +120,46 @@ enum TemplateContent {
 const CONVEX_TEMPLATE: &[TemplateFile] = &[
     TemplateFile {
         relative_path: "convex/schema.ts",
-        content: TemplateContent::Static(CONVEX_SCHEMA_TS),
+        content: TemplateContent::Static(convex::SCHEMA_TS),
     },
     TemplateFile {
         relative_path: "convex/messages.ts",
-        content: TemplateContent::Static(CONVEX_MESSAGES_TS),
+        content: TemplateContent::Static(convex::MESSAGES_TS),
     },
     TemplateFile {
         relative_path: ".gitignore",
-        content: TemplateContent::Static(CONVEX_GITIGNORE),
+        content: TemplateContent::Static(convex::GITIGNORE),
     },
     TemplateFile {
         relative_path: "tsconfig.json",
-        content: TemplateContent::Static(CONVEX_TSCONFIG_JSON),
+        content: TemplateContent::Static(convex::TSCONFIG_JSON),
     },
     TemplateFile {
         relative_path: "package.json",
-        content: TemplateContent::Template(CONVEX_PACKAGE_JSON_TMPL),
+        content: TemplateContent::Template(convex::PACKAGE_JSON_TMPL),
     },
 ];
 
 const CLOUD_FUNCTIONS_TEMPLATE: &[TemplateFile] = &[
     TemplateFile {
         relative_path: "firebase.json",
-        content: TemplateContent::Static(CF_FIREBASE_JSON),
+        content: TemplateContent::Static(cloud_functions::FIREBASE_JSON),
     },
     TemplateFile {
         relative_path: "functions/package.json",
-        content: TemplateContent::Template(CF_FUNCTIONS_PACKAGE_JSON_TMPL),
+        content: TemplateContent::Template(cloud_functions::FUNCTIONS_PACKAGE_JSON_TMPL),
     },
     TemplateFile {
         relative_path: "functions/tsconfig.json",
-        content: TemplateContent::Static(CF_FUNCTIONS_TSCONFIG_JSON),
+        content: TemplateContent::Static(cloud_functions::FUNCTIONS_TSCONFIG_JSON),
     },
     TemplateFile {
         relative_path: "functions/src/index.ts",
-        content: TemplateContent::Static(CF_FUNCTIONS_INDEX_TS),
+        content: TemplateContent::Static(cloud_functions::FUNCTIONS_INDEX_TS),
     },
     TemplateFile {
         relative_path: ".gitignore",
-        content: TemplateContent::Static(CF_GITIGNORE),
+        content: TemplateContent::Static(cloud_functions::GITIGNORE),
     },
 ];
 
@@ -363,7 +349,7 @@ mod tests {
 
     #[test]
     fn convex_package_json_template_substitution() {
-        let rendered = render_template(CONVEX_PACKAGE_JSON_TMPL, "my-app");
+        let rendered = render_template(convex::PACKAGE_JSON_TMPL, "my-app");
         // BPD: the scaffold references the binary-provisioned convex package via
         // a file: specifier, never a registry version range.
         assert!(
@@ -390,7 +376,7 @@ mod tests {
 
     #[test]
     fn cloud_functions_package_json_template_substitution() {
-        let rendered = render_template(CF_FUNCTIONS_PACKAGE_JSON_TMPL, "my-app");
+        let rendered = render_template(cloud_functions::FUNCTIONS_PACKAGE_JSON_TMPL, "my-app");
         assert!(
             rendered.contains("\"name\": \"my-app-functions\""),
             "rendered package.json should contain the project name"

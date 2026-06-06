@@ -129,14 +129,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
     binary release, Homebrew/cask, Linux package mirror, and release-owned OCI
     image lanes are in flight under this plan.
-- `docs/plans/nimbus-assets-crate-plan.md`
-  - proposed follow-on plan for extracting in-scope production distribution,
-    UI, and template bytes into a focused private `nimbus-assets` crate.
-    Covers the BPD JS package payload, operator UI bytes, auth static assets,
-    init scaffold templates, and machine bootstrap templates while keeping
-    routing, auth, provisioning, codegen, adapter behavior, and release policy
-    in their existing owner crates.
-
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/`. Use current
@@ -213,6 +205,13 @@ historical execution detail.
     client apps. `/goal` control plane gated on
     `BPD_FULL=1 bash scripts/verify-binary-embedded-package-distribution.sh`
     (27 conditions). Rides under `docs/plans/distribution-plan.md`.
+- `docs/plans/archive/nimbus-assets-crate-plan.md`
+  - completed asset-catalog extraction wave (AE0-AE6, closed 2026-06-05).
+    Introduced the private `nimbus-assets` crate as the single owner for
+    in-scope production JS package payload bytes, operator UI/auth static
+    bytes, and init/machine templates while keeping provisioning, codegen,
+    routing, auth/session, rendering, and release policy in their behavior
+    owner crates.
 - `docs/plans/archive/node-dbus-client-binding-plan.md`
   - completed Node-side systemd D-Bus binding wave (NDB0-NDB7, closed
     2026-05-29 via PR #3). Attached `lucab/zbus_systemd` (pin `=0.26000.0`)

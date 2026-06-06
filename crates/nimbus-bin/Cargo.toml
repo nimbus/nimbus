@@ -29,6 +29,7 @@ fs2.workspace = true
 indicatif.workspace = true
 libc.workspace = true
 nimbus = { path = "../nimbus", features = ["aws-kms"] }
+nimbus-assets = { path = "../nimbus-assets", features = ["js-packages", "templates"] }
 nimbus-machine = { path = "../nimbus-machine" }
 nimbus-server = { path = "../nimbus-server" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
@@ -52,7 +53,6 @@ tracing-subscriber.workspace = true
 flate2 = "1"
 oci-client = "0.16"
 zstd = "0.13"
-rust-embed = { version = "=8.11.0", features = ["interpolate-folder-path"] }
 
 [build-dependencies]
 serde_json.workspace = true

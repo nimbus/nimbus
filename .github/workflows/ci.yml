@@ -68,9 +68,9 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       # `make clippy` triggers the UI dependency graph (codegen + SPA build)
-      # before invoking cargo, so nimbus-server's `include_str!`s of the
-      # gitignored `.nimbus/convex/` outputs resolve. Node is therefore a
-      # build prerequisite for any Rust target that touches nimbus-server.
+      # before invoking cargo, so nimbus-convex's generated registry includes
+      # and nimbus-assets' SPA embed inputs resolve. Node is therefore a build
+      # prerequisite for any Rust target that touches nimbus-server.
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
@@ -675,8 +675,8 @@ jobs:
         run: make build-ui
 
       - name: Stage embedded JS package payloads
-        # The embedded-packages tree is gitignored and required at compile time
-        # by nimbus-bin's rust-embed. Stage it here so warm-sccache (which has no
+        # The embedded package tree is gitignored and required at compile time
+        # by nimbus-assets' rust-embed. Stage it here so warm-sccache (which has no
         # Node toolchain) can consume it as an artifact, mirroring coverage.yml.
         run: make build-packages
 
@@ -694,7 +694,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: embedded-packages
-          path: crates/nimbus-bin/embedded-packages
+          path: crates/nimbus-assets/embedded/packages
           if-no-files-found: error
           retention-days: 1
 
@@ -715,9 +715,9 @@ jobs:
     # adding minutes to the wall-pole warm pass. Test-bin compile is now
     # paid inline in the downstream test jobs (harness shards, coverage
     # shards), which were already sharded by CW1 and CA3 respectively.
-    # The job consumes ui-artifacts because nimbus-server's include_str!s
-    # of the convex codegen output and rust-embed of the SPA dist must be
-    # present for the workspace to type-check.
+    # The job consumes ui-artifacts because nimbus-convex's generated registry
+    # includes and nimbus-assets' SPA embed inputs must be present for the
+    # workspace to type-check.
     name: Warm sccache
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -747,10 +747,10 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: embedded-packages
-          path: crates/nimbus-bin/embedded-packages
+          path: crates/nimbus-assets/embedded/packages
 
       - name: Refresh embedded package payload mtimes
-        run: find crates/nimbus-bin/embedded-packages -exec touch {} +
+        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       - name: Warm sccache via workspace check
         run: cargo check --workspace

@@ -1,6 +1,6 @@
 # Nimbus Assets Crate Plan
 
-- **Status:** `proposed`
+- **Status:** `done`
 - **Primary owner:** this plan once activated
 - **Goal:** extract in-scope production distribution/UI/template assets into a
   focused `nimbus-assets` crate without turning it into a behavior or policy
@@ -37,20 +37,23 @@ Rules for execution:
   are recorded in the execution log.
 - Do not move behavior into `nimbus-assets` to satisfy an asset movement gate.
 - If a phase touches BPD staging, package closure, CI artifact paths, or
-  release asset flow, rerun the BPD verifier before marking the phase done.
+  release asset flow, rerun the full BPD closeout verifier
+  (`BPD_FULL=1 bash scripts/verify-binary-embedded-package-distribution.sh`)
+  before marking the phase done. The default BPD verifier is a fast structural
+  gate and is not sufficient closeout evidence.
 - Keep this plan updated before stopping, handing off, or likely context loss.
 
 ## Phase Status Ledger
 
 | Phase | Status | Completion gate |
 | --- | --- | --- |
-| AE0. Inventory and verifier scaffold | `pending` | `scripts/verify-nimbus-assets-crate.sh` records the current in-scope production embed inventory, domain-owned embed allowlist, and passes on the baseline. |
-| AE1. Add `nimbus-assets` skeleton | `pending` | Private workspace crate exists with empty default features, feature-gated modules, and feature-gated build checks. |
-| AE2. Move JS package embedding | `pending` | BPD package bytes and integrity APIs are owned by `nimbus-assets::js_packages`; BPD verifier still passes. |
-| AE3. Move UI asset embedding | `pending` | UI bytes are owned by `nimbus-assets::ui`; server UI/auth behavior tests still pass. |
-| AE4. Move production templates | `pending` | Init and machine production templates are owned by `nimbus-assets::templates`; CLI output stays equivalent. |
-| AE5. Dependency and build cleanup | `pending` | Old direct embed dependencies/checks are removed or explicitly justified; build comments point at the asset owner. |
-| AE6. Closeout | `pending` | Final verifier, BPD verifier, docs validation, format check, focused tests, and agreed broad gate pass. |
+| AE0. Inventory and verifier scaffold | `done` | `scripts/verify-nimbus-assets-crate.sh` records the current in-scope production embed inventory, domain-owned embed allowlist, and passes on the baseline. |
+| AE1. Add `nimbus-assets` skeleton | `done` | Private workspace crate exists with empty default features, feature-gated modules, and feature-gated build checks. |
+| AE2. Move JS package embedding | `done` | BPD package bytes and integrity APIs are owned by `nimbus-assets::js_packages`; the full BPD closeout verifier still passes. |
+| AE3. Move UI asset embedding | `done` | UI bytes are owned by `nimbus-assets::ui`; server UI/auth behavior tests still pass. |
+| AE4. Move production templates | `done` | Init and machine production templates are owned by `nimbus-assets::templates`; CLI output stays equivalent. |
+| AE5. Dependency and build cleanup | `done` | Old direct embed dependencies/checks are removed or explicitly justified; build comments point at the asset owner. |
+| AE6. Closeout | `done` | Final verifier, full BPD closeout verifier, docs validation, format check, focused tests, and agreed broad gate pass. |
 
 ## Why this plan exists
 
@@ -59,12 +62,13 @@ distribution-facing bytes:
 
 - dependency-closed JS package payloads staged by
   `scripts/stage-embedded-packages.mjs` under
-  `crates/nimbus-bin/embedded-packages/`
+  `crates/nimbus-assets/embedded/packages/`
 - the operator UI SPA built under `packages/nimbus-ui/dist/`
-- local auth page assets in `crates/nimbus-server/assets/`
-- `nimbus init` scaffold templates under `crates/nimbus-bin/templates/`
+- local auth page assets in `crates/nimbus-assets/embedded/ui-auth/`
+- `nimbus init` scaffold templates under
+  `crates/nimbus-assets/embedded/templates/`
 - machine bootstrap and systemd templates under
-  `crates/nimbus-bin/src/machine/assets/`
+  `crates/nimbus-assets/embedded/templates/machine/`
 
 That spread is understandable historically, but it makes asset ownership look
 incidental: the server owns some bytes, the binary owns some bytes, and the
@@ -139,13 +143,13 @@ catalog.
 
 ### JS package payload
 
-`crates/nimbus-bin/src/embedded_packages.rs` owns the BPD payload:
+`nimbus_assets::js_packages` owns the BPD payload:
 
 - `#[derive(Embed)]` with
-  `#[folder = "$CARGO_MANIFEST_DIR/embedded-packages/"]`
+  `#[folder = "$CARGO_MANIFEST_DIR/embedded/packages/"]`
 - manifest parsing and validation
 - per-file checksum verification
-- package materialization for provisioned packages
+- package byte materialization primitives for provisioned packages
 - embedded tooling lookup
 - tests for expected embedded packages
 
@@ -158,40 +162,44 @@ currently hard-coded in:
 - `.github/workflows/ci.yml`
 - `.github/workflows/coverage.yml`
 - `.github/workflows/release.yml`
-- `crates/nimbus-bin/build.rs`
+- `crates/nimbus-assets/build.rs`
 - `scripts/verify-binary-embedded-package-distribution.sh`
+
+`nimbus-bin` consumes `nimbus_assets::js_packages` for provisioning,
+tooling materialization, and checksum comparison, but still owns package
+selection, destination paths, app reconciliation, CLI messages, filesystem
+writes, and Node reinstall decisions.
 
 ### UI assets
 
-`crates/nimbus-server/src/http/ui.rs` owns the operator UI embedding:
+`nimbus_assets::ui` owns the operator UI embedding:
 
 - `#[derive(Embed)]` over `packages/nimbus-ui/dist/`
-- `include_str!` for `crates/nimbus-server/assets/auth.html`
-- `include_str!` for `crates/nimbus-server/assets/auth.js`
+- `include_str!` for `crates/nimbus-assets/embedded/ui-auth/auth.html`
+- `include_str!` for `crates/nimbus-assets/embedded/ui-auth/auth.js`
 - SPA fallback, asset content-type handling, auth page rendering, and CSP hash
   tests
 
-Only the bytes and byte lookup belong in the asset crate. Route behavior,
-auth decisions, cookie/session handling, and CSP header assembly stay in
-`nimbus-server`.
+Only the bytes and byte lookup moved. Route behavior, auth decisions,
+cookie/session handling, auth-page rendering substitutions, content-type
+selection, and CSP header assembly stay in `nimbus-server`.
 
 ### Templates
 
-`crates/nimbus-bin/src/init.rs` embeds scaffold templates with `include_str!`:
+`nimbus_assets::templates` embeds scaffold templates with `include_str!`:
 
 - Convex schema, messages, package template, `tsconfig`, and gitignore
 - Cloud Functions Firebase config, package template, `tsconfig`, entrypoint,
   and gitignore
 
-`crates/nimbus-bin/src/machine/bootstrap.rs` embeds machine bootstrap templates:
+`nimbus_assets::templates::machine` embeds machine bootstrap templates:
 
 - ready service
 - nimbus service and socket units
 - virtiofs service and mount templates
 
-These are production templates and should move into `nimbus-assets::templates`.
-The CLI commands still own rendering, prompting, filesystem writes, and
-installation behavior.
+The CLI commands still own rendering, substitutions, prompting, filesystem
+writes, and installation behavior.
 
 ### Local fixtures
 
@@ -317,7 +325,7 @@ flowchart LR
 
 ### AE0. Inventory and Verifier Scaffold
 
-Status: `pending`
+Status: `done`
 
 Add `scripts/verify-nimbus-assets-crate.sh` before moving code. The first
 version is an inventory gate that records current in-scope production embed
@@ -349,7 +357,7 @@ Required evidence:
 
 - `bash scripts/verify-nimbus-assets-crate.sh`
 - `npm run docs:validate-refs:strict`
-- `git diff --check -- docs/plans/nimbus-assets-crate-plan.md scripts/verify-nimbus-assets-crate.sh`
+- `git diff --check -- docs/plans/archive/nimbus-assets-crate-plan.md scripts/verify-nimbus-assets-crate.sh`
 
 ### AE1. Add `nimbus-assets` Skeleton
 
@@ -432,7 +440,7 @@ Success criteria:
   same phase.
 - Package names, staged manifests, checksums, and provisioned output remain
   semantically unchanged.
-- The BPD verifier and asset verifier both cover the new root.
+- The full BPD closeout verifier and asset verifier both cover the new root.
 
 Required evidence:
 
@@ -440,7 +448,7 @@ Required evidence:
 - `node scripts/check-package-closure.mjs`
 - `cargo test -p nimbus-assets --features js-packages`
 - `cargo test -p nimbus-bin provision::tests`
-- `bash scripts/verify-binary-embedded-package-distribution.sh`
+- `BPD_FULL=1 bash scripts/verify-binary-embedded-package-distribution.sh`
 - `bash scripts/verify-nimbus-assets-crate.sh`
 
 ### AE3. Move UI Asset Embedding
@@ -562,11 +570,11 @@ Required evidence:
 - `cargo check -p nimbus-bin`
 - `cargo check -p nimbus-server`
 - `bash scripts/verify-nimbus-assets-crate.sh`
-- `bash scripts/verify-binary-embedded-package-distribution.sh`
+- `BPD_FULL=1 bash scripts/verify-binary-embedded-package-distribution.sh`
 
 ### AE6. Closeout
 
-Status: `pending`
+Status: `done`
 
 Close the plan when all in-scope production distribution/UI/template assets
 have a clear owner and all behavioral consumers remain behavior owners.
@@ -574,7 +582,7 @@ have a clear owner and all behavioral consumers remain behavior owners.
 Required evidence:
 
 - `bash scripts/verify-nimbus-assets-crate.sh`
-- `bash scripts/verify-binary-embedded-package-distribution.sh`
+- `BPD_FULL=1 bash scripts/verify-binary-embedded-package-distribution.sh`
 - `npm run docs:validate-refs:strict`
 - `cargo fmt --all --check`
 - the focused `nimbus-assets`, `nimbus-bin`, and `nimbus-server` test commands
@@ -642,11 +650,11 @@ than a single large grep block. Suggested conditions:
 Use this prompt to run the whole plan to completion:
 
 ```text
-/goal Execute docs/plans/nimbus-assets-crate-plan.md to completion.
+/goal Execute docs/plans/archive/nimbus-assets-crate-plan.md to completion.
 
 Treat the plan as the control plane. Start by reading README.md,
 ARCHITECTURE.md, docs/README.md, docs/plans/README.md, and
-docs/plans/nimbus-assets-crate-plan.md, then inspect the current asset owners
+docs/plans/archive/nimbus-assets-crate-plan.md, then inspect the current asset owners
 and domain-owned embed allowlist before editing. Work the ledger in order from
 AE0 through AE6. Keep exactly one phase in_progress at a time, update the phase
 ledger before and after each phase, and add execution-log evidence with exact
@@ -661,15 +669,16 @@ flow stay in their current owner crates.
 For each phase, satisfy the phase success criteria and run the required
 evidence commands before marking it done. If a phase touches BPD staging,
 package closure, CI artifact paths, or release asset flow, also run
-bash scripts/verify-binary-embedded-package-distribution.sh before marking the
-phase done. Keep scripts/verify-nimbus-assets-crate.sh current as the final
-control-plane verifier.
+BPD_FULL=1 bash scripts/verify-binary-embedded-package-distribution.sh before
+marking the phase done. Treat the plain BPD verifier as a fast structural check
+only, not as closeout proof. Keep scripts/verify-nimbus-assets-crate.sh current
+as the final control-plane verifier.
 
 Do not mark the goal complete until every ledger row is done, all open
 decisions are resolved or converted into an explicit follow-up, the final
-verifier passes, BPD still passes, docs validation passes, format passes,
-focused nimbus-assets/nimbus-bin/nimbus-server tests pass, and make check has
-passed or the plan records a concrete accepted narrower gate.
+verifier passes, the full BPD closeout verifier passes, docs validation passes,
+format passes, focused nimbus-assets/nimbus-bin/nimbus-server tests pass, and
+make check has passed or the plan records a concrete accepted narrower gate.
 ```
 
 ## Risks and Mitigations
@@ -680,7 +689,7 @@ passed or the plan records a concrete accepted narrower gate.
 
 - **Risk: Moving the BPD staging root breaks CI artifact flow.**
   Mitigation: phase the Rust API move separately from the generated-root move,
-  and run the BPD verifier after the root move.
+  and run the full BPD closeout verifier after the root move.
 
 - **Risk: The public facade accidentally exposes or pulls every asset family.**
   Mitigation: keep default features empty, do not re-export `nimbus-assets`
@@ -696,20 +705,37 @@ passed or the plan records a concrete accepted narrower gate.
 
 ## Open Decisions
 
-- Should the staged JS package root move immediately in AE2, or should the
-  first implementation keep the generated root under `nimbus-bin` until the
-  asset API migration is proven?
-- Should `auth.html` and `auth.js` live under
-  `crates/nimbus-assets/embedded/ui-auth/`, or under
-  `crates/nimbus-assets/embedded/templates/server-auth/`?
-- Should machine bootstrap templates share one `templates::machine` module, or
-  split into `templates::machine::systemd` and `templates::machine::virtiofs`
-  if the set grows?
+None.
+
+Resolved decisions:
+
+- 2026-06-05: AE2 moved the staged JS package root immediately to
+  `crates/nimbus-assets/embedded/packages/` in the same bounded change as the
+  Rust API move. The full BPD closeout verifier passed afterward, so there is
+  no remaining transitional root under `nimbus-bin`.
+- 2026-06-05: AE3 placed `auth.html` and `auth.js` under
+  `crates/nimbus-assets/embedded/ui-auth/`. They are server UI/auth static
+  bytes, not reusable scaffold templates; `nimbus-server` still owns rendering
+  substitutions, auth/session behavior, and CSP policy.
+- 2026-06-05: AE4 kept machine bootstrap templates in one
+  `templates::machine` module. The current unit and virtiofs template set is a
+  cohesive bootstrap surface; splitting into `templates::machine::systemd` and
+  `templates::machine::virtiofs` can wait until the set grows enough to justify
+  extra hierarchy.
 
 ## Execution Log
 
 | Date | Change | Evidence |
 | --- | --- | --- |
-| 2026-06-01 | Created proposed plan for `nimbus-assets` extraction. | `npm run docs:validate-refs:strict`; `git diff --check -- docs/plans/README.md docs/plans/nimbus-assets-crate-plan.md`; trailing-whitespace scan. |
-| 2026-06-01 | Added control-plane rules, phase ledger, per-phase success criteria, required evidence, and autonomous `/goal` prompt. | `npm run docs:validate-refs:strict`; `git diff --check -- docs/plans/nimbus-assets-crate-plan.md docs/plans/README.md`; trailing-whitespace scan. |
-| 2026-06-01 | Audited scope wording against current workspace embeds; narrowed this plan to in-scope distribution/UI/template assets, added domain-owned embed allowlist requirement, and added generated-asset prerequisites before the early `--features all` check. | `npm run docs:validate-refs:strict`; `git diff --check -- docs/plans/nimbus-assets-crate-plan.md docs/plans/README.md`; trailing-whitespace scan. |
+| 2026-06-01 | Created proposed plan for `nimbus-assets` extraction. | `npm run docs:validate-refs:strict`; `git diff --check -- docs/plans/README.md docs/plans/archive/nimbus-assets-crate-plan.md`; trailing-whitespace scan. |
+| 2026-06-01 | Added control-plane rules, phase ledger, per-phase success criteria, required evidence, and autonomous `/goal` prompt. | `npm run docs:validate-refs:strict`; `git diff --check -- docs/plans/archive/nimbus-assets-crate-plan.md docs/plans/README.md`; trailing-whitespace scan. |
+| 2026-06-01 | Audited scope wording against current workspace embeds; narrowed this plan to in-scope distribution/UI/template assets, added domain-owned embed allowlist requirement, and added generated-asset prerequisites before the early `--features all` check. | `npm run docs:validate-refs:strict`; `git diff --check -- docs/plans/archive/nimbus-assets-crate-plan.md docs/plans/README.md`; trailing-whitespace scan. |
+| 2026-06-05 | Audit-fix: replaced ambiguous BPD verifier references with the full `BPD_FULL=1` closeout gate wherever this plan relies on BPD guarantees. | `BPD_FULL=1 bash scripts/verify-binary-embedded-package-distribution.sh` -> 27 passed, 0 failed; `npm run docs:validate-refs:strict`; `git diff --check -- docs/plans/archive/nimbus-assets-crate-plan.md docs/operating/local-dev.md`; plain BPD verifier proven to fail without `BPD_FULL=1` on condition 22. |
+| 2026-06-05 | AE0 done: added the baseline inventory verifier and activated this plan as the execution control plane. | `bash scripts/verify-nimbus-assets-crate.sh` -> 10 passed, 0 failed; `npm run docs:validate-refs:strict` -> pass (242 working-tree Markdown files); `git diff --check -- docs/plans/archive/nimbus-assets-crate-plan.md scripts/verify-nimbus-assets-crate.sh` -> clean. |
+| 2026-06-05 | Audit closeout: archived this completed plan and removed the stale active-plan routing entry so new agents do not resume finished work. | `bash scripts/verify-nimbus-assets-crate.sh` -> 15 passed, 0 failed; `npm run docs:validate-refs:strict` -> pass (241 working-tree Markdown files); `git diff --check` -> clean. |
+| 2026-06-05 | AE1 done: added the private workspace `nimbus-assets` crate skeleton with empty default features, family-specific feature gates, shared integrity module, transitional asset-family modules, and feature-gated build checks for generated UI, staged JS packages, and current template roots. | `npm run build -w nimbus-ui` -> pass, built `packages/nimbus-ui/dist/` with existing route/export warnings; `npm run build:embedded-packages` -> staged 8 packages / 717 files; `cargo fmt --all --check` -> clean; `cargo check -p nimbus-assets --no-default-features` -> pass; `cargo check -p nimbus-assets --features all` -> pass; `bash scripts/verify-nimbus-assets-crate.sh` -> 11 passed, 0 failed. |
+| 2026-06-05 | AE2 done: moved BPD package bytes, manifest parsing, checksum verification, tooling materialization, and package byte materialization primitives into `nimbus_assets::js_packages`; moved the generated payload root to `crates/nimbus-assets/embedded/packages/`; updated Makefile, staging/closure scripts, CI/coverage artifact paths, `nimbus-bin` consumers, and the BPD closeout verifier. | `npm run build:embedded-packages` -> staged 8 packages / 717 files at `crates/nimbus-assets/embedded/packages`; `node scripts/check-package-closure.mjs` -> OK (5 Nimbus + 3 co-provisioned third-party roots); `cargo fmt --all --check` -> clean after applying `cargo fmt`; `cargo test -p nimbus-assets --features js-packages` -> 5 passed, 0 failed; `cargo test -p nimbus-bin provision::tests` -> 12 passed, 0 failed, 551 filtered out; `BPD_FULL=1 bash scripts/verify-binary-embedded-package-distribution.sh` -> 27 passed, 0 failed; `bash scripts/verify-nimbus-assets-crate.sh` -> 12 passed, 0 failed. |
+| 2026-06-05 | AE3 done: moved operator UI byte lookup and auth static bytes into `nimbus_assets::ui`; moved `auth.html` and `auth.js` to `crates/nimbus-assets/embedded/ui-auth/`; updated `nimbus-server` to consume UI bytes from the asset crate while keeping routing, auth, content-type, rendering substitutions, and CSP behavior in the server crate. | `npm run build -w nimbus-ui` -> pass, rebuilt `packages/nimbus-ui/dist/` with existing route/export warnings; `cargo fmt --all --check` -> clean; `cargo test -p nimbus-assets --features ui` -> 2 passed, 0 failed; `cargo test -p nimbus-server http::ui::tests` -> 4 passed, 0 failed, 406 filtered out; `cargo test -p nimbus-server local_ui` -> 13 passed, 0 failed, 397 filtered out; `bash scripts/verify-nimbus-assets-crate.sh` -> 13 passed, 0 failed. |
+| 2026-06-05 | AE4 done: moved Convex init, Cloud Functions init, and machine bootstrap production templates into `nimbus_assets::templates`; updated `nimbus-bin` init and machine bootstrap rendering to consume template constants while retaining substitutions, CLI behavior, prompts, filesystem writes, and machine flow in `nimbus-bin`. | `cargo fmt --all --check` -> clean after applying `cargo fmt`; `cargo test -p nimbus-assets --features templates` -> 2 passed, 0 failed; `cargo test -p nimbus-bin init::tests` -> 25 passed, 0 failed, 538 filtered out; `cargo test -p nimbus-bin machine::bootstrap::tests` -> 3 passed, 0 failed, 560 filtered out; `bash scripts/verify-nimbus-assets-crate.sh` -> 14 passed, 0 failed. |
+| 2026-06-05 | AE5 done: removed the obsolete `nimbus-server` asset `build.rs`, kept `nimbus-bin/build.rs` to non-asset package-version metadata, updated Makefile/CI/local-dev comments to name `nimbus-assets` and `nimbus-convex` as the compile-time asset owners, and tightened both verifiers against direct `rust-embed`, old asset checks, stale owner comments, and production `features = ["all"]` use. | `cargo fmt --all --check` -> clean; `cargo check -p nimbus-bin` -> pass, finished in 33.90s; `cargo check -p nimbus-server` -> pass, finished in 26.43s; `bash scripts/verify-nimbus-assets-crate.sh` -> 15 passed, 0 failed; `BPD_FULL=1 bash scripts/verify-binary-embedded-package-distribution.sh` -> 27 passed, 0 failed. |
+| 2026-06-05 | AE6 done: closed the plan after all production distribution/UI/template assets had a single `nimbus-assets` catalog owner and all behavior stayed in `nimbus-bin`, `nimbus-server`, or the domain owner crates. | `bash scripts/verify-nimbus-assets-crate.sh` -> 15 passed, 0 failed; `BPD_FULL=1 bash scripts/verify-binary-embedded-package-distribution.sh` -> 27 passed, 0 failed; `npm run docs:validate-refs:strict` -> pass (242 working-tree Markdown files); `cargo fmt --all --check` -> clean; `cargo test -p nimbus-assets --features js-packages` -> 5 passed, 0 failed; `cargo test -p nimbus-bin provision::tests` -> 12 passed, 0 failed, 551 filtered out; `cargo test -p nimbus-assets --features ui` -> 2 passed, 0 failed; `cargo test -p nimbus-server http::ui::tests` -> 4 passed, 0 failed, 406 filtered out; `cargo test -p nimbus-server local_ui` -> 13 passed, 0 failed, 397 filtered out; `cargo test -p nimbus-assets --features templates` -> 2 passed, 0 failed; `cargo test -p nimbus-bin init::tests` -> 25 passed, 0 failed, 538 filtered out; `cargo test -p nimbus-bin machine::bootstrap::tests` -> 3 passed, 0 failed, 560 filtered out; `make check` -> pass, workspace check finished in 1.72s. |

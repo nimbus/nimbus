@@ -15,12 +15,14 @@ The repo's build is a heterogeneous graph that spans both toolchains:
 
 - **Rust crates** in `crates/*` compile via Cargo.
 - **JavaScript packages** in `packages/*` build via npm workspaces.
-- **`nimbus-server`** is a Rust crate that has a compile-time dependency on
-  artifacts produced by a JS workspace:
-  - `crates/nimbus-server/src/http/loading.rs` `include_str!`s files
-    under `packages/nimbus-ui/.nimbus/convex/` (output of `convex codegen`).
-  - The server embeds `packages/nimbus-ui/dist/` via `rust-embed` (output
-    of `npm run build -w packages/nimbus-ui`).
+- **`nimbus-assets` and the Convex registry path** have compile-time
+  dependencies on artifacts produced by a JS workspace:
+  - `crates/nimbus-convex/src/registry/loading.rs` `include_str!`s and
+    `include_bytes!`s files under `packages/nimbus-ui/.nimbus/convex/`
+    (output of `convex codegen`).
+  - `crates/nimbus-assets/src/ui.rs` embeds `packages/nimbus-ui/dist/`
+    via `rust-embed`; `crates/nimbus-server/src/http/ui.rs` serves those
+    bytes and owns route/auth behavior.
 
 Make owns this cross-toolchain graph. The promise is:
 
@@ -31,9 +33,9 @@ Make owns this cross-toolchain graph. The promise is:
 The graph lives at the top of the `Makefile` (`UI_PKG`,
 `UI_CODEGEN_SOURCES`, `UI_CODEGEN_OUTPUTS`, `UI_CODEGEN_SENTINEL`,
 `UI_SPA_SOURCES`, `UI_DIST_INDEX`). Every Make target that compiles
-`nimbus-server` lists `$(UI_DIST_INDEX)` as a prerequisite so the SPA
-build (which itself depends on codegen) fires automatically when the
-inputs change.
+`nimbus-server` or `nimbus-assets` lists `$(UI_DIST_INDEX)` as a prerequisite
+so the SPA build (which itself depends on codegen) fires automatically when
+the inputs change.
 
 ## Prerequisites
 
@@ -83,17 +85,17 @@ asserts inputs exist (and errors actionably if they don't). See
 
 Running `cargo build`, `cargo check`, or `cargo test` against
 `nimbus-server` directly works **iff** the UI artifacts already exist on
-disk. If they don't, `build.rs` returns:
+disk. If they don't, `nimbus-assets/build.rs` returns:
 
 ```
 nimbus-ui dist is missing — <path> does not exist.
 Run any `make` target (e.g. `make build-ui`, `make check`, `make test`);
 Make's dependency graph will build the SPA on demand. Cargo-direct
-builds of nimbus-server require dist to exist beforehand.
+builds that compile nimbus-assets with the ui feature require dist to exist
+beforehand.
 ```
 
-This is intentional — `build.rs` does not run `npm` itself (that would
-make Cargo own the JS toolchain), but it tells you exactly what to run
-instead. The most common case is a fresh clone: run `make ci-required`
-(or any other Make target) once and then continue with `cargo` as
-normal.
+This is intentional — the asset-crate `build.rs` does not run `npm` itself
+(that would make Cargo own the JS toolchain), but it tells you exactly what
+to run instead. The most common case is a fresh clone: run `make ci-required`
+(or any other Make target) once and then continue with `cargo` as normal.
