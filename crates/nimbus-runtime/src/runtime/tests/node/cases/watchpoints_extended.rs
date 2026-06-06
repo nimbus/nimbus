@@ -4351,6 +4351,7 @@ const FS_HOST_IO_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-fs-stat-bigint.js",
     "test/parallel/test-fs-stream-destroy-emit-error.js",
     "test/parallel/test-fs-stream-double-close.js",
+    "test/parallel/test-fs-stream-fs-options.js",
     "test/parallel/test-fs-stream-options.js",
     "test/parallel/test-fs-symlink-dir.js",
     "test/parallel/test-fs-symlink-longpath.js",
@@ -4359,6 +4360,8 @@ const FS_HOST_IO_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-fs-write-stream-close-without-callback.js",
     "test/parallel/test-fs-write-stream-err.js",
     "test/parallel/test-fs-write-stream-file-handle-2.js",
+    "test/parallel/test-fs-write-stream-fs.js",
+    "test/parallel/test-fs-write-stream-throw-type-error.js",
     "test/parallel/test-fs-writestream-open-write.js",
 ];
 
@@ -4370,6 +4373,7 @@ const FS_HOST_IO_PROMOTED_NODE22_ONLY_PATHS: &[&str] = &[
 ];
 
 const FS_HOST_IO_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
+    "test/parallel/test-fastutf8stream-sync.js",
     "test/parallel/test-fs-glob-throw.mjs",
     "test/parallel/test-fs-rmSync-special-char.js",
     "test/parallel/test-fs-write-stream.js",

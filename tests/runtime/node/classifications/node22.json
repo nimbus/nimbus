@@ -2909,7 +2909,6 @@
         "test/parallel/test-fs-stream-construct-compat-error-write.js",
         "test/parallel/test-fs-stream-construct-compat-graceful-fs.js",
         "test/parallel/test-fs-stream-construct-compat-old-node.js",
-        "test/parallel/test-fs-stream-fs-options.js",
         "test/parallel/test-fs-symlink-dir-junction-relative.js",
         "test/parallel/test-fs-symlink-dir-junction.js",
         "test/parallel/test-fs-syncwritestream.js",
@@ -2920,9 +2919,7 @@
         "test/parallel/test-fs-write-sigxfsz.js",
         "test/parallel/test-fs-write-stream-eagain.mjs",
         "test/parallel/test-fs-write-stream-flush.js",
-        "test/parallel/test-fs-write-stream-fs.js",
         "test/parallel/test-fs-write-stream-patch-open.js",
-        "test/parallel/test-fs-write-stream-throw-type-error.js",
         "test/parallel/test-fs-write.js"
       ]
     },
