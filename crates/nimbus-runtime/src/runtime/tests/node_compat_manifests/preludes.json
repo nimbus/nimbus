@@ -52,6 +52,11 @@
       "selection_mode": "default_fixture_mapping"
     },
     {
+      "id": "process_before_exit_throw_to_exit",
+      "phase": "postlude",
+      "selection_mode": "default_fixture_mapping"
+    },
+    {
       "id": "fork_child_settle",
       "phase": "postlude",
       "selection_mode": "default_fixture_mapping"

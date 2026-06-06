@@ -592,6 +592,18 @@ fn node_compat_named_preludes_catalog_matches_default_behavior_registry() {
             "test/parallel/test-zlib-unused-weak.js",
             Some(NodeCompatNamedPreludeBehavior::ExposeGc),
         ),
+        (
+            "test/parallel/test-process-exit-from-before-exit.js",
+            Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel),
+        ),
+        (
+            "test/parallel/test-beforeexit-event-exit.js",
+            Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel),
+        ),
+        (
+            "test/parallel/test-process-exit-recursive.js",
+            Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel),
+        ),
         ("test/parallel/test-buffer-equals.js", None),
     ];
     for (fixture, expected_behavior) in prelude_cases {
@@ -641,6 +653,34 @@ fn node_compat_named_preludes_catalog_matches_default_behavior_registry() {
         (
             "test/parallel/test-worker-ref.js",
             Some(NodeCompatNamedPostludeBehavior::ProcessBeforeExitReentry),
+        ),
+        (
+            "test/parallel/test-process-beforeexit.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessBeforeExitReentry),
+        ),
+        (
+            "test/parallel/test-process-beforeexit-throw-exit.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessBeforeExitThrowToExit),
+        ),
+        (
+            "test/parallel/test-timers-unrefed-in-beforeexit.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
+        ),
+        (
+            "test/parallel/test-process-exit-from-before-exit.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
+        ),
+        (
+            "test/parallel/test-file-write-stream5.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
+        ),
+        (
+            "test/parallel/test-stream-writable-samecb-singletick.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
+        ),
+        (
+            "test/parallel/test-process-env-deprecation.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
         ),
         // `.on('beforeExit')` against an already-settled loop -> emit once.
         (

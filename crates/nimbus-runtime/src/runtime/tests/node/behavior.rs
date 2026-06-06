@@ -47,6 +47,31 @@ const PROCESS_BEFORE_EXIT_REENTRY_POSTLUDE: &str = r#"
     );
   }
 "#;
+const PROCESS_BEFORE_EXIT_THROW_POSTLUDE: &str = r#"
+  if (typeof globalThis.process?.emit === "function") {
+    const __nimbusInitialExitCode = globalThis.process.exitCode ?? 0;
+    try {
+      globalThis.process.emit("beforeExit", __nimbusInitialExitCode);
+    } catch (__nimbusBeforeExitError) {
+      // A throw inside a beforeExit handler is an uncaught exception in Node.
+      // Node still proceeds to the exit sequence, where 'exit' listeners run
+      // (and may reset process.exitCode). Swallow it here so the postlude can
+      // emit 'exit' exactly as Node would after the unhandled throw.
+    }
+    if (typeof globalThis.__nimbusProcessTicksAndRejections === "function") {
+      globalThis.__nimbusProcessTicksAndRejections();
+    }
+    await Promise.resolve();
+    await new Promise((resolve) => queueMicrotask(resolve));
+    if (typeof globalThis.process?.nextTick === "function") {
+      await new Promise((resolve) => globalThis.process.nextTick(resolve));
+    }
+    globalThis.process.emit(
+      "exit",
+      globalThis.process.exitCode ?? __nimbusInitialExitCode,
+    );
+  }
+"#;
 const FORK_CHILD_SETTLE_POSTLUDE: &str = r#"
   if (typeof common.__nimbusFlushForkWorkers === "function") {
     await common.__nimbusFlushForkWorkers();
@@ -229,13 +254,15 @@ impl NodeCompatNamedPreludeBehavior {
 pub(super) enum NodeCompatNamedPostludeBehavior {
     ProcessLifecycleDrain,
     ProcessBeforeExitReentry,
+    ProcessBeforeExitThrowToExit,
     ForkChildSettle,
 }
 
 impl NodeCompatNamedPostludeBehavior {
-    pub(super) const ALL: [Self; 3] = [
+    pub(super) const ALL: [Self; 4] = [
         Self::ProcessLifecycleDrain,
         Self::ProcessBeforeExitReentry,
+        Self::ProcessBeforeExitThrowToExit,
         Self::ForkChildSettle,
     ];
 
@@ -243,6 +270,7 @@ impl NodeCompatNamedPostludeBehavior {
         match self {
             Self::ProcessLifecycleDrain => "process_lifecycle_drain",
             Self::ProcessBeforeExitReentry => "process_before_exit_reentry",
+            Self::ProcessBeforeExitThrowToExit => "process_before_exit_throw_to_exit",
             Self::ForkChildSettle => "fork_child_settle",
         }
     }
@@ -259,6 +287,7 @@ impl NodeCompatNamedPostludeBehavior {
         match self {
             Self::ProcessLifecycleDrain => PROCESS_LIFECYCLE_DRAIN_POSTLUDE,
             Self::ProcessBeforeExitReentry => PROCESS_BEFORE_EXIT_REENTRY_POSTLUDE,
+            Self::ProcessBeforeExitThrowToExit => PROCESS_BEFORE_EXIT_THROW_POSTLUDE,
             Self::ForkChildSettle => FORK_CHILD_SETTLE_POSTLUDE,
         }
     }

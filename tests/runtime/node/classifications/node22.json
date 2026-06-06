@@ -1669,7 +1669,6 @@
         "test/parallel/test-atomics-wake.js",
         "test/parallel/test-bad-unicode.js",
         "test/parallel/test-bash-completion.js",
-        "test/parallel/test-beforeexit-event-exit.js",
         "test/parallel/test-benchmark-cli.js",
         "test/parallel/test-blob-createobjecturl.js",
         "test/parallel/test-blob-file-backed.js",
@@ -2786,7 +2785,6 @@
         "test/abort/test-process-abort-exitcode.js",
         "test/parallel/test-process-argv-0.js",
         "test/parallel/test-process-available-memory.js",
-        "test/parallel/test-process-beforeexit-throw-exit.js",
         "test/parallel/test-process-beforeexit.js",
         "test/parallel/test-process-binding-util.js",
         "test/parallel/test-process-chdir-errormessage.js",
@@ -2818,8 +2816,6 @@
         "test/parallel/test-process-execve.js",
         "test/parallel/test-process-exit-code-validation.js",
         "test/parallel/test-process-exit-code.js",
-        "test/parallel/test-process-exit-from-before-exit.js",
-        "test/parallel/test-process-exit-recursive.js",
         "test/parallel/test-process-external-stdio-close-spawn.js",
         "test/parallel/test-process-external-stdio-close.js",
         "test/parallel/test-process-get-builtin.mjs",
@@ -2877,8 +2873,7 @@
         "test/parallel/test-timers-unenroll-unref-interval.js",
         "test/parallel/test-timers-unref-active.js",
         "test/parallel/test-timers-unref-remove-other-unref-timers-only-one-fires.js",
-        "test/parallel/test-timers-unref-remove-other-unref-timers.js",
-        "test/parallel/test-timers-unrefed-in-beforeexit.js"
+        "test/parallel/test-timers-unref-remove-other-unref-timers.js"
       ]
     },
     {

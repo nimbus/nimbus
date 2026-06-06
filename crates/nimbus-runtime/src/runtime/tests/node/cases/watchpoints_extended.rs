@@ -2285,6 +2285,60 @@ fn node24_default_lane_executes_nds3_fork_method_promoted_batch_fixture() {
     );
 }
 
+// NDS3 event-loop-lifecycle promotion wave. Each fixture below is a genuine
+// Application-API required gap whose only blocker was that the Nimbus runtime
+// driver never natively emits the Node `beforeExit`/`exit` process lifecycle (or
+// honors a `process.exit()` short-circuit) at the end of a fixture module. The
+// harness compensates with per-fixture lifecycle preludes/postludes
+// (process_exit_sentinel / process_before_exit_reentry /
+// process_before_exit_throw_to_exit / process_lifecycle_drain) assigned in
+// default_prelude_behavior_for_fixture / default_postlude_behavior_for_fixture.
+// These are pure nimbus test-crate mechanisms with no fork dependency; with them
+// each fixture executes green in-isolate on BOTH lanes (verified individually
+// under a hard external timeout), so it is promoted from a required gap to
+// measured default-lane support and re-verified here as a non-ignored in-batch
+// pass. upstream Deno passes each of these in tests/node_compat/config.jsonc,
+// confirming the gap was a Nimbus-harness divergence, not a Deno-level gap.
+const NDS3_LIFECYCLE_PROMOTED_EXTRA_DIRS: &[&str] = &["test/common"];
+
+const NDS3_LIFECYCLE_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-beforeexit-event-exit.js",
+    "test/parallel/test-process-beforeexit-throw-exit.js",
+    "test/parallel/test-process-exit-from-before-exit.js",
+    "test/parallel/test-process-exit-recursive.js",
+    "test/parallel/test-timers-unrefed-in-beforeexit.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_nds3_lifecycle_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NDS3_LIFECYCLE_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-nds3-lifecycle-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        NDS3_LIFECYCLE_PROMOTED_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_nds3_lifecycle_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NDS3_LIFECYCLE_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-nds3-lifecycle-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        NDS3_LIFECYCLE_PROMOTED_EXTRA_DIRS,
+    );
+}
+
 #[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked async_hooks required-gap inventory; classify AsyncLocalStorage, promise hooks, provider lifecycle, graph/network, timer/task, GC, and host-owned failures after the first wide run"]
 fn node22_supported_lane_async_hooks_required_gap_watchpoint() {

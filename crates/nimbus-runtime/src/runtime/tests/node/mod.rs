@@ -1337,7 +1337,10 @@ try {{
     let process_exit_cleanup_script = if use_sync_tick_drain {
         ""
     } else {
-        r#"      await common.__nimbusFlushChildProcesses?.();
+        // This runs inside the invoke catch block, where the try-scoped `const
+        // common` is unreachable. `require` is declared before the try, so it
+        // stays in scope here; re-require common fresh to flush child processes.
+        r#"      await require("./test/common/index.js").__nimbusFlushChildProcesses?.();
 "#
     };
     // async-hooks fixtures enable their user hook at top level and assert the
@@ -2691,6 +2694,15 @@ pub(super) fn default_prelude_behavior_for_fixture(
         | "test/parallel/test-cluster-worker-exit.js" => {
             Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel)
         }
+        // Top-level / handler-driven `process.exit()` lifecycle fixtures: route
+        // the synthetic exit through reallyExit -> sentinel throw so the harness
+        // maps a code-0 exit to success without reaching the unavailable
+        // host-process Deno.exit path.
+        "test/parallel/test-process-exit-from-before-exit.js"
+        | "test/parallel/test-beforeexit-event-exit.js"
+        | "test/parallel/test-process-exit-recursive.js" => {
+            Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel)
+        }
         "test/parallel/test-inspector-open.js" | "test/parallel/test-inspector-enabled.js" => {
             Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel)
         }
@@ -2749,6 +2761,31 @@ pub(super) fn default_postlude_behavior_for_fixture(
         }
         "test/parallel/test-worker-ref.js" => {
             Some(NodeCompatNamedPostludeBehavior::ProcessBeforeExitReentry)
+        }
+        // Canonical repeatable-beforeExit cascade: each `.once('beforeExit')`
+        // handler reschedules real loop work (setImmediate/setTimeout/net), so
+        // the loop must run between emits. The reentry loop settles false once
+        // the terminal nextTick stage leaves no loop-keeping work.
+        "test/parallel/test-process-beforeexit.js" => {
+            Some(NodeCompatNamedPostludeBehavior::ProcessBeforeExitReentry)
+        }
+        // A throw inside the sole `beforeExit` handler is an uncaught exception
+        // in Node; the exit sequence still runs 'exit' listeners (which reset
+        // exitCode here). Emit beforeExit (swallow the throw) then emit exit.
+        "test/parallel/test-process-beforeexit-throw-exit.js" => {
+            Some(NodeCompatNamedPostludeBehavior::ProcessBeforeExitThrowToExit)
+        }
+        // Single-emit beforeExit fixtures: the handler fires exactly once
+        // against the already-settled loop. test-process-exit-from-before-exit
+        // additionally calls process.exit(0) inside the handler (sentinel
+        // prelude turns that into the success path); the unref'd/late timers in
+        // these fixtures must not fire, which holds because the loop is idle.
+        "test/parallel/test-timers-unrefed-in-beforeexit.js"
+        | "test/parallel/test-process-exit-from-before-exit.js"
+        | "test/parallel/test-file-write-stream5.js"
+        | "test/parallel/test-stream-writable-samecb-singletick.js"
+        | "test/parallel/test-process-env-deprecation.js" => {
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain)
         }
         // test/async-hooks/test-async-await.js registers `process.on('beforeExit',
         // mustCall())` -- `.on` fires the handler on EVERY emit (unlike
