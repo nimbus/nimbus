@@ -614,7 +614,6 @@
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
         "test/parallel/test-util-callbackify.js",
-        "test/parallel/test-util-getcallsite.js",
         "test/parallel/test-util-getcallsites.js",
         "test/parallel/test-util-inspect-long-running.js",
         "test/parallel/test-util-inspect-proxy.js",
@@ -2786,7 +2785,6 @@
       "test_paths": [
         "test/abort/test-process-abort-exitcode.js",
         "test/parallel/test-process-argv-0.js",
-        "test/parallel/test-process-assert.js",
         "test/parallel/test-process-available-memory.js",
         "test/parallel/test-process-beforeexit-throw-exit.js",
         "test/parallel/test-process-beforeexit.js",
@@ -2842,7 +2840,6 @@
         "test/parallel/test-process-really-exit.js",
         "test/parallel/test-process-redirect-warnings-env.js",
         "test/parallel/test-process-redirect-warnings.js",
-        "test/parallel/test-process-ref-unref.js",
         "test/parallel/test-process-remove-all-signal-listeners.js",
         "test/parallel/test-process-setgroups.js",
         "test/parallel/test-process-threadCpuUsage-worker-threads.js",

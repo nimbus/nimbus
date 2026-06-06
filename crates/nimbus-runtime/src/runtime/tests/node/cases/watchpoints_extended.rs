@@ -2235,6 +2235,56 @@ fn node24_default_lane_executes_nds3_census_promoted_batch_fixture() {
     );
 }
 
+// NDS3 deno_node fork-method promotion wave (nimbus/deno v2.8.2-nimbus.5). Each
+// fixture below is a genuine Application-API required gap whose only blocker was
+// a missing `ext/node/polyfills` method, ported faithfully against upstream Node
+// semantics in the fork (process.assert -> DEP0100 ERR_ASSERTION; process.ref/
+// unref -> Symbol.for("nodejs.ref"/"nodejs.unref")-then-method dispatch matching
+// lib/internal/process/per_thread.js; util.getCallSite -> ExperimentalWarning
+// rename alias for util.getCallSites). With that fork tag pinned, each fixture
+// executes green in-isolate, so it is promoted from a required gap to measured
+// default-lane support and re-verified here as a non-ignored in-batch pass.
+const NDS3_FORK_METHOD_PROMOTED_EXTRA_DIRS: &[&str] = &["test/common"];
+
+const NDS3_FORK_METHOD_PROMOTED_NODE22_PATHS: &[&str] = &[
+    "test/parallel/test-process-assert.js",
+    "test/parallel/test-process-ref-unref.js",
+    "test/parallel/test-util-getcallsite.js",
+];
+
+const NDS3_FORK_METHOD_PROMOTED_NODE24_PATHS: &[&str] =
+    &["test/parallel/test-process-ref-unref.js"];
+
+#[test]
+fn node22_supported_lane_executes_nds3_fork_method_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NDS3_FORK_METHOD_PROMOTED_NODE22_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-nds3-fork-method-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        NDS3_FORK_METHOD_PROMOTED_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_nds3_fork_method_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NDS3_FORK_METHOD_PROMOTED_NODE24_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-nds3-fork-method-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        NDS3_FORK_METHOD_PROMOTED_EXTRA_DIRS,
+    );
+}
+
 #[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked async_hooks required-gap inventory; classify AsyncLocalStorage, promise hooks, provider lifecycle, graph/network, timer/task, GC, and host-owned failures after the first wide run"]
 fn node22_supported_lane_async_hooks_required_gap_watchpoint() {

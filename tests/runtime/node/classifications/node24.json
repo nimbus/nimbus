@@ -3166,7 +3166,6 @@
         "test/parallel/test-process-really-exit.js",
         "test/parallel/test-process-redirect-warnings-env.js",
         "test/parallel/test-process-redirect-warnings.js",
-        "test/parallel/test-process-ref-unref.js",
         "test/parallel/test-process-remove-all-signal-listeners.js",
         "test/parallel/test-process-setgroups.js",
         "test/parallel/test-process-threadCpuUsage-worker-threads.js",
