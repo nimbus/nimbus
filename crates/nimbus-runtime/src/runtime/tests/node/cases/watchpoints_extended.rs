@@ -2413,6 +2413,87 @@ fn node24_default_lane_executes_nds3_fork_cycle1_promoted_batch_fixture() {
     );
 }
 
+// NDS3 fork cycle 2 (fork tag v2.8.2-nimbus.7). Each path below produced a clean
+// PASS in the process-isolated cycle-2 census on the repinned tag AND is
+// re-verified here as a non-ignored in-batch pass, which removes it from
+// `requires_unpromoted_node_surface` on the next `classifications.py sync`. The
+// fork edits behind these promotions: node:v8 `promiseHooks` registry (append-only
+// core.setPromiseHooks trampolines + per-type splice-able user lists), node:url
+// `URLPattern` re-export of the WHATWG URLPattern, the Nimbus-local
+// `snapshotFsStreamOptions` rewrite (for-in inherited keys, non-object passthrough
+// to the builtin, default-only `fs` injection), and the Nimbus-local
+// `module_type_from_path` reverse import-attribute guard (a non-JSON file requested
+// `with { type: 'json' }` now rejects). Common = passes on both lines; node24-only
+// = urlpattern fixtures the node22 corpus does not vendor.
+const NDS3_FORK_CYCLE2_PROMOTED_EXTRA_DIRS: &[&str] = &[
+    "test/common",
+    "test/es-module",
+    "test/fixtures/es-modules",
+];
+
+const NDS3_FORK_CYCLE2_PROMOTED_EXTRA_RUNTIME_FILES: &[&str] = &[
+    "test/fixtures/elipses.txt",
+    "test/fixtures/x.txt",
+    "test/fixtures/empty.js",
+    "test/fixtures/empty.json",
+];
+
+// Promoted = confirmed green on a per-fixture census against the repinned fork.
+// The node:v8 `promiseHooks` registry greens the two hooks whose assertions run
+// synchronously at promise creation (`on-init`, `on-before`); the `create-hook`,
+// `on-after`, `on-resolve`, and `exceptions` fixtures assert during tick-drain,
+// where the Nimbus bundle harness's own bootstrap/tick promises are observable to
+// the global v8 promise-hook surface and over-count against bare-fixture
+// expectations -- a harness-observability gap deferred to a dedicated suppression
+// cycle, NOT a `promiseHooks` API defect (see nds3-fork-cycle2-result.md). The two
+// `test-fs-read-stream{,-pos}.js` fixtures stay genuine structural gaps: the former
+// needs an mkfifo named pipe the isolate does not provide, the latter calls
+// `process.exit` -> `Deno.exit`, deliberately absent in a multi-tenant isolate.
+const NDS3_FORK_CYCLE2_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-promise-hook-on-init.js",
+    "test/parallel/test-promise-hook-on-before.js",
+    "test/parallel/test-fs-read-stream-inherit.js",
+    "test/parallel/test-fs-read-stream-throw-type-error.js",
+    "test/es-module/test-esm-dynamic-import-attribute.js",
+    "test/es-module/test-esm-dynamic-import-attribute.mjs",
+];
+
+const NDS3_FORK_CYCLE2_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
+    "test/parallel/test-urlpattern-invalidthis.js",
+    "test/parallel/test-urlpattern.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_nds3_fork_cycle2_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NDS3_FORK_CYCLE2_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-nds3-fork-cycle2-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        NDS3_FORK_CYCLE2_PROMOTED_EXTRA_RUNTIME_FILES,
+        NDS3_FORK_CYCLE2_PROMOTED_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_nds3_fork_cycle2_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NDS3_FORK_CYCLE2_PROMOTED_COMMON_PATHS
+        .iter()
+        .chain(NDS3_FORK_CYCLE2_PROMOTED_NODE24_ONLY_PATHS.iter())
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-nds3-fork-cycle2-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        NDS3_FORK_CYCLE2_PROMOTED_EXTRA_RUNTIME_FILES,
+        NDS3_FORK_CYCLE2_PROMOTED_EXTRA_DIRS,
+    );
+}
+
 #[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked async_hooks required-gap inventory; classify AsyncLocalStorage, promise hooks, provider lifecycle, graph/network, timer/task, GC, and host-owned failures after the first wide run"]
 fn node22_supported_lane_async_hooks_required_gap_watchpoint() {

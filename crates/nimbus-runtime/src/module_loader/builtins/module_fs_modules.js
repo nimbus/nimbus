@@ -690,19 +690,37 @@ function createNimbusFsModule(fsPromisesModule) {
     return fsBuiltin.watchFile(filename, options, wrappedListener);
   };
   function snapshotFsStreamOptions(options) {
-    const optionsSnapshot = snapshotFsEncodingOptions(options);
-    if (
-      optionsSnapshot
-      && typeof optionsSnapshot === "object"
-      && "fd" in optionsSnapshot
-      && optionsSnapshot.fd != null
-    ) {
-      return optionsSnapshot;
+    if (options === null || options === undefined) {
+      return { fs: fsModule };
     }
-    if (optionsSnapshot && typeof optionsSnapshot === "object") {
-      return { ...optionsSnapshot, fs: fsModule };
+    if (typeof options === "string") {
+      // A string options value selects the encoding; preserve that while still
+      // routing reads through the Nimbus-sandboxed fs by default.
+      return { encoding: options, fs: fsModule };
     }
-    return { fs: fsModule };
+    if (typeof options !== "object") {
+      // Forward an invalid non-object options value unchanged so the builtin's
+      // getOptions throws ERR_INVALID_ARG_TYPE instead of masking it.
+      return options;
+    }
+    // Copy via for-in (like the builtin's copyObject) so __proto__-inherited
+    // option keys (start/end/fd/autoClose/encoding/fs) survive; object spread
+    // would drop them.
+    const snapshot = {};
+    for (const key in options) {
+      snapshot[key] = options[key];
+    }
+    if ("fd" in snapshot && snapshot.fd != null) {
+      // With an explicit fd the stream operates on the descriptor directly;
+      // keep the original behavior of not overriding fs in that case.
+      return snapshot;
+    }
+    if (!("fs" in snapshot)) {
+      // Inject the Nimbus-sandboxed fs only as a default, never clobbering a
+      // caller-supplied fs:{open,read,close}.
+      snapshot.fs = fsModule;
+    }
+    return snapshot;
   }
   fsModule.createReadStream = function createReadStream(path, options) {
     return new fsModule.ReadStream(path, options);

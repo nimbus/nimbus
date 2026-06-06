@@ -576,11 +576,16 @@ fn ensure_json_import_attribute(
     module_type: &ModuleType,
     options: &ModuleLoadOptions,
 ) -> Result<(), JsErrorBox> {
-    if module_type == &ModuleType::Json
-        && options.requested_module_type != RequestedModuleType::Json
-    {
+    let is_json = module_type == &ModuleType::Json;
+    let requested_json = options.requested_module_type == RequestedModuleType::Json;
+    if is_json && !requested_json {
         return Err(JsErrorBox::generic(
             "Attempted to load JSON module without specifying \"type\": \"json\" attribute in the import statement.",
+        ));
+    }
+    if requested_json && !is_json {
+        return Err(JsErrorBox::generic(
+            "Import attribute \"type\" of value \"json\" is incompatible with the module format of the resolved module.",
         ));
     }
 
