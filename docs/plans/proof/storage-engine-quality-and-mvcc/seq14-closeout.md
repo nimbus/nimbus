@@ -1,23 +1,21 @@
 # SEQ14 Closeout Evidence
 
-status: pre_pr_pending
+status: done
 
 ## Summary
 
 `SEQ14` closes the storage-engine-quality-and-mvcc plan by making the completed
 architecture visible outside the plan, rerunning the reusable verifier after
 the live-provider gates, recording the one live bug found during closeout, and
-preparing the branch for a draft pull request.
-
-The only remaining closeout action at this checkpoint is replacing the pending
-PR line below with the draft PR URL after the branch is pushed.
+pushing the branch with a draft pull request.
 
 ## Branch And PR State
 
 - Worktree: `/Users/jack/src/github.com/nimbus/nimbus-worktrees/storage-engine-quality-and-mvcc`
 - Branch: `codex/storage-engine-quality-and-mvcc`
 - Base recorded by SEQ0: `main@4a9e6a77bcd3c51ef14018d1e34c3e2dfd199d38`
-- PR URL: pending until first branch push
+- First pushed commit: `4e99e45b6fea6e01b7df23945e4e807c681d624d`
+- Draft PR URL: `https://github.com/nimbus/nimbus/pull/13`
 
 ## Architecture Documentation Updates
 
@@ -85,6 +83,19 @@ as a deterministic redb smoke budget for the new storage engine surfaces.
   - PITR export/import: `264.958375ms <= 1s`
   - retention compaction: `1.386792ms <= 500ms`
 
+## Additional Closeout Finding
+
+The final verifier exposed one nondeterministic SQLite PITR test assumption:
+`sqlite_point_in_time_archive_restores_sequence_and_timestamp_targets` used the
+system clock, so adjacent commits could share the same timestamp and make a
+timestamp-target restore choose the later update sequence instead of the second
+insert sequence. The test now opens SQLite with a `ManualClock` and assigns
+distinct timestamps to schema creation, first insert, second insert, and update
+commits.
+
+- `cargo test -p nimbus-storage sqlite_point_in_time_archive_restores_sequence_and_timestamp_targets -- --nocapture`
+  - result after fix: `1 passed, 0 failed`
+
 ## Final Local Verification
 
 - `bash scripts/verify-storage-engine-quality-and-mvcc.sh`
@@ -103,5 +114,4 @@ as a deterministic redb smoke budget for the new storage engine surfaces.
   MySQL/libSQL fixture execution without skip paths.
 - The libSQL diagnostics freshness bug is fixed in the implementation rather
   than waived in the proof.
-- Branch push, draft PR creation, final status flip, and this proof's PR URL
-  update remain the only pending closeout actions at this checkpoint.
+- Branch push and draft PR creation are complete.

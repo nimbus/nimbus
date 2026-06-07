@@ -101,17 +101,17 @@ fi
 
 step 2 "Plan is autonomous from the current bootstrap state"
 IN_PROGRESS_PHASE_COUNT="$(grep -Ec '^\|[[:space:]]*SEQ[0-9]+[[:space:]]*\|[[:space:]]*`in_progress`[[:space:]]*\|' "${PLAN}")"
-if contains "${PLAN}" 'seq14-in-progress' \
+if contains "${PLAN}" 'seq14-done' \
    && contains "${PLAN}" 'Start at SEQ0' \
    && contains "${PLAN}" 'at most one phase in_progress' \
    && contains "${PLAN}" 'external_evidence_pending' \
    && contains "${PLAN}" 'Control Plane Rules' \
    && contains "${PLAN}" 'Verifier Contract' \
    && [ "${IN_PROGRESS_PHASE_COUNT}" -le 1 ]; then
-  pass "Plan has bootstrap status, control rules, verifier contract, autonomous /goal prompt, and at most one in-progress phase"
+  pass "Plan has final status, control rules, verifier contract, autonomous /goal prompt, and at most one in-progress phase"
 else
   fail "Plan autonomy incomplete" \
-    "Expected bootstrap status, Start-at-SEQ0 goal prompt, at-most-one-in-progress rule, external_evidence_pending semantics, Control Plane Rules, Verifier Contract, and <= 1 in-progress phase"
+    "Expected final status, Start-at-SEQ0 goal prompt, at-most-one-in-progress rule, external_evidence_pending semantics, Control Plane Rules, Verifier Contract, and <= 1 in-progress phase"
 fi
 
 step 3 "SEQ0 proof records worktree, branch, base, sources, and enterprise charter"
@@ -800,9 +800,9 @@ step 20 "Closeout requires architecture docs and PR"
 if contains "${PLAN}" 'ARCHITECTURE.md' \
    && contains "${PLAN}" 'docs/architecture/storage/persistence-engine-baseline.md' \
    && contains "${PLAN}" 'pull request' \
-   && contains "${PLAN}" 'branch push' \
-   && contains "${PLAN}" 'PR creation' \
-   && contains "${SEQ14_PROOF}" '^status: pre_pr_pending$' \
+   && contains "${PLAN}" 'pushed branch' \
+   && contains "${PLAN}" 'draft PR' \
+   && contains "${SEQ14_PROOF}" '^status: done$' \
    && contains "${SEQ14_PROOF}" 'ARCHITECTURE.md' \
    && contains "${SEQ14_PROOF}" 'docs/architecture/storage/persistence-engine-baseline.md' \
    && contains "${SEQ14_PROOF}" 'docs/operating/storage-backends.md' \
@@ -812,7 +812,8 @@ if contains "${PLAN}" 'ARCHITECTURE.md' \
    && contains "${SEQ14_PROOF}" 'docs/adapters/mongodb/operations.md' \
    && contains "${SEQ14_PROOF}" 'docs/adapters/dynamodb/enterprise-readiness.md' \
    && contains "${SEQ14_PROOF}" 'docs/adapters/native/README.md' \
-   && contains "${SEQ14_PROOF}" 'PR URL: pending until first branch push' \
+   && contains "${SEQ14_PROOF}" 'Draft PR URL: `https://github.com/nimbus/nimbus/pull/13`' \
+   && contains "${SEQ14_PROOF}" 'Branch push and draft PR creation are complete' \
    && contains "${SEQ14_PROOF}" '20 passed, 0 failed' \
    && contains "${SEQ14_PROOF}" 'cargo fmt --all --check' \
    && contains "${SEQ14_PROOF}" 'npm run docs:validate-refs:strict' \
@@ -826,10 +827,10 @@ if contains "${PLAN}" 'ARCHITECTURE.md' \
    && contains "docs/adapters/cloud-functions/compatibility.md" 'Storage Semantics Inherited By Cloud Functions' \
    && contains "docs/adapters/mongodb/operations.md" 'Storage Semantics' \
    && contains "docs/adapters/native/README.md" 'Storage Semantics'; then
-  pass "Plan closeout records architecture docs, adapter docs, pre-PR branch state, verification, and pending PR handoff"
+  pass "Plan closeout records architecture docs, adapter docs, pushed branch, draft PR, verification, and final proof"
 else
   fail "SEQ14 closeout contract incomplete" \
-    "Expected architecture doc updates, adapter doc updates, SEQ14 proof, verification counts, pending PR handoff, pushed branch and pull request requirements"
+    "Expected architecture doc updates, adapter doc updates, SEQ14 proof, verification counts, pushed branch, draft PR URL, and pull request requirements"
 fi
 
 printf '\n\033[1mSummary:\033[0m %s passed, %s failed\n' "${PASS}" "${FAIL}"

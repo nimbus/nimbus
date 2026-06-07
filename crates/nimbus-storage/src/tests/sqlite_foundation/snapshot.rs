@@ -85,20 +85,28 @@ fn sqlite_materialized_snapshot_plus_journal_tail_rebuild_matches_live_state() {
 #[test]
 fn sqlite_point_in_time_archive_restores_sequence_and_timestamp_targets() {
     let live_dir = tempdir().expect("temporary directory should create");
-    let live = SqliteTenantStore::open(live_dir.path().join("live.sqlite3"))
-        .expect("sqlite tenant store should open");
+    let clock = Arc::new(ManualClock::new(Timestamp(1_000)));
+    let live = SqliteTenantStore::open_with_simulation(
+        live_dir.path().join("live.sqlite3"),
+        clock.clone(),
+        Arc::new(crate::NoopFaultInjector),
+    )
+    .expect("sqlite tenant store should open");
     let table_schema = ranked_tasks_schema();
     let table = table_schema.table.clone();
     live.replace_table_schema(&table_schema)
         .expect("table schema should persist");
 
+    clock.set(Timestamp(1_100));
     let first = ranked_document(&table, "First", 1);
     live.insert_with_indexes(&first, &table_schema.indexes)
         .expect("first insert should succeed");
+    clock.set(Timestamp(1_200));
     let second = ranked_document(&table, "Second", 3);
     let second_commit = live
         .insert_with_indexes(&second, &table_schema.indexes)
         .expect("second insert should succeed");
+    clock.set(Timestamp(1_300));
     live.update_with_indexes(
         &table,
         &first.id,

@@ -96,7 +96,10 @@ This directory prefers a small-number-of-plans model with clear ownership.
     budget now guards latest point reads, historical point reads, historical
     index pagination, CDC streaming, PITR export/import, retention compaction,
     and bounded document/index version write amplification.
-    SEQ14 closes with final architecture docs, pushed branch, and PR.
+    SEQ14 is complete: final architecture, operating, adapter, plan, proof,
+    and verifier docs record the completed storage contract; the branch
+    `codex/storage-engine-quality-and-mvcc` is pushed; and draft PR
+    `https://github.com/nimbus/nimbus/pull/13` is open with closeout evidence.
 - `docs/plans/node-default-runtime-support-hardening-plan.md`
   - active Node runtime default-quality plan (NDS0..NDS10). Starts from
     the completed NFRC baseline where Node24 is the product default,
