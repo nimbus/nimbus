@@ -793,7 +793,6 @@ async fn mysql_historical_index_prefix_composite_range_and_pagination_are_stable
             mysql_document_title_strings(&open_docs),
             mysql_status_rank_full_scan_oracle_titles(
                 &opened.store,
-                &table,
                 &table_id,
                 &[&first, &second, &third],
                 third_insert.sequence,
@@ -821,7 +820,6 @@ async fn mysql_historical_index_prefix_composite_range_and_pagination_are_stable
             mysql_document_title_strings(&exact_rank_two),
             mysql_status_rank_full_scan_oracle_titles(
                 &opened.store,
-                &table,
                 &table_id,
                 &[&first, &second, &third],
                 third_insert.sequence,
@@ -2107,7 +2105,6 @@ fn mysql_rank_full_scan_oracle_titles(
 
 fn mysql_status_rank_full_scan_oracle_titles(
     store: &crate::MySqlTenantStore,
-    table: &TableName,
     table_id: &TableId,
     corpus: &[&Document],
     sequence: SequenceNumber,
@@ -2119,7 +2116,7 @@ fn mysql_status_rank_full_scan_oracle_titles(
         .iter()
         .filter_map(|document| {
             store
-                .get_document_version_at(table, table_id, &document.id, sequence)
+                .get_document_version_at(&document.table, table_id, &document.id, sequence)
                 .expect("document version oracle should load")
         })
         .filter_map(|document| {

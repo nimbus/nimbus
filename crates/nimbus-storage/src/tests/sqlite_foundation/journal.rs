@@ -618,7 +618,6 @@ fn sqlite_historical_index_prefix_composite_range_and_pagination_are_stable() {
         sqlite_document_title_strings(&open_docs),
         sqlite_status_rank_full_scan_oracle_titles(
             &snapshot,
-            &schema.table,
             &table_id,
             &[&first, &second, &third],
             third_insert.sequence,
@@ -645,7 +644,6 @@ fn sqlite_historical_index_prefix_composite_range_and_pagination_are_stable() {
         sqlite_document_title_strings(&exact_rank_two),
         sqlite_status_rank_full_scan_oracle_titles(
             &snapshot,
-            &schema.table,
             &table_id,
             &[&first, &second, &third],
             third_insert.sequence,
@@ -875,7 +873,6 @@ fn sqlite_rank_full_scan_oracle_titles(
 
 fn sqlite_status_rank_full_scan_oracle_titles(
     snapshot: &crate::sqlite::SqliteReadSnapshot,
-    table: &TableName,
     table_id: &TableId,
     corpus: &[&Document],
     sequence: SequenceNumber,
@@ -887,7 +884,7 @@ fn sqlite_status_rank_full_scan_oracle_titles(
         .iter()
         .filter_map(|document| {
             snapshot
-                .get_document_version_at(table, table_id, &document.id, sequence)
+                .get_document_version_at(&document.table, table_id, &document.id, sequence)
                 .expect("document version oracle should load")
         })
         .filter_map(|document| {

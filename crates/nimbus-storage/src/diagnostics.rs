@@ -289,7 +289,7 @@ fn capabilities(
     }
 }
 
-fn diagnostic(
+struct StorageHealthDiagnosticInput {
     capabilities: StorageCapabilities,
     progress: JournalProgress,
     retention_floor: Option<SequenceNumber>,
@@ -298,7 +298,19 @@ fn diagnostic(
     version_counts: MvccVersionCountsDiagnostic,
     retention_pins: Vec<RetentionPin>,
     retention_gc: RetentionGcWatermarks,
-) -> StorageHealthDiagnostic {
+}
+
+fn diagnostic(input: StorageHealthDiagnosticInput) -> StorageHealthDiagnostic {
+    let StorageHealthDiagnosticInput {
+        capabilities,
+        progress,
+        retention_floor,
+        document_versions,
+        index_versions,
+        version_counts,
+        retention_pins,
+        retention_gc,
+    } = input;
     let freshness_lag = progress
         .durable_head
         .0
@@ -629,16 +641,16 @@ impl TenantStore {
         let retention_gc = self
             .retention_floor
             .gc_watermarks(progress.applied_head, retention_config);
-        Ok(diagnostic(
-            self.storage_capabilities(),
+        Ok(diagnostic(StorageHealthDiagnosticInput {
+            capabilities: self.storage_capabilities(),
             progress,
-            self.retention_floor.lowest_pinned_sequence(),
+            retention_floor: self.retention_floor.lowest_pinned_sequence(),
             document_versions,
             index_versions,
-            mvcc_version_counts(&schema, table_identity_versions),
-            self.retention_floor.snapshot(),
+            version_counts: mvcc_version_counts(&schema, table_identity_versions),
+            retention_pins: self.retention_floor.snapshot(),
             retention_gc,
-        ))
+        }))
     }
 }
 
@@ -672,16 +684,16 @@ impl SqliteTenantStore {
         let retention_gc = self
             .retention_floor
             .gc_watermarks(progress.applied_head, retention_config);
-        Ok(diagnostic(
-            self.storage_capabilities(),
+        Ok(diagnostic(StorageHealthDiagnosticInput {
+            capabilities: self.storage_capabilities(),
             progress,
-            self.retention_floor.lowest_pinned_sequence(),
+            retention_floor: self.retention_floor.lowest_pinned_sequence(),
             document_versions,
             index_versions,
-            mvcc_version_counts(&schema, table_identity_versions),
-            self.retention_floor.snapshot(),
+            version_counts: mvcc_version_counts(&schema, table_identity_versions),
+            retention_pins: self.retention_floor.snapshot(),
             retention_gc,
-        ))
+        }))
     }
 }
 
@@ -711,16 +723,16 @@ impl PostgresTenantStore {
         let retention_gc = self
             .retention_floor
             .gc_watermarks(progress.applied_head, retention_config);
-        Ok(diagnostic(
-            self.storage_capabilities(),
+        Ok(diagnostic(StorageHealthDiagnosticInput {
+            capabilities: self.storage_capabilities(),
             progress,
-            self.retention_floor.lowest_pinned_sequence(),
+            retention_floor: self.retention_floor.lowest_pinned_sequence(),
             document_versions,
             index_versions,
-            mvcc_version_counts(&schema, table_identity_versions),
-            self.retention_floor.snapshot(),
+            version_counts: mvcc_version_counts(&schema, table_identity_versions),
+            retention_pins: self.retention_floor.snapshot(),
             retention_gc,
-        ))
+        }))
     }
 }
 
@@ -750,16 +762,16 @@ impl MySqlTenantStore {
         let retention_gc = self
             .retention_floor
             .gc_watermarks(progress.applied_head, retention_config);
-        Ok(diagnostic(
-            self.storage_capabilities(),
+        Ok(diagnostic(StorageHealthDiagnosticInput {
+            capabilities: self.storage_capabilities(),
             progress,
-            self.retention_floor.lowest_pinned_sequence(),
+            retention_floor: self.retention_floor.lowest_pinned_sequence(),
             document_versions,
             index_versions,
-            mvcc_version_counts(&schema, table_identity_versions),
-            self.retention_floor.snapshot(),
+            version_counts: mvcc_version_counts(&schema, table_identity_versions),
+            retention_pins: self.retention_floor.snapshot(),
             retention_gc,
-        ))
+        }))
     }
 }
 
@@ -789,16 +801,16 @@ impl LibsqlReplicaTenantStore {
         let retention_gc = self
             .retention_floor
             .gc_watermarks(progress.applied_head, retention_config);
-        Ok(diagnostic(
-            self.storage_capabilities(),
+        Ok(diagnostic(StorageHealthDiagnosticInput {
+            capabilities: self.storage_capabilities(),
             progress,
-            self.retention_floor.lowest_pinned_sequence(),
+            retention_floor: self.retention_floor.lowest_pinned_sequence(),
             document_versions,
             index_versions,
-            mvcc_version_counts(&schema, table_identity_versions),
-            self.retention_floor.snapshot(),
+            version_counts: mvcc_version_counts(&schema, table_identity_versions),
+            retention_pins: self.retention_floor.snapshot(),
             retention_gc,
-        ))
+        }))
     }
 }
 
