@@ -1425,7 +1425,6 @@
         "test/abort/test-addon-register-signal-handler.js",
         "test/abort/test-addon-uv-handle-leak.js",
         "test/abort/test-signal-handler.js",
-        "test/async-hooks/test-async-exec-resource-http-32060.js",
         "test/async-hooks/test-async-local-storage-dgram.js",
         "test/async-hooks/test-async-local-storage-socket.js",
         "test/async-hooks/test-async-local-storage-tlssocket.js",

@@ -2067,6 +2067,12 @@ const ASYNC_HOOKS_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-async-hooks-stack-overflow-nested-async.js",
     "test/parallel/test-async-hooks-stack-overflow.js",
     "test/parallel/test-async-hooks-top-level-clearimmediate.js",
+    // NDS3 cycle 3b broken-chunk recovery: this required-gap fixture lost its
+    // census result to a chunk-level timeout (rc 124/133 discarded ~19 fast
+    // neighbors). Re-run individually under an OS-level gtimeout it passes
+    // cleanly on both lanes (node22 + node24) with the async-hooks batch
+    // staging; ground-truth verified in the non-ignored batch below.
+    "test/async-hooks/test-async-exec-resource-http-32060.js",
 ];
 
 const ASYNC_HOOKS_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
