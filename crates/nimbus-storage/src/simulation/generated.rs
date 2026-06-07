@@ -18,11 +18,15 @@ pub struct GeneratedTaskRecord {
 
 impl GeneratedTaskRecord {
     fn datadriven(status: &str, rank: &str, title: &str, line_number: usize) -> Result<Self> {
-        let rank = rank.parse::<i64>().map_err(|_| {
-            Error::InvalidInput(format!(
-                "generated history line {line_number} rank `{rank}` is not a signed integer"
-            ))
-        })?;
+        let rank = match rank.parse::<i64>() {
+            Ok(rank) => rank,
+            Err(_) => {
+                return Err(Error::InvalidInput(format!(
+                    "generated history line {} rank `{}` is not a signed integer",
+                    line_number, rank
+                )));
+            }
+        };
         Ok(Self {
             title: title.to_string(),
             status: status.to_string(),
@@ -75,11 +79,13 @@ impl GeneratedTaskRecord {
 }
 
 fn parse_generated_slot(slot: &str, line_number: usize) -> Result<u32> {
-    slot.parse::<u32>().map_err(|_| {
-        Error::InvalidInput(format!(
-            "generated history line {line_number} slot `{slot}` is not an unsigned integer"
-        ))
-    })
+    match slot.parse::<u32>() {
+        Ok(slot) => Ok(slot),
+        Err(_) => Err(Error::InvalidInput(format!(
+            "generated history line {} slot `{}` is not an unsigned integer",
+            line_number, slot
+        ))),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
