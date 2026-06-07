@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::fmt::Write as _;
 use std::future::Future;
 use std::str::FromStr;
@@ -11,7 +10,7 @@ use deadpool_postgres::{
 };
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, FieldType, Filter,
-    FilterOp, HistoricalIndexCursor, HistoricalIndexTuple, HistoricalReadShape, IndexDefinition,
+    HistoricalIndexCursor, HistoricalIndexTuple, HistoricalReadShape, IndexDefinition,
     IndexLifecycleEvent, ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema,
     SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName,
     TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp,
@@ -35,9 +34,9 @@ use crate::commit_log::{
 use crate::runtime_bridge::bridge_tokio_runtime;
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{
-    DurableJournalBootstrap, DurableJournalPage, JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT,
-    MaterializedJournalSnapshot, PointInTimeRestoreArchive, PointInTimeRestoreTarget,
-    ResolvedScheduleOp, ResolvedWrite, TenantWriteCommit,
+    DurableJournalBootstrap, DurableJournalPage, JournalProgress, MaterializedJournalSnapshot,
+    PointInTimeRestoreArchive, PointInTimeRestoreTarget, ResolvedScheduleOp, ResolvedWrite,
+    TenantWriteCommit,
 };
 
 mod backend;
@@ -46,6 +45,7 @@ mod document_versions;
 mod index_versions;
 mod notifications;
 mod provider;
+mod query_helpers;
 mod read;
 mod resource_paths;
 mod storage;
@@ -53,6 +53,7 @@ mod table_lifecycle;
 mod trigger_delivery;
 mod trigger_invocations;
 mod write;
+mod write_schema_events;
 
 use self::backend::*;
 pub use self::config::PostgresProviderConfig;
@@ -65,6 +66,7 @@ use self::notifications::{
     PendingPostgresNotification, PostgresProviderNotificationPayload, parse_postgres_notification,
 };
 pub use self::notifications::{PostgresNotificationListener, PostgresProviderNotification};
+use self::query_helpers::*;
 
 const POSTGRES_IDENTIFIER_LIMIT: usize = 63;
 const TARGET_TENANT_HASH_HEX_LEN: usize = 40;

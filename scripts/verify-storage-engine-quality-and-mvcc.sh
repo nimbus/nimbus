@@ -65,6 +65,12 @@ contains() {
   [ -f "${file}" ] && grep -q "${pattern}" "${file}"
 }
 
+line_count_at_most() {
+  local file="$1"
+  local max_lines="$2"
+  [ -f "${file}" ] && [ "$(wc -l <"${file}" | tr -d ' ')" -le "${max_lines}" ]
+}
+
 printf '\033[1mSEQ verification gate - storage-engine-quality-and-mvcc\033[0m\n'
 printf 'Repo: %s\n' "${REPO_ROOT}"
 
@@ -849,6 +855,13 @@ if contains "${PLAN}" 'ARCHITECTURE.md' \
    && contains "${SEQ14_PROOF}" 'snapshot_unavailable_historical_read_maps_to_service_unavailable' \
    && contains "${SEQ14_PROOF}" 'crates/nimbus-storage/src/index/history_scan.rs' \
    && contains "${SEQ14_PROOF}" 'MySQL durable-journal stream/bootstrap' \
+   && contains "${SEQ14_PROOF}" 'crates/nimbus-storage/src/mysql/table_catalog.rs' \
+   && contains "${SEQ14_PROOF}" 'crates/nimbus-storage/src/mysql/query_helpers.rs' \
+   && contains "${SEQ14_PROOF}" 'crates/nimbus-storage/src/postgres/query_helpers.rs' \
+   && contains "${SEQ14_PROOF}" 'crates/nimbus-storage/src/postgres/write_schema_events.rs' \
+   && contains "${SEQ14_PROOF}" 'mysql/backend.rs` 1329' \
+   && contains "${SEQ14_PROOF}" 'postgres/backend.rs` 1470' \
+   && contains "${SEQ14_PROOF}" 'postgres/write.rs` 1476' \
    && contains "${SEQ14_PROOF}" 'historical_index -- --nocapture' \
    && contains "${SEQ14_PROOF}" 'durable_journal_stream -- --nocapture' \
    && contains "${SEQ14_PROOF}" 'cargo fmt --all --check' \
@@ -857,6 +870,22 @@ if contains "${PLAN}" 'ARCHITECTURE.md' \
    && contains "${SEQ14_PROOF}" 'libSQL diagnostics freshness bug is fixed' \
    && contains "ARCHITECTURE.md" 'latest-row plus version-history architecture' \
    && contains "docs/architecture/storage/persistence-engine-baseline.md" 'MVCC, PITR, CDC, and retention contract' \
+   && contains "docs/architecture/storage/persistence-engine-baseline.md" 'mysql/table_catalog.rs' \
+   && contains "docs/architecture/storage/persistence-engine-baseline.md" 'postgres/write_schema_events.rs' \
+   && contains "${PLAN}" 'SQL-family production storage roots stay below' \
+   && contains "${PLAN}" 'crates/nimbus-storage/src/mysql/table_catalog.rs' \
+   && contains "${PLAN}" 'crates/nimbus-storage/src/postgres/write_schema_events.rs' \
+   && contains "crates/nimbus-storage/src/mysql.rs" 'mod query_helpers' \
+   && contains "crates/nimbus-storage/src/mysql.rs" 'mod table_catalog' \
+   && contains "crates/nimbus-storage/src/postgres.rs" 'mod query_helpers' \
+   && contains "crates/nimbus-storage/src/postgres.rs" 'mod write_schema_events' \
+   && contains "crates/nimbus-storage/src/mysql/table_catalog.rs" 'load_table_id_from_session' \
+   && contains "crates/nimbus-storage/src/mysql/query_helpers.rs" 'filter_index_documents_with_cancel' \
+   && contains "crates/nimbus-storage/src/postgres/query_helpers.rs" 'append_postgres_range_clause' \
+   && contains "crates/nimbus-storage/src/postgres/write_schema_events.rs" 'durable_record_changes_schema_cache' \
+   && line_count_at_most "crates/nimbus-storage/src/mysql/backend.rs" 1499 \
+   && line_count_at_most "crates/nimbus-storage/src/postgres/backend.rs" 1499 \
+   && line_count_at_most "crates/nimbus-storage/src/postgres/write.rs" 1499 \
    && contains "docs/operating/storage-backends.md" 'Historical reads use retained' \
    && contains "docs/adapters/convex/compatibility.md" 'Storage Semantics Inherited By Convex' \
    && contains "docs/adapters/firebase/compatibility.md" 'Storage Semantics Inherited By Firebase' \

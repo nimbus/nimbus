@@ -10,7 +10,7 @@ use mysql_async::{
 };
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, FieldType, Filter,
-    FilterOp, HistoricalIndexCursor, HistoricalIndexTuple, HistoricalReadShape, IndexDefinition,
+    HistoricalIndexCursor, HistoricalIndexTuple, HistoricalReadShape, IndexDefinition,
     IndexLifecycleEvent, ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema,
     SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName,
     TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp,
@@ -29,9 +29,8 @@ use crate::commit_log::{
 use crate::runtime_bridge::bridge_tokio_runtime;
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{
-    DurableJournalBootstrap, DurableJournalPage, JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT,
-    MaterializedJournalSnapshot, PointInTimeRestoreArchive, PointInTimeRestoreTarget,
-    TenantWriteCommit,
+    DurableJournalBootstrap, DurableJournalPage, JournalProgress, MaterializedJournalSnapshot,
+    PointInTimeRestoreArchive, PointInTimeRestoreTarget, TenantWriteCommit,
 };
 use crate::{ResolvedScheduleOp, ResolvedWrite};
 
@@ -39,15 +38,19 @@ mod backend;
 mod document_versions;
 mod index_versions;
 mod provider;
+mod query_helpers;
 mod read;
 mod resource_paths;
 mod storage;
+mod table_catalog;
 mod table_lifecycle;
 mod trigger_delivery;
 mod trigger_invocations;
 mod write;
 
 use self::backend::*;
+use self::query_helpers::*;
+use self::table_catalog::*;
 
 const MYSQL_IDENTIFIER_LIMIT: usize = 64;
 const TARGET_TENANT_HASH_HEX_LEN: usize = 40;

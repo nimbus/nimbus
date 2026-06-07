@@ -143,6 +143,14 @@ branch rather than deferred:
 - MySQL durable-journal stream/bootstrap now derives `cursor_floor` from the
   retained `commit_log` floor, aligning CDC retention semantics with
   redb/SQLite/Postgres instead of reporting a permanent zero floor.
+- SQL-family production roots now stay below the repo's 1,500-line review
+  threshold by extracting concept-owned helpers:
+  `crates/nimbus-storage/src/mysql/table_catalog.rs`,
+  `crates/nimbus-storage/src/mysql/query_helpers.rs`,
+  `crates/nimbus-storage/src/postgres/query_helpers.rs`, and
+  `crates/nimbus-storage/src/postgres/write_schema_events.rs`. Post-extraction
+  line counts are `mysql/backend.rs` 1329, `postgres/backend.rs` 1470, and
+  `postgres/write.rs` 1476.
 - `docs/technical-debt.md` now marks A-021, A-022, and O-007 done.
 - The owning plan records the narrow modularity exception for the provider
   conformance roots and the embedded redb composition root.
@@ -159,6 +167,8 @@ Focused verification after these fixes:
   - result: `10 passed, 0 failed`
 - `cargo test -p nimbus-storage durable_journal_stream -- --nocapture`
   - result: `2 passed, 0 failed`
+- `cargo check -p nimbus-storage`
+  - result: passed after SQL-family production-root modularity extraction
 - `cargo test -p nimbus-mongodb find_and_modify -- --nocapture`
   - result: `9 passed, 0 failed`
 - `cargo test -p nimbus-storage point_in_time -- --nocapture`

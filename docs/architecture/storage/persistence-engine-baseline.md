@@ -136,6 +136,10 @@ SQLite, Postgres, and MySQL share one pure historical index scan planner in
 `crates/nimbus-storage/src/index/history_scan.rs` for query shape, encoded
 tuple bounds, cursor validation, and page finalization. Backend modules own only
 their physical `index_versions` lookup and `document_versions` hydration.
+SQL-family production roots stay below the repo's 1,500-line review threshold by
+moving stable table-id catalog operations to `mysql/table_catalog.rs`,
+document/index filtering and range helpers to SQL-family `query_helpers.rs`
+modules, and Postgres schema-cache event shaping to `postgres/write_schema_events.rs`.
 
 ## Tenant Event Journal Baseline
 
