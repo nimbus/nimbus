@@ -30,6 +30,12 @@ protocols, and ExtendDB for compatibility-facing proof.
   fixes, including live SEQ3/SEQ4 provider evidence, SEQ13 performance
   evidence, architecture docs, pushed branch, and draft PR
   `https://github.com/nimbus/nimbus/pull/13`.
+- **Post-closeout challenge prompt:**
+  `docs/plans/prompts/storage-engine-quality-and-mvcc-post-closeout-architecture-review.md`
+  is the durable follow-up audit prompt. Use it only after verifying the local
+  checkout, remote branch, and PR #13 head all match, then re-check the local
+  Convex, CockroachDB, TigerBeetle, ElectricSQL, and ExtendDB source refs before
+  accepting the completed architecture as the enterprise baseline.
 - **Depends on:**
   - durable tenant event journal
   - retention floors and hard-delete gates

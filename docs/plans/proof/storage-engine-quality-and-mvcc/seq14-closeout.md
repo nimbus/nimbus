@@ -17,6 +17,16 @@ pushing the branch with a draft pull request.
 - First pushed commit: `4e99e45b6fea6e01b7df23945e4e807c681d624d`
 - Draft PR URL: `https://github.com/nimbus/nimbus/pull/13`
 
+## Post-Closeout Architecture Challenge
+
+The durable follow-up audit prompt is
+`docs/plans/prompts/storage-engine-quality-and-mvcc-post-closeout-architecture-review.md`.
+It is not a resume prompt for SEQ implementation. It is the next architecture
+challenge gate for a fresh reviewer to verify the PR head, re-check local
+Convex/CockroachDB/TigerBeetle/ElectricSQL/ExtendDB source refs, inspect the
+final code/proof/verifier evidence, and decide whether the completed storage
+architecture is genuinely enterprise-ready.
+
 ## Architecture Documentation Updates
 
 The completed architecture is no longer hidden only in this plan:

@@ -17,7 +17,24 @@ You are reviewing the completed Nimbus storage-engine quality and MVCC work.
 Your job is to challenge the final architecture, not to assume the plan was
 correct because it completed.
 
-Work from repo evidence, not chat history. Read these first:
+Work from repo evidence, not chat history.
+
+Start by verifying that you are auditing the intended completed work, not
+`main`, a stale worktree, or a mismatched PR checkout:
+
+```text
+git status --short --branch
+git rev-parse HEAD
+git rev-parse origin/codex/storage-engine-quality-and-mvcc
+gh pr view 13 --json url,state,isDraft,baseRefName,headRefName,headRefOid
+```
+
+If `gh` is unavailable, use the GitHub connector or PR page to identify the PR
+head. Do not continue silently if local `HEAD`, the remote branch, and PR #13's
+head differ. Either switch to the PR head or report the mismatch as the first
+finding.
+
+Read these Nimbus docs first:
 
 - `AGENTS.md`
 - `README.md`
@@ -29,6 +46,11 @@ Work from repo evidence, not chat history. Read these first:
 - `docs/architecture/storage/persistence-engine-baseline.md`
 - `docs/architecture/storage/provider-topologies.md`
 - `docs/architecture/storage/consistency-routing.md`
+- `docs/architecture/storage/table-identity.md`
+- `docs/architecture/storage/trait-segregation.md`
+- `docs/architecture/storage/typed-key-columns.md`
+- `docs/architecture/storage/encryption.md`
+- `docs/operating/storage-backends.md`
 - `docs/adapters/convex/ai-guidelines.md`
 - `docs/adapters/convex/compatibility.md`
 - `docs/adapters/firebase/compatibility.md`
@@ -36,9 +58,29 @@ Work from repo evidence, not chat history. Read these first:
 - `docs/adapters/dynamodb/enterprise-readiness.md`
 - `docs/adapters/dynamodb/feature-coverage.md`
 - `docs/adapters/mongodb/operations.md`
+- `docs/adapters/native/README.md`
 - `docs/adapters/native/http-api.md`
+- `docs/adapters/native/websocket-protocol.md`
+- `docs/adapters/native/errors.md`
 
 Then inspect the final code and verifier evidence that implement the SEQ plan.
+
+Also re-check the local comparison repositories that shaped the plan. Do not
+assume the SEQ0 refs are still current without looking:
+
+| Source | Local path | What to re-check |
+| --- | --- | --- |
+| Convex | `~/src/github.com/get-convex/convex-backend` | application-level snapshots, repeatable timestamps, table/index identity, authorization/dependency tracking |
+| CockroachDB | `~/src/github.com/cockroachdb/cockroach` | MVCC timestamp vocabulary, GC/retention errors, metamorphic/iterator testing |
+| TigerBeetle | `~/src/github.com/tigerbeetle/tigerbeetle` | deterministic checkpoint/replay discipline and digest-style correctness proofs |
+| ElectricSQL | `~/src/github.com/electric-sql/electric` | snapshot-plus-log handoff, shape handles, replica freshness boundaries |
+| ExtendDB | `~/src/github.com/ExtendDB/extenddb` | compatibility transparency and backend-owned physical layout behind protocol semantics |
+
+For each source, record `git -C <path> rev-parse --short HEAD` and
+`git -C <path> status --short --branch`. If the local source has moved since
+`SEQ0`, state whether the newer source changes any conclusion. If a source is
+missing, report the missing evidence instead of treating the comparison as
+complete.
 
 ## Core Question
 
@@ -107,7 +149,11 @@ Useful names may include `NimbusStorageSemantics`, `TenantTimeline`, or another
 repo-idiomatic equivalent.
 
 Check whether the final docs and diagnostics expose backend and adapter
-capability levels instead of a vague supported/unsupported bit:
+capability levels instead of a vague supported/unsupported bit. The current
+implementation may expose precise per-feature support states; that is useful
+evidence. The review question is whether operators can also derive a clear
+coarse capability profile without losing typed per-feature error detail.
+Candidate aggregate profiles include:
 
 - `LatestOnly`
 - `HistoricalReads`
@@ -115,8 +161,10 @@ capability levels instead of a vague supported/unsupported bit:
 - `HistoricalReadsPitrCdc`
 - `EnterpriseComplete`
 
-The exact names can differ, but enterprise buyers and operators need a clear
-capability ladder.
+The exact names can differ. Do not replace a richer per-feature matrix with one
+coarse enum. Instead, flag a gap only if backend/adapter diagnostics and docs
+make an enterprise buyer infer capability from scattered booleans, vague
+supported/unsupported text, or optimistic adapter claims.
 
 Check whether historical reads resolve a first-class immutable read shape:
 
@@ -220,7 +268,9 @@ Audit every adapter surface:
   divergences are explicit; no implied AWS PITR parity unless implemented.
 - MongoDB: change streams are backed by real CDC semantics; PITR/historical
   reads are documented extensions or clear unsupported errors.
-- Native HTTP/WebSocket: full Nimbus enterprise surface is explicit and typed.
+- Native HTTP/WebSocket: public routes are explicit. Historical reads, PITR, or
+  changefeed routes must be typed and documented if exposed; absent public
+  routes must remain honest `UnsupportedAdapter` states in diagnostics and docs.
 
 ## Verification Expectations
 
@@ -243,9 +293,14 @@ Return a structured audit:
 
 ```markdown
 ## Verdict
+- Checkout/PR/source-ref state audited.
 - Is the final architecture needed?
 - Is it a semantic logical MVCC layer rather than duplicated backend MVCC?
 - Is it enterprise-ready or still missing trust evidence?
+
+## Evidence Matrix
+- Enterprise guarantee -> code path -> test/oracle -> proof/doc -> verifier
+  condition.
 
 ## Architecture Findings
 - [Critical/Major/Minor] Finding with file/line evidence.

@@ -100,6 +100,8 @@ This directory prefers a small-number-of-plans model with clear ownership.
     and verifier docs record the completed storage contract; the branch
     `codex/storage-engine-quality-and-mvcc` is pushed; and draft PR
     `https://github.com/nimbus/nimbus/pull/13` is open with closeout evidence.
+    The durable post-closeout challenge gate is
+    `docs/plans/prompts/storage-engine-quality-and-mvcc-post-closeout-architecture-review.md`.
 - `docs/plans/node-default-runtime-support-hardening-plan.md`
   - active Node runtime default-quality plan (NDS0..NDS10). Starts from
     the completed NFRC baseline where Node24 is the product default,
