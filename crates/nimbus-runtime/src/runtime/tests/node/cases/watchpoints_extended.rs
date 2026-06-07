@@ -2291,6 +2291,58 @@ fn node24_default_lane_executes_nds3_fork_method_promoted_batch_fixture() {
     );
 }
 
+// NDS3 cycle-3 domain fork promotion wave (nimbus/deno v2.8.2-nimbus.8). The
+// `node:domain` polyfill diverged from Node lib/domain.js in two ways that
+// corrupted the domains-stack/active-domain bookkeeping a domain's error handler
+// observes (synchronously and from a nextTick scheduled inside it):
+//   1. Domain.exit() set the active domain to `null` on an empty stack, where
+//      Node yields `undefined` (stack[-1]); Node reserves `null` for the active
+//      domain only in synchronous emit-error routing and the top-level uncaught
+//      handler.
+//   2. The post-error-handler restore rebound the `stack` local to the saved
+//      array, leaving the exported `_stack` reference pointing at the emptied
+//      original array (Node's `exports._stack` is a live binding, so its raw
+//      reassignment is safe; ours is not).
+// Both are fixed in the fork polyfill (exit() -> undefined-on-empty; in-place
+// truncate+repush restore that preserves `_stack` identity). With that fork tag
+// pinned, the fixture executes green in-isolate on BOTH lanes (process-isolated
+// census + the non-ignored in-batch pass below), so it is promoted from a
+// v8-isolate-required gap to measured default-lane support.
+const NDS3_DOMAIN_FORK_PROMOTED_EXTRA_DIRS: &[&str] = &["test/common"];
+
+const NDS3_DOMAIN_FORK_PROMOTED_COMMON_PATHS: &[&str] =
+    &["test/parallel/test-domain-emit-error-handler-stack.js"];
+
+#[test]
+fn node22_supported_lane_executes_nds3_domain_fork_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NDS3_DOMAIN_FORK_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-nds3-domain-fork-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        NDS3_DOMAIN_FORK_PROMOTED_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_nds3_domain_fork_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NDS3_DOMAIN_FORK_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-nds3-domain-fork-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        NDS3_DOMAIN_FORK_PROMOTED_EXTRA_DIRS,
+    );
+}
+
 // NDS3 event-loop-lifecycle promotion wave. Each fixture below is a genuine
 // Application-API required gap whose only blocker was that the Nimbus runtime
 // driver never natively emits the Node `beforeExit`/`exit` process lifecycle (or
