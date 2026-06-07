@@ -151,7 +151,9 @@ pub fn firestore_grpc_code(error: &Error) -> Code {
         Error::Conflict(_) => Code::Aborted,
         Error::ResourceExhausted(_) => Code::ResourceExhausted,
         Error::PermissionDenied(_) => Code::PermissionDenied,
-        Error::InvalidInput(_) | Error::SchemaValidation(_) => Code::InvalidArgument,
+        Error::InvalidInput(_) | Error::SchemaValidation(_) | Error::HistoricalRead { .. } => {
+            Code::InvalidArgument
+        }
         Error::AlreadyExists(_) => Code::AlreadyExists,
         Error::Transport(_) => Code::Unavailable,
         Error::Storage { kind, .. } => match kind {
@@ -196,7 +198,7 @@ fn firebase_rest_error(error: &Error) -> FirestoreRestError {
         Error::Conflict(_) => (StatusCode::CONFLICT, "ABORTED"),
         Error::ResourceExhausted(_) => (StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED"),
         Error::PermissionDenied(_) => (StatusCode::FORBIDDEN, "PERMISSION_DENIED"),
-        Error::InvalidInput(_) | Error::SchemaValidation(_) => {
+        Error::InvalidInput(_) | Error::SchemaValidation(_) | Error::HistoricalRead { .. } => {
             (StatusCode::BAD_REQUEST, "INVALID_ARGUMENT")
         }
         Error::AlreadyExists(_) => (StatusCode::CONFLICT, "ALREADY_EXISTS"),
@@ -289,6 +291,14 @@ mod tests {
             ),
             (
                 Error::SchemaValidation("schema".to_string()),
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+            ),
+            (
+                Error::historical_read(
+                    nimbus_core::HistoricalReadErrorKind::UnsupportedAdapter,
+                    "historical reads are not exposed through Firestore",
+                ),
                 StatusCode::BAD_REQUEST,
                 "INVALID_ARGUMENT",
             ),

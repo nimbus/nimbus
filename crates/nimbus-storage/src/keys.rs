@@ -1,12 +1,30 @@
 use nimbus_core::{
     CollectionName, CollectionPath, DocumentId, DocumentLocator, DocumentPath, ResourcePathBinding,
-    TableId, TriggerInvocationKey,
+    SequenceNumber, TableId, TriggerInvocationKey,
 };
 
 /// Builds the primary document key.
 pub fn document_key(table_id: &TableId, id: &DocumentId) -> Vec<u8> {
     let mut key = table_prefix(table_id);
     key.extend_from_slice(id.as_str().as_bytes());
+    key
+}
+
+/// Builds the prefix for all historical versions of one document identity.
+pub fn document_version_prefix(table_id: &TableId, id: &DocumentId) -> Vec<u8> {
+    let mut key = document_key(table_id, id);
+    key.push(0);
+    key
+}
+
+/// Builds a primary key for one historical document version.
+pub fn document_version_key(
+    table_id: &TableId,
+    id: &DocumentId,
+    sequence: SequenceNumber,
+) -> Vec<u8> {
+    let mut key = document_version_prefix(table_id, id);
+    key.extend_from_slice(&sequence.0.to_be_bytes());
     key
 }
 

@@ -18,6 +18,7 @@ pub use evaluator::{
 pub use nimbus_storage::EmbeddedProviderKind;
 pub use nimbus_storage::MonthlyActiveUsersSnapshot;
 pub use nimbus_storage::{
+    ChangefeedBootstrap, ChangefeedCursor, ChangefeedEvent, ChangefeedHandle, ChangefeedPage,
     DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DurableJournalBootstrap, DurableJournalPage,
     LibsqlReplicaBarrierPath, LibsqlReplicaFreshnessStats, LibsqlReplicaRefreshCause,
     LibsqlReplicaRefreshPath, MaterializedJournalSnapshot, ShadowMaterializer,
@@ -43,8 +44,8 @@ pub use subscriptions::{
 };
 pub use tenant::{
     MaterializedReadSurfaceStats, MutationAdmissionPhase, MutationAdmissionStats,
-    MutationJournalStats, QueryPlanningStats, ServingSnapshotManagerStats,
-    SubscriptionDeliveryStats, TenantEngineDiagnosticsSnapshot,
+    MutationJournalStats, PinnedServingReadSnapshot, QueryPlanningStats,
+    ServingSnapshotManagerStats, SubscriptionDeliveryStats, TenantEngineDiagnosticsSnapshot,
 };
 pub use triggers::{
     TriggerInvocationExecution, TriggerInvocationExecutor, TriggerLookupMatch, TriggerRegistration,

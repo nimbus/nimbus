@@ -51,6 +51,21 @@ Nimbus currently has three distinct Firebase-facing stories:
 | Go / Java / Python server SDKs | `not claimed` | Upstream Firestore gRPC/REST clients | Treated the same as Admin Node: underlying protocol work exists, but no supported-compatibility claim is published yet. | No upstream SDK verification yet; broader admin/library features remain outside the current claim. |
 | Android / Apple / C++ / Unity client SDKs | `not claimed` | Native mobile transport stacks | The server exposes the Firestore protocol family, but Nimbus has not yet run the upstream mobile/native SDK compatibility wave. | No tested claim for auth, reconnect, persistence, or SDK-specific client behavior. |
 
+## Storage Semantics Inherited By Firebase
+
+Firebase-compatible CRUD, query, listener, write-batch, and transaction paths
+share the Nimbus engine-owned storage path. The Firebase surface remains a
+Firestore-compatible current-state API, not a new public historical-query API,
+but writes still commit document rows, index effects, version rows, and tenant
+journal events atomically underneath the adapter.
+
+Operator-visible storage health therefore applies to Firebase deployments too:
+MVCC version counts, historical-query admission, retention pressure,
+backend/adapter support state, PITR archive posture, and CDC/changefeed cursor
+state are reported by the backend diagnostics rather than by Firebase-specific
+side channels. Unsupported or expired history fails closed as typed storage
+errors before it can be projected into a Firebase response shape.
+
 ## `@nimbus/firebase` API Coverage
 
 | Area | Status | Notes |

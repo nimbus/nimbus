@@ -188,6 +188,44 @@ pub(super) fn tenant_init_sql(schema_name: &str) -> String {
             PRIMARY KEY (table_id, id)\
         );\
         CREATE TABLE IF NOT EXISTS {} (\
+            table_id TEXT NOT NULL,\
+            id TEXT NOT NULL,\
+            commit_sequence BIGINT NOT NULL,\
+            commit_time BIGINT NOT NULL,\
+            tombstone BOOLEAN NOT NULL,\
+            data_json TEXT,\
+            typed_fields_json TEXT,\
+            creation_time BIGINT,\
+            update_time BIGINT,\
+            PRIMARY KEY (table_id, id, commit_sequence),\
+            CHECK (\
+                (\
+                    tombstone = TRUE \
+                    AND data_json IS NULL \
+                    AND typed_fields_json IS NULL \
+                    AND creation_time IS NULL \
+                    AND update_time IS NULL \
+                )\
+                OR (\
+                    tombstone = FALSE \
+                    AND data_json IS NOT NULL \
+                    AND typed_fields_json IS NOT NULL \
+                    AND creation_time IS NOT NULL \
+                    AND update_time IS NOT NULL \
+                )\
+            )\
+        );\
+        CREATE TABLE IF NOT EXISTS {} (\
+            table_id TEXT NOT NULL,\
+            index_id TEXT NOT NULL,\
+            encoded_tuple BYTEA NOT NULL,\
+            document_id TEXT NOT NULL,\
+            visible_from BIGINT NOT NULL,\
+            visible_until BIGINT,\
+            PRIMARY KEY (table_id, index_id, encoded_tuple, document_id, visible_from)\
+        );\
+        CREATE INDEX IF NOT EXISTS {} ON {} (table_id, index_id, encoded_tuple, document_id, visible_from);\
+        CREATE TABLE IF NOT EXISTS {} (\
             table_name TEXT PRIMARY KEY,\
             schema_json TEXT NOT NULL\
         );\
@@ -238,6 +276,10 @@ pub(super) fn tenant_init_sql(schema_name: &str) -> String {
         qualified_table(schema_name, "table_catalog"),
         qualified_table(schema_name, "documents"),
         qualified_table(schema_name, "table_catalog"),
+        qualified_table(schema_name, "document_versions"),
+        qualified_table(schema_name, "index_versions"),
+        quote_identifier("idx_index_versions_visibility"),
+        qualified_table(schema_name, "index_versions"),
         qualified_table(schema_name, "schemas"),
         qualified_table(schema_name, "resource_path_bindings"),
         quote_identifier("idx_resource_path_bindings_collection_group_path"),
@@ -251,4 +293,19 @@ pub(super) fn tenant_init_sql(schema_name: &str) -> String {
         qualified_table(schema_name, "commit_log"),
         qualified_table(schema_name, "metadata"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tenant_init_sql_keeps_document_version_boolean_predicates_tokenized() {
+        let sql = tenant_init_sql("tenant_test_schema");
+
+        assert!(sql.contains("tombstone = TRUE AND data_json IS NULL"));
+        assert!(sql.contains("tombstone = FALSE AND data_json IS NOT NULL"));
+        assert!(!sql.contains("TRUEAND"));
+        assert!(!sql.contains("FALSEAND"));
+    }
 }

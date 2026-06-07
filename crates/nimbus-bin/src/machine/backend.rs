@@ -82,6 +82,7 @@ fn machine_client_error_to_sandbox_error(error: Error) -> SandboxError {
         Error::InvalidInput(_)
         | Error::SchemaValidation(_)
         | Error::SchemaNotFound(_)
+        | Error::HistoricalRead { .. }
         | Error::Serialization(_) => SandboxError::InvalidSpec { message: rendered },
         Error::ResourceExhausted(_)
         | Error::PermissionDenied(_)

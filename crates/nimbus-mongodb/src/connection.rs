@@ -1,7 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use super::commands::change_stream::ChangeStreamStore;
 use super::commands::cursor::CursorStore;
 use super::commands::session::SessionStore;
 
@@ -35,7 +34,6 @@ pub struct ConnectionState {
     pub(crate) scram_state: Option<ScramState>,
     pub(crate) cursor_store: CursorStore,
     pub(crate) session_store: SessionStore,
-    pub(crate) change_stream_store: ChangeStreamStore,
 }
 
 impl ConnectionState {
@@ -48,7 +46,6 @@ impl ConnectionState {
             scram_state: None,
             cursor_store: CursorStore::default(),
             session_store: SessionStore::default(),
-            change_stream_store: ChangeStreamStore::default(),
         }
     }
 }

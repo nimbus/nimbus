@@ -13,11 +13,11 @@ use hyper::client::connect::{Connected, Connection as HyperConnection};
 use libsql::{Builder, Connection, Database, Transaction, TransactionBehavior};
 use native_tls::TlsConnector as NativeTlsConnector;
 use nimbus_core::{
-    CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, IndexLifecycleEvent,
-    Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber,
-    StorageErrorKind, TableId, TableLifecycleEvent, TableName, TableSchema, TableState,
-    TenantEventKind, TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor,
-    TriggerWriteOrigin, WriteOp, WriteOpType,
+    CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error,
+    HistoricalIndexCursor, HistoricalReadShape, IndexLifecycleEvent, Result, ScheduledJob,
+    ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId,
+    TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord,
+    TenantId, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use reqwest::Client as HttpClient;
 use reqwest::header::AUTHORIZATION;
@@ -48,13 +48,16 @@ use crate::sqlite::{
     rebuild_sqlite_indexes_from_loaded_schema,
 };
 use crate::store::{
-    APPLIED_SEQUENCE_KEY, DurableJournalBootstrap, DurableJournalPage, JournalProgress,
-    MAX_DURABLE_JOURNAL_STREAM_LIMIT, NEXT_SEQUENCE_KEY, ResolvedScheduleOp, ResolvedWrite,
-    TRIGGER_DELIVERY_CURSOR_KEY, TenantWriteCommit,
+    APPLIED_SEQUENCE_KEY, DurableJournalBootstrap, DurableJournalPage, HistoricalIndexDocumentPage,
+    JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT, MaterializedJournalSnapshot,
+    NEXT_SEQUENCE_KEY, PointInTimeRestoreArchive, PointInTimeRestoreTarget, ResolvedScheduleOp,
+    ResolvedWrite, TRIGGER_DELIVERY_CURSOR_KEY, TenantWriteCommit,
 };
 
 mod backend;
+mod document_versions;
 mod freshness;
+mod index_versions;
 mod provider;
 mod read;
 mod remote;
@@ -90,6 +93,8 @@ const LIBSQL_TENANT_READ_PARALLELISM: usize = 4;
 const LIBSQL_TENANT_WRITE_PARALLELISM: usize = 1;
 const LIBSQL_REPLICA_FILENAME: &str = "tenant.sqlite3";
 const LIBSQL_DROP_TENANT_SQL: &str = r#"
+DROP TABLE IF EXISTS index_versions;
+DROP TABLE IF EXISTS document_versions;
 DROP TABLE IF EXISTS documents;
 DROP TABLE IF EXISTS table_catalog;
 DROP TABLE IF EXISTS schemas;

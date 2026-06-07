@@ -125,8 +125,13 @@ isolation is identical.
 Every tenant backend exposes a machine-readable `StorageHealthDiagnostic` and
 `StorageCapabilities` posture for operator inspection. The diagnostic includes
 the backend layout, event-log head, applied head, retention floor, storage
-format version, encryption posture, freshness lag, last recovery status, and
-whether table summaries are exact.
+format version, document-version and index-version ranges, MVCC operator state,
+historical-query admission, retention pressure, backend capability profile,
+backend feature support, adapter capability profiles, adapter support,
+backend-parity state, encryption posture, freshness lag, last recovery status,
+and whether table summaries are exact. Capability profiles are derived from the
+typed feature matrix and give operators a coarse posture such as `latest_only`
+or `enterprise_complete` without hiding per-feature unsupported errors.
 
 The durable history is a tenant event journal, not a document-only commit log.
 Schema, table lifecycle, index lifecycle, scheduler, trigger-delivery, document,
@@ -138,6 +143,18 @@ Hard delete is protected by a retention floor. Exported snapshots, transaction
 sessions, journal consumers, embedded replicas, shadow materializers, and
 CDC/subscription consumers can pin table identities or event sequences; physical
 cleanup is denied until those pins advance or release.
+
+Current reads stay on applied latest-row document and index storage for the
+fast path. Historical reads use retained `document_versions`, `index_versions`,
+and versioned table/schema/index/read-policy identity. Expired history,
+unsupported adapters, unsupported backends, cursor mismatches, policy-snapshot
+gaps, and storage-format mismatches fail closed with typed historical-read
+errors.
+
+PITR export/import and CDC/changefeed both use the tenant event journal. PITR
+archives carry sequence or timestamp targets plus canonical fingerprints; CDC
+cursors carry an explicit bootstrap cut and journal handoff so consumers can
+resume without missing or duplicating events.
 
 ## Environment Variables
 
