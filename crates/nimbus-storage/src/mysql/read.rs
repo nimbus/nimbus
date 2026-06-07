@@ -59,6 +59,9 @@ impl MySqlTenantStore {
             let schema = load_schema_from_session(&mut transaction, &database_name).await?;
             let progress =
                 load_journal_progress_from_session(&mut transaction, &database_name).await?;
+            let journal_cursor_floor =
+                load_durable_journal_cursor_floor_from_session(&mut transaction, &database_name)
+                    .await?;
             let table_identities =
                 load_table_identities_from_session(&mut transaction, &database_name).await?;
             let documents =
@@ -71,6 +74,7 @@ impl MySqlTenantStore {
             Ok(MySqlReadSnapshot {
                 schema,
                 progress,
+                journal_cursor_floor,
                 table_identities,
                 documents,
                 resource_path_bindings,
@@ -332,18 +336,26 @@ impl MySqlTenantStore {
         limit: usize,
     ) -> Result<DurableJournalPage> {
         validate_durable_journal_stream_limit(limit)?;
-        let latest_sequence = self.latest_sequence()?;
-        if after.0 > latest_sequence.0 {
-            return Err(Error::InvalidInput(format!(
-                "journal cursor {} is ahead of the latest durable sequence {}",
-                after.0, latest_sequence.0
-            )));
-        }
-
         let provider = self.provider.clone();
         let database_name = self.database_name.clone();
         self.block_on(async move {
             let mut conn = provider.conn().await?;
+            let latest_sequence =
+                load_latest_sequence_from_session(&mut conn, &database_name).await?;
+            let cursor_floor =
+                load_durable_journal_cursor_floor_from_session(&mut conn, &database_name).await?;
+            if after.0 < cursor_floor.0 {
+                return Err(Error::InvalidInput(format!(
+                    "journal cursor {} is behind the retention floor {}",
+                    after.0, cursor_floor.0
+                )));
+            }
+            if after.0 > latest_sequence.0 {
+                return Err(Error::InvalidInput(format!(
+                    "journal cursor {} is ahead of the latest durable sequence {}",
+                    after.0, latest_sequence.0
+                )));
+            }
             let query = format!(
                 "SELECT record_blob FROM {} WHERE sequence > ? ORDER BY sequence LIMIT ?",
                 qualified_table(&database_name, "commit_log")
@@ -376,7 +388,7 @@ impl MySqlTenantStore {
                 records,
                 next_cursor,
                 latest_sequence,
-                cursor_floor: SequenceNumber(0),
+                cursor_floor,
                 has_more,
             })
         })
@@ -713,6 +725,12 @@ impl MySqlReadSnapshot {
     ) -> Result<DurableJournalPage> {
         validate_durable_journal_stream_limit(limit)?;
         let latest_sequence = self.latest_sequence()?;
+        if after.0 < self.journal_cursor_floor.0 {
+            return Err(Error::InvalidInput(format!(
+                "journal cursor {} is behind the retention floor {}",
+                after.0, self.journal_cursor_floor.0
+            )));
+        }
         if after.0 > latest_sequence.0 {
             return Err(Error::InvalidInput(format!(
                 "journal cursor {} is ahead of the latest durable sequence {}",
@@ -723,7 +741,7 @@ impl MySqlReadSnapshot {
             records: Vec::new(),
             next_cursor: after,
             latest_sequence,
-            cursor_floor: SequenceNumber(0),
+            cursor_floor: self.journal_cursor_floor,
             has_more: false,
         })
     }
@@ -734,7 +752,7 @@ impl MySqlReadSnapshot {
             resume_after: snapshot.applied_sequence,
             bootstrap_cut: snapshot.durable_head,
             snapshot,
-            cursor_floor: SequenceNumber(0),
+            cursor_floor: self.journal_cursor_floor,
         })
     }
 

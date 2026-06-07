@@ -1,15 +1,17 @@
 use nimbus_core::{
-    Document, DocumentId, Error, HistoricalIndexCursor, HistoricalIndexQuery,
-    HistoricalIndexScalar, HistoricalIndexTuple, HistoricalReadShape, IndexDefinition, IndexId,
-    Result, SequenceNumber, StorageErrorKind, TableId, TenantEventKind, WriteOp,
+    Document, DocumentId, Error, HistoricalIndexCursor, HistoricalIndexTuple, HistoricalReadShape,
+    IndexDefinition, IndexId, Result, SequenceNumber, StorageErrorKind, TableId, TenantEventKind,
+    WriteOp,
 };
 use rusqlite::OptionalExtension;
 use rusqlite::types::Value as SqlValue;
 use serde_json::Value;
 
 use crate::diagnostics::IndexVersionStorageDiagnostic;
-use crate::index::{encode_index_tuple, encode_index_value, encoded_index_tuple_for_document};
-use crate::keys::prefix_end;
+use crate::index::encoded_index_tuple_for_document;
+use crate::index::history_scan::{
+    HistoricalIndexDocumentEntry, HistoricalIndexScanPlan, finish_historical_index_page,
+};
 use crate::store::HistoricalIndexDocumentPage;
 use crate::{
     CURRENT_INDEX_VERSION_STORAGE_FORMAT, INDEX_VERSION_STORAGE_FORMAT_METADATA_KEY,
@@ -35,11 +37,6 @@ struct IndexVersionMutation {
     document_id: DocumentId,
     index_id: IndexId,
     table_id: TableId,
-}
-
-struct HistoricalIndexDocumentEntry {
-    tuple: HistoricalIndexTuple,
-    document: Document,
 }
 
 impl SqliteTenantStore {
@@ -91,23 +88,8 @@ impl SqliteReadSnapshot {
         limit: usize,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<HistoricalIndexDocumentPage> {
-        let index = queryable_historical_index(read_shape, index_name)?;
-        let encoded = encode_index_value(value)?;
-        let end_key = prefix_end(&encoded);
-        let query = HistoricalIndexQuery::Equal(HistoricalIndexTuple::from_values(
-            std::slice::from_ref(value),
-        )?);
-        self.historical_index_scan_page_for_tuple_bounds(
-            read_shape,
-            &index,
-            query,
-            &encoded,
-            Some(&encoded),
-            end_key.as_deref(),
-            after,
-            limit,
-            check_cancel,
-        )
+        let plan = HistoricalIndexScanPlan::equal(read_shape, index_name, value)?;
+        self.historical_index_scan_page_for_plan(read_shape, &plan, after, limit, check_cancel)
     }
 
     pub fn historical_index_scan_prefix_cancellable(
@@ -138,24 +120,8 @@ impl SqliteReadSnapshot {
         limit: usize,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<HistoricalIndexDocumentPage> {
-        let index = queryable_historical_index(read_shape, index_name)?;
-        let encoded_prefix = encode_index_tuple(prefix_values)?;
-        let end_key = prefix_end(&encoded_prefix);
-        let prefix = prefix_values
-            .iter()
-            .map(HistoricalIndexScalar::from_json)
-            .collect::<Result<Vec<_>>>()?;
-        self.historical_index_scan_page_for_tuple_bounds(
-            read_shape,
-            &index,
-            HistoricalIndexQuery::Prefix(prefix),
-            &encoded_prefix,
-            Some(&encoded_prefix),
-            end_key.as_deref(),
-            after,
-            limit,
-            check_cancel,
-        )
+        let plan = HistoricalIndexScanPlan::prefix(read_shape, index_name, prefix_values)?;
+        self.historical_index_scan_page_for_plan(read_shape, &plan, after, limit, check_cancel)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -197,22 +163,15 @@ impl SqliteReadSnapshot {
         limit: usize,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<HistoricalIndexDocumentPage> {
-        let index = queryable_historical_index(read_shape, index_name)?;
-        let start_encoded = start.map(encode_index_value).transpose()?;
-        let end_encoded = end.map(encode_index_value).transpose()?;
-        let start_key = historical_range_start_key(start_encoded.as_deref(), start_inclusive);
-        let end_key = historical_range_end_key(end_encoded.as_deref(), end_inclusive);
-        self.historical_index_scan_page_for_tuple_bounds(
+        let plan = HistoricalIndexScanPlan::range(
             read_shape,
-            &index,
-            historical_range_query(start, end, start_inclusive, end_inclusive)?,
-            &[],
-            start_key.as_deref(),
-            end_key.as_deref(),
-            after,
-            limit,
-            check_cancel,
-        )
+            index_name,
+            start,
+            end,
+            start_inclusive,
+            end_inclusive,
+        )?;
+        self.historical_index_scan_page_for_plan(read_shape, &plan, after, limit, check_cancel)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -257,93 +216,36 @@ impl SqliteReadSnapshot {
         limit: usize,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<HistoricalIndexDocumentPage> {
-        let index = queryable_historical_index(read_shape, index_name)?;
-        let encoded_prefix = encode_index_tuple(exact_prefix)?;
-        let start_key = historical_composite_start_key(&encoded_prefix, start, start_inclusive)?;
-        let end_key = historical_composite_end_key(&encoded_prefix, end, end_inclusive)?;
-        self.historical_index_scan_page_for_tuple_bounds(
+        let plan = HistoricalIndexScanPlan::composite_range(
             read_shape,
-            &index,
-            historical_composite_range_query(
-                exact_prefix,
-                start,
-                end,
-                start_inclusive,
-                end_inclusive,
-            )?,
-            &encoded_prefix,
-            Some(&start_key),
-            end_key.as_deref(),
-            after,
-            limit,
-            check_cancel,
-        )
+            index_name,
+            exact_prefix,
+            start,
+            end,
+            start_inclusive,
+            end_inclusive,
+        )?;
+        self.historical_index_scan_page_for_plan(read_shape, &plan, after, limit, check_cancel)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn historical_index_scan_page_for_tuple_bounds(
+    fn historical_index_scan_page_for_plan(
         &self,
         read_shape: &HistoricalReadShape,
-        index: &IndexDefinition,
-        query: HistoricalIndexQuery,
-        match_prefix: &[u8],
-        start_key: Option<&[u8]>,
-        end_key: Option<&[u8]>,
+        plan: &HistoricalIndexScanPlan,
         after: Option<&HistoricalIndexCursor>,
         limit: usize,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<HistoricalIndexDocumentPage> {
-        if limit == 0 {
-            return Err(Error::InvalidInput(
-                "historical index page limit must be greater than zero".to_string(),
-            ));
-        }
-        if let Some(cursor) = after {
-            cursor.validate_context(read_shape, index, &query)?;
-        }
-        let mut entries = self.visible_historical_index_entries_for_tuple_bounds(
+        plan.validate_page_request(read_shape, after, limit)?;
+        let entries = self.visible_historical_index_entries_for_tuple_bounds(
             read_shape,
-            index,
-            match_prefix,
-            start_key,
-            end_key,
+            &plan.index,
+            plan.match_prefix.as_slice(),
+            plan.start_key.as_deref(),
+            plan.end_key.as_deref(),
             check_cancel,
         )?;
-        entries.sort_by(|left, right| {
-            left.tuple
-                .cmp(&right.tuple)
-                .then_with(|| left.document.id.cmp(&right.document.id))
-        });
-        let start = after
-            .and_then(|cursor| {
-                entries.iter().position(|entry| {
-                    &entry.tuple == cursor.last_tuple()
-                        && &entry.document.id == cursor.last_document_id()
-                })
-            })
-            .map_or(0, |position| position.saturating_add(1));
-        let selected = entries
-            .into_iter()
-            .skip(start)
-            .take(limit)
-            .collect::<Vec<_>>();
-        let next_cursor = if selected.len() == limit {
-            selected.last().map(|entry| {
-                HistoricalIndexCursor::new(
-                    read_shape,
-                    index,
-                    query,
-                    entry.tuple.clone(),
-                    entry.document.id.clone(),
-                )
-            })
-        } else {
-            None
-        };
-        Ok(HistoricalIndexDocumentPage {
-            documents: selected.into_iter().map(|entry| entry.document).collect(),
-            next_cursor,
-        })
+        finish_historical_index_page(read_shape, plan, after, limit, entries)
     }
 
     fn visible_historical_index_entries_for_tuple_bounds(
@@ -451,131 +353,6 @@ struct SqliteIndexVersionValue {
     document_id: String,
     visible_from: i64,
     visible_until: Option<i64>,
-}
-
-fn queryable_historical_index(
-    read_shape: &HistoricalReadShape,
-    index_name: &str,
-) -> Result<IndexDefinition> {
-    read_shape
-        .queryable_indexes()
-        .iter()
-        .find(|index| index.name == index_name)
-        .cloned()
-        .ok_or_else(|| {
-            Error::InvalidInput(format!(
-                "enabled historical index not found for table {}: {}",
-                read_shape.table(),
-                index_name
-            ))
-        })
-}
-
-fn historical_range_start_key(start: Option<&[u8]>, start_inclusive: bool) -> Option<Vec<u8>> {
-    let start = start?;
-    if start_inclusive {
-        Some(start.to_vec())
-    } else {
-        prefix_end(start).or_else(|| Some(Vec::new()))
-    }
-}
-
-fn historical_range_end_key(end: Option<&[u8]>, end_inclusive: bool) -> Option<Vec<u8>> {
-    let end = end?;
-    if end_inclusive {
-        prefix_end(end)
-    } else {
-        Some(end.to_vec())
-    }
-}
-
-fn historical_composite_start_key(
-    exact_prefix: &[u8],
-    start: Option<&Value>,
-    start_inclusive: bool,
-) -> Result<Vec<u8>> {
-    let Some(start) = start else {
-        return Ok(exact_prefix.to_vec());
-    };
-    let mut key = exact_prefix.to_vec();
-    key.extend_from_slice(&encode_index_value(start)?);
-    if start_inclusive {
-        Ok(key)
-    } else {
-        Ok(prefix_end(&key).unwrap_or_default())
-    }
-}
-
-fn historical_composite_end_key(
-    exact_prefix: &[u8],
-    end: Option<&Value>,
-    end_inclusive: bool,
-) -> Result<Option<Vec<u8>>> {
-    let Some(end) = end else {
-        return Ok(prefix_end(exact_prefix));
-    };
-    let mut key = exact_prefix.to_vec();
-    key.extend_from_slice(&encode_index_value(end)?);
-    if end_inclusive {
-        Ok(prefix_end(&key))
-    } else {
-        Ok(Some(key))
-    }
-}
-
-fn historical_range_query(
-    start: Option<&Value>,
-    end: Option<&Value>,
-    start_inclusive: bool,
-    end_inclusive: bool,
-) -> Result<HistoricalIndexQuery> {
-    Ok(HistoricalIndexQuery::Range {
-        start: start
-            .map(|value| HistoricalIndexTuple::from_values(std::slice::from_ref(value)))
-            .transpose()?,
-        start_inclusive,
-        end: end
-            .map(|value| HistoricalIndexTuple::from_values(std::slice::from_ref(value)))
-            .transpose()?,
-        end_inclusive,
-    })
-}
-
-fn historical_composite_range_query(
-    exact_prefix: &[Value],
-    start: Option<&Value>,
-    end: Option<&Value>,
-    start_inclusive: bool,
-    end_inclusive: bool,
-) -> Result<HistoricalIndexQuery> {
-    if start.is_none() && end.is_none() {
-        return Ok(HistoricalIndexQuery::Prefix(
-            exact_prefix
-                .iter()
-                .map(HistoricalIndexScalar::from_json)
-                .collect::<Result<Vec<_>>>()?,
-        ));
-    }
-    Ok(HistoricalIndexQuery::Range {
-        start: composite_bound_tuple(exact_prefix, start)?,
-        start_inclusive,
-        end: composite_bound_tuple(exact_prefix, end)?,
-        end_inclusive,
-    })
-}
-
-fn composite_bound_tuple(
-    exact_prefix: &[Value],
-    bound: Option<&Value>,
-) -> Result<Option<HistoricalIndexTuple>> {
-    if exact_prefix.is_empty() && bound.is_none() {
-        return Ok(None);
-    }
-    let mut values = exact_prefix.to_vec();
-    if let Some(bound) = bound {
-        values.push(bound.clone());
-    }
-    HistoricalIndexTuple::from_values(&values).map(Some)
 }
 
 fn maybe_push_visible_historical_entry(

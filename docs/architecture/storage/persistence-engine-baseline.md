@@ -132,6 +132,11 @@ the document visible at the same retained sequence. Historical cursors are
 bound to the read shape, index identity, bounds, and retained sequence; a cursor
 from another shape fails closed instead of being reinterpreted.
 
+SQLite, Postgres, and MySQL share one pure historical index scan planner in
+`crates/nimbus-storage/src/index/history_scan.rs` for query shape, encoded
+tuple bounds, cursor validation, and page finalization. Backend modules own only
+their physical `index_versions` lookup and `document_versions` hydration.
+
 ## Tenant Event Journal Baseline
 
 ### Why the tenant event journal is Nimbus-owned
@@ -210,6 +215,10 @@ CDC/changefeed uses typed `ChangefeedHandle`, `ChangefeedCursor`,
 `ChangefeedBootstrap`, `ChangefeedPage`, and `ChangefeedEvent` over the same
 tenant event journal. The initial snapshot cut and journal handoff are explicit
 so consumers do not miss or duplicate events.
+
+Durable journal streams expose a retained `cursor_floor`; cursors before that
+floor fail closed as expired history. redb, SQLite, Postgres, MySQL, and libSQL
+derive that floor from the retained commit-log minimum sequence.
 
 Retention GC computes separate safe watermarks for document versions, index
 versions, registry metadata, read-policy metadata, CDC, PITR exports, shadow

@@ -11,12 +11,11 @@ use deadpool_postgres::{
 };
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, FieldType, Filter,
-    FilterOp, HistoricalIndexCursor, HistoricalIndexQuery, HistoricalIndexScalar,
-    HistoricalIndexTuple, HistoricalReadShape, IndexDefinition, IndexLifecycleEvent,
-    ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
-    SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName, TableSchema,
-    TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor,
-    TriggerWriteOrigin, WriteOp, WriteOpType,
+    FilterOp, HistoricalIndexCursor, HistoricalIndexTuple, HistoricalReadShape, IndexDefinition,
+    IndexLifecycleEvent, ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema,
+    SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName,
+    TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp,
+    TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

@@ -361,6 +361,26 @@ where
     Ok(SequenceNumber(value))
 }
 
+pub(super) async fn load_durable_journal_cursor_floor_from_session<C>(
+    session: &mut C,
+    database_name: &str,
+) -> Result<SequenceNumber>
+where
+    C: Queryable,
+{
+    let query = format!(
+        "SELECT MIN(sequence) FROM {}",
+        qualified_table(database_name, "commit_log")
+    );
+    let value = session
+        .query_first::<Option<u64>, _>(query)
+        .await
+        .map_err(map_mysql_error)?
+        .flatten()
+        .unwrap_or(0);
+    Ok(SequenceNumber(value.saturating_sub(1)))
+}
+
 pub(super) async fn load_metadata_u64_from_session<C>(
     session: &mut C,
     database_name: &str,

@@ -1,5 +1,6 @@
 mod bounds;
 mod encoding;
+pub(crate) mod history_scan;
 mod keyspace;
 mod maintenance;
 mod scan;

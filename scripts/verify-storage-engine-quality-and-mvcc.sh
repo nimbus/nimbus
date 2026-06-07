@@ -327,6 +327,7 @@ STORAGE_HISTORICAL_INDEX_OUTPUT="$(mktemp "${TMPDIR:-/tmp}/seq-storage-historica
 if contains "${PLAN}" 'SEQ4 | `done`' \
    && contains "${PLAN}" 'HistoricalIndexHistory' \
    && contains "${PLAN}" 'index_versions' \
+   && contains "${PLAN}" 'crates/nimbus-storage/src/index/history_scan.rs' \
    && contains "${SEQ4_PROOF}" '^status: done$' \
    && contains "${SEQ4_PROOF}" 'SEQ4 Versioned Indexes' \
    && contains "${SEQ4_PROOF}" 'HistoricalIndexHistory' \
@@ -342,6 +343,7 @@ if contains "${PLAN}" 'SEQ4 | `done`' \
    && contains "${SEQ4_PROOF}" 'same SQLite transaction' \
    && contains "${SEQ4_PROOF}" 'CURRENT_INDEX_VERSION_STORAGE_FORMAT' \
    && contains "${SEQ4_PROOF}" 'Embedded Historical Routing Evidence' \
+   && contains "${SEQ4_PROOF}" 'Shared SQL-family scan planner' \
    && contains "${SEQ4_PROOF}" 'redb historical index scans' \
    && contains "${SEQ4_PROOF}" 'SQLite historical index scans' \
    && contains "${SEQ4_PROOF}" 'cursor mismatch fail-closed' \
@@ -377,6 +379,11 @@ if contains "${PLAN}" 'SEQ4 | `done`' \
    && contains "crates/nimbus-core/src/index_history.rs" 'pub fn validate_context' \
    && contains "crates/nimbus-core/src/index_history.rs" 'fn visible_at' \
    && contains "crates/nimbus-core/src/lib.rs" 'HistoricalIndexHistory' \
+   && contains "crates/nimbus-storage/src/index/mod.rs" 'pub(crate) mod history_scan' \
+   && contains "crates/nimbus-storage/src/index/history_scan.rs" 'pub(crate) struct HistoricalIndexScanPlan' \
+   && contains "crates/nimbus-storage/src/index/history_scan.rs" 'pub(crate) fn finish_historical_index_page' \
+   && contains "crates/nimbus-storage/src/index/history_scan.rs" 'pub fn composite_range' \
+   && contains "crates/nimbus-storage/src/index/history_scan.rs" 'cursor.validate_context' \
    && contains "crates/nimbus-storage/src/format.rs" 'CURRENT_INDEX_VERSION_STORAGE_FORMAT' \
    && contains "crates/nimbus-storage/src/store.rs" 'INDEX_VERSIONS' \
    && contains "crates/nimbus-storage/src/store/index_versions.rs" 'record_index_versions_for_writes' \
@@ -387,18 +394,21 @@ if contains "${PLAN}" 'SEQ4 | `done`' \
    && contains "crates/nimbus-storage/src/sqlite.rs" 'CREATE TABLE IF NOT EXISTS index_versions' \
    && contains "crates/nimbus-storage/src/sqlite/index_versions.rs" 'record_index_versions_for_writes_in_conn' \
    && contains "crates/nimbus-storage/src/sqlite/index_versions.rs" 'historical_index_scan_eq_cancellable' \
+   && contains "crates/nimbus-storage/src/sqlite/index_versions.rs" 'HistoricalIndexScanPlan::equal' \
    && contains "crates/nimbus-storage/src/sqlite/index_versions.rs" 'historical_index_scan_composite_range_cancellable' \
    && contains "crates/nimbus-storage/src/sqlite/index_versions.rs" 'visible_until' \
    && contains "crates/nimbus-storage/src/sqlite/journal.rs" 'record_index_versions_for_events_in_conn' \
    && contains "crates/nimbus-storage/src/postgres/config.rs" 'index_versions' \
    && contains "crates/nimbus-storage/src/postgres/index_versions.rs" 'record_index_versions_for_writes_in_session' \
    && contains "crates/nimbus-storage/src/postgres/index_versions.rs" 'historical_index_scan_eq_cancellable' \
+   && contains "crates/nimbus-storage/src/postgres/index_versions.rs" 'HistoricalIndexScanPlan::equal' \
    && contains "crates/nimbus-storage/src/postgres/index_versions.rs" 'visible_historical_index_entries_for_tuple_bounds' \
    && contains "crates/nimbus-storage/src/postgres/write.rs" 'record_index_versions_for_events_in_session' \
    && contains "crates/nimbus-storage/src/postgres/backend.rs" 'record_index_versions_for_writes_in_session' \
    && contains "crates/nimbus-storage/src/mysql/backend.rs" 'encoded_tuple_hash' \
    && contains "crates/nimbus-storage/src/mysql/index_versions.rs" 'record_index_versions_for_writes_in_session' \
    && contains "crates/nimbus-storage/src/mysql/index_versions.rs" 'historical_index_scan_eq_cancellable' \
+   && contains "crates/nimbus-storage/src/mysql/index_versions.rs" 'HistoricalIndexScanPlan::equal' \
    && contains "crates/nimbus-storage/src/mysql/index_versions.rs" 'visible_historical_index_entries_for_tuple_bounds' \
    && contains "crates/nimbus-storage/src/mysql/index_versions.rs" 'encoded_tuple_hash' \
    && contains "crates/nimbus-storage/src/mysql/write.rs" 'record_index_versions_for_events_in_session' \
@@ -610,6 +620,7 @@ fi
 
 step 14 "SEQ9 CDC/changefeed uses typed cursors and journal handoff"
 CHANGEFEED_OUTPUT="$(mktemp "${TMPDIR:-/tmp}/seq-changefeed.XXXXXX")"
+DURABLE_JOURNAL_STREAM_OUTPUT="$(mktemp "${TMPDIR:-/tmp}/seq-durable-journal-stream.XXXXXX")"
 if contains "${PLAN}" 'SEQ9 | `done`' \
    && contains "${SEQ9_PROOF}" '^status: done$' \
    && contains "${SEQ9_PROOF}" 'ChangefeedHandle' \
@@ -620,6 +631,8 @@ if contains "${PLAN}" 'SEQ9 | `done`' \
    && contains "${SEQ9_PROOF}" 'Snapshot-to-log handoff' \
    && contains "${SEQ9_PROOF}" 'Retention-expired errors' \
    && contains "${SEQ9_PROOF}" 'All-provider storage surface' \
+   && contains "${SEQ9_PROOF}" 'MySQL durable-journal streams' \
+   && contains "${SEQ9_PROOF}" 'durable_journal_stream' \
    && contains "${SEQ9_PROOF}" 'Engine service surface' \
    && contains "${SEQ9_PROOF}" '2 passed, 0 failed' \
    && contains "crates/nimbus-storage/src/changefeed.rs" 'pub struct ChangefeedHandle' \
@@ -629,6 +642,11 @@ if contains "${PLAN}" 'SEQ9 | `done`' \
    && contains "crates/nimbus-storage/src/changefeed.rs" 'pub struct ChangefeedEvent' \
    && contains "crates/nimbus-storage/src/changefeed.rs" 'HistoricalReadErrorKind::RetentionExpired' \
    && contains "crates/nimbus-storage/src/changefeed.rs" 'impl_changefeed_journal' \
+   && contains "crates/nimbus-storage/src/mysql.rs" 'journal_cursor_floor: SequenceNumber' \
+   && contains "crates/nimbus-storage/src/mysql/backend.rs" 'load_durable_journal_cursor_floor_from_session' \
+   && contains "crates/nimbus-storage/src/mysql/read.rs" 'cursor_floor: self.journal_cursor_floor' \
+   && contains "crates/nimbus-storage/src/mysql/read.rs" 'journal cursor {} is behind the retention floor {}' \
+   && contains "crates/nimbus-storage/src/libsql.rs" 'load_remote_durable_journal_cursor_floor' \
    && contains "crates/nimbus-storage/src/traits/mod.rs" 'fn export_changefeed_bootstrap' \
    && contains "crates/nimbus-storage/src/traits/mod.rs" 'fn stream_changefeed' \
    && contains "crates/nimbus-storage/src/lib.rs" 'ChangefeedBootstrap' \
@@ -647,11 +665,13 @@ if contains "${PLAN}" 'SEQ9 | `done`' \
    && contains "crates/nimbus-engine/src/service/queries/journal.rs" 'pub async fn stream_changefeed_async' \
    && cargo test -p nimbus-storage changefeed -- --nocapture >"${CHANGEFEED_OUTPUT}" 2>&1 \
    && grep -q '2 passed; 0 failed' "${CHANGEFEED_OUTPUT}" \
+   && cargo test -p nimbus-storage durable_journal_stream -- --nocapture >"${DURABLE_JOURNAL_STREAM_OUTPUT}" 2>&1 \
+   && grep -q '2 passed; 0 failed' "${DURABLE_JOURNAL_STREAM_OUTPUT}" \
    && cargo check -p nimbus-engine >/dev/null 2>&1; then
-  pass "SEQ9 proof covers typed CDC handles/cursors, snapshot-to-log handoff, event payloads, retention errors, all-provider storage APIs, and engine service APIs"
+  pass "SEQ9 proof covers typed CDC handles/cursors, snapshot-to-log handoff, event payloads, retained cursor floors, all-provider storage APIs, and engine service APIs"
 else
   fail "SEQ9 proof or tests incomplete" \
-    "Expected SEQ9 done, CDC proof/source anchors, passing cargo test -p nimbus-storage changefeed, and cargo check -p nimbus-engine; captured output at ${CHANGEFEED_OUTPUT}"
+    "Expected SEQ9 done, CDC proof/source anchors, MySQL durable cursor-floor anchors, passing cargo test -p nimbus-storage changefeed/durable_journal_stream, and cargo check -p nimbus-engine; captured outputs at ${CHANGEFEED_OUTPUT} and ${DURABLE_JOURNAL_STREAM_OUTPUT}"
 fi
 
 step 15 "SEQ10 generated MVCC conformance covers PITR and CDC against pure models"
@@ -827,6 +847,10 @@ if contains "${PLAN}" 'ARCHITECTURE.md' \
    && contains "${SEQ14_PROOF}" '20 passed, 0 failed' \
    && contains "${SEQ14_PROOF}" 'npm run build -w nimbus-ui' \
    && contains "${SEQ14_PROOF}" 'snapshot_unavailable_historical_read_maps_to_service_unavailable' \
+   && contains "${SEQ14_PROOF}" 'crates/nimbus-storage/src/index/history_scan.rs' \
+   && contains "${SEQ14_PROOF}" 'MySQL durable-journal stream/bootstrap' \
+   && contains "${SEQ14_PROOF}" 'historical_index -- --nocapture' \
+   && contains "${SEQ14_PROOF}" 'durable_journal_stream -- --nocapture' \
    && contains "${SEQ14_PROOF}" 'cargo fmt --all --check' \
    && contains "${SEQ14_PROOF}" 'npm run docs:validate-refs:strict' \
    && contains "${SEQ14_PROOF}" 'git diff --check' \

@@ -37,7 +37,7 @@ claiming stock SDK parity.
 | Snapshot-to-log handoff | `ChangefeedBootstrap::from_durable_bootstrap(...)` converts `DurableJournalBootstrap` into an explicit snapshot, handle, resume cursor, latest sequence, and cursor floor. The cursor resumes after the snapshot's applied sequence, so snapshot rows and catch-up events do not overlap. |
 | Event pages | `ChangefeedPage::from_durable_page(...)` converts durable journal records into `ChangefeedEvent` values after validating record integrity. Each event carries sequence, timestamp, authoritative `TenantEventKind` payloads, and the original `TenantEventRecord`. |
 | Retention-expired errors | CDC maps durable journal floor misses into `HistoricalReadErrorKind::RetentionExpired`. Cursor handle rotation also rejects cursors below the new handle floor before streaming. |
-| All-provider storage surface | redb, SQLite, Postgres, MySQL, and libSQL tenant stores expose `export_changefeed_bootstrap(...)` and `stream_changefeed(...)` via the shared storage implementation. The `DurableJournal` trait now has default CDC methods for every backend that implements the durable journal capability. |
+| All-provider storage surface | redb, SQLite, Postgres, MySQL, and libSQL tenant stores expose `export_changefeed_bootstrap(...)` and `stream_changefeed(...)` via the shared storage implementation. The `DurableJournal` trait now has default CDC methods for every backend that implements the durable journal capability. MySQL durable-journal streams and bootstrap snapshots derive `cursor_floor` from the retained `commit_log` minimum sequence, matching the retained-cursor behavior already used by redb, SQLite, and Postgres. |
 | Engine service surface | `Service` exposes sync and async `export_changefeed_bootstrap(...)` and `stream_changefeed(...)` methods through the existing tenant operation guard and persistence executor path. |
 
 ## Verification Evidence
@@ -45,6 +45,7 @@ claiming stock SDK parity.
 | Command | Result |
 | --- | --- |
 | `cargo test -p nimbus-storage changefeed -- --nocapture` | Passed: `2 passed, 0 failed`, `295 filtered out`. Covers redb snapshot-to-log handoff, no duplicate pages across cursor resume, handle rotation, table lifecycle, schema, index lifecycle, document write, trigger delivery payloads, and SQLite retention-expired mapping. |
+| `cargo test -p nimbus-storage durable_journal_stream -- --nocapture` | Passed: `2 passed, 0 failed`, `303 filtered out`. Covers retained cursor-floor rejection for redb and SQLite, and the verifier now anchors the equivalent MySQL `cursor_floor` implementation in production code. |
 | `cargo check -p nimbus-engine` | Passed. Confirms storage, all provider stores, persistence delegates, and engine service CDC APIs compile in production code. |
 
 ## External Fixture State

@@ -136,6 +136,13 @@ branch rather than deferred:
   copying one active-pin floor into every resource family.
 - MongoDB `$changeStream` now fails closed with `CommandNotSupported` until the
   adapter is backed by the durable SEQ changefeed bootstrap and cursor model.
+- SQL-family historical index planning is now centralized in
+  `crates/nimbus-storage/src/index/history_scan.rs`, reducing SQLite/Postgres/MySQL
+  drift risk while leaving physical row fetching and document hydration
+  backend-owned.
+- MySQL durable-journal stream/bootstrap now derives `cursor_floor` from the
+  retained `commit_log` floor, aligning CDC retention semantics with
+  redb/SQLite/Postgres instead of reporting a permanent zero floor.
 - `docs/technical-debt.md` now marks A-021, A-022, and O-007 done.
 - The owning plan records the narrow modularity exception for the provider
   conformance roots and the embedded redb composition root.
@@ -148,6 +155,10 @@ Focused verification after these fixes:
   - result: `15 passed, 0 failed`
 - `cargo test -p nimbus-storage diagnostic -- --nocapture`
   - result: `15 passed, 0 failed`
+- `cargo test -p nimbus-storage historical_index -- --nocapture`
+  - result: `10 passed, 0 failed`
+- `cargo test -p nimbus-storage durable_journal_stream -- --nocapture`
+  - result: `2 passed, 0 failed`
 - `cargo test -p nimbus-mongodb find_and_modify -- --nocapture`
   - result: `9 passed, 0 failed`
 - `cargo test -p nimbus-storage point_in_time -- --nocapture`

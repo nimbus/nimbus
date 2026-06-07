@@ -10,12 +10,11 @@ use mysql_async::{
 };
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, FieldType, Filter,
-    FilterOp, HistoricalIndexCursor, HistoricalIndexQuery, HistoricalIndexScalar,
-    HistoricalIndexTuple, HistoricalReadShape, IndexDefinition, IndexLifecycleEvent,
-    ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
-    SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName, TableSchema,
-    TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor,
-    TriggerWriteOrigin, WriteOp, WriteOpType,
+    FilterOp, HistoricalIndexCursor, HistoricalIndexTuple, HistoricalReadShape, IndexDefinition,
+    IndexLifecycleEvent, ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema,
+    SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName,
+    TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp,
+    TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -120,6 +119,7 @@ pub struct MySqlTenantStore {
 pub struct MySqlReadSnapshot {
     schema: Schema,
     progress: JournalProgress,
+    journal_cursor_floor: SequenceNumber,
     table_identities: Vec<crate::TableIdentitySnapshotEntry>,
     documents: Vec<Document>,
     resource_path_bindings: Vec<ResourcePathBinding>,
