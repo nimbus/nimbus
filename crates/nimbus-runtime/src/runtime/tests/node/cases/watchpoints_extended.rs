@@ -2632,6 +2632,7 @@ const WEBCRYPTO_REQUIRED_GAP_NODE24_EXTRA_DIRS: &[&str] = &[
 const WEBCRYPTO_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-webcrypto-derivebits.js",
     "test/parallel/test-webcrypto-getRandomValues.js",
+    "test/parallel/test-webcrypto-random.js",
 ];
 
 #[test]
