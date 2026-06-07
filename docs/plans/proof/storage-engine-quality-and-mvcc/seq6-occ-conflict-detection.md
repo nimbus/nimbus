@@ -41,7 +41,7 @@ commit.
 | Transaction queries use the same overlay | `Service::query_documents_in_transaction(...)` routes simple `Query` reads through the pinned execution unit, matching the existing structured and point-read transaction paths. |
 | Read-only sessions fail closed | Read-only transaction sessions reject staged writes with `InvalidInput` and remain rollbackable after the rejected stage attempt. |
 | OCC remains on the existing path | Staged writes are still prepared by `MutationExecutionUnit::stage_atomic_write_batch(...)`, dependencies are tracked by existing point/query loaders, and `MutationExecutionUnit::commit(...)` continues to call `ensure_schema_unchanged(...)` and `ensure_no_conflicts(...)` before the single storage transaction. |
-| MongoDB no longer buffers outside the engine | `SessionState` no longer owns a local `buffered_writes` list. Mongo CRUD writes with an active `lsid` now call `Service::stage_atomic_write_batch_in_transaction(...)`, and Mongo finds/updates/deletes route query matching through `Service::query_documents_in_transaction(...)` / `get_document_in_transaction(...)` when an active token exists. |
+| MongoDB no longer buffers outside the engine | `SessionState` no longer owns a local `buffered_writes` list. Mongo CRUD writes with an active `lsid` now call `Service::stage_atomic_write_batch_in_transaction(...)`, Mongo finds/updates/deletes route query matching through `Service::query_documents_in_transaction(...)` / `get_document_in_transaction(...)` when an active token exists, and `findAndModify` return-new reads use the same transaction overlay after staged updates or upserts. |
 | DynamoDB and Firebase error surfaces cover SEQ errors | DynamoDB maps `HistoricalRead` errors to `ValidationException`; Firebase maps them to `INVALID_ARGUMENT` / gRPC `InvalidArgument`, preserving typed fail-closed behavior for unsupported or expired historical features. |
 
 ## Verification Evidence
@@ -49,7 +49,7 @@ commit.
 | Command | Result |
 | --- | --- |
 | `cargo test -p nimbus-engine transaction_session -- --nocapture` | Passed: `9 passed, 0 failed`, `266 filtered out`. Covers begin-snapshot point reads, staged write read-your-writes, outside invisibility before commit, conflict on concurrent document change, read-only stage rejection, expiry, rollback, principal mismatch, final-batch commit, and tracked-read conflict reporting. |
-| `cargo test -p nimbus-mongodb transaction_ -- --nocapture` | Passed: `9 passed, 0 failed`, `254 filtered out`. Covers Mongo session lifecycle plus engine-staged transaction writes visible through the same `lsid`, invisible outside the transaction before commit, committed on commit, and discarded on abort. |
+| `cargo test -p nimbus-mongodb transaction_ -- --nocapture` | Passed: `11 passed, 0 failed`, `254 filtered out`. Covers Mongo session lifecycle plus engine-staged transaction writes visible through the same `lsid`, `findAndModify` return-new update/upsert overlay reads, outside invisibility before commit, committed-on-commit behavior, and discarded-on-abort behavior. |
 | `cargo test -p nimbus-dynamodb transact -- --nocapture` | Passed: DynamoDB transact unit lane `10 passed, 0 failed`, failure-injection lane `1 passed, 0 failed`. Covers repeatable `TransactGet`, atomic `TransactWrite`, condition cancellation without partial writes, stream records committed with data writes, and transaction conflict mapping. |
 | `cargo test -p nimbus-dynamodb maps_each_core_error_class_to_the_expected_dynamodb_code -- --nocapture` | Passed: `1 passed, 0 failed`. Covers the new `HistoricalRead` error mapping to `ValidationException`. |
 | `cargo test -p nimbus-firebase transaction -- --nocapture` | Passed: `7 passed, 0 failed`, `35 filtered out`. Covers Firestore transaction request parsing, transaction selectors, commit transaction bytes, batch-get transaction bytes, and unsupported aggregation transaction selector behavior. |
@@ -63,6 +63,7 @@ live in the engine-owned transaction execution unit, reads through an active
 session token observe that pending overlay, outside readers do not observe it
 before commit, and commit still goes through existing OCC conflict detection and
 one storage transaction. MongoDB moved off adapter-local buffered writes so its
-transaction reads and writes share the engine snapshot/overlay. DynamoDB and
-Firebase transaction surfaces remain on the existing session manager and now
-compile against the full SEQ historical-read error taxonomy.
+transaction reads, writes, and `findAndModify` return-new responses share the
+engine snapshot/overlay. DynamoDB and Firebase transaction surfaces remain on
+the existing session manager and now compile against the full SEQ
+historical-read error taxonomy.

@@ -52,6 +52,10 @@ support state, and backend-parity comparison state.
 - Policy gated: historical admission returns `PolicySnapshotMissing`.
 - Backend divergence: `BackendParityDiagnostic::compare(...)` reports
   `BackendDivergence` when operator-visible MVCC counts or heads differ.
+- SEQ14 review correction: backend feature support no longer reports stale
+  `external_evidence_pending` states after live MySQL/libSQL closeout evidence,
+  and native HTTP/WebSocket historical reads, PITR, and changefeed remain
+  `UnsupportedAdapter` until public native routes are documented and shipped.
 
 ## Verification
 

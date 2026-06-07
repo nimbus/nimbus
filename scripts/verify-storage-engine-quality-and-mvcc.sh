@@ -205,14 +205,14 @@ if contains "${PLAN}" 'SEQ0 | `done`' \
    && contains "${SEQ1_PROOF}" 'HistoricalCursorIdentity' \
    && contains "${SEQ1_PROOF}" 'HistoricalAuthorization' \
    && contains "${SEQ1_PROOF}" 'unsupported-backend' \
-   && contains "${SEQ1_PROOF}" '10 passed, 0 failed' \
+   && contains "${SEQ1_PROOF}" '11 passed, 0 failed' \
    && contains "${SEQ1_PROOF}" '2 passed, 0 failed' \
    && contains "crates/nimbus-core/src/mvcc.rs" 'pub struct HistoricalReadSnapshot' \
    && contains "crates/nimbus-core/src/mvcc.rs" 'pub struct HistoricalCursorIdentity' \
    && contains "crates/nimbus-core/src/mvcc.rs" 'pub enum HistoricalVersionVisibility' \
    && contains "crates/nimbus-core/src/error.rs" 'pub enum HistoricalReadErrorKind' \
    && cargo test -p nimbus-core mvcc -- --nocapture >"${CORE_MVCC_OUTPUT}" 2>&1 \
-   && grep -q '10 passed; 0 failed' "${CORE_MVCC_OUTPUT}" \
+   && grep -q '11 passed; 0 failed' "${CORE_MVCC_OUTPUT}" \
    && cargo test -p nimbus-core historical_read -- --nocapture >"${CORE_HISTORICAL_READ_OUTPUT}" 2>&1 \
    && grep -q '2 passed; 0 failed' "${CORE_HISTORICAL_READ_OUTPUT}"; then
   pass "SEQ1 core MVCC semantics and typed fail-closed errors are implemented and tested"
@@ -471,7 +471,7 @@ if contains "${PLAN}" 'SEQ6 | `done`' \
    && contains "${SEQ6_PROOF}" 'Service::query_documents_in_transaction' \
    && contains "${SEQ6_PROOF}" 'MongoDB no longer buffers outside the engine' \
    && contains "${SEQ6_PROOF}" 'DynamoDB and Firebase error surfaces cover SEQ errors' \
-   && contains "${SEQ6_PROOF}" '9 passed, 0 failed' \
+   && contains "${SEQ6_PROOF}" '11 passed, 0 failed' \
    && contains "${SEQ6_PROOF}" '10 passed, 0 failed' \
    && contains "${SEQ6_PROOF}" '7 passed, 0 failed' \
    && contains "crates/nimbus-engine/src/service/transactions.rs" 'pub fn stage_atomic_write_batch_in_transaction' \
@@ -489,7 +489,7 @@ if contains "${PLAN}" 'SEQ6 | `done`' \
    && cargo test -p nimbus-engine transaction_session -- --nocapture >"${ENGINE_TRANSACTION_OUTPUT}" 2>&1 \
    && grep -q '9 passed; 0 failed' "${ENGINE_TRANSACTION_OUTPUT}" \
    && cargo test -p nimbus-mongodb transaction_ -- --nocapture >"${MONGODB_TRANSACTION_OUTPUT}" 2>&1 \
-   && grep -q '9 passed; 0 failed' "${MONGODB_TRANSACTION_OUTPUT}" \
+   && grep -q '11 passed; 0 failed' "${MONGODB_TRANSACTION_OUTPUT}" \
    && cargo test -p nimbus-dynamodb transact -- --nocapture >"${DYNAMODB_TRANSACTION_OUTPUT}" 2>&1 \
    && grep -q '10 passed; 0 failed' "${DYNAMODB_TRANSACTION_OUTPUT}" \
    && grep -q '1 passed; 0 failed' "${DYNAMODB_TRANSACTION_OUTPUT}" \

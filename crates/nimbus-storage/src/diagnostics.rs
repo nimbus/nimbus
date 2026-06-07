@@ -199,15 +199,6 @@ impl StorageFeatureSupport {
         }
     }
 
-    fn external_evidence_pending(feature: StorageFeature, reason: impl Into<String>) -> Self {
-        Self {
-            feature,
-            state: StorageFeatureSupportState::ExternalEvidencePending,
-            error_kind: None,
-            reason: reason.into(),
-        }
-    }
-
     fn unsupported(
         feature: StorageFeature,
         error_kind: HistoricalReadErrorKind,
@@ -341,7 +332,7 @@ fn diagnostic(
     }
 }
 
-fn backend_feature_support(backend: &str) -> Vec<StorageFeatureSupport> {
+fn backend_feature_support(_backend: &str) -> Vec<StorageFeatureSupport> {
     let mut supports = vec![
         StorageFeatureSupport::supported(
             StorageFeature::LatestReads,
@@ -362,17 +353,10 @@ fn backend_feature_support(backend: &str) -> Vec<StorageFeatureSupport> {
         StorageFeature::PointInTimeRestore,
         StorageFeature::Changefeed,
     ] {
-        if matches!(backend, "mysql" | "libsql") {
-            supports.push(StorageFeatureSupport::external_evidence_pending(
-                feature,
-                "implementation is present, but live MySQL/libSQL fixture evidence remains pending before SEQ14 closeout",
-            ));
-        } else {
-            supports.push(StorageFeatureSupport::supported(
-                feature,
-                "implemented and covered by deterministic local verification",
-            ));
-        }
+        supports.push(StorageFeatureSupport::supported(
+            feature,
+            "implemented on the shared tenant-event journal and covered by deterministic plus live provider verification",
+        ));
     }
     supports
 }
@@ -423,17 +407,20 @@ fn adapter_support_matrix() -> Vec<AdapterSupportDiagnostic> {
                 StorageFeature::LatestReads,
                 "native APIs are the canonical Nimbus surface",
             ),
-            StorageFeatureSupport::supported(
+            StorageFeatureSupport::unsupported(
                 StorageFeature::HistoricalDocumentReads,
-                "native extension can expose typed historical-read admission",
+                HistoricalReadErrorKind::UnsupportedAdapter,
+                "storage primitive exists, but no public native HTTP/WebSocket route is documented yet; fail closed",
             ),
-            StorageFeatureSupport::supported(
+            StorageFeatureSupport::unsupported(
                 StorageFeature::PointInTimeRestore,
-                "native extension can expose typed PITR import/export",
+                HistoricalReadErrorKind::UnsupportedAdapter,
+                "storage primitive exists, but no public native HTTP/WebSocket route is documented yet; fail closed",
             ),
-            StorageFeatureSupport::supported(
+            StorageFeatureSupport::unsupported(
                 StorageFeature::Changefeed,
-                "native extension can expose typed CDC handles",
+                HistoricalReadErrorKind::UnsupportedAdapter,
+                "storage primitive exists, but no public native HTTP/WebSocket route is documented yet; fail closed",
             ),
             StorageFeatureSupport::supported(
                 StorageFeature::OperatorDiagnostics,
@@ -801,6 +788,21 @@ mod tests {
                         && support.error_kind == Some(HistoricalReadErrorKind::UnsupportedAdapter)
                 })
         }));
+        assert!(health.adapter_support.iter().any(|adapter| {
+            adapter.adapter == "native_http_websocket"
+                && adapter.features.iter().any(|support| {
+                    support.feature == StorageFeature::PointInTimeRestore
+                        && support.state == StorageFeatureSupportState::Unsupported
+                        && support.error_kind == Some(HistoricalReadErrorKind::UnsupportedAdapter)
+                })
+        }));
+        assert!(
+            health
+                .backend_support
+                .iter()
+                .all(|support| support.state != StorageFeatureSupportState::ExternalEvidencePending),
+            "SEQ14 closeout diagnostics must not report stale external evidence pending states"
+        );
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use nimbus_core::{
-    AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, Document, DocumentLocator,
-    PrincipalContext, TableName, TenantId, WriteKey, WriteSetMode,
+    AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, Document, DocumentId, DocumentLocator,
+    Error, PrincipalContext, TableName, TenantId, WriteKey, WriteSetMode,
 };
 use nimbus_engine::Service;
 
@@ -41,6 +41,33 @@ fn execute_or_stage_writes(
         .map_err(MongoError::from)?;
     eu.execute_atomic_write_batch(batch)
         .map_err(MongoError::from)
+}
+
+fn get_document_after_find_and_modify_write(
+    body: &bson::Document,
+    conn: &ConnectionState,
+    service: &Arc<Service>,
+    tenant_id: &TenantId,
+    table: &TableName,
+    document_id: DocumentId,
+    principal: &PrincipalContext,
+) -> Result<Option<Document>, MongoError> {
+    if let Some(transaction_token) = conn.session_store.active_transaction_token(body) {
+        return service
+            .get_document_in_transaction(
+                tenant_id,
+                &transaction_token,
+                principal,
+                table,
+                document_id,
+            )
+            .map_err(MongoError::from);
+    }
+    match service.get_document_with_principal(tenant_id, table, document_id, principal) {
+        Ok(document) => Ok(Some(document)),
+        Err(Error::DocumentNotFound(_) | Error::NotFound(_)) => Ok(None),
+        Err(error) => Err(MongoError::from(error)),
+    }
 }
 
 pub fn insert(
@@ -677,15 +704,23 @@ pub fn find_and_modify(
 
     let principal = PrincipalContext::system();
     let value = if return_new {
-        match service.get_document_with_principal(&tenant_id, &table, doc.id.clone(), &principal) {
-            Ok(new_doc) => {
+        match get_document_after_find_and_modify_write(
+            body,
+            conn,
+            service,
+            &tenant_id,
+            &table,
+            doc.id.clone(),
+            &principal,
+        )? {
+            Some(new_doc) => {
                 let mut bson_doc = bson_bridge::document_to_bson_doc(&new_doc);
                 if let Some(proj) = fields {
                     apply_projection(&mut bson_doc, proj);
                 }
                 bson::Bson::Document(bson_doc)
             }
-            Err(_) => bson::Bson::Null,
+            None => bson::Bson::Null,
         }
     } else {
         let mut old = old_bson;
@@ -801,15 +836,17 @@ fn find_and_upsert(
 
     let principal = PrincipalContext::system();
     let value = if return_new {
-        match service.get_document_with_principal(tenant_id, table, doc_id, &principal) {
-            Ok(new_doc) => {
+        match get_document_after_find_and_modify_write(
+            body, conn, service, tenant_id, table, doc_id, &principal,
+        )? {
+            Some(new_doc) => {
                 let mut bson_doc = bson_bridge::document_to_bson_doc(&new_doc);
                 if let Some(proj) = fields {
                     apply_projection(&mut bson_doc, proj);
                 }
                 bson::Bson::Document(bson_doc)
             }
-            Err(_) => bson::Bson::Null,
+            None => bson::Bson::Null,
         }
     } else {
         bson::Bson::Null

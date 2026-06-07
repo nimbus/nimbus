@@ -524,6 +524,9 @@ impl StructuredHttpError {
                             StatusCode::NOT_IMPLEMENTED
                         }
                         HistoricalReadErrorKind::PolicySnapshotMissing => StatusCode::FORBIDDEN,
+                        HistoricalReadErrorKind::SnapshotUnavailable => {
+                            StatusCode::SERVICE_UNAVAILABLE
+                        }
                         HistoricalReadErrorKind::CursorMismatch
                         | HistoricalReadErrorKind::FormatMismatch
                         | HistoricalReadErrorKind::RetentionExpired
@@ -581,3 +584,25 @@ pub(crate) async fn send_fatal_error_and_close(
 }
 
 pub(crate) const FATAL_PROTOCOL_CLOSE_CODE: u16 = close_code::POLICY;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_unavailable_historical_read_maps_to_service_unavailable() {
+        let response = StructuredHttpError::from_app_error(crate::state::AppError::from(
+            Error::historical_read(
+                HistoricalReadErrorKind::SnapshotUnavailable,
+                "serving snapshot is not available for the requested sequence",
+            ),
+        ));
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            response
+                .message()
+                .contains("serving snapshot is not available")
+        );
+    }
+}

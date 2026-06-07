@@ -1,4 +1,4 @@
-use nimbus_core::{Error, Result};
+use nimbus_core::{Error, HistoricalReadErrorKind, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -19,7 +19,7 @@ pub fn validate_storage_format_version(version: StorageFormatVersion) -> Result<
 }
 
 pub fn validate_document_version_storage_format(version: StorageFormatVersion) -> Result<()> {
-    validate_named_storage_format_version(
+    validate_named_historical_storage_format_version(
         "document-version storage format",
         version,
         CURRENT_DOCUMENT_VERSION_STORAGE_FORMAT,
@@ -27,7 +27,7 @@ pub fn validate_document_version_storage_format(version: StorageFormatVersion) -
 }
 
 pub fn validate_index_version_storage_format(version: StorageFormatVersion) -> Result<()> {
-    validate_named_storage_format_version(
+    validate_named_historical_storage_format_version(
         "index-version storage format",
         version,
         CURRENT_INDEX_VERSION_STORAGE_FORMAT,
@@ -49,8 +49,9 @@ pub fn validate_document_version_storage_format_state(
 ) -> Result<()> {
     match version {
         Some(version) => validate_document_version_storage_format(version),
-        None if has_versions => Err(Error::Internal(
-            "document-version rows exist without a storage format marker".to_string(),
+        None if has_versions => Err(Error::historical_read(
+            HistoricalReadErrorKind::FormatMismatch,
+            "document-version rows exist without a storage format marker",
         )),
         None => Ok(()),
     }
@@ -62,8 +63,9 @@ pub fn validate_index_version_storage_format_state(
 ) -> Result<()> {
     match version {
         Some(version) => validate_index_version_storage_format(version),
-        None if has_versions => Err(Error::Internal(
-            "index-version rows exist without a storage format marker".to_string(),
+        None if has_versions => Err(Error::historical_read(
+            HistoricalReadErrorKind::FormatMismatch,
+            "index-version rows exist without a storage format marker",
         )),
         None => Ok(()),
     }
@@ -89,6 +91,32 @@ fn validate_named_storage_format_version(
     )))
 }
 
+fn validate_named_historical_storage_format_version(
+    label: &str,
+    version: StorageFormatVersion,
+    current: StorageFormatVersion,
+) -> Result<()> {
+    if version == current {
+        return Ok(());
+    }
+    if version.0 > current.0 {
+        return Err(Error::historical_read(
+            HistoricalReadErrorKind::FormatMismatch,
+            format!(
+                "unknown future {label} version {}; current version is {}",
+                version.0, current.0
+            ),
+        ));
+    }
+    Err(Error::historical_read(
+        HistoricalReadErrorKind::FormatMismatch,
+        format!(
+            "unsupported old {label} version {}; current version is {}",
+            version.0, current.0
+        ),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,6 +139,10 @@ mod tests {
             CURRENT_DOCUMENT_VERSION_STORAGE_FORMAT.0 + 1,
         ))
         .expect_err("unknown future document-version versions must fail closed");
+        assert_eq!(
+            err.historical_read_kind(),
+            Some(HistoricalReadErrorKind::FormatMismatch)
+        );
         assert!(
             err.to_string()
                 .contains("unknown future document-version storage format version")
@@ -123,9 +155,30 @@ mod tests {
             CURRENT_INDEX_VERSION_STORAGE_FORMAT.0 + 1,
         ))
         .expect_err("unknown future index-version versions must fail closed");
+        assert_eq!(
+            err.historical_read_kind(),
+            Some(HistoricalReadErrorKind::FormatMismatch)
+        );
         assert!(
             err.to_string()
                 .contains("unknown future index-version storage format version")
+        );
+    }
+
+    #[test]
+    fn version_rows_without_history_format_marker_are_typed_format_mismatches() {
+        let document_err = validate_document_version_storage_format_state(None, true)
+            .expect_err("document-version rows without marker must fail closed");
+        assert_eq!(
+            document_err.historical_read_kind(),
+            Some(HistoricalReadErrorKind::FormatMismatch)
+        );
+
+        let index_err = validate_index_version_storage_format_state(None, true)
+            .expect_err("index-version rows without marker must fail closed");
+        assert_eq!(
+            index_err.historical_read_kind(),
+            Some(HistoricalReadErrorKind::FormatMismatch)
         );
     }
 }

@@ -37,12 +37,12 @@ physical layouts after SEQ1 and SEQ2 settle the semantics.
 | Area | Evidence |
 | --- | --- |
 | MVCC scalar contract | `crates/nimbus-core/src/mvcc.rs` defines `CommitSequence`, `CommitTimestamp`, `ReadTimestamp`, `HistoricalReadSnapshot`, `RetentionFloor`, and `HistoryWindow` with serde-ready newtypes and explicit retained-window checks. |
-| Timestamp resolution | `HistoricalReadSnapshot::resolve_at_or_before` resolves product timestamps to the latest durable commit at or before the read timestamp and breaks same-timestamp ties by the highest `CommitSequence`. |
+| Timestamp resolution | `HistoricalReadSnapshot::resolve_at_or_before` resolves product timestamps to the latest durable commit at or before the read timestamp, breaks same-timestamp ties by the highest `CommitSequence`, and rejects non-monotonic commit timelines with `SnapshotUnavailable` so timestamp-target PITR cannot replay a sequence prefix containing commits timestamped after the requested point. |
 | Historical cursor identity | `HistoricalCursorIdentity` binds the resolved read snapshot, `TableId`, full-scan/index query shape, `PolicySnapshotId`, `RetentionFloor`, backend/adapter support identity, and storage format generation. Resume drift returns a typed fail-closed cursor mismatch. |
 | Historical authorization | `HistoricalAuthorization` requires a policy snapshot for the requested read timestamp. Missing policy snapshots fail closed with `PolicySnapshotMissing`. |
 | Pending writes | `HistoricalVersionVisibility::Pending` is never visible to historical readers; committed versions are visible only at or after their commit sequence. |
 | Unsupported and expired states | `HistoricalReadErrorKind` and `Error::HistoricalRead` add typed fail-closed states for unsupported backends, unsupported adapters, expired retention, timestamp out of range, cursor mismatch, policy snapshot missing, and storage format mismatch. |
-| Public error mapping | `crates/nimbus-server/src/error_envelope.rs` maps typed historical-read errors into structured public envelopes and HTTP statuses. Unsupported backend/adapter reports `501 Not Implemented`; expired/cursor/format/timestamp problems report `400 Bad Request`; missing policy snapshots report `403 Forbidden`. |
+| Public error mapping | `crates/nimbus-server/src/error_envelope.rs` maps typed historical-read errors into structured public envelopes and HTTP statuses. Unsupported backend/adapter reports `501 Not Implemented`; expired/cursor/format/timestamp problems report `400 Bad Request`; missing policy snapshots report `403 Forbidden`; unavailable serving snapshots report `503 Service Unavailable`. |
 | Sandbox forwarding | `crates/nimbus-bin/src/machine/backend.rs` classifies historical-read failures as invalid forwarded specs if they ever cross the machine API path. |
 
 ## Read-Before-Edit Checklist
@@ -71,7 +71,7 @@ Before editing `nimbus-core`, read:
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all --check` | Passed. |
-| `cargo test -p nimbus-core mvcc -- --nocapture` | Passed: `10 passed, 0 failed`, `98 filtered out`. Covers timestamp-to-sequence tie handling, before-first-commit rejection, retention bounds, historical policy snapshot requirement, cursor identity drift, format mismatch, unsupported backend/adapter typed errors, and pending-write invisibility. |
+| `cargo test -p nimbus-core mvcc -- --nocapture` | Passed: `11 passed, 0 failed`, `114 filtered out`. Covers timestamp-to-sequence tie handling, non-monotonic commit timestamp rejection, before-first-commit rejection, retention bounds, historical policy snapshot requirement, cursor identity drift, format mismatch, unsupported backend/adapter typed errors, and pending-write invisibility. |
 | `cargo test -p nimbus-core historical_read -- --nocapture` | Passed: `2 passed, 0 failed`, `106 filtered out`. Covers the public historical-read error helper and a filtered MVCC visibility regression. |
 | `cargo check -p nimbus-core` | Passed. |
 | `cargo check -p nimbus-server -p nimbus-bin` | Blocked before checking the touched public mappings because `nimbus-assets` requires `packages/nimbus-ui/dist/index.html`. |

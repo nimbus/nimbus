@@ -96,11 +96,60 @@ commits.
 - `cargo test -p nimbus-storage sqlite_point_in_time_archive_restores_sequence_and_timestamp_targets -- --nocapture`
   - result after fix: `1 passed, 0 failed`
 
+## Post-Review Audit Fixes
+
+The local autoreview skill and manual follow-up audit found additional
+closeout issues after the draft PR was opened. The fixes are now part of this
+branch rather than deferred:
+
+- `HistoricalReadErrorKind::SnapshotUnavailable` is mapped by
+  `crates/nimbus-server/src/error_envelope.rs` to HTTP `503 Service
+  Unavailable`.
+- Timestamp-target PITR now rejects non-monotonic commit timelines with
+  `SnapshotUnavailable` instead of choosing a sequence prefix that could
+  include commits timestamped after the requested point.
+- MongoDB `findAndModify` with `new: true` now reads from the active
+  transaction overlay for both update and upsert return paths.
+- Document/index history storage-format admission now reports
+  `HistoricalReadErrorKind::FormatMismatch` instead of generic internal errors.
+- Storage diagnostics no longer report stale MySQL/libSQL
+  `external_evidence_pending` states after SEQ14 closeout, and native
+  HTTP/WebSocket historical reads, PITR, and changefeed remain
+  `UnsupportedAdapter` until public native routes exist.
+- `docs/technical-debt.md` now marks A-021, A-022, and O-007 done.
+- The owning plan records the narrow modularity exception for the provider
+  conformance roots and the embedded redb composition root.
+
+Focused verification after these fixes:
+
+- `cargo test -p nimbus-core mvcc -- --nocapture`
+  - result: `11 passed, 0 failed`
+- `cargo test -p nimbus-storage format -- --nocapture`
+  - result: `15 passed, 0 failed`
+- `cargo test -p nimbus-storage diagnostic -- --nocapture`
+  - result: `15 passed, 0 failed`
+- `cargo test -p nimbus-mongodb find_and_modify -- --nocapture`
+  - result: `9 passed, 0 failed`
+- `cargo test -p nimbus-storage point_in_time -- --nocapture`
+  - result: `4 passed, 0 failed`
+- `cargo test -p nimbus-storage generated_history -- --nocapture`
+  - result: `9 passed, 2 ignored`
+- `cargo test -p nimbus-server snapshot_unavailable_historical_read_maps_to_service_unavailable -- --nocapture`
+  - result: blocked before server compilation by the pre-existing
+    `packages/nimbus-ui` build prerequisite:
+    `convex codegen --app .` exits with `unknown option '--app'`.
+
 ## Final Local Verification
 
 - `bash scripts/verify-storage-engine-quality-and-mvcc.sh`
   - result: `20 passed, 0 failed`
 - `cargo fmt --all --check`
+  - result: passed
+- `cargo check -p nimbus-core`
+  - result: passed
+- `cargo check -p nimbus-mongodb`
+  - result: passed
+- `cargo check -p nimbus-storage`
   - result: passed
 - `npm run docs:validate-refs:strict`
   - result: `docs reference validation: pass (242 working-tree Markdown files)`

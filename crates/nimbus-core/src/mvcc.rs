@@ -108,12 +108,33 @@ impl HistoricalReadSnapshot {
         read_timestamp: ReadTimestamp,
         commits: impl IntoIterator<Item = (CommitTimestamp, CommitSequence)>,
     ) -> Result<Self> {
-        commits
-            .into_iter()
-            .filter(|(commit_timestamp, _)| {
-                commit_timestamp.timestamp() <= read_timestamp.timestamp()
-            })
-            .max_by_key(|(commit_timestamp, sequence)| (*commit_timestamp, *sequence))
+        let mut commits = commits.into_iter().collect::<Vec<_>>();
+        commits.sort_by_key(|(_, sequence)| *sequence);
+
+        let mut previous: Option<(CommitTimestamp, CommitSequence)> = None;
+        let mut latest_at_or_before = None;
+        for (commit_timestamp, sequence) in commits {
+            if let Some((previous_timestamp, previous_sequence)) = previous
+                && commit_timestamp < previous_timestamp
+            {
+                return Err(Error::historical_read(
+                    HistoricalReadErrorKind::SnapshotUnavailable,
+                    format!(
+                        "commit timestamp moved backward at sequence {}; previous sequence {} timestamp {:?}, current timestamp {:?}; timestamp-target historical reads require monotonic commit timestamps",
+                        sequence.sequence().0,
+                        previous_sequence.sequence().0,
+                        previous_timestamp.timestamp(),
+                        commit_timestamp.timestamp()
+                    ),
+                ));
+            }
+            if commit_timestamp.timestamp() <= read_timestamp.timestamp() {
+                latest_at_or_before = Some((commit_timestamp, sequence));
+            }
+            previous = Some((commit_timestamp, sequence));
+        }
+
+        latest_at_or_before
             .map(|(commit_timestamp, sequence)| {
                 Self::new(read_timestamp, sequence, commit_timestamp)
             })
@@ -645,6 +666,28 @@ mod tests {
 
         assert_eq!(snapshot.sequence(), sequence(11));
         assert_eq!(snapshot.commit_timestamp(), commit_timestamp(1_000));
+    }
+
+    #[test]
+    fn timestamp_resolution_rejects_non_monotonic_commit_timestamps() {
+        let error = HistoricalReadSnapshot::resolve_at_or_before(
+            read_timestamp(950),
+            [
+                (commit_timestamp(1_000), sequence(10)),
+                (commit_timestamp(900), sequence(11)),
+            ],
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.historical_read_kind(),
+            Some(HistoricalReadErrorKind::SnapshotUnavailable)
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("timestamp-target historical reads require monotonic commit timestamps")
+        );
     }
 
     #[test]
