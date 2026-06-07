@@ -6,8 +6,8 @@ use serde_json::Value;
 
 use crate::{
     CommitSequence, CommitTimestamp, Document, DocumentId, Error, HistoricalReadErrorKind,
-    HistoricalReadShape, HistoricalReadSnapshot, IndexDefinition, IndexId, ReadTimestamp, Result,
-    TableId, TenantEventKind, TenantEventRecord, VersionedRegistry,
+    HistoricalReadShape, HistoricalReadSnapshot, IndexDefinition, IndexId, PolicySnapshotId,
+    ReadTimestamp, Result, TableId, TenantEventKind, TenantEventRecord, VersionedRegistry,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -130,6 +130,8 @@ pub struct HistoricalIndexCursor {
     table_id: TableId,
     index_id: IndexId,
     query: HistoricalIndexQuery,
+    policy_snapshot: PolicySnapshotId,
+    storage_format_generation: u16,
     last_tuple: HistoricalIndexTuple,
     last_document_id: DocumentId,
 }
@@ -147,6 +149,8 @@ impl HistoricalIndexCursor {
             table_id: read_shape.table_id().clone(),
             index_id: index.id.clone(),
             query,
+            policy_snapshot: read_shape.policy_snapshot().clone(),
+            storage_format_generation: read_shape.storage_format_generation(),
             last_tuple,
             last_document_id,
         }
@@ -454,10 +458,12 @@ fn validate_cursor(
         || cursor.table_id != *read_shape.table_id()
         || cursor.index_id != index.id
         || cursor.query != *query
+        || cursor.policy_snapshot != *read_shape.policy_snapshot()
+        || cursor.storage_format_generation != read_shape.storage_format_generation()
     {
         return Err(Error::historical_read(
             HistoricalReadErrorKind::CursorMismatch,
-            "historical index cursor does not match read snapshot, table, index, or query",
+            "historical index cursor does not match read snapshot, table, index, query, policy snapshot, or storage format generation",
         ));
     }
     Ok(())
@@ -476,8 +482,8 @@ mod tests {
     use serde_json::{Map, json};
 
     use crate::{
-        FieldSchema, FieldType, IndexState, SchemaChangeEvent, SequenceNumber, TableName,
-        TableSchema, Timestamp, WriteOp, WriteOpType,
+        AccessRule, FieldSchema, FieldType, IndexState, SchemaChangeEvent, SequenceNumber,
+        TableAccessPolicy, TableName, TableSchema, Timestamp, WriteOp, WriteOpType,
     };
 
     use super::*;
@@ -503,6 +509,19 @@ mod tests {
             ],
             indexes: vec![index],
             access_policy: None,
+        }
+    }
+
+    fn authenticated_ranked_schema(table: &TableName, index: IndexDefinition) -> TableSchema {
+        TableSchema {
+            access_policy: Some(TableAccessPolicy {
+                read: AccessRule {
+                    require_authenticated: true,
+                    ..AccessRule::default()
+                },
+                ..TableAccessPolicy::default()
+            }),
+            ..ranked_schema(table, index)
         }
     }
 
@@ -713,6 +732,111 @@ mod tests {
                 1,
             )
             .expect_err("cursor query mismatch must fail closed");
+        assert!(err.to_string().contains("cursor_mismatch"));
+    }
+
+    #[test]
+    fn historical_index_cursor_rejects_policy_snapshot_drift() {
+        let table = table("tasks");
+        let table_id = TableId::new();
+        let index = IndexDefinition::new("by_group_rank", ["group", "rank"]);
+        let first_id = DocumentId::new();
+        let second_id = DocumentId::new();
+        let records = vec![
+            schema_record(1, &table, &table_id, ranked_schema(&table, index.clone())),
+            write_record(
+                2,
+                &table,
+                &table_id,
+                None,
+                Some(document(&table, &first_id, 1, "a")),
+            ),
+            write_record(
+                3,
+                &table,
+                &table_id,
+                None,
+                Some(document(&table, &second_id, 2, "a")),
+            ),
+            schema_record(
+                4,
+                &table,
+                &table_id,
+                authenticated_ranked_schema(&table, index),
+            ),
+        ];
+        let registry = VersionedRegistry::from_records(records.clone()).expect("registry builds");
+        let history = HistoricalIndexHistory::from_records(records).expect("history builds");
+        let before_policy = shape_at(&registry, &table, 3);
+        let after_policy = shape_at(&registry, &table, 4);
+        let query =
+            HistoricalIndexQuery::Prefix(vec![HistoricalIndexScalar::String("a".to_string())]);
+        let page = history
+            .scan_page_at(&before_policy, "by_group_rank", query.clone(), None, 1)
+            .expect("first page should load");
+
+        let err = history
+            .scan_page_at(
+                &after_policy,
+                "by_group_rank",
+                query,
+                page.next_cursor.as_ref(),
+                1,
+            )
+            .expect_err("policy drift must fail closed");
+
+        assert!(err.to_string().contains("cursor_mismatch"));
+    }
+
+    #[test]
+    fn historical_index_cursor_rejects_storage_format_drift() {
+        let table = table("tasks");
+        let table_id = TableId::new();
+        let index = IndexDefinition::new("by_group_rank", ["group", "rank"]);
+        let first_id = DocumentId::new();
+        let second_id = DocumentId::new();
+        let records = vec![
+            schema_record(1, &table, &table_id, ranked_schema(&table, index)),
+            write_record(
+                2,
+                &table,
+                &table_id,
+                None,
+                Some(document(&table, &first_id, 1, "a")),
+            ),
+            write_record(
+                3,
+                &table,
+                &table_id,
+                None,
+                Some(document(&table, &second_id, 2, "a")),
+            ),
+        ];
+        let registry_v1 =
+            VersionedRegistry::from_records_with_format_generation(records.clone(), 1)
+                .expect("registry builds");
+        let registry_v2 =
+            VersionedRegistry::from_records_with_format_generation(records.clone(), 2)
+                .expect("registry builds");
+        let history = HistoricalIndexHistory::from_records(records).expect("history builds");
+        let shape_v1 = shape_at(&registry_v1, &table, 3);
+        let shape_v2 = shape_at(&registry_v2, &table, 3);
+        let query =
+            HistoricalIndexQuery::Prefix(vec![HistoricalIndexScalar::String("a".to_string())]);
+        let page = history
+            .scan_page_at(&shape_v1, "by_group_rank", query.clone(), None, 1)
+            .expect("first page should load");
+
+        let err = history
+            .scan_page_at(
+                &shape_v2,
+                "by_group_rank",
+                query,
+                page.next_cursor.as_ref(),
+                1,
+            )
+            .expect_err("format drift must fail closed");
+
         assert!(err.to_string().contains("cursor_mismatch"));
     }
 

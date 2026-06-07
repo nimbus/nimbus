@@ -7,8 +7,9 @@ status: done
 `SEQ12` turns storage diagnostics into an operator-facing MVCC support snapshot
 instead of a thin backend/head report. The existing fields remain present, and
 the diagnostic now also exposes versioned index storage, MVCC operator state,
-historical-query admission, retention pressure, backend support state, adapter
-support state, and backend-parity comparison state.
+historical-query admission, retention pressure, backend capability profile,
+backend support state, adapter capability profiles, adapter support state, and
+backend-parity comparison state.
 
 ## Implementation Anchors
 
@@ -19,6 +20,7 @@ support state, and backend-parity comparison state.
   - `HistoricalQueryAdmissionRequest`
   - `HistoricalQueryAdmissionDiagnostic`
   - `StoragePressureDiagnostic`
+  - `StorageCapabilityProfile`
   - `BackendParityDiagnostic`
   - `AdapterSupportDiagnostic`
   - `storage_health_diagnostic_with_retention_config(...)`
@@ -47,7 +49,8 @@ support state, and backend-parity comparison state.
 - Expired: historical admission returns `RetentionExpired` for sequences older
   than the retained MVCC window.
 - Unsupported: historical admission and adapter matrices expose typed
-  unsupported backend/adapter states.
+  unsupported backend/adapter states while adapter capability profiles remain
+  `LatestOnly` until public historical/PITR/changefeed routes ship.
 - Format mismatch: historical admission returns `FormatMismatch`.
 - Policy gated: historical admission returns `PolicySnapshotMissing`.
 - Backend divergence: `BackendParityDiagnostic::compare(...)` reports

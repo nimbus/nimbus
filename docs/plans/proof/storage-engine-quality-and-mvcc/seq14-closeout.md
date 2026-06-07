@@ -126,6 +126,16 @@ branch rather than deferred:
   `external_evidence_pending` states after SEQ14 closeout, and native
   HTTP/WebSocket historical reads, PITR, and changefeed remain
   `UnsupportedAdapter` until public native routes exist.
+- Storage diagnostics now expose a derived capability profile beside the typed
+  per-feature support matrix, so backends can report `enterprise_complete`
+  while adapters with no public historical/PITR/changefeed routes remain
+  `latest_only`.
+- Historical index cursors now bind the read-shape policy snapshot and storage
+  format generation, so pagination cannot resume across policy or format drift.
+- Retention GC watermarks now route pins by resource dependency instead of
+  copying one active-pin floor into every resource family.
+- MongoDB `$changeStream` now fails closed with `CommandNotSupported` until the
+  adapter is backed by the durable SEQ changefeed bootstrap and cursor model.
 - `docs/technical-debt.md` now marks A-021, A-022, and O-007 done.
 - The owning plan records the narrow modularity exception for the provider
   conformance roots and the embedded redb composition root.
@@ -144,10 +154,15 @@ Focused verification after these fixes:
   - result: `4 passed, 0 failed`
 - `cargo test -p nimbus-storage generated_history -- --nocapture`
   - result: `9 passed, 2 ignored`
+- `npm run build -w nimbus-ui`
+  - result: passed after `packages/nimbus-ui` codegen switched from stale
+    `convex codegen --app .` to the repo-owned `@nimbus/codegen` CLI.
+- `cargo test -p nimbus-bridge runtime_host_error_envelope_preserves_historical_read_kind -- --nocapture`
+  - result: `1 passed, 0 failed`
+- `cargo test -p nimbus-convex historical_read_error_round_trips_through_runtime_encoding -- --nocapture`
+  - result: `1 passed, 0 failed`
 - `cargo test -p nimbus-server snapshot_unavailable_historical_read_maps_to_service_unavailable -- --nocapture`
-  - result: blocked before server compilation by the pre-existing
-    `packages/nimbus-ui` build prerequisite:
-    `convex codegen --app .` exits with `unknown option '--app'`.
+  - result: `1 passed, 0 failed`
 
 ## Final Local Verification
 

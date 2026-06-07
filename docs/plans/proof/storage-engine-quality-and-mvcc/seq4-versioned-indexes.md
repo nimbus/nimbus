@@ -48,7 +48,7 @@ evidence now covers Postgres, MySQL, and libSQL without fixture skip paths.
 | Visibility intervals | The oracle builds `visible_from` plus exclusive `visible_until` intervals from `TenantEventRecord` document writes. Updates close the previous tuple and open the new tuple at the same sequence; deletes close the previous tuple without adding a new row. |
 | Registry-driven identity | The oracle resolves maintained/queryable index definitions through `VersionedRegistry` and `HistoricalReadShape`, so scans are keyed by stable `TableId`, stable `IndexId`, and the selected historical read sequence. |
 | Ordered tuple semantics | `HistoricalIndexScalar` and `HistoricalIndexNumberKey` define a backend-portable scalar ordering for null, boolean, number, and string values. Number ordering follows the same sortable IEEE-754 transform as the existing storage index encoder. |
-| Pagination identity | `HistoricalIndexCursor` binds read snapshot, table id, index id, query shape, last tuple, and last document id. A mismatched cursor fails closed with `HistoricalReadErrorKind::CursorMismatch`. |
+| Pagination identity | `HistoricalIndexCursor` binds read snapshot, table id, index id, query shape, policy snapshot, storage format generation, last tuple, and last document id. A mismatched cursor fails closed with `HistoricalReadErrorKind::CursorMismatch`. |
 
 ## Embedded Physical Storage Evidence
 
@@ -114,7 +114,7 @@ so diagnostics use the same freshness guarantee as current query reads.
 
 | Command | Result |
 | --- | --- |
-| `cargo test -p nimbus-core index_history -- --nocapture` | Passed: `4 passed, 0 failed`, `120 filtered out`. Covers update/delete visibility intervals, prefix scans, range scans, cursor identity mismatch, non-queryable index rejection, and zero format-generation fail-closed behavior. |
+| `cargo test -p nimbus-core index_history -- --nocapture` | Passed: `6 passed, 0 failed`. Covers update/delete visibility intervals, prefix scans, range scans, query mismatch, policy snapshot drift, storage format drift, non-queryable index rejection, and zero format-generation fail-closed behavior. |
 | `cargo test -p nimbus-storage libsql_index_versions_are_materialized_during_durable_recovery -- --nocapture` | Passed after the libSQL diagnostic cache-freshness fix: `1 passed, 0 failed`, `302 filtered out`. |
 | `cargo test -p nimbus-storage index_versions -- --nocapture` | Passed with Docker-backed live external-provider fixtures: `12 passed, 0 failed`, `291 filtered out`. Covers redb, SQLite, Postgres, MySQL, and libSQL direct insert/update/delete visibility intervals, durable recovery materialization, no pre-recovery historical visibility, and embedded fail-closed rejection of unknown future index-version storage format markers. |
 | `cargo test -p nimbus-storage historical_index -- --nocapture` | Passed with Docker-backed live external-provider fixtures: `10 passed, 0 failed`, `293 filtered out`. Covers redb, SQLite, Postgres, MySQL, and libSQL historical equality, range, composite prefix-range, pagination, cursor mismatch, and full-scan document-version oracle conformance over physical `index_versions` plus `document_versions`. |

@@ -11,6 +11,7 @@ use crate::{RetentionGcConfig, RetentionGcWatermarks, RetentionPin};
 pub struct StorageCapabilities {
     pub backend: String,
     pub backend_layout: TableBackendLayout,
+    pub capability_profile: StorageCapabilityProfile,
     pub strong_reads: bool,
     pub eventual_reads: bool,
     pub tenant_event_journal: bool,
@@ -24,6 +25,7 @@ pub struct StorageCapabilities {
 pub struct StorageHealthDiagnostic {
     pub backend: String,
     pub backend_layout: TableBackendLayout,
+    pub backend_capability_profile: StorageCapabilityProfile,
     pub event_log_head: SequenceNumber,
     pub applied_head: SequenceNumber,
     pub retention_floor: Option<SequenceNumber>,
@@ -79,6 +81,16 @@ pub enum StorageFeatureSupportState {
     Unsupported,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageCapabilityProfile {
+    LatestOnly,
+    HistoricalReads,
+    HistoricalReadsPitr,
+    HistoricalReadsPitrCdc,
+    EnterpriseComplete,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StorageFeatureSupport {
     pub feature: StorageFeature,
@@ -90,6 +102,7 @@ pub struct StorageFeatureSupport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdapterSupportDiagnostic {
     pub adapter: String,
+    pub capability_profile: StorageCapabilityProfile,
     pub features: Vec<StorageFeatureSupport>,
 }
 
@@ -260,16 +273,19 @@ fn capabilities(
     eventual_reads: bool,
     encryption_posture: &str,
 ) -> StorageCapabilities {
+    let feature_support = backend_feature_support(backend);
+    let capability_profile = capability_profile_for_features(&feature_support);
     StorageCapabilities {
         backend: backend.to_string(),
         backend_layout,
+        capability_profile,
         strong_reads: true,
         eventual_reads,
         tenant_event_journal: true,
         retention_floor: true,
         exact_summary: true,
         encryption_posture: encryption_posture.to_string(),
-        feature_support: backend_feature_support(backend),
+        feature_support,
     }
 }
 
@@ -303,6 +319,7 @@ fn diagnostic(
     StorageHealthDiagnostic {
         backend: capabilities.backend,
         backend_layout: capabilities.backend_layout,
+        backend_capability_profile: capabilities.capability_profile,
         event_log_head: progress.durable_head,
         applied_head: progress.applied_head,
         retention_floor,
@@ -372,9 +389,8 @@ fn adapter_support_matrix() -> Vec<AdapterSupportDiagnostic> {
         "mongodb",
     ]
     .into_iter()
-    .map(|adapter| AdapterSupportDiagnostic {
-        adapter: adapter.to_string(),
-        features: vec![
+    .map(|adapter| {
+        let features = vec![
             StorageFeatureSupport::supported(
                 StorageFeature::LatestReads,
                 "adapter latest-row behavior stays on the shared storage path",
@@ -398,11 +414,15 @@ fn adapter_support_matrix() -> Vec<AdapterSupportDiagnostic> {
                 StorageFeature::OperatorDiagnostics,
                 "support state is visible to operators",
             ),
-        ],
+        ];
+        AdapterSupportDiagnostic {
+            adapter: adapter.to_string(),
+            capability_profile: capability_profile_for_features(&features),
+            features,
+        }
     })
-    .chain(std::iter::once(AdapterSupportDiagnostic {
-        adapter: "native_http_websocket".to_string(),
-        features: vec![
+    .chain(std::iter::once({
+        let features = vec![
             StorageFeatureSupport::supported(
                 StorageFeature::LatestReads,
                 "native APIs are the canonical Nimbus surface",
@@ -426,9 +446,43 @@ fn adapter_support_matrix() -> Vec<AdapterSupportDiagnostic> {
                 StorageFeature::OperatorDiagnostics,
                 "native extension can expose storage health diagnostics",
             ),
-        ],
+        ];
+        AdapterSupportDiagnostic {
+            adapter: "native_http_websocket".to_string(),
+            capability_profile: capability_profile_for_features(&features),
+            features,
+        }
     }))
     .collect()
+}
+
+fn capability_profile_for_features(features: &[StorageFeatureSupport]) -> StorageCapabilityProfile {
+    let supports = |feature| {
+        features.iter().any(|support| {
+            support.feature == feature && support.state == StorageFeatureSupportState::Supported
+        })
+    };
+    let historical_reads = supports(StorageFeature::HistoricalDocumentReads)
+        && supports(StorageFeature::HistoricalIndexReads);
+    let pitr = supports(StorageFeature::PointInTimeRestore);
+    let cdc = supports(StorageFeature::Changefeed);
+    let enterprise_complete = historical_reads
+        && pitr
+        && cdc
+        && supports(StorageFeature::RetentionGc)
+        && supports(StorageFeature::OperatorDiagnostics);
+
+    if enterprise_complete {
+        StorageCapabilityProfile::EnterpriseComplete
+    } else if historical_reads && pitr && cdc {
+        StorageCapabilityProfile::HistoricalReadsPitrCdc
+    } else if historical_reads && pitr {
+        StorageCapabilityProfile::HistoricalReadsPitr
+    } else if historical_reads {
+        StorageCapabilityProfile::HistoricalReads
+    } else {
+        StorageCapabilityProfile::LatestOnly
+    }
 }
 
 fn mvcc_version_counts(
@@ -768,6 +822,10 @@ mod tests {
             health.backend_layout,
             TableBackendLayout::RedbKeyspaceByTableId
         );
+        assert_eq!(
+            health.backend_capability_profile,
+            StorageCapabilityProfile::EnterpriseComplete
+        );
         assert_eq!(health.event_log_head, SequenceNumber(0));
         assert_eq!(health.applied_head, SequenceNumber(0));
         assert_eq!(health.format_version, CURRENT_STORAGE_FORMAT_VERSION);
@@ -782,6 +840,7 @@ mod tests {
             && support.state == StorageFeatureSupportState::Supported));
         assert!(health.adapter_support.iter().any(|adapter| {
             adapter.adapter == "firebase"
+                && adapter.capability_profile == StorageCapabilityProfile::LatestOnly
                 && adapter.features.iter().any(|support| {
                     support.feature == StorageFeature::HistoricalDocumentReads
                         && support.state == StorageFeatureSupportState::Unsupported
@@ -790,6 +849,7 @@ mod tests {
         }));
         assert!(health.adapter_support.iter().any(|adapter| {
             adapter.adapter == "native_http_websocket"
+                && adapter.capability_profile == StorageCapabilityProfile::LatestOnly
                 && adapter.features.iter().any(|support| {
                     support.feature == StorageFeature::PointInTimeRestore
                         && support.state == StorageFeatureSupportState::Unsupported

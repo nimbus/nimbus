@@ -51,6 +51,31 @@ fn aggregate_empty_pipeline() {
 }
 
 #[test]
+fn aggregate_change_stream_fails_closed_until_backed_by_durable_cdc() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    seed_users(&fixture);
+    let body = bson::doc! {
+        "aggregate": "users",
+        "$db": "testdb",
+        "pipeline": [ { "$changeStream": {} } ],
+        "cursor": {},
+    };
+
+    let err = aggregate(&body, &mut test_conn(), &fixture.service())
+        .expect_err("change streams must fail closed");
+
+    match err {
+        MongoError::Command {
+            code_name, message, ..
+        } => {
+            assert_eq!(code_name, "CommandNotSupported");
+            assert!(message.contains("durable Nimbus CDC cut model"));
+        }
+        other => panic!("expected command error, got {other:?}"),
+    }
+}
+
+#[test]
 fn aggregate_match_stage() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     seed_users(&fixture);

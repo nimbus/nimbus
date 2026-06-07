@@ -126,9 +126,12 @@ Every tenant backend exposes a machine-readable `StorageHealthDiagnostic` and
 `StorageCapabilities` posture for operator inspection. The diagnostic includes
 the backend layout, event-log head, applied head, retention floor, storage
 format version, document-version and index-version ranges, MVCC operator state,
-historical-query admission, retention pressure, backend feature support,
-adapter support, backend-parity state, encryption posture, freshness lag, last
-recovery status, and whether table summaries are exact.
+historical-query admission, retention pressure, backend capability profile,
+backend feature support, adapter capability profiles, adapter support,
+backend-parity state, encryption posture, freshness lag, last recovery status,
+and whether table summaries are exact. Capability profiles are derived from the
+typed feature matrix and give operators a coarse posture such as `latest_only`
+or `enterprise_complete` without hiding per-feature unsupported errors.
 
 The durable history is a tenant event journal, not a document-only commit log.
 Schema, table lifecycle, index lifecycle, scheduler, trigger-delivery, document,

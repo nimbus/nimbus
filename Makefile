@@ -16,7 +16,7 @@ SINGLE_FLIGHT = bash scripts/single-flight.sh
 
 UI_PKG := packages/nimbus-ui
 
-# Files whose change should trigger `convex codegen` re-run.
+# Files whose change should trigger the UI codegen re-run.
 UI_CODEGEN_SOURCES := \
   $(shell find $(UI_PKG)/convex -type f -name '*.ts' -not -path '*/_generated/*' 2>/dev/null) \
   $(UI_PKG)/scripts/generate-routes.mjs \
@@ -34,7 +34,7 @@ UI_CODEGEN_OUTPUTS := \
   $(UI_PKG)/.nimbus/convex/node_external_packages.json \
   $(UI_PKG)/.nimbus/convex/schema.json
 
-# Track codegen freshness via bundle.sha256 — `convex codegen` writes it
+# Track codegen freshness via bundle.sha256 — `npm run codegen` writes it
 # at the end of its bundle step, so its mtime is a faithful sentinel for
 # the whole UI_CODEGEN_OUTPUTS set. (Edge case: if you manually delete
 # one of the other six outputs but leave bundle.sha256, Make won't notice

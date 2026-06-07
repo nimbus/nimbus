@@ -9,10 +9,10 @@ document and index histories introduced by SEQ3 and SEQ4. The implementation
 uses the existing storage `RetentionFloor` rather than introducing a second
 pin registry. Compaction computes separate document, index, registry,
 read-policy, CDC, PITR, materializer, replica, and transaction-session
-watermarks, then conservatively applies active pins to every resource family.
-That policy is intentionally safe for the first enterprise GC checkpoint:
-future phases can relax resource-specific pin routing after PITR and CDC have
-their final public handles.
+watermarks from resource-specific participant routing. That keeps pruning
+conservative where resources truly depend on the same pin while giving
+operators precise active-pin counts and floors for the resource that is
+actually holding history.
 
 ## Read-Before-Edit Checklist
 
@@ -38,7 +38,7 @@ their final public handles.
 | --- | --- |
 | Typed GC contract | `RetentionGcConfig`, `RetentionGcResource`, `RetentionGcWatermark`, `RetentionGcWatermarks`, and `RetentionGcSummary` define the configured history window, per-resource watermarks, active pin count, safe prune floor, and exact document/index prune counts. |
 | Conservative enterprise default | `RetentionGcConfig::retain_all()` is the default diagnostic posture, so Nimbus does not prune history unless an operator or caller supplies an explicit positive history window. |
-| Existing pin registry reused | `RetentionFloor::gc_watermarks(...)` derives every resource watermark from the existing retention pins. SQLite, Postgres, MySQL, and libSQL now expose the same `pin_retention_participant(...)` helper that redb already exposed. |
+| Existing pin registry reused | `RetentionFloor::gc_watermarks(...)` derives every resource watermark from the existing retention pins and routes pins by participant/resource dependency. SQLite, Postgres, MySQL, and libSQL now expose the same `pin_retention_participant(...)` helper that redb already exposed. |
 | Document anchor preservation | redb, SQLite, Postgres, MySQL, and libSQL document-version compaction delete rows below the safe floor except the latest anchor at or before the floor for each `(table_id, document_id)`. This preserves reads at the oldest retained sequence even when the visible state began before the floor. |
 | Index interval pruning | redb, SQLite, Postgres, MySQL, and libSQL index-version compaction removes only closed intervals with `visible_until <= safe_prune_before`; open intervals and intervals visible at the floor remain. |
 | Atomic backend maintenance | redb and SQLite compact inside a write transaction. Postgres, MySQL, and libSQL compact through their existing write transaction lifecycles, tenant locks, and rollback/commit behavior, and the maintenance transaction emits no logical mutation commit. |
@@ -48,7 +48,7 @@ their final public handles.
 
 | Command | Result |
 | --- | --- |
-| `cargo test -p nimbus-storage retention_gc -- --nocapture` | Passed: `2 passed, 0 failed`, `290 filtered out`. Covers redb and SQLite pin-blocked compaction, release-advanced compaction, document anchor preservation, closed index interval pruning, active pin diagnostics, and exact prune summaries. |
+| `cargo test -p nimbus-storage retention_gc -- --nocapture` | Passed: `3 passed, 0 failed`. Covers redb and SQLite pin-blocked compaction, release-advanced compaction, document anchor preservation, closed index interval pruning, active pin diagnostics, resource-specific watermark routing, and exact prune summaries. |
 | `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo test -p nimbus-storage document_versions -- --nocapture` | Passed at SEQ7 checkpoint: `17 passed, 0 failed`, `275 filtered out`. Final Docker-backed live provider evidence was later added in SEQ3 closeout: `cargo test -p nimbus-storage document_versions -- --nocapture` passed `17 passed, 0 failed`. |
 | `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo test -p nimbus-storage index_versions -- --nocapture` | Passed at SEQ7 checkpoint: `12 passed, 0 failed`, `280 filtered out`. Final Docker-backed live provider evidence was later added in SEQ4 closeout: `cargo test -p nimbus-storage index_versions -- --nocapture` passed `12 passed, 0 failed`. |
 | `cargo check -p nimbus-storage` | Passed. Confirms the runtime provider code, including Postgres/MySQL/libSQL compaction wrappers, compiles outside test-only cfg. |

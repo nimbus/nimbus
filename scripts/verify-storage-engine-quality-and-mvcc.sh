@@ -334,7 +334,7 @@ if contains "${PLAN}" 'SEQ4 | `done`' \
    && contains "${SEQ4_PROOF}" 'visible_from' \
    && contains "${SEQ4_PROOF}" 'exclusive `visible_until`' \
    && contains "${SEQ4_PROOF}" 'CursorMismatch' \
-   && contains "${SEQ4_PROOF}" '4 passed, 0 failed' \
+   && contains "${SEQ4_PROOF}" '6 passed, 0 failed' \
    && contains "${SEQ4_PROOF}" 'Embedded Physical Storage Evidence' \
    && contains "${SEQ4_PROOF}" 'redb physical index-version rows' \
    && contains "${SEQ4_PROOF}" 'SQLite physical index-version rows' \
@@ -369,6 +369,10 @@ if contains "${PLAN}" 'SEQ4 | `done`' \
    && contains "crates/nimbus-core/src/index_history.rs" 'pub struct HistoricalIndexHistory' \
    && contains "crates/nimbus-core/src/index_history.rs" 'pub enum HistoricalIndexQuery' \
    && contains "crates/nimbus-core/src/index_history.rs" 'pub struct HistoricalIndexCursor' \
+   && contains "crates/nimbus-core/src/index_history.rs" 'policy_snapshot: PolicySnapshotId' \
+   && contains "crates/nimbus-core/src/index_history.rs" 'storage_format_generation: u16' \
+   && contains "crates/nimbus-core/src/index_history.rs" 'historical_index_cursor_rejects_policy_snapshot_drift' \
+   && contains "crates/nimbus-core/src/index_history.rs" 'historical_index_cursor_rejects_storage_format_drift' \
    && contains "crates/nimbus-core/src/index_history.rs" 'pub fn from_document' \
    && contains "crates/nimbus-core/src/index_history.rs" 'pub fn validate_context' \
    && contains "crates/nimbus-core/src/index_history.rs" 'fn visible_at' \
@@ -420,7 +424,7 @@ if contains "${PLAN}" 'SEQ4 | `done`' \
    && contains "crates/nimbus-storage/src/tests/mysql_provider.rs" 'mysql_rank_full_scan_oracle_titles' \
    && contains "crates/nimbus-storage/src/tests/libsql_provider.rs" 'libsql_rank_full_scan_oracle_titles' \
    && cargo test -p nimbus-core index_history -- --nocapture >"${CORE_INDEX_HISTORY_OUTPUT}" 2>&1 \
-   && grep -q '4 passed; 0 failed' "${CORE_INDEX_HISTORY_OUTPUT}" \
+   && grep -q '6 passed; 0 failed' "${CORE_INDEX_HISTORY_OUTPUT}" \
    && cargo test -p nimbus-storage index_versions -- --nocapture >"${STORAGE_INDEX_VERSIONS_OUTPUT}" 2>&1 \
    && grep -q '12 passed; 0 failed' "${STORAGE_INDEX_VERSIONS_OUTPUT}" \
    && cargo test -p nimbus-storage historical_index -- --nocapture >"${STORAGE_HISTORICAL_INDEX_OUTPUT}" 2>&1 \
@@ -516,11 +520,13 @@ if contains "${PLAN}" 'SEQ7 | `done`' \
    && contains "${SEQ7_PROOF}" 'Document anchor preservation' \
    && contains "${SEQ7_PROOF}" 'Index interval pruning' \
    && contains "${SEQ7_PROOF}" 'StorageHealthDiagnostic' \
-   && contains "${SEQ7_PROOF}" '2 passed, 0 failed' \
+   && contains "${SEQ7_PROOF}" '3 passed, 0 failed' \
    && contains "${SEQ7_PROOF}" '17 passed, 0 failed' \
    && contains "${SEQ7_PROOF}" '12 passed, 0 failed' \
    && contains "crates/nimbus-storage/src/retention.rs" 'pub struct RetentionGcConfig' \
    && contains "crates/nimbus-storage/src/retention.rs" 'pub struct RetentionGcWatermarks' \
+   && contains "crates/nimbus-storage/src/retention.rs" 'fn pin_protects_resource' \
+   && contains "crates/nimbus-storage/src/retention.rs" 'retention_gc_watermarks_are_resource_specific' \
    && contains "crates/nimbus-storage/src/retention.rs" 'pub struct RetentionGcSummary' \
    && contains "crates/nimbus-storage/src/retention.rs" 'pub fn compact_retained_versions' \
    && contains "crates/nimbus-storage/src/diagnostics.rs" 'pub retention_pins: Vec<RetentionPin>' \
@@ -543,7 +549,7 @@ if contains "${PLAN}" 'SEQ7 | `done`' \
    && contains "crates/nimbus-storage/src/tests/crud_and_journal.rs" 'redb_retention_gc_preserves_document_anchor_and_respects_pins' \
    && contains "crates/nimbus-storage/src/tests/sqlite_foundation/journal.rs" 'sqlite_retention_gc_preserves_document_anchor_and_respects_pins' \
    && cargo test -p nimbus-storage retention_gc -- --nocapture >"${RETENTION_GC_OUTPUT}" 2>&1 \
-   && grep -q '2 passed; 0 failed' "${RETENTION_GC_OUTPUT}" \
+   && grep -q '3 passed; 0 failed' "${RETENTION_GC_OUTPUT}" \
    && NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo test -p nimbus-storage document_versions -- --nocapture >"${DOCUMENT_VERSIONS_OUTPUT}" 2>&1 \
    && grep -q '17 passed; 0 failed' "${DOCUMENT_VERSIONS_OUTPUT}" \
    && NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo test -p nimbus-storage index_versions -- --nocapture >"${INDEX_VERSIONS_OUTPUT}" 2>&1 \
@@ -727,6 +733,7 @@ if contains "${PLAN}" 'SEQ12 | `done`' \
    && contains "${SEQ12_PROOF}" 'MvccOperatorDiagnostic' \
    && contains "${SEQ12_PROOF}" 'HistoricalQueryAdmissionDiagnostic' \
    && contains "${SEQ12_PROOF}" 'StoragePressureDiagnostic' \
+   && contains "${SEQ12_PROOF}" 'StorageCapabilityProfile' \
    && contains "${SEQ12_PROOF}" 'BackendParityDiagnostic' \
    && contains "${SEQ12_PROOF}" 'AdapterSupportDiagnostic' \
    && contains "${SEQ12_PROOF}" 'storage_health_diagnostic_with_retention_config' \
@@ -736,6 +743,9 @@ if contains "${PLAN}" 'SEQ12 | `done`' \
    && contains "crates/nimbus-storage/src/diagnostics.rs" 'pub struct MvccOperatorDiagnostic' \
    && contains "crates/nimbus-storage/src/diagnostics.rs" 'pub struct HistoricalQueryAdmissionDiagnostic' \
    && contains "crates/nimbus-storage/src/diagnostics.rs" 'pub struct StoragePressureDiagnostic' \
+   && contains "crates/nimbus-storage/src/diagnostics.rs" 'pub enum StorageCapabilityProfile' \
+   && contains "crates/nimbus-storage/src/diagnostics.rs" 'pub backend_capability_profile: StorageCapabilityProfile' \
+   && contains "crates/nimbus-storage/src/diagnostics.rs" 'pub capability_profile: StorageCapabilityProfile' \
    && contains "crates/nimbus-storage/src/diagnostics.rs" 'pub struct BackendParityDiagnostic' \
    && contains "crates/nimbus-storage/src/diagnostics.rs" 'pub struct AdapterSupportDiagnostic' \
    && contains "crates/nimbus-storage/src/diagnostics.rs" 'pub fn storage_health_diagnostic_with_retention_config' \
@@ -815,6 +825,8 @@ if contains "${PLAN}" 'ARCHITECTURE.md' \
    && contains "${SEQ14_PROOF}" 'Draft PR URL: `https://github.com/nimbus/nimbus/pull/13`' \
    && contains "${SEQ14_PROOF}" 'Branch push and draft PR creation are complete' \
    && contains "${SEQ14_PROOF}" '20 passed, 0 failed' \
+   && contains "${SEQ14_PROOF}" 'npm run build -w nimbus-ui' \
+   && contains "${SEQ14_PROOF}" 'snapshot_unavailable_historical_read_maps_to_service_unavailable' \
    && contains "${SEQ14_PROOF}" 'cargo fmt --all --check' \
    && contains "${SEQ14_PROOF}" 'npm run docs:validate-refs:strict' \
    && contains "${SEQ14_PROOF}" 'git diff --check' \
@@ -826,7 +838,11 @@ if contains "${PLAN}" 'ARCHITECTURE.md' \
    && contains "docs/adapters/firebase/compatibility.md" 'Storage Semantics Inherited By Firebase' \
    && contains "docs/adapters/cloud-functions/compatibility.md" 'Storage Semantics Inherited By Cloud Functions' \
    && contains "docs/adapters/mongodb/operations.md" 'Storage Semantics' \
-   && contains "docs/adapters/native/README.md" 'Storage Semantics'; then
+   && contains "docs/adapters/mongodb/operations.md" 'CommandNotSupported' \
+   && contains "docs/adapters/native/README.md" 'not implicitly' \
+   && contains "docs/adapters/native/README.md" 'UnsupportedAdapter' \
+   && contains "packages/nimbus-ui/package.json" 'node ../codegen/src/cli.mjs --app .' \
+   && ! grep -q 'convex codegen --app' packages/nimbus-ui/package.json Makefile; then
   pass "Plan closeout records architecture docs, adapter docs, pushed branch, draft PR, verification, and final proof"
 else
   fail "SEQ14 closeout contract incomplete" \

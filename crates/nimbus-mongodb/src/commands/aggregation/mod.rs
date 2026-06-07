@@ -6,7 +6,7 @@ use nimbus_engine::Service;
 
 use super::super::bson_bridge;
 use super::super::connection::ConnectionState;
-use super::super::error::{BAD_VALUE, MongoError};
+use super::super::error::{BAD_VALUE, COMMAND_NOT_SUPPORTED, MongoError};
 use super::crud::apply_projection;
 use super::tenant::{DEFAULT_TENANT, ensure_tenant, resolve_tenant_context};
 
@@ -47,9 +47,11 @@ pub fn aggregate(
     ensure_tenant(service, &tenant_context)?;
 
     if is_change_stream_pipeline(pipeline) {
-        let resume_token = get_change_stream_options(pipeline)
-            .and_then(super::change_stream::extract_resume_option);
-        return open_change_stream_aggregate(conn, service, collection, db_name, resume_token);
+        return Err(MongoError::Command {
+            code: COMMAND_NOT_SUPPORTED.code,
+            code_name: COMMAND_NOT_SUPPORTED.code_name.into(),
+            message: "MongoDB change streams are not exposed until they are backed by the durable Nimbus CDC cut model".into(),
+        });
     }
 
     let stages = parse_pipeline(pipeline)?;
@@ -649,39 +651,11 @@ fn bson_to_usize(value: &bson::Bson) -> Option<usize> {
     }
 }
 
-fn get_change_stream_options(pipeline: &[bson::Bson]) -> Option<&bson::Document> {
-    let first = pipeline.first()?.as_document()?;
-    let cs_value = first.get("$changeStream")?;
-    cs_value.as_document()
-}
-
 fn is_change_stream_pipeline(pipeline: &[bson::Bson]) -> bool {
     pipeline
         .first()
         .and_then(|s| s.as_document())
         .is_some_and(|doc| doc.contains_key("$changeStream"))
-}
-
-fn open_change_stream_aggregate(
-    conn: &mut ConnectionState,
-    service: &Arc<Service>,
-    collection: &str,
-    db_name: &str,
-    resume_token: Option<super::change_stream::ResumeToken>,
-) -> Result<bson::Document, MongoError> {
-    let ns = format!("{}.{}", db_name, collection);
-    let (cursor_id, cursor) =
-        super::change_stream::open_change_stream(collection, db_name, service, resume_token)?;
-    conn.change_stream_store.insert(cursor_id, cursor);
-
-    Ok(bson::doc! {
-        "cursor": {
-            "firstBatch": Vec::<bson::Bson>::new(),
-            "id": cursor_id,
-            "ns": &ns,
-        },
-        "ok": 1.0,
-    })
 }
 
 #[cfg(test)]

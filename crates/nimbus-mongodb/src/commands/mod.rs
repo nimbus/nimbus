@@ -1,6 +1,5 @@
 mod admin;
 mod aggregation;
-pub(crate) mod change_stream;
 mod collection;
 pub(crate) mod crud;
 pub(crate) mod cursor;
@@ -56,8 +55,8 @@ pub async fn dispatch(
         "createIndexes" | "createindexes" => index::create_indexes(body, service),
         "dropIndexes" | "dropindexes" => index::drop_indexes(body, service),
         "listIndexes" | "listindexes" => index::list_indexes(body, service),
-        "getMore" => get_more_with_change_stream(body, conn).await,
-        "killCursors" => kill_cursors_with_change_stream(body, conn),
+        "getMore" => cursor::get_more(body, conn),
+        "killCursors" => cursor::kill_cursors(body, conn),
         "startSession" => session::start_session(body, conn),
         "endSessions" => session::end_sessions(body, conn, service),
         "refreshSessions" => session::refresh_sessions(body, conn),
@@ -65,101 +64,6 @@ pub async fn dispatch(
         "abortTransaction" => session::abort_transaction(body, conn, service),
         _ => Err(MongoError::command_not_found(command_name)),
     }
-}
-
-async fn get_more_with_change_stream(
-    body: &bson::Document,
-    conn: &mut ConnectionState,
-) -> Result<bson::Document, MongoError> {
-    let cursor_id = body.get_i64("getMore").map_err(|_| MongoError::Command {
-        code: super::error::BAD_VALUE.code,
-        code_name: super::error::BAD_VALUE.code_name.into(),
-        message: "missing cursor id in getMore command".into(),
-    })?;
-
-    if conn.change_stream_store.contains(cursor_id) {
-        let max_await_ms = match body.get("maxAwaitTimeMS") {
-            Some(bson::Bson::Int32(n)) => Some(*n as u64),
-            Some(bson::Bson::Int64(n)) => Some(*n as u64),
-            _ => None,
-        };
-        let timeout = std::time::Duration::from_millis(max_await_ms.unwrap_or(1000));
-
-        let cursor = conn
-            .change_stream_store
-            .get_mut(cursor_id)
-            .expect("cursor existence was checked");
-
-        let mut events = change_stream::collect_change_events(cursor);
-
-        if events.is_empty() {
-            match tokio::time::timeout(timeout, cursor.receiver.recv()).await {
-                Ok(Some(nimbus_engine::SubscriptionUpdate::Result { snapshot, .. })) => {
-                    let ns = cursor.ns.clone();
-                    let new_events = change_stream::snapshot_to_change_events_pub(
-                        &ns,
-                        cursor.last_snapshot.as_ref(),
-                        &snapshot,
-                    );
-                    events.extend(new_events);
-                    cursor.last_snapshot = Some(snapshot);
-
-                    if let Some(ref token) = cursor.resume_after {
-                        events = change_stream::filter_events_after_resume(events, token);
-                        if !events.is_empty() {
-                            cursor.resume_after = None;
-                        }
-                    }
-                }
-                Ok(Some(nimbus_engine::SubscriptionUpdate::Error { .. })) => {}
-                Ok(None) => {
-                    conn.change_stream_store.remove(cursor_id);
-                    return Ok(bson::doc! {
-                        "cursor": {
-                            "nextBatch": Vec::<bson::Bson>::new(),
-                            "id": 0_i64,
-                            "ns": "",
-                        },
-                        "ok": 1.0,
-                    });
-                }
-                Err(_) => {}
-            }
-        }
-
-        let ns = conn
-            .change_stream_store
-            .get_mut(cursor_id)
-            .map(|c| c.ns.clone())
-            .unwrap_or_default();
-
-        let next_batch: Vec<bson::Bson> = events.into_iter().map(bson::Bson::Document).collect();
-
-        Ok(bson::doc! {
-            "cursor": {
-                "nextBatch": next_batch,
-                "id": cursor_id,
-                "ns": &ns,
-            },
-            "ok": 1.0,
-        })
-    } else {
-        cursor::get_more(body, conn)
-    }
-}
-
-fn kill_cursors_with_change_stream(
-    body: &bson::Document,
-    conn: &mut ConnectionState,
-) -> Result<bson::Document, MongoError> {
-    if let Ok(cursor_ids) = body.get_array("cursors") {
-        for id_bson in cursor_ids {
-            if let Some(id) = id_bson.as_i64() {
-                conn.change_stream_store.remove(id);
-            }
-        }
-    }
-    cursor::kill_cursors(body, conn)
 }
 
 pub fn extract_command_name(doc: &bson::Document) -> Option<String> {

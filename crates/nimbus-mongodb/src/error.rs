@@ -34,6 +34,10 @@ pub const COMMAND_NOT_FOUND: MongoErrorCode = MongoErrorCode {
     code: 59,
     code_name: "CommandNotFound",
 };
+pub const COMMAND_NOT_SUPPORTED: MongoErrorCode = MongoErrorCode {
+    code: 115,
+    code_name: "CommandNotSupported",
+};
 pub const WRITE_CONFLICT: MongoErrorCode = MongoErrorCode {
     code: 112,
     code_name: "WriteConflict",

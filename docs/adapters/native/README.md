@@ -167,12 +167,15 @@ subscriptions use applied latest-row document/index state. Writes commit the
 document row, index effects, MVCC version rows, and tenant journal event in one
 storage transaction.
 
-Historical storage features are implemented below the adapter: retained
-document/index versions support historical reads and PITR; typed CDC/changefeed
-cursors use explicit snapshot cuts and journal handoff; retention and
-historical-query eligibility are exposed through storage diagnostics. Expired,
-unsupported, policy-gated, cursor-mismatched, or format-mismatched historical
-requests fail closed with typed storage errors.
+Historical storage features are implemented below the adapter, not implicitly
+published as native HTTP/WebSocket routes. Retained document/index versions
+support historical reads and PITR inside the storage and engine layers; typed
+CDC/changefeed cursors use explicit snapshot cuts and journal handoff; retention
+and historical-query eligibility are exposed through storage diagnostics. Until
+a public native route is documented in the HTTP or WebSocket reference,
+historical reads, PITR, and public changefeed requests remain unsupported
+adapter features and fail closed with
+`HistoricalReadErrorKind::UnsupportedAdapter` typed storage errors.
 
 ### Server functions with the `nimbus` SDK
 

@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use nimbus_core::{Error, Result, StorageErrorKind};
+use nimbus_core::{Error, HistoricalReadErrorKind, Result, StorageErrorKind};
 use nimbus_runtime::NimbusRuntimeError;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -173,6 +173,21 @@ impl RuntimeHostPublicError {
                 None,
             ),
             Error::Storage { kind, .. } => Self::from_storage_error(error, *kind),
+            Error::HistoricalRead { kind, .. } => Self::new(
+                "op.historical_read",
+                error.to_string(),
+                RuntimeHostErrorSeverity::Error,
+                matches!(
+                    *kind,
+                    HistoricalReadErrorKind::UnsupportedBackend
+                        | HistoricalReadErrorKind::UnsupportedAdapter
+                ),
+                json!({ "historicalReadKind": kind.as_str() }),
+                Some(RuntimeHostErrorRemediation::new(
+                    "fix_request",
+                    "Use a supported historical read target and retry within the retained history window.",
+                )),
+            ),
             Error::Serialization(_) => Self::new(
                 "service.serialization",
                 error.to_string(),
@@ -322,5 +337,29 @@ pub fn encode_runtime_core_result(
         Err(Error::Cancelled) => Err(NimbusRuntimeError::Cancelled),
         Err(error) => serde_json::to_value(RuntimeHostResponseEnvelope::from_core_error(&error))
             .map_err(Into::into),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_host_error_envelope_preserves_historical_read_kind() {
+        let error = Error::historical_read(
+            HistoricalReadErrorKind::SnapshotUnavailable,
+            "serving snapshot does not cover the requested read shape",
+        );
+
+        let encoded = serde_json::to_value(RuntimeHostResponseEnvelope::from_core_error(&error))
+            .expect("error envelope should serialize");
+
+        assert_eq!(encoded["status"], "error");
+        assert_eq!(encoded["error"]["code"], "op.historical_read");
+        assert_eq!(
+            encoded["error"]["detail"]["historicalReadKind"],
+            "snapshot_unavailable"
+        );
+        assert_eq!(encoded["error"]["retryable"], false);
     }
 }

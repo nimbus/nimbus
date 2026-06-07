@@ -74,12 +74,11 @@ Before editing `nimbus-core`, read:
 | `cargo test -p nimbus-core mvcc -- --nocapture` | Passed: `11 passed, 0 failed`, `114 filtered out`. Covers timestamp-to-sequence tie handling, non-monotonic commit timestamp rejection, before-first-commit rejection, retention bounds, historical policy snapshot requirement, cursor identity drift, format mismatch, unsupported backend/adapter typed errors, and pending-write invisibility. |
 | `cargo test -p nimbus-core historical_read -- --nocapture` | Passed: `2 passed, 0 failed`, `106 filtered out`. Covers the public historical-read error helper and a filtered MVCC visibility regression. |
 | `cargo check -p nimbus-core` | Passed. |
-| `cargo check -p nimbus-server -p nimbus-bin` | Blocked before checking the touched public mappings because `nimbus-assets` requires `packages/nimbus-ui/dist/index.html`. |
-| `npm run build -w nimbus-ui` | Failed in pre-existing UI codegen script: `convex codegen --app .` returned `error: unknown option '--app'`. |
-| `cargo check -p nimbus-server -p nimbus-bin --no-default-features` | Blocked by the same unconditional `nimbus-server -> nimbus-assets(ui)` compile-time artifact requirement. |
+| `npm run build -w nimbus-ui` | Passed after the UI package codegen script was corrected to use the repo-owned `@nimbus/codegen` CLI instead of stale `convex codegen --app .`. Produces `packages/nimbus-ui/dist/index.html` for `nimbus-assets`. |
+| `cargo test -p nimbus-server snapshot_unavailable_historical_read_maps_to_service_unavailable -- --nocapture` | Passed: `1 passed, 0 failed`, `410 filtered out`. Confirms `HistoricalReadErrorKind::SnapshotUnavailable` maps to HTTP `503 Service Unavailable` once the UI asset prerequisite exists. |
 
-The broader server/bin compile blocker is not caused by SEQ1 code, but it must
-be cleared before SEQ14 closeout can claim full workspace verification.
+The public server mapping that was originally blocked by the UI asset
+prerequisite is now verified.
 
 ## SEQ1 Closeout
 

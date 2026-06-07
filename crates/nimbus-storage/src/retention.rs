@@ -205,20 +205,26 @@ impl RetentionFloor {
                 .0
                 .saturating_sub(config.history_window_sequences),
         );
-        let pinned_floor = pins
-            .iter()
-            .map(|pin| pin.sequence)
-            .min_by_key(|sequence| sequence.0);
-        let safe_prune_before = pinned_floor
-            .map(|pinned| pinned.min(window_floor))
-            .unwrap_or(window_floor);
-        let watermark = |resource| RetentionGcWatermark {
-            resource,
-            latest_sequence,
-            window_floor,
-            pinned_floor,
-            safe_prune_before,
-            active_pin_count: pins.len(),
+        let watermark = |resource| {
+            let relevant = pins
+                .iter()
+                .filter(|pin| pin_protects_resource(pin, resource))
+                .collect::<Vec<_>>();
+            let pinned_floor = relevant
+                .iter()
+                .map(|pin| pin.sequence)
+                .min_by_key(|sequence| sequence.0);
+            let safe_prune_before = pinned_floor
+                .map(|pinned| pinned.min(window_floor))
+                .unwrap_or(window_floor);
+            RetentionGcWatermark {
+                resource,
+                latest_sequence,
+                window_floor,
+                pinned_floor,
+                safe_prune_before,
+                active_pin_count: relevant.len(),
+            }
         };
 
         RetentionGcWatermarks {
@@ -267,6 +273,39 @@ impl RetentionFloor {
                 "hard delete for table id {} is blocked by retention participant {:?} at sequence {} ({})",
                 table_id, pin.participant, pin.sequence.0, pin.reason
             ))),
+        }
+    }
+}
+
+fn pin_protects_resource(pin: &RetentionPin, resource: RetentionGcResource) -> bool {
+    match resource {
+        RetentionGcResource::DocumentVersions | RetentionGcResource::IndexVersions => matches!(
+            pin.participant,
+            RetentionParticipant::TransactionSession
+                | RetentionParticipant::ExportedSnapshot
+                | RetentionParticipant::EmbeddedReplica
+                | RetentionParticipant::ShadowMaterializer
+        ),
+        RetentionGcResource::RegistryMetadata | RetentionGcResource::ReadPolicyMetadata => true,
+        RetentionGcResource::CdcJournal => matches!(
+            pin.participant,
+            RetentionParticipant::JournalConsumer
+                | RetentionParticipant::CdcSubscription
+                | RetentionParticipant::ExportedSnapshot
+                | RetentionParticipant::EmbeddedReplica
+                | RetentionParticipant::ShadowMaterializer
+        ),
+        RetentionGcResource::PitrExport => {
+            pin.participant == RetentionParticipant::ExportedSnapshot
+        }
+        RetentionGcResource::ShadowMaterializer => {
+            pin.participant == RetentionParticipant::ShadowMaterializer
+        }
+        RetentionGcResource::EmbeddedReplica => {
+            pin.participant == RetentionParticipant::EmbeddedReplica
+        }
+        RetentionGcResource::TransactionSession => {
+            pin.participant == RetentionParticipant::TransactionSession
         }
     }
 }
@@ -512,5 +551,40 @@ mod tests {
             HardDeleteDecision::Denied { .. }
         ));
         assert_eq!(recovered.lowest_pinned_sequence(), Some(SequenceNumber(9)));
+    }
+
+    #[test]
+    fn retention_gc_watermarks_are_resource_specific() {
+        let floor = RetentionFloor::new();
+        let _cdc_pin = floor.pin(
+            RetentionParticipant::CdcSubscription,
+            SequenceNumber(4),
+            None,
+            "cdc cursor",
+        );
+        let _transaction_pin = floor.pin(
+            RetentionParticipant::TransactionSession,
+            SequenceNumber(6),
+            None,
+            "read transaction",
+        );
+
+        let watermarks = floor.gc_watermarks(
+            SequenceNumber(10),
+            RetentionGcConfig::new(2).expect("config should build"),
+        );
+
+        assert_eq!(
+            watermarks.document_versions.pinned_floor,
+            Some(SequenceNumber(6))
+        );
+        assert_eq!(watermarks.document_versions.active_pin_count, 1);
+        assert_eq!(watermarks.cdc_journal.pinned_floor, Some(SequenceNumber(4)));
+        assert_eq!(watermarks.cdc_journal.active_pin_count, 1);
+        assert_eq!(
+            watermarks.registry_metadata.pinned_floor,
+            Some(SequenceNumber(4))
+        );
+        assert_eq!(watermarks.registry_metadata.active_pin_count, 2);
     }
 }

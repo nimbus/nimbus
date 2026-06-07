@@ -123,23 +123,10 @@ func main() {
 
 ## Change Streams
 
-```typescript
-import { MongoClient } from "mongodb";
-import { uri } from "@nimbus/mongodb";
-
-const client = new MongoClient(uri({ database: "myapp" }));
-await client.connect();
-
-const messages = client.db("myapp").collection("messages");
-
-const stream = messages.watch();
-stream.on("change", (change) => {
-  console.log("Change:", change.operationType, change.fullDocument);
-});
-
-// Insert triggers the change stream
-await messages.insertOne({ author: "Alice", body: "Hello" });
-```
+MongoDB `watch()` / `$changeStream` is not exposed yet. Nimbus only exposes
+MongoDB change streams once they are backed by the durable tenant journal
+bootstrap and `ChangefeedCursor` model used by storage CDC; until then the
+adapter fails closed with `CommandNotSupported`.
 
 ## Demo App
 

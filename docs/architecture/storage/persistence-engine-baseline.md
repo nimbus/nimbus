@@ -223,8 +223,12 @@ Every backend exposes `StorageCapabilities` and `StorageHealthDiagnostic`.
 The diagnostic reports backend layout, event-log head, applied head, retention
 floor, storage format version, document-version and index-version counts and
 ranges, MVCC operator state, historical-query admission, retention pressure,
-backend feature support, adapter support, backend-parity state, encryption
-posture, freshness lag, last recovery status, and exact-summary support.
+backend capability profile, backend feature support, adapter capability
+profiles, adapter support, backend-parity state, encryption posture, freshness
+lag, last recovery status, and exact-summary support. The profile is derived
+from the detailed feature matrix (`latest_only`, `historical_reads`,
+`historical_reads_pitr`, `historical_reads_pitr_cdc`, or
+`enterprise_complete`) and never replaces typed per-feature unsupported errors.
 
 `StorageFormatVersion` is explicit and unknown future versions fail closed
 through startup validation rather than being treated as best-effort metadata.
