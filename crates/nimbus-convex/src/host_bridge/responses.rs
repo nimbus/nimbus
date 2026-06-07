@@ -45,6 +45,10 @@ pub enum ConvexRuntimeEncodedError {
         storage_kind: String,
         message: String,
     },
+    HistoricalRead {
+        historical_read_kind: String,
+        message: String,
+    },
     Serialization {
         message: String,
     },
@@ -104,6 +108,10 @@ impl ConvexRuntimeEncodedError {
                 storage_kind: kind.as_str().to_string(),
                 message,
             },
+            Error::HistoricalRead { kind, message } => Self::HistoricalRead {
+                historical_read_kind: kind.as_str().to_string(),
+                message,
+            },
             Error::Serialization(message) => Self::Serialization { message },
             Error::NotFound(message) => Self::NotFound { message },
             Error::Transport(message) => Self::Transport { message },
@@ -141,6 +149,16 @@ impl ConvexRuntimeEncodedError {
                 .parse()
                 .map(|kind| Error::storage(kind, message))
                 .unwrap_or_else(Error::Internal),
+            Self::HistoricalRead {
+                historical_read_kind,
+                message,
+            } => historical_read_kind_from_str(&historical_read_kind)
+                .map(|kind| Error::historical_read(kind, message))
+                .unwrap_or_else(|| {
+                    Error::Internal(format!(
+                        "unknown historical read error kind `{historical_read_kind}`"
+                    ))
+                }),
             Self::Serialization { message } => Error::Serialization(message),
             Self::NotFound { message } => Error::NotFound(message),
             Self::Transport { message } => Error::Transport(message),
@@ -149,10 +167,26 @@ impl ConvexRuntimeEncodedError {
     }
 }
 
+fn historical_read_kind_from_str(value: &str) -> Option<nimbus_core::HistoricalReadErrorKind> {
+    match value {
+        "cursor_mismatch" => Some(nimbus_core::HistoricalReadErrorKind::CursorMismatch),
+        "format_mismatch" => Some(nimbus_core::HistoricalReadErrorKind::FormatMismatch),
+        "policy_snapshot_missing" => {
+            Some(nimbus_core::HistoricalReadErrorKind::PolicySnapshotMissing)
+        }
+        "retention_expired" => Some(nimbus_core::HistoricalReadErrorKind::RetentionExpired),
+        "snapshot_unavailable" => Some(nimbus_core::HistoricalReadErrorKind::SnapshotUnavailable),
+        "timestamp_out_of_range" => Some(nimbus_core::HistoricalReadErrorKind::TimestampOutOfRange),
+        "unsupported_adapter" => Some(nimbus_core::HistoricalReadErrorKind::UnsupportedAdapter),
+        "unsupported_backend" => Some(nimbus_core::HistoricalReadErrorKind::UnsupportedBackend),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nimbus_core::StorageErrorKind;
+    use nimbus_core::{HistoricalReadErrorKind, StorageErrorKind};
 
     #[test]
     fn storage_error_round_trips_through_runtime_encoding() {
@@ -168,6 +202,26 @@ mod tests {
                 assert_eq!(message, "replica cache unavailable");
             }
             other => panic!("expected storage error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn historical_read_error_round_trips_through_runtime_encoding() {
+        let encoded = ConvexRuntimeEncodedError::from_core_error(Error::historical_read(
+            HistoricalReadErrorKind::SnapshotUnavailable,
+            "serving snapshot does not cover the requested read shape",
+        ));
+
+        let decoded = encoded.into_core_error();
+        match decoded {
+            Error::HistoricalRead { kind, message } => {
+                assert_eq!(kind, HistoricalReadErrorKind::SnapshotUnavailable);
+                assert_eq!(
+                    message,
+                    "serving snapshot does not cover the requested read shape"
+                );
+            }
+            other => panic!("expected historical read error, got {other:?}"),
         }
     }
 }

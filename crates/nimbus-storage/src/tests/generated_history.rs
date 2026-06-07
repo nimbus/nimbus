@@ -101,6 +101,223 @@ fn assert_generated_task_history_matches_model_on_storage_surface(
     );
 }
 
+fn assert_generated_task_mvcc_history_matches_model(
+    history: &GeneratedTaskHistory,
+    case: Option<GeneratedTaskHistorySeedCase>,
+    test_name: &str,
+) {
+    let table = TableName::new(history.table()).expect("generated task table should be valid");
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let bootstrap = store
+        .export_changefeed_bootstrap()
+        .expect("changefeed bootstrap should export before generated replay");
+    let mut ids_by_slot = BTreeMap::<u32, DocumentId>::new();
+    let mut prefix_sequences = Vec::new();
+
+    for (step_index, step) in history.steps().iter().enumerate() {
+        let commit = match step {
+            crate::GeneratedTaskHistoryStep::Insert { slot, record } => {
+                let document = Document::new(table.clone(), generated_task_fields(record));
+                let document_id = document.id.clone();
+                let commit = store.insert(&document).unwrap_or_else(|error| {
+                    panic!(
+                        "{}: {error}",
+                        history.failure_context(
+                            "generated MVCC insert should commit",
+                            Some(step_index)
+                        )
+                    )
+                });
+                ids_by_slot.insert(*slot, document_id);
+                commit
+            }
+            crate::GeneratedTaskHistoryStep::Update { slot, record } => {
+                let document_id = ids_by_slot.get(slot).unwrap_or_else(|| {
+                    panic!(
+                        "{}",
+                        history.failure_context(
+                            "missing slot binding during generated MVCC update",
+                            Some(step_index),
+                        )
+                    )
+                });
+                store
+                    .update(&table, document_id, &generated_task_fields(record))
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "{}: {error}",
+                            history.failure_context(
+                                "generated MVCC update should commit",
+                                Some(step_index),
+                            )
+                        )
+                    })
+            }
+            crate::GeneratedTaskHistoryStep::Delete { slot } => {
+                let document_id = ids_by_slot.remove(slot).unwrap_or_else(|| {
+                    panic!(
+                        "{}",
+                        history.failure_context(
+                            "missing slot binding during generated MVCC delete",
+                            Some(step_index),
+                        )
+                    )
+                });
+                store.delete(&table, &document_id).unwrap_or_else(|error| {
+                    panic!(
+                        "{}: {error}",
+                        history.failure_context(
+                            "generated MVCC delete should commit",
+                            Some(step_index)
+                        )
+                    )
+                })
+            }
+        };
+        prefix_sequences.push(commit.sequence);
+
+        let actual =
+            normalize_generated_task_documents(store.scan_table(&table).unwrap_or_else(|error| {
+                panic!(
+                    "{}: {error}",
+                    history.failure_context(
+                        "generated MVCC latest scan should succeed",
+                        Some(step_index),
+                    )
+                )
+            }));
+        let expected = history.model_through(step_index + 1).final_documents();
+        assert_eq!(
+            actual,
+            expected,
+            "{}",
+            case.map(|case| case.failure_context(
+                "nimbus-storage",
+                test_name,
+                "generated MVCC latest prefix diverged from model"
+            ))
+            .unwrap_or_else(|| history.failure_context(
+                "generated MVCC latest prefix diverged from model",
+                Some(step_index),
+            ))
+        );
+    }
+
+    let checkpoints = [
+        0,
+        prefix_sequences.len() / 2,
+        prefix_sequences.len().saturating_sub(1),
+    ];
+    for checkpoint in checkpoints {
+        let Some(sequence) = prefix_sequences.get(checkpoint).copied() else {
+            continue;
+        };
+        let archive = store
+            .export_point_in_time_restore_archive(
+                crate::PointInTimeRestoreTarget::Sequence(sequence),
+                crate::RetentionGcConfig::retain_all(),
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{}: {error}",
+                    history.failure_context(
+                        "generated MVCC PITR archive should export",
+                        Some(checkpoint),
+                    )
+                )
+            });
+        let restored = TenantStore::create_in_memory().expect("PITR restore store should open");
+        restored
+            .import_point_in_time_restore_archive(&archive)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{}: {error}",
+                    history.failure_context(
+                        "generated MVCC PITR archive should import",
+                        Some(checkpoint),
+                    )
+                )
+            });
+        let restored_documents = normalize_generated_task_documents(
+            restored
+                .scan_table(&table)
+                .expect("restored generated history scan should succeed"),
+        );
+        let expected = history.model_through(checkpoint + 1).final_documents();
+        assert_eq!(
+            restored_documents,
+            expected,
+            "{}",
+            history.failure_context(
+                "generated MVCC PITR restored prefix diverged from model",
+                Some(checkpoint),
+            )
+        );
+    }
+
+    let mut cursor = bootstrap.cursor;
+    let mut cdc_document_sequences = Vec::new();
+    loop {
+        let page = store
+            .stream_changefeed(&cursor, 3)
+            .expect("generated MVCC changefeed should stream");
+        for event in &page.events {
+            if event
+                .events
+                .iter()
+                .any(|event| matches!(event, nimbus_core::TenantEventKind::DocumentWrite { .. }))
+            {
+                cdc_document_sequences.push(event.sequence);
+            }
+        }
+        cursor = page.next_cursor;
+        if !page.has_more && cursor.after.0 >= page.latest_sequence.0 {
+            break;
+        }
+    }
+    assert_eq!(
+        cdc_document_sequences,
+        prefix_sequences,
+        "{}",
+        case.map(|case| case.failure_context(
+            "nimbus-storage",
+            test_name,
+            "generated MVCC CDC stream missed or duplicated document-write sequences"
+        ))
+        .unwrap_or_else(|| history.failure_context(
+            "generated MVCC CDC stream missed or duplicated document-write sequences",
+            None,
+        ))
+    );
+}
+
+fn collect_changefeed_document_sequences<F>(
+    mut cursor: crate::ChangefeedCursor,
+    mut stream: F,
+) -> Vec<SequenceNumber>
+where
+    F: FnMut(&crate::ChangefeedCursor) -> crate::ChangefeedPage,
+{
+    let mut sequences = Vec::new();
+    loop {
+        let page = stream(&cursor);
+        for event in &page.events {
+            if event
+                .events
+                .iter()
+                .any(|event| matches!(event, nimbus_core::TenantEventKind::DocumentWrite { .. }))
+            {
+                sequences.push(event.sequence);
+            }
+        }
+        cursor = page.next_cursor;
+        if !page.has_more && cursor.after.0 >= page.latest_sequence.0 {
+            break;
+        }
+    }
+    sequences
+}
+
 fn build_generated_task_durable_record(
     store: &TenantStore,
     history: &GeneratedTaskHistory,
@@ -309,6 +526,187 @@ fn generated_task_history_matches_model_on_storage_surface() {
         None,
         "generated_task_history_matches_model_on_storage_surface",
     );
+}
+
+#[test]
+fn datadriven_generated_task_history_drives_mvcc_pitr_and_cdc_conformance() {
+    let history = GeneratedTaskHistory::datadriven(
+        "datadriven-mvcc",
+        r#"
+        insert 0 todo 1 first
+        insert 1 done 2 second
+        update 0 done 3 first_done
+        insert 2 in_progress 4 third
+        delete 1
+        update 2 done 5 third_done
+        "#,
+    )
+    .expect("datadriven history should parse");
+    assert_generated_task_mvcc_history_matches_model(
+        &history,
+        None,
+        "datadriven_generated_task_history_drives_mvcc_pitr_and_cdc_conformance",
+    );
+}
+
+#[test]
+fn generated_mvcc_history_required_seed_corpus_matches_pitr_and_cdc_models() {
+    let history = GeneratedTaskHistory::seeded("generated-mvcc-required", 41, 18);
+    assert_generated_task_mvcc_history_matches_model(
+        &history,
+        None,
+        "generated_mvcc_history_required_seed_corpus_matches_pitr_and_cdc_models",
+    );
+}
+
+#[test]
+fn canonical_digest_generated_history_matches_redb_sqlite_pitr_cdc_and_rebuild_paths() {
+    let clock = Arc::new(ManualClock::new(Timestamp(90_000)));
+    let redb = TenantStore::create_in_memory_with_simulation(
+        clock.clone(),
+        Arc::new(crate::NoopFaultInjector),
+    )
+    .expect("redb store should open");
+    let sqlite_dir = tempdir().expect("sqlite tempdir should create");
+    let sqlite = SqliteTenantStore::open_with_simulation(
+        sqlite_dir.path().join("tenant.sqlite3"),
+        clock.clone(),
+        Arc::new(crate::NoopFaultInjector),
+    )
+    .expect("sqlite store should open");
+    let table = TableName::new("tasks").expect("table should parse");
+    let table_id = TableId::new();
+    redb.stage_hidden_table_identity(&table, &table_id)
+        .expect("redb hidden table should stage");
+    sqlite
+        .stage_hidden_table_identity(&table, &table_id)
+        .expect("sqlite hidden table should stage");
+    redb.activate_hidden_table_identity(&table, &table_id)
+        .expect("redb hidden table should activate");
+    sqlite
+        .activate_hidden_table_identity(&table, &table_id)
+        .expect("sqlite hidden table should activate");
+
+    let redb_bootstrap = redb
+        .export_changefeed_bootstrap()
+        .expect("redb changefeed bootstrap should export");
+    let sqlite_bootstrap = sqlite
+        .export_changefeed_bootstrap()
+        .expect("sqlite changefeed bootstrap should export");
+    assert_eq!(redb_bootstrap.cursor.after, sqlite_bootstrap.cursor.after);
+
+    let history = GeneratedTaskHistory::seeded("parity-digest", 83, 16);
+    let mut ids_by_slot = BTreeMap::<u32, DocumentId>::new();
+    let mut prefix_sequences = Vec::new();
+    for (step_index, step) in history.steps().iter().enumerate() {
+        clock.set(Timestamp(91_000 + step_index as u64));
+        let (redb_commit, sqlite_commit) = match step {
+            crate::GeneratedTaskHistoryStep::Insert { slot, record } => {
+                let document = Document::new(table.clone(), generated_task_fields(record));
+                ids_by_slot.insert(*slot, document.id.clone());
+                (
+                    redb.insert(&document).expect("redb insert should commit"),
+                    sqlite
+                        .insert(&document)
+                        .expect("sqlite insert should commit"),
+                )
+            }
+            crate::GeneratedTaskHistoryStep::Update { slot, record } => {
+                let document_id = ids_by_slot
+                    .get(slot)
+                    .expect("generated parity update slot should exist");
+                (
+                    redb.update(&table, document_id, &generated_task_fields(record))
+                        .expect("redb update should commit"),
+                    sqlite
+                        .update(&table, document_id, &generated_task_fields(record))
+                        .expect("sqlite update should commit"),
+                )
+            }
+            crate::GeneratedTaskHistoryStep::Delete { slot } => {
+                let document_id = ids_by_slot
+                    .remove(slot)
+                    .expect("generated parity delete slot should exist");
+                (
+                    redb.delete(&table, &document_id)
+                        .expect("redb delete should commit"),
+                    sqlite
+                        .delete(&table, &document_id)
+                        .expect("sqlite delete should commit"),
+                )
+            }
+        };
+        assert_eq!(redb_commit.sequence, sqlite_commit.sequence);
+        prefix_sequences.push(redb_commit.sequence);
+    }
+
+    let redb_snapshot = redb
+        .export_materialized_journal_snapshot()
+        .expect("redb latest snapshot should export");
+    let sqlite_snapshot = sqlite
+        .export_materialized_journal_snapshot()
+        .expect("sqlite latest snapshot should export");
+    let redb_latest = redb_snapshot
+        .canonical_fingerprint()
+        .expect("redb latest digest should compute");
+    let sqlite_latest = sqlite_snapshot
+        .canonical_fingerprint()
+        .expect("sqlite latest digest should compute");
+    assert_eq!(redb_latest, sqlite_latest);
+
+    for sequence in [
+        prefix_sequences[prefix_sequences.len() / 2],
+        *prefix_sequences
+            .last()
+            .expect("generated parity sequence should exist"),
+    ] {
+        let redb_archive = redb
+            .export_point_in_time_restore_archive(
+                crate::PointInTimeRestoreTarget::Sequence(sequence),
+                crate::RetentionGcConfig::retain_all(),
+            )
+            .expect("redb PITR archive should export");
+        let sqlite_archive = sqlite
+            .export_point_in_time_restore_archive(
+                crate::PointInTimeRestoreTarget::Sequence(sequence),
+                crate::RetentionGcConfig::retain_all(),
+            )
+            .expect("sqlite PITR archive should export");
+        assert_eq!(
+            redb_archive.target_fingerprint,
+            sqlite_archive.target_fingerprint
+        );
+
+        let restored = TenantStore::create_in_memory_with_simulation(
+            clock.clone(),
+            Arc::new(crate::NoopFaultInjector),
+        )
+        .expect("restored parity store should open");
+        restored
+            .import_point_in_time_restore_archive(&redb_archive)
+            .expect("redb PITR archive should restore through replay");
+        assert_eq!(
+            restored
+                .export_materialized_journal_snapshot()
+                .expect("restored parity snapshot should export")
+                .canonical_fingerprint()
+                .expect("restored parity digest should compute"),
+            redb_archive.target_fingerprint
+        );
+    }
+
+    let redb_sequences = collect_changefeed_document_sequences(redb_bootstrap.cursor, |cursor| {
+        redb.stream_changefeed(cursor, 4)
+            .expect("redb changefeed should stream")
+    });
+    let sqlite_sequences =
+        collect_changefeed_document_sequences(sqlite_bootstrap.cursor, |cursor| {
+            sqlite
+                .stream_changefeed(cursor, 4)
+                .expect("sqlite changefeed should stream")
+        });
+    assert_eq!(redb_sequences, prefix_sequences);
+    assert_eq!(sqlite_sequences, prefix_sequences);
 }
 
 #[test]

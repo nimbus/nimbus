@@ -12,6 +12,8 @@ use crate::simulation::{FaultInjector, FaultPoint};
 #[cfg(test)]
 mod tests;
 
+use super::document_versions::record_document_versions_for_writes;
+use super::index_versions::record_index_versions_for_writes;
 use super::schema_rewrite::{
     durable_record_index_keys_for_table_id, rewrite_document_indexes_in_write_txn,
 };
@@ -173,6 +175,13 @@ pub(super) fn append_tenant_event(
     events: Vec<TenantEventKind>,
 ) -> Result<TenantEventRecord> {
     let record = TenantEventRecord::from_events(sequence, timestamp, events)?;
+    record_document_versions_for_events(
+        write_txn,
+        record.sequence,
+        record.timestamp,
+        &record.events,
+    )?;
+    record_index_versions_for_events(write_txn, record.sequence, &record.events)?;
     let mut log = write_txn.open_table(COMMIT_LOG).map_err(map_redb_error)?;
     let payload = crate::commit_log::serialize_tenant_event_record(&record)?;
     log.insert(sequence.0, payload.as_slice())
@@ -190,11 +199,52 @@ fn apply_durable_record_in_write_txn(
         if let Some(execution_id) = record.scheduled_execution_id.as_deref() {
             let _ = begin_scheduled_execution(write_txn, Some(execution_id))?;
         }
+        record_document_versions_for_writes(
+            write_txn,
+            record.sequence,
+            record.timestamp,
+            &record.writes,
+        )?;
+        record_index_versions_for_writes(write_txn, record.sequence, &record.writes)?;
         return apply_document_writes_in_write_txn(write_txn, &record.writes);
     }
 
+    record_document_versions_for_events(
+        write_txn,
+        record.sequence,
+        record.timestamp,
+        &record.events,
+    )?;
+    record_index_versions_for_events(write_txn, record.sequence, &record.events)?;
     for event in &record.events {
         apply_tenant_event_in_write_txn(write_txn, event)?;
+    }
+    Ok(())
+}
+
+fn record_document_versions_for_events(
+    write_txn: &redb::WriteTransaction,
+    sequence: SequenceNumber,
+    timestamp: Timestamp,
+    events: &[TenantEventKind],
+) -> Result<()> {
+    for event in events {
+        if let TenantEventKind::DocumentWrite { writes } = event {
+            record_document_versions_for_writes(write_txn, sequence, timestamp, writes)?;
+        }
+    }
+    Ok(())
+}
+
+fn record_index_versions_for_events(
+    write_txn: &redb::WriteTransaction,
+    sequence: SequenceNumber,
+    events: &[TenantEventKind],
+) -> Result<()> {
+    for event in events {
+        if let TenantEventKind::DocumentWrite { writes } = event {
+            record_index_versions_for_writes(write_txn, sequence, writes)?;
+        }
     }
     Ok(())
 }

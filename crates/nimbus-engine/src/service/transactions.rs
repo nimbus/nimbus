@@ -5,7 +5,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use nimbus_core::{
     AtomicWriteBatch, AtomicWriteBatchOutcome, CollectionName, Document, DocumentId, DocumentPath,
-    Error, PrincipalContext, Result, StructuredQuery, TableName, TenantId, Timestamp,
+    Error, PrincipalContext, Query, Result, StructuredQuery, TableName, TenantId, Timestamp,
     TransactionSession, TransactionSessionMode, TransactionSessionToken,
 };
 use rand::RngCore;
@@ -162,6 +162,18 @@ impl Service {
         execution_unit.get_document(table, document_id)
     }
 
+    /// Evaluates one query through the pinned transaction snapshot and staged writes.
+    pub fn query_documents_in_transaction(
+        &self,
+        tenant_id: &TenantId,
+        token: &TransactionSessionToken,
+        principal: &PrincipalContext,
+        query: &Query,
+    ) -> Result<Vec<Document>> {
+        let execution_unit = self.transaction_execution_unit(tenant_id, token, principal)?;
+        execution_unit.query_documents_cancellable(query, &mut || Ok(()))
+    }
+
     /// Evaluates one structured query through the pinned transaction snapshot.
     pub fn query_documents_structured_in_transaction(
         &self,
@@ -193,6 +205,32 @@ impl Service {
             query,
             &mut || Ok(()),
         )
+    }
+
+    /// Stages writes in an active transaction session without committing them.
+    ///
+    /// Later transaction reads observe the staged overlay, while outside reads
+    /// continue to see committed state until `commit_transaction_session`.
+    pub fn stage_atomic_write_batch_in_transaction(
+        &self,
+        tenant_id: &TenantId,
+        token: &TransactionSessionToken,
+        principal: &PrincipalContext,
+        batch: AtomicWriteBatch,
+    ) -> Result<AtomicWriteBatchOutcome> {
+        let session = self
+            .transaction_sessions
+            .write()
+            .expect("transaction session lock should not be poisoned")
+            .clone_active(tenant_id, token, principal, self.now())?;
+        if matches!(session.session.mode, TransactionSessionMode::ReadOnly)
+            && !batch.writes.is_empty()
+        {
+            return Err(Error::InvalidInput(
+                "read-only transaction session cannot stage writes".to_string(),
+            ));
+        }
+        session.execution_unit.stage_atomic_write_batch(batch)
     }
 
     /// Commits a transaction session exactly once, optionally applying an
@@ -311,8 +349,9 @@ mod tests {
     use std::sync::Arc;
 
     use nimbus_core::{
-        AtomicWrite, AtomicWriteBatch, DocumentId, DocumentLocator, Error, PrincipalContext,
-        TableName, TenantId, Timestamp, TransactionSessionMode, WriteKey, WritePrecondition,
+        AtomicWrite, AtomicWriteBatch, DocumentId, DocumentLocator, Error, OrderBy, OrderDirection,
+        PrincipalContext, Query, TableName, TenantId, Timestamp, TransactionSessionMode, WriteKey,
+        WritePrecondition, WriteSetMode,
     };
     use nimbus_storage::{ManualClock, NoopFaultInjector};
     use nimbus_testing::ServiceFixture;
@@ -439,6 +478,183 @@ mod tests {
             .expect("document should exist");
 
         assert_eq!(read_back.get_field("body"), Some(&json!("before")));
+    }
+
+    #[test]
+    fn transaction_session_staged_writes_are_visible_inside_session_only_until_commit() {
+        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let service = fixture.service();
+        let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+        let table = messages_table("messages_txn_session_staged_overlay");
+        let document_id = DocumentId::from_key("staged-doc").expect("document id should parse");
+        let principal = PrincipalContext::anonymous();
+
+        let session = service
+            .begin_transaction_session(
+                tenant_id.clone(),
+                principal.clone(),
+                TransactionSessionMode::ReadWrite,
+            )
+            .expect("transaction session should start");
+        let staged = service
+            .stage_atomic_write_batch_in_transaction(
+                &tenant_id,
+                &session.token,
+                &principal,
+                AtomicWriteBatch::new(vec![AtomicWrite::Set {
+                    key: WriteKey::from(DocumentLocator::new(table.clone(), document_id.clone())),
+                    document: serde_json::Map::from_iter([("body".to_string(), json!("inside"))]),
+                    mode: WriteSetMode::Create,
+                    precondition: WritePrecondition::default(),
+                    transforms: Vec::new(),
+                }])
+                .expect("batch should build"),
+            )
+            .expect("staging should succeed");
+        assert!(staged.commit.is_none(), "staging must not commit");
+        assert!(matches!(
+            service.get_document(&tenant_id, &table, document_id.clone()),
+            Err(Error::DocumentNotFound(_))
+        ));
+
+        let transactional_point_read = service
+            .get_document_in_transaction(
+                &tenant_id,
+                &session.token,
+                &principal,
+                &table,
+                document_id.clone(),
+            )
+            .expect("transactional point read should succeed")
+            .expect("staged document should be visible in the session");
+        assert_eq!(
+            transactional_point_read.get_field("body"),
+            Some(&json!("inside"))
+        );
+        let transactional_query = service
+            .query_documents_in_transaction(
+                &tenant_id,
+                &session.token,
+                &principal,
+                &Query {
+                    table: table.clone(),
+                    filters: Vec::new(),
+                    order: Some(OrderBy {
+                        field: "body".to_string(),
+                        direction: OrderDirection::Asc,
+                    }),
+                    limit: None,
+                },
+            )
+            .expect("transactional query should succeed");
+        assert_eq!(transactional_query.len(), 1);
+        assert_eq!(
+            transactional_query[0].get_field("body"),
+            Some(&json!("inside"))
+        );
+
+        let outcome = service
+            .commit_transaction_session(&tenant_id, &session.token, &principal, None)
+            .expect("transaction commit should persist staged writes");
+        assert!(outcome.commit.is_some());
+        assert_eq!(
+            service
+                .get_document(&tenant_id, &table, document_id)
+                .expect("document should be committed")
+                .get_field("body"),
+            Some(&json!("inside"))
+        );
+    }
+
+    #[test]
+    fn transaction_session_staged_writes_conflict_with_concurrent_document_change() {
+        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let service = fixture.service();
+        let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+        let table = messages_table("messages_txn_session_staged_conflict");
+        let document_id = service
+            .insert_document(
+                &tenant_id,
+                table.clone(),
+                serde_json::Map::from_iter([("body".to_string(), json!("before"))]),
+            )
+            .expect("fixture insert should succeed");
+        let principal = PrincipalContext::anonymous();
+
+        let session = service
+            .begin_transaction_session(
+                tenant_id.clone(),
+                principal.clone(),
+                TransactionSessionMode::ReadWrite,
+            )
+            .expect("transaction session should start");
+        service
+            .stage_atomic_write_batch_in_transaction(
+                &tenant_id,
+                &session.token,
+                &principal,
+                patch_body_batch(&table, &document_id, "inside"),
+            )
+            .expect("staging should succeed");
+        service
+            .update_document(
+                &tenant_id,
+                table.clone(),
+                document_id.clone(),
+                serde_json::Map::from_iter([("body".to_string(), json!("outside"))]),
+            )
+            .expect("outside update should succeed");
+
+        let error = service
+            .commit_transaction_session(&tenant_id, &session.token, &principal, None)
+            .expect_err("staged transaction should conflict with the outside write");
+        assert!(matches!(error, Error::Conflict(_)));
+        assert_eq!(
+            service
+                .get_document(&tenant_id, &table, document_id)
+                .expect("document should still exist")
+                .get_field("body"),
+            Some(&json!("outside"))
+        );
+        assert_eq!(service.active_transaction_session_count(), 0);
+    }
+
+    #[test]
+    fn read_only_transaction_session_rejects_staged_writes() {
+        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let service = fixture.service();
+        let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+        let table = messages_table("messages_txn_session_read_only_stage");
+        let document_id = DocumentId::from_key("read-only-stage").expect("id should parse");
+        let principal = PrincipalContext::anonymous();
+
+        let session = service
+            .begin_transaction_session(
+                tenant_id.clone(),
+                principal.clone(),
+                TransactionSessionMode::ReadOnly,
+            )
+            .expect("transaction session should start");
+        let error = service
+            .stage_atomic_write_batch_in_transaction(
+                &tenant_id,
+                &session.token,
+                &principal,
+                AtomicWriteBatch::new(vec![AtomicWrite::Set {
+                    key: WriteKey::from(DocumentLocator::new(table, document_id)),
+                    document: serde_json::Map::from_iter([("body".to_string(), json!("bad"))]),
+                    mode: WriteSetMode::Create,
+                    precondition: WritePrecondition::default(),
+                    transforms: Vec::new(),
+                }])
+                .expect("batch should build"),
+            )
+            .expect_err("read-only transaction must reject staged writes");
+
+        assert!(matches!(error, Error::InvalidInput(_)));
+        service
+            .rollback_transaction_session(&tenant_id, &session.token, &principal)
+            .expect("read-only transaction should remain rollbackable after rejected stage");
     }
 
     #[test]

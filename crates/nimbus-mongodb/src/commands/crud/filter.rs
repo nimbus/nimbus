@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use nimbus_core::{
     Document, DocumentId, Filter, FilterOp, OrderBy, OrderDirection, PrincipalContext, Query,
-    TableName, TenantId,
+    TableName, TenantId, TransactionSessionToken,
 };
 use nimbus_engine::Service;
 
@@ -144,6 +144,7 @@ pub(super) fn query_documents(
     filter_doc: &bson::Document,
     orders: Vec<OrderBy>,
     limit: Option<usize>,
+    transaction_token: Option<&TransactionSessionToken>,
 ) -> Result<Vec<Document>, MongoError> {
     let principal = PrincipalContext::system();
 
@@ -152,10 +153,24 @@ pub(super) fn query_documents(
     {
         let id_str = bson_id_to_string(id_val);
         if let Ok(doc_id) = DocumentId::from_key(&id_str) {
-            match service.get_document_with_principal(tenant_id, table, doc_id, &principal) {
+            let result = match transaction_token {
+                Some(transaction_token) => service.get_document_in_transaction(
+                    tenant_id,
+                    transaction_token,
+                    &principal,
+                    table,
+                    doc_id,
+                ),
+                None => service
+                    .get_document_with_principal(tenant_id, table, doc_id, &principal)
+                    .map(Some),
+            };
+            match result {
                 Ok(doc) => {
                     let non_id_filters = translate_filter_excluding_id(filter_doc)?;
-                    if matches_simple_filters(&doc, &non_id_filters) {
+                    if let Some(doc) = doc
+                        && matches_simple_filters(&doc, &non_id_filters)
+                    {
                         return Ok(vec![doc]);
                     }
                     return Ok(vec![]);
@@ -175,9 +190,13 @@ pub(super) fn query_documents(
         order: primary_order,
         limit: if orders.len() > 1 { None } else { limit },
     };
-    let mut docs = service
-        .query_documents_with_principal(tenant_id, &query, &principal)
-        .map_err(MongoError::from)?;
+    let mut docs = match transaction_token {
+        Some(transaction_token) => {
+            service.query_documents_in_transaction(tenant_id, transaction_token, &principal, &query)
+        }
+        None => service.query_documents_with_principal(tenant_id, &query, &principal),
+    }
+    .map_err(MongoError::from)?;
 
     if orders.len() > 1 {
         apply_compound_sort(&mut docs, &orders);

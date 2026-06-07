@@ -1,6 +1,79 @@
+use super::document_versions::{
+    prune_document_versions_before_remote, record_document_versions_for_events_remote,
+};
+use super::index_versions::{
+    prune_index_versions_before_remote, record_index_versions_for_events_remote,
+};
 use super::*;
 
 impl LibsqlReplicaTenantStore {
+    pub fn retention_gc_watermarks(
+        &self,
+        config: crate::RetentionGcConfig,
+    ) -> Result<crate::RetentionGcWatermarks> {
+        Ok(self
+            .retention_floor
+            .gc_watermarks(self.journal_progress()?.applied_head, config))
+    }
+
+    pub fn compact_retained_versions(
+        &self,
+        config: crate::RetentionGcConfig,
+    ) -> Result<crate::RetentionGcSummary> {
+        let watermarks = self.retention_gc_watermarks(config)?;
+        let document_prune_before = watermarks.document_versions.safe_prune_before;
+        let index_prune_before = watermarks.index_versions.safe_prune_before;
+        let committed = self.execute_write(move |transaction| {
+            transaction.prune_retained_versions(document_prune_before, index_prune_before)
+        })?;
+        debug_assert!(committed.commit.is_none());
+        Ok(crate::RetentionGcSummary {
+            watermarks,
+            document_versions_pruned: committed.value.0,
+            index_versions_pruned: committed.value.1,
+        })
+    }
+
+    pub fn export_point_in_time_restore_archive(
+        &self,
+        target: PointInTimeRestoreTarget,
+        retention_config: crate::RetentionGcConfig,
+    ) -> Result<PointInTimeRestoreArchive> {
+        let records = self.read_durable_journal_from(SequenceNumber(1))?;
+        let progress = self.journal_progress()?;
+        let watermarks = self.retention_gc_watermarks(retention_config)?;
+        crate::store::build_point_in_time_restore_archive(
+            target,
+            records,
+            progress.durable_head,
+            watermarks.document_versions.safe_prune_before,
+        )
+    }
+
+    pub fn import_point_in_time_restore_archive(
+        &self,
+        archive: &PointInTimeRestoreArchive,
+    ) -> Result<JournalProgress> {
+        crate::store::validate_point_in_time_archive_for_journal_replay_import(archive)?;
+        let current = self.export_materialized_journal_snapshot()?;
+        crate::store::validate_materialized_journal_replay_base_is_empty(&current)?;
+        self.append_durable_records_batch(&archive.journal_tail)?;
+        let progress = self.recover_durable_journal()?;
+        let restored_fingerprint = self
+            .export_materialized_journal_snapshot()?
+            .canonical_fingerprint()?;
+        if restored_fingerprint != archive.target_fingerprint {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Corruption,
+                format!(
+                    "point-in-time restore fingerprint mismatch: restored {} expected {}",
+                    restored_fingerprint, archive.target_fingerprint
+                ),
+            ));
+        }
+        Ok(progress)
+    }
+
     pub fn replace_table_schema(&self, table_schema: &TableSchema) -> Result<()> {
         let table_schema = table_schema.clone();
         self.execute_write(move |transaction| transaction.replace_table_schema(&table_schema))?;
@@ -390,6 +463,22 @@ impl LibsqlReplicaWriteTransaction {
             trigger_write_origin: None,
             check_cancel: Box::new(check_cancel),
             refresh_cache_after_commit: false,
+        })
+    }
+
+    pub fn prune_retained_versions(
+        &mut self,
+        document_prune_before: SequenceNumber,
+        index_prune_before: SequenceNumber,
+    ) -> Result<(u64, u64)> {
+        self.check_cancel()?;
+        self.store.block_on(async {
+            let document_versions_pruned =
+                prune_document_versions_before_remote(self.session()?, document_prune_before)
+                    .await?;
+            let index_versions_pruned =
+                prune_index_versions_before_remote(self.session()?, index_prune_before).await?;
+            Ok((document_versions_pruned, index_versions_pruned))
         })
     }
 
@@ -1018,7 +1107,23 @@ impl LibsqlReplicaWriteTransaction {
             writes,
         };
         let payload = serialize_tenant_event_record(&record)?;
+        let record_sequence = record.sequence;
+        let record_timestamp = record.timestamp;
+        let record_events = record.events.clone();
         self.store.block_on(async {
+            record_document_versions_for_events_remote(
+                self.session()?,
+                record_sequence,
+                record_timestamp,
+                &record_events,
+            )
+            .await?;
+            record_index_versions_for_events_remote(
+                self.session()?,
+                record_sequence,
+                &record_events,
+            )
+            .await?;
             self.session()?
                 .execute(
                     "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",

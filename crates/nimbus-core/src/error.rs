@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error as ThisError;
 
 use crate::types::{DocumentId, TableName, TenantId};
@@ -49,6 +50,40 @@ impl FromStr for StorageErrorKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoricalReadErrorKind {
+    CursorMismatch,
+    FormatMismatch,
+    PolicySnapshotMissing,
+    RetentionExpired,
+    SnapshotUnavailable,
+    TimestampOutOfRange,
+    UnsupportedAdapter,
+    UnsupportedBackend,
+}
+
+impl HistoricalReadErrorKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CursorMismatch => "cursor_mismatch",
+            Self::FormatMismatch => "format_mismatch",
+            Self::PolicySnapshotMissing => "policy_snapshot_missing",
+            Self::RetentionExpired => "retention_expired",
+            Self::SnapshotUnavailable => "snapshot_unavailable",
+            Self::TimestampOutOfRange => "timestamp_out_of_range",
+            Self::UnsupportedAdapter => "unsupported_adapter",
+            Self::UnsupportedBackend => "unsupported_backend",
+        }
+    }
+}
+
+impl std::fmt::Display for HistoricalReadErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Core Nimbus error type.
 #[derive(Debug, ThisError)]
 pub enum Error {
@@ -94,6 +129,12 @@ pub enum Error {
         message: String,
     },
 
+    #[error("historical read error [{kind}]: {message}")]
+    HistoricalRead {
+        kind: HistoricalReadErrorKind,
+        message: String,
+    },
+
     #[error("serialization error: {0}")]
     Serialization(String),
 
@@ -128,6 +169,20 @@ impl Error {
             _ => None,
         }
     }
+
+    pub fn historical_read(kind: HistoricalReadErrorKind, message: impl Into<String>) -> Self {
+        Self::HistoricalRead {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    pub fn historical_read_kind(&self) -> Option<HistoricalReadErrorKind> {
+        match self {
+            Self::HistoricalRead { kind, .. } => Some(*kind),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -151,6 +206,23 @@ mod tests {
         assert_eq!(
             StorageErrorKind::from_str("corruption").expect("kind should parse"),
             StorageErrorKind::Corruption
+        );
+    }
+
+    #[test]
+    fn historical_read_error_helper_preserves_kind_and_message() {
+        let error = Error::historical_read(
+            HistoricalReadErrorKind::RetentionExpired,
+            "read timestamp is older than the retention floor",
+        );
+
+        assert_eq!(
+            error.historical_read_kind(),
+            Some(HistoricalReadErrorKind::RetentionExpired)
+        );
+        assert_eq!(
+            error.to_string(),
+            "historical read error [retention_expired]: read timestamp is older than the retention floor"
         );
     }
 }

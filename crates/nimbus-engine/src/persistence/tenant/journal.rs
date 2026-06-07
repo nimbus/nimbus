@@ -9,6 +9,8 @@ impl TenantPersistence {
     delegate_store_method!(fn read_durable_journal_from(&self, sequence: SequenceNumber) -> Result<Vec<DurableMutationRecord>>);
     delegate_store_method!(fn stream_durable_journal(&self, after: SequenceNumber, limit: usize) -> Result<DurableJournalPage>);
     delegate_store_method!(fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap>);
+    delegate_store_method!(fn export_changefeed_bootstrap(&self) -> Result<ChangefeedBootstrap>);
+    delegate_store_method!(fn stream_changefeed(&self, cursor: &ChangefeedCursor, limit: usize) -> Result<ChangefeedPage>);
 
     pub(crate) fn append_durable_records_batch(
         &self,

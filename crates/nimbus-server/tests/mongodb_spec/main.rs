@@ -740,16 +740,17 @@ async fn change_stream_over_wire() {
         .await;
     assert_eq!(
         resp.get_f64("ok").unwrap(),
-        1.0,
-        "aggregate $changeStream failed: {:?}",
+        0.0,
+        "aggregate $changeStream should fail closed until wired to durable Nimbus CDC cuts: {:?}",
         resp
     );
-    let cursor = resp.get_document("cursor").unwrap();
-    let cursor_id = cursor.get_i64("id").unwrap();
-    assert!(cursor_id != 0, "change stream cursor should be non-zero");
-    let first_batch = cursor.get_array("firstBatch").unwrap();
     assert!(
-        first_batch.is_empty(),
-        "initial batch should be empty for change stream"
+        resp.get_str("errmsg")
+            .expect("unsupported change stream error should include a message")
+            .contains("durable Nimbus CDC cut model"),
+        "unsupported change stream error should name the durable CDC prerequisite: {:?}",
+        resp
     );
+    assert_eq!(resp.get_i32("code").unwrap(), 115);
+    assert_eq!(resp.get_str("codeName").unwrap(), "CommandNotSupported");
 }

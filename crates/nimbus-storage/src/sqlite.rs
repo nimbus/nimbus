@@ -17,18 +17,21 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::RetentionFloor;
 use crate::commit_log::{deserialize_durable_record, serialize_durable_record};
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{
     APPLIED_SEQUENCE_KEY, DurableJournalBootstrap, DurableJournalPage, JournalProgress,
     MAX_DURABLE_JOURNAL_STREAM_LIMIT, MaterializedJournalSnapshot, NEXT_SEQUENCE_KEY,
-    ResolvedScheduleOp, ResolvedWrite, TenantWriteCommit,
+    PointInTimeRestoreArchive, PointInTimeRestoreTarget, ResolvedScheduleOp, ResolvedWrite,
+    TenantWriteCommit,
 };
+use crate::{RetentionFloor, RetentionGcConfig, RetentionGcSummary};
 
 mod backend;
 mod config;
+mod document_versions;
 pub mod encryption;
+mod index_versions;
 mod journal;
 mod read;
 mod resource_paths;
@@ -81,6 +84,48 @@ CREATE TABLE IF NOT EXISTS documents (
     PRIMARY KEY (table_id, id),
     FOREIGN KEY (table_id) REFERENCES table_catalog(table_id)
 );
+
+CREATE TABLE IF NOT EXISTS document_versions (
+    table_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    commit_sequence INTEGER NOT NULL,
+    commit_time INTEGER NOT NULL,
+    tombstone INTEGER NOT NULL CHECK (tombstone IN (0, 1)),
+    data_json TEXT,
+    typed_fields_json TEXT,
+    creation_time INTEGER,
+    update_time INTEGER,
+    PRIMARY KEY (table_id, id, commit_sequence),
+    CHECK (
+        (
+            tombstone = 1
+            AND data_json IS NULL
+            AND typed_fields_json IS NULL
+            AND creation_time IS NULL
+            AND update_time IS NULL
+        )
+        OR (
+            tombstone = 0
+            AND data_json IS NOT NULL
+            AND typed_fields_json IS NOT NULL
+            AND creation_time IS NOT NULL
+            AND update_time IS NOT NULL
+        )
+    )
+);
+
+CREATE TABLE IF NOT EXISTS index_versions (
+    table_id TEXT NOT NULL,
+    index_id TEXT NOT NULL,
+    encoded_tuple BLOB NOT NULL,
+    document_id TEXT NOT NULL,
+    visible_from INTEGER NOT NULL,
+    visible_until INTEGER,
+    PRIMARY KEY (table_id, index_id, encoded_tuple, document_id, visible_from)
+);
+
+CREATE INDEX IF NOT EXISTS idx_index_versions_visibility
+    ON index_versions (table_id, index_id, encoded_tuple, document_id, visible_from);
 
 CREATE TABLE IF NOT EXISTS schemas (
     table_name TEXT NOT NULL PRIMARY KEY,
@@ -144,6 +189,50 @@ const MIN_SQLITE_READ_CONNECTIONS: usize = 2;
 
 pub fn sqlite_init_sql() -> &'static str {
     SQLITE_INIT_SQL
+}
+
+impl SqliteTenantStore {
+    pub fn retention_gc_watermarks(
+        &self,
+        config: RetentionGcConfig,
+    ) -> Result<crate::RetentionGcWatermarks> {
+        Ok(self
+            .retention_floor
+            .gc_watermarks(self.journal_progress()?.applied_head, config))
+    }
+
+    pub fn compact_retained_versions(
+        &self,
+        config: RetentionGcConfig,
+    ) -> Result<RetentionGcSummary> {
+        let watermarks = self.retention_gc_watermarks(config)?;
+        let document_prune_before = watermarks.document_versions.safe_prune_before;
+        let index_prune_before = watermarks.index_versions.safe_prune_before;
+        if document_prune_before.0 == 0 && index_prune_before.0 == 0 {
+            return Ok(RetentionGcSummary {
+                watermarks,
+                document_versions_pruned: 0,
+                index_versions_pruned: 0,
+            });
+        }
+
+        let mut transaction = self.begin_write_transaction()?;
+        let document_versions_pruned = document_versions::prune_document_versions_before_in_conn(
+            transaction.connection_mut()?,
+            document_prune_before,
+        )?;
+        let index_versions_pruned = index_versions::prune_index_versions_before_in_conn(
+            transaction.connection_mut()?,
+            index_prune_before,
+        )?;
+        let commit = transaction.commit()?;
+        debug_assert!(commit.is_none());
+        Ok(RetentionGcSummary {
+            watermarks,
+            document_versions_pruned,
+            index_versions_pruned,
+        })
+    }
 }
 
 /// SQLite-backed tenant store split into concept-owned provider modules.

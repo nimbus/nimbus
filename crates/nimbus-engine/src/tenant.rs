@@ -39,7 +39,9 @@ pub(crate) use self::materialized_reads::MaterializedReadPublishPauseHandle;
 pub(crate) use self::materialized_reads::MaterializedTablePublicationStats;
 pub(crate) use self::materialized_reads::ServingSnapshot;
 use self::materialized_reads::TenantMaterializedReadSurface;
-pub use self::materialized_reads::{MaterializedReadSurfaceStats, ServingSnapshotManagerStats};
+pub use self::materialized_reads::{
+    MaterializedReadSurfaceStats, PinnedServingReadSnapshot, ServingSnapshotManagerStats,
+};
 #[cfg(test)]
 pub(crate) use self::mutation::DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY;
 #[cfg(test)]

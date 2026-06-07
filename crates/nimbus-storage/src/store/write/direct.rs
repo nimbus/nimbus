@@ -75,8 +75,9 @@ impl TenantWriteTransaction {
             };
             let mut document = existing_document.clone();
             for (field, value) in patch {
-                document.fields.insert(field.clone(), value.clone());
+                document.set_field(field.clone(), value.clone());
             }
+            document.update_time = self.clock.now();
             validate(&existing_document, &document)?;
             let payload = encode_document_msgpack(&document)
                 .map_err(|error| Error::Serialization(error.to_string()))?;

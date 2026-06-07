@@ -1,3 +1,5 @@
+mod document_versions;
+mod index_versions;
 mod journal;
 mod journal_snapshot;
 mod journal_stream;
@@ -25,15 +27,26 @@ pub(crate) use self::scan::ScanStats;
 use crate::RetentionFloor;
 use crate::simulation::{Clock, FaultInjector};
 
+pub use index_versions::HistoricalIndexDocumentPage;
 pub(crate) use journal_snapshot::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION;
-pub use journal_snapshot::MaterializedJournalSnapshot;
+pub use journal_snapshot::{
+    MaterializedJournalSnapshot, PointInTimeRestoreArchive, PointInTimeRestoreTarget,
+};
+pub(crate) use journal_snapshot::{
+    build_point_in_time_restore_archive, validate_materialized_journal_replay_base_is_empty,
+    validate_point_in_time_archive_for_journal_replay_import,
+};
 pub use journal_stream::{
     DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DurableJournalBootstrap, DurableJournalPage,
     MAX_DURABLE_JOURNAL_STREAM_LIMIT,
 };
 
 pub(crate) const DOCUMENTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("documents");
+pub(crate) const DOCUMENT_VERSIONS: TableDefinition<&[u8], &[u8]> =
+    TableDefinition::new("document_versions");
 pub(crate) const INDEXES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("indexes");
+pub(crate) const INDEX_VERSIONS: TableDefinition<&[u8], &[u8]> =
+    TableDefinition::new("index_versions");
 pub(crate) const TABLE_CATALOG: TableDefinition<&str, &str> = TableDefinition::new("table_catalog");
 pub(crate) const RESOURCE_PATH_BINDINGS: TableDefinition<&[u8], &[u8]> =
     TableDefinition::new("resource_path_bindings");

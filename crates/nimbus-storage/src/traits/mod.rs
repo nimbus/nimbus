@@ -17,6 +17,7 @@ use crate::async_storage::{
     EmbeddedPersistenceProvider, EmbeddedRedbProvider, EmbeddedSqliteProvider,
     OpenedEmbeddedRedbTenant, OpenedEmbeddedSqliteTenant, UsageStorage,
 };
+use crate::changefeed::{ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage};
 use crate::encryption::LocalKeyProvider;
 use crate::libsql::OpenedLibsqlReplicaTenant;
 use crate::mysql::OpenedMySqlTenant;
@@ -137,6 +138,18 @@ pub trait DurableJournal {
         limit: usize,
     ) -> Result<DurableJournalPage>;
     fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap>;
+
+    fn export_changefeed_bootstrap(&self) -> Result<ChangefeedBootstrap> {
+        ChangefeedBootstrap::from_durable_bootstrap(self.export_durable_journal_bootstrap()?)
+    }
+
+    fn stream_changefeed(&self, cursor: &ChangefeedCursor, limit: usize) -> Result<ChangefeedPage> {
+        cursor.rotate_handle(cursor.handle.clone())?;
+        let page = self
+            .stream_durable_journal(cursor.after, limit)
+            .map_err(crate::changefeed::map_changefeed_journal_error)?;
+        ChangefeedPage::from_durable_page(cursor.handle.clone(), page)
+    }
 }
 
 /// Scheduler inspection capability for stores that own scheduled work.

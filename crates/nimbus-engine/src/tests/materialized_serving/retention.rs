@@ -20,7 +20,7 @@ fn pinned_materialized_serving_snapshots_remain_stable_after_later_applies() {
 
     let query = Query {
         table: table.clone(),
-        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        filters: Vec::new(),
         order: Some(OrderBy {
             field: "body".to_string(),
             direction: OrderDirection::Asc,
@@ -91,6 +91,190 @@ fn pinned_materialized_serving_snapshots_remain_stable_after_later_applies() {
         pinned_bodies,
         vec!["Ada"],
         "a pinned serving snapshot should continue to reflect the exact frontier it captured"
+    );
+}
+
+#[test]
+fn pinned_serving_read_shape_handle_preserves_identity_and_documents_after_later_applies() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_serving_mvcc_shape");
+    let schema = serving_status_schema(&table);
+    service
+        .set_table_schema(&tenant_id, schema.clone())
+        .expect("schema should persist");
+    let table_id = service
+        .table_id(&tenant_id, &table)
+        .expect("table id lookup should succeed")
+        .expect("schema write should create table identity");
+
+    let ada_id = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Ada")),
+            ]),
+        )
+        .expect("seed insert should succeed");
+
+    let query = Query {
+        table: table.clone(),
+        filters: Vec::new(),
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    let warmed = service
+        .query_documents(&tenant_id, &query)
+        .expect("warming query should succeed");
+    assert_eq!(document_bodies(&warmed), vec!["Ada"]);
+
+    let before_insert = published_sequence(
+        &service,
+        &tenant_id,
+        &table,
+        "warmed table should expose a publication",
+    );
+    let read_shape = serving_read_shape(&table, &table_id, &schema, before_insert);
+    let serving_snapshot = service
+        .materialized_serving_snapshot_for_testing(&tenant_id, before_insert)
+        .expect("serving snapshot should load")
+        .expect("warmed table should expose a serving snapshot");
+    let pinned = serving_snapshot
+        .pin_read_shape(read_shape.clone())
+        .expect("serving snapshot should pin the read-shape bundle it covers");
+    assert_eq!(pinned.covered_sequence(), before_insert);
+    assert_eq!(pinned.table_id(), &table_id);
+    assert_eq!(pinned.read_shape(), &read_shape);
+    assert_eq!(pinned.read_shape().queryable_indexes()[0].name, "by_status");
+    assert_eq!(
+        pinned
+            .document(&ada_id)
+            .expect("pinned read shape should find Ada")
+            .get_field("body"),
+        Some(&json!("Ada"))
+    );
+
+    let beta_id = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Beta")),
+            ]),
+        )
+        .expect("second insert should succeed");
+    let after_insert = published_sequence(
+        &service,
+        &tenant_id,
+        &table,
+        "resident table should publish after the second insert",
+    );
+    let current = service
+        .materialized_serving_snapshot_for_testing(&tenant_id, after_insert)
+        .expect("current serving snapshot should load")
+        .expect("current snapshot should exist");
+    let current_documents = current
+        .table_documents(&table)
+        .expect("current snapshot should include the warmed table");
+    let mut current_bodies = document_bodies(&current_documents);
+    current_bodies.sort_unstable();
+    assert_eq!(current_bodies, vec!["Ada", "Beta"]);
+
+    assert!(
+        pinned.document(&beta_id).is_none(),
+        "pinned read-shape handle must not see later writes"
+    );
+    assert_eq!(
+        document_bodies(
+            &pinned
+                .table_documents()
+                .expect("pinned read shape should expose table docs"),
+        ),
+        vec!["Ada"]
+    );
+}
+
+#[test]
+fn pinned_serving_read_shape_handle_fails_closed_when_snapshot_does_not_cover_shape() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_serving_mvcc_shape_fail_closed");
+    let schema = serving_status_schema(&table);
+    service
+        .set_table_schema(&tenant_id, schema.clone())
+        .expect("schema should persist");
+    let table_id = service
+        .table_id(&tenant_id, &table)
+        .expect("table id lookup should succeed")
+        .expect("schema write should create table identity");
+
+    service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Ada")),
+            ]),
+        )
+        .expect("seed insert should succeed");
+
+    let query = Query {
+        table: table.clone(),
+        filters: Vec::new(),
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+    service
+        .query_documents(&tenant_id, &query)
+        .expect("warming query should succeed");
+    let before_insert = published_sequence(
+        &service,
+        &tenant_id,
+        &table,
+        "warmed table should expose a publication",
+    );
+    let snapshot = service
+        .materialized_serving_snapshot_for_testing(&tenant_id, before_insert)
+        .expect("serving snapshot should load")
+        .expect("warmed table should expose a serving snapshot");
+
+    service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Beta")),
+            ]),
+        )
+        .expect("second insert should succeed");
+    let after_insert = published_sequence(
+        &service,
+        &tenant_id,
+        &table,
+        "resident table should publish after the second insert",
+    );
+    let newer_shape = serving_read_shape(&table, &table_id, &schema, after_insert);
+    let error = match snapshot.pin_read_shape(newer_shape) {
+        Ok(_) => panic!("older serving snapshot must reject a newer read shape"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error.historical_read_kind(),
+        Some(nimbus_core::HistoricalReadErrorKind::SnapshotUnavailable)
     );
 }
 
@@ -531,4 +715,64 @@ fn pinned_serving_snapshot_extends_retention_until_release() {
         released_stats.pruned_snapshot_count >= 2,
         "older snapshots should prune once the pin is released"
     );
+}
+
+fn serving_status_schema(table: &TableName) -> TableSchema {
+    TableSchema {
+        table: table.clone(),
+        fields: vec![
+            FieldSchema {
+                name: "status".to_string(),
+                field_type: FieldType::String,
+                required: true,
+            },
+            FieldSchema {
+                name: "body".to_string(),
+                field_type: FieldType::String,
+                required: true,
+            },
+        ],
+        indexes: vec![IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
+            name: "by_status".to_string(),
+            fields: vec!["status".to_string()],
+        }],
+        access_policy: None,
+    }
+}
+
+fn serving_read_shape(
+    table: &TableName,
+    table_id: &nimbus_core::TableId,
+    schema: &TableSchema,
+    sequence: SequenceNumber,
+) -> nimbus_core::HistoricalReadShape {
+    let registry = nimbus_core::VersionedRegistry::from_records([
+        nimbus_core::TenantEventRecord::schema_change(
+            SequenceNumber(1),
+            Timestamp(100),
+            nimbus_core::SchemaChangeEvent::SetTable {
+                table: table.clone(),
+                table_id: table_id.clone(),
+                previous: None,
+                current: schema.clone(),
+            },
+        )
+        .expect("schema change event should build"),
+    ])
+    .expect("registry should build");
+    registry
+        .read_shape_at(table, serving_historical_snapshot(sequence))
+        .expect("read shape should load")
+        .expect("table should exist at historical read")
+}
+
+fn serving_historical_snapshot(sequence: SequenceNumber) -> nimbus_core::HistoricalReadSnapshot {
+    let timestamp = Timestamp(sequence.0.saturating_mul(100));
+    nimbus_core::HistoricalReadSnapshot::new(
+        nimbus_core::ReadTimestamp::new(timestamp),
+        nimbus_core::CommitSequence::new(sequence),
+        nimbus_core::CommitTimestamp::new(timestamp),
+    )
 }

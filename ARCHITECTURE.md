@@ -23,7 +23,7 @@ flowchart TD
         T2["Server · axum, WebSocket"]
         T3["Runtime · V8 (via deno_core)"]
         T4["Engine"]
-        T5["Storage · SQLite / redb, JSON / blobs"]
+        T5["Storage · SQLite / redb / Postgres / MySQL / libSQL"]
 
         T2 --- T3 & T4
         T3 & T4 --- T5
@@ -76,7 +76,7 @@ flowchart TD
         Engine & Storage --> Core
     end
 
-    Disk[("Embedded tenant persistence")]
+    Disk[("Tenant persistence")]
 
     Client <-->|HTTP / WS| Server
     Storage <-->|read / write| Disk
@@ -141,6 +141,15 @@ requests go to the runtime, which executes a V8 handler; async host operations
 inside that handler now await the engine and storage futures directly instead
 of bouncing through a Tokio `spawn_blocking(...)` adapter layer.
 
+Storage uses a latest-row plus version-history architecture. Current reads and
+subscriptions stay on applied materialized document/index rows for the common
+path, while historical reads, CDC/changefeed, PITR, retention diagnostics, and
+deterministic rebuild checks use versioned document rows, versioned index
+intervals, versioned table/schema/index/read-policy snapshots, and the
+authoritative tenant event journal. Unsupported or expired historical requests
+fail closed with typed `HistoricalReadErrorKind` variants rather than silently
+falling back to latest state.
+
 This leads to a deliberate two-tier logic model. V8 and `deno_core` remain a
 first-class execution surface for Convex compatibility, JavaScript portability,
 and the existing function-oriented developer model. At the same time, the
@@ -193,6 +202,14 @@ file links (links go stale; symbol search does not).
   `DurableMutationRecord`, `CommitEntry`, `WriteOp`. The durable journal
   records every mutation; `CommitEntry` is the applied compatibility view used
   by existing engine and transport surfaces.
+- `mvcc.rs` — MVCC sequence, timestamp, retention-window, historical snapshot,
+  historical cursor, and historical authorization vocabulary.
+- `versioned_registry.rs` — Event-derived table, schema, index, and
+  read-policy snapshots bundled as the `HistoricalReadShape` used by
+  historical document and index reads.
+- `document_history.rs` / `index_history.rs` — Pure oracles for document and
+  index version visibility, cursor identity, and fail-closed historical
+  behavior.
 - `query.rs` — `Query`, `Filter`, `FilterOp`, `OrderBy`. Also `PaginatedQuery`, `Cursor`, `Page` for cursor-based pagination.
 - `schema.rs` — `Schema`, `TableSchema`, `FieldSchema`, `FieldType`, `IndexDefinition`. Schema is optional per-table. Validation checks required fields and type matching.
 - `scheduled.rs` — `ScheduledJob`, `CronJob`, `CronSchedule`, `ScheduledJobResult`. Interval-based cron.
@@ -269,6 +286,17 @@ metering.
   and metadata-sequence ownership.
 - `store/read.rs` — `TenantReadSnapshot`, document reads, table scans,
   sequence and journal progress reads, and read-snapshot ownership.
+- `store/document_versions.rs` / `store/index_versions.rs` — redb
+  version-history storage for historical point reads and historical index
+  pages. SQL-family backends own matching modules under `sqlite/`, `postgres/`,
+  `mysql/`, and `libsql/`.
+- `changefeed.rs` — typed CDC/changefeed handles, cursors, bootstrap cuts, and
+  page conversion over the existing durable journal.
+- `retention.rs` — retention GC config, per-resource watermarks, active pins,
+  document anchor preservation, and closed index-interval pruning.
+- `diagnostics.rs` — storage capabilities, backend support state, adapter
+  support state, MVCC operator health, historical-query admission, retention
+  pressure, version count/range summaries, and backend-parity diagnostics.
 - `store/scan.rs` — conservative scan pushdown, scan metrics, and low-level
   MessagePack field probing for scan-time filtering.
 - `store/schema_rewrite.rs` — durable schema-aware index rewrite helpers used
@@ -1169,16 +1197,24 @@ At the architecture level, the key rules are:
 - `DurableMutationRecord` remains the authoritative per-tenant ordered history
 - document, index, scheduler, and commit-log effects still materialize
   atomically at the provider boundary
-- serving reads still come from applied materialized state rather than from a
-  journal-overlay path
-- bootstrap and replica catch-up remain snapshot-plus-stream over the same
-  durable-history contract
+- current serving reads still come from applied materialized state rather than
+  from a journal-overlay path
+- historical document/index reads use versioned rows plus a resolved
+  `HistoricalReadShape`; they do not infer table, schema, index, or policy
+  identity from latest state
+- CDC/changefeed bootstrap and PITR restore use snapshot-plus-stream over the
+  same durable-history contract
+- retention GC prunes only past safe watermarks and preserves required document
+  anchors and active consumer/session pins
+- storage-format and historical-query admission errors fail closed with typed
+  unsupported, expired, cursor-mismatch, policy, and format states
 - planner semantics stay backend-independent: exact-index path, range-index
   path, then fallback scan
 
-The backend layouts, durable-journal baseline, serving-snapshot direction,
-shadow-materializer posture, and persistence-specific design decisions now live
-in [docs/architecture/storage/persistence-engine-baseline.md](docs/architecture/storage/persistence-engine-baseline.md).
+The backend layouts, MVCC versioning contract, durable-journal baseline,
+serving-snapshot direction, shadow-materializer posture, diagnostics, and
+persistence-specific design decisions now live in
+[docs/architecture/storage/persistence-engine-baseline.md](docs/architecture/storage/persistence-engine-baseline.md).
 
 ---
 
@@ -1188,9 +1224,10 @@ Persistence-engine decisions that would otherwise dominate this document now
 live in
 [docs/architecture/storage/persistence-engine-baseline.md](docs/architecture/storage/persistence-engine-baseline.md).
 That reference owns the settled backend layouts, durable-journal baseline,
-bootstrap and replay contract, serving-snapshot direction, shadow-materializer
-posture, format guidance, and the persistence-specific non-decisions that keep
-the storage seam canonical.
+bootstrap and replay contract, MVCC versioning contract, CDC/PITR/retention
+posture, serving-snapshot direction, shadow-materializer posture, format
+guidance, and the persistence-specific non-decisions that keep the storage seam
+canonical.
 
 **Why keep V8 and still leave room for WASM?** The research guide is right
 that schema-generated APIs and WASM plugins are attractive for a database: WASM

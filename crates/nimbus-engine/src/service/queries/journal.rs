@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use nimbus_core::{DurableMutationRecord, Result, SequenceNumber, TenantId};
-use nimbus_storage::{DurableJournalBootstrap, DurableJournalPage};
+use nimbus_storage::{
+    ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage, DurableJournalBootstrap,
+    DurableJournalPage,
+};
 
 use crate::persistence::TenantPersistence;
 use crate::service::Service;
@@ -95,6 +98,47 @@ impl Service {
     ) -> Result<DurableJournalBootstrap> {
         self.execute_journal_read_async(tenant_id, move |store| {
             store.export_durable_journal_bootstrap()
+        })
+        .await
+    }
+
+    /// Exports a typed changefeed bootstrap with snapshot cut and resume cursor.
+    pub fn export_changefeed_bootstrap(&self, tenant_id: &TenantId) -> Result<ChangefeedBootstrap> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        runtime.store.export_changefeed_bootstrap()
+    }
+
+    /// Exports a typed changefeed bootstrap asynchronously.
+    pub async fn export_changefeed_bootstrap_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+    ) -> Result<ChangefeedBootstrap> {
+        self.execute_journal_read_async(tenant_id, move |store| store.export_changefeed_bootstrap())
+            .await
+    }
+
+    /// Streams typed changefeed events from a retained changefeed cursor.
+    pub fn stream_changefeed(
+        &self,
+        tenant_id: &TenantId,
+        cursor: &ChangefeedCursor,
+        limit: usize,
+    ) -> Result<ChangefeedPage> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        runtime.store.stream_changefeed(cursor, limit)
+    }
+
+    /// Streams typed changefeed events asynchronously from a retained cursor.
+    pub async fn stream_changefeed_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        cursor: ChangefeedCursor,
+        limit: usize,
+    ) -> Result<ChangefeedPage> {
+        self.execute_journal_read_async(tenant_id, move |store| {
+            store.stream_changefeed(&cursor, limit)
         })
         .await
     }

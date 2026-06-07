@@ -32,7 +32,8 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
         // Bad request shape / schema / value → ValidationException.
         CoreError::InvalidInput(_)
         | CoreError::SchemaValidation(_)
-        | CoreError::Serialization(_) => DynamoDbError::ValidationException(message),
+        | CoreError::Serialization(_)
+        | CoreError::HistoricalRead { .. } => DynamoDbError::ValidationException(message),
 
         // Authorization.
         CoreError::PermissionDenied(_) => DynamoDbError::AccessDeniedException(message),
@@ -59,7 +60,7 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
 mod tests {
     use super::*;
     use crate::wire::render_error;
-    use nimbus_core::StorageErrorKind;
+    use nimbus_core::{HistoricalReadErrorKind, StorageErrorKind};
 
     fn code(error: &DynamoDbError) -> &str {
         error.error_type()
@@ -81,6 +82,13 @@ mod tests {
         );
         assert_eq!(
             code(&map_core_error(CoreError::SchemaValidation("bad".into()))),
+            "ValidationException"
+        );
+        assert_eq!(
+            code(&map_core_error(CoreError::historical_read(
+                HistoricalReadErrorKind::UnsupportedAdapter,
+                "historical reads are not exposed through DynamoDB"
+            ))),
             "ValidationException"
         );
         assert_eq!(
