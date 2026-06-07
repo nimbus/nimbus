@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use nimbus_core::{
-    AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, AtomicWriteResult, Document,
-    DocumentLocator, PrincipalContext, TableName, TenantId, Timestamp, WriteKey, WriteSetMode,
+    AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, Document, DocumentLocator,
+    PrincipalContext, TableName, TenantId, WriteKey, WriteSetMode,
 };
 use nimbus_engine::Service;
 
@@ -17,28 +17,22 @@ mod update;
 use filter::{has_operator_keys, query_documents, resolve_field_path, translate_sort};
 use update::{build_operator_write, build_replacement_write};
 
-fn execute_or_buffer_writes(
+fn execute_or_stage_writes(
     body: &bson::Document,
     conn: &mut ConnectionState,
     service: &Arc<Service>,
     tenant_id: &TenantId,
     writes: Vec<AtomicWrite>,
 ) -> Result<AtomicWriteBatchOutcome, MongoError> {
-    if conn
-        .session_store
-        .buffer_writes_if_in_transaction(body, writes.clone())
-        .is_some()
-    {
-        return Ok(AtomicWriteBatchOutcome {
-            commit: None,
-            commit_time: Timestamp(0),
-            write_results: (0..writes.len())
-                .map(|_| AtomicWriteResult {
-                    update_time: None,
-                    transform_results: vec![],
-                })
-                .collect(),
-        });
+    if let Some(transaction_token) = conn.session_store.active_transaction_token(body) {
+        return service
+            .stage_atomic_write_batch_in_transaction(
+                tenant_id,
+                &transaction_token,
+                &PrincipalContext::system(),
+                AtomicWriteBatch { writes },
+            )
+            .map_err(MongoError::from);
     }
     let batch = AtomicWriteBatch { writes };
     let principal = PrincipalContext::system();
@@ -129,6 +123,7 @@ pub fn find(
 
     let empty_filter = bson::Document::new();
     let effective_filter = filter_doc.unwrap_or(&empty_filter);
+    let transaction_token = conn.session_store.active_transaction_token(body);
     let documents = query_documents(
         service,
         &tenant_id,
@@ -136,6 +131,7 @@ pub fn find(
         effective_filter,
         order,
         limit.map(|l| l + skip),
+        transaction_token.as_ref(),
     )?;
 
     let bson_docs: Vec<bson::Document> = documents
@@ -337,7 +333,16 @@ fn execute_single_update(
     }
 
     let limit = if multi { None } else { Some(1) };
-    let matched = query_documents(service, tenant_id, table, filter_doc, vec![], limit)?;
+    let transaction_token = conn.session_store.active_transaction_token(body);
+    let matched = query_documents(
+        service,
+        tenant_id,
+        table,
+        filter_doc,
+        vec![],
+        limit,
+        transaction_token.as_ref(),
+    )?;
 
     if matched.is_empty() {
         if upsert {
@@ -372,7 +377,7 @@ fn execute_single_update(
             build_operator_write(write_key, u_doc, Some(doc))?
         };
 
-        execute_or_buffer_writes(body, conn, service, tenant_id, vec![write])?;
+        execute_or_stage_writes(body, conn, service, tenant_id, vec![write])?;
         n_modified += 1;
     }
 
@@ -445,7 +450,7 @@ fn execute_upsert(
         transforms: vec![],
     };
 
-    execute_or_buffer_writes(body, conn, service, tenant_id, vec![write])?;
+    execute_or_stage_writes(body, conn, service, tenant_id, vec![write])?;
 
     Ok(UpdateResult {
         n: 1,
@@ -546,7 +551,16 @@ fn execute_single_delete(
     };
 
     let query_limit = if limit_val == 1 { Some(1) } else { None };
-    let matched = query_documents(service, tenant_id, table, filter_doc, vec![], query_limit)?;
+    let transaction_token = conn.session_store.active_transaction_token(body);
+    let matched = query_documents(
+        service,
+        tenant_id,
+        table,
+        filter_doc,
+        vec![],
+        query_limit,
+        transaction_token.as_ref(),
+    )?;
 
     if matched.is_empty() {
         return Ok(0);
@@ -568,7 +582,7 @@ fn execute_single_delete(
             missing_ok: true,
         };
 
-        execute_or_buffer_writes(body, conn, service, tenant_id, vec![write])?;
+        execute_or_stage_writes(body, conn, service, tenant_id, vec![write])?;
     }
 
     Ok(docs_to_delete.len() as i32)
@@ -604,7 +618,16 @@ pub fn find_and_modify(
 
     let empty_filter = bson::Document::new();
     let effective_filter = filter_doc.unwrap_or(&empty_filter);
-    let matched = query_documents(service, &tenant_id, &table, effective_filter, sort, Some(1))?;
+    let transaction_token = conn.session_store.active_transaction_token(body);
+    let matched = query_documents(
+        service,
+        &tenant_id,
+        &table,
+        effective_filter,
+        sort,
+        Some(1),
+        transaction_token.as_ref(),
+    )?;
 
     if remove {
         return find_and_remove(body, conn, service, &tenant_id, &table, &matched, fields);
@@ -650,7 +673,7 @@ pub fn find_and_modify(
         build_operator_write(write_key, u_doc, Some(doc))?
     };
 
-    execute_or_buffer_writes(body, conn, service, &tenant_id, vec![write])?;
+    execute_or_stage_writes(body, conn, service, &tenant_id, vec![write])?;
 
     let principal = PrincipalContext::system();
     let value = if return_new {
@@ -706,7 +729,7 @@ fn find_and_remove(
         missing_ok: true,
     };
 
-    execute_or_buffer_writes(body, conn, service, tenant_id, vec![write])?;
+    execute_or_stage_writes(body, conn, service, tenant_id, vec![write])?;
 
     Ok(bson::doc! {
         "value": old_bson,
@@ -774,7 +797,7 @@ fn find_and_upsert(
         transforms: vec![],
     };
 
-    execute_or_buffer_writes(body, conn, service, tenant_id, vec![write])?;
+    execute_or_stage_writes(body, conn, service, tenant_id, vec![write])?;
 
     let principal = PrincipalContext::system();
     let value = if return_new {
@@ -848,6 +871,7 @@ pub fn count(body: &bson::Document, service: &Arc<Service>) -> Result<bson::Docu
         effective_filter,
         vec![],
         query_limit,
+        None,
     )?;
 
     let mut n = documents.len();
@@ -888,7 +912,15 @@ pub fn distinct(
 
     let empty_filter = bson::Document::new();
     let effective_filter = filter_doc.unwrap_or(&empty_filter);
-    let documents = query_documents(service, &tenant_id, &table, effective_filter, vec![], None)?;
+    let documents = query_documents(
+        service,
+        &tenant_id,
+        &table,
+        effective_filter,
+        vec![],
+        None,
+        None,
+    )?;
 
     let mut seen_keys = std::collections::HashSet::<String>::new();
     let mut seen = Vec::<bson::Bson>::new();
@@ -1012,7 +1044,7 @@ fn insert_single_doc(
         transforms: vec![],
     };
 
-    execute_or_buffer_writes(body, conn, service, tenant_id, vec![write])?;
+    execute_or_stage_writes(body, conn, service, tenant_id, vec![write])?;
     Ok(())
 }
 

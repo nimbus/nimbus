@@ -1,11 +1,38 @@
 use std::sync::Arc;
 
-use nimbus_core::{Document, DurableMutationRecord, Error, Result, TableName, TenantId};
+use nimbus_core::{
+    Document, DurableMutationRecord, Error, HistoricalReadShape, Result, TableName, TenantId,
+};
 use nimbus_storage::{DurableJournalBootstrap, TenantStore};
 
+use crate::PinnedServingReadSnapshot;
 use crate::service::Service;
 
 impl Service {
+    pub fn pin_serving_read_shape(
+        &self,
+        tenant_id: &TenantId,
+        read_shape: HistoricalReadShape,
+    ) -> Result<PinnedServingReadSnapshot> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let required_sequence = read_shape.read_snapshot().sequence().sequence();
+        let table = read_shape.table().clone();
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let snapshot = if let Some(snapshot) =
+            runtime.materialized_serving_snapshot_for_table(&table, required_sequence)
+        {
+            snapshot
+        } else {
+            runtime.load_materialized_serving_snapshot_cancellable(
+                runtime.store(),
+                &table,
+                required_sequence,
+                &mut || Ok(()),
+            )?
+        };
+        snapshot.pin_read_shape(read_shape)
+    }
+
     pub(super) async fn read_durable_journal_suffix_to_sequence_async(
         self: &Arc<Self>,
         tenant_id: &TenantId,

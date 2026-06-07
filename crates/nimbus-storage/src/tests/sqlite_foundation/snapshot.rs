@@ -83,6 +83,92 @@ fn sqlite_materialized_snapshot_plus_journal_tail_rebuild_matches_live_state() {
 }
 
 #[test]
+fn sqlite_point_in_time_archive_restores_sequence_and_timestamp_targets() {
+    let live_dir = tempdir().expect("temporary directory should create");
+    let live = SqliteTenantStore::open(live_dir.path().join("live.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let table_schema = ranked_tasks_schema();
+    let table = table_schema.table.clone();
+    live.replace_table_schema(&table_schema)
+        .expect("table schema should persist");
+
+    let first = ranked_document(&table, "First", 1);
+    live.insert_with_indexes(&first, &table_schema.indexes)
+        .expect("first insert should succeed");
+    let second = ranked_document(&table, "Second", 3);
+    let second_commit = live
+        .insert_with_indexes(&second, &table_schema.indexes)
+        .expect("second insert should succeed");
+    live.update_with_indexes(
+        &table,
+        &first.id,
+        &serde_json::Map::from_iter([("rank".to_string(), json!(2))]),
+        &table_schema.indexes,
+    )
+    .expect("update should succeed");
+
+    let sequence_archive = live
+        .export_point_in_time_restore_archive(
+            crate::PointInTimeRestoreTarget::Sequence(second_commit.sequence),
+            crate::RetentionGcConfig::retain_all(),
+        )
+        .expect("sequence archive should export");
+    let timestamp_archive = live
+        .export_point_in_time_restore_archive(
+            crate::PointInTimeRestoreTarget::Timestamp(sequence_archive.target_timestamp),
+            crate::RetentionGcConfig::retain_all(),
+        )
+        .expect("timestamp archive should export");
+    assert_eq!(sequence_archive.target_sequence, second_commit.sequence);
+    assert_eq!(timestamp_archive.target_sequence, second_commit.sequence);
+    assert_eq!(
+        sequence_archive.target_fingerprint,
+        timestamp_archive.target_fingerprint
+    );
+
+    let restored_dir = tempdir().expect("temporary directory should create");
+    let restored = SqliteTenantStore::open(restored_dir.path().join("restored.sqlite3"))
+        .expect("restored sqlite tenant store should open");
+    let progress = restored
+        .import_point_in_time_restore_archive(&sequence_archive)
+        .expect("sequence point-in-time archive should import");
+    assert_eq!(progress.durable_head, second_commit.sequence);
+    assert_eq!(progress.applied_head, second_commit.sequence);
+    assert_eq!(
+        restored
+            .export_materialized_journal_snapshot()
+            .expect("restored snapshot should export")
+            .canonical_fingerprint()
+            .expect("restored fingerprint should compute"),
+        sequence_archive.target_fingerprint
+    );
+
+    let restored_documents = restored
+        .scan_table(&table)
+        .expect("restored scan should succeed");
+    assert_eq!(restored_documents.len(), 2);
+    let restored_first = restored_documents
+        .iter()
+        .find(|document| document.id == first.id)
+        .expect("first document should be present at target");
+    assert_eq!(restored_first.fields.get("rank"), Some(&json!(1)));
+    assert_eq!(
+        restored
+            .index_scan_eq(&table, "by_rank", &json!(2))
+            .expect("rank 2 scan should succeed")
+            .len(),
+        0
+    );
+    assert_eq!(
+        restored
+            .index_scan_eq(&table, "by_rank", &json!(3))
+            .expect("rank 3 scan should succeed")
+            .len(),
+        1
+    );
+}
+
+#[test]
 fn sqlite_materialized_snapshot_records_durable_boundary_and_rejects_incomplete_tail() {
     let dir = tempdir().expect("temporary directory should create");
     let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))

@@ -10,10 +10,12 @@ use mysql_async::{
 };
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, FieldType, Filter,
-    FilterOp, IndexDefinition, IndexLifecycleEvent, ResourcePathBinding, Result, ScheduledJob,
-    ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId,
-    TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord,
-    TenantId, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
+    FilterOp, HistoricalIndexCursor, HistoricalIndexQuery, HistoricalIndexScalar,
+    HistoricalIndexTuple, HistoricalReadShape, IndexDefinition, IndexLifecycleEvent,
+    ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
+    SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName, TableSchema,
+    TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor,
+    TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -29,11 +31,14 @@ use crate::runtime_bridge::bridge_tokio_runtime;
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{
     DurableJournalBootstrap, DurableJournalPage, JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT,
-    MaterializedJournalSnapshot, TenantWriteCommit,
+    MaterializedJournalSnapshot, PointInTimeRestoreArchive, PointInTimeRestoreTarget,
+    TenantWriteCommit,
 };
 use crate::{ResolvedScheduleOp, ResolvedWrite};
 
 mod backend;
+mod document_versions;
+mod index_versions;
 mod provider;
 mod read;
 mod resource_paths;

@@ -23,7 +23,7 @@ fn index_key(
 }
 
 /// Builds the encoded tuple payload for one document and index definition.
-fn encoded_index_key_for_document(
+pub(crate) fn encoded_index_tuple_for_document(
     document: &Document,
     index: &IndexDefinition,
 ) -> Result<Option<Vec<u8>>> {
@@ -43,12 +43,12 @@ pub(crate) fn index_key_for_document(
     index: &IndexDefinition,
     table_id: &TableId,
 ) -> Result<Option<Vec<u8>>> {
-    Ok(encoded_index_key_for_document(document, index)?
+    Ok(encoded_index_tuple_for_document(document, index)?
         .map(|encoded| index_key(table_id, &index.id, &encoded, &document.id)))
 }
 
 /// Builds the prefix for all entries of an index.
-pub(super) fn index_prefix(table_id: &TableId, index_id: &IndexId) -> Vec<u8> {
+pub(crate) fn index_prefix(table_id: &TableId, index_id: &IndexId) -> Vec<u8> {
     let mut prefix = table_index_prefix(table_id);
     prefix.extend_from_slice(index_id.as_str().as_bytes());
     prefix.push(0x00);
@@ -56,7 +56,7 @@ pub(super) fn index_prefix(table_id: &TableId, index_id: &IndexId) -> Vec<u8> {
 }
 
 /// Builds the prefix for a specific indexed value.
-pub(super) fn index_value_prefix(
+pub(crate) fn index_value_prefix(
     table_id: &TableId,
     index_id: &IndexId,
     encoded_value: &[u8],
@@ -82,7 +82,7 @@ pub(crate) fn table_index_prefix(table_id: &TableId) -> Vec<u8> {
     prefix
 }
 
-pub(super) fn encoded_value_from_index_key(key: &[u8], prefix_len: usize) -> &[u8] {
+pub(crate) fn encoded_value_from_index_key(key: &[u8], prefix_len: usize) -> &[u8] {
     &key[prefix_len..encoded_value_end(key)]
 }
 

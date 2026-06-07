@@ -3,6 +3,12 @@ use super::table_lifecycle::{
     mark_table_deleting_in_session, stage_hidden_table_identity_in_session,
 };
 use super::*;
+use crate::postgres::document_versions::{
+    record_document_versions_for_events_in_session, record_document_versions_for_writes_in_session,
+};
+use crate::postgres::index_versions::{
+    record_index_versions_for_events_in_session, record_index_versions_for_writes_in_session,
+};
 use crate::table_identity::{
     DEFAULT_TABLE_NAMESPACE, deleting_table_namespace, hidden_table_namespace,
 };
@@ -942,9 +948,39 @@ where
             let _ = begin_scheduled_execution_in_session(session, schema_name, Some(execution_id))
                 .await?;
         }
+        record_document_versions_for_writes_in_session(
+            session,
+            schema_name,
+            record.sequence,
+            record.timestamp,
+            &record.writes,
+        )
+        .await?;
+        record_index_versions_for_writes_in_session(
+            session,
+            schema_name,
+            record.sequence,
+            &record.writes,
+        )
+        .await?;
         return apply_document_writes_in_session(session, schema_name, &record.writes).await;
     }
 
+    record_document_versions_for_events_in_session(
+        session,
+        schema_name,
+        record.sequence,
+        record.timestamp,
+        &record.events,
+    )
+    .await?;
+    record_index_versions_for_events_in_session(
+        session,
+        schema_name,
+        record.sequence,
+        &record.events,
+    )
+    .await?;
     for event in &record.events {
         apply_tenant_event_in_session(session, schema_name, event).await?;
     }

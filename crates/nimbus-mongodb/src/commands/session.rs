@@ -1,10 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use nimbus_core::{
-    AtomicWrite, AtomicWriteBatch, PrincipalContext, TransactionSessionMode,
-    TransactionSessionToken,
-};
+use nimbus_core::{PrincipalContext, TransactionSessionMode, TransactionSessionToken};
 use nimbus_engine::Service;
 use nimbus_tenant::TenantIsolationContext;
 
@@ -94,16 +91,8 @@ pub fn commit_transaction(
         .clone()
         .unwrap_or_else(|| default_tenant_context("mongodb transaction commit"));
     let tenant_id = tenant_context.tenant_id().clone();
-    let buffered = std::mem::take(&mut session.buffered_writes);
-
-    let batch = if buffered.is_empty() {
-        None
-    } else {
-        Some(AtomicWriteBatch { writes: buffered })
-    };
-
     service
-        .commit_transaction_session(&tenant_id, &token, &PrincipalContext::system(), batch)
+        .commit_transaction_session(&tenant_id, &token, &PrincipalContext::system(), None)
         .map_err(|e| match e {
             nimbus_core::Error::Conflict(_) => MongoError::Command {
                 code: WRITE_CONFLICT.code,
@@ -137,7 +126,6 @@ pub fn abort_transaction(
         .take()
         .ok_or_else(no_such_transaction)?;
     session.transaction_started = false;
-    session.buffered_writes.clear();
     let tenant_context = session
         .tenant_context
         .clone()
@@ -218,7 +206,6 @@ pub struct SessionState {
     pub transaction_token: Option<TransactionSessionToken>,
     pub transaction_started: bool,
     pub tenant_context: Option<TenantIsolationContext>,
-    pub buffered_writes: Vec<AtomicWrite>,
 }
 
 impl SessionStore {
@@ -230,7 +217,6 @@ impl SessionStore {
                 transaction_token: None,
                 transaction_started: false,
                 tenant_context: None,
-                buffered_writes: Vec::new(),
             },
         );
         bson::doc! {
@@ -266,16 +252,14 @@ impl SessionStore {
         extract_session_uuid(lsid_doc)
     }
 
-    pub fn buffer_writes_if_in_transaction(
-        &mut self,
+    pub fn active_transaction_token(
+        &self,
         body: &bson::Document,
-        writes: Vec<AtomicWrite>,
-    ) -> Option<()> {
+    ) -> Option<TransactionSessionToken> {
         let lsid = Self::extract_lsid(body)?;
-        let session = self.sessions.get_mut(&lsid)?;
+        let session = self.sessions.get(&lsid)?;
         if session.transaction_started && session.transaction_token.is_some() {
-            session.buffered_writes.extend(writes);
-            Some(())
+            session.transaction_token.clone()
         } else {
             None
         }
@@ -604,7 +588,7 @@ mod tests {
     }
 
     #[test]
-    fn transaction_buffers_writes_and_flushes_on_commit() {
+    fn transaction_stages_writes_in_engine_session_and_flushes_on_commit() {
         use crate::commands::crud;
 
         let fixture = ServiceFixture::new(|path| Service::new(path));
@@ -638,9 +622,34 @@ mod tests {
         let result = crud::insert(&insert_body, &mut conn, &fixture.service()).unwrap();
         assert_eq!(result.get_i32("n").unwrap(), 1);
 
-        let uuid = extract_uuid_bytes(&lsid).to_vec();
-        let session = conn.session_store.get_session_mut(&uuid).unwrap();
-        assert_eq!(session.buffered_writes.len(), 1);
+        let transaction_find_body =
+            bson::doc! { "find": "txitems", "$db": "testdb", "lsid": lsid_field(&lsid) };
+        let transaction_found =
+            crud::find(&transaction_find_body, &mut conn, &fixture.service()).unwrap();
+        let transaction_batch = transaction_found
+            .get_document("cursor")
+            .unwrap()
+            .get_array("firstBatch")
+            .unwrap();
+        assert_eq!(
+            transaction_batch.len(),
+            2,
+            "transaction reads should include staged writes"
+        );
+
+        let outside_find_body = bson::doc! { "find": "txitems", "$db": "testdb" };
+        let outside_before_commit =
+            crud::find(&outside_find_body, &mut conn, &fixture.service()).unwrap();
+        let outside_before_batch = outside_before_commit
+            .get_document("cursor")
+            .unwrap()
+            .get_array("firstBatch")
+            .unwrap();
+        assert_eq!(
+            outside_before_batch.len(),
+            1,
+            "outside reads must not see uncommitted transaction writes"
+        );
 
         let commit_body = bson::doc! {
             "commitTransaction": 1,
@@ -649,18 +658,19 @@ mod tests {
         };
         commit_transaction(&commit_body, &mut conn, &fixture.service()).unwrap();
 
+        let uuid = extract_uuid_bytes(&lsid).to_vec();
         let session = conn.session_store.get_session_mut(&uuid).unwrap();
-        assert!(session.buffered_writes.is_empty());
+        assert!(!session.transaction_started);
+        assert!(session.transaction_token.is_none());
 
-        let find_body = bson::doc! { "find": "txitems", "$db": "testdb" };
-        let found = crud::find(&find_body, &mut conn, &fixture.service()).unwrap();
+        let found = crud::find(&outside_find_body, &mut conn, &fixture.service()).unwrap();
         let cursor = found.get_document("cursor").unwrap();
         let batch = cursor.get_array("firstBatch").unwrap();
         assert_eq!(batch.len(), 2);
     }
 
     #[test]
-    fn transaction_abort_discards_buffered_writes() {
+    fn transaction_abort_discards_engine_staged_writes() {
         use crate::commands::crud;
 
         let fixture = ServiceFixture::new(|path| Service::new(path));
@@ -693,9 +703,29 @@ mod tests {
         };
         crud::insert(&insert_body, &mut conn, &fixture.service()).unwrap();
 
-        let uuid = extract_uuid_bytes(&lsid).to_vec();
-        let session = conn.session_store.get_session_mut(&uuid).unwrap();
-        assert_eq!(session.buffered_writes.len(), 1);
+        let transaction_find_body =
+            bson::doc! { "find": "abortitems", "$db": "testdb", "lsid": lsid_field(&lsid) };
+        let transaction_found =
+            crud::find(&transaction_find_body, &mut conn, &fixture.service()).unwrap();
+        let transaction_batch = transaction_found
+            .get_document("cursor")
+            .unwrap()
+            .get_array("firstBatch")
+            .unwrap();
+        assert_eq!(transaction_batch.len(), 2);
+
+        let outside_find_body = bson::doc! { "find": "abortitems", "$db": "testdb" };
+        let outside_before_abort =
+            crud::find(&outside_find_body, &mut conn, &fixture.service()).unwrap();
+        assert_eq!(
+            outside_before_abort
+                .get_document("cursor")
+                .unwrap()
+                .get_array("firstBatch")
+                .unwrap()
+                .len(),
+            1
+        );
 
         let abort_body = bson::doc! {
             "abortTransaction": 1,
@@ -704,8 +734,21 @@ mod tests {
         };
         abort_transaction(&abort_body, &mut conn, &fixture.service()).unwrap();
 
+        let uuid = extract_uuid_bytes(&lsid).to_vec();
         let session = conn.session_store.get_session_mut(&uuid).unwrap();
-        assert!(session.buffered_writes.is_empty());
+        assert!(!session.transaction_started);
+        assert!(session.transaction_token.is_none());
+        let outside_after_abort =
+            crud::find(&outside_find_body, &mut conn, &fixture.service()).unwrap();
+        assert_eq!(
+            outside_after_abort
+                .get_document("cursor")
+                .unwrap()
+                .get_array("firstBatch")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

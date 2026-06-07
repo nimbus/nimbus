@@ -14,6 +14,7 @@ use nimbus_core::{CommitEntry, Result, SequenceNumber, TableName};
 use self::backend::MaterializedServingBackend;
 #[cfg(test)]
 pub(crate) use self::pause::MaterializedReadPublishPauseHandle;
+pub use self::snapshot::PinnedServingReadSnapshot;
 pub(crate) use self::snapshot::ServingSnapshot;
 use self::snapshot::ServingSnapshotManager;
 #[cfg(test)]

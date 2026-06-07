@@ -1,5 +1,11 @@
 use super::*;
 use crate::keys::{document_path_key, resource_locator_key};
+use crate::sqlite::document_versions::{
+    record_document_versions_for_events_in_conn, record_document_versions_for_writes_in_conn,
+};
+use crate::sqlite::index_versions::{
+    record_index_versions_for_events_in_conn, record_index_versions_for_writes_in_conn,
+};
 use crate::store::TRIGGER_DELIVERY_CURSOR_KEY;
 use crate::table_identity::{
     DEFAULT_TABLE_NAMESPACE, deleting_table_namespace, hidden_table_namespace,
@@ -169,6 +175,47 @@ impl SqliteTenantStore {
         self.recover_durable_journal()
     }
 
+    pub fn export_point_in_time_restore_archive(
+        &self,
+        target: PointInTimeRestoreTarget,
+        retention_config: RetentionGcConfig,
+    ) -> Result<PointInTimeRestoreArchive> {
+        let records = self.read_durable_journal_from(SequenceNumber(1))?;
+        let progress = self.journal_progress()?;
+        let watermarks = self.retention_gc_watermarks(retention_config)?;
+        crate::store::build_point_in_time_restore_archive(
+            target,
+            records,
+            progress.durable_head,
+            watermarks.document_versions.safe_prune_before,
+        )
+    }
+
+    pub fn import_point_in_time_restore_archive(
+        &self,
+        archive: &PointInTimeRestoreArchive,
+    ) -> Result<JournalProgress> {
+        archive.validate()?;
+        let progress = self.rebuild_materialized_journal_from_snapshot(
+            &archive.base_snapshot,
+            &archive.journal_tail,
+            Some(archive.target_sequence),
+        )?;
+        let restored_fingerprint = self
+            .export_materialized_journal_snapshot()?
+            .canonical_fingerprint()?;
+        if restored_fingerprint != archive.target_fingerprint {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Corruption,
+                format!(
+                    "point-in-time restore fingerprint mismatch: restored {} expected {}",
+                    restored_fingerprint, archive.target_fingerprint
+                ),
+            ));
+        }
+        Ok(progress)
+    }
+
     pub fn append_durable_records_batch(&self, records: &[DurableMutationRecord]) -> Result<()> {
         if records.is_empty() {
             return Ok(());
@@ -303,6 +350,13 @@ pub(super) fn append_tenant_event_record(
     events: Vec<TenantEventKind>,
 ) -> Result<TenantEventRecord> {
     let record = TenantEventRecord::from_events(sequence, timestamp, events)?;
+    record_document_versions_for_events_in_conn(
+        conn,
+        record.sequence,
+        record.timestamp,
+        &record.events,
+    )?;
+    record_index_versions_for_events_in_conn(conn, record.sequence, &record.events)?;
     let payload = serialize_durable_record(&record)?;
     conn.execute(
         "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
@@ -326,9 +380,23 @@ pub(super) fn apply_durable_record_in_conn(
         if let Some(execution_id) = record.scheduled_execution_id.as_deref() {
             let _ = begin_scheduled_execution_in_conn(conn, Some(execution_id))?;
         }
+        record_document_versions_for_writes_in_conn(
+            conn,
+            record.sequence,
+            record.timestamp,
+            &record.writes,
+        )?;
+        record_index_versions_for_writes_in_conn(conn, record.sequence, &record.writes)?;
         return apply_document_writes_in_conn(conn, &record.writes);
     }
 
+    record_document_versions_for_events_in_conn(
+        conn,
+        record.sequence,
+        record.timestamp,
+        &record.events,
+    )?;
+    record_index_versions_for_events_in_conn(conn, record.sequence, &record.events)?;
     for event in &record.events {
         apply_tenant_event_in_conn(conn, event)?;
     }

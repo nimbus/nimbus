@@ -4,9 +4,10 @@ use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use nimbus_core::{Document, DocumentId, SequenceNumber, TableName};
-#[cfg(test)]
-use nimbus_core::{Error, Result};
+use nimbus_core::{
+    Document, DocumentId, Error, HistoricalReadErrorKind, HistoricalReadShape, Result,
+    SequenceNumber, TableId, TableName,
+};
 use tokio::sync::Notify;
 
 use super::stats::ServingSnapshotManagerStats;
@@ -16,6 +17,12 @@ pub(super) type MaterializedTableDocuments = HashMap<DocumentId, Document>;
 #[derive(Clone)]
 pub(crate) struct ServingSnapshot {
     inner: Arc<ServingSnapshotInner>,
+}
+
+#[derive(Clone)]
+pub struct PinnedServingReadSnapshot {
+    snapshot: ServingSnapshot,
+    read_shape: HistoricalReadShape,
 }
 
 struct ServingSnapshotInner {
@@ -62,6 +69,38 @@ impl ServingSnapshot {
             .cloned()
     }
 
+    pub(crate) fn pin_read_shape(
+        &self,
+        read_shape: HistoricalReadShape,
+    ) -> Result<PinnedServingReadSnapshot> {
+        let required_sequence = read_shape.read_snapshot().sequence().sequence();
+        if self.covered_sequence().0 < required_sequence.0 {
+            return Err(Error::historical_read(
+                HistoricalReadErrorKind::SnapshotUnavailable,
+                format!(
+                    "serving snapshot covers sequence {}, below historical read sequence {} for table {}",
+                    self.covered_sequence().0,
+                    required_sequence.0,
+                    read_shape.table()
+                ),
+            ));
+        }
+        if !self.contains_table(read_shape.table()) {
+            return Err(Error::historical_read(
+                HistoricalReadErrorKind::SnapshotUnavailable,
+                format!(
+                    "serving snapshot covering sequence {} does not include table {}",
+                    self.covered_sequence().0,
+                    read_shape.table()
+                ),
+            ));
+        }
+        Ok(PinnedServingReadSnapshot {
+            snapshot: self.clone(),
+            read_shape,
+        })
+    }
+
     pub(super) fn from_tables(
         covered_sequence: SequenceNumber,
         tables: HashMap<TableName, Arc<MaterializedTableDocuments>>,
@@ -80,6 +119,28 @@ impl ServingSnapshot {
 
     fn pin_count(&self) -> usize {
         Arc::strong_count(&self.inner)
+    }
+}
+
+impl PinnedServingReadSnapshot {
+    pub fn covered_sequence(&self) -> SequenceNumber {
+        self.snapshot.covered_sequence()
+    }
+
+    pub fn read_shape(&self) -> &HistoricalReadShape {
+        &self.read_shape
+    }
+
+    pub fn table_id(&self) -> &TableId {
+        self.read_shape.table_id()
+    }
+
+    pub fn table_documents(&self) -> Option<Vec<Document>> {
+        self.snapshot.table_documents(self.read_shape.table())
+    }
+
+    pub fn document(&self, document_id: &DocumentId) -> Option<Document> {
+        self.snapshot.document(self.read_shape.table(), document_id)
     }
 }
 

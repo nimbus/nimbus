@@ -5,14 +5,98 @@ This directory prefers a small-number-of-plans model with clear ownership.
 ## Active execution plans
 
 - `docs/plans/storage-engine-quality-and-mvcc-plan.md`
-  - proposed follow-on plan after storage architecture trust hardening
-    completes. Targets the larger storage-engine quality features that would
-    move Nimbus closer to Convex/CockroachDB/TigerBeetle-class rigor without
-    copying distributed database machinery: MVCC document and index retention,
-    historical point/scan/index reads, versioned table/schema/index registry,
-    serving snapshot manager, retention compaction, PITR/export/import, CDC
-    cursors, deterministic parity checks, MVCC metamorphic tests, and
-    operator MVCC diagnostics. Activation is gated on the SATH verifier.
+  - proposed follow-on plan after the completed storage architecture
+    trust-hardening baseline. Targets larger storage-engine quality features
+    that would move Nimbus closer to Convex/CockroachDB/TigerBeetle-class rigor
+    without copying distributed database machinery: typed MVCC semantics,
+    versioned table/schema/index/read-policy registry snapshots before
+    historical index correctness, MVCC document and index retention,
+    historical point/scan/index/pagination reads, extension of the existing
+    `ServingSnapshotManager`, integration with existing transaction-session
+    conflict checks and pending-write overlays, retention compaction with
+    separate watermarks, PITR/export/import, CDC cursor and snapshot-to-log
+    handoff, deterministic parity checks, MVCC metamorphic tests, storage-format
+    gates, and operator MVCC diagnostics. SATH currently passes on `main`.
+    SEQ0 is complete in the dedicated `main`-based
+    `codex/storage-engine-quality-and-mvcc` worktree: it recorded
+    worktree/branch/base evidence, proof bundle, verifier, enterprise guarantee
+    charter, all-supported backend/adapter matrix, staged proof order, adapter
+    support matrix, performance budgets, focused embedded baseline, explicit
+    external-provider benchmark gaps, and starting decisions for historical
+    authorization, cursor identity, format behavior, retention watermarks, and
+    CDC handoff. SEQ1 is complete: `nimbus-core` now has typed MVCC
+    timestamp/sequence/retention/cursor/policy semantics, typed historical-read
+    errors, and focused core tests. SEQ2 is complete: `nimbus-core` now has an
+    event-derived `VersionedRegistry` and `HistoricalReadShape` oracle for
+    table/schema/index/read-policy snapshots. SEQ3 is complete: the core
+    `DocumentVersionHistory` oracle plus redb/SQLite/Postgres/MySQL/libSQL
+    physical document-version rows now cover direct writes, durable recovery,
+    durable format gates, and diagnostic version count/range reporting. Live
+    explicit Postgres fixture coverage caught and verified a generated-DDL
+    tokenization fix, and Docker-backed live `document_versions` provider
+    coverage passed across MySQL and libSQL without fixture skip paths. SEQ4 is
+    complete: the core `HistoricalIndexHistory` oracle is in place, and
+    redb/SQLite/Postgres/MySQL/libSQL have physical `index_versions` rows with
+    same-transaction direct/replay recording; embedded stores also have
+    fail-closed format markers. redb, SQLite, Postgres, MySQL, and libSQL route
+    historical equality, range, composite prefix-range, and cursor-bound pages
+    through physical `index_versions` plus `document_versions` using the SEQ2
+    `HistoricalReadShape`; libSQL uses the freshness barrier and refreshed
+    SQLite replica cache. Docker-backed live `index_versions` and
+    `historical_index` provider coverage passed across MySQL and libSQL without
+    fixture skip paths, and that live gate found and fixed a libSQL
+    table-identity diagnostic freshness bug. SEQ5 is complete: the existing
+    `ServingSnapshotManager` now has
+    a `PinnedServingReadSnapshot` boundary that carries the SEQ2
+    `HistoricalReadShape`, preserves stable table/index/read-snapshot identity,
+    keeps pinned serving documents immutable across later writes, and fails
+    closed with `SnapshotUnavailable` when a serving snapshot does not cover the
+    requested shape. SEQ6 is complete: transaction sessions can stage pending
+    writes in the engine-owned execution unit, transaction reads observe that
+    overlay through the active token, outside readers do not see uncommitted
+    writes, commits still use existing OCC/dependency checks, MongoDB no longer
+    buffers transaction writes outside the engine, and DynamoDB/Firebase error
+    mappers cover the SEQ historical-read error taxonomy.
+    SEQ7 is complete: retention GC now has typed config, separate resource
+    watermarks, active pin diagnostics, exact prune summaries, safe
+    document-version anchor preservation, and closed index interval pruning
+    across redb, SQLite, Postgres, MySQL, and libSQL. Embedded retention-GC
+    tests passed, broader fixture-disabled document/index version lanes passed,
+    and `cargo check -p nimbus-storage` passed. SEQ8 is complete: the storage
+    layer now has `PointInTimeRestoreArchive`/`PointInTimeRestoreTarget`,
+    sequence and timestamp restore targets, retention-expired rejection,
+    storage-format validation, canonical restored-snapshot fingerprints,
+    embedded redb/SQLite import/export tests, and production PITR APIs for
+    Postgres, MySQL, and libSQL that restore through durable journal replay.
+    SEQ9 is complete: typed `ChangefeedHandle`,
+    `ChangefeedCursor`, `ChangefeedBootstrap`, `ChangefeedPage`, and
+    `ChangefeedEvent` wrap the existing durable tenant journal with explicit
+    snapshot cuts, no-miss/no-duplicate handoff, handle rotation validation,
+    retention-expired mapping, all-provider storage APIs, and engine service
+    wrappers. SEQ10 is complete: `GeneratedTaskHistory::datadriven(...)` adds a
+    line-numbered history DSL, and generated MVCC conformance now checks latest
+    prefixes, PITR-restored historical prefixes, and CDC document-write
+    sequences against the pure generated model in the required embedded lane.
+    SEQ11 is complete: deterministic redb/SQLite parity now replays the same
+    generated history with a shared manual clock, stable table identity, and
+    shared document ids, then compares latest canonical snapshot fingerprints,
+    midpoint/final PITR fingerprints, restored replay fingerprints, and CDC
+    document-write sequence cuts. The gate found and fixed redb's stale
+    `update_time` direct-update divergence by aligning redb updates with the
+    SQL-family transaction-clock behavior.
+    SEQ12 is complete: `StorageHealthDiagnostic` now includes index-version
+    counts, MVCC operator state, historical-query admission, retention pressure,
+    backend feature support, adapter support matrices, and backend-parity
+    comparison. Every backend exposes index-version diagnostics and
+    `storage_health_diagnostic_with_retention_config(...)` for operator
+    retention-window inspection. Focused tests cover healthy, lagging,
+    compacting, expired, unsupported, format-mismatch, backend-divergence, and
+    policy-gated states. SEQ13 is complete: the existing provider benchmark
+    reports remain the broad performance baseline, and a focused redb smoke
+    budget now guards latest point reads, historical point reads, historical
+    index pagination, CDC streaming, PITR export/import, retention compaction,
+    and bounded document/index version write amplification.
+    SEQ14 closes with final architecture docs, pushed branch, and PR.
 - `docs/plans/node-default-runtime-support-hardening-plan.md`
   - active Node runtime default-quality plan (NDS0..NDS10). Starts from
     the completed NFRC baseline where Node24 is the product default,

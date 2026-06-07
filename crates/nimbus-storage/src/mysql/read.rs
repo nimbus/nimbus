@@ -386,6 +386,10 @@ impl MySqlTenantStore {
         self.read_snapshot()?.export_durable_journal_bootstrap()
     }
 
+    pub fn export_materialized_journal_snapshot(&self) -> Result<MaterializedJournalSnapshot> {
+        self.read_snapshot()?.export_materialized_journal_snapshot()
+    }
+
     pub fn scheduled_execution_exists(&self, execution_id: &str) -> Result<bool> {
         let provider = self.provider.clone();
         let database_name = self.database_name.clone();

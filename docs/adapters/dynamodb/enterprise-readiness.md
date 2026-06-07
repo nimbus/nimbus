@@ -48,6 +48,12 @@ through an official SDK due to protocol drift.
 - **Soak:** a 2620-operation mixed workload (reads/writes/conditional
   writes/queries/metadata/auth failures) ran with **0 panics, 0 task leaks, 0
   unhandled 5xx** (`soak.md`).
+- **Shared storage guarantees:** DynamoDB single-item, batch, transaction, TTL,
+  and stream-visible writes lower through the same Nimbus engine/storage path
+  as native and Firebase requests. A committed write updates latest document
+  rows, index effects, MVCC version rows, and the tenant event journal
+  atomically; stream records are derived from that shared durable history rather
+  than an adapter-local log.
 
 ## Tenant & auth isolation
 

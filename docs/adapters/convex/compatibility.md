@@ -26,6 +26,22 @@ first-party native JS surface under `packages/nimbus`; native apps may use a
 - starting Nimbus with `--app-dir` enables the Convex HTTP, WebSocket,
   scheduler, and runtime diagnostics routes
 
+## Storage Semantics Inherited By Convex
+
+Convex-compatible `ctx.db` reads, writes, scheduled mutations, live queries,
+and trigger-visible changes all flow through the same Nimbus engine and storage
+path as the native API. The public Convex-compatible surface remains a
+current-state API, but the underlying storage engine now records versioned
+document rows, versioned index intervals, versioned table/schema/index
+read-shape identity, typed retention state, PITR archives, and CDC/changefeed
+cuts behind that surface.
+
+That means Convex-compatible execution inherits the storage guarantees rather
+than bypassing them: document writes, index effects, version rows, and tenant
+journal events commit atomically; current reads stay on the latest-row fast
+path; historical or retention-sensitive internal operations fail closed with
+typed storage errors instead of silently reading latest state.
+
 ## Codegen Security Boundary
 
 Codegen-time schema, server-definition, and resolver planning are handled by a

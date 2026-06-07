@@ -11,10 +11,12 @@ use deadpool_postgres::{
 };
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, FieldType, Filter,
-    FilterOp, IndexDefinition, IndexLifecycleEvent, ResourcePathBinding, Result, ScheduledJob,
-    ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId,
-    TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord,
-    TenantId, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
+    FilterOp, HistoricalIndexCursor, HistoricalIndexQuery, HistoricalIndexScalar,
+    HistoricalIndexTuple, HistoricalReadShape, IndexDefinition, IndexLifecycleEvent,
+    ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
+    SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName, TableSchema,
+    TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor,
+    TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -35,11 +37,14 @@ use crate::runtime_bridge::bridge_tokio_runtime;
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{
     DurableJournalBootstrap, DurableJournalPage, JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT,
-    MaterializedJournalSnapshot, ResolvedScheduleOp, ResolvedWrite, TenantWriteCommit,
+    MaterializedJournalSnapshot, PointInTimeRestoreArchive, PointInTimeRestoreTarget,
+    ResolvedScheduleOp, ResolvedWrite, TenantWriteCommit,
 };
 
 mod backend;
 mod config;
+mod document_versions;
+mod index_versions;
 mod notifications;
 mod provider;
 mod read;

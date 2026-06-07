@@ -6,9 +6,9 @@ use crate::keys::prefix_end;
 use super::encoding::{encode_index_tuple, encode_index_value};
 use super::keyspace::index_value_prefix;
 
-pub(super) type CompositeRangeScanBounds = (Vec<u8>, Vec<u8>, Option<Vec<u8>>);
+pub(crate) type CompositeRangeScanBounds = (Vec<u8>, Vec<u8>, Option<Vec<u8>>);
 
-pub(super) fn composite_range_scan_bounds(
+pub(crate) fn composite_range_scan_bounds(
     table_id: &TableId,
     index_id: &IndexId,
     exact_prefix: &[Value],

@@ -44,7 +44,7 @@ pub(super) fn rewrite_document_indexes_in_write_txn(
     Ok(())
 }
 
-fn load_table_schema_in_write_txn(
+pub(super) fn load_table_schema_in_write_txn(
     write_txn: &redb::WriteTransaction,
     table: &TableName,
 ) -> Result<Option<TableSchema>> {

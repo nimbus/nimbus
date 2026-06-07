@@ -3,6 +3,12 @@ use super::table_lifecycle::{
     mark_table_deleting_in_session, stage_hidden_table_identity_in_session,
 };
 use super::*;
+use crate::mysql::document_versions::{
+    record_document_versions_for_events_in_session, record_document_versions_for_writes_in_session,
+};
+use crate::mysql::index_versions::{
+    record_index_versions_for_events_in_session, record_index_versions_for_writes_in_session,
+};
 use crate::table_identity::{
     DEFAULT_TABLE_NAMESPACE, deleting_table_namespace, hidden_table_namespace,
 };
@@ -98,6 +104,51 @@ pub(super) fn tenant_init_statements(database_name: &str) -> Vec<String> {
             ) ENGINE=InnoDB",
             qualified_table(database_name, "documents"),
             qualified_table(database_name, "table_catalog")
+        ),
+        format!(
+            "CREATE TABLE IF NOT EXISTS {} (\
+                table_id VARCHAR(191) NOT NULL,\
+                id VARCHAR(191) NOT NULL,\
+                commit_sequence BIGINT UNSIGNED NOT NULL,\
+                commit_time BIGINT UNSIGNED NOT NULL,\
+                tombstone BOOLEAN NOT NULL,\
+                data_json LONGTEXT NULL,\
+                typed_fields_json LONGTEXT NULL,\
+                creation_time BIGINT UNSIGNED NULL,\
+                update_time BIGINT UNSIGNED NULL,\
+                PRIMARY KEY (table_id, id, commit_sequence),\
+                CHECK (\
+                    (\
+                        tombstone = TRUE \
+                        AND data_json IS NULL \
+                        AND typed_fields_json IS NULL \
+                        AND creation_time IS NULL \
+                        AND update_time IS NULL \
+                    )\
+                    OR (\
+                        tombstone = FALSE \
+                        AND data_json IS NOT NULL \
+                        AND typed_fields_json IS NOT NULL \
+                        AND creation_time IS NOT NULL \
+                        AND update_time IS NOT NULL \
+                    )\
+                )\
+            ) ENGINE=InnoDB",
+            qualified_table(database_name, "document_versions")
+        ),
+        format!(
+            "CREATE TABLE IF NOT EXISTS {} (\
+                table_id VARCHAR(191) NOT NULL,\
+                index_id VARCHAR(191) NOT NULL,\
+                encoded_tuple_hash BINARY(32) NOT NULL,\
+                encoded_tuple LONGBLOB NOT NULL,\
+                document_id VARCHAR(191) NOT NULL,\
+                visible_from BIGINT UNSIGNED NOT NULL,\
+                visible_until BIGINT UNSIGNED NULL,\
+                PRIMARY KEY (table_id, index_id, encoded_tuple_hash, document_id, visible_from),\
+                KEY idx_index_versions_visibility (table_id, index_id, encoded_tuple_hash, document_id, visible_from)\
+            ) ENGINE=InnoDB",
+            qualified_table(database_name, "index_versions")
         ),
         format!(
             "CREATE TABLE IF NOT EXISTS {} (\
@@ -1069,9 +1120,39 @@ where
         {
             return Ok(());
         }
+        record_document_versions_for_writes_in_session(
+            session,
+            database_name,
+            record.sequence,
+            record.timestamp,
+            &record.writes,
+        )
+        .await?;
+        record_index_versions_for_writes_in_session(
+            session,
+            database_name,
+            record.sequence,
+            &record.writes,
+        )
+        .await?;
         return apply_document_writes_in_session(session, database_name, &record.writes).await;
     }
 
+    record_document_versions_for_events_in_session(
+        session,
+        database_name,
+        record.sequence,
+        record.timestamp,
+        &record.events,
+    )
+    .await?;
+    record_index_versions_for_events_in_session(
+        session,
+        database_name,
+        record.sequence,
+        &record.events,
+    )
+    .await?;
     for event in &record.events {
         apply_tenant_event_in_session(session, database_name, event).await?;
     }
@@ -1853,4 +1934,19 @@ pub(super) fn mysql_generated_column_expr(field: &str) -> String {
         "JSON_UNQUOTE(JSON_EXTRACT(data_json, '$.\"{}\"'))",
         field.replace('\\', "\\\\").replace('"', "\\\"")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tenant_init_statements_keep_document_version_boolean_predicates_tokenized() {
+        let sql = tenant_init_statements("tenant_test_database").join(";");
+
+        assert!(sql.contains("tombstone = TRUE AND data_json IS NULL"));
+        assert!(sql.contains("tombstone = FALSE AND data_json IS NOT NULL"));
+        assert!(!sql.contains("TRUEAND"));
+        assert!(!sql.contains("FALSEAND"));
+    }
 }

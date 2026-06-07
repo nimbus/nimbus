@@ -65,6 +65,19 @@ adoption path, see
 | No-op update suppression | `supported` | No-op overwrites do not emit `onDocumentUpdated()` events. |
 | Named databases | `deferred` | Current coverage is only for Firestore `(default)`. |
 
+## Storage Semantics Inherited By Cloud Functions
+
+Firestore trigger delivery is backed by the same tenant event journal used by
+storage recovery, CDC/changefeed, and PITR. Trigger-visible document changes are
+not emitted from an adapter-local buffer: the document row, index effects,
+version rows, durable journal event, and trigger delivery state share the
+engine-owned commit/replay path.
+
+Current trigger handlers observe current-state Firestore events. Historical
+storage state is operator-facing today through backend diagnostics, PITR, and
+CDC/changefeed; unsupported, expired, or format-mismatched history fails closed
+before it is projected into trigger execution.
+
 ## Covered `firebase-admin` Matrix
 
 The first covered admin slice is intentionally narrow and source-compatible.

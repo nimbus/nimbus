@@ -1,7 +1,7 @@
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use nimbus_core::{Error, StorageErrorKind};
+use nimbus_core::{Error, HistoricalReadErrorKind, StorageErrorKind};
 use serde::Serialize;
 use serde_json::{Value, json};
 use time::OffsetDateTime;
@@ -362,6 +362,21 @@ impl PublicError {
                     None,
                 ),
             },
+            Error::HistoricalRead { kind, .. } => Self::new(
+                "op.historical_read",
+                error.to_string(),
+                ErrorSeverity::Error,
+                matches!(
+                    *kind,
+                    HistoricalReadErrorKind::UnsupportedBackend
+                        | HistoricalReadErrorKind::UnsupportedAdapter
+                ),
+                json!({ "historicalReadKind": kind.as_str() }),
+                Some(ErrorRemediation::new(
+                    "fix_request",
+                    "Use a supported historical read target and retry within the retained history window.",
+                )),
+            ),
             Error::Serialization(_) => Self::new(
                 "service.serialization",
                 error.to_string(),
@@ -503,6 +518,17 @@ impl StructuredHttpError {
                     Error::InvalidInput(_) => StatusCode::BAD_REQUEST,
                     Error::SchemaValidation(_) => StatusCode::UNPROCESSABLE_ENTITY,
                     Error::AlreadyExists(_) => StatusCode::CONFLICT,
+                    Error::HistoricalRead { kind, .. } => match kind {
+                        HistoricalReadErrorKind::UnsupportedBackend
+                        | HistoricalReadErrorKind::UnsupportedAdapter => {
+                            StatusCode::NOT_IMPLEMENTED
+                        }
+                        HistoricalReadErrorKind::PolicySnapshotMissing => StatusCode::FORBIDDEN,
+                        HistoricalReadErrorKind::CursorMismatch
+                        | HistoricalReadErrorKind::FormatMismatch
+                        | HistoricalReadErrorKind::RetentionExpired
+                        | HistoricalReadErrorKind::TimestampOutOfRange => StatusCode::BAD_REQUEST,
+                    },
                     Error::Transport(_) => StatusCode::SERVICE_UNAVAILABLE,
                     Error::Storage { kind, .. } => match kind {
                         StorageErrorKind::Busy
