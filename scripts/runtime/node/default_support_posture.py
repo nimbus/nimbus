@@ -344,6 +344,7 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         # multi-tenant isolate, so greening this fixture by remapping the
         # capability denial would weaken the host fs boundary.
         'test/parallel/test-fs-open.js',
+        'test/parallel/test-fs-stream-construct-compat-error-read.js',
     }),
     ('diagnostic_only_non_isolate', 'host_filesystem_ownership_boundary', 'diagnostic_stub'): frozenset({
         # NDS3 cycle 13 (2026-06-08): source-confirmed. After in-isolate
