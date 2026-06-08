@@ -4462,6 +4462,19 @@ const FS_HOST_IO_PROMOTED_NODE22_ONLY_PATHS: &[&str] = &[
 const FS_HOST_IO_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
     "test/parallel/test-fastutf8stream-sync.js",
     "test/parallel/test-fs-glob-throw.mjs",
+    // fs.mkdtempDisposableSync / fs.promises.mkdtempDisposable are Node 24+
+    // disposable temp-dir APIs (no node22 variant exists). Each returns an
+    // object with .path, .remove(), and Symbol.dispose/Symbol.asyncDispose that
+    // captures the directory at creation so a later process.chdir() does not
+    // break removal. The disposable wrappers shipped earlier, but the
+    // underlying mkdtemp/mkdtempSync resolved a relative prefix against the
+    // sandbox base rather than the per-isolate virtual process.cwd(), so the
+    // chdirDoesNotAffectRemoval sub-test failed. Greened by nimbus/deno
+    // v2.8.2-nimbus.16, which resolves a relative prefix against process.cwd()
+    // before the op and relativizes the return for Node's relative-in/
+    // relative-out contract.
+    "test/parallel/test-fs-mkdtempDisposableSync.js",
+    "test/parallel/test-fs-promises-mkdtempDisposable.js",
     // The node24 variants of these position-validation fixtures add an
     // empty-buffer + zero-length + invalid-position block (absent from the
     // node22 variants promoted in the node22-only group above), which requires
