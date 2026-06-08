@@ -345,6 +345,14 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         # capability denial would weaken the host fs boundary.
         'test/parallel/test-fs-open.js',
     }),
+    ('diagnostic_only_non_isolate', 'host_filesystem_ownership_boundary', 'diagnostic_stub'): frozenset({
+        # NDS3 cycle 13 (2026-06-08): source-confirmed. After in-isolate
+        # lchown argument validation, the non-Windows block reads host uid/gid
+        # via process.geteuid()/getegid() and calls fs.lchown* against a real
+        # file. The default multi-tenant isolate must not expose host uid/gid
+        # sys access or symlink/file ownership mutation.
+        'test/parallel/test-fs-lchown.js',
+    }),
     ('test_harness_only', 'exact_node_cli_or_tooling_topology', 'test_harness_emulation'): frozenset({
         'test/es-module/test-cjs-esm-warn.js',
         'test/es-module/test-esm-assertionless-json-import.js',
@@ -628,6 +636,7 @@ WAVE2_REASON_TEXT = {
     'host_owned_non_isolate_harness': 'fixture depends on a host-owned diagnostic surface (inspector debugging port or NODE_DEBUG child timing) and must fail closed unless a host-capable backend is selected',
     'host_owned_permission_policy': 'fixture is gated behind the host --permission model (--allow-fs-*/--allow-child-process) and asserts permission-model side effects the V8 isolate does not own',
     'absolute_host_path_policy_boundary': 'fixture asserts raw Node ENOENT behavior for an absolute host-root path outside the generated bundle root; Nimbus must fail closed before raw host open instead of allowing unbounded host fs path probes',
+    'host_filesystem_ownership_boundary': 'fixture reads host uid/gid metadata and mutates filesystem ownership; the default multi-tenant isolate must fail closed rather than exposing sys identity or chown/lchown host mutation',
     'official_harness_or_support_file': 'fixture exercises upstream Node harness or documentation-consistency topology rather than the Application runtime support contract',
     'pending_deprecation_flag_gated_warning_emission': 'fixture is gated by --pending-deprecation and asserts emission of a pending (DEPxxxx) deprecation warning that Node does not emit by default; the multi-tenant isolate does not expose the opt-in flag, so the warning is intentionally never emitted and the assertion cannot run as default Application API behavior',
     'upstream_or_platform_boundary': "fixture is gated by V8 native-syntax intrinsics, host-platform skips, host-specific filesystem/watch backends, or Node's exact native build/dependency composition, so it cannot run as public Application API behavior inside the Nimbus V8 isolate",
