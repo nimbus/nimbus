@@ -78,16 +78,29 @@ export {};
     let write_denied = result["writeDenied"]
         .as_str()
         .expect("write denial should be a string");
+    // node:fs surfaces a sandbox write denial as the Node-correct `EACCES`
+    // errno (deno_node maps Deno's `NotCapable` permission error to EACCES so
+    // fs consumers see libuv-style codes). Older Deno-native phrasing is kept
+    // as an accepted alternative in case a denial is reported by the Nimbus
+    // capability layer instead.
     assert!(
-        write_denied.contains("runtime write capability denied")
+        write_denied.contains("EACCES")
+            || write_denied.contains("runtime write capability denied")
             || write_denied.contains("Requires write access"),
         "unexpected write denial: {write_denied}"
+    );
+    // The hard security property: the escape write must never materialize a
+    // file outside the write root, regardless of how the denial is phrased.
+    assert!(
+        !tempdir.path().join("app/.nimbus/escape.txt").exists(),
+        "escape write must not create a file outside the write root"
     );
     let metadata_denied = result["metadataDenied"]
         .as_str()
         .expect("metadata denial should be a string");
     assert!(
-        metadata_denied.contains("runtime read capability denied")
+        metadata_denied.contains("EACCES")
+            || metadata_denied.contains("runtime read capability denied")
             || metadata_denied.contains("Requires read access"),
         "unexpected metadata denial: {metadata_denied}"
     );
