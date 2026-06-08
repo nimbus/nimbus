@@ -89,5 +89,6 @@ pub(super) fn supports_extension_backed_node_builtin(
             | "node:child_process"
             | "node:crypto"
             | "node:worker_threads"
+            | "node:zlib"
     )
 }

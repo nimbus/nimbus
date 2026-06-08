@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
@@ -69,7 +70,6 @@ impl RestrictedModuleLoader {
                         conditions,
                     )
                     .map(|specifier| specifier.to_string())
-                    .map_err(|error| JsErrorBox::generic(error.to_string()))
             }));
         }
         loader
@@ -347,25 +347,31 @@ impl ModuleLoader for RestrictedModuleLoader {
         if let Some(registry) = &self.loader_hook_registry
             && registry.load_active.get()
             && !options.is_synchronous
-            && !self.is_commonjs_module(module_specifier)
         {
             let receiver = registry.push_load(module_specifier.to_string());
             let loader = self.clone();
             let module_specifier = module_specifier.clone();
             return ModuleLoadResponse::Async(Box::pin(async move {
                 match receiver.await {
-                    Ok(Ok((Some(source), format))) => Ok(ModuleSource::new(
-                        module_type_from_hook_format(format.as_deref()),
-                        ModuleSourceCode::String(source.into()),
-                        &module_specifier,
-                        None,
-                    )),
-                    Ok(Ok((None, Some(format))))
+                    Ok(Ok((_, Some(format))))
                         if format == "builtin" && module_specifier.scheme() == "node" =>
                     {
                         Ok(ModuleSource::new(
                             ModuleType::JavaScript,
                             ModuleSourceCode::String(String::new().into()),
+                            &module_specifier,
+                            None,
+                        ))
+                    }
+                    Ok(Ok((Some(source), format))) => {
+                        let source = if format.as_deref() == Some("commonjs") {
+                            wrap_hook_commonjs_source(&module_specifier, &source)?
+                        } else {
+                            source
+                        };
+                        Ok(ModuleSource::new(
+                            module_type_from_hook_format(format.as_deref()),
+                            ModuleSourceCode::String(source.into()),
                             &module_specifier,
                             None,
                         ))
@@ -416,6 +422,154 @@ fn module_type_from_hook_format(format: Option<&str>) -> ModuleType {
         Some("module") | Some("commonjs") | None => ModuleType::JavaScript,
         Some(other) => ModuleType::Other(Cow::Owned(other.to_string())),
     }
+}
+
+fn wrap_hook_commonjs_source(
+    module_specifier: &ModuleSpecifier,
+    source: &str,
+) -> Result<String, JsErrorBox> {
+    let file_path = module_specifier.to_file_path().ok();
+    let filename = file_path
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| module_specifier.to_string());
+    let dirname = file_path
+        .as_deref()
+        .and_then(Path::parent)
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let filename_literal = js_string_literal(&filename)?;
+    let dirname_literal = js_string_literal(&dirname)?;
+    let mut wrapped = format!(
+        r#"const __nimbusCjsModule = {{ exports: {{}} }};
+const __nimbusCjsFilename = {filename_literal};
+const __nimbusCjsDirname = {dirname_literal};
+const __nimbusCjsRequire = typeof globalThis.require === "function"
+  ? globalThis.require
+  : function __nimbusUnsupportedHookRequire(specifier) {{
+      throw new Error("CommonJS load hook source called require(" + JSON.stringify(specifier) + "), but Nimbus cannot synthesize nested require from an async ESM load hook");
+    }};
+(function (exports, require, module, __filename, __dirname) {{
+"#
+    );
+    wrapped.push_str(source);
+    if !source.ends_with('\n') {
+        wrapped.push('\n');
+    }
+    wrapped.push_str(
+        r#"}).call(
+  __nimbusCjsModule.exports,
+  __nimbusCjsModule.exports,
+  __nimbusCjsRequire,
+  __nimbusCjsModule,
+  __nimbusCjsFilename,
+  __nimbusCjsDirname
+);
+const __nimbusCjsDefault = __nimbusCjsModule.exports;
+export default __nimbusCjsDefault;
+"#,
+    );
+    for export_name in collect_commonjs_named_exports(source) {
+        let export_literal = js_string_literal(&export_name)?;
+        let binding_name = commonjs_named_export_binding(&export_name);
+        wrapped.push_str(&format!(
+            "const {binding_name} = __nimbusCjsDefault[{export_literal}];\n\
+             export {{ {binding_name} as {export_name} }};\n"
+        ));
+    }
+    Ok(wrapped)
+}
+
+fn js_string_literal(value: &str) -> Result<String, JsErrorBox> {
+    serde_json::to_string(value).map_err(|error| {
+        JsErrorBox::generic(format!(
+            "failed to encode runtime module loader string literal: {error}"
+        ))
+    })
+}
+
+fn collect_commonjs_named_exports(source: &str) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    collect_property_exports(source, "exports.", &mut names);
+    collect_property_exports(source, "module.exports.", &mut names);
+    collect_define_property_exports(source, "Object.defineProperty(exports,", &mut names);
+    collect_define_property_exports(source, "Object.defineProperty(module.exports,", &mut names);
+    names.retain(|name| name != "default" && name != "__esModule");
+    names
+}
+
+fn collect_property_exports(source: &str, marker: &str, names: &mut BTreeSet<String>) {
+    let mut remaining = source;
+    while let Some(index) = remaining.find(marker) {
+        let after_marker = &remaining[index + marker.len()..];
+        let Some(name) = read_js_identifier(after_marker) else {
+            remaining = after_marker;
+            continue;
+        };
+        names.insert(name.to_string());
+        remaining = &after_marker[name.len()..];
+    }
+}
+
+fn collect_define_property_exports(source: &str, marker: &str, names: &mut BTreeSet<String>) {
+    let mut remaining = source;
+    while let Some(index) = remaining.find(marker) {
+        let after_marker = remaining[index + marker.len()..].trim_start();
+        let Some(after_quote) = after_marker.strip_prefix(['"', '\'']) else {
+            remaining = after_marker;
+            continue;
+        };
+        let quote = after_marker.as_bytes()[0] as char;
+        let Some(end_index) = after_quote.find(quote) else {
+            remaining = after_quote;
+            continue;
+        };
+        let name = &after_quote[..end_index];
+        if is_valid_js_identifier(name) {
+            names.insert(name.to_string());
+        }
+        remaining = &after_quote[end_index + 1..];
+    }
+}
+
+fn read_js_identifier(input: &str) -> Option<&str> {
+    let mut chars = input.char_indices();
+    let (_, first) = chars.next()?;
+    if !is_js_identifier_start(first) {
+        return None;
+    }
+    let mut end = first.len_utf8();
+    for (index, char) in chars {
+        if !is_js_identifier_part(char) {
+            break;
+        }
+        end = index + char.len_utf8();
+    }
+    Some(&input[..end])
+}
+
+fn is_valid_js_identifier(name: &str) -> bool {
+    read_js_identifier(name).is_some_and(|identifier| identifier.len() == name.len())
+}
+
+fn is_js_identifier_start(char: char) -> bool {
+    char == '_' || char == '$' || char.is_ascii_alphabetic()
+}
+
+fn is_js_identifier_part(char: char) -> bool {
+    is_js_identifier_start(char) || char.is_ascii_digit()
+}
+
+fn commonjs_named_export_binding(export_name: &str) -> String {
+    let mut binding = String::from("__nimbusCjsExport_");
+    for char in export_name.chars() {
+        if is_js_identifier_part(char) {
+            binding.push(char);
+        } else {
+            binding.push('_');
+        }
+    }
+    binding
 }
 
 fn load_data_url_module_source(

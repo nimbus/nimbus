@@ -20,6 +20,30 @@ fn resolve_runtime_test_spawn_path(path: &Path, cwd: Option<&Path>) -> PathBuf {
     }
 }
 
+fn push_supported_node_option(exec_argv: &mut Vec<String>, token: &str) {
+    match token {
+        "--expose-internals"
+        | "--experimental-print-required-tla"
+        | "--experimental-require-module"
+        | "--experimental-vm-modules"
+        | "--no-experimental-require-module"
+        | "--no-experimental-sqlite"
+        | "--no-require-module"
+        | "--no-warnings"
+        | "--no-turbo-fast-api-calls"
+        | "--preserve-symlinks"
+        | "--preserve-symlinks-main"
+        | "--require-module"
+        | "--trace-warnings"
+        | "--trace-events-enabled"
+        | "--turbo-fast-api-calls" => exec_argv.push(token.to_string()),
+        _ if token.starts_with("--trace-require-module=") || token.starts_with("--title=") => {
+            exec_argv.push(token.to_string());
+        }
+        _ => {}
+    }
+}
+
 pub(super) fn runtime_test_spawn_mode(
     payload: RuntimeTestSpawnPayload,
 ) -> std::result::Result<RuntimeTestSpawnPlan, JsErrorBox> {
@@ -60,6 +84,11 @@ pub(super) fn runtime_test_spawn_mode(
             })
         })
         .transpose()?;
+    if let Some(node_options) = payload.env.as_ref().and_then(|env| env.get("NODE_OPTIONS")) {
+        for token in node_options.split_whitespace() {
+            push_supported_node_option(&mut exec_argv, token);
+        }
+    }
 
     let mut index = 0usize;
     let parse_test_random_seed = |value: &str| -> std::result::Result<u32, JsErrorBox> {

@@ -86,6 +86,32 @@ function isBuiltin(specifier) {
   );
 }
 
+let activeHookRegistrations = 0;
+
+function registerHooks(hooks) {
+  const registration = denoRegisterHooks(hooks);
+  activeHookRegistrations += 1;
+  let registered = true;
+  return {
+    deregister() {
+      if (registered) {
+        registered = false;
+        activeHookRegistrations = Math.max(0, activeHookRegistrations - 1);
+      }
+      return registration.deregister();
+    },
+  };
+}
+
+function loadHookedBuiltinWithOverrideFallback(request, parent, isMain, override) {
+  const loaded = denoLoad(request, parent, isMain);
+  const normalizedSpecifier = normalizeBuiltinSpecifier(request);
+  const denoBuiltin = normalizedSpecifier
+    ? denoGetBuiltinModule(normalizedSpecifier)
+    : undefined;
+  return loaded === denoBuiltin ? override : loaded;
+}
+
 if (Array.isArray(builtinModules)) {
   for (const specifier of Object.keys(INTERNAL_MODULE_OVERRIDES)) {
     if (!isPublicBuiltinOverrideSpecifier(specifier)) {
@@ -143,6 +169,9 @@ Module._load = function (request, parent, isMain) {
   }
   const override = getBuiltinOverride(request);
   if (override !== undefined) {
+    if (activeHookRegistrations > 0) {
+      return loadHookedBuiltinWithOverrideFallback(request, parent, isMain, override);
+    }
     return override;
   }
   return denoLoad(request, parent, isMain);
@@ -154,6 +183,12 @@ Module._resolveFilename = function (request, parent, isMain, options) {
     normalizedSpecifier &&
     Object.prototype.hasOwnProperty.call(INTERNAL_MODULE_OVERRIDES, normalizedSpecifier)
   ) {
+    if (activeHookRegistrations > 0) {
+      const resolved = denoResolveFilename(request, parent, isMain, options);
+      return normalizeBuiltinSpecifier(resolved) === normalizedSpecifier
+        ? normalizedSpecifier
+        : resolved;
+    }
     return normalizedSpecifier;
   }
   return denoResolveFilename(request, parent, isMain, options);
@@ -177,6 +212,14 @@ function createRequire(filenameOrUrl) {
       }
       const override = getBuiltinOverride(request);
       if (override !== undefined) {
+        if (activeHookRegistrations > 0) {
+          return loadHookedBuiltinWithOverrideFallback(
+            request,
+            undefined,
+            false,
+            override,
+          );
+        }
         return override;
       }
       return Reflect.apply(target, thisArg, args);
@@ -185,6 +228,7 @@ function createRequire(filenameOrUrl) {
 }
 
 Module.createRequire = createRequire;
+Module.registerHooks = registerHooks;
 
 export {
   _stat,

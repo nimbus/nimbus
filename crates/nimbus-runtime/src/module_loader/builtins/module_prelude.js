@@ -26,7 +26,7 @@ const {
   findSourceMap,
   globalPaths,
   register,
-  registerHooks,
+  registerHooks: denoRegisterHooks,
 } = Module;
 
 const denoCreateRequire = Module.createRequire.bind(Module);

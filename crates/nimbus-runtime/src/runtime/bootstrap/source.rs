@@ -1061,6 +1061,14 @@ Object.freeze(__nimbusInstallRuntimeContractGlobals);
 const POST_BOOTSTRAP_SOURCE: &str = r#"
 const __nimbusRuntimeContract =
   __nimbusCoreOps.op_nimbus_runtime_contract();
+const __nimbusWasmStreamingCore = Deno.core;
+const __nimbusWasmStreamingFetchModule =
+  __nimbusWasmStreamingCore.loadExtScript("ext:deno_fetch/26_fetch.js");
+__nimbusWasmStreamingCore.setWasmStreamingCallback(
+  function __nimbusWasmStreamingCallback(source, rid) {
+    return __nimbusWasmStreamingFetchModule.handleWasmStreaming(source, rid);
+  },
+);
 if (globalThis.__nimbusRetainDenoForNodeLazyScripts !== true) {
   delete globalThis.Deno;
 }

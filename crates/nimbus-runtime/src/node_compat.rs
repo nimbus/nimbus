@@ -283,7 +283,7 @@ fn build_node_resolver_with_condition_override(
     conditions: Option<Vec<String>>,
 ) -> LocalNodeResolver {
     let mut options = NodeResolverOptions::default();
-    if let Some(conditions) = conditions {
+    if let Some(conditions) = conditions.filter(|conditions| !conditions.is_empty()) {
         let conditions = conditions.into_iter().map(Cow::Owned).collect();
         match resolution_mode {
             NodeResolutionMode::Import => {
@@ -392,9 +392,7 @@ fn resolve_node_target_with_resolver(
             )? {
                 return Ok(resolved);
             }
-            return Err(JsErrorBox::generic(format!(
-                "failed to resolve runtime module `{specifier}` from `{referrer}`: {error}"
-            )));
+            return Err(JsErrorBox::from_err(error));
         }
     };
     match resolved {
@@ -671,6 +669,7 @@ mod tests {
     use super::*;
     use crate::limits::RuntimeLimits;
     use crate::runtime::RuntimeBundle;
+    use deno_error::JsErrorClass as _;
 
     #[test]
     fn split_package_specifier_handles_scoped_and_unscoped_subpaths() {
@@ -958,5 +957,77 @@ mod tests {
                 kind: ResolvedNodeModuleKind::EsModule,
             }
         );
+    }
+
+    #[test]
+    fn resolve_node_target_empty_condition_override_uses_default_conditions() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let functions_root = app_root.join("functions");
+        let package_root = functions_root.join("node_modules/foo");
+        std::fs::create_dir_all(&package_root).expect("package root should build");
+        std::fs::write(
+            package_root.join("package.json"),
+            r#"{
+              "name": "foo",
+              "exports": {
+                "./second": {
+                  "foo": "./foo.cjs",
+                  "default": "./default.cjs"
+                },
+                "./no-default": {
+                  "foo": "./foo.cjs"
+                }
+              }
+            }"#,
+        )
+        .expect("package manifest should write");
+        std::fs::write(package_root.join("foo.cjs"), "module.exports = 'foo';\n")
+            .expect("custom condition file should write");
+        std::fs::write(
+            package_root.join("default.cjs"),
+            "module.exports = 'default';\n",
+        )
+        .expect("default condition file should write");
+
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
+            .expect("policy should build");
+        let referrer = functions_root.join("main.mjs").display().to_string();
+
+        let default_resolved = resolve_node_target_with_conditions(
+            &policy,
+            "foo/second",
+            &referrer,
+            node_resolver::ResolutionMode::Import,
+            Some(Vec::new()),
+        )
+        .expect("empty override should use default import conditions");
+        assert_eq!(
+            default_resolved,
+            ResolvedNodeTarget::Module {
+                path: package_root
+                    .join("default.cjs")
+                    .canonicalize()
+                    .expect("default path should canonicalize"),
+                kind: ResolvedNodeModuleKind::CommonJs,
+            }
+        );
+
+        let error = resolve_node_target_with_conditions(
+            &policy,
+            "foo/no-default",
+            &referrer,
+            node_resolver::ResolutionMode::Import,
+            Some(Vec::new()),
+        )
+        .expect_err("empty override should preserve package exports failures");
+        let code = error
+            .get_additional_properties()
+            .find(|(key, _)| key == "code")
+            .map(|(_, value)| value.to_string());
+        assert_eq!(code.as_deref(), Some("ERR_PACKAGE_PATH_NOT_EXPORTED"));
     }
 }

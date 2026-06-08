@@ -956,6 +956,9 @@ if (Array.isArray(process.execArgv)) {{
 }} else {{
   process.execArgv = [...__nimbusExecArgv];
 }}
+globalThis.Deno?.core
+  ?.loadExtScript("ext:deno_node/internal_binding/node_options.ts")
+  ?.setOptionSourceExecArgv?.(__nimbusExecArgv);
 "#,
         serde_json::to_string(&plan.exec_argv).expect("exec argv should serialize")
     );

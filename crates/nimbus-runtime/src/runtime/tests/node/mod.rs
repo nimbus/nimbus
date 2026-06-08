@@ -1346,6 +1346,16 @@ try {{
         r#"      await require("./test/common/index.js").__nimbusFlushChildProcesses?.();
 "#
     };
+    let preloaded_common_for_assert_script = if test_relative_path.starts_with("test/module-hooks/")
+    {
+        // module.registerHooks fixtures should not observe harness bookkeeping
+        // requires after their hooks are active.
+        r#"const __nimbusNodeCompatPreloadedCommonForAssert =
+  createRequire(import.meta.url)("./test/common/index.js");
+"#
+    } else {
+        "const __nimbusNodeCompatPreloadedCommonForAssert = null;"
+    };
     // async-hooks fixtures enable their user hook at top level and assert the
     // EXACT init counts for the resources THEY create. By the time the Rust
     // driver calls `globalThis.__nimbusInvoke(...)`, the fixture's own event
@@ -1424,6 +1434,9 @@ if (typeof globalThis.process === "object" && globalThis.process !== null) {{
   globalThis.process.execPath = __nimbusCompatExecPath;
   const __nimbusNodeCompatExecArgv = {node_options_exec_argv};
   globalThis.process.execArgv = Array.from(__nimbusNodeCompatExecArgv);
+  globalThis.Deno?.core
+    ?.loadExtScript("ext:deno_node/internal_binding/node_options.ts")
+    ?.setOptionSourceExecArgv?.(__nimbusNodeCompatExecArgv);
   if (Array.isArray(globalThis.process.argv)) {{
     if (globalThis.process.argv.length === 0) {{
       globalThis.process.argv.push(__nimbusCompatExecPath);
@@ -1438,6 +1451,7 @@ if (typeof globalThis.process === "object" && globalThis.process !== null) {{
   }}
 }}
 {infra_warmup_script}
+{preloaded_common_for_assert_script}
 {lane_prelude}
 {prelude_script}
 {import_preamble}
@@ -1449,7 +1463,8 @@ if (typeof globalThis.process === "object" && globalThis.process !== null) {{
     __nimbusInvokeStep = "import guard";
 {invoke_import_guard}
     __nimbusInvokeStep = "require common";
-    const common = require("./test/common/index.js");
+    const common = __nimbusNodeCompatPreloadedCommonForAssert ??
+      require("./test/common/index.js");
     __nimbusInvokeStep = "async drain";
 {async_drain_script}
     __nimbusInvokeStep = "postlude";
@@ -2161,8 +2176,12 @@ fn module_loader_required_surface_blocker_entry(entry: &serde_json::Value) -> bo
 fn module_loader_required_surface_blocker_paths(lane: NodeCompatLane) -> Vec<String> {
     let fixture_paths =
         node_compat_posture_paths_for_selector(lane, module_loader_required_surface_blocker_entry);
+    // This selector follows the live generated required-surface blocker
+    // population, which intentionally shrinks as module-loader fixtures are
+    // promoted or reclassified. Keep the upper bound as a runaway guard, but
+    // allow the floor to drain all the way to the last residual gap.
     assert!(
-        (50..=260).contains(&fixture_paths.len()),
+        (1..=260).contains(&fixture_paths.len()),
         "module-loader required-surface blocker selector should stay broad but reviewable; selected {} fixtures",
         fixture_paths.len()
     );
