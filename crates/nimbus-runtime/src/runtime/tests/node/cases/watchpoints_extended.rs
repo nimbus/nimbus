@@ -2667,6 +2667,34 @@ fn node24_default_lane_executes_webcrypto_promoted_batch_fixture() {
     );
 }
 
+// AES-GCM/RSA-OAEP encrypt/decrypt fixtures promoted on the Node22 supported
+// lane only. The green path depends on two fork/runtime fixes that landed for
+// the v2.8.2-nimbus.13 pin: the DOMException op-error builders registered in
+// `98_global_scope_shared.js` (so OperationError surfaces with the right name)
+// and the AES-GCM truncated authentication-tag decrypt support in the fork's
+// `ext/crypto/decrypt.rs`. Node24's version-conditional encrypt/decrypt
+// dispatch remains wave-B, so these stay out of the shared common batch.
+const WEBCRYPTO_PROMOTED_NODE22_ENCRYPT_DECRYPT_PATHS: &[&str] = &[
+    "test/parallel/test-webcrypto-encrypt-decrypt-aes.js",
+    "test/parallel/test-webcrypto-encrypt-decrypt-rsa.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_webcrypto_encrypt_decrypt_batch_fixture() {
+    let fixture_paths = WEBCRYPTO_PROMOTED_NODE22_ENCRYPT_DECRYPT_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-webcrypto-encrypt-decrypt-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        WEBCRYPTO_REQUIRED_GAP_COMMON_EXTRA_DIRS,
+    );
+}
+
 #[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked WebCrypto required-gap inventory; classify algorithms, key import/export, error shape, host-policy, and Node24-only fixtures after the first wide run"]
 fn node22_supported_lane_webcrypto_required_gap_watchpoint() {

@@ -25,6 +25,79 @@ const {
   QuotaExceededError,
 } = core.loadExtScript("ext:deno_web/01_dom_exception.js");
 
+// Register the WebCrypto / Web platform DOMException op-error builders.
+//
+// deno_core's `to_v8_error` rehydrates a Rust op error tagged with
+// `#[class("DOMExceptionOperationError")]` (and siblings) by calling the JS
+// builder registered for that class name via `core.registerErrorBuilder`. The
+// Deno CLI registers these in `runtime/js/99_main.js`, but Nimbus runs its own
+// bootstrap and never loads that file, so without this block every crypto op
+// that returns an OperationError (e.g. AES-CBC bad-padding decrypt) surfaces as
+// a generic TypeError instead of `DOMException` with the correct `name`. This
+// is a Nimbus-local bootstrap responsibility, not a fork change: the builders
+// only need `core` plus the `DOMException`/`QuotaExceededError` constructors
+// already in lexical scope here. Mirror the full set Deno registers.
+core.registerErrorBuilder(
+  "DOMExceptionOperationError",
+  function DOMExceptionOperationError(msg) {
+    return new DOMException(msg, "OperationError");
+  },
+);
+core.registerErrorBuilder(
+  "DOMExceptionQuotaExceededError",
+  function DOMExceptionQuotaExceededError(msg) {
+    return new QuotaExceededError(msg);
+  },
+);
+core.registerErrorBuilder(
+  "DOMExceptionNotSupportedError",
+  function DOMExceptionNotSupportedError(msg) {
+    return new DOMException(msg, "NotSupported");
+  },
+);
+core.registerErrorBuilder(
+  "DOMExceptionNetworkError",
+  function DOMExceptionNetworkError(msg) {
+    return new DOMException(msg, "NetworkError");
+  },
+);
+core.registerErrorBuilder(
+  "DOMExceptionAbortError",
+  function DOMExceptionAbortError(msg) {
+    return new DOMException(msg, "AbortError");
+  },
+);
+core.registerErrorBuilder(
+  "DOMExceptionInvalidCharacterError",
+  function DOMExceptionInvalidCharacterError(msg) {
+    return new DOMException(msg, "InvalidCharacterError");
+  },
+);
+core.registerErrorBuilder(
+  "DOMExceptionDataError",
+  function DOMExceptionDataError(msg) {
+    return new DOMException(msg, "DataError");
+  },
+);
+core.registerErrorBuilder(
+  "DOMExceptionInvalidStateError",
+  function DOMExceptionInvalidStateError(msg) {
+    return new DOMException(msg, "InvalidStateError");
+  },
+);
+core.registerErrorBuilder(
+  "DOMExceptionSyntaxError",
+  function DOMExceptionSyntaxError(msg) {
+    return new DOMException(msg, "SyntaxError");
+  },
+);
+core.registerErrorBuilder(
+  "DOMExceptionIndexSizeError",
+  function DOMExceptionIndexSizeError(msg) {
+    return new DOMException(msg, "IndexSizeError");
+  },
+);
+
 // Match the Deno runtime module name that Node polyfills import. Keep this
 // intentionally smaller than the full Deno runtime global contract, but wide
 // enough for Node polyfills to rely on the same shared URL / fetch / DOM

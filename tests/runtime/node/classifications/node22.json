@@ -2592,8 +2592,6 @@
         "test/parallel/test-webcrypto-derivekey-ecdh.js",
         "test/parallel/test-webcrypto-derivekey.js",
         "test/parallel/test-webcrypto-digest.js",
-        "test/parallel/test-webcrypto-encrypt-decrypt-aes.js",
-        "test/parallel/test-webcrypto-encrypt-decrypt-rsa.js",
         "test/parallel/test-webcrypto-export-import-cfrg.js",
         "test/parallel/test-webcrypto-export-import-ec.js",
         "test/parallel/test-webcrypto-export-import-rsa.js",
