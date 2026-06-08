@@ -4462,7 +4462,18 @@ const FS_HOST_IO_PROMOTED_NODE22_ONLY_PATHS: &[&str] = &[
 const FS_HOST_IO_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
     "test/parallel/test-fastutf8stream-sync.js",
     "test/parallel/test-fs-glob-throw.mjs",
+    // The node24 variants of these position-validation fixtures add an
+    // empty-buffer + zero-length + invalid-position block (absent from the
+    // node22 variants promoted in the node22-only group above), which requires
+    // validating position before the zero-length short-circuit. Greened by
+    // nimbus/deno v2.8.2-nimbus.15 (fs read/readSync position order parity).
+    "test/parallel/test-fs-read-position-validation.mjs",
+    "test/parallel/test-fs-read-promises-position-validation.mjs",
+    "test/parallel/test-fs-readSync-position-validation.mjs",
     "test/parallel/test-fs-rmSync-special-char.js",
+    // fs.stat honors an already-aborted AbortSignal (settles the callback with
+    // an AbortError before issuing the stat). Greened by the same fork tag.
+    "test/parallel/test-fs-stat-abort-test.js",
     "test/parallel/test-fs-write-stream.js",
 ];
 
