@@ -335,6 +335,16 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         'test/parallel/test-permission-fs-write-v8.js',
         'test/parallel/test-permission-processbinding.js',
     }),
+    ('diagnostic_only_non_isolate', 'absolute_host_path_policy_boundary', 'diagnostic_stub'): frozenset({
+        # NDS3 cycle 12 (2026-06-08): source-confirmed against the official
+        # fixture and the existing ignored watchpoint. The fixture's first
+        # assertion opens an absolute host-root path outside the generated
+        # bundle root and requires raw Node ENOENT behavior. Nimbus intentionally
+        # denies absolute host-path probes before raw host open in the
+        # multi-tenant isolate, so greening this fixture by remapping the
+        # capability denial would weaken the host fs boundary.
+        'test/parallel/test-fs-open.js',
+    }),
     ('test_harness_only', 'exact_node_cli_or_tooling_topology', 'test_harness_emulation'): frozenset({
         'test/es-module/test-cjs-esm-warn.js',
         'test/es-module/test-esm-assertionless-json-import.js',
@@ -617,6 +627,7 @@ WAVE2_REASON_TEXT = {
     'expose_internals_private_module_surface': "fixture is gated behind --expose-internals and exercises private require('internal/*') modules outside the public Application API surface; isolate-safe but intentionally not exposed, so it is a visible optional gap rather than required support",
     'host_owned_non_isolate_harness': 'fixture depends on a host-owned diagnostic surface (inspector debugging port or NODE_DEBUG child timing) and must fail closed unless a host-capable backend is selected',
     'host_owned_permission_policy': 'fixture is gated behind the host --permission model (--allow-fs-*/--allow-child-process) and asserts permission-model side effects the V8 isolate does not own',
+    'absolute_host_path_policy_boundary': 'fixture asserts raw Node ENOENT behavior for an absolute host-root path outside the generated bundle root; Nimbus must fail closed before raw host open instead of allowing unbounded host fs path probes',
     'official_harness_or_support_file': 'fixture exercises upstream Node harness or documentation-consistency topology rather than the Application runtime support contract',
     'pending_deprecation_flag_gated_warning_emission': 'fixture is gated by --pending-deprecation and asserts emission of a pending (DEPxxxx) deprecation warning that Node does not emit by default; the multi-tenant isolate does not expose the opt-in flag, so the warning is intentionally never emitted and the assertion cannot run as default Application API behavior',
     'upstream_or_platform_boundary': "fixture is gated by V8 native-syntax intrinsics, host-platform skips, host-specific filesystem/watch backends, or Node's exact native build/dependency composition, so it cannot run as public Application API behavior inside the Nimbus V8 isolate",
@@ -651,6 +662,12 @@ _WP_NATIVE_BACKED_OPTIONAL = (
     "unsupported",
     "fixture exercises the non-required node:sqlite native-backed builtin, which is isolate-safe-capable through a runtime-provided implementation but is not part of the default Application contract in this wave",
 )
+_WP_ABSOLUTE_HOST_PATH_POLICY = (
+    "diagnostic_only_non_isolate",
+    "absolute_host_path_policy_boundary",
+    "diagnostic_stub",
+    WAVE2_REASON_TEXT["absolute_host_path_policy_boundary"],
+)
 
 # Watchpoint-pinned fixtures whose CORE assertion is structurally outside the
 # multi-tenant V8 isolate contract on the lane where the catalog records a
@@ -675,6 +692,7 @@ WATCHPOINT_STRUCTURAL_RECLASSIFICATIONS = {
     "test/parallel/test-module-loading-error.js": _WP_NATIVE_ADDON,
     "test/es-module/test-esm-import-assertion-warning.mjs": _WP_CLI_TOPOLOGY,
     "test/parallel/test-sqlite.js": _WP_NATIVE_BACKED_OPTIONAL,
+    "test/parallel/test-fs-open.js": _WP_ABSOLUTE_HOST_PATH_POLICY,
     "test/parallel/test-dgram-cluster-bind-error.js": _WP_HOST_PROCESS_CONTROL,
     "test/parallel/test-dgram-cluster-close-during-bind.js": _WP_HOST_PROCESS_CONTROL,
     "test/parallel/test-dgram-exclusive-implicit-bind.js": _WP_HOST_PROCESS_CONTROL,
