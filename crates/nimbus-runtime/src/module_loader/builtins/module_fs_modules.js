@@ -722,11 +722,20 @@ function createNimbusFsModule(fsPromisesModule) {
     }
     return snapshot;
   }
+  function receiverInheritsStreamPrototype(receiver, streamConstructor) {
+    return receiver !== null
+      && receiver !== undefined
+      && streamConstructor.prototype.isPrototypeOf(receiver);
+  }
   fsModule.createReadStream = function createReadStream(path, options) {
     return new fsModule.ReadStream(path, options);
   };
   const NimbusReadStream = function ReadStream(path, options) {
-    return fsBuiltin.ReadStream(path, snapshotFsStreamOptions(options));
+    const snapshot = snapshotFsStreamOptions(options);
+    if (!receiverInheritsStreamPrototype(this, fsBuiltin.ReadStream)) {
+      return new fsBuiltin.ReadStream(path, snapshot);
+    }
+    return Reflect.apply(fsBuiltin.ReadStream, this, [path, snapshot]);
   };
   NimbusReadStream.prototype = fsBuiltin.ReadStream.prototype;
   Object.setPrototypeOf(NimbusReadStream, fsBuiltin.ReadStream);
@@ -740,7 +749,11 @@ function createNimbusFsModule(fsPromisesModule) {
     return new fsModule.WriteStream(path, options);
   };
   const NimbusWriteStream = function WriteStream(path, options) {
-    return fsBuiltin.WriteStream(path, snapshotFsStreamOptions(options));
+    const snapshot = snapshotFsStreamOptions(options);
+    if (!receiverInheritsStreamPrototype(this, fsBuiltin.WriteStream)) {
+      return new fsBuiltin.WriteStream(path, snapshot);
+    }
+    return Reflect.apply(fsBuiltin.WriteStream, this, [path, snapshot]);
   };
   NimbusWriteStream.prototype = fsBuiltin.WriteStream.prototype;
   Object.setPrototypeOf(NimbusWriteStream, fsBuiltin.WriteStream);

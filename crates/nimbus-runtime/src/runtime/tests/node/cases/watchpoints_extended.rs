@@ -4438,6 +4438,13 @@ const FS_HOST_IO_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-fs-stat-bigint.js",
     "test/parallel/test-fs-stream-destroy-emit-error.js",
     "test/parallel/test-fs-stream-double-close.js",
+    // These stream subclass fixtures call fs.ReadStream or fs.WriteStream with
+    // a user-created receiver and expect an overridden open() path to run. The
+    // Nimbus fs wrapper preserves that receiver while still snapshotting
+    // sandboxed fs options.
+    "test/parallel/test-fs-stream-construct-compat-error-write.js",
+    "test/parallel/test-fs-stream-construct-compat-graceful-fs.js",
+    "test/parallel/test-fs-stream-construct-compat-old-node.js",
     "test/parallel/test-fs-stream-fs-options.js",
     "test/parallel/test-fs-stream-options.js",
     "test/parallel/test-fs-symlink-dir.js",
