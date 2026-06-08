@@ -3194,7 +3194,6 @@
       "owner": "streams-local-io/fs-host-io",
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
-        "test/parallel/test-fs-chown-negative-one.js",
         "test/parallel/test-fs-cp-async-socket.mjs",
         "test/parallel/test-fs-cp-sync-copy-socket-error.mjs",
         "test/parallel/test-fs-error-messages.js",

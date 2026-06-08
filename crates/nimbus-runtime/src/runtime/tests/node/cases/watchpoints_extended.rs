@@ -4419,6 +4419,7 @@ fn fs_host_io_runnable_fixture_paths(lane: NodeCompatLane) -> Vec<String> {
 }
 
 const FS_HOST_IO_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-fs-chown-negative-one.js",
     "test/parallel/test-fs-fchown-negative-one.js",
     "test/parallel/test-fs-filehandle-use-after-close.js",
     "test/parallel/test-fs-fmap.js",
