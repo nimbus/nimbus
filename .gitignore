@@ -29,6 +29,10 @@ node_modules
 !crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/**/node_modules/**
 dist
 **/dist
+# Official Node fixtures include transpiled dist/ trees that are test data,
+# not build output; keep them versioned so CI runs the same corpus as local.
+!crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/**/dist/
+!crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/**/dist/**
 .DS_Store
 **/.DS_Store
 .pytest_cache
@@ -37,6 +41,9 @@ __pycache__
 **/__pycache__
 *.py[cod]
 .env
+# Official Node fixtures include .env test data (dotenv/run-script/test-runner);
+# keep them versioned so CI runs the same corpus as local.
+!crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/**/.env
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 .nimbus
