@@ -604,6 +604,10 @@ fn node_compat_named_preludes_catalog_matches_default_behavior_registry() {
             "test/parallel/test-process-exit-recursive.js",
             Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel),
         ),
+        (
+            "test/parallel/test-fs-read-stream-pos.js",
+            Some(NodeCompatNamedPreludeBehavior::ProcessExitAlwaysSentinel),
+        ),
         ("test/parallel/test-buffer-equals.js", None),
     ];
     for (fixture, expected_behavior) in prelude_cases {

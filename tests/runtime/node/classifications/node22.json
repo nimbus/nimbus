@@ -2884,7 +2884,6 @@
         "test/parallel/test-fs-promises-watch-iterator.js",
         "test/parallel/test-fs-promises.js",
         "test/parallel/test-fs-read-file-sync-hostname.js",
-        "test/parallel/test-fs-read-stream-pos.js",
         "test/parallel/test-fs-read-stream.js",
         "test/parallel/test-fs-readdir-pipe.js",
         "test/parallel/test-fs-readdir-ucs2.js",

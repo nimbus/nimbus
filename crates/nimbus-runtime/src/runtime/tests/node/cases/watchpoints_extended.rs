@@ -4434,6 +4434,10 @@ const FS_HOST_IO_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-fs-read-stream-err.js",
     "test/parallel/test-fs-read-stream-fd-leak.js",
     "test/parallel/test-fs-read-stream-patch-open.js",
+    // The fixture exits only after its positioned read assertions complete and
+    // the stream close handler runs. Route that code-0 teardown through the
+    // harness sentinel; do not grant a host-process exit primitive.
+    "test/parallel/test-fs-read-stream-pos.js",
     "test/parallel/test-fs-read-stream-resume.js",
     "test/parallel/test-fs-readdir-recursive.js",
     "test/parallel/test-fs-readdir-stack-overflow.js",

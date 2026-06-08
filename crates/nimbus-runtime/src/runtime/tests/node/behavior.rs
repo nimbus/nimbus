@@ -115,6 +115,37 @@ for (const __nimbusProcessExitTarget of __nimbusProcessExitTargets) {
 }
 "#;
 
+const PROCESS_EXIT_ALWAYS_SENTINEL_PRELUDE: &str = r#"
+import { createRequire as __nimbusCreateRequireForProcessExit } from "node:module";
+
+const __nimbusRequireForProcessExit =
+  __nimbusCreateRequireForProcessExit(import.meta.url);
+const __nimbusProcessExitSentinel = "__NIMBUS_NODE_COMPAT_PROCESS_EXIT__";
+const __nimbusProcessExitTargets = new Set([
+  globalThis.process,
+  __nimbusRequireForProcessExit("node:process"),
+]);
+
+for (const __nimbusProcessExitTarget of __nimbusProcessExitTargets) {
+  if (
+    __nimbusProcessExitTarget &&
+    typeof __nimbusProcessExitTarget.reallyExit === "function"
+  ) {
+    __nimbusProcessExitTarget.reallyExit = (code) => {
+      const resolvedCode = code ?? __nimbusProcessExitTarget.exitCode ?? 0;
+      __nimbusProcessExitTarget.exitCode = resolvedCode;
+      if (globalThis.process && globalThis.process !== __nimbusProcessExitTarget) {
+        globalThis.process.exitCode = resolvedCode;
+      }
+      __nimbusRequireForProcessExit("./test/common/index.js").__nimbusAssert?.();
+      const exitError = new Error(`${__nimbusProcessExitSentinel}:${resolvedCode}`);
+      exitError.code = "NIMBUS_NODE_COMPAT_PROCESS_EXIT";
+      throw exitError;
+    };
+  }
+}
+"#;
+
 const INTERACTIVE_TERMINAL_PRELUDE: &str = r#"
 globalThis.__nimbusNodeCompatTerm = "xterm-256color";
 if (globalThis.process?.env) {
@@ -185,6 +216,7 @@ const PENDING_DEPRECATION_PRELUDE: &str = r#"
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NodeCompatNamedPreludeBehavior {
     ProcessExitSentinel,
+    ProcessExitAlwaysSentinel,
     InteractiveTerminal,
     DnsResultOrderIpv4First,
     DnsResultOrderIpv6First,
@@ -195,8 +227,9 @@ pub(super) enum NodeCompatNamedPreludeBehavior {
 }
 
 impl NodeCompatNamedPreludeBehavior {
-    pub(super) const ALL: [Self; 8] = [
+    pub(super) const ALL: [Self; 9] = [
         Self::ProcessExitSentinel,
+        Self::ProcessExitAlwaysSentinel,
         Self::InteractiveTerminal,
         Self::DnsResultOrderIpv4First,
         Self::DnsResultOrderIpv6First,
@@ -209,6 +242,7 @@ impl NodeCompatNamedPreludeBehavior {
     pub(super) fn id(self) -> &'static str {
         match self {
             Self::ProcessExitSentinel => "process_exit_sentinel",
+            Self::ProcessExitAlwaysSentinel => "process_exit_always_sentinel",
             Self::InteractiveTerminal => "interactive_terminal",
             Self::DnsResultOrderIpv4First => "dns_result_order_ipv4first",
             Self::DnsResultOrderIpv6First => "dns_result_order_ipv6first",
@@ -233,6 +267,7 @@ impl NodeCompatNamedPreludeBehavior {
     fn script(self) -> &'static str {
         match self {
             Self::ProcessExitSentinel => PROCESS_EXIT_SENTINEL_PRELUDE,
+            Self::ProcessExitAlwaysSentinel => PROCESS_EXIT_ALWAYS_SENTINEL_PRELUDE,
             Self::InteractiveTerminal => INTERACTIVE_TERMINAL_PRELUDE,
             Self::DnsResultOrderIpv4First => DNS_RESULT_ORDER_IPV4FIRST_PRELUDE,
             Self::DnsResultOrderIpv6First => DNS_RESULT_ORDER_IPV6FIRST_PRELUDE,

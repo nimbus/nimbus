@@ -1021,7 +1021,10 @@ globalThis.global.gc = __nimbusTestGc;"#
         || should_capture_top_level_import_error_for_fixture(test_relative_path)
         || matches!(
             default_prelude_behavior_for_fixture(test_relative_path),
-            Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel)
+            Some(
+                NodeCompatNamedPreludeBehavior::ProcessExitSentinel
+                    | NodeCompatNamedPreludeBehavior::ProcessExitAlwaysSentinel
+            )
         );
     let import_preamble = if should_quiesce_then_require_fixture(test_relative_path) {
         String::new()
@@ -1622,7 +1625,10 @@ fn execute_upstream_node_compat_test_with_extra_files(
             let error = error.to_string();
             if matches!(
                 resolved_prelude_behavior,
-                Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel)
+                Some(
+                    NodeCompatNamedPreludeBehavior::ProcessExitSentinel
+                        | NodeCompatNamedPreludeBehavior::ProcessExitAlwaysSentinel
+                )
             ) && let Some(exit_code) = node_compat_process_exit_code_from_error(&error)
             {
                 if exit_code == 0 {
@@ -2702,6 +2708,13 @@ pub(super) fn default_prelude_behavior_for_fixture(
         | "test/parallel/test-beforeexit-event-exit.js"
         | "test/parallel/test-process-exit-recursive.js" => {
             Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel)
+        }
+        // This fs fixture calls process.exit() only after its positioned read
+        // assertions and close handler complete. Treat even a late code-0 exit
+        // as synthetic fixture termination so the harness does not wait on
+        // residual handles, without exposing real host-process exit authority.
+        "test/parallel/test-fs-read-stream-pos.js" => {
+            Some(NodeCompatNamedPreludeBehavior::ProcessExitAlwaysSentinel)
         }
         "test/parallel/test-inspector-open.js" | "test/parallel/test-inspector-enabled.js" => {
             Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel)
