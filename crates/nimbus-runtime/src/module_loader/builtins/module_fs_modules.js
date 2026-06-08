@@ -817,8 +817,6 @@ function createNimbusFsModule(fsPromisesModule) {
       fsBuiltin.closeSync(fd);
     }
   };
-  fsModule.lchmod = undefined;
-  fsModule.lchmodSync = undefined;
   fsModule.symlink = function symlink(target, path, type, callback) {
     if (typeof type === "function") {
       callback = type;

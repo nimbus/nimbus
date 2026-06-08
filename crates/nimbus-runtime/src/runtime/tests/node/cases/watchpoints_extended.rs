@@ -4424,6 +4424,7 @@ const FS_HOST_IO_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-fs-filehandle-use-after-close.js",
     "test/parallel/test-fs-fmap.js",
     "test/parallel/test-fs-internal-assertencoding.js",
+    "test/parallel/test-fs-lchmod.js",
     "test/parallel/test-fs-lchown-negative-one.js",
     "test/parallel/test-fs-make-callback.js",
     "test/parallel/test-fs-makeStatsCallback.js",

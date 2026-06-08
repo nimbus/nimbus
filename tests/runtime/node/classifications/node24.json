@@ -3199,7 +3199,6 @@
         "test/parallel/test-fs-error-messages.js",
         "test/parallel/test-fs-existssync-memleak-longpath.js",
         "test/parallel/test-fs-filehandle.js",
-        "test/parallel/test-fs-lchmod.js",
         "test/parallel/test-fs-lchown.js",
         "test/parallel/test-fs-long-path.js",
         "test/parallel/test-fs-open.js",
