@@ -58,10 +58,17 @@ function isPerfHooksSpecifier(specifier) {
   return normalizeBuiltinSpecifier(specifier) === "perf_hooks";
 }
 
+function isProcessSpecifier(specifier) {
+  return normalizeBuiltinSpecifier(specifier) === "process";
+}
+
 function getBuiltinOverride(specifier) {
   const normalizedSpecifier = normalizeBuiltinSpecifier(specifier);
   if (!normalizedSpecifier) {
     return undefined;
+  }
+  if (normalizedSpecifier === "process") {
+    return processModule;
   }
   return INTERNAL_MODULE_OVERRIDES[normalizedSpecifier];
 }
@@ -80,6 +87,7 @@ function getBuiltinModule(specifier) {
 function isBuiltin(specifier) {
   const normalizedSpecifier = normalizeBuiltinSpecifier(specifier);
   return (
+    normalizedSpecifier === "process" ||
     (normalizedSpecifier !== null &&
       isPublicBuiltinOverrideSpecifier(normalizedSpecifier)) ||
     denoIsBuiltin(specifier)
@@ -167,6 +175,9 @@ Module._load = function (request, parent, isMain) {
   if (isPerfHooksSpecifier(request)) {
     return globalThis.__nimbusPerfHooksBuiltin;
   }
+  if (isProcessSpecifier(request)) {
+    return processModule;
+  }
   const override = getBuiltinOverride(request);
   if (override !== undefined) {
     if (activeHookRegistrations > 0) {
@@ -209,6 +220,9 @@ function createRequire(filenameOrUrl) {
       const request = args[0];
       if (isPerfHooksSpecifier(request)) {
         return globalThis.__nimbusPerfHooksBuiltin;
+      }
+      if (isProcessSpecifier(request)) {
+        return processModule;
       }
       const override = getBuiltinOverride(request);
       if (override !== undefined) {

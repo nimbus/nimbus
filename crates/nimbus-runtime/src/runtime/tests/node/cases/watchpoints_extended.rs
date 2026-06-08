@@ -1130,7 +1130,8 @@ fn node24_default_lane_process_diagnostics_channel_watchpoint() {
     );
 }
 
-const STREAMS_WEB_PLATFORM_EXTRA_DIRS: &[&str] = &["test/common"];
+const STREAMS_WEB_PLATFORM_EXTRA_DIRS: &[&str] =
+    &["test/common", "test/fixtures", "test/fixtures/wpt"];
 
 const STREAMS_WEB_PLATFORM_LOW_ROI_PATHS: &[&str] =
     &[
@@ -1141,11 +1142,15 @@ const STREAMS_WEB_PLATFORM_LOW_ROI_PATHS: &[&str] =
 
 const STREAMS_WEB_PLATFORM_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/async-hooks/test-async-local-storage-stream-finished.js",
+    "test/parallel/test-blob-createobjecturl.js",
+    "test/parallel/test-blob-file-backed.js",
     "test/parallel/test-file-write-stream.js",
     "test/parallel/test-file-write-stream2.js",
     "test/parallel/test-file-write-stream3.js",
     "test/parallel/test-file-write-stream4.js",
     "test/parallel/test-filehandle-readablestream.js",
+    "test/parallel/test-global-domexception.js",
+    "test/parallel/test-global-setters.js",
     "test/parallel/test-js-stream-call-properties.js",
     "test/parallel/test-stream-iterator-helpers-test262-tests.mjs",
     "test/parallel/test-stream-readable-async-iterators.js",
@@ -1181,10 +1186,24 @@ const STREAMS_WEB_PLATFORM_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-stream3-cork-uncork.js",
     "test/parallel/test-stream3-pause-then-read.js",
     "test/parallel/test-streams-highwatermark.js",
+    "test/parallel/test-webstream-encoding-inspect.js",
+    "test/parallel/test-webstream-readable-from.js",
     "test/parallel/test-webstream-string-tag.js",
     "test/parallel/test-webstream-structured-clone-no-leftovers.mjs",
+    "test/parallel/test-webstreams-abort-controller.js",
     "test/parallel/test-webstreams-compose.js",
     "test/parallel/test-webstreams-finished.js",
+    "test/parallel/test-whatwg-encoding-custom-fatal-streaming.js",
+    "test/parallel/test-whatwg-encoding-custom-textdecoder-api-invalid-label.js",
+    "test/parallel/test-whatwg-encoding-custom-textdecoder-fatal.js",
+    "test/parallel/test-whatwg-encoding-custom-textdecoder-invalid-arg.js",
+    "test/parallel/test-whatwg-encoding-custom-textdecoder-utf16-surrogates.js",
+    "test/parallel/test-whatwg-url-custom-inspect.js",
+    "test/parallel/test-whatwg-url-custom-parsing.js",
+    "test/parallel/test-whatwg-url-custom-properties.js",
+    "test/parallel/test-whatwg-url-invalidthis.js",
+    "test/parallel/test-whatwg-webstreams-compression.js",
+    "test/parallel/test-whatwg-webstreams-encoding.js",
     "test/parallel/test-wrap-js-stream-destroy.js",
     "test/parallel/test-wrap-js-stream-duplex.js",
     "test/parallel/test-wrap-js-stream-read-stop.js",
@@ -1208,8 +1227,13 @@ const STREAMS_WEB_PLATFORM_PROMOTED_NODE24_EXTRA_PATHS: &[&str] = &[
     "test/parallel/test-fastutf8stream-retry.js",
     "test/parallel/test-fastutf8stream-write.js",
     "test/parallel/test-stream-readable-to-web-byob.js",
+    "test/parallel/test-urlpattern-types.js",
     "test/parallel/test-webstreams-adapters-sync-write-error.js",
+    "test/parallel/test-webstreams-adapters-writable-buffer-sources.js",
+    "test/parallel/test-webstreams-compression-bad-chunks.js",
+    "test/parallel/test-webstreams-compression-buffer-source.js",
     "test/parallel/test-webstreams-decompression-reject-trailing.js",
+    "test/parallel/test-webstreams-duplex-fromweb-writev-unhandled-rejection.js",
 ];
 
 fn streams_web_platform_unpromoted_surface_path(path: &str) -> bool {

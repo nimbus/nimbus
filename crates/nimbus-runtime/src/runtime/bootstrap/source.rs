@@ -754,6 +754,16 @@ function __nimbusDefineNodeFeature(target, property, value) {
   });
 }
 
+function __nimbusDefineNodeFeatureGetter(target, property, value) {
+  Object.defineProperty(target, property, {
+    get() {
+      return value;
+    },
+    configurable: true,
+    enumerable: true,
+  });
+}
+
 function __nimbusNodeFeatureBoolean(source, property) {
   return source && typeof source === "object" && source[property] === true;
 }
@@ -821,7 +831,7 @@ function __nimbusCreateNodeProcessFeatures(source, nodeMajor) {
     );
     const sourceTypescript =
       source && typeof source === "object" ? source.typescript : undefined;
-    __nimbusDefineNodeFeature(
+    __nimbusDefineNodeFeatureGetter(
       features,
       "typescript",
       typeof sourceTypescript === "string" ? sourceTypescript : sourceTypescript === true,
@@ -1034,11 +1044,16 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
         } catch (_error) {}
       }
     }
+    let globalProcessValue = processValue;
     Object.defineProperty(globalThis, "process", {
-      value: processValue,
+      get() {
+        return globalProcessValue;
+      },
+      set(value) {
+        globalProcessValue = value;
+      },
       configurable: true,
       enumerable: false,
-      writable: false,
     });
     return;
   }

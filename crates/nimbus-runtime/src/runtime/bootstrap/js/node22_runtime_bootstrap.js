@@ -1061,8 +1061,18 @@ function seedNodeProcessBuiltinModuleLoader(nodeProcess) {
   ) {
     return;
   }
+  const nodeProcessBuiltinModule = nodeProcess;
   Object.defineProperty(nodeProcess, "getBuiltinModule", {
-    value: getBuiltinModule,
+    value(specifier) {
+      const normalizedSpecifier = typeof specifier === "string" &&
+          specifier.startsWith("node:")
+        ? specifier.slice(5)
+        : specifier;
+      if (normalizedSpecifier === "process") {
+        return nodeProcessBuiltinModule;
+      }
+      return getBuiltinModule.call(nodeProcessBuiltin, specifier);
+    },
     configurable: true,
     enumerable: true,
     writable: true,
@@ -3783,11 +3793,16 @@ if (
   typeof globalThis.Buffer === "undefined"
   && (internals.nodeGlobals?.Buffer !== undefined || nodeBuffer !== undefined)
 ) {
+  let globalBufferValue = internals.nodeGlobals?.Buffer ?? nodeBuffer;
   Object.defineProperty(globalThis, "Buffer", {
-    value: internals.nodeGlobals?.Buffer ?? nodeBuffer,
+    get() {
+      return globalBufferValue;
+    },
+    set(value) {
+      globalBufferValue = value;
+    },
     configurable: true,
     enumerable: false,
-    writable: false,
   });
 }
 seedGlobalIfMissing("structuredClone", webStructuredClone);
