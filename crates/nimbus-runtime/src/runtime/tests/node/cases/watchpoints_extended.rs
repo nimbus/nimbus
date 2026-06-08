@@ -4310,6 +4310,7 @@ const CORE_SEMANTICS_UTIL_PROMOTED_NODE22_EXTRA_PATHS: &[&str] = &[
 const CORE_SEMANTICS_UTIL_PROMOTED_NODE24_EXTRA_PATHS: &[&str] = &[
     "test/parallel/test-assert.js",
     "test/parallel/test-buffer-generic-methods.js",
+    "test/parallel/test-url-parse-deprecation.js",
     "test/parallel/test-util.js",
     "test/parallel/test-util-styletext-hex.js",
 ];
