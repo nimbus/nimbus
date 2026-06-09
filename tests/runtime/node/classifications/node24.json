@@ -2978,17 +2978,10 @@
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
         "test/parallel/test-diagnostics-channel-child-process.js",
-        "test/parallel/test-diagnostics-channel-http2-client-stream-created.js",
-        "test/parallel/test-diagnostics-channel-http2-client-stream-start.js",
-        "test/parallel/test-diagnostics-channel-module-import-error.js",
-        "test/parallel/test-diagnostics-channel-module-import.js",
-        "test/parallel/test-diagnostics-channel-module-require-error.js",
-        "test/parallel/test-diagnostics-channel-module-require.js",
         "test/parallel/test-diagnostics-channel-net-client-socket-tls.js",
         "test/parallel/test-diagnostics-channel-net.js",
         "test/parallel/test-diagnostics-channel-process.js",
         "test/parallel/test-diagnostics-channel-udp.js",
-        "test/parallel/test-diagnostics-channel-web-locks.js",
         "test/parallel/test-diagnostics-channel-worker-threads.js"
       ]
     },

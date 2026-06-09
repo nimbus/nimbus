@@ -800,6 +800,14 @@ fn should_suppress_sync_tick_promises_for_fixture(test_relative_path: &str) -> b
             | "test/parallel/test-async-hooks-disable-during-promise.js"
             | "test/parallel/test-async-hooks-promise-triggerid.js"
             | "test/parallel/test-async-hooks-promise.js"
+            // These diagnostics-channel fixtures are CommonJS main modules that
+            // use top-level dynamic import. Loading them through the harness's
+            // ESM `import("./fixture.js")` leaves `require` undefined before
+            // the fixture can subscribe. A synchronous CJS require matches
+            // `node main.js` and lets the fork's CJS translator wrap the
+            // fixture-owned dynamic import for `module.import` tracing.
+            | "test/parallel/test-diagnostics-channel-module-import-error.js"
+            | "test/parallel/test-diagnostics-channel-module-import.js"
     )
 }
 
@@ -942,6 +950,19 @@ fn should_capture_top_level_import_error_for_fixture(test_relative_path: &str) -
     )
 }
 
+fn should_force_commonjs_package_scope_for_fixture(test_relative_path: &str) -> bool {
+    matches!(
+        test_relative_path,
+        "test/parallel/test-diagnostics-channel-module-import-error.js"
+            | "test/parallel/test-diagnostics-channel-module-import.js"
+    )
+}
+
+fn should_load_fixture_with_commonjs_require(test_relative_path: &str) -> bool {
+    should_require_fixture_without_import_promise(test_relative_path)
+        || should_force_commonjs_package_scope_for_fixture(test_relative_path)
+}
+
 fn write_node_compat_bundle(
     options: NodeCompatBundleWriteOptions<'_>,
 ) -> (tempfile::TempDir, PathBuf) {
@@ -1028,7 +1049,7 @@ globalThis.global.gc = __nimbusTestGc;"#
         );
     let import_preamble = if should_quiesce_then_require_fixture(test_relative_path) {
         String::new()
-    } else if should_require_fixture_without_import_promise(test_relative_path) {
+    } else if should_load_fixture_with_commonjs_require(test_relative_path) {
         // Load the fixture with a synchronous CommonJS require instead of
         // `await import(...)`. The fixture body runs in place (just like a real
         // `node main.js` main-module load), the fixture's top-level hook is
@@ -1347,9 +1368,12 @@ try {{
 "#
     };
     let preloaded_common_for_assert_script = if test_relative_path.starts_with("test/module-hooks/")
+        || test_relative_path.starts_with("test/parallel/test-diagnostics-channel-module-")
     {
         // module.registerHooks fixtures should not observe harness bookkeeping
-        // requires after their hooks are active.
+        // requires after their hooks are active. The module diagnostics-channel
+        // fixtures similarly subscribe to module.require at top level and assert
+        // exactly the fixture-owned require/import events.
         r#"const __nimbusNodeCompatPreloadedCommonForAssert =
   createRequire(import.meta.url)("./test/common/index.js");
 "#
@@ -1518,6 +1542,14 @@ export {{}};
     let test_path = bundle_dir.join(test_relative_path);
     std::fs::create_dir_all(test_path.parent().expect("test parent should resolve"))
         .expect("test dir should build");
+    if should_force_commonjs_package_scope_for_fixture(test_relative_path) {
+        let package_json_path = test_path
+            .parent()
+            .expect("test parent should resolve")
+            .join("package.json");
+        std::fs::write(&package_json_path, r#"{"type":"commonjs"}"#)
+            .expect("fixture package scope should write");
+    }
     std::fs::write(&test_path, test_source).expect("upstream test fixture should write");
     for (relative_path, source) in extra_files {
         let fixture_path = bundle_dir.join(relative_path);
@@ -1720,6 +1752,35 @@ fn execute_upstream_node_compat_test_with_extra_files(
     Ok(NodeCompatFixtureOutcome {
         skipped: result.get("skipped") == Some(&serde_json::json!(true)),
     })
+}
+
+#[test]
+fn node_compat_diagnostics_module_import_fixture_uses_commonjs_entry() {
+    let (_tempdir, bundle_path) = write_node_compat_bundle(NodeCompatBundleWriteOptions {
+        test_relative_path: "test/parallel/test-diagnostics-channel-module-import.js",
+        test_source: "const common = require('../common'); import('node:fs');",
+        extra_files: &[],
+        capture_top_level_skip: false,
+        lane: None,
+        prelude_script: None,
+        postlude_script: None,
+        node_options: &[],
+        mode: NodeCompatBundleMode::Runtime,
+    });
+    let bundle_source = std::fs::read_to_string(&bundle_path).expect("bundle should read");
+    assert!(
+        bundle_source.contains(
+            r#"createRequire(import.meta.url)("./test/parallel/test-diagnostics-channel-module-import.js");"#
+        ),
+        "diagnostics module-import fixture should load through createRequire:\n{bundle_source}"
+    );
+    let package_json_path = bundle_path
+        .parent()
+        .expect("bundle parent should exist")
+        .join("test/parallel/package.json");
+    let package_json =
+        std::fs::read_to_string(package_json_path).expect("fixture package scope should read");
+    assert_eq!(package_json, r#"{"type":"commonjs"}"#);
 }
 
 fn node_compat_fixture_requires_runtime_self_exec(test_relative_path: &str) -> bool {

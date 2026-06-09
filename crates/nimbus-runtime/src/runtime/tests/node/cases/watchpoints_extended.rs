@@ -1055,8 +1055,10 @@ const PROCESS_DIAGNOSTICS_CHANNEL_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-diagnostics-channel-http2-client-stream-body-single-string.js",
     "test/parallel/test-diagnostics-channel-http2-client-stream-close-error.js",
     "test/parallel/test-diagnostics-channel-http2-client-stream-close.js",
+    "test/parallel/test-diagnostics-channel-http2-client-stream-created.js",
     "test/parallel/test-diagnostics-channel-http2-client-stream-error.js",
     "test/parallel/test-diagnostics-channel-http2-client-stream-finish.js",
+    "test/parallel/test-diagnostics-channel-http2-client-stream-start.js",
     "test/parallel/test-diagnostics-channel-http2-server-stream-close-error.js",
     "test/parallel/test-diagnostics-channel-http2-server-stream-close.js",
     "test/parallel/test-diagnostics-channel-http2-server-stream-created-start-timing.js",
@@ -1065,6 +1067,10 @@ const PROCESS_DIAGNOSTICS_CHANNEL_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-diagnostics-channel-http2-server-stream-finish.js",
     "test/parallel/test-diagnostics-channel-http2-server-stream-start.js",
     "test/parallel/test-diagnostics-channel-memory-leak.js",
+    "test/parallel/test-diagnostics-channel-module-import-error.js",
+    "test/parallel/test-diagnostics-channel-module-import.js",
+    "test/parallel/test-diagnostics-channel-module-require-error.js",
+    "test/parallel/test-diagnostics-channel-module-require.js",
     "test/parallel/test-diagnostics-channel-tracing-channel-args-types.js",
     "test/parallel/test-diagnostics-channel-tracing-channel-callback-early-exit.js",
     "test/parallel/test-diagnostics-channel-tracing-channel-callback-error.js",
@@ -1081,6 +1087,9 @@ const PROCESS_DIAGNOSTICS_CHANNEL_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-diagnostics-channel-tracing-channel-sync-run-stores.js",
     "test/parallel/test-diagnostics-channel-tracing-channel-sync.js",
 ];
+
+const PROCESS_DIAGNOSTICS_CHANNEL_PROMOTED_NODE24_ONLY_PATHS: &[&str] =
+    &["test/parallel/test-diagnostics-channel-web-locks.js"];
 
 #[test]
 fn node22_supported_lane_executes_process_diagnostics_channel_promoted_batch_fixture() {
@@ -1101,6 +1110,7 @@ fn node22_supported_lane_executes_process_diagnostics_channel_promoted_batch_fix
 fn node24_default_lane_executes_process_diagnostics_channel_promoted_batch_fixture() {
     let fixture_paths: Vec<String> = PROCESS_DIAGNOSTICS_CHANNEL_PROMOTED_COMMON_PATHS
         .iter()
+        .chain(PROCESS_DIAGNOSTICS_CHANNEL_PROMOTED_NODE24_ONLY_PATHS.iter())
         .map(|path| path.to_string())
         .collect();
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
