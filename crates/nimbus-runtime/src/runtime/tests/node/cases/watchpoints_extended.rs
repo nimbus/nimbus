@@ -5502,3 +5502,48 @@ fn node24_default_lane_executes_wave23_harvest_promoted_batch_fixture() {
         &extra_dirs,
     );
 }
+
+// NDS3 wave-24 fork-fix promotion block. Self-contained green guards for the two
+// fixtures the v2.8.2-nimbus.25 fork bump turned green on both lanes:
+//   - test-process-cpuUsage.js  (deno_node process.cpuUsage() now reads the
+//     current-thread CPU op directly instead of the stripped Deno namespace)
+//   - test-global-webstreams.js (bootstrap now seeds TextEncoder/DecoderStream
+//     and Compression/DecompressionStream from the same deno_web ext modules the
+//     stream/web polyfill uses, so the globals are identity-equal to require's)
+// Carries its own extra-dirs so it does not depend on any other batch's scaffolding.
+const WAVE24_FORK_FIX_PROMOTED_EXTRA_DIRS: &[&str] = &["test/common", "test/fixtures"];
+
+const WAVE24_FORK_FIX_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-global-webstreams.js",
+    "test/parallel/test-process-cpuUsage.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_wave24_fork_fix_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = WAVE24_FORK_FIX_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| path.to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-wave24-fork-fix-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        WAVE24_FORK_FIX_PROMOTED_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_wave24_fork_fix_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = WAVE24_FORK_FIX_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| path.to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-wave24-fork-fix-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        WAVE24_FORK_FIX_PROMOTED_EXTRA_DIRS,
+    );
+}

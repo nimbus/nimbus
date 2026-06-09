@@ -79,6 +79,19 @@ const {
   WritableStreamDefaultController: webWritableStreamDefaultController,
   WritableStreamDefaultWriter: webWritableStreamDefaultWriter,
 } = core.loadExtScript("ext:deno_web/06_streams.js");
+// The encoding/compression web-stream globals come from the same ext modules
+// that the `stream/web` Node polyfill re-exports, so seeding them here keeps
+// `globalThis.TextEncoderStream === require("stream/web").TextEncoderStream`
+// (and siblings) identity-equal. `loadExtScript` is cached, so these resolve to
+// the same bindings the polyfill loads.
+const {
+  TextDecoderStream: webTextDecoderStream,
+  TextEncoderStream: webTextEncoderStream,
+} = core.loadExtScript("ext:deno_web/08_text_encoding.js");
+const {
+  CompressionStream: webCompressionStream,
+  DecompressionStream: webDecompressionStream,
+} = core.loadExtScript("ext:deno_web/14_compression.js");
 core.loadExtScript("ext:deno_web/10_filereader.js");
 core.loadExtScript("ext:deno_web/12_location.js");
 const {
@@ -3847,6 +3860,10 @@ seedGlobalIfMissing("TransformStreamDefaultController", webTransformStreamDefaul
 seedGlobalIfMissing("WritableStream", webWritableStream);
 seedGlobalIfMissing("WritableStreamDefaultController", webWritableStreamDefaultController);
 seedGlobalIfMissing("WritableStreamDefaultWriter", webWritableStreamDefaultWriter);
+seedGlobalIfMissing("TextEncoderStream", webTextEncoderStream);
+seedGlobalIfMissing("TextDecoderStream", webTextDecoderStream);
+seedGlobalIfMissing("CompressionStream", webCompressionStream);
+seedGlobalIfMissing("DecompressionStream", webDecompressionStream);
 seedGlobalIfMissing("MessageChannel", webMessageChannel);
 seedGlobalIfMissing("MessagePort", webMessagePort);
 upgradeGlobalConsole(globalThis.process);
