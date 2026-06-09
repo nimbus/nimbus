@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use nimbus_core::TenantId;
-use nimbus_sandbox::{SandboxBuildLaunchSpec, SandboxHandle, SandboxImageLaunchSpec, SandboxSpec};
+use nimbus_sandbox::{SandboxHandle, SandboxSpec};
 
 pub trait ServiceInstanceCatalog: Send + Sync + 'static {
     fn service_instances_for_tenant(&self, tenant_id: &TenantId)
@@ -18,90 +18,71 @@ pub trait ServiceInstanceCatalog: Send + Sync + 'static {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ServiceImplementation {
-    SandboxBacked(SandboxBackedServiceImplementation),
-    BuiltIn(BuiltInServiceImplementation),
-    External(ExternalServiceImplementation),
+pub enum ServiceBackend {
+    Sandbox(SandboxSpec),
+    BuiltIn(BuiltInServiceSpec),
+    External(ExternalServiceSpec),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SandboxBackedServiceImplementation {
-    Image(SandboxImageLaunchSpec),
-    Build(SandboxBuildLaunchSpec),
+pub struct BuiltInServiceSpec {
+    provider: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BuiltInServiceImplementation {
-    capability: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExternalServiceImplementation {
+pub struct ExternalServiceSpec {
     endpoint: String,
 }
 
-impl ServiceImplementation {
-    pub fn sandbox_image(launch: SandboxImageLaunchSpec) -> Self {
-        Self::SandboxBacked(SandboxBackedServiceImplementation::Image(launch))
+impl ServiceBackend {
+    pub fn sandbox(spec: SandboxSpec) -> Self {
+        Self::Sandbox(spec)
     }
 
-    pub fn sandbox_build(launch: SandboxBuildLaunchSpec) -> Self {
-        Self::SandboxBacked(SandboxBackedServiceImplementation::Build(launch))
-    }
-
-    pub fn built_in(capability: impl Into<String>) -> Self {
-        Self::BuiltIn(BuiltInServiceImplementation::new(capability))
+    pub fn built_in(provider: impl Into<String>) -> Self {
+        Self::BuiltIn(BuiltInServiceSpec::new(provider))
     }
 
     pub fn external(endpoint: impl Into<String>) -> Self {
-        Self::External(ExternalServiceImplementation::new(endpoint))
+        Self::External(ExternalServiceSpec::new(endpoint))
     }
 
-    pub fn sandbox_backed(&self) -> Option<&SandboxBackedServiceImplementation> {
+    pub fn sandbox_spec(&self) -> Option<&SandboxSpec> {
         match self {
-            Self::SandboxBacked(implementation) => Some(implementation),
+            Self::Sandbox(spec) => Some(spec),
             Self::BuiltIn(_) | Self::External(_) => None,
         }
     }
 
-    pub fn into_sandbox_backed(self) -> Option<SandboxBackedServiceImplementation> {
+    pub fn into_sandbox_spec(self) -> Option<SandboxSpec> {
         match self {
-            Self::SandboxBacked(implementation) => Some(implementation),
+            Self::Sandbox(spec) => Some(spec),
             Self::BuiltIn(_) | Self::External(_) => None,
         }
     }
 
-    pub fn implementation_kind(&self) -> &'static str {
+    pub fn kind(&self) -> &'static str {
         match self {
-            Self::SandboxBacked(_) => "sandbox-backed",
+            Self::Sandbox(_) => "sandbox",
             Self::BuiltIn(_) => "built-in",
             Self::External(_) => "external",
         }
     }
 }
 
-impl SandboxBackedServiceImplementation {
-    pub fn spec(&self) -> &SandboxSpec {
-        match self {
-            Self::Image(launch) => &launch.spec,
-            Self::Build(launch) => &launch.spec,
-        }
-    }
-}
-
-impl BuiltInServiceImplementation {
-    pub fn new(capability: impl Into<String>) -> Self {
+impl BuiltInServiceSpec {
+    pub fn new(provider: impl Into<String>) -> Self {
         Self {
-            capability: capability.into(),
+            provider: provider.into(),
         }
     }
 
-    pub fn capability(&self) -> &str {
-        &self.capability
+    pub fn provider(&self) -> &str {
+        &self.provider
     }
 }
 
-impl ExternalServiceImplementation {
+impl ExternalServiceSpec {
     pub fn new(endpoint: impl Into<String>) -> Self {
         Self {
             endpoint: endpoint.into(),
@@ -114,11 +95,11 @@ impl ExternalServiceImplementation {
 }
 
 pub trait ServiceDefinitionCatalog: Send + Sync + 'static {
-    fn service_implementation_for_tenant(
+    fn service_backend_for_tenant(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Option<ServiceImplementation>;
+    ) -> Option<ServiceBackend>;
 }
 
 #[derive(Debug, Default)]
@@ -137,11 +118,11 @@ impl ServiceInstanceCatalog for EmptyServiceInstanceCatalog {
 pub struct EmptyServiceDefinitionCatalog;
 
 impl ServiceDefinitionCatalog for EmptyServiceDefinitionCatalog {
-    fn service_implementation_for_tenant(
+    fn service_backend_for_tenant(
         &self,
         _tenant_id: &TenantId,
         _service_name: &str,
-    ) -> Option<ServiceImplementation> {
+    ) -> Option<ServiceBackend> {
         None
     }
 }
@@ -186,7 +167,7 @@ mod tests {
 
         assert!(
             catalog
-                .service_implementation_for_tenant(&tenant_id, "db")
+                .service_backend_for_tenant(&tenant_id, "db")
                 .is_none(),
             "empty service definition catalog should not declare services"
         );

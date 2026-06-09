@@ -25,7 +25,7 @@ pub struct OciImageConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OciImageLaunchDefaults {
-    pub filesystem: SandboxFilesystemSpec,
+    pub rootfs: SandboxRootfsSpec,
     pub process: SandboxProcessSpec,
     pub exposed_ports: Vec<OciExposedPort>,
     pub user: Option<String>,
@@ -95,19 +95,18 @@ impl OciImageConfig {
         }
     }
 
-    pub fn resolve_process_spec(
-        &self,
-        overrides: &SandboxImageProcessOverrides,
-    ) -> Result<SandboxProcessSpec> {
-        let entrypoint = overrides
+    pub fn resolve_process_spec(&self, process: &SandboxProcessSpec) -> Result<SandboxProcessSpec> {
+        let entrypoint = process
             .entrypoint
             .clone()
             .unwrap_or_else(|| self.entrypoint.clone());
-        let cmd = overrides.cmd.clone().unwrap_or_else(|| self.cmd.clone());
-        let args = if entrypoint.is_empty() {
-            cmd
+        let command = process.command.clone().unwrap_or_else(|| self.cmd.clone());
+        let args = if !process.args.is_empty() {
+            process.args.clone()
+        } else if entrypoint.is_empty() {
+            command
         } else {
-            entrypoint.into_iter().chain(cmd).collect()
+            entrypoint.into_iter().chain(command).collect()
         };
 
         if args.is_empty() {
@@ -118,27 +117,34 @@ impl OciImageConfig {
             });
         }
 
-        let env = merge_env_pairs(&self.env, &overrides.env);
-        let cwd = overrides
-            .cwd
-            .clone()
-            .or_else(|| self.working_dir.as_ref().map(PathBuf::from))
-            .unwrap_or_else(|| PathBuf::from("/"));
+        let env = if process.env.is_empty() || process.uses_default_env() {
+            self.env.clone()
+        } else {
+            merge_env_pairs(&self.env, &process.env)
+        };
+        let cwd = if process.uses_default_cwd() {
+            self.working_dir
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/"))
+        } else {
+            process.cwd.clone()
+        };
 
         Ok(SandboxProcessSpec::new(args)
             .with_env(env)
             .with_cwd(cwd)
-            .with_terminal(overrides.terminal))
+            .with_terminal(process.terminal))
     }
 
     pub fn resolve_launch_defaults(
         &self,
         rootfs: impl Into<PathBuf>,
-        overrides: &SandboxImageProcessOverrides,
+        process: &SandboxProcessSpec,
     ) -> Result<OciImageLaunchDefaults> {
         Ok(OciImageLaunchDefaults {
-            filesystem: SandboxFilesystemSpec::new(rootfs),
-            process: self.resolve_process_spec(overrides)?,
+            rootfs: SandboxRootfsSpec::new(rootfs),
+            process: self.resolve_process_spec(process)?,
             exposed_ports: self.exposed_port_bindings()?,
             user: self.user.clone().filter(|user| !user.trim().is_empty()),
             stop_signal: self.stop_signal.clone(),

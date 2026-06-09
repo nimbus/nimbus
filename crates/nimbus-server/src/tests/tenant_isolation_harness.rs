@@ -13,36 +13,33 @@ use nimbus_runtime::{
 };
 use nimbus_sandbox::{
     PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
-    SandboxFilesystemSpec, SandboxFuture, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
-    SandboxMountSpec, SandboxProcessSpec, SandboxSpec, SandboxStatus,
+    SandboxFuture, SandboxHandle, SandboxId, SandboxMountSpec, SandboxOciImageSource,
+    SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus,
 };
-use nimbus_services::RuntimeServiceRegistry;
+use nimbus_services::{RuntimeServiceRegistry, ServiceBackend};
 
 struct HarnessServiceDefinitionCatalog;
 
 impl crate::ServiceDefinitionCatalog for HarnessServiceDefinitionCatalog {
-    fn service_implementation_for_tenant(
+    fn service_backend_for_tenant(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Option<crate::ServiceImplementation> {
+    ) -> Option<ServiceBackend> {
         if service_name != "db" {
             return None;
         }
         let spec = SandboxSpec::new(
             tenant_id.clone(),
-            "db",
+            SandboxOwnerSpec::service("db"),
             SandboxBackendKind::Krun,
-            SandboxFilesystemSpec::new(""),
+            SandboxRootSpec::oci_image_reference(
+                "registry.example.com/nimbus/postgres@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            ),
             SandboxProcessSpec::new(Vec::<String>::new()),
         )
         .with_mount(SandboxMountSpec::tenant_volume("data", "/var/lib/db"));
-        Some(crate::ServiceImplementation::sandbox_image(
-            SandboxImageLaunchSpec::new(
-                spec,
-                "registry.example.com/nimbus/postgres@sha256:0000000000000000000000000000000000000000000000000000000000000000",
-            ),
-        ))
+        Some(ServiceBackend::sandbox(spec))
     }
 }
 
@@ -96,7 +93,11 @@ impl HarnessSandboxBackend {
         image_reference: &str,
     ) -> Result<SandboxHandle, SandboxError> {
         let tenant = spec.tenant_id.as_str();
-        let service = spec.name.as_str();
+        let service = spec
+            .service_name()
+            .ok_or_else(|| SandboxError::InvalidSpec {
+                message: "harness service sandbox spec must be service-owned".to_owned(),
+            })?;
         let sandbox_id = SandboxId::new(format!("sandbox-{tenant}-{service}"));
         let sandbox_root = |kind: &str| {
             self.tenant_artifact_root(kind, tenant)
@@ -191,16 +192,26 @@ impl SandboxBackend for HarnessSandboxBackend {
     }
 
     fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
-        Box::pin(async move {
-            Err(SandboxError::InvalidSpec {
-                message: format!("harness rootfs launch unsupported for {}", spec.name),
-            })
-        })
-    }
-
-    fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
         self.start_calls.fetch_add(1, Ordering::SeqCst);
-        let result = self.materialize_record(&launch.spec, &launch.image_reference);
+        let image_reference = match &spec.root {
+            SandboxRootSpec::OciImage(image) => match &image.source {
+                SandboxOciImageSource::Reference(reference) => Ok(reference.reference.as_str()),
+                SandboxOciImageSource::Build(_) => Err(SandboxError::InvalidSpec {
+                    message: format!(
+                        "harness service sandbox {} must use an image reference",
+                        spec.display_name()
+                    ),
+                }),
+            },
+            SandboxRootSpec::Rootfs(_) => Err(SandboxError::InvalidSpec {
+                message: format!(
+                    "harness service sandbox {} must use an OCI image root",
+                    spec.display_name()
+                ),
+            }),
+        };
+        let result =
+            image_reference.and_then(|reference| self.materialize_record(&spec, reference));
         Box::pin(async move { result })
     }
 

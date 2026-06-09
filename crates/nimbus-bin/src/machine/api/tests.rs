@@ -16,9 +16,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use nimbus::{
-    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
-    SandboxBuildLaunchSpec, SandboxError, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
-    SandboxPortBinding, SandboxSpec, SandboxStatus, TenantId,
+    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
+    SandboxHandle, SandboxId, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
+    SandboxRootSpec, SandboxSpec, SandboxStatus, TenantId,
 };
 use nimbus_sandbox::SandboxFuture;
 use serde_json::json;
@@ -433,12 +433,257 @@ async fn machine_api_list_and_current_refresh_persisted_service_state_before_rep
         .expect("machine API server should shut down cleanly");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn machine_api_start_routes_reject_cross_wired_root_kinds_before_backend_start() {
+    let temp_dir = short_socket_tempdir();
+    let socket_path = temp_dir.path().join("nimbus.sock");
+    let listener = bind_direct_listener(&socket_path).expect("listener should bind");
+    let backend = RecordingStartBackend::default();
+    let started_sandboxes = backend.started_sandboxes();
+    let state = MachineApiState {
+        control_data_dir: temp_dir.path().join("control"),
+        listen_mode: MachineApiListenMode::DirectSocket,
+        binary_lookup_path: Some(fake_runtime_path(&temp_dir)),
+        helper_binary_dirs: Vec::new(),
+        service_backend: Some(Arc::new(backend)),
+        machine_port_forwarder: None,
+    };
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(serve_machine_api(listener, state, async move {
+        let _ = shutdown_rx.await;
+    }));
+    wait_for_socket_path(&socket_path);
+
+    let tenant_id = TenantId::new("svc-demo").expect("tenant id should be valid");
+    let build_body = serde_json::to_string(&MachineApiServiceSandboxImageStartRequest {
+        spec: machine_api_build_spec(&tenant_id, "api"),
+    })
+    .expect("build request should serialize");
+    let image_response = unix_http_post_json(
+        &socket_path,
+        "/v1/machine-api/service-sandboxes/image-start",
+        &build_body,
+    );
+    assert!(
+        image_response.contains("400 Bad Request"),
+        "{image_response}"
+    );
+    assert!(
+        image_response.contains(MACHINE_API_IMAGE_START_OPERATION),
+        "{image_response}"
+    );
+    assert!(
+        image_response.contains("requires OCI image reference"),
+        "{image_response}"
+    );
+    assert!(
+        image_response.contains("received OCI image build"),
+        "{image_response}"
+    );
+
+    let image_body = serde_json::to_string(&MachineApiServiceSandboxBuildStartRequest {
+        spec: machine_api_image_spec(&tenant_id, "db"),
+    })
+    .expect("image request should serialize");
+    let build_response = unix_http_post_json(
+        &socket_path,
+        "/v1/machine-api/service-sandboxes/build-start",
+        &image_body,
+    );
+    assert!(
+        build_response.contains("400 Bad Request"),
+        "{build_response}"
+    );
+    assert!(
+        build_response.contains(MACHINE_API_BUILD_START_OPERATION),
+        "{build_response}"
+    );
+    assert!(
+        build_response.contains("requires OCI image build"),
+        "{build_response}"
+    );
+    assert!(
+        build_response.contains("received OCI image reference"),
+        "{build_response}"
+    );
+
+    assert!(
+        started_sandboxes
+            .lock()
+            .expect("lock should acquire")
+            .is_empty(),
+        "mismatched route/spec roots must be rejected before backend start"
+    );
+
+    let _ = shutdown_tx.send(());
+    server
+        .await
+        .expect("machine API server task should join")
+        .expect("machine API server should shut down cleanly");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn machine_api_start_routes_reject_standalone_specs_before_backend_start() {
+    let temp_dir = short_socket_tempdir();
+    let socket_path = temp_dir.path().join("nimbus.sock");
+    let listener = bind_direct_listener(&socket_path).expect("listener should bind");
+    let backend = RecordingStartBackend::default();
+    let started_sandboxes = backend.started_sandboxes();
+    let state = MachineApiState {
+        control_data_dir: temp_dir.path().join("control"),
+        listen_mode: MachineApiListenMode::DirectSocket,
+        binary_lookup_path: Some(fake_runtime_path(&temp_dir)),
+        helper_binary_dirs: Vec::new(),
+        service_backend: Some(Arc::new(backend)),
+        machine_port_forwarder: None,
+    };
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(serve_machine_api(listener, state, async move {
+        let _ = shutdown_rx.await;
+    }));
+    wait_for_socket_path(&socket_path);
+
+    let tenant_id = TenantId::new("svc-demo").expect("tenant id should be valid");
+    let mut image_spec = machine_api_image_spec(&tenant_id, "db");
+    image_spec.owner = SandboxOwnerSpec::standalone_named("scratch-db");
+    let image_body =
+        serde_json::to_string(&MachineApiServiceSandboxImageStartRequest { spec: image_spec })
+            .expect("image request should serialize");
+    let image_response = unix_http_post_json(
+        &socket_path,
+        "/v1/machine-api/service-sandboxes/image-start",
+        &image_body,
+    );
+    assert!(
+        image_response.contains("400 Bad Request"),
+        "{image_response}"
+    );
+    assert!(
+        image_response.contains("requires service-owned sandbox metadata"),
+        "{image_response}"
+    );
+
+    let mut build_spec = machine_api_build_spec(&tenant_id, "api");
+    build_spec.owner = SandboxOwnerSpec::standalone_named("scratch-api");
+    let build_body =
+        serde_json::to_string(&MachineApiServiceSandboxBuildStartRequest { spec: build_spec })
+            .expect("build request should serialize");
+    let build_response = unix_http_post_json(
+        &socket_path,
+        "/v1/machine-api/service-sandboxes/build-start",
+        &build_body,
+    );
+    assert!(
+        build_response.contains("400 Bad Request"),
+        "{build_response}"
+    );
+    assert!(
+        build_response.contains("requires service-owned sandbox metadata"),
+        "{build_response}"
+    );
+
+    assert!(
+        started_sandboxes
+            .lock()
+            .expect("lock should acquire")
+            .is_empty(),
+        "standalone specs must be rejected before backend start"
+    );
+
+    let _ = shutdown_tx.send(());
+    server
+        .await
+        .expect("machine API server task should join")
+        .expect("machine API server should shut down cleanly");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn service_sandbox_id_routes_ignore_standalone_sandbox_records() {
+    let temp_dir = short_socket_tempdir();
+    let control_data_dir = temp_dir.path().join("control");
+    let state_root = machine_container_state_root(&control_data_dir);
+    let sandbox_id = SandboxId::new("standalone-01aaa");
+    write_standalone_container_manifest(
+        &state_root,
+        sandbox_id.as_str(),
+        "svc-demo",
+        "scratch",
+        SandboxStatus::Ready,
+    );
+
+    let backend = RecordingStartBackend::default();
+    let stopped_sandboxes = backend.stopped_sandboxes();
+    let socket_path = temp_dir.path().join("nimbus.sock");
+    let listener = bind_direct_listener(&socket_path).expect("listener should bind");
+    let state = MachineApiState {
+        control_data_dir,
+        listen_mode: MachineApiListenMode::DirectSocket,
+        binary_lookup_path: Some(fake_runtime_path(&temp_dir)),
+        helper_binary_dirs: Vec::new(),
+        service_backend: Some(Arc::new(backend)),
+        machine_port_forwarder: None,
+    };
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(serve_machine_api(listener, state, async move {
+        let _ = shutdown_rx.await;
+    }));
+    wait_for_socket_path(&socket_path);
+
+    let inspect_response = unix_http_get(
+        &socket_path,
+        &format!("/v1/machine-api/service-sandboxes/{sandbox_id}"),
+    );
+    assert!(inspect_response.contains("200 OK"), "{inspect_response}");
+    assert!(
+        inspect_response.contains("\"handle\":null"),
+        "{inspect_response}"
+    );
+
+    let stop_response = unix_http_post_json(
+        &socket_path,
+        &format!("/v1/machine-api/service-sandboxes/{sandbox_id}/stop"),
+        "{}",
+    );
+    assert!(stop_response.contains("404 Not Found"), "{stop_response}");
+    assert!(
+        stopped_sandboxes
+            .lock()
+            .expect("lock should acquire")
+            .is_empty(),
+        "standalone records must be rejected before backend stop"
+    );
+
+    let _ = shutdown_tx.send(());
+    server
+        .await
+        .expect("machine API server task should join")
+        .expect("machine API server should shut down cleanly");
+}
+
 fn unix_http_get(socket_path: &Path, path: &str) -> String {
     let mut stream = UnixStream::connect(socket_path).expect("unix socket should accept");
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .expect("read timeout should set");
     write!(stream, "GET {path} HTTP/1.0\r\nHost: localhost\r\n\r\n").expect("request should write");
+    read_unix_http_response(stream).expect("response should be valid utf-8")
+}
+
+fn unix_http_post_json(socket_path: &Path, path: &str, body: &str) -> String {
+    let mut stream = UnixStream::connect(socket_path).expect("unix socket should accept");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("read timeout should set");
+    write!(
+        stream,
+        "POST {path} HTTP/1.0\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.as_bytes().len()
+    )
+    .expect("request should write");
+    read_unix_http_response(stream).expect("response should be valid utf-8")
+}
+
+fn read_unix_http_response(mut stream: UnixStream) -> Result<String, std::io::Error> {
     let mut response = Vec::new();
     let mut chunk = [0_u8; 4096];
     loop {
@@ -453,10 +698,11 @@ fn unix_http_get(socket_path: &Path, path: &str) -> String {
             {
                 break;
             }
-            Err(error) => panic!("response should read: {error}"),
+            Err(error) => return Err(error),
         }
     }
-    String::from_utf8(response).expect("response should be valid utf-8")
+    String::from_utf8(response)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
 }
 
 fn wait_for_http_response_contains(socket_path: &Path, path: &str, needle: &str) -> String {
@@ -481,25 +727,7 @@ fn try_unix_http_get(socket_path: &Path, path: &str) -> Result<String, std::io::
     let mut stream = UnixStream::connect(socket_path)?;
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     write!(stream, "GET {path} HTTP/1.0\r\nHost: localhost\r\n\r\n")?;
-    let mut response = Vec::new();
-    let mut chunk = [0_u8; 4096];
-    loop {
-        match stream.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(read) => response.extend_from_slice(&chunk[..read]),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                break;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    String::from_utf8(response)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    read_unix_http_response(stream)
 }
 
 fn wait_for_socket_path(path: &Path) {
@@ -569,6 +797,50 @@ fn write_container_manifest(
     status: SandboxStatus,
     published_endpoints: Vec<PublishedEndpoint>,
 ) {
+    write_container_manifest_with_owner(
+        state_root,
+        sandbox_id,
+        tenant_id,
+        service_name,
+        json!({
+            "kind": "service",
+            "name": service_name
+        }),
+        status,
+        published_endpoints,
+    );
+}
+
+fn write_standalone_container_manifest(
+    state_root: &Path,
+    sandbox_id: &str,
+    tenant_id: &str,
+    display_name: &str,
+    status: SandboxStatus,
+) {
+    write_container_manifest_with_owner(
+        state_root,
+        sandbox_id,
+        tenant_id,
+        display_name,
+        json!({
+            "kind": "standalone",
+            "display_name": display_name
+        }),
+        status,
+        Vec::new(),
+    );
+}
+
+fn write_container_manifest_with_owner(
+    state_root: &Path,
+    sandbox_id: &str,
+    tenant_id: &str,
+    handle_name: &str,
+    owner: serde_json::Value,
+    status: SandboxStatus,
+    published_endpoints: Vec<PublishedEndpoint>,
+) {
     let container_dir = state_root
         .join("tenants")
         .join(tenant_id)
@@ -582,7 +854,7 @@ fn write_container_manifest(
     let handle = SandboxHandle::new(
         nimbus::TenantId::new(tenant_id).expect("tenant id should parse"),
         SandboxId::new(sandbox_id),
-        service_name,
+        handle_name,
         SandboxBackendKind::Container,
         status,
         published_endpoints,
@@ -591,9 +863,10 @@ fn write_container_manifest(
         "handle": handle,
         "spec": {
             "tenant_id": tenant_id,
-            "name": service_name,
+            "owner": owner,
             "backend": "container",
-            "filesystem": {
+            "root": {
+                "kind": "rootfs",
                 "rootfs": "/tmp/rootfs",
                 "readonly": true
             },
@@ -626,6 +899,92 @@ fn write_container_manifest(
     .expect("manifest should write");
 }
 
+fn machine_api_image_spec(tenant_id: &TenantId, service_name: &str) -> SandboxSpec {
+    let mut spec = machine_api_rootfs_spec(tenant_id, service_name);
+    spec.root = SandboxRootSpec::oci_image_reference("docker.io/library/busybox:latest");
+    spec
+}
+
+fn machine_api_build_spec(tenant_id: &TenantId, service_name: &str) -> SandboxSpec {
+    let mut spec = machine_api_rootfs_spec(tenant_id, service_name);
+    spec.root = SandboxRootSpec::oci_image_build(
+        format!("{service_name}:dev"),
+        "/tmp/Dockerfile",
+        "/tmp/context",
+    );
+    spec
+}
+
+fn machine_api_rootfs_spec(tenant_id: &TenantId, service_name: &str) -> SandboxSpec {
+    SandboxSpec::new(
+        tenant_id.clone(),
+        SandboxOwnerSpec::service(service_name),
+        SandboxBackendKind::Container,
+        SandboxRootSpec::rootfs("/tmp/rootfs"),
+        SandboxProcessSpec::new(["/bin/server"]),
+    )
+    .with_port_binding(SandboxPortBinding::tcp("default", 18080, 8080))
+}
+
+#[derive(Debug, Default)]
+struct RecordingStartBackend {
+    started_sandboxes: Arc<Mutex<Vec<String>>>,
+    stopped_sandboxes: Arc<Mutex<Vec<String>>>,
+}
+
+impl RecordingStartBackend {
+    fn started_sandboxes(&self) -> Arc<Mutex<Vec<String>>> {
+        Arc::clone(&self.started_sandboxes)
+    }
+
+    fn stopped_sandboxes(&self) -> Arc<Mutex<Vec<String>>> {
+        Arc::clone(&self.stopped_sandboxes)
+    }
+}
+
+impl SandboxBackend for RecordingStartBackend {
+    fn kind(&self) -> SandboxBackendKind {
+        SandboxBackendKind::Container
+    }
+
+    fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
+        let started_sandboxes = Arc::clone(&self.started_sandboxes);
+        let tenant_id = spec.tenant_id.clone();
+        let backend = spec.backend;
+        let service_name = spec.display_name().to_owned();
+        Box::pin(async move {
+            started_sandboxes
+                .lock()
+                .expect("lock should acquire")
+                .push(service_name.clone());
+            Ok(SandboxHandle::new(
+                tenant_id,
+                SandboxId::new(format!("{service_name}-01aaa")),
+                service_name,
+                backend,
+                SandboxStatus::Ready,
+                Vec::new(),
+            ))
+        })
+    }
+
+    fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+        Box::pin(async move { Ok(None) })
+    }
+
+    fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
+        let stopped_sandboxes = Arc::clone(&self.stopped_sandboxes);
+        let sandbox_id = id.clone();
+        Box::pin(async move {
+            stopped_sandboxes
+                .lock()
+                .expect("lock should acquire")
+                .push(sandbox_id.as_str().to_owned());
+            Ok(())
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 struct RefreshingInspectBackend {
     state_root: PathBuf,
@@ -652,24 +1011,8 @@ impl SandboxBackend for RefreshingInspectBackend {
 
     fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
         let message = format!(
-            "test refresh backend expects inspect only, not bare spec {}",
-            spec.name
-        );
-        Box::pin(async move { Err(SandboxError::InvalidSpec { message }) })
-    }
-
-    fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        let message = format!(
-            "test refresh backend expects inspect only, not image launch {}",
-            launch.spec.name
-        );
-        Box::pin(async move { Err(SandboxError::InvalidSpec { message }) })
-    }
-
-    fn start_from_build(&self, launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        let message = format!(
-            "test refresh backend expects inspect only, not build launch {}",
-            launch.spec.name
+            "test refresh backend expects inspect only, not start for {}",
+            spec.display_name()
         );
         Box::pin(async move { Err(SandboxError::InvalidSpec { message }) })
     }

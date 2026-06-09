@@ -28,7 +28,7 @@ use crate::tenant::TenantIsolationMode;
 use crate::{http, ws};
 use nimbus_auth::ApplicationAuthVerifier;
 use nimbus_services::{EmptyServiceInstanceCatalog, ServiceInstanceCatalog, ServiceManager};
-use nimbus_services::{RuntimeServiceRegistry, ServiceInstanceRuntimeRegistry};
+use nimbus_services::{RuntimeServiceRegistry, ServiceInstanceBindingRegistry};
 
 const DEMOS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../demos");
 
@@ -51,7 +51,7 @@ impl RuntimeServiceSource {
     ) -> Arc<dyn RuntimeServiceRegistry> {
         match self {
             Self::ServiceInstanceCatalog(service_instances) => {
-                Arc::new(ServiceInstanceRuntimeRegistry::new(service_instances))
+                Arc::new(ServiceInstanceBindingRegistry::new(service_instances))
             }
             Self::ServiceManager(service_manager) => {
                 crate::service_manager::attach_system_state_engine(

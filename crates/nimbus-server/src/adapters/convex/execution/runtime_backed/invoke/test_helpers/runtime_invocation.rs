@@ -13,7 +13,7 @@ use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_host_state,
 };
 use nimbus_auth::normalize_principal_context;
-use nimbus_services::{RuntimeServiceRegistry, ServiceInstanceRuntimeRegistry};
+use nimbus_services::{RuntimeServiceRegistry, ServiceInstanceBindingRegistry};
 use nimbus_tenant::{
     RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
     admit_runtime_invocation_decision,
@@ -58,7 +58,7 @@ fn invoke_named_convex_function_with_trace_cancellable(
     cancellation: HostCallCancellation,
 ) -> Result<(Value, RuntimeReadSet), Error> {
     let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-        ServiceInstanceRuntimeRegistry::new(Arc::new(crate::EmptyServiceInstanceCatalog)),
+        ServiceInstanceBindingRegistry::new(Arc::new(crate::EmptyServiceInstanceCatalog)),
     );
     let bundle = registry.required_runtime_bundle()?;
     let invocation_kind = request.kind.clone();
@@ -118,7 +118,7 @@ async fn invoke_named_convex_function_with_trace_async(
     request: InvocationRequest,
 ) -> Result<(Value, RuntimeReadSet), Error> {
     let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-        ServiceInstanceRuntimeRegistry::new(Arc::new(crate::EmptyServiceInstanceCatalog)),
+        ServiceInstanceBindingRegistry::new(Arc::new(crate::EmptyServiceInstanceCatalog)),
     );
     let context = RuntimeInvocationContext::new(
         service,

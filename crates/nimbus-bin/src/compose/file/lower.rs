@@ -139,7 +139,7 @@ impl ComposeProjectPlan {
         let tenant_id = TenantId::new(CONFIG_VALIDATION_TENANT_ID)
             .expect("config validation tenant id should remain valid");
         for (service_name, service) in &self.services {
-            let _ = service.to_service_implementation(&tenant_id, service_name)?;
+            let _ = service.to_service_backend(&tenant_id, service_name)?;
         }
         Ok(ComposeServiceCatalog { project: self })
     }
@@ -187,15 +187,15 @@ fn ensure_service_volumes_declared(
 }
 
 impl ServiceDefinitionCatalog for ComposeServiceCatalog {
-    fn service_implementation_for_tenant(
+    fn service_backend_for_tenant(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Option<ServiceImplementation> {
+    ) -> Option<ServiceBackend> {
         self.project.services.get(service_name).map(|service| {
-            service
-                .to_service_implementation(tenant_id, service_name)
-                .expect("validated compose services should keep lowering through the server catalog seam")
+            service.to_service_backend(tenant_id, service_name).expect(
+                "validated compose services should keep lowering through the server catalog seam",
+            )
         })
     }
 }
@@ -252,7 +252,7 @@ impl ComposeServicePlan {
             raw.working_dir,
             raw.user,
         )?;
-        let _ = process.to_image_process_overrides()?;
+        let _ = process.to_process_spec()?;
         let ports = resolve_ports(service_name, raw.ports, &mut warnings)?;
         let x_nimbus = raw.x_nimbus;
         let resources = ComposeResourcePlan::from_raw(
@@ -297,34 +297,13 @@ impl ComposeServicePlan {
         })
     }
 
-    fn to_service_implementation(
+    fn to_service_backend(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Result<ServiceImplementation, Error> {
+    ) -> Result<ServiceBackend, Error> {
         let spec = self.to_sandbox_spec(tenant_id, service_name)?;
-        let process_overrides = self.process.to_image_process_overrides()?;
-        match &self.source {
-            ComposeLaunchPlan::Image { image_reference } => {
-                Ok(ServiceImplementation::sandbox_image(
-                    SandboxImageLaunchSpec::new(spec, image_reference.clone())
-                        .with_process_overrides(process_overrides),
-                ))
-            }
-            ComposeLaunchPlan::Build {
-                image_name,
-                dockerfile_path,
-                context_path,
-            } => Ok(ServiceImplementation::sandbox_build(
-                SandboxBuildLaunchSpec::new(
-                    spec,
-                    image_name.clone(),
-                    dockerfile_path.clone(),
-                    context_path.clone(),
-                )
-                .with_process_overrides(process_overrides),
-            )),
-        }
+        Ok(ServiceBackend::sandbox(spec))
     }
 
     fn to_sandbox_spec(
@@ -334,10 +313,10 @@ impl ComposeServicePlan {
     ) -> Result<SandboxSpec, Error> {
         let mut spec = SandboxSpec::new(
             tenant_id.clone(),
-            service_name,
+            SandboxOwnerSpec::service(service_name),
             self.backend,
-            SandboxFilesystemSpec::new(PathBuf::new()),
-            SandboxProcessSpec::new(Vec::<String>::new()),
+            self.source.to_sandbox_root_spec(),
+            self.process.to_process_spec()?,
         )
         .with_egress_policy(compose_egress_policy(service_name, self.x_nimbus.as_ref())?)
         .with_lifecycle(compose_lifecycle_spec(
@@ -408,6 +387,27 @@ fn compose_egress_policy(
     Ok(policy)
 }
 impl ComposeLaunchPlan {
+    fn to_sandbox_root_spec(&self) -> SandboxRootSpec {
+        match self {
+            Self::Image { image_reference } => {
+                SandboxRootSpec::oci_image(SandboxOciImageSource::Reference(
+                    SandboxOciImageReferenceSpec::new(image_reference.clone()),
+                ))
+            }
+            Self::Build {
+                image_name,
+                dockerfile_path,
+                context_path,
+            } => {
+                SandboxRootSpec::oci_image(SandboxOciImageSource::Build(SandboxOciBuildSpec::new(
+                    image_name.clone(),
+                    dockerfile_path.clone(),
+                    context_path.clone(),
+                )))
+            }
+        }
+    }
+
     fn from_raw(
         service_name: &str,
         project_name: &str,
@@ -506,25 +506,32 @@ impl ComposeProcessPlan {
         })
     }
 
-    pub(crate) fn to_image_process_overrides(&self) -> Result<SandboxImageProcessOverrides, Error> {
-        let mut overrides = SandboxImageProcessOverrides::default();
+    pub(crate) fn to_process_spec(&self) -> Result<SandboxProcessSpec, Error> {
+        let mut process = SandboxProcessSpec::new(Vec::<String>::new());
         if let Some(entrypoint) = &self.entrypoint {
-            overrides.entrypoint = Some(command_plan_to_argv(
+            process = process.with_entrypoint(command_plan_to_argv(
                 entrypoint,
                 "services.<service>.entrypoint",
             )?);
         }
         if let Some(command) = &self.command {
-            overrides.cmd = Some(command_plan_to_argv(command, "services.<service>.command")?);
+            process =
+                process.with_command(command_plan_to_argv(command, "services.<service>.command")?);
         }
-        overrides.env = self
-            .environment
-            .iter()
-            .map(|(key, value)| format!("{key}={value}"))
-            .collect();
-        overrides.cwd = self.working_dir.clone();
-        overrides.user = self.user.clone();
-        Ok(overrides)
+        if !self.environment.is_empty() {
+            process = process.with_env(
+                self.environment
+                    .iter()
+                    .map(|(key, value)| format!("{key}={value}")),
+            );
+        }
+        if let Some(working_dir) = &self.working_dir {
+            process = process.with_cwd(working_dir.clone());
+        }
+        if let Some(user) = &self.user {
+            process = process.with_user(user.clone());
+        }
+        Ok(process)
     }
 }
 

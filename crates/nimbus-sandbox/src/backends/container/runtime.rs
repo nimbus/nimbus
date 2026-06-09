@@ -40,8 +40,8 @@ use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
 use crate::process::pid_is_alive;
 use crate::spec::{
-    SandboxBuildLaunchSpec, SandboxImageLaunchSpec, SandboxImageProcessOverrides,
-    SandboxResourceQuotaPolicy, SandboxSpec,
+    SandboxOciImageSource, SandboxResourceQuotaPolicy, SandboxRootSpec, SandboxRootfsSpec,
+    SandboxSpec, resolve_process_without_image_defaults,
 };
 
 const DEFAULT_RUNTIME_PATH: &str = "crun";
@@ -221,26 +221,6 @@ impl ContainerSandboxBackend {
         self.finish_start(launch_plan)
     }
 
-    fn start_from_image_sync(&self, launch: SandboxImageLaunchSpec) -> Result<SandboxHandle> {
-        let launch_plan = self.plan_start_from_image(
-            &launch.spec,
-            &launch.image_reference,
-            &launch.process_overrides,
-        )?;
-        self.finish_start(launch_plan)
-    }
-
-    fn start_from_build_sync(&self, launch: SandboxBuildLaunchSpec) -> Result<SandboxHandle> {
-        let launch_plan = self.plan_start_from_build(
-            &launch.spec,
-            &launch.image_name,
-            &launch.dockerfile_path,
-            &launch.context_path,
-            &launch.process_overrides,
-        )?;
-        self.finish_start(launch_plan)
-    }
-
     fn finish_start(&self, launch_plan: ContainerLaunchPlan) -> Result<SandboxHandle> {
         let mut manifest = launch_plan.manifest;
         match self.config.launch_mode {
@@ -297,42 +277,16 @@ impl ContainerSandboxBackend {
     }
 
     pub(crate) fn plan_start(&self, spec: &SandboxSpec) -> Result<ContainerLaunchPlan> {
-        let sandbox_id = next_sandbox_id(&spec.name);
-        self.plan_start_with_id(spec, &sandbox_id, None, None)
-    }
-
-    pub(crate) fn plan_start_from_image(
-        &self,
-        spec: &SandboxSpec,
-        image_reference: &str,
-        overrides: &SandboxImageProcessOverrides,
-    ) -> Result<ContainerLaunchPlan> {
-        let sandbox_id = next_sandbox_id(&spec.name);
-        self.resource_quota_manager().ensure_launch_quota(spec)?;
-        let prepared_launch =
-            self.prepare_image_launch(spec, &sandbox_id, image_reference, overrides)?;
-        self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
-    }
-
-    pub(crate) fn plan_start_from_build(
-        &self,
-        spec: &SandboxSpec,
-        image_name: &str,
-        dockerfile_path: &Path,
-        context_path: &Path,
-        overrides: &SandboxImageProcessOverrides,
-    ) -> Result<ContainerLaunchPlan> {
-        let sandbox_id = next_sandbox_id(&spec.name);
-        self.resource_quota_manager().ensure_launch_quota(spec)?;
-        let prepared_launch = self.prepare_built_image_launch(
-            spec,
-            &sandbox_id,
-            image_name,
-            dockerfile_path,
-            context_path,
-            overrides,
-        )?;
-        self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
+        let sandbox_id = next_sandbox_id(spec.display_name());
+        match &spec.root {
+            SandboxRootSpec::Rootfs(_) => self.plan_start_with_id(spec, &sandbox_id, None, None),
+            SandboxRootSpec::OciImage(image) => {
+                self.resource_quota_manager().ensure_launch_quota(spec)?;
+                let prepared_launch =
+                    self.prepare_oci_image_launch(spec, &sandbox_id, &image.source)?;
+                self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
+            }
+        }
     }
 
     fn plan_start_with_materialized_launch(
@@ -365,7 +319,7 @@ impl ContainerSandboxBackend {
             });
         }
 
-        let resolved_launch = resolve_launch_spec(spec, launch_defaults);
+        let resolved_launch = resolve_launch_spec(spec, launch_defaults)?;
         let mut resolved_spec = resolved_launch.spec.clone();
         self.resource_quota_manager()
             .ensure_launch_quota(&resolved_spec)?;
@@ -435,7 +389,7 @@ impl ContainerSandboxBackend {
             },
             &conmon_layout,
             sandbox_id,
-            &resolved_launch.spec.name,
+            resolved_launch.spec.display_name(),
             &bundle_layout.bundle_dir,
             launch_artifact
                 .as_ref()
@@ -446,7 +400,7 @@ impl ContainerSandboxBackend {
         let handle = SandboxHandle::new(
             resolved_spec.tenant_id.clone(),
             sandbox_id.clone(),
-            resolved_spec.name.clone(),
+            resolved_spec.display_name().to_owned(),
             SandboxBackendKind::Container,
             SandboxStatus::Starting,
             visible_published_endpoints(
@@ -581,14 +535,13 @@ impl ContainerSandboxBackend {
         spec: &SandboxSpec,
         sandbox_id: &SandboxId,
         image_reference: &str,
-        overrides: &SandboxImageProcessOverrides,
     ) -> Result<PreparedMaterializedImageLaunch> {
         OciImageMaterializer::for_tenant_sandbox(
             &self.config.state_root,
             &spec.tenant_id,
             sandbox_id,
         )
-        .prepare_image_launch(sandbox_id, image_reference, overrides)
+        .prepare_image_launch(sandbox_id, image_reference, &spec.process)
     }
 
     fn prepare_built_image_launch(
@@ -598,7 +551,6 @@ impl ContainerSandboxBackend {
         image_name: &str,
         dockerfile_path: &Path,
         context_path: &Path,
-        overrides: &SandboxImageProcessOverrides,
     ) -> Result<PreparedMaterializedImageLaunch> {
         OciDockerfileBuilder::for_tenant_sandbox(
             &self.config.state_root,
@@ -610,8 +562,28 @@ impl ContainerSandboxBackend {
             image_name,
             dockerfile_path,
             context_path,
-            overrides,
+            &spec.process,
         )
+    }
+
+    fn prepare_oci_image_launch(
+        &self,
+        spec: &SandboxSpec,
+        sandbox_id: &SandboxId,
+        source: &SandboxOciImageSource,
+    ) -> Result<PreparedMaterializedImageLaunch> {
+        match source {
+            SandboxOciImageSource::Reference(reference) => {
+                self.prepare_image_launch(spec, sandbox_id, &reference.reference)
+            }
+            SandboxOciImageSource::Build(build) => self.prepare_built_image_launch(
+                spec,
+                sandbox_id,
+                &build.image_name,
+                &build.dockerfile_path,
+                &build.context_path,
+            ),
+        }
     }
 
     fn cleanup_manifest_launch_artifacts(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
@@ -655,7 +627,7 @@ impl ContainerSandboxBackend {
             &manifest.network_layout,
             &self.network_config(),
             &manifest.handle.id,
-            &manifest.spec.name,
+            manifest.spec.display_name(),
             &hostname_for(&manifest.spec),
             &manifest.spec.port_bindings,
             self.config.machine_port_forwarder.as_ref(),
@@ -722,7 +694,7 @@ impl ContainerSandboxBackend {
             &manifest.network_layout,
             &self.network_config(),
             &manifest.handle.id,
-            &manifest.spec.name,
+            manifest.spec.display_name(),
             &hostname_for(&manifest.spec),
             &manifest.spec.port_bindings,
             self.config.machine_port_forwarder.as_ref(),
@@ -842,7 +814,7 @@ fn container_tenant_volume_mounts(
             message: format!(
                 "failed to create tenant volume {} for sandbox {} under {}: {error}",
                 volume_name,
-                spec.name,
+                spec.display_name(),
                 source.display()
             ),
         })?;
@@ -872,16 +844,6 @@ impl SandboxBackend for ContainerSandboxBackend {
     fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
         let backend = self.clone();
         Box::pin(async move { backend.start_sync(spec) })
-    }
-
-    fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        let backend = self.clone();
-        Box::pin(async move { backend.start_from_image_sync(launch) })
-    }
-
-    fn start_from_build(&self, launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        let backend = self.clone();
-        Box::pin(async move { backend.start_from_build_sync(launch) })
     }
 
     fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
@@ -1028,7 +990,7 @@ fn next_sandbox_id(name: &str) -> SandboxId {
 }
 
 fn hostname_for(spec: &SandboxSpec) -> String {
-    let slug = slugify(&spec.name);
+    let slug = slugify(spec.display_name());
     if slug.is_empty() {
         "nimbus-container".to_owned()
     } else {
@@ -1051,21 +1013,25 @@ fn slugify(name: &str) -> String {
 fn resolve_launch_spec(
     spec: &SandboxSpec,
     launch_defaults: Option<&OciImageLaunchDefaults>,
-) -> ContainerResolvedLaunchSpec {
+) -> Result<ContainerResolvedLaunchSpec> {
     let Some(launch_defaults) = launch_defaults else {
-        return ContainerResolvedLaunchSpec {
-            spec: spec.clone(),
-            image_metadata: ContainerImageMetadata::default(),
-        };
+        let mut resolved_spec = spec.clone();
+        resolved_spec.process = resolve_process_without_image_defaults(&spec.process)?;
+        let process_user = resolved_spec.process.user.clone();
+        return Ok(ContainerResolvedLaunchSpec {
+            spec: resolved_spec,
+            image_metadata: ContainerImageMetadata {
+                user: process_user,
+                ..ContainerImageMetadata::default()
+            },
+        });
     };
 
     let mut resolved_spec = spec.clone();
-    if resolved_spec.filesystem.is_unspecified() {
-        resolved_spec.filesystem = launch_defaults.filesystem.clone();
-    }
+    resolved_spec.root = resolve_root_spec(&spec.root, &launch_defaults.rootfs);
     resolved_spec.process = resolve_process_spec(&spec.process, &launch_defaults.process);
 
-    ContainerResolvedLaunchSpec {
+    Ok(ContainerResolvedLaunchSpec {
         spec: resolved_spec,
         image_metadata: ContainerImageMetadata {
             user: launch_defaults.user.clone(),
@@ -1074,6 +1040,20 @@ fn resolve_launch_spec(
             labels: launch_defaults.labels.clone(),
             exposed_ports: launch_defaults.exposed_ports.clone(),
         },
+    })
+}
+
+fn resolve_root_spec(root: &SandboxRootSpec, defaults: &SandboxRootfsSpec) -> SandboxRootSpec {
+    match root {
+        SandboxRootSpec::Rootfs(rootfs) if !rootfs.is_unspecified() => {
+            SandboxRootSpec::Rootfs(rootfs.clone())
+        }
+        SandboxRootSpec::Rootfs(rootfs) => {
+            let mut resolved = defaults.clone();
+            resolved.readonly = resolved.readonly || rootfs.readonly;
+            SandboxRootSpec::Rootfs(resolved)
+        }
+        SandboxRootSpec::OciImage(_) => SandboxRootSpec::Rootfs(defaults.clone()),
     }
 }
 
@@ -1088,13 +1068,38 @@ fn resolve_process_spec(
     if spec.env.is_empty() || spec.uses_default_env() {
         resolved.env = defaults.env.clone();
     } else {
-        resolved.env = spec.env.clone();
+        resolved.env = merge_env_overrides(&defaults.env, &spec.env);
     }
     if !spec.uses_default_cwd() {
         resolved.cwd = spec.cwd.clone();
     }
     resolved.terminal = spec.terminal || defaults.terminal;
     resolved
+}
+
+fn merge_env_overrides(base: &[String], overrides: &[String]) -> Vec<String> {
+    let mut merged = base.to_vec();
+    for override_entry in overrides {
+        let Some(override_key) = env_key(override_entry) else {
+            merged.push(override_entry.clone());
+            continue;
+        };
+
+        if let Some(index) = merged
+            .iter()
+            .position(|entry| env_key(entry).is_some_and(|key| key == override_key))
+        {
+            merged[index] = override_entry.clone();
+        } else {
+            merged.push(override_entry.clone());
+        }
+    }
+    merged
+}
+
+fn env_key(entry: &str) -> Option<&str> {
+    let (key, _) = entry.split_once('=')?;
+    (!key.is_empty()).then_some(key)
 }
 
 fn configured_stop_signal(image_metadata: &ContainerImageMetadata) -> String {

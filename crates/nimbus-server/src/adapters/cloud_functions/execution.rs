@@ -71,7 +71,7 @@ mod tests {
         ArtifactVerifierBackend, ArtifactVerifierBackendIdentity, ArtifactVerifierResult,
         SLSA_PROVENANCE_V1_PREDICATE_TYPE,
     };
-    use nimbus_services::{RuntimeServiceRegistry, ServiceInstanceRuntimeRegistry};
+    use nimbus_services::{RuntimeServiceRegistry, ServiceInstanceBindingRegistry};
     use nimbus_tenant::TenantIsolationMode;
     use nimbus_testing::{ServerFixture, wait_for_value};
 
@@ -154,7 +154,7 @@ export {};
             CloudFunctionsRegistry::from_app_dir(app_dir.path()).expect("registry should load"),
         );
         let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-            ServiceInstanceRuntimeRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
+            ServiceInstanceBindingRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
         );
         let executor = CloudFunctionsTriggerExecutor::new(
             engine.clone(),
@@ -243,7 +243,7 @@ export {};
             CloudFunctionsRegistry::from_app_dir(app_dir.path()).expect("registry should load"),
         );
         let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-            ServiceInstanceRuntimeRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
+            ServiceInstanceBindingRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
         );
         let executor = CloudFunctionsTriggerExecutor::new(
             engine.clone(),
@@ -336,7 +336,7 @@ export {};
             CloudFunctionsRegistry::from_app_dir(app_dir.path()).expect("registry should load"),
         );
         let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-            ServiceInstanceRuntimeRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
+            ServiceInstanceBindingRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
         );
         let executor = CloudFunctionsTriggerExecutor::new(
             engine.clone(),
@@ -838,7 +838,7 @@ export {};
             CloudFunctionsRegistry::from_app_dir(app_dir.path()).expect("registry should load"),
         );
         let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-            ServiceInstanceRuntimeRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
+            ServiceInstanceBindingRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
         );
         let executor = CloudFunctionsTriggerExecutor::new(
             engine,
@@ -912,7 +912,7 @@ export {};
                 .with_runtime_bundle_provenance_verifier(policy, EmptyProvenanceVerifier),
         );
         let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-            ServiceInstanceRuntimeRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
+            ServiceInstanceBindingRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
         );
         let executor = CloudFunctionsTriggerExecutor::new(
             engine.clone(),

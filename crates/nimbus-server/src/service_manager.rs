@@ -51,11 +51,11 @@ mod tests {
     };
     use nimbus_sandbox::{
         PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
-        SandboxError, SandboxFilesystemSpec, SandboxFuture, SandboxHandle, SandboxId,
-        SandboxImageLaunchSpec, SandboxProcessSpec, SandboxSpec, SandboxStatus,
+        SandboxError, SandboxFuture, SandboxHandle, SandboxId, SandboxOciImageSource,
+        SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus,
     };
     use nimbus_services::{
-        RuntimeServiceRegistry, ServiceDefinitionCatalog, ServiceImplementation, ServiceManager,
+        RuntimeServiceRegistry, ServiceBackend, ServiceDefinitionCatalog, ServiceManager,
     };
     use nimbus_testing::ServerFixture;
     use serde_json::{Map, Value, json};
@@ -71,16 +71,15 @@ mod tests {
     }
 
     impl ServiceDefinitionCatalog for StubServiceDefinitionCatalog {
-        fn service_implementation_for_tenant(
+        fn service_backend_for_tenant(
             &self,
             tenant_id: &TenantId,
             service_name: &str,
-        ) -> Option<ServiceImplementation> {
+        ) -> Option<ServiceBackend> {
             self.image_launches.get(service_name).map(|image| {
-                ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
-                    sparse_image_spec(tenant_id, service_name),
-                    image,
-                ))
+                let mut spec = sparse_image_spec(tenant_id, service_name);
+                spec.root = SandboxRootSpec::oci_image_reference(image.as_str());
+                ServiceBackend::sandbox(spec)
             })
         }
     }
@@ -125,22 +124,30 @@ mod tests {
         }
 
         fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
-            Box::pin(async move {
-                Err(SandboxError::InvalidSpec {
-                    message: format!("rootfs launch unsupported for {}", spec.name),
+            let is_image_start = matches!(
+                &spec.root,
+                SandboxRootSpec::OciImage(image)
+                    if matches!(&image.source, SandboxOciImageSource::Reference(_))
+            );
+            if is_image_start {
+                self.image_starts.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async move {
+                    Ok(Self::handle(
+                        &spec.tenant_id,
+                        spec.display_name(),
+                        SandboxStatus::Ready,
+                    ))
                 })
-            })
-        }
-
-        fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
-            self.image_starts.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async move {
-                Ok(Self::handle(
-                    &launch.spec.tenant_id,
-                    &launch.spec.name,
-                    SandboxStatus::Ready,
-                ))
-            })
+            } else {
+                let service_name = spec.display_name().to_owned();
+                Box::pin(async move {
+                    Err(SandboxError::InvalidSpec {
+                        message: format!(
+                            "non-image service backend unsupported for {service_name}"
+                        ),
+                    })
+                })
+            }
         }
 
         fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
@@ -170,9 +177,9 @@ mod tests {
     fn sparse_image_spec(tenant_id: &TenantId, name: &str) -> SandboxSpec {
         SandboxSpec::new(
             tenant_id.clone(),
-            name,
+            SandboxOwnerSpec::service(name),
             SandboxBackendKind::Krun,
-            SandboxFilesystemSpec::new(""),
+            SandboxRootSpec::rootfs(""),
             SandboxProcessSpec::new(Vec::<String>::new()),
         )
     }

@@ -5,14 +5,13 @@ mod manager;
 mod registry;
 
 pub use catalog::{
-    BuiltInServiceImplementation, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
-    ExternalServiceImplementation, SandboxBackedServiceImplementation, ServiceDefinitionCatalog,
-    ServiceImplementation, ServiceInstanceCatalog,
+    BuiltInServiceSpec, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
+    ExternalServiceSpec, ServiceBackend, ServiceDefinitionCatalog, ServiceInstanceCatalog,
 };
 pub use manager::{
     NoopServiceEvidenceWriter, ServiceEvidenceFuture, ServiceEvidenceWriter, ServiceManager,
 };
 pub use registry::{
-    RuntimeServiceBindingFuture, RuntimeServiceRegistry, ServiceInstanceRuntimeRegistry,
+    RuntimeServiceBindingFuture, RuntimeServiceRegistry, ServiceInstanceBindingRegistry,
     service_binding_from_handle,
 };

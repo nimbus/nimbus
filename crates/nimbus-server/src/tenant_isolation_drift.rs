@@ -157,7 +157,7 @@ fn scan_sandbox_state_roots(
                     observed.push(ObservedSandboxManifest {
                         pointer,
                         tenant_id: manifest.spec.tenant_id.as_str().to_owned(),
-                        service_name: manifest.spec.name.clone(),
+                        service_name: manifest.spec.service_name().map(ToOwned::to_owned),
                         sandbox_id: manifest.handle.id.as_str().to_owned(),
                         status: manifest.status,
                         handle: manifest.handle,
@@ -328,14 +328,15 @@ fn validate_manifest_shape(
             format!("spec tenant `{spec_tenant}` does not match handle tenant `{handle_tenant}`"),
         );
     }
-    if manifest.spec.name != manifest.handle.name {
+    if manifest.spec.display_name() != manifest.handle.name {
         report.push(
             SandboxManifest,
-            "sandbox_manifest_handle_service_mismatch",
+            "sandbox_manifest_handle_name_mismatch",
             &location,
             format!(
-                "spec service `{}` does not match handle service `{}`",
-                manifest.spec.name, manifest.handle.name
+                "spec display name `{}` does not match handle name `{}`",
+                manifest.spec.display_name(),
+                manifest.handle.name
             ),
         );
     }
@@ -596,8 +597,8 @@ fn validate_observed_manifests(
     for manifest in observed {
         let location = manifest.pointer.manifest_path.display().to_string();
         if active_sandbox_status(manifest.status)
-            && !active_service_keys
-                .insert((manifest.tenant_id.clone(), manifest.service_name.clone()))
+            && let Some(service_key) = manifest.service_key()
+            && !active_service_keys.insert(service_key.clone())
         {
             report.push(
                 SandboxManifest,
@@ -605,7 +606,7 @@ fn validate_observed_manifests(
                 &location,
                 format!(
                     "multiple active manifests claim tenant `{}` service `{}`",
-                    manifest.tenant_id, manifest.service_name
+                    service_key.tenant_id, service_key.service_name
                 ),
             );
         }
@@ -623,12 +624,11 @@ fn validate_observed_manifests(
             );
         }
 
-        let service_key = ServiceKey {
-            tenant_id: manifest.tenant_id.clone(),
-            service_name: manifest.service_name.clone(),
-        };
-        if active_sandbox_status(manifest.status) {
-            match service_records.get(&service_key) {
+        let service_key = manifest.service_key();
+        if active_sandbox_status(manifest.status)
+            && let Some(service_key) = service_key.as_ref()
+        {
+            match service_records.get(service_key) {
                 Some(service_record)
                     if service_record
                         .sandbox_id
@@ -649,19 +649,22 @@ fn validate_observed_manifests(
                     &location,
                     format!(
                         "active manifest for tenant `{}` service `{}` has no _nimbus service document",
-                        manifest.tenant_id, manifest.service_name
+                        service_key.tenant_id, service_key.service_name
                     ),
                 ),
             }
         }
 
         for endpoint in &manifest.handle.published_endpoints {
+            let Some(service_key) = service_key.as_ref() else {
+                continue;
+            };
             if !active_sandbox_status(manifest.status) {
                 continue;
-            }
+            };
             let port_key = PortKey {
-                tenant_id: manifest.tenant_id.clone(),
-                service_name: manifest.service_name.clone(),
+                tenant_id: service_key.tenant_id.clone(),
+                service_name: service_key.service_name.clone(),
                 endpoint_name: endpoint.name.clone(),
             };
             match port_records.get(&port_key) {
@@ -687,7 +690,7 @@ fn validate_observed_manifests(
                     &location,
                     format!(
                         "active manifest endpoint `{}` for tenant `{}` service `{}` has no _nimbus port document",
-                        endpoint.name, manifest.tenant_id, manifest.service_name
+                        endpoint.name, service_key.tenant_id, service_key.service_name
                     ),
                 ),
             }
@@ -700,8 +703,9 @@ fn validate_observed_manifests(
         }
         let has_manifest = observed.iter().any(|manifest| {
             active_sandbox_status(manifest.status)
-                && manifest.tenant_id == service_key.tenant_id
-                && manifest.service_name == service_key.service_name
+                && manifest
+                    .service_key()
+                    .is_some_and(|manifest_key| manifest_key == *service_key)
                 && service_record
                     .sandbox_id
                     .as_ref()
@@ -783,8 +787,9 @@ fn manifest_has_endpoint(
 ) -> bool {
     observed.iter().any(|manifest| {
         active_sandbox_status(manifest.status)
-            && manifest.tenant_id == service_key.tenant_id
-            && manifest.service_name == service_key.service_name
+            && manifest
+                .service_key()
+                .is_some_and(|manifest_key| manifest_key == *service_key)
             && manifest
                 .handle
                 .published_endpoints
@@ -834,7 +839,7 @@ struct PersistedSandboxManifest {
 struct ObservedSandboxManifest {
     pointer: ManifestPointer,
     tenant_id: String,
-    service_name: String,
+    service_name: Option<String>,
     sandbox_id: String,
     status: SandboxStatus,
     handle: SandboxHandle,
@@ -852,6 +857,15 @@ impl ServiceKey {
             tenant_id: tenant_id.to_owned(),
             service_name: service_name.to_owned(),
         }
+    }
+}
+
+impl ObservedSandboxManifest {
+    fn service_key(&self) -> Option<ServiceKey> {
+        self.service_name.as_ref().map(|service_name| ServiceKey {
+            tenant_id: self.tenant_id.clone(),
+            service_name: service_name.clone(),
+        })
     }
 }
 
@@ -882,8 +896,9 @@ mod tests {
 
     use nimbus_core::{DocumentId, TableName};
     use nimbus_sandbox::{
-        PublishedEndpoint, PublishedEndpointProtocol, SandboxBackendKind, SandboxFilesystemSpec,
-        SandboxId, SandboxMountSpec, SandboxPortBinding, SandboxProcessSpec,
+        PublishedEndpoint, PublishedEndpointProtocol, SandboxBackendKind, SandboxId,
+        SandboxMountSpec, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
+        SandboxRootSpec,
     };
     use serde_json::json;
     use tempfile::tempdir;
@@ -916,9 +931,9 @@ mod tests {
         );
         let spec = SandboxSpec::new(
             tenant_id.clone(),
-            "db",
+            SandboxOwnerSpec::service("db"),
             SandboxBackendKind::Krun,
-            SandboxFilesystemSpec::new("/rootfs"),
+            SandboxRootSpec::rootfs("/rootfs"),
             SandboxProcessSpec::new(["postgres"]),
         )
         .with_port_binding(SandboxPortBinding::tcp("postgres", 15_432, 5432))
@@ -948,6 +963,54 @@ mod tests {
         assert!(
             report.is_clean(),
             "clean state should not produce drift violations: {:?}",
+            report.violations()
+        );
+    }
+
+    #[tokio::test]
+    async fn tenant_isolation_drift_scanner_does_not_treat_standalone_sandboxes_as_services() {
+        let temp = tempdir().expect("tempdir should create");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+        crate::system_tenant::prepare_system_tenant_async(&engine, None)
+            .await
+            .expect("system tenant should prepare");
+        let state_root = temp.path().join("sandbox-state");
+        let tenant_id = TenantId::new("tenant-a").expect("tenant id should parse");
+
+        for name in ["desktop-a", "desktop-b"] {
+            let sandbox_id = SandboxId::new(format!("sandbox-tenant-a-{name}"));
+            let handle = SandboxHandle::new(
+                tenant_id.clone(),
+                sandbox_id.clone(),
+                name,
+                SandboxBackendKind::Krun,
+                SandboxStatus::Ready,
+                vec![PublishedEndpoint::new(
+                    "vnc",
+                    PublishedEndpointProtocol::Tcp,
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 16_000),
+                )],
+            );
+            let spec = SandboxSpec::new(
+                tenant_id.clone(),
+                SandboxOwnerSpec::standalone_named(name),
+                SandboxBackendKind::Krun,
+                SandboxRootSpec::rootfs("/rootfs"),
+                SandboxProcessSpec::new(["sleep", "60"]),
+            );
+            write_manifest(&state_root, "tenant-a", sandbox_id.as_str(), &handle, &spec);
+        }
+
+        let report = scan_tenant_isolation_drift_async(
+            &engine,
+            &TenantIsolationDriftScanConfig::new().with_sandbox_state_root(&state_root),
+        )
+        .await
+        .expect("drift scan should complete");
+
+        assert!(
+            report.is_clean(),
+            "standalone sandbox manifests must not be reconciled as services: {:?}",
             report.violations()
         );
     }
@@ -1066,9 +1129,9 @@ mod tests {
         );
         let spec = SandboxSpec::new(
             tenant_b,
-            "db",
+            SandboxOwnerSpec::service("db"),
             SandboxBackendKind::Krun,
-            SandboxFilesystemSpec::new("/rootfs"),
+            SandboxRootSpec::rootfs("/rootfs"),
             SandboxProcessSpec::new(["postgres"]),
         )
         .with_mount(SandboxMountSpec::tenant_volume(

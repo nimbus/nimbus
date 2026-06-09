@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use nimbus::{
-    Error, PublishedEndpointProtocol, SandboxBackendKind, SandboxBuildLaunchSpec,
-    SandboxEgressPolicy, SandboxEgressRule, SandboxFilesystemSpec, SandboxImageLaunchSpec,
-    SandboxImageProcessOverrides, SandboxLifecycleSpec, SandboxMountSpec, SandboxPortBinding,
-    SandboxProcessSpec, SandboxRestartPolicy, SandboxSpec, ServiceDefinitionCatalog,
-    ServiceImplementation, TenantId, validate_tenant_volume_name,
+    Error, PublishedEndpointProtocol, SandboxBackendKind, SandboxEgressPolicy, SandboxEgressRule,
+    SandboxLifecycleSpec, SandboxMountSpec, SandboxOciBuildSpec, SandboxOciImageReferenceSpec,
+    SandboxOciImageSource, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
+    SandboxRestartPolicy, SandboxRootSpec, SandboxSpec, ServiceBackend, ServiceDefinitionCatalog,
+    TenantId, validate_tenant_volume_name,
 };
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;

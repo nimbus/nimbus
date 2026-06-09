@@ -16,7 +16,10 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use nimbus::{Error, SandboxBackend, SandboxBackendKind, SandboxError, SandboxStatus, TenantId};
+use nimbus::{
+    Error, SandboxBackend, SandboxBackendKind, SandboxError, SandboxOciImageSource,
+    SandboxRootSpec, SandboxSpec, SandboxStatus, TenantId,
+};
 use nimbus_sandbox::backends::container::{
     ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerSandboxStateView,
     OciMachinePortForwarderConfig,
@@ -167,6 +170,83 @@ fn require_service_backend(
             status: StatusCode::SERVICE_UNAVAILABLE,
             message: MACHINE_API_OPERATION_BLOCKER.to_owned(),
         })
+}
+
+fn require_image_start_root(spec: &SandboxSpec) -> Result<(), MachineApiHttpError> {
+    require_service_sandbox_start_spec(MACHINE_API_IMAGE_START_OPERATION, spec)?;
+    if matches!(
+        &spec.root,
+        SandboxRootSpec::OciImage(image)
+            if matches!(&image.source, SandboxOciImageSource::Reference(_))
+    ) {
+        return Ok(());
+    }
+
+    Err(machine_api_start_root_error(
+        MACHINE_API_IMAGE_START_OPERATION,
+        "OCI image reference",
+        spec,
+    ))
+}
+
+fn require_build_start_root(spec: &SandboxSpec) -> Result<(), MachineApiHttpError> {
+    require_service_sandbox_start_spec(MACHINE_API_BUILD_START_OPERATION, spec)?;
+    if matches!(
+        &spec.root,
+        SandboxRootSpec::OciImage(image)
+            if matches!(&image.source, SandboxOciImageSource::Build(_))
+    ) {
+        return Ok(());
+    }
+
+    Err(machine_api_start_root_error(
+        MACHINE_API_BUILD_START_OPERATION,
+        "OCI image build",
+        spec,
+    ))
+}
+
+fn require_service_sandbox_start_spec(
+    operation: &str,
+    spec: &SandboxSpec,
+) -> Result<(), MachineApiHttpError> {
+    if spec.service_name().is_some() {
+        return Ok(());
+    }
+
+    Err(MachineApiHttpError {
+        status: StatusCode::BAD_REQUEST,
+        message: format!(
+            "{operation} requires service-owned sandbox metadata; received {:?} for sandbox {}",
+            spec.owner,
+            spec.display_name()
+        ),
+    })
+}
+
+fn machine_api_start_root_error(
+    operation: &str,
+    expected_root: &str,
+    spec: &SandboxSpec,
+) -> MachineApiHttpError {
+    MachineApiHttpError {
+        status: StatusCode::BAD_REQUEST,
+        message: format!(
+            "{operation} requires {expected_root}; received {} for sandbox {}",
+            sandbox_root_kind(&spec.root),
+            spec.display_name()
+        ),
+    }
+}
+
+fn sandbox_root_kind(root: &SandboxRootSpec) -> &'static str {
+    match root {
+        SandboxRootSpec::Rootfs(_) => "rootfs",
+        SandboxRootSpec::OciImage(image) => match &image.source {
+            SandboxOciImageSource::Reference(_) => "OCI image reference",
+            SandboxOciImageSource::Build(_) => "OCI image build",
+        },
+    }
 }
 
 fn sandbox_error_to_http_error(error: SandboxError) -> MachineApiHttpError {

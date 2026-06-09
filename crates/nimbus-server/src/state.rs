@@ -343,7 +343,7 @@ mod tests {
             firebase_config: None,
             license_state: LicenseState::community(),
             runtime_service_registry: Arc::new(
-                nimbus_services::ServiceInstanceRuntimeRegistry::new(Arc::new(
+                nimbus_services::ServiceInstanceBindingRegistry::new(Arc::new(
                     nimbus_services::EmptyServiceInstanceCatalog,
                 )),
             ),

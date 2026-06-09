@@ -16,16 +16,11 @@ fn krun_backend_image_backed_smoke_pulls_and_boots_busybox() {
 
     let config = smoke_backend_config(bundle_root, state_root);
     let backend = KrunSandboxBackend::new(config.clone());
-    let spec =
-        empty_image_spec("image-smoke").with_port_binding(http_binding(host_port, guest_port));
+    let mut spec = image_spec("image-smoke", "docker://busybox:latest")
+        .with_port_binding(http_binding(host_port, guest_port));
+    spec.process = busybox_http_process(guest_port);
 
-    let handle = block_on(
-        backend.start_from_image(
-            SandboxImageLaunchSpec::new(spec, "docker://busybox:latest")
-                .with_process_overrides(busybox_http_overrides(guest_port)),
-        ),
-    )
-    .expect("image-backed krun start should succeed");
+    let handle = block_on(backend.start(spec)).expect("image-backed krun start should succeed");
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
@@ -77,19 +72,15 @@ fn krun_backend_m2_direct_rootfs_resource_limits_lowering() {
 
     let backend = KrunSandboxBackend::new(smoke_backend_config(bundle_root.clone(), state_root));
     let guest_port_str = guest_port.to_string();
-    let spec = SandboxSpec::new(
-        sandbox_tenant(),
-        "m2-rootfs-resources",
-        SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new(rootfs.clone()),
-        SandboxProcessSpec::new(["/bin/busybox", "httpd", "-f", "-p", &guest_port_str]),
-    )
-    .with_resource_limits(
-        SandboxResourceLimits::default()
-            .with_cpu_count(2)
-            .with_memory_limit_bytes(256 * 1024 * 1024),
-    )
-    .with_port_binding(http_binding(host_port, guest_port));
+    let mut spec = rootfs_spec("m2-rootfs-resources", rootfs.clone());
+    spec.process = SandboxProcessSpec::new(["/bin/busybox", "httpd", "-f", "-p", &guest_port_str]);
+    let spec = spec
+        .with_resource_limits(
+            SandboxResourceLimits::default()
+                .with_cpu_count(2)
+                .with_memory_limit_bytes(256 * 1024 * 1024),
+        )
+        .with_port_binding(http_binding(host_port, guest_port));
 
     let handle =
         block_on(backend.start(spec)).expect("rootfs-backed resource-limits sandbox should start");
@@ -154,21 +145,17 @@ fn krun_backend_m2_image_backed_resource_limits_lowering() {
 
     let config = smoke_backend_config(bundle_root.clone(), state_root.clone());
     let backend = KrunSandboxBackend::new(config);
-    let spec = empty_image_spec("m2-image-resources")
+    let mut spec = image_spec("m2-image-resources", "docker://busybox:latest")
         .with_resource_limits(
             SandboxResourceLimits::default()
                 .with_cpu_count(2)
                 .with_memory_limit_bytes(256 * 1024 * 1024),
         )
         .with_port_binding(http_binding(host_port, guest_port));
+    spec.process = busybox_http_process(guest_port);
 
-    let handle = block_on(
-        backend.start_from_image(
-            SandboxImageLaunchSpec::new(spec, "docker://busybox:latest")
-                .with_process_overrides(busybox_http_overrides(guest_port)),
-        ),
-    )
-    .expect("image-backed resource-limits sandbox should start");
+    let handle =
+        block_on(backend.start(spec)).expect("image-backed resource-limits sandbox should start");
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));

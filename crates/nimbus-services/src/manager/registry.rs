@@ -28,7 +28,7 @@ impl RuntimeServiceRegistry for ServiceManager {
     ) -> Result<Option<InvocationServiceBinding>, Error> {
         let key = TenantServiceKey::new(tenant_id, service_name);
         Ok(self
-            .current_handle(&key)
+            .refresh_handle(&key)?
             .and_then(|handle| service_binding_from_handle(&handle)))
     }
 
@@ -39,7 +39,12 @@ impl RuntimeServiceRegistry for ServiceManager {
         cancellation: HostCallCancellation,
     ) -> RuntimeServiceBindingFuture<'a> {
         Box::pin(async move {
-            if let Some(binding) = self.resolve_service_binding(tenant_id, service_name)? {
+            let key = TenantServiceKey::new(tenant_id, service_name);
+            if let Some(binding) = self
+                .refresh_handle_async(&key)
+                .await?
+                .and_then(|handle| service_binding_from_handle(&handle))
+            {
                 return Ok(Some(binding));
             }
             let Some(handle) = self

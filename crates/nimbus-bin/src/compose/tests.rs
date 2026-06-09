@@ -8,8 +8,8 @@ use std::time::Duration;
 use super::*;
 use clap::{Parser, Subcommand};
 use nimbus::{
-    SandboxBackendKind, SandboxBuildLaunchSpec, SandboxFilesystemSpec, SandboxId,
-    SandboxImageLaunchSpec, SandboxProcessSpec, SandboxSpec, SandboxStatus, ServiceImplementation,
+    SandboxBackendKind, SandboxId, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec,
+    SandboxSpec, SandboxStatus, ServiceBackend,
 };
 use nimbus_sandbox::SandboxFuture;
 use nimbus_sandbox::backends::container::{

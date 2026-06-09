@@ -1,6 +1,5 @@
 use nimbus::{
-    SandboxBackend, SandboxBackendKind, SandboxBuildLaunchSpec, SandboxError, SandboxHandle,
-    SandboxId, SandboxImageLaunchSpec, SandboxSpec,
+    SandboxBackend, SandboxBackendKind, SandboxError, SandboxHandle, SandboxId, SandboxSpec,
 };
 use nimbus_sandbox::SandboxFuture;
 
@@ -25,18 +24,10 @@ impl SandboxBackend for ForwardedMachineApiSandboxBackend {
 
     fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
         let message = format!(
-            "forwarded machine API backend requires image/build launches, not bare spec {}",
-            spec.name
+            "forwarded machine API backend cannot start service sandbox {} on this host",
+            spec.display_name()
         );
         Box::pin(async move { Err(SandboxError::InvalidSpec { message }) })
-    }
-
-    fn start_from_image(&self, _launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        unsupported_machine_api_backend()
-    }
-
-    fn start_from_build(&self, _launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        unsupported_machine_api_backend()
     }
 
     fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
@@ -54,14 +45,6 @@ impl SandboxBackend for ForwardedMachineApiSandboxBackend {
             })
         })
     }
-}
-
-fn unsupported_machine_api_backend() -> SandboxFuture<SandboxHandle> {
-    Box::pin(async move {
-        Err(SandboxError::BackendUnavailable {
-            message: unsupported_machine_api_backend_message(),
-        })
-    })
 }
 
 fn unsupported_machine_api_backend_message() -> String {

@@ -11,7 +11,7 @@ use super::{
     BuildahCli, OciExposedPort, OciExposedPortProtocol, OciImageConfig, OciImageLaunchDefaults,
 };
 use crate::backends::oci::command::CommandSpec;
-use crate::spec::SandboxImageProcessOverrides;
+use crate::spec::SandboxProcessSpec;
 
 fn fake_buildah_cli(script_path: PathBuf) -> BuildahCli {
     BuildahCli::new("/bin/sh").with_launcher_args([script_path.to_string_lossy().into_owned()])
@@ -122,7 +122,7 @@ fn resolve_process_spec_uses_image_defaults() {
         .expect("sample inspect output should parse");
 
     let process = config
-        .resolve_process_spec(&SandboxImageProcessOverrides::default())
+        .resolve_process_spec(&SandboxProcessSpec::new(Vec::<String>::new()))
         .expect("image defaults should lower into a process spec");
 
     assert_eq!(
@@ -149,14 +149,14 @@ fn resolve_process_spec_applies_overrides_with_env_precedence() {
         .expect("sample inspect output should parse");
 
     let process = config
-        .resolve_process_spec(&SandboxImageProcessOverrides {
-            entrypoint: Some(vec!["/bin/sh".to_owned(), "-lc".to_owned()]),
-            cmd: Some(vec!["exec custom-api".to_owned()]),
-            env: vec!["POSTGRES_DB=app".to_owned(), "LOG_LEVEL=debug".to_owned()],
-            cwd: Some(PathBuf::from("/workspace")),
-            user: None,
-            terminal: true,
-        })
+        .resolve_process_spec(
+            &SandboxProcessSpec::new(Vec::<String>::new())
+                .with_entrypoint(["/bin/sh", "-lc"])
+                .with_command(["exec custom-api"])
+                .with_env(["POSTGRES_DB=app", "LOG_LEVEL=debug"])
+                .with_cwd("/workspace")
+                .with_terminal(true),
+        )
         .expect("overrides should lower into a process spec");
 
     assert_eq!(
@@ -195,7 +195,7 @@ fn resolve_process_spec_rejects_missing_launch_command() {
     };
 
     let error = config
-        .resolve_process_spec(&SandboxImageProcessOverrides::default())
+        .resolve_process_spec(&SandboxProcessSpec::new(Vec::<String>::new()))
         .expect_err("missing command should be rejected");
     assert!(
         error
@@ -268,18 +268,16 @@ fn resolve_launch_defaults_collects_rootfs_process_ports_and_metadata() {
     let defaults = config
         .resolve_launch_defaults(
             "/srv/rootfs",
-            &SandboxImageProcessOverrides {
-                cmd: Some(vec!["serve".to_owned()]),
-                env: vec!["SERVICE_MODE=foreground".to_owned()],
-                ..SandboxImageProcessOverrides::default()
-            },
+            &SandboxProcessSpec::new(Vec::<String>::new())
+                .with_command(["serve"])
+                .with_env(["SERVICE_MODE=foreground"]),
         )
         .expect("launch defaults should resolve");
 
     assert_eq!(
         defaults,
         OciImageLaunchDefaults {
-            filesystem: crate::spec::SandboxFilesystemSpec::new("/srv/rootfs"),
+            rootfs: crate::spec::SandboxRootfsSpec::new("/srv/rootfs"),
             process: crate::spec::SandboxProcessSpec::new(["/usr/local/bin/service", "serve",])
                 .with_env(["SERVICE_MODE=foreground"])
                 .with_cwd("/"),
@@ -375,18 +373,16 @@ fn prepare_image_launch_combines_buildah_materialization_and_launch_defaults() {
         .prepare_image_launch(
             "postgres-working",
             "postgres:16",
-            &SandboxImageProcessOverrides {
-                env: vec!["PGPORT=5432".to_owned()],
-                cwd: Some(PathBuf::from("/workspace")),
-                ..SandboxImageProcessOverrides::default()
-            },
+            &SandboxProcessSpec::new(Vec::<String>::new())
+                .with_env(["PGPORT=5432"])
+                .with_cwd("/workspace"),
         )
         .expect("prepared launch should succeed");
 
     assert_eq!(prepared.mount_session.session_name, "postgres-working");
     assert_eq!(prepared.mount_session.image_reference, "postgres:16");
     assert_eq!(
-        prepared.launch_defaults.filesystem.rootfs,
+        prepared.launch_defaults.rootfs.rootfs,
         PathBuf::from("/tmp/fake-rootfs")
     );
     assert_eq!(
@@ -434,7 +430,7 @@ fn prepare_image_launch_prefers_process_user_override_over_image_user() {
         .prepare_image_launch(
             "postgres-working",
             "postgres:16",
-            &SandboxImageProcessOverrides::default().with_user("123:456"),
+            &SandboxProcessSpec::new(Vec::<String>::new()).with_user("123:456"),
         )
         .expect("prepared launch should succeed");
 
@@ -482,7 +478,7 @@ fn prepare_built_image_launch_uses_built_image_reference() {
             "api-working",
             Path::new("/workspace/Dockerfile"),
             Path::new("/workspace"),
-            &SandboxImageProcessOverrides::default(),
+            &SandboxProcessSpec::new(Vec::<String>::new()),
         )
         .expect("prepared built launch should succeed");
 
@@ -491,7 +487,7 @@ fn prepare_built_image_launch_uses_built_image_reference() {
         "localhost/nimbus-api"
     );
     assert_eq!(
-        prepared.launch_defaults.filesystem.rootfs,
+        prepared.launch_defaults.rootfs.rootfs,
         PathBuf::from("/tmp/fake-rootfs")
     );
 

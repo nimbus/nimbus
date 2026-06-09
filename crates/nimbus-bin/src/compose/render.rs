@@ -128,7 +128,7 @@ pub(super) fn render_service_inspect_view<T: Serialize>(
     }
 }
 
-pub(super) fn render_service_process_snapshot_view(
+pub(super) fn render_service_sandbox_process_snapshot_view(
     snapshot: &ServiceProcessSnapshot,
     format: ComposeTopOutputFormat,
     no_heading: bool,
@@ -140,13 +140,13 @@ pub(super) fn render_service_process_snapshot_view(
         ComposeTopOutputFormat::Yaml => serde_yaml::to_string(snapshot).map_err(|error| {
             Error::Serialization(format!("failed to render compose top output: {error}"))
         }),
-        ComposeTopOutputFormat::Table => {
-            Ok(render_service_process_snapshot_table(snapshot, no_heading))
-        }
+        ComposeTopOutputFormat::Table => Ok(render_service_sandbox_process_snapshot_table(
+            snapshot, no_heading,
+        )),
     }
 }
 
-fn render_service_process_snapshot_table(
+fn render_service_sandbox_process_snapshot_table(
     snapshot: &ServiceProcessSnapshot,
     no_heading: bool,
 ) -> String {
