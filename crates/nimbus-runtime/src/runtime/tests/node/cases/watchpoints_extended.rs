@@ -5371,3 +5371,134 @@ fn node_compat_supplementary_signal_lifecycle_watchpoint_node22() {
 fn node_compat_supplementary_signal_lifecycle_watchpoint_node24() {
     assert_signal_lifecycle_watchpoint("node24");
 }
+
+// NDS3 wave-23 incidental free-pass promotion. Each fixture below is a
+// v8-isolate-required gap that already executes green in-isolate against the
+// pinned fork (v2.8.2-nimbus tag .24); the full required-gap harvest surfaced
+// them as incidental passes needing no fork change. They are promoted here
+// from required gaps to measured default-lane support and re-verified as
+// non-ignored in-batch passes. The block is self-contained (its own staged
+// dirs/files) so it neither depends on diagnostic harvest scaffolding nor
+// shifts any existing watchpoint.
+
+const WAVE23_HARVEST_PROMOTED_EXTRA_DIRS: &[&str] = &[
+    "test/common",
+    "test/async-hooks",
+    "test/es-module",
+    "test/module-hooks",
+    "test/fixtures/wpt",
+    "test/fixtures/crypto",
+    "test/fixtures/keys",
+    "test/fixtures/cycles",
+    "test/fixtures/es-module-url",
+    "test/fixtures/es-module-loaders",
+    "test/fixtures/es-module-require-cache",
+    "test/fixtures/es-module-specifiers",
+    "test/fixtures/es-modules",
+    "test/fixtures/import-require-cycle",
+    "test/fixtures/module-hooks",
+    "test/fixtures/module-require-symlink",
+    "test/fixtures/node_modules",
+    "test/fixtures/packages",
+    "test/fixtures/snapshot",
+    "test/fixtures/test-module-loading-globalpaths",
+    "test/fixtures/typescript",
+    "test/fixtures/uncaught-exceptions",
+];
+
+const WAVE23_HARVEST_PROMOTED_EXTRA_RUNTIME_FILES: &[&str] = &[
+    "test/fixtures/person-large.jpg",
+    "test/fixtures/aead-vectors.js",
+    "test/fixtures/a.js",
+    "test/fixtures/baz.js",
+    "test/fixtures/empty.js",
+    "test/fixtures/empty.cjs",
+    "test/fixtures/empty.json",
+    "test/fixtures/empty.txt",
+    "test/fixtures/x.txt",
+    "test/fixtures/elipses.txt",
+    "test/fixtures/loop.js",
+    "test/fixtures/utf8_test_text.txt",
+    "test/fixtures/experimental.json",
+    "test/fixtures/invalid.json",
+    "test/fixtures/is-object.js",
+    "test/fixtures/module-loading-error.node",
+    "test/fixtures/out-of-bound.wasm",
+    "test/fixtures/pkgexports.mjs",
+    "test/fixtures/printA.js",
+    "test/fixtures/primitive-42.json",
+    "test/fixtures/recursive-a.cjs",
+    "test/fixtures/recursive-b.cjs",
+    "test/fixtures/simple.wasm",
+];
+
+const WAVE23_HARVEST_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/es-module/test-cjs-prototype-pollution.js",
+    "test/es-module/test-esm-data-urls.js",
+    "test/es-module/test-esm-exports.mjs",
+    "test/es-module/test-esm-import-attributes-errors.mjs",
+    "test/es-module/test-esm-import-attributes-identity.mjs",
+    "test/es-module/test-esm-import-meta-resolve-hooks.mjs",
+    "test/es-module/test-esm-import-meta.mjs",
+    "test/es-module/test-esm-imports.mjs",
+    "test/es-module/test-esm-invalid-data-urls.js",
+    "test/es-module/test-esm-json-cache.mjs",
+    "test/es-module/test-esm-live-binding.mjs",
+    "test/es-module/test-esm-main-lookup.mjs",
+    "test/es-module/test-esm-pkgname.mjs",
+    "test/es-module/test-esm-process.mjs",
+    "test/es-module/test-esm-prototype-pollution.mjs",
+    "test/es-module/test-esm-undefined-cjs-global-like-variables.js",
+    "test/es-module/test-require-module-error-catching.js",
+    "test/parallel/test-module-setsourcemapssupport.js",
+    "test/parallel/test-require-process.js",
+    "test/parallel/test-util-callbackify.js",
+    "test/parallel/test-util-promisify-custom-names.mjs",
+];
+
+// NOTE: test/parallel/test-webcrypto-sign-verify.js was a harvest free-pass
+// candidate but exceeds the wall-clock timeout under the non-ignored batch
+// green-guard (heavy RSA/ECDSA sign+verify across the full algorithm matrix),
+// so it is intentionally NOT promoted here — it stays a required gap and a
+// candidate for the webcrypto fork-fix cluster, not a measured pass.
+const WAVE23_HARVEST_PROMOTED_NODE22_ONLY_PATHS: &[&str] =
+    &["test/parallel/test-eventemitter-asyncresource.js"];
+
+const WAVE23_HARVEST_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
+    "test/es-module/test-esm-import-attributes-errors.js",
+];
+
+#[test]
+fn node22_supported_lane_executes_wave23_harvest_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = WAVE23_HARVEST_PROMOTED_COMMON_PATHS
+        .iter()
+        .chain(WAVE23_HARVEST_PROMOTED_NODE22_ONLY_PATHS.iter())
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-wave23-harvest-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        WAVE23_HARVEST_PROMOTED_EXTRA_RUNTIME_FILES,
+        WAVE23_HARVEST_PROMOTED_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_wave23_harvest_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = WAVE23_HARVEST_PROMOTED_COMMON_PATHS
+        .iter()
+        .chain(WAVE23_HARVEST_PROMOTED_NODE24_ONLY_PATHS.iter())
+        .map(|path| (*path).to_string())
+        .collect();
+    // The Node24 vendored tree additionally carries the webcrypto fixture subtree.
+    let mut extra_dirs: Vec<&str> = WAVE23_HARVEST_PROMOTED_EXTRA_DIRS.to_vec();
+    extra_dirs.push("test/fixtures/webcrypto");
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-wave23-harvest-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        WAVE23_HARVEST_PROMOTED_EXTRA_RUNTIME_FILES,
+        &extra_dirs,
+    );
+}
