@@ -135,6 +135,50 @@ HOST_PROCESS_CONTROL_PREFIXES = (
     "test/parallel/test-process-execve",
 )
 
+# NDS3 wave-25 disposition (2026-06-09): each fixture below binds or connects a
+# real host TCP/UDP/TLS socket (or listening server) and then asserts the host
+# libuv async-resource handle graph (TCPSERVERWRAP / TCPWRAP / TLSWRAP /
+# SHUTDOWNWRAP / UDPWRAP) or a socket-level error/address behavior. The default
+# multi-tenant V8 isolate denies ambient host network access, so the
+# socket-backed behavior is host-owned and must fail closed unless a
+# host-capable (sandbox-backed service / microVM) backend is selected. Source-
+# confirmed per-fixture against the official fixture body:
+#   async-hooks/test-graph.http.js        -> http.createServer().listen()
+#   async-hooks/test-graph.shutdown.js    -> net.createServer().listen()
+#   async-hooks/test-graph.tcp.js         -> net.connect() to host '::1'
+#   async-hooks/test-graph.tls-write.js   -> tls.createServer/connect
+#   async-hooks/test-graph.tls-write-12.js-> tls.createServer/connect (TLSv1.2)
+#   async-hooks/test-tcpwrap.js           -> net.createServer() TCPWRAP graph
+#   parallel/test-double-tls-client.js    -> tls.connect double-TLS client
+#   parallel/test-double-tls-server.js    -> tls.createServer double-TLS server
+#   parallel/test-dgram-error-message-address.js -> dgram bind to '1.1.1.1'
+#   parallel/test-dgram-ipv6only.js       -> dgram udp6 bind ipv6Only option
+#   parallel/test-dgram-reuseport.js      -> dgram bind reusePort option
+#   parallel/test-dgram-udp6-link-local-address.js -> dgram udp6 link-local bind
+#   parallel/test-dgram-udp6-send-default-host.js  -> dgram udp6 send default host
+#   parallel/test-https-connect-address-family.js  -> https.get real connection
+# The node24 lane already routes the dgram/https members through the
+# requires_unpromoted host-owned keyword catch (diagnostic_only_non_isolate);
+# this set reconciles the node22 watchpoint-pinned lane and promotes the
+# async-hooks graph + double-tls members (v8_isolate_required on both lanes) to
+# the same host-owned disposition.
+HOST_NETWORK_SOCKET_PATHS = {
+    "test/async-hooks/test-graph.http.js",
+    "test/async-hooks/test-graph.shutdown.js",
+    "test/async-hooks/test-graph.tcp.js",
+    "test/async-hooks/test-graph.tls-write.js",
+    "test/async-hooks/test-graph.tls-write-12.js",
+    "test/async-hooks/test-tcpwrap.js",
+    "test/parallel/test-double-tls-client.js",
+    "test/parallel/test-double-tls-server.js",
+    "test/parallel/test-dgram-error-message-address.js",
+    "test/parallel/test-dgram-ipv6only.js",
+    "test/parallel/test-dgram-reuseport.js",
+    "test/parallel/test-dgram-udp6-link-local-address.js",
+    "test/parallel/test-dgram-udp6-send-default-host.js",
+    "test/parallel/test-https-connect-address-family.js",
+}
+
 NODE_CLI_TOPOLOGY_PATHS = {
     "test/client-proxy/test-use-env-proxy-cli-http.mjs",
     "test/client-proxy/test-use-env-proxy-cli-https.mjs",
@@ -354,6 +398,24 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         # sys access or symlink/file ownership mutation.
         'test/parallel/test-fs-lchown.js',
     }),
+    ('diagnostic_only_non_isolate', 'host_owned_system_resource_surface', 'diagnostic_stub'): frozenset({
+        # NDS3 wave-25 (2026-06-09): source-confirmed. Each fixture's blocking
+        # assertion reads or mutates a host-owned system resource the default
+        # multi-tenant isolate denies as host sys access:
+        #   test-os.js: the priority block (gated only on !common.isIBMi) calls
+        #     os.setPriority()/os.getPriority(), which round-trips host process
+        #     scheduling priority (setpriority(2)); granting it would let tenant
+        #     code renice host processes. The sibling test-os-process-priority.js
+        #     is already classified host-owned here, and the pure os.* surfaces
+        #     (hostname/type/release/...) remain visible elsewhere.
+        #   test-process-available-memory.js: a five-line fixture whose sole
+        #     assertion calls process.availableMemory(), reading host free system
+        #     memory (systemMemoryInfo); exposing host RAM stats to tenant code is
+        #     a host-info leak the sandbox denies. A fabricated value would be a
+        #     false green, so the honest disposition is host-owned fail-closed.
+        'test/parallel/test-os.js',
+        'test/parallel/test-process-available-memory.js',
+    }),
     ('test_harness_only', 'exact_node_cli_or_tooling_topology', 'test_harness_emulation'): frozenset({
         'test/es-module/test-cjs-esm-warn.js',
         'test/es-module/test-esm-assertionless-json-import.js',
@@ -543,6 +605,24 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         'test/parallel/test-process-exception-capture.js',
         'test/parallel/test-quic-session-stream-lifecycle.mjs',
         'test/parallel/test-require-long-path.js',
+        # NDS3 wave-25 (2026-06-09): source-confirmed.
+        #   test-vm-global-property-enumerator.js: asserts the EXACT
+        #     Object.getOwnPropertyNames() set of a vm context global against a
+        #     hardcoded upstream list. Nimbus's embedded V8 149 exposes newer
+        #     globals the fixture's reference build does not enumerate (Temporal,
+        #     SuppressedError, DisposableStack, AsyncDisposableStack,
+        #     Float16Array), so the exact-set assertion is tied to the embedded
+        #     V8 release's global composition rather than Nimbus's compatibility
+        #     contract. Same structural class as the test-v8-serdes.js
+        #     V8-version-drift special-case; the global set cannot be trimmed
+        #     without downgrading V8 or hiding standard globals.
+        #   test-path-win32-normalize-device-names.js: top-level
+        #     `if (!common.isWindows) common.skip('Windows only')`. Windows-only
+        #     path.win32 reserved-device-name normalization; the path.win32
+        #     behavior is implemented but cannot be exercised on the non-Windows
+        #     host (same lever as test-require-long-path.js directly above).
+        'test/parallel/test-vm-global-property-enumerator.js',
+        'test/parallel/test-path-win32-normalize-device-names.js',
     }),
     ('upstream_or_platform_boundary', 'pending_deprecation_flag_gated_warning_emission', 'unsupported'): frozenset({
         # NDS3 wave-3 disposition (2026-06-06): `// Flags: --pending-deprecation`
@@ -693,6 +773,8 @@ WAVE2_REASON_TEXT = {
     'prebuilt_v8_native_binding_unreachable_surface': "fixture asserts a public v8/vm API (vm.measureMemory, v8.queryObjects, v8.startCpuProfile) whose only implementation path is a V8 native C++ binding the prebuilt rusty_v8 release does not export, so it is unreachable without forking rusty_v8's native layer and cutting a new release; isolate-capable in principle but a visible optional gap rather than required default support",
     'upstream_or_platform_boundary': "fixture is gated by V8 native-syntax intrinsics, host-platform skips, host-specific filesystem/watch backends, or Node's exact native build/dependency composition, so it cannot run as public Application API behavior inside the Nimbus V8 isolate",
     'experimental_shadow_realm_flag_gated': "fixture is gated by --experimental-shadow-realm and asserts the ShadowRealm global, an experimental off-by-default Node feature the pinned deno_core fork (and upstream Deno) does not enable via the harmony flag set; the multi-tenant isolate cannot honor a per-invocation experimental opt-in flag, so the global is intentionally absent and the assertion is not part of the required default Application surface",
+    'host_owned_network_socket_surface': "fixture binds or connects a real host TCP/UDP/TLS socket (or listening server) and asserts the host libuv async-resource handle graph or socket-level address/error behavior; the default multi-tenant V8 isolate denies ambient host network access, so the socket-backed behavior is host-owned and must fail closed unless a host-capable (sandbox-backed service / microVM) backend is selected",
+    'host_owned_system_resource_surface': "fixture reads or mutates a host-owned system resource (host process scheduling priority via os.getPriority/os.setPriority, or host free-memory introspection via process.availableMemory) that the default multi-tenant isolate denies as host sys access; isolate-safe-capable only through a host-capable backend, so it is a host-owned non-isolate surface rather than required default support",
 }
 
 
@@ -730,6 +812,12 @@ _WP_ABSOLUTE_HOST_PATH_POLICY = (
     "diagnostic_stub",
     WAVE2_REASON_TEXT["absolute_host_path_policy_boundary"],
 )
+_WP_HOST_NETWORK_SOCKET = (
+    "diagnostic_only_non_isolate",
+    "host_owned_network_socket_surface",
+    "diagnostic_stub",
+    WAVE2_REASON_TEXT["host_owned_network_socket_surface"],
+)
 
 # Watchpoint-pinned fixtures whose CORE assertion is structurally outside the
 # multi-tenant V8 isolate contract on the lane where the catalog records a
@@ -759,6 +847,21 @@ WATCHPOINT_STRUCTURAL_RECLASSIFICATIONS = {
     "test/parallel/test-dgram-cluster-close-during-bind.js": _WP_HOST_PROCESS_CONTROL,
     "test/parallel/test-dgram-exclusive-implicit-bind.js": _WP_HOST_PROCESS_CONTROL,
     "test/parallel/test-dgram-bind-socket-close-before-cluster-reply.js": _WP_HOST_PROCESS_CONTROL,
+    # NDS3 wave-25 (2026-06-09): the node22 lane pins each fixture below as a
+    # rust_watchpoint expected-failure (v8_isolate_required), while the node24
+    # lane already routes the identical fixture through requires_unpromoted to a
+    # host-owned disposition. Each binds/connects a real host UDP/TCP/TLS socket
+    # (source-confirmed; see HOST_NETWORK_SOCKET_PATHS) or, for the http-agent
+    # reuse fixture, introspects host process.report libuv handle state. Mirror
+    # the node24 tuple so both lanes agree; the #[ignore] watchpoint stays as a
+    # tripwire.
+    "test/parallel/test-dgram-error-message-address.js": _WP_HOST_NETWORK_SOCKET,
+    "test/parallel/test-dgram-ipv6only.js": _WP_HOST_NETWORK_SOCKET,
+    "test/parallel/test-dgram-reuseport.js": _WP_HOST_NETWORK_SOCKET,
+    "test/parallel/test-dgram-udp6-link-local-address.js": _WP_HOST_NETWORK_SOCKET,
+    "test/parallel/test-dgram-udp6-send-default-host.js": _WP_HOST_NETWORK_SOCKET,
+    "test/parallel/test-https-connect-address-family.js": _WP_HOST_NETWORK_SOCKET,
+    "test/parallel/test-http-agent-reuse-drained-socket-only.js": _WP_HOST_PROCESS_CONTROL,
 }
 
 
@@ -857,6 +960,13 @@ def classify_entry(entry: dict[str, Any]) -> tuple[str, str, str, str]:
                 "exact_host_process_control_surface",
                 "diagnostic_stub",
                 "fixture requires host process replacement, abort/fatal-exit behavior, native dlopen, raw stdio, signal delivery, uid/gid/group mutation, or warning-file side effects and must fail closed inside the V8 isolate",
+            )
+        if test_path in HOST_NETWORK_SOCKET_PATHS:
+            return (
+                "diagnostic_only_non_isolate",
+                "host_owned_network_socket_surface",
+                "diagnostic_stub",
+                WAVE2_REASON_TEXT["host_owned_network_socket_surface"],
             )
         if test_path in NODE_CLI_TOPOLOGY_PATHS or any(
             test_path.startswith(prefix) for prefix in NODE_CLI_TOPOLOGY_PREFIXES
@@ -1051,8 +1161,10 @@ def build_posture(repo: Path) -> dict[str, Any]:
         "reason_vocabulary": sorted(
             {
                 "child_process_host_output_topology",
+                "host_owned_network_socket_surface",
                 "host_owned_non_isolate_harness",
                 "host_owned_permission_policy",
+                "host_owned_system_resource_surface",
                 "exact_host_process_control_surface",
                 "exact_node_cli_or_tooling_topology",
                 "expose_internals_private_module_surface",
