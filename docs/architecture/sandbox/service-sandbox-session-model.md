@@ -207,28 +207,29 @@ const nimbus = new Nimbus();
 await nimbus.services.start({ name: "search", waitUntil: "ready" });
 const search = await nimbus.services.get({ name: "search" });
 
-// Future isolated execution resource once server-backed sandbox routes land.
+// Isolated execution resource.
+const spec = buildSandboxSpec();
 const sandbox = await nimbus.sandboxes.create({
   profile: "desktop",
+  spec,
 });
 
-// Future scoped interaction with an existing sandbox.
+// Scoped interaction with an existing sandbox.
 const desktop = await nimbus.sessions.open({
-  target: { sandbox: { id: sandbox.id } },
-  channels: ["screen", "input", "files"],
+  target: { sandbox: { id: sandbox.metadata.id } },
+  channels: ["stdio", "files"],
 });
 
-// Future scoped interaction with a named service.
+// Scoped interaction with a named sandbox-backed service.
 const tools = await nimbus.sessions.open({
   target: { service: { name: "mcp-tools" } },
-  channels: ["stdio", "events"],
+  channels: ["stdio"],
 });
 
-// Future built-in browser service session.
+// Built-in browser service session.
 const browser = await nimbus.sessions.open({
   target: { service: { name: "browser" } },
-  channels: ["cdp", "page", "files"],
-  profile: "research",
+  channels: ["cdp", "page"],
 });
 ```
 

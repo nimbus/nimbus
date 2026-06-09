@@ -6,7 +6,9 @@ mod registry;
 
 pub use catalog::{
     BuiltInServiceSpec, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
-    ExternalServiceSpec, ServiceBackend, ServiceDefinitionCatalog, ServiceInstanceCatalog,
+    ExternalAuthPolicy, ExternalServiceSpec, HealthCheckPolicy, SandboxResource, ServiceBackend,
+    ServiceDefinition, ServiceDefinitionCatalog, ServiceDefinitionSource, ServiceInstanceCatalog,
+    SessionLifecycleState, SessionResource, SessionTarget, SessionTargetSnapshot,
 };
 pub use manager::{
     NoopServiceEvidenceWriter, ServiceEvidenceFuture, ServiceEvidenceWriter, ServiceManager,

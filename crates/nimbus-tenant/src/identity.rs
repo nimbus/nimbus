@@ -10,6 +10,7 @@ use super::{RuntimeIsolationTier, TenantIsolationDecision};
 pub enum WorkloadKind {
     RuntimeFunction,
     Service,
+    Sandbox,
     HttpRequest,
     SystemTask,
 }
@@ -19,6 +20,7 @@ impl WorkloadKind {
         match self {
             Self::RuntimeFunction => "runtime_function",
             Self::Service => "service",
+            Self::Sandbox => "sandbox",
             Self::HttpRequest => "http_request",
             Self::SystemTask => "system_task",
         }
@@ -53,6 +55,10 @@ impl WorkloadAttributes {
 
     pub fn service(name: impl Into<String>) -> Self {
         Self::new(WorkloadKind::Service, name)
+    }
+
+    pub fn sandbox(name: impl Into<String>) -> Self {
+        Self::new(WorkloadKind::Sandbox, name)
     }
 
     pub fn with_runtime_tier(mut self, tier: RuntimeIsolationTier) -> Self {

@@ -114,6 +114,9 @@ pub enum Error {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    #[error("precondition failed: {0}")]
+    PreconditionFailed(String),
+
     #[error("invalid input: {0}")]
     InvalidInput(String),
 

@@ -3,6 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use nimbus_core::{Error, TenantId};
 use nimbus_sandbox::{SandboxError, SandboxHandle};
 
+use crate::{SandboxResource, ServiceDefinition, SessionResource};
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct TenantServiceKey {
     pub(super) tenant_id: TenantId,
@@ -21,7 +23,13 @@ impl TenantServiceKey {
 #[derive(Default)]
 pub(super) struct ServiceManagerState {
     pub(super) handles: BTreeMap<TenantServiceKey, SandboxHandle>,
+    pub(super) definitions: BTreeMap<TenantServiceKey, ServiceDefinition>,
+    pub(super) sandbox_resources: BTreeMap<String, SandboxResource>,
+    pub(super) sessions: BTreeMap<String, SessionResource>,
     pub(super) activations_in_progress: BTreeSet<TenantServiceKey>,
+    pub(super) next_definition_version: u64,
+    pub(super) next_sandbox_resource_version: u64,
+    pub(super) next_session_version: u64,
 }
 
 pub(super) enum ActivationClaim {

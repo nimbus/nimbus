@@ -106,8 +106,8 @@ nimbus-workload:v1
   /tenant/<tenant_id>
   /deployment/<generation|none>
   /surface/<admission_surface>
-  /kind/<runtime_function|service|http_request|system_task>
-  /name/<percent-escaped service-or-function>
+  /kind/<runtime_function|service|sandbox|http_request|system_task>
+  /name/<percent-escaped workload name>
   /runtime-tier/<tier|none>
   /runtime-backend/<backend|none>
   /sandbox-backend/<backend|none>

@@ -9,8 +9,9 @@ export const NIMBUS_ROOT_SDK_FORBIDDEN_FRAGMENTS = [
   "ensureRunning",
   "/api/services/",
   "NimbusSessionCreateRequest",
-  "sandboxes",
-  "sessions",
+  "sessions.create",
+  "sessions.renew",
+  "sessions.extend",
   "async request(path",
   "async resolveRestClient",
 ];
@@ -21,11 +22,14 @@ export const NIMBUS_ROOT_SDK_METHOD_FRAGMENTS = [
   "restart(input",
   "get(selector",
   "wait(input",
+  "open(input",
+  "close(input",
 ];
 
 export const NIMBUS_ROOT_SDK_RUNTIME_FRAGMENTS = [
   "/api/tenants/",
   "/services/",
+  "/api/sessions",
   "#controlPlaneRequest",
   "#resolveRestClient",
 ];

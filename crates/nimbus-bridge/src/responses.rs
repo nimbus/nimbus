@@ -142,6 +142,17 @@ impl RuntimeHostPublicError {
                     "Resolve the conflicting state and retry.",
                 )),
             ),
+            Error::PreconditionFailed(_) => Self::new(
+                "op.precondition_failed",
+                error.to_string(),
+                RuntimeHostErrorSeverity::Error,
+                false,
+                Value::Null,
+                Some(RuntimeHostErrorRemediation::new(
+                    "refresh_resource",
+                    "Refresh the resource version or generation, then retry.",
+                )),
+            ),
             Error::InvalidInput(_) => Self::new(
                 "op.invalid_input",
                 error.to_string(),

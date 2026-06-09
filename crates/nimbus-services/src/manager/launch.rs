@@ -1,6 +1,6 @@
 use nimbus_core::Error;
 use nimbus_sandbox::SandboxHandle;
-use nimbus_tenant::TenantIsolationDecision;
+use nimbus_tenant::{TenantIsolationDecision, TenantVolumePolicyDecision};
 
 use crate::ServiceBackend;
 use nimbus_node::LocalEnforcementBinding;
@@ -14,6 +14,7 @@ impl ServiceManager {
         key: &TenantServiceKey,
         decision: &TenantIsolationDecision,
         service_backend: ServiceBackend,
+        volume_policy: &TenantVolumePolicyDecision,
     ) -> Result<SandboxHandle, Error> {
         let backend_kind = service_backend.kind();
         let Some(sandbox_spec) = service_backend.into_sandbox_spec() else {
@@ -35,6 +36,8 @@ impl ServiceManager {
         decision
             .network()
             .ensure_sandbox_egress_matches(&sandbox_spec, "sandbox-backed service launch")?;
+        volume_policy
+            .ensure_sandbox_mounts_match(&sandbox_spec, "sandbox-backed service launch")?;
         self.admit_sandbox_root(decision, &sandbox_spec)?;
 
         let handle = self

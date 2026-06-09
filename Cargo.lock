@@ -6414,6 +6414,8 @@ dependencies = [
  "nimbus-tenant",
  "tempfile",
  "tokio",
+ "ulid",
+ "url",
 ]
 
 [[package]]

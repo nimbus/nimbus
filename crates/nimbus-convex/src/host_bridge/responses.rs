@@ -26,6 +26,9 @@ pub enum ConvexRuntimeEncodedError {
     Conflict {
         message: String,
     },
+    PreconditionFailed {
+        message: String,
+    },
     ResourceExhausted {
         message: String,
     },
@@ -97,6 +100,7 @@ impl ConvexRuntimeEncodedError {
             },
             Error::AlreadyExists(message) => Self::AlreadyExists { message },
             Error::Conflict(message) => Self::Conflict { message },
+            Error::PreconditionFailed(message) => Self::PreconditionFailed { message },
             Error::ResourceExhausted(message) => Self::ResourceExhausted { message },
             Error::PermissionDenied(message) => Self::PermissionDenied { message },
             Error::InvalidInput(message) => Self::InvalidInput { message },
@@ -135,6 +139,7 @@ impl ConvexRuntimeEncodedError {
                 .unwrap_or_else(|error| Error::Internal(error.to_string())),
             Self::AlreadyExists { message } => Error::AlreadyExists(message),
             Self::Conflict { message } => Error::Conflict(message),
+            Self::PreconditionFailed { message } => Error::PreconditionFailed(message),
             Self::ResourceExhausted { message } => Error::ResourceExhausted(message),
             Self::PermissionDenied { message } => Error::PermissionDenied(message),
             Self::InvalidInput { message } => Error::InvalidInput(message),
@@ -223,5 +228,18 @@ mod tests {
             }
             other => panic!("expected historical read error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn precondition_failed_error_round_trips_through_runtime_encoding() {
+        let encoded = ConvexRuntimeEncodedError::from_core_error(Error::PreconditionFailed(
+            "stale generation".to_owned(),
+        ));
+
+        let decoded = encoded.into_core_error();
+        assert!(matches!(
+            decoded,
+            Error::PreconditionFailed(message) if message == "stale generation"
+        ));
     }
 }

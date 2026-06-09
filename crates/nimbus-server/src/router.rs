@@ -655,8 +655,35 @@ fn build_local_admin_router() -> Router<Arc<AppState>> {
 fn build_service_control_router() -> Router<Arc<AppState>> {
     Router::new()
         .route(
+            "/api/sessions",
+            get(http::list_sessions).post(http::open_session),
+        )
+        .route("/api/sessions/{session_id}", get(http::get_session))
+        .route(
+            "/api/sessions/{session_id}/close",
+            post(http::close_session),
+        )
+        .route(
+            "/api/tenants/{tenant_id}/sandboxes",
+            get(http::list_sandboxes).post(http::create_sandbox),
+        )
+        .route(
+            "/api/tenants/{tenant_id}/sandboxes/{sandbox_id}",
+            get(http::get_sandbox),
+        )
+        .route(
+            "/api/tenants/{tenant_id}/sandboxes/{sandbox_id}/stop",
+            post(http::stop_sandbox),
+        )
+        .route(
+            "/api/tenants/{tenant_id}/services",
+            get(http::list_service_definitions).post(http::create_service_definition),
+        )
+        .route(
             "/api/tenants/{tenant_id}/services/{service_name}",
-            get(http::get_service),
+            get(http::get_service)
+                .put(http::update_service_definition)
+                .delete(http::delete_service_definition),
         )
         .route(
             "/api/tenants/{tenant_id}/services/{service_name}/start",

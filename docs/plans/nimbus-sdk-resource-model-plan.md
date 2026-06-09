@@ -2,11 +2,12 @@
 
 ## Status
 
-- **Status:** `ready`
+- **Status:** `done`
 - **Primary goal:** implement the `@nimbus/nimbus` resource model described in
   [`docs/architecture/sandbox/service-sandbox-session-model.md`](../architecture/sandbox/service-sandbox-session-model.md).
-  The current landed SDK slice owns service lifecycle/status; sandbox and session
-  namespaces land only with server-backed routes in their owning phases.
+  The landed SDK owns service lifecycle/status, service-definition CRUD,
+  standalone sandbox resources, and scoped service/sandbox session leases through
+  server-backed routes.
 - **Activation prerequisites:**
   - `docs/plans/service-backend-and-sandbox-spec-refactor-plan.md` completed
     SBR0 through SBR6 on 2026-06-09. SRM0 and SRM1 may start from the current
@@ -34,7 +35,7 @@ services and does not replace the sandbox backend plan.
 
 ## Current Baseline
 
-Repo audit on 2026-06-09 found that part of this plan has already landed:
+Repo audit and implementation on 2026-06-09 completed this plan:
 
 - `packages/nimbus/package.json` names the package `@nimbus/nimbus` and exports
   the root SDK plus `./transports/rest`.
@@ -42,8 +43,14 @@ Repo audit on 2026-06-09 found that part of this plan has already landed:
   and credential discovery.
 - `Nimbus.services` exposes `start`, `stop`, `restart`, `get`, and `wait`.
   `ensureRunning` is intentionally absent.
-- `Nimbus.sandboxes` and `Nimbus.sessions` are intentionally absent until
-  server-backed resource routes land.
+- `Nimbus.services` also exposes server-backed service-definition
+  `create`/`update`/`delete`/`list` APIs for sandbox-backed, built-in, and
+  external service definitions.
+- `Nimbus.sandboxes` exposes server-backed `create`, `get`, `list`, and `stop`
+  APIs for id-addressed standalone sandbox resources.
+- `Nimbus.sessions` exposes server-backed `open`, `get`, `list`, and `close`
+  APIs for scoped service/sandbox session leases with target snapshots, TTL
+  expiration, and channel admission.
 - `crates/nimbus-server` exposes canonical service routes:
   `GET /api/tenants/{tenant_id}/services/{service_name}` and
   `POST /api/tenants/{tenant_id}/services/{service_name}/{start|stop|restart}`.
@@ -52,19 +59,21 @@ Repo audit on 2026-06-09 found that part of this plan has already landed:
   `ServiceBackend`, `BuiltInServiceSpec`, `ExternalServiceSpec`,
   `SandboxSpec.root`, and `SandboxRootSpec`.
 
-SRM0 still must create the verifier. SRM1 should reconcile, verify, and close
-out this landed baseline rather than reimplement it from scratch.
+SRM0 through SRM6 are complete. Use the resource-model verifier as the primary
+guard against regressions, future-looking SDK stubs, adapter context leaks, and
+service/sandbox/session authority drift.
 
 ## Execution Order
 
-1. Run SRM0 and SRM1 to register the SDK resource-model verifier and close out
-   the already-landed service lifecycle/status SDK baseline.
-2. Run SRM2 after SRM1 and principal-class route gates are verified. SRM2 owns
-   the service definition CRUD contract below and must implement it as
-   server-backed resource code, not SDK-only stubs.
-3. Run SRM3/SRM4 for sandbox and session resources after their server routes,
-   policy, audit, and channel support exist.
-4. Run SRM5/SRM6 for examples, verifier hardening, and final closeout.
+1. SRM0/SRM1 registered the SDK resource-model verifier and closed out the
+   service lifecycle/status SDK baseline.
+2. SRM2 implemented service definition CRUD as server-backed resource code, not
+   SDK-only stubs.
+3. SRM3 implemented id-addressed standalone sandbox resources without creating
+   a service-name side channel.
+4. SRM4 implemented scoped session resources with server-side target reach,
+   channel admission, TTL expiration, and audit.
+5. SRM5/SRM6 added examples, verifier hardening, and final closeout.
 
 ## Resource Model
 
@@ -98,18 +107,15 @@ await nimbus.services.start({ name: "search", waitUntil: "ready" });
 await nimbus.services.get({ name: "search" });
 ```
 
-The future full SDK shape, once server-backed sandbox and session routes land,
-is:
+The landed SDK resource shape is:
 
 ```ts
-// Future sandbox namespace once server-backed sandbox routes land.
 const sandbox = await nimbus.sandboxes.create({ profile: "desktop" });
 
 // Reserved future shape for explicit isolate-backed sandbox resources.
 // This is not how ordinary function invocation isolates are addressed.
 const worker = await nimbus.sandboxes.create({ profile: "isolate" });
 
-// Future session namespace once server-backed session routes land.
 const desktop = await nimbus.sessions.open({
   target: { sandbox: { id: sandbox.id } },
   channels: ["screen", "input", "files"],
@@ -128,7 +134,7 @@ const browser = await nimbus.sessions.open({
 ```
 
 Transport selection stays internal to the SDK. Product APIs live on
-`Nimbus.services`, `Nimbus.sandboxes`, and future `Nimbus.sessions`; low-level
+`Nimbus.services`, `Nimbus.sandboxes`, and `Nimbus.sessions`; low-level
 `@nimbus/nimbus/transports/*` entries are explicit protocol plumbing. This plan
 must not add public adapter or runtime-context shortcuts for services,
 sandboxes, sessions, browser, model, audio, video, or content capabilities.
@@ -216,6 +222,10 @@ the same phase.
   action, or configured operator auth. An exact service grant lets a principal
   reach the named service; it never lets that principal mutate the service
   definition or grant access to others.
+- Service-definition list permission is inventory authority, not inspect
+  authority. List-only callers receive metadata/status plus a redacted backend
+  kind; full backend specs and external endpoint policy require inspect
+  permission or configured operator auth.
 - Sandbox and session control routes use their own explicit permissions and
   tenant ownership checks; they do not imply service reach or service-definition
   administration.
@@ -352,9 +362,12 @@ await nimbus.services.list();
 a generation/resource-version precondition and returns `412 Precondition Failed`
 when the caller's view is stale. `delete` refuses running services or live
 sessions unless the request includes an explicit force policy that the server
-authorizes and audits. Required delete semantics must not depend on a `DELETE`
-request body that proxies may drop; use `If-Match`, typed query parameters, or a
-separate audited action route for rich force/grace policy.
+authorizes and audits separately from normal definition administration; tenant
+or spawned-workload force delete also requires exact service reach so definition
+permissions cannot silently stop a service or close its sessions. Required
+delete semantics must not depend on a `DELETE` request body that proxies may
+drop; use `If-Match`, typed query parameters, or a separate audited action route
+for rich force/grace policy.
 Built-in and external definitions are not placeholders: a built-in provider or
 external endpoint is accepted only when Nimbus can validate its provider,
 policy, readiness, and auth behavior for that tenant. Otherwise the create or
@@ -451,11 +464,13 @@ are opaque server ids; sessions are not name-addressable.
 
 `GET /api/sessions?tenantId={tenant_id}` uses `tenantId` as the route tenant.
 Tenant and spawned-workload callers must resolve to exactly that tenant and
-cannot omit it. Operator callers may list another tenant's sessions only through
-configured operator auth, with the target tenant explicitly supplied and audited.
-This plan does not add a global all-tenant session listing route; if one is ever
-needed, it must be a separate operator-only route with pagination, filters,
-audit, and abuse controls.
+cannot omit it. Application principals receive only sessions whose target they
+can reach: exact service grants for service-target sessions and sandbox reach
+for sandbox-target sessions. Operator callers may list another tenant's sessions
+only through configured operator auth, with the target tenant explicitly
+supplied and audited. This plan does not add a global all-tenant session listing
+route; if one is ever needed, it must be a separate operator-only route with
+pagination, filters, audit, and abuse controls.
 
 The response records `id`, `tenantId`, target, resolved service generation or
 sandbox id, granted channels, selected backend/provider, actual `expiresAt`,
@@ -488,13 +503,13 @@ authorization and channel policy are rechecked on every rebind.
 
 | Phase | Status | Hard dependencies | Verifiable success signal |
 | --- | --- | --- | --- |
-| SRM0 | `todo` | none | Plan registered; architecture model linked; verifier bootstrap passes registration/model checks. |
-| SRM1 | `partial` | capability-segregation CB3; current service SDK/server baseline | Existing `@nimbus/nimbus` service lifecycle/status APIs are verified, package selftests pass, stale `ensureRunning` and unimplemented sandbox/session methods are rejected, and adapter export/type-surface guards prove no resource namespace leakage. |
-| SRM2 | `todo` | SRM1; capability-segregation CB8 | Static and dynamic services support sandbox-backed, built-in, and external definitions through the tenant service resource contract with exact-grant reach coverage and separate service-definition administration permissions. |
-| SRM3 | `todo` | SRM1; capability-segregation CB8 | Sandbox APIs are id/handle-addressed only; labels cannot confer authority; sandbox creation does not publish a service. |
-| SRM4 | `todo` | SRM2; SRM3; required sandbox-plan backend bands for channel types | Sessions open only against `{ service: { name } }` or `{ sandbox: { id } }`, enforce TTL/audit/channel policy, and fail closed on unsupported channels. |
-| SRM5 | `todo` | SRM2-SRM4 | App/agent examples typecheck and demonstrate service, sandbox, and session usage without adapter ctx shortcuts. |
-| SRM6 | `todo` | SRM1-SRM5 | Final resource-model verifier, capability-segregation verifier, and required JS/Rust/docs gates pass with evidence. |
+| SRM0 | `done` | none | Plan registered; architecture model linked; verifier bootstrap passes registration/model checks. |
+| SRM1 | `done` | capability-segregation CB3; current service SDK/server baseline | Existing `@nimbus/nimbus` service lifecycle/status APIs are verified, package selftests pass, stale lifecycle/session verbs are rejected, and adapter export/type-surface guards prove no resource namespace leakage. |
+| SRM2 | `done` | SRM1; capability-segregation CB8 | Static and dynamic services support sandbox-backed, built-in, and external definitions through the tenant service resource contract with exact-grant reach coverage and separate service-definition administration permissions. |
+| SRM3 | `done` | SRM1; capability-segregation CB8 | Sandbox APIs are id/handle-addressed only; labels cannot confer authority; sandbox creation does not publish a service. |
+| SRM4 | `done` | SRM2; SRM3; required sandbox-plan backend bands for channel types | Sessions open only against `{ service: { name } }` or `{ sandbox: { id } }`, enforce TTL/audit/channel policy, and fail closed on unsupported channels. |
+| SRM5 | `done` | SRM2-SRM4 | App/agent examples typecheck and demonstrate service, sandbox, and session usage without adapter ctx shortcuts. |
+| SRM6 | `done` | SRM1-SRM5 | Final resource-model verifier, capability-segregation verifier, and required JS/Rust/docs gates pass with evidence. |
 
 ## Phases
 
@@ -527,8 +542,8 @@ authorization and channel policy are rechecked on every rebind.
   they are not a reason to ship public SDK methods ahead of real capability.
 - Gate: `import { Nimbus } from "@nimbus/nimbus"` typechecks with service
   lifecycle/status APIs; package selftests reject stale `ensureRunning`,
-  `/api/services/{name}/ensure-running`, `sandboxes.create`, `sessions.create`,
-  and `sessions.open` calls until their owning routes land; adapter package
+  `/api/services/{name}/ensure-running`, `sessions.create`, `sessions.renew`,
+  and `sessions.extend`; adapter package
   export/type-surface guards prove they do not re-export Nimbus resource
   namespaces. Tests cover `waitUntil: "ready"`, `wait({ until: "healthy" })`,
   and timeout/failure behavior against the real `GET service` status path.
@@ -556,6 +571,12 @@ authorization and channel policy are rechecked on every rebind.
   - resource-shaped list responses with bounded pagination, opaque
     `resourceVersion`/continuation tokens, redacted specs/endpoints when the
     caller lacks inspect/endpoint authority, and no global all-tenant listing
+  - safe public service-definition response projections that never echo sandbox
+    launch secrets, raw environment values, command arrays, host `rootfs` paths,
+    local Dockerfile/context paths, or operator-only build inputs
+  - service-definition delete/update coordination with the service lifecycle slot
+    so definition mutation cannot race an in-flight activation into orphaned
+    running backends or stale desired state
   - resource-shaped status conditions with `observedGeneration` so clients can
     distinguish stale controller observations from current desired state
   - route/body tenant and service-name agreement checks for create/update/delete
@@ -588,7 +609,9 @@ authorization and channel policy are rechecked on every rebind.
   service-definition permissions cover create/list/inspect/update/delete/grant
   mutation, collection responses are bounded and opaque-versioned, and
   principal-class route tests cover allowed and denied cases for each backend
-  kind.
+  kind. Tests prove public service-definition responses redact sandbox launch
+  arrays, environment values, and operator-only host/build inputs even when the
+  internal static catalog stores them.
 
 ### SRM3 - Sandbox API
 
@@ -613,7 +636,11 @@ authorization and channel policy are rechecked on every rebind.
   unavailable without configured operator auth, sandbox create does not create a
   service name, failed admission creates no partial sandbox resource, and any
   implemented `profile: "isolate"` resource is user-created/id-addressed rather
-  than an invocation isolate.
+  than an invocation isolate. Sandbox create/list/get/stop responses use the same
+  safe projection rule as service definitions: they do not echo launch-time
+  command arrays or environment values. Post-start backend validation failures
+  such as mismatched returned tenant handles or duplicate backend ids must stop
+  the returned handle before returning an error.
 
 ### SRM4 - Session API
 
@@ -678,6 +705,15 @@ authorization and channel policy are rechecked on every rebind.
   passes when the touched slice depends on adapter/resource namespace or host
   transport boundaries. Run broader Rust gates required by touched server or
   sandbox code before closeout.
+- Modularity exception: `crates/nimbus-server/src/service_manager/tests.rs` is
+  the service-manager route fixture root and may remain in the 1,500-1,999 line
+  band while it owns shared HTTP fixture helpers, service lifecycle route tests,
+  and principal-class route tests. Concept-owned slices that exceed shared
+  fixture scope must live in children such as
+  `service_manager/tests/definitions.rs`, `service_manager/tests/sandboxes.rs`,
+  `service_manager/tests/sessions.rs`, and
+  `service_manager/tests/redaction.rs`; the verifier keeps every module below
+  2,000 lines.
 
 ## Verifiable Success Criteria
 
@@ -698,9 +734,9 @@ authorization and channel policy are rechecked on every rebind.
 4. Sessions target `{ service: { name } }` or `{ sandbox: { id } }`; service
    targets use the service manager with exact service grants and sandbox targets
    use exact ids plus sandbox session permissions.
-5. The MVP SDK exposes service lifecycle/status, not raw service-binding
-   resolution. Service-targeted sessions land only when SRM4 supplies server
-   routes, TTL, audit, and channel-gating tests.
+5. The SDK exposes service lifecycle/status, not raw service-binding
+   resolution. Service-targeted sessions are server-backed, TTL-bound, audited,
+   and channel-gated.
 6. Dynamic service registration records owner, TTL/idle policy, readiness,
    endpoint policy, session/channel policy when applicable, service backend
    kind, sandbox/built-in/external spec, admission inputs, and exact-grant
@@ -762,6 +798,25 @@ authorization and channel policy are rechecked on every rebind.
 | 2026-06-09 | Final readiness cleanup | plan-only | Removed the typed fail-closed SDK-method escape hatch; clarified that typed fail-closed errors belong inside implemented routes, not ahead of real capability; made session listing tenant-scoped and explicitly denied global all-tenant listing; refreshed capability prerequisite wording to completed-baseline-plus-verification language. Verification: `npm run docs:validate-refs:strict` pass (246 working-tree Markdown files); `git diff --check -- docs/plans/nimbus-sdk-resource-model-plan.md` pass. | Start SRM0/SRM1 |
 | 2026-06-09 | Authority and policy readiness cleanup | plan-only | Split exact service reach grants from service-definition administration permissions; replaced built-in/external placeholder policy blobs with named closed policy types; made SRM2 own service-definition CRUD implementation instead of depending on itself; promoted the plan to ready status; added the exact resource-model verifier command to closeout expectations. Verification: `npm run docs:validate-refs:strict` pass (246 working-tree Markdown files); `git diff --check -- docs/plans/nimbus-sdk-resource-model-plan.md docs/plans/README.md` pass. | Start SRM0/SRM1 |
 | 2026-06-09 | Multi-level architecture audit | plan-only | Compared the plan against local Kubernetes, Moby/Swarm, Firecracker, and current Nimbus code patterns; added resource-version/condition/list contracts, route/body agreement checks, stable `builtIn` wire spelling, lifecycle-specific wait validation, delete-without-body semantics, external-secret-reference gating, streaming-channel flow-control requirements, and verifier guards for each. Also corrected the completed service-backend refactor plan's stale top-level status. Verification: `npm run docs:validate-refs:strict` pass (246 working-tree Markdown files); `git diff --check -- docs/plans/nimbus-sdk-resource-model-plan.md docs/plans/service-backend-and-sandbox-spec-refactor-plan.md docs/plans/README.md` pass. | Start SRM0/SRM1 |
+| 2026-06-09 | SRM0/SRM1 verifier and SDK wait closeout | done | Added `scripts/verify-nimbus-sdk-resource-model.sh` with registration/model, package surface, stale/future SDK method, server route, adapter namespace, and package typecheck conditions. Closed the service SDK wait contract by making `start`/`restart` waits activation-only (`ready`/`healthy`) and `stop` waits stopped-only, with runtime rejection before control-plane requests and type-level selftest coverage. Rebuilt `packages/nimbus/dist` and restaged embedded package artifacts. Verification: `bash scripts/verify-nimbus-sdk-resource-model.sh` pass (`7 passed, 0 failed`); `npm run typecheck --workspace @nimbus/nimbus` pass; `npm run test --workspace @nimbus/nimbus` pass; `npm run build --workspace @nimbus/nimbus` pass; `node scripts/stage-embedded-packages.mjs` pass (`8 packages`, `721 files`). | Start SRM2 |
+| 2026-06-09 | SRM2 service definition resource API | done | Implemented dynamic service-definition CRUD through the existing tenant service manager path: `POST/GET collection/PUT/DELETE /api/tenants/{tenant_id}/services`, resource-shaped definition responses with metadata/spec/status/conditions, bounded list metadata, body tenant/name conflict rejection, generation preconditions, force-delete stop path, closed built-in provider IDs, external endpoint/auth/health policy admission, and separate service-definition permission claims. Expanded `@nimbus/nimbus` with `services.create/update/delete/list` and closed backend spec types while keeping sandbox/session namespaces absent. Expanded the verifier with SRM2 checks and refreshed dist/embedded package artifacts. Verification: `bash scripts/verify-nimbus-sdk-resource-model.sh` pass (`11 passed, 0 failed`); `npm run typecheck --workspace @nimbus/nimbus` pass; `npm run test --workspace @nimbus/nimbus` pass; `npm run build --workspace @nimbus/nimbus` pass; `node scripts/stage-embedded-packages.mjs` pass (`8 packages`, `721 files`); `cargo test -p nimbus-services` pass (`26 passed`); `cargo test -p nimbus-server service_manager -- --nocapture` pass (`12 passed`, `406 filtered out` plus filtered integration targets); `cargo check -p nimbus-services -p nimbus-server -p nimbus-bin` pass. | Start SRM3 |
+| 2026-06-09 | SRM3 sandbox resource API | done | Implemented tenant-scoped standalone sandbox resources in the service manager and server: `GET/POST /api/tenants/{tenant_id}/sandboxes`, `GET /api/tenants/{tenant_id}/sandboxes/{sandbox_id}`, and `POST /api/tenants/{tenant_id}/sandboxes/{sandbox_id}/stop`; sandbox resources are id-addressed, require standalone sandbox owner metadata, preserve labels as filter metadata only, and do not publish services. Expanded `@nimbus/nimbus` with `sandboxes.create/get/list/stop`, updated package selftests and artifact policy to allow the implemented sandbox namespace while keeping sessions absent. Verification: `bash scripts/verify-nimbus-sdk-resource-model.sh` pass (`15 passed, 0 failed`); `cargo fmt --all --check` pass; `npm run typecheck --workspace @nimbus/nimbus` pass; `npm run test --workspace @nimbus/nimbus` pass; `cargo test -p nimbus-services` pass (`26 passed`); `cargo test -p nimbus-server service_manager -- --nocapture` pass (`14 passed`, `406 filtered out` plus filtered integration targets); `cargo check -p nimbus-services -p nimbus-server -p nimbus-bin` pass. | Start SRM4 |
+| 2026-06-09 | SRM4 session resource API | done | Implemented server-backed session resources in `nimbus-services` and `nimbus-server`: `POST /api/sessions`, `GET /api/sessions?tenantId=...`, `GET /api/sessions/{session_id}`, and `POST /api/sessions/{session_id}/close`; sessions have opaque ids, target snapshots, server-owned TTL expiration, close reasons, and closed channel admission (`browser` service `cdp`/`page`; sandbox-backed targets `stdio`/`files`). Route policy requires session permission plus target reach: exact service grants for service-target sessions and sandbox reach for sandbox-target sessions. Expanded `@nimbus/nimbus` with `sessions.open/get/list/close`, rejected `sessions.create/renew/extend`, and refreshed dist/embedded package artifacts. Verification: `bash scripts/verify-nimbus-sdk-resource-model.sh` pass (`19 passed, 0 failed`); `npm run typecheck --workspace @nimbus/nimbus` pass; `npm run test --workspace @nimbus/nimbus` pass; `npm run build --workspace @nimbus/nimbus` pass; `node scripts/stage-embedded-packages.mjs` pass (`8 packages`, `721 files`); `cargo test -p nimbus-server service_manager -- --nocapture` pass (`17 passed`, `406 filtered out` plus filtered integration targets); `cargo check -p nimbus-server` pass. | Start SRM5 |
+| 2026-06-09 | SRM5 app/agent examples | done | Added `docs/examples/nimbus-sdk-resource-model.md` and linked it from `docs/README.md`; examples demonstrate Compose service lifecycle/status, built-in service definition declaration without a raw resolver, standalone task sandbox creation, sandbox-target sessions, built-in browser service sessions, sandbox-backed service-target sessions, and adapter action code importing `Nimbus` directly while adapter contexts stay clean. Updated the package README and sandbox architecture model to reflect landed sandbox/session APIs and current channel support. Verification: `bash scripts/verify-nimbus-sdk-resource-model.sh` pass (`22 passed, 0 failed`); `npm run test --workspace @nimbus/nimbus` pass. | Start SRM6 |
+| 2026-06-09 | SRM6 final closeout | done | Completed the SDK resource-model plan through SRM0-SRM6: service lifecycle/status, service definition CRUD, standalone sandbox resources, scoped session resources, examples, artifact guards, adapter-boundary checks, and final verifiers. Verification: `cargo fmt --all --check` pass; `npm run typecheck --workspace @nimbus/nimbus` pass; `npm run test --workspace @nimbus/nimbus` pass; `npm run build --workspace @nimbus/nimbus` pass; `node scripts/stage-embedded-packages.mjs` pass (`8 packages`, `721 files`); `npm run lint:capability-boundary` pass (`48 files`); `cargo test -p nimbus-services` pass (`26 passed`); `cargo test -p nimbus-server service_manager -- --nocapture` pass (`17 passed`, `406 filtered out` plus filtered integration targets); `cargo check -p nimbus-services -p nimbus-server -p nimbus-bin` pass; `npm run docs:validate-refs:strict` pass (`247 working-tree Markdown files`); `bash scripts/verify-nimbus-sdk-resource-model.sh` pass (`22 passed, 0 failed` before SRM6 closeout condition); `bash scripts/verify-nimbus-capability-segregation.sh` pass (`10 passed, 0 failed`); `git diff --check` pass. | Plan complete |
+| 2026-06-09 | Post-review resource hardening | done | Closed the final audit findings after SRM6: external service definitions now preserve and return the admitted endpoint/auth/health policy shape; session ids use opaque ULID-backed ids instead of sequence-shaped ids; session `GET`/`close` pre-authorize session permission before manager lookup, enforce target reach after lookup, and mask cross-tenant application lookups as not found; closing an expired session preserves server-owned `expired` state; sandbox/session operator-auth failures now audit consistently with service routes; and `scripts/verify-nimbus-sdk-resource-model.sh` guards these contracts. Verification: `cargo fmt --all --check` pass; `cargo test -p nimbus-services` pass (`26 passed`); `cargo test -p nimbus-server service_manager -- --nocapture` pass (`17 passed`, `406 filtered out` plus filtered integration targets); `cargo check -p nimbus-services -p nimbus-server -p nimbus-bin` pass; `npm run typecheck --workspace @nimbus/nimbus` pass; `npm run test --workspace @nimbus/nimbus` pass; `npm run build --workspace @nimbus/nimbus` pass; `bash scripts/verify-nimbus-sdk-resource-model.sh` pass (`23 passed, 0 failed`); `npm run lint:capability-boundary` pass (`48 files`); `bash scripts/verify-nimbus-capability-segregation.sh` pass (`10 passed, 0 failed`); `npm run docs:validate-refs:strict` pass (`247 working-tree Markdown files`); `git diff --check` pass. | Plan complete |
+| 2026-06-09 | Autoreview resource isolation closeout | done | Closed the structured autoreview findings after post-review hardening: tenant teardown now stops service-backed handles and standalone sandbox resources, then purges tenant-owned dynamic definitions, standalone sandbox resources, sessions, handles, and activations; service-definition updates reject active or activating backends before mutating desired state; and sandbox get/stop masks cross-tenant sandbox ids as not found. Verification: `cargo fmt --all --check` pass; `cargo check -p nimbus-services -p nimbus-server -p nimbus-bin` pass; `cargo test -p nimbus-services` pass (`26 passed`); `cargo test -p nimbus-server service_manager -- --nocapture` pass (`21 passed`, `406 filtered out` plus filtered integration targets); `bash scripts/verify-nimbus-sdk-resource-model.sh` pass (`23 passed, 0 failed`). | Rerun structured autoreview closeout |
+| 2026-06-09 | Autoreview DTO/precondition/modularity closeout | done | Closed the second structured autoreview findings: sandbox-backed service and standalone sandbox HTTP routes now use an explicit public sandbox-spec DTO that accepts the SDK/docs wire shape, rejects mismatched `spec.tenantId`, and translates to internal `SandboxSpec` only at the route boundary; generation mismatches use `Error::PreconditionFailed` and HTTP 412 with adapter-specific protocol mappings; target-scoped session permissions now pass a two-phase `GET`/`close` check that requires session action authority before lookup and target reach after lookup; and server service-manager tests moved into `service_manager/tests.rs` so the production module stays below the repo line threshold. Verification: `cargo test -p nimbus-server service_manager -- --nocapture` pass (`21 passed`, `406 filtered out` plus filtered integration targets); `cargo check -p nimbus-services -p nimbus-server -p nimbus-bin` pass; `npm run typecheck --workspace @nimbus/nimbus` pass; `npm run test --workspace @nimbus/nimbus` pass; `npm run build --workspace @nimbus/nimbus` pass; `node scripts/stage-embedded-packages.mjs` pass (`8 packages`, `721 files`); `bash scripts/verify-nimbus-sdk-resource-model.sh` pass (`23 passed, 0 failed`); `cargo test -p nimbus-services` pass (`26 passed`); `cargo fmt --all --check` pass; `npm run lint:capability-boundary` pass (`48 files`); `npm run docs:validate-refs:strict` pass (`247 working-tree Markdown files`); `git diff --check` pass; `bash scripts/verify-nimbus-capability-segregation.sh` pass (`10 passed, 0 failed`). | Rerun structured autoreview closeout |
+| 2026-06-09 | Autoreview public sandbox hardening closeout | done | Closed the final structured autoreview findings: public sandbox specs now reject host `rootfs` paths and local OCI build-context paths as operator-only internal inputs before backend launch; SDK sandbox root types expose only admitted OCI image references; sandbox spec responses serialize owner fields as `serviceName`/`displayName`; and service-manager tests are split into parent route tests plus `service_manager/tests/sessions.rs`, with verifier line-count guards for both modules. Verification: `cargo test -p nimbus-server service_manager -- --nocapture` pass (`22 passed`, `406 filtered out` plus filtered integration targets); `cargo check -p nimbus-services -p nimbus-server -p nimbus-bin` pass; `npm run build --workspace @nimbus/nimbus` pass; `node scripts/stage-embedded-packages.mjs` pass (`8 packages`, `721 files`); `npm run typecheck --workspace @nimbus/nimbus` pass; `npm run test --workspace @nimbus/nimbus` pass; `cargo fmt --all --check` pass; `cargo test -p nimbus-services` pass (`26 passed`); `npm run lint:capability-boundary` pass (`48 files`); `bash scripts/verify-nimbus-sdk-resource-model.sh` pass (`23 passed, 0 failed`); `npm run docs:validate-refs:strict` pass (`247 working-tree Markdown files`); `git diff --check` pass; `bash scripts/verify-nimbus-capability-segregation.sh` pass (`10 passed, 0 failed`). | Rerun structured autoreview closeout |
+| 2026-06-09 | Autoreview response-redaction closeout | done | Closed the structured autoreview P1 on public sandbox/service responses: HTTP sandbox spec responses now use safe read projections that redact operator-only rootfs/build inputs and summarize launch argv/entrypoint/command/environment values instead of echoing secrets; SDK request and response types are split (`NimbusSandboxSpec` for launch input, `NimbusSandboxSpecResponse`/`NimbusServiceBackendResponse` for reads); service-definition and sandbox resource route tests assert dangerous launch strings and host paths are absent; and the verifier guards the redaction contract. | Rerun focused gates and structured autoreview closeout |
+| 2026-06-09 | Autoreview sandbox cleanup closeout | done | Closed the structured autoreview P2 on standalone sandbox resource leaks: `create_sandbox_resource_for_decision_async` now stops a returned backend handle when post-start validation fails on a mismatched tenant or duplicate sandbox id; service-manager tests cover both cleanup paths; and the verifier guards the cleanup helper and regressions. | Rerun focused gates and structured autoreview closeout |
+| 2026-06-09 | Autoreview definition lifecycle/projection closeout | done | Closed structured autoreview findings on service-definition race and list projection: service-definition delete now claims the same per-service lifecycle slot as activation, rejects non-force deletes while activation is in flight, waits for forced deletes to settle before stopping/removing active backends, and releases the slot on failure; service-definition collection responses now return a redacted backend-kind projection for list-only callers and require inspect permission or operator auth for full backend specs/endpoints. Tests and verifier guards cover both contracts. | Rerun focused gates and structured autoreview closeout |
+| 2026-06-09 | Autoreview declared-volume/modularity closeout | done | Closed structured autoreview findings on service-backed tenant volumes and test-module threshold policy: sandbox-backed service launch now validates tenant volume mounts against the independently admitted service-definition/catalog volume policy, dynamic service definitions cannot self-authorize tenant volume mounts, and regression tests cover both rejected unadmitted volumes and accepted catalog-declared volumes; the active plan records the service-manager route test fixture as a justified 1,500-1,999 line exception while keeping concept-owned session/redaction tests split into child modules and verifier-guarded below 2,000 lines. | Rerun focused gates and structured autoreview closeout |
+| 2026-06-09 | Autoreview service admission/session closeout | done | Closed structured autoreview findings on fail-closed service admission, session attachment, and lifecycle evidence: service-backed volume admission now comes from the independent catalog volume policy instead of the candidate launch spec; Compose catalogs expose admitted named-volume policy; dynamic definitions reject tenant-volume mounts; sandbox-targeted sessions require a ready sandbox; service-targeted sessions fail closed while a service lifecycle/delete slot is held and recheck dynamic definition generation before insertion; forced service-definition delete records a stopped endpoint-cleared service handle before removing state; external service endpoints use structural URL parsing with host and credential checks; and service-definition manager/route admission tests live in concept-owned child modules below line thresholds with no raw sleep in the in-flight delete regression. Verification: `cargo test -p nimbus-services` pass (`36 passed`); `cargo test -p nimbus-server service_manager -- --nocapture` pass (`24 passed`, `406 filtered out` plus filtered integration targets); `cargo test -p nimbus-bin compose::file` pass (`28 passed`, `542 filtered out` plus filtered integration targets); `cargo check -p nimbus-services -p nimbus-server -p nimbus-bin` pass; `cargo fmt --all --check` pass; `npm run typecheck --workspace @nimbus/nimbus` pass; `npm run test --workspace @nimbus/nimbus` pass; `npm run build --workspace @nimbus/nimbus` pass; `node scripts/stage-embedded-packages.mjs` pass (`8 packages`, `721 files`); `npm run lint:capability-boundary` pass (`48 files`); `npm run docs:validate-refs:strict` pass (`247 working-tree Markdown files`); `bash scripts/verify-nimbus-sdk-resource-model.sh` pass (`23 passed, 0 failed`); `bash scripts/verify-nimbus-capability-segregation.sh` pass (`10 passed, 0 failed`); `git diff --check` pass. | Rerun structured autoreview closeout |
+| 2026-06-09 | Autoreview scoped-list authorization closeout | done | Closed structured autoreview findings on collection authorization: sandbox collection routes now authorize application principals with any valid sandbox `list` scope and then filter concrete resources by exact/id-prefix/tenant scope; session collection routes now authorize any valid session `list` scope and then filter each returned session by session scope plus target reach. Regression tests cover exact/id-prefix scoped sandbox inventory and service/sandbox-target scoped session inventory. Server route tests are split into `service_manager/tests/{definitions,sandboxes,sessions,redaction}.rs`, and the verifier enforces every module below 2,000 lines. Verification: `cargo fmt --all --check` pass; `cargo check -p nimbus-services -p nimbus-server -p nimbus-bin` pass; `cargo test -p nimbus-services` pass (`36 passed`); `cargo test -p nimbus-server service_manager -- --nocapture` pass (`24 passed`, `406 filtered out` plus filtered integration targets); `cargo test -p nimbus-bin compose::file` pass (`28 passed`, `542 filtered out` plus filtered integration targets); `npm run typecheck --workspace @nimbus/nimbus` pass; `npm run test --workspace @nimbus/nimbus` pass; `npm run build --workspace @nimbus/nimbus` pass; `node scripts/stage-embedded-packages.mjs` pass (`8 packages`, `721 files`); `npm run lint:capability-boundary` pass (`48 files`); `bash scripts/verify-nimbus-sdk-resource-model.sh` pass (`23 passed, 0 failed`); `bash scripts/verify-nimbus-capability-segregation.sh` pass (`10 passed, 0 failed`); `npm run docs:validate-refs:strict` pass (`247 working-tree Markdown files`); `git diff --check` pass. | Rerun structured autoreview closeout |
+| 2026-06-09 | Autoreview exact-grant/reliability closeout | done | Closed structured autoreview findings on exact service grants and scheduler-sensitive tests: service and session routes now share one `http/service_grants.rs` exact-grant predicate that rejects wildcard aliases (`*`, `all`, `service:*`, `services:*`) before accepting exact service names; service-target session tests prove mixed exact-plus-wildcard grants are denied; and the in-flight force-delete regression now waits on a test-only lifecycle-slot wait observer instead of raw scheduler yields. The verifier guards the shared predicate, wildcard aliases, session regression, and absence of `yield_now` in the service-definition race test. Verification: `cargo test -p nimbus-services delete_service_definition_serializes_with_in_flight_activation -- --nocapture` pass (`1 passed`, `35 filtered out`); `cargo test -p nimbus-server service_manager -- --nocapture` pass (`24 passed`, `406 filtered out` plus filtered integration targets); `cargo fmt --all --check` pass; `cargo check -p nimbus-services -p nimbus-server -p nimbus-bin` pass; `cargo test -p nimbus-services` pass (`36 passed`); `bash scripts/verify-nimbus-sdk-resource-model.sh` pass (`23 passed, 0 failed`); `npm run typecheck --workspace @nimbus/nimbus` pass; `npm run test --workspace @nimbus/nimbus` pass; `npm run build --workspace @nimbus/nimbus` pass; `node scripts/stage-embedded-packages.mjs` pass (`8 packages`, `721 files`); `npm run lint:capability-boundary` pass (`48 files`); `bash scripts/verify-nimbus-capability-segregation.sh` pass (`10 passed, 0 failed`). | Rerun structured autoreview closeout |
+| 2026-06-09 | Autoreview duplicate-id ownership closeout | done | Closed the structured autoreview P1 on duplicate sandbox ids after backend start: standalone sandbox creation now treats a duplicate returned backend id as a conflict without stopping by id, because that id may already belong to a tracked sandbox owned by an earlier create path. The regression proves the duplicate create returns conflict, records no backend stop calls, leaves one tracked sandbox resource, and preserves the existing backend handle. The verifier guards both the regression name and the duplicate-id no-stop assertion. Verification: `cargo test -p nimbus-services create_sandbox_resource_preserves_existing_backend_after_duplicate_started_id -- --nocapture` pass (`1 passed`, `35 filtered out`); `cargo fmt --all --check` pass; `cargo check -p nimbus-services -p nimbus-server -p nimbus-bin` pass; `cargo test -p nimbus-services` pass (`36 passed`); `cargo test -p nimbus-server service_manager -- --nocapture` pass (`24 passed`, `406 filtered out` plus filtered integration targets); `cargo test -p nimbus-bin compose::file` pass (`28 passed`, `542 filtered out` plus filtered integration targets); `npm run typecheck --workspace @nimbus/nimbus` pass; `npm run test --workspace @nimbus/nimbus` pass; `npm run build --workspace @nimbus/nimbus` pass; `node scripts/stage-embedded-packages.mjs` pass (`8 packages`, `721 files`); `npm run lint:capability-boundary` pass (`48 files`); `bash scripts/verify-nimbus-sdk-resource-model.sh` pass (`23 passed, 0 failed`); `bash scripts/verify-nimbus-capability-segregation.sh` pass (`10 passed, 0 failed`); `npm run docs:validate-refs:strict` pass (`247 working-tree Markdown files`); `git diff --check` pass. | Rerun structured autoreview closeout |
+| 2026-06-09 | Autoreview session-target union closeout | done | Closed the structured autoreview P2 on ambiguous session targets: session open requests now parse `target` as a closed exact-one object and reject payloads that contain both `service` and `sandbox` instead of silently selecting one branch. Regression coverage sends an ambiguous target and expects `400 Bad Request`; the verifier guards the exact-one parser error and test anchor. Verification: `cargo test -p nimbus-server service_manager::tests::sessions::session_routes_reject_service_sessions_without_exact_grants_and_unsupported_channels -- --nocapture` pass (`1 passed`, `429 filtered out`); `cargo fmt --all --check` pass; `cargo check -p nimbus-services -p nimbus-server -p nimbus-bin` pass; `cargo test -p nimbus-server service_manager -- --nocapture` pass (`24 passed`, `406 filtered out` plus filtered integration targets); `cargo test -p nimbus-services` pass (`36 passed`); `cargo test -p nimbus-bin compose::file` pass (`28 passed`, `542 filtered out` plus filtered integration targets); `npm run typecheck --workspace @nimbus/nimbus` pass; `npm run test --workspace @nimbus/nimbus` pass; `npm run build --workspace @nimbus/nimbus` pass; `node scripts/stage-embedded-packages.mjs` pass (`8 packages`, `721 files`); `npm run lint:capability-boundary` pass (`48 files`); `bash scripts/verify-nimbus-sdk-resource-model.sh` pass (`23 passed, 0 failed`); `bash scripts/verify-nimbus-capability-segregation.sh` pass (`10 passed, 0 failed`); `npm run docs:validate-refs:strict` pass (`247 working-tree Markdown files`); `git diff --check` pass. | Rerun structured autoreview closeout |
 
 ## /goal Prompt
 

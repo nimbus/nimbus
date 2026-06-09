@@ -27,9 +27,13 @@ mod local_admin;
 mod machines;
 mod metadata;
 mod queries;
+mod sandbox_spec;
+mod sandboxes;
 mod scheduling;
 mod schema;
+mod service_grants;
 mod services;
+mod sessions;
 mod tenants;
 mod ui;
 mod version_info;
@@ -49,12 +53,17 @@ pub(crate) use metadata::{
 pub(crate) use queries::{
     bootstrap_journal, query_documents, query_documents_paginated, read_journal,
 };
+pub(crate) use sandboxes::{create_sandbox, get_sandbox, list_sandboxes, stop_sandbox};
 pub(crate) use scheduling::{
     cancel_scheduled_job, create_cron_job, delete_cron_job, get_scheduled_job_result,
     list_cron_jobs, list_scheduled_jobs, schedule_mutation,
 };
 pub(crate) use schema::{delete_table_schema, get_schema, get_table_schema, set_table_schema};
-pub(crate) use services::{get_service, restart_service, start_service, stop_service};
+pub(crate) use services::{
+    create_service_definition, delete_service_definition, get_service, list_service_definitions,
+    restart_service, start_service, stop_service, update_service_definition,
+};
+pub(crate) use sessions::{close_session, get_session, list_sessions, open_session};
 pub(crate) use tenants::{create_tenant, delete_tenant, list_tenants};
 pub(crate) use ui::{
     consume_ui_launch_ticket, create_ui_session, mint_ui_launch_ticket, ui_auth, ui_auth_script,

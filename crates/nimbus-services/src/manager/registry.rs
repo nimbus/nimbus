@@ -1,7 +1,8 @@
 use futures::executor::block_on;
 use nimbus_core::{Error, TenantId};
 use nimbus_runtime::{HostCallCancellation, InvocationServiceBinding, InvocationServices};
-use nimbus_sandbox::SandboxStatus;
+use nimbus_sandbox::{SandboxHandle, SandboxStatus};
+use std::collections::BTreeSet;
 
 use crate::ServiceInstanceCatalog;
 use crate::registry::{
@@ -59,13 +60,28 @@ impl RuntimeServiceRegistry for ServiceManager {
 
     fn teardown_tenant(&self, tenant_id: &TenantId) -> Result<(), Error> {
         let tenant_handles = self.tenant_handles(tenant_id);
+        let tenant_sandbox_resources = self
+            .list_sandbox_resources_for_tenant(tenant_id)
+            .into_iter()
+            .map(|resource| resource.handle)
+            .collect::<Vec<_>>();
+        let mut stopped_sandbox_ids = BTreeSet::new();
         for (key, handle) in &tenant_handles {
-            block_on(self.sandbox_backend.stop(&handle.id))
-                .map_err(|error| sandbox_backend_error(key, "stop", &error))?;
+            if stopped_sandbox_ids.insert(handle.id.as_str().to_owned()) {
+                block_on(self.sandbox_backend.stop(&handle.id))
+                    .map_err(|error| sandbox_backend_error(key, "stop", &error))?;
+            }
             let mut stopped_handle = handle.clone();
             stopped_handle.status = SandboxStatus::Stopped;
             stopped_handle.published_endpoints.clear();
             block_on(self.record_service_handle(key, &stopped_handle))?;
+        }
+        for handle in &tenant_sandbox_resources {
+            if stopped_sandbox_ids.insert(handle.id.as_str().to_owned()) {
+                block_on(self.sandbox_backend.stop(&handle.id)).map_err(|error| {
+                    standalone_sandbox_teardown_error(tenant_id, handle, &error)
+                })?;
+            }
         }
         block_on(
             self.sandbox_backend
@@ -85,7 +101,27 @@ impl RuntimeServiceRegistry for ServiceManager {
             state.handles.remove(&key);
             state.activations_in_progress.remove(&key);
         }
+        state
+            .definitions
+            .retain(|key, _| &key.tenant_id != tenant_id);
+        state
+            .sandbox_resources
+            .retain(|_, resource| &resource.tenant_id != tenant_id);
+        state
+            .sessions
+            .retain(|_, session| &session.tenant_id != tenant_id);
         self.activation_notify.notify_waiters();
         Ok(())
     }
+}
+
+fn standalone_sandbox_teardown_error(
+    tenant_id: &TenantId,
+    handle: &SandboxHandle,
+    error: &nimbus_sandbox::SandboxError,
+) -> Error {
+    Error::Internal(format!(
+        "failed to stop standalone sandbox {} for tenant {} during tenant teardown: {error}",
+        handle.id, tenant_id
+    ))
 }

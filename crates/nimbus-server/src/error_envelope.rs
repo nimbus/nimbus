@@ -267,6 +267,17 @@ impl PublicError {
                     "Resolve the conflicting state and retry.",
                 )),
             ),
+            Error::PreconditionFailed(_) => Self::new(
+                "op.precondition_failed",
+                error.to_string(),
+                ErrorSeverity::Error,
+                false,
+                Value::Null,
+                Some(ErrorRemediation::new(
+                    "refresh_resource",
+                    "Refresh the resource, then retry with the latest generation or resource version.",
+                )),
+            ),
             Error::InvalidInput(_) => Self::new(
                 "op.invalid_input",
                 error.to_string(),
@@ -513,6 +524,7 @@ impl StructuredHttpError {
                     | Error::SchemaNotFound(_)
                     | Error::NotFound(_) => StatusCode::NOT_FOUND,
                     Error::Conflict(_) => StatusCode::CONFLICT,
+                    Error::PreconditionFailed(_) => StatusCode::PRECONDITION_FAILED,
                     Error::ResourceExhausted(_) => StatusCode::TOO_MANY_REQUESTS,
                     Error::PermissionDenied(_) => StatusCode::FORBIDDEN,
                     Error::InvalidInput(_) => StatusCode::BAD_REQUEST,

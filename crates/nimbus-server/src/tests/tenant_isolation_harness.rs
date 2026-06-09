@@ -41,6 +41,17 @@ impl crate::ServiceDefinitionCatalog for HarnessServiceDefinitionCatalog {
         .with_mount(SandboxMountSpec::tenant_volume("data", "/var/lib/db"));
         Some(ServiceBackend::sandbox(spec))
     }
+
+    fn service_volume_policy_for_tenant(
+        &self,
+        _tenant_id: &TenantId,
+        service_name: &str,
+    ) -> crate::TenantVolumePolicyDecision {
+        if service_name == "db" {
+            return crate::TenantVolumePolicyDecision::new(["data"]);
+        }
+        crate::TenantVolumePolicyDecision::default()
+    }
 }
 
 #[derive(Debug, Clone)]
