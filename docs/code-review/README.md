@@ -6,6 +6,9 @@ Dated, agent-assisted reviews of the Nimbus codebase. Each review is a self-cont
 
 - [2026-06-09 — Full-codebase review](2026-06-09-full-codebase-review.md) — all 27 crates (~391k LoC). Architecture validated clean/acyclic; **193 findings** (2 critical, 12 high, 35 medium, 116 low, 28 info).
 
+## Executing the review
+- [Codex execution prompt](codex-execution-prompt.md) — a ready-to-paste prompt that tells a codex agent to **re-confirm every finding** (all 193, including low/info/nice-to-haves) and then **properly fix each confirmed one** to the repo's enterprise bar, with a per-change verification gate and a running remediation ledger.
+
 ## How to consume this (codex mode)
 1. **Read Part I** of the dated report for the architecture verdict, themed analysis, and the **recommended remediation order** (security → correctness → modularity → quality).
 2. **Work the ledger in Part II by severity.** Each finding is independently executable. Start with Critical and High — those were double-verified by two independent agents.
