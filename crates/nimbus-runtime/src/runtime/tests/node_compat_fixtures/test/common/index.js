@@ -1835,7 +1835,7 @@ function installChildProcessShim() {
   const originalSpawn = childProcess.spawn;
   const originalExecFile = childProcess.execFile;
   const originalFork = childProcess.fork;
-  childProcess.spawnSync = function nimbusHarnessSpawnSync(command, args, options) {
+  childProcess.spawnSync = function spawnSync(command, args, options) {
     if (canUseNimbusSpawnSync(command, args, options)) {
       return runNimbusSpawnSync(command, args, options);
     }
@@ -1845,7 +1845,7 @@ function installChildProcessShim() {
     }
     return originalSpawnSync.apply(this, arguments);
   };
-  childProcess.execFileSync = function nimbusHarnessExecFileSync(command, args, options) {
+  childProcess.execFileSync = function execFileSync(command, args, options) {
     if (canUseNimbusSpawnSync(command, args, options)) {
       const result = runNimbusSpawnSync(command, args, options);
       if (result.status === 0) {
@@ -1860,13 +1860,13 @@ function installChildProcessShim() {
     }
     return originalExecFileSync.apply(this, arguments);
   };
-  childProcess.spawn = function nimbusHarnessSpawn(command, args, options) {
+  childProcess.spawn = function spawn(command, args, options) {
     if (canUseNimbusAsyncSpawn(command, args, options)) {
       return createNimbusAsyncChildProcess(command, args, options);
     }
     return originalSpawn.apply(this, arguments);
   };
-  childProcess.execFile = function nimbusHarnessExecFile(
+  childProcess.execFile = function execFile(
     command,
     argsOrOptionsOrCallback,
     optionsOrCallback,
@@ -1913,7 +1913,7 @@ function installChildProcessShim() {
 
     return originalExecFile.apply(this, arguments);
   };
-  childProcess.fork = function nimbusHarnessFork(modulePath, argsOrOptions, maybeOptions) {
+  childProcess.fork = function fork(modulePath, argsOrOptions, maybeOptions) {
     let args = [];
     let options = {};
 

@@ -963,6 +963,13 @@ fn should_load_fixture_with_commonjs_require(test_relative_path: &str) -> bool {
         || should_force_commonjs_package_scope_for_fixture(test_relative_path)
 }
 
+fn should_load_fixture_as_async_main_module(test_relative_path: &str) -> bool {
+    matches!(
+        test_relative_path,
+        "test/es-module/test-esm-import-meta-main.mjs"
+    )
+}
+
 fn write_node_compat_bundle(
     options: NodeCompatBundleWriteOptions<'_>,
 ) -> (tempfile::TempDir, PathBuf) {
@@ -1048,6 +1055,10 @@ globalThis.global.gc = __nimbusTestGc;"#
             )
         );
     let import_preamble = if should_quiesce_then_require_fixture(test_relative_path) {
+        String::new()
+    } else if matches!(mode, NodeCompatBundleMode::Runtime)
+        && should_load_fixture_as_async_main_module(test_relative_path)
+    {
         String::new()
     } else if should_load_fixture_with_commonjs_require(test_relative_path) {
         // Load the fixture with a synchronous CommonJS require instead of
@@ -1169,10 +1180,13 @@ try {{
         } else {
             ""
         };
-    let invoke_import_guard =
-        if should_quiesce_then_require_fixture(test_relative_path) && capture_import_error {
-            format!(
-                r#"  if (typeof globalThis.__nimbusProcessTicksAndRejections === "function") {{
+    let invoke_import_guard = if matches!(mode, NodeCompatBundleMode::Runtime)
+        && should_load_fixture_as_async_main_module(test_relative_path)
+    {
+        String::new()
+    } else if should_quiesce_then_require_fixture(test_relative_path) && capture_import_error {
+        format!(
+            r#"  if (typeof globalThis.__nimbusProcessTicksAndRejections === "function") {{
     globalThis.__nimbusProcessTicksAndRejections();
   }}
   let __nimbusImportError = null;
@@ -1185,43 +1199,35 @@ try {{
     if ({capture_top_level_skip} &&
         (__nimbusImportError?.__nimbusSkip ||
          __nimbusImportError?.code === "NIMBUS_NODE_COMPAT_SKIP")) {{
-      return {{
-        ok: true,
-        skipped: true,
-        testPath: "{test_relative_path}",
-      }};
+      return __nimbusNodeCompatResult(true);
     }}
     throw __nimbusImportError;
   }}
 "#
-            )
-        } else if should_quiesce_then_require_fixture(test_relative_path) {
-            format!(
-                r#"  if (typeof globalThis.__nimbusProcessTicksAndRejections === "function") {{
+        )
+    } else if should_quiesce_then_require_fixture(test_relative_path) {
+        format!(
+            r#"  if (typeof globalThis.__nimbusProcessTicksAndRejections === "function") {{
     globalThis.__nimbusProcessTicksAndRejections();
   }}
   require("./{test_relative_path}");
 "#
-            )
-        } else if capture_import_error {
-            format!(
-                r#"  if (__nimbusImportError) {{
+        )
+    } else if capture_import_error {
+        format!(
+            r#"  if (__nimbusImportError) {{
     if ({capture_top_level_skip} &&
         (__nimbusImportError?.__nimbusSkip ||
          __nimbusImportError?.code === "NIMBUS_NODE_COMPAT_SKIP")) {{
-      return {{
-        ok: true,
-        skipped: true,
-        testPath: "{test_relative_path}",
-      }};
+      return __nimbusNodeCompatResult(true);
     }}
     throw __nimbusImportError;
   }}
 "#
-            )
-        } else {
-            String::new()
-        };
+        )
+    } else {
+        String::new()
+    };
     let lane_prelude = lane
         .map(|lane| {
             format!(
@@ -1480,6 +1486,15 @@ if (typeof globalThis.process === "object" && globalThis.process !== null) {{
 {prelude_script}
 {import_preamble}
 
+const __nimbusNodeCompatResult = (skipped) => Object.assign(
+  Object.create(null),
+  {{
+    ok: true,
+    skipped,
+    testPath: "{test_relative_path}",
+  }},
+);
+
 {invoke_signature}
   let __nimbusInvokeStep = "create require";
   const require = createRequire(import.meta.url);
@@ -1498,11 +1513,7 @@ if (typeof globalThis.process === "object" && globalThis.process !== null) {{
     __nimbusInvokeStep = "common assert";
     common.__nimbusAssert?.();
     globalThis.__nimbusNodeCompatInvocationFinalized = true;
-    return {{
-      ok: true,
-      skipped: false,
-      testPath: "{test_relative_path}",
-    }};
+    return __nimbusNodeCompatResult(false);
   }} catch (__nimbusInvokeError) {{
     if (__nimbusInvokeError === undefined) {{
       throw new Error(`Nimbus node_compat harness rejected with undefined during ${{__nimbusInvokeStep}}`);
@@ -1512,11 +1523,7 @@ if (typeof globalThis.process === "object" && globalThis.process !== null) {{
     if (__nimbusExitCode === 0) {{
 {process_exit_cleanup_script}
       globalThis.__nimbusNodeCompatInvocationFinalized = true;
-      return {{
-        ok: true,
-        skipped: false,
-        testPath: "{test_relative_path}",
-      }};
+      return __nimbusNodeCompatResult(false);
     }}
     throw __nimbusInvokeError;
   }}
@@ -1563,6 +1570,86 @@ export {{}};
     }
 
     (tempdir, bundle_path)
+}
+
+async fn invoke_node_compat_fixture_with_async_main_module(
+    runtime: &NimbusRuntime,
+    harness_bundle: &RuntimeBundle,
+    bundle_path: &Path,
+    test_relative_path: &str,
+    request: &InvocationRequest,
+) -> crate::error::Result<serde_json::Value> {
+    let snapshot = runtime.bootstrap_snapshot()?;
+    let reusable_runtime = crate::backends::v8::ReusableV8Runtime::fresh(
+        runtime.create_runtime_from_snapshot(harness_bundle, snapshot)?,
+        crate::backends::v8::V8RuntimeConstructionMode::StartupSnapshot,
+    );
+    let permit =
+        crate::executor::SharedInvocationPermit::new(runtime.policy(), None, None, true, None);
+    let watchdog = crate::watchdog::WatchdogTimer::new();
+    let mut driver = runtime.prepare_runtime_invocation_driver(
+        reusable_runtime,
+        watchdog,
+        None,
+        permit,
+        false,
+    )?;
+
+    let result = async {
+        runtime
+            .load_bundle_with_trace(
+                &mut driver.runtime,
+                harness_bundle,
+                driver.construction_mode,
+                None,
+                Some(request),
+            )
+            .await?;
+
+        let fixture_path = bundle_path
+            .parent()
+            .expect("node_compat bundle should have a parent")
+            .join(test_relative_path);
+        let fixture_specifier =
+            deno_core::ModuleSpecifier::from_file_path(&fixture_path).map_err(|_| {
+                crate::error::NimbusRuntimeError::Contract(format!(
+                    "node_compat fixture path `{}` should become a file URL",
+                    fixture_path.display()
+                ))
+            })?;
+        let module_id = driver
+            .runtime
+            .load_main_es_module(&fixture_specifier)
+            .await
+            .map_err(|error| crate::error::NimbusRuntimeError::JavaScript(error.to_string()))?;
+        let evaluation = driver.runtime.mod_evaluate(module_id);
+        driver
+            .runtime
+            .run_event_loop(Default::default())
+            .await
+            .map_err(|error| crate::error::NimbusRuntimeError::JavaScript(error.to_string()))?;
+        evaluation
+            .await
+            .map_err(|error| crate::error::NimbusRuntimeError::JavaScript(error.to_string()))?;
+        tokio::task::yield_now().await;
+        driver
+            .runtime
+            .run_event_loop(Default::default())
+            .await
+            .map_err(|error| crate::error::NimbusRuntimeError::JavaScript(error.to_string()))?;
+
+        runtime
+            .invoke_loaded_bundle_with_trace(
+                &mut driver.runtime,
+                request,
+                Some(harness_bundle),
+                driver.construction_mode,
+                None,
+            )
+            .await
+    }
+    .await;
+    driver.finalize(result).await
 }
 
 fn execute_upstream_node_compat_test_with_extra_files(
@@ -1627,6 +1714,13 @@ fn execute_upstream_node_compat_test_with_extra_files(
         auth: None,
         services: Default::default(),
     };
+    let load_fixture_as_async_main_module =
+        should_load_fixture_as_async_main_module(test_relative_path);
+    let bundle = if load_fixture_as_async_main_module {
+        RuntimeBundle::with_side_entrypoint(&bundle_path)
+    } else {
+        RuntimeBundle::new(&bundle_path)
+    };
 
     let started_at = Instant::now();
     let result = tokio::runtime::Builder::new_current_thread()
@@ -1634,10 +1728,20 @@ fn execute_upstream_node_compat_test_with_extra_files(
         .build()
         .expect("tokio runtime should build")
         .block_on(async {
-            tokio::time::timeout(
-                wall_clock_timeout,
-                runtime.invoke_bundle(&RuntimeBundle::new(&bundle_path), &request),
-            )
+            tokio::time::timeout(wall_clock_timeout, async {
+                if load_fixture_as_async_main_module {
+                    invoke_node_compat_fixture_with_async_main_module(
+                        &runtime,
+                        &bundle,
+                        &bundle_path,
+                        test_relative_path,
+                        &request,
+                    )
+                    .await
+                } else {
+                    runtime.invoke_bundle(&bundle, &request).await
+                }
+            })
             .await
         });
 
@@ -1781,6 +1885,52 @@ fn node_compat_diagnostics_module_import_fixture_uses_commonjs_entry() {
     let package_json =
         std::fs::read_to_string(package_json_path).expect("fixture package scope should read");
     assert_eq!(package_json, r#"{"type":"commonjs"}"#);
+}
+
+#[test]
+fn node_compat_import_meta_main_fixture_uses_runtime_main_entry() {
+    let (_tempdir, bundle_path) = write_node_compat_bundle(NodeCompatBundleWriteOptions {
+        test_relative_path: "test/es-module/test-esm-import-meta-main.mjs",
+        test_source: "assert.strictEqual(import.meta.main, true);",
+        extra_files: &[],
+        capture_top_level_skip: true,
+        lane: None,
+        prelude_script: None,
+        postlude_script: None,
+        node_options: &[],
+        mode: NodeCompatBundleMode::Runtime,
+    });
+    let bundle_source = std::fs::read_to_string(&bundle_path).expect("bundle should read");
+    assert!(
+        !bundle_source.contains(r#"import "./test/es-module/test-esm-import-meta-main.mjs";"#),
+        "runtime bundle should leave import-meta-main fixture for Rust main-module load:\n{bundle_source}"
+    );
+    assert!(
+        !bundle_source
+            .contains(r#"await import("./test/es-module/test-esm-import-meta-main.mjs");"#),
+        "runtime bundle should not side-import import-meta-main fixture:\n{bundle_source}"
+    );
+}
+
+#[test]
+fn node_compat_import_meta_main_oracle_bundle_still_imports_fixture() {
+    let (_tempdir, bundle_path) = write_node_compat_bundle(NodeCompatBundleWriteOptions {
+        test_relative_path: "test/es-module/test-esm-import-meta-main.mjs",
+        test_source: "assert.strictEqual(import.meta.main, true);",
+        extra_files: &[],
+        capture_top_level_skip: true,
+        lane: None,
+        prelude_script: None,
+        postlude_script: None,
+        node_options: &[],
+        mode: NodeCompatBundleMode::Oracle,
+    });
+    let bundle_source = std::fs::read_to_string(&bundle_path).expect("bundle should read");
+    assert!(
+        bundle_source
+            .contains(r#"await import("./test/es-module/test-esm-import-meta-main.mjs");"#),
+        "oracle bundle should remain runnable without Nimbus's Rust harness path:\n{bundle_source}"
+    );
 }
 
 fn node_compat_fixture_requires_runtime_self_exec(test_relative_path: &str) -> bool {

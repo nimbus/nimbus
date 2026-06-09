@@ -27,6 +27,59 @@ use twox_hash::XxHash64;
 mod code_cache;
 mod embedded_builtins;
 
+#[derive(Debug, thiserror::Error, deno_error::JsError)]
+enum NodeModuleLoadError {
+    #[error("Unknown module format: {mime_type} for URL {url}")]
+    #[class(generic)]
+    #[property("code" = "ERR_UNKNOWN_MODULE_FORMAT")]
+    UnknownModuleFormat { mime_type: String, url: String },
+
+    #[error("Module \"{url}\" needs an import attribute of type \"json\"")]
+    #[class(generic)]
+    #[property("code" = "ERR_IMPORT_ATTRIBUTE_MISSING")]
+    ImportAttributeMissing { url: String },
+
+    #[error("Import attribute \"type\" with value \"json\" is incompatible with module \"{url}\"")]
+    #[class(generic)]
+    #[property("code" = "ERR_IMPORT_ATTRIBUTE_TYPE_INCOMPATIBLE")]
+    ImportAttributeTypeIncompatible { url: String },
+
+    #[error("Import attribute \"type\" with value \"{requested}\" is not supported")]
+    #[class(generic)]
+    #[property("code" = "ERR_IMPORT_ATTRIBUTE_UNSUPPORTED")]
+    ImportAttributeUnsupported { requested: String },
+
+    #[error("No such built-in module: {specifier}")]
+    #[class(generic)]
+    #[property("code" = "ERR_UNKNOWN_BUILTIN_MODULE")]
+    UnknownBuiltinModule { specifier: String },
+
+    #[error(
+        "Only URLs with a scheme in: file, data, and node are supported by the default ESM loader. Received protocol '{scheme}:'"
+    )]
+    #[class(generic)]
+    #[property("code" = "ERR_UNSUPPORTED_ESM_URL_SCHEME")]
+    UnsupportedEsmUrlScheme { scheme: String },
+}
+
+#[derive(Debug, thiserror::Error, deno_error::JsError)]
+#[error("Cannot find module '{url}'")]
+#[class(generic)]
+#[property("code" = "ERR_MODULE_NOT_FOUND")]
+#[property("url" = self.url.clone())]
+struct NodeModuleNotFoundError {
+    url: String,
+}
+
+#[derive(Debug, thiserror::Error, deno_error::JsError)]
+#[error("Directory import '{url}' is not supported resolving ES modules")]
+#[class(generic)]
+#[property("code" = "ERR_UNSUPPORTED_DIR_IMPORT")]
+#[property("url" = self.url.clone())]
+struct NodeUnsupportedDirImportError {
+    url: String,
+}
+
 pub(crate) use code_cache::BundleModuleCodeCache;
 use embedded_builtins::{
     INTERNAL_READLINE_UTILS_SPECIFIER, NIMBUS_INTERNAL_READLINE_UTILS_SPECIFIER,
@@ -94,7 +147,9 @@ impl RestrictedModuleLoader {
                     "node:repl requires an interactive host process and is service/microVM-routed; production in-process Node profiles do not expose REPL authority"
                 }
                 _ => {
-                    "unsupported node: builtin for the current Node-compatible surface; the verified extension-backed lane currently includes core semantics builtins (node:assert/strict, node:buffer, node:console, node:events, node:path including posix/win32, node:punycode, node:querystring, node:string_decoder, node:url), process/timing builtins (node:process, node:timers, node:timers/promises, node:util, node:diagnostics_channel, node:perf_hooks), selected host/runtime builtins (node:fs, node:fs/promises, node:os, node:tty, node:stream including consumers/promises/web, node:child_process, node:crypto, node:worker_threads), and the in-progress networking family (node:dns, node:net, node:dgram, node:tls, node:http, node:https, node:http2), plus minimal Node globals"
+                    return JsErrorBox::from_err(NodeModuleLoadError::UnknownBuiltinModule {
+                        specifier: specifier.to_string(),
+                    });
                 }
             },
         };
@@ -117,6 +172,13 @@ impl RestrictedModuleLoader {
             return Ok(());
         }
         if specifier.scheme() != "file" {
+            if self.compatibility_target.is_node() {
+                return Err(JsErrorBox::from_err(
+                    NodeModuleLoadError::UnsupportedEsmUrlScheme {
+                        scheme: specifier.scheme().to_string(),
+                    },
+                ));
+            }
             return Err(JsErrorBox::generic(format!(
                 "runtime bundle imports must stay within approved runtime roots, unsupported scheme: {}",
                 specifier.scheme()
@@ -136,6 +198,7 @@ impl RestrictedModuleLoader {
         &self,
         module_specifier: &ModuleSpecifier,
         options: ModuleLoadOptions,
+        resolved_hook_format: Option<&str>,
     ) -> Result<ModuleSource, JsErrorBox> {
         if let Some(source) = self.supported_node_builtin_source(module_specifier.as_str()) {
             return Ok(ModuleSource::new(
@@ -146,12 +209,29 @@ impl RestrictedModuleLoader {
             ));
         }
         if module_specifier.scheme() == "data" && self.compatibility_target.is_node() {
-            return load_data_url_module_source(module_specifier, options);
+            return load_data_url_module_source(module_specifier, options, resolved_hook_format);
         }
         let path = module_specifier.to_file_path().map_err(|_| {
             JsErrorBox::generic(format!("invalid file module specifier: {module_specifier}"))
         })?;
-        let module_type = module_type_from_path(&path, &options)?;
+        let metadata = std::fs::metadata(&path).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                JsErrorBox::from_err(NodeModuleNotFoundError {
+                    url: module_specifier.to_string(),
+                })
+            } else {
+                JsErrorBox::generic(format!(
+                    "failed to inspect runtime bundle module {}: {source}",
+                    path.display()
+                ))
+            }
+        })?;
+        if metadata.is_dir() {
+            return Err(JsErrorBox::from_err(NodeUnsupportedDirImportError {
+                url: module_specifier.to_string(),
+            }));
+        }
+        let module_type = module_type_from_path(&path, &options, resolved_hook_format)?;
         let mut code = std::fs::read(&path).map_err(|source| {
             JsErrorBox::generic(format!(
                 "failed to load runtime bundle module {}: {source}",
@@ -329,13 +409,46 @@ impl ModuleLoader for RestrictedModuleLoader {
         referrer: &str,
         kind: ResolutionKind,
     ) -> Result<ModuleSpecifier, JsErrorBox> {
+        self.resolve_with_scope_and_type(
+            scope,
+            specifier,
+            referrer,
+            kind,
+            &RequestedModuleType::None,
+        )
+    }
+
+    fn resolve_with_scope_and_type(
+        &self,
+        scope: &mut v8::PinScope,
+        specifier: &str,
+        referrer: &str,
+        kind: ResolutionKind,
+        requested_module_type: &RequestedModuleType,
+    ) -> Result<ModuleSpecifier, JsErrorBox> {
         if !self.is_synthetic_commonjs_wrapper_import(specifier, referrer)
             && let Some(registry) = &self.loader_hook_registry
-            && let Some(url) = registry.resolve(scope, specifier, referrer)?
+            && let Some(url) =
+                registry.resolve(scope, specifier, referrer, requested_module_type)?
         {
             return ModuleSpecifier::parse(&url).map_err(JsErrorBox::from_err);
         }
         self.resolve_unhooked(specifier, referrer, kind)
+    }
+
+    fn import_meta_resolve_with_scope(
+        &self,
+        scope: &mut v8::PinScope,
+        specifier: &str,
+        referrer: &str,
+    ) -> Result<ModuleSpecifier, JsErrorBox> {
+        if let Some(registry) = &self.loader_hook_registry
+            && let Some(url) =
+                registry.resolve(scope, specifier, referrer, &RequestedModuleType::None)?
+        {
+            return ModuleSpecifier::parse(&url).map_err(JsErrorBox::from_err);
+        }
+        self.resolve_unhooked(specifier, referrer, ResolutionKind::DynamicImport)
     }
 
     fn load(
@@ -344,11 +457,23 @@ impl ModuleLoader for RestrictedModuleLoader {
         _maybe_referrer: Option<&ModuleLoadReferrer>,
         options: ModuleLoadOptions,
     ) -> ModuleLoadResponse {
+        let requested_module_type_for_hooks = options.requested_module_type.clone();
+        let resolved_hook_format = self.loader_hook_registry.as_ref().and_then(|registry| {
+            registry
+                .take_resolved_format(module_specifier.as_str(), &requested_module_type_for_hooks)
+        });
+        let options = match resolved_hook_format.as_deref() {
+            Some(format) => module_load_options_with_resolved_hook_format(options, format),
+            None => options,
+        };
         if let Some(registry) = &self.loader_hook_registry
             && registry.load_active.get()
             && !options.is_synchronous
         {
-            let receiver = registry.push_load(module_specifier.to_string());
+            let receiver = registry.push_load(
+                module_specifier.to_string(),
+                &requested_module_type_for_hooks,
+            );
             let loader = self.clone();
             let module_specifier = module_specifier.clone();
             return ModuleLoadResponse::Async(Box::pin(async move {
@@ -376,8 +501,11 @@ impl ModuleLoader for RestrictedModuleLoader {
                             None,
                         ))
                     }
-                    Ok(Ok((None, _))) => {
-                        loader.load_module_source(&module_specifier, options).await
+                    Ok(Ok((None, format))) => {
+                        let hook_format = format.as_deref().or(resolved_hook_format.as_deref());
+                        loader
+                            .load_module_source(&module_specifier, options, hook_format)
+                            .await
                     }
                     Ok(Err(error)) => Err(JsErrorBox::generic(error)),
                     Err(_) => Err(JsErrorBox::generic("module load hook cancelled")),
@@ -390,7 +518,11 @@ impl ModuleLoader for RestrictedModuleLoader {
         ModuleLoadResponse::Async(Box::pin({
             let loader = self.clone();
             let module_specifier = module_specifier.clone();
-            async move { loader.load_module_source(&module_specifier, options).await }
+            async move {
+                loader
+                    .load_module_source(&module_specifier, options, resolved_hook_format.as_deref())
+                    .await
+            }
         }))
     }
 
@@ -421,6 +553,23 @@ fn module_type_from_hook_format(format: Option<&str>) -> ModuleType {
         Some("wasm") => ModuleType::Wasm,
         Some("module") | Some("commonjs") | None => ModuleType::JavaScript,
         Some(other) => ModuleType::Other(Cow::Owned(other.to_string())),
+    }
+}
+
+fn module_load_options_with_resolved_hook_format(
+    options: ModuleLoadOptions,
+    format: &str,
+) -> ModuleLoadOptions {
+    let requested_module_type = match format {
+        "json" if options.requested_module_type == RequestedModuleType::None => {
+            RequestedModuleType::Json
+        }
+        _ => options.requested_module_type,
+    };
+    ModuleLoadOptions {
+        is_dynamic_import: options.is_dynamic_import,
+        is_synchronous: options.is_synchronous,
+        requested_module_type,
     }
 }
 
@@ -575,8 +724,10 @@ fn commonjs_named_export_binding(export_name: &str) -> String {
 fn load_data_url_module_source(
     module_specifier: &ModuleSpecifier,
     options: ModuleLoadOptions,
+    resolved_hook_format: Option<&str>,
 ) -> Result<ModuleSource, JsErrorBox> {
-    let (module_type, code) = data_url_module_source_bytes(module_specifier, &options)?;
+    let (module_type, code) =
+        data_url_module_source_bytes(module_specifier, &options, resolved_hook_format)?;
     Ok(ModuleSource::new(
         module_type,
         ModuleSourceCode::Bytes(code.into_boxed_slice().into()),
@@ -588,6 +739,7 @@ fn load_data_url_module_source(
 fn data_url_module_source_bytes(
     module_specifier: &ModuleSpecifier,
     options: &ModuleLoadOptions,
+    resolved_hook_format: Option<&str>,
 ) -> Result<(ModuleType, Vec<u8>), JsErrorBox> {
     let specifier = module_specifier.as_str();
     let payload = specifier.strip_prefix("data:").ok_or_else(|| {
@@ -596,7 +748,12 @@ fn data_url_module_source_bytes(
     let (media_type, encoded_data) = payload.split_once(',').ok_or_else(|| {
         JsErrorBox::generic(format!("invalid data module specifier: {module_specifier}"))
     })?;
-    let module_type = module_type_from_data_url_media_type(media_type, module_specifier, options)?;
+    let module_type = module_type_from_data_url_media_type(
+        media_type,
+        module_specifier,
+        options,
+        resolved_hook_format,
+    )?;
     let decoded = percent_decode_data_url_bytes(encoded_data, module_specifier)?;
     let bytes = if data_url_media_type_is_base64(media_type) {
         let encoded = std::str::from_utf8(&decoded).map_err(|error| {
@@ -619,7 +776,14 @@ fn module_type_from_data_url_media_type(
     media_type: &str,
     module_specifier: &ModuleSpecifier,
     options: &ModuleLoadOptions,
+    resolved_hook_format: Option<&str>,
 ) -> Result<ModuleType, JsErrorBox> {
+    if let Some(format) = resolved_hook_format {
+        let module_type = module_type_from_hook_format(Some(format));
+        ensure_json_import_attribute(&module_type, Some(module_specifier), options)?;
+        return Ok(module_type);
+    }
+
     let mime_type = data_url_mime_type(media_type);
     let module_type = match mime_type.as_str() {
         "text/javascript"
@@ -629,12 +793,15 @@ fn module_type_from_data_url_media_type(
         "application/json" => ModuleType::Json,
         "application/wasm" => ModuleType::Wasm,
         _ => {
-            return Err(JsErrorBox::generic(format!(
-                "Unknown module format: {mime_type} for URL {module_specifier}"
-            )));
+            return Err(JsErrorBox::from_err(
+                NodeModuleLoadError::UnknownModuleFormat {
+                    mime_type,
+                    url: module_specifier.to_string(),
+                },
+            ));
         }
     };
-    ensure_json_import_attribute(&module_type, options)?;
+    ensure_json_import_attribute(&module_type, Some(module_specifier), options)?;
     Ok(module_type)
 }
 
@@ -703,8 +870,11 @@ fn hex_digit_value(value: u8) -> Option<u8> {
 fn module_type_from_path(
     path: &Path,
     options: &ModuleLoadOptions,
+    resolved_hook_format: Option<&str>,
 ) -> Result<ModuleType, JsErrorBox> {
-    let module_type = if let Some(extension) = path.extension() {
+    let module_type = if let Some(format) = resolved_hook_format {
+        module_type_from_hook_format(Some(format))
+    } else if let Some(extension) = path.extension() {
         let ext = extension.to_string_lossy().to_ascii_lowercase();
         if ext == "json" {
             ModuleType::Json
@@ -722,24 +892,37 @@ fn module_type_from_path(
         ModuleType::JavaScript
     };
 
-    ensure_json_import_attribute(&module_type, options)?;
+    let module_specifier = ModuleSpecifier::from_file_path(path).ok();
+    ensure_json_import_attribute(&module_type, module_specifier.as_ref(), options)?;
     Ok(module_type)
 }
 
 fn ensure_json_import_attribute(
     module_type: &ModuleType,
+    module_specifier: Option<&ModuleSpecifier>,
     options: &ModuleLoadOptions,
 ) -> Result<(), JsErrorBox> {
+    if let RequestedModuleType::Other(requested) = &options.requested_module_type {
+        return Err(JsErrorBox::from_err(
+            NodeModuleLoadError::ImportAttributeUnsupported {
+                requested: requested.to_string(),
+            },
+        ));
+    }
+
     let is_json = module_type == &ModuleType::Json;
     let requested_json = options.requested_module_type == RequestedModuleType::Json;
+    let url = module_specifier
+        .map(|specifier| specifier.to_string())
+        .unwrap_or_default();
     if is_json && !requested_json {
-        return Err(JsErrorBox::generic(
-            "Attempted to load JSON module without specifying \"type\": \"json\" attribute in the import statement.",
+        return Err(JsErrorBox::from_err(
+            NodeModuleLoadError::ImportAttributeMissing { url },
         ));
     }
     if requested_json && !is_json {
-        return Err(JsErrorBox::generic(
-            "Import attribute \"type\" of value \"json\" is incompatible with the module format of the resolved module.",
+        return Err(JsErrorBox::from_err(
+            NodeModuleLoadError::ImportAttributeTypeIncompatible { url },
         ));
     }
 
@@ -795,6 +978,23 @@ fn has_url_like_scheme(specifier: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use deno_error::JsErrorClass as _;
+
+    fn assert_error_code(error: &JsErrorBox, expected: &str) {
+        let code = error
+            .get_additional_properties()
+            .find(|(key, _)| key == "code")
+            .map(|(_, value)| value.to_string());
+        assert_eq!(code.as_deref(), Some(expected));
+    }
+
+    fn assert_error_property(error: &JsErrorBox, property: &str, expected: &str) {
+        let value = error
+            .get_additional_properties()
+            .find(|(key, _)| key == property)
+            .map(|(_, value)| value.to_string());
+        assert_eq!(value.as_deref(), Some(expected));
+    }
 
     #[test]
     fn bare_package_detection_excludes_url_like_schemes() {
@@ -807,6 +1007,32 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_esm_url_scheme_error_carries_node_code() {
+        let error = JsErrorBox::from_err(NodeModuleLoadError::UnsupportedEsmUrlScheme {
+            scheme: "http".to_string(),
+        });
+
+        assert_error_code(&error, "ERR_UNSUPPORTED_ESM_URL_SCHEME");
+    }
+
+    #[test]
+    fn node_module_lookup_errors_carry_url_property() {
+        let missing_url = "file:///tmp/does-not-exist.mjs";
+        let missing_error = JsErrorBox::from_err(NodeModuleNotFoundError {
+            url: missing_url.to_string(),
+        });
+        assert_error_code(&missing_error, "ERR_MODULE_NOT_FOUND");
+        assert_error_property(&missing_error, "url", missing_url);
+
+        let directory_url = "file:///tmp/package-dir";
+        let directory_error = JsErrorBox::from_err(NodeUnsupportedDirImportError {
+            url: directory_url.to_string(),
+        });
+        assert_error_code(&directory_error, "ERR_UNSUPPORTED_DIR_IMPORT");
+        assert_error_property(&directory_error, "url", directory_url);
+    }
+
+    #[test]
     fn data_url_module_source_decodes_percent_encoded_javascript() {
         let specifier =
             ModuleSpecifier::parse("data:text/javascript,export%20default%202").unwrap();
@@ -816,7 +1042,8 @@ mod tests {
             is_synchronous: false,
         };
 
-        let (module_type, source) = data_url_module_source_bytes(&specifier, &options).unwrap();
+        let (module_type, source) =
+            data_url_module_source_bytes(&specifier, &options, None).unwrap();
 
         assert_eq!(module_type, ModuleType::JavaScript);
         assert_eq!(source, b"export default 2");
@@ -832,7 +1059,8 @@ mod tests {
             is_synchronous: false,
         };
 
-        let (module_type, source) = data_url_module_source_bytes(&specifier, &options).unwrap();
+        let (module_type, source) =
+            data_url_module_source_bytes(&specifier, &options, None).unwrap();
 
         assert_eq!(module_type, ModuleType::JavaScript);
         assert_eq!(source, b"export default 7");
@@ -881,12 +1109,12 @@ mod tests {
             is_synchronous: false,
         };
 
-        let error = data_url_module_source_bytes(&specifier, &options).unwrap_err();
+        let error = data_url_module_source_bytes(&specifier, &options, None).unwrap_err();
 
         assert!(
             error
                 .to_string()
-                .contains("Attempted to load JSON module without specifying")
+                .contains("needs an import attribute of type \"json\"")
         );
     }
 
@@ -899,7 +1127,7 @@ mod tests {
             is_synchronous: false,
         };
 
-        let error = data_url_module_source_bytes(&specifier, &options).unwrap_err();
+        let error = data_url_module_source_bytes(&specifier, &options, None).unwrap_err();
 
         assert!(
             error

@@ -23,7 +23,7 @@ pub(in super::super) async fn op_nimbus_runtime_test_spawn(
         prepared
             .runtime
             .invoke_bundle(
-                &RuntimeBundle::new(&prepared.bundle_path),
+                &RuntimeBundle::with_side_entrypoint(&prepared.bundle_path),
                 &prepared.request,
             )
             .await,
@@ -41,7 +41,7 @@ pub(in super::super) fn op_nimbus_runtime_test_spawn_sync(
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
     let prepared = prepare_runtime_test_spawn_invocation(state, payload)?;
     let result = runtime_test_spawn_result_from_value(prepared.runtime.invoke_bundle_blocking(
-        &RuntimeBundle::new(&prepared.bundle_path),
+        &RuntimeBundle::with_side_entrypoint(&prepared.bundle_path),
         &prepared.request,
     ));
     sync_runtime_test_spawn_file_outputs(&prepared.file_output_syncs)?;

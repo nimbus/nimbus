@@ -17,6 +17,7 @@ use crate::module_loader::BundleModuleCodeCache;
 pub struct RuntimeBundleIdentity {
     tenant_label: Option<String>,
     content_kind: RuntimeBundleContentKind,
+    entrypoint_kind: RuntimeBundleEntrypointKind,
     entrypoint: PathBuf,
     expected_sha256: Option<String>,
 }
@@ -39,9 +40,16 @@ impl RuntimeBundleIdentity {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum RuntimeBundleEntrypointKind {
+    Main,
+    Side,
+}
+
 #[derive(Debug)]
 struct RuntimeBundleShared {
     content_kind: RuntimeBundleContentKind,
+    entrypoint_kind: RuntimeBundleEntrypointKind,
     entrypoint: PathBuf,
     canonical_entrypoint: Option<PathBuf>,
     canonical_module_root: Option<PathBuf>,
@@ -94,6 +102,7 @@ impl RuntimeBundle {
         Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
             RuntimeBundleContentKind::JavaScript,
+            RuntimeBundleEntrypointKind::Main,
             None,
             None,
             None,
@@ -107,6 +116,7 @@ impl RuntimeBundle {
         Ok(Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
             RuntimeBundleContentKind::JavaScript,
+            RuntimeBundleEntrypointKind::Main,
             Some(normalize_sha256(expected_sha256.as_ref())?),
             None,
             None,
@@ -121,6 +131,7 @@ impl RuntimeBundle {
         Ok(Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
             RuntimeBundleContentKind::JavaScript,
+            RuntimeBundleEntrypointKind::Main,
             Some(normalize_sha256(expected_sha256.as_ref())?),
             Some(tenant_label.into()),
             None,
@@ -134,9 +145,36 @@ impl RuntimeBundle {
         Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
             RuntimeBundleContentKind::JavaScript,
+            RuntimeBundleEntrypointKind::Main,
             None,
             None,
             Some(module_root.as_ref().to_path_buf()),
+        )
+    }
+
+    pub(crate) fn with_side_entrypoint_and_module_root(
+        entrypoint: impl AsRef<Path>,
+        module_root: impl AsRef<Path>,
+    ) -> Self {
+        Self::from_parts(
+            entrypoint.as_ref().to_path_buf(),
+            RuntimeBundleContentKind::JavaScript,
+            RuntimeBundleEntrypointKind::Side,
+            None,
+            None,
+            Some(module_root.as_ref().to_path_buf()),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_side_entrypoint(entrypoint: impl AsRef<Path>) -> Self {
+        Self::from_parts(
+            entrypoint.as_ref().to_path_buf(),
+            RuntimeBundleContentKind::JavaScript,
+            RuntimeBundleEntrypointKind::Side,
+            None,
+            None,
+            None,
         )
     }
 
@@ -146,6 +184,10 @@ impl RuntimeBundle {
 
     pub fn content_kind(&self) -> RuntimeBundleContentKind {
         self.shared.content_kind
+    }
+
+    pub(crate) fn entrypoint_kind(&self) -> RuntimeBundleEntrypointKind {
+        self.shared.entrypoint_kind
     }
 
     pub fn canonical_entrypoint(&self) -> Option<&Path> {
@@ -205,6 +247,7 @@ impl RuntimeBundle {
     fn from_parts(
         entrypoint: PathBuf,
         content_kind: RuntimeBundleContentKind,
+        entrypoint_kind: RuntimeBundleEntrypointKind,
         expected_sha256: Option<String>,
         tenant_label: Option<String>,
         explicit_module_root: Option<PathBuf>,
@@ -235,6 +278,7 @@ impl RuntimeBundle {
         let identity = RuntimeBundleIdentity {
             tenant_label,
             content_kind,
+            entrypoint_kind,
             entrypoint: canonical_entrypoint
                 .clone()
                 .unwrap_or_else(|| entrypoint.clone()),
@@ -243,6 +287,7 @@ impl RuntimeBundle {
         Self {
             shared: Arc::new(RuntimeBundleShared {
                 content_kind,
+                entrypoint_kind,
                 entrypoint,
                 canonical_entrypoint,
                 canonical_module_root,

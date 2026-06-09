@@ -14,6 +14,7 @@ pub(crate) use self::source::{
 pub(crate) use self::state::{
     InstalledRuntimeWorkerBootstrapState, RuntimeCancellationState,
     RuntimeInvocationTimeoutController, bind_runtime_host_bridge, initialize_runtime_state,
-    main_thread_worker_bootstrap_state, reset_runtime_invocation_state,
+    install_missing_deno_extension_state, main_thread_worker_bootstrap_state,
+    reset_runtime_invocation_state,
 };
 pub(crate) use self::transpile::extension_transpiler_for_target;

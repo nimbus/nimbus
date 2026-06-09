@@ -94,6 +94,75 @@ function isBuiltin(specifier) {
   );
 }
 
+const NIMBUS_BUILTIN_ESM_EXPORT_SYNC_CALLBACKS =
+  "__nimbusBuiltinEsmExportSyncCallbacks";
+const NIMBUS_ORIGINAL_SYNC_BUILTIN_ESM_EXPORTS =
+  "__nimbusOriginalSyncBuiltinESMExports";
+const denoSyncBuiltinESMExports = Object.prototype.hasOwnProperty.call(
+  Module,
+  NIMBUS_ORIGINAL_SYNC_BUILTIN_ESM_EXPORTS,
+)
+  ? Module[NIMBUS_ORIGINAL_SYNC_BUILTIN_ESM_EXPORTS]
+  : typeof Module.syncBuiltinESMExports === "function"
+  ? Module.syncBuiltinESMExports.bind(Module)
+  : null;
+if (
+  !Object.prototype.hasOwnProperty.call(
+    Module,
+    NIMBUS_ORIGINAL_SYNC_BUILTIN_ESM_EXPORTS,
+  )
+) {
+  Object.defineProperty(Module, NIMBUS_ORIGINAL_SYNC_BUILTIN_ESM_EXPORTS, {
+    value: denoSyncBuiltinESMExports,
+    configurable: true,
+    enumerable: false,
+    writable: false,
+  });
+}
+const nimbusBuiltinEsmExportSyncCallbacks = Object.prototype.hasOwnProperty.call(
+  Module,
+  NIMBUS_BUILTIN_ESM_EXPORT_SYNC_CALLBACKS,
+)
+  ? Module[NIMBUS_BUILTIN_ESM_EXPORT_SYNC_CALLBACKS]
+  : new Set();
+if (
+  !Object.prototype.hasOwnProperty.call(
+    Module,
+    NIMBUS_BUILTIN_ESM_EXPORT_SYNC_CALLBACKS,
+  )
+) {
+  Object.defineProperty(Module, NIMBUS_BUILTIN_ESM_EXPORT_SYNC_CALLBACKS, {
+    value: nimbusBuiltinEsmExportSyncCallbacks,
+    configurable: true,
+    enumerable: false,
+    writable: false,
+  });
+}
+
+function __nimbusRegisterBuiltinEsmExportSync(callback) {
+  if (typeof callback !== "function") {
+    throw new TypeError("Nimbus builtin ESM export sync callback must be a function");
+  }
+  nimbusBuiltinEsmExportSyncCallbacks.add(callback);
+  return function unregisterBuiltinEsmExportSync() {
+    nimbusBuiltinEsmExportSyncCallbacks.delete(callback);
+  };
+}
+
+function syncBuiltinESMExports() {
+  denoSyncBuiltinESMExports?.();
+  for (const callback of nimbusBuiltinEsmExportSyncCallbacks) {
+    callback();
+  }
+}
+
+Object.defineProperty(Module, "__nimbusRegisterBuiltinEsmExportSync", {
+  value: __nimbusRegisterBuiltinEsmExportSync,
+  configurable: true,
+  enumerable: false,
+  writable: true,
+});
+
 let activeHookRegistrations = 0;
 
 function registerHooks(hooks) {
@@ -243,6 +312,7 @@ function createRequire(filenameOrUrl) {
 
 Module.createRequire = createRequire;
 Module.registerHooks = registerHooks;
+Module.syncBuiltinESMExports = syncBuiltinESMExports;
 
 export {
   _stat,
@@ -265,5 +335,6 @@ export {
   Module,
   register,
   registerHooks,
+  syncBuiltinESMExports,
 };
 export default Module;

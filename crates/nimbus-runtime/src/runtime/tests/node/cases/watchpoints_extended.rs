@@ -1736,6 +1736,7 @@ const ESM_MODULE_LOADER_EXTRA_DIRS: &[&str] = &[
     "test/common",
     "test/es-module",
     "test/fixtures/cycles",
+    "test/fixtures/es-module-url",
     "test/fixtures/es-module-loaders",
     "test/fixtures/es-module-require-cache",
     "test/fixtures/es-module-specifiers",
@@ -1748,6 +1749,7 @@ const ESM_MODULE_LOADER_EXTRA_DIRS: &[&str] = &[
     "test/fixtures/snapshot",
     "test/fixtures/test-module-loading-globalpaths",
     "test/fixtures/typescript",
+    "test/fixtures/uncaught-exceptions",
 ];
 
 const ESM_DATA_URL_CLUSTER_PATHS: &[&str] = &[
@@ -1916,6 +1918,41 @@ fn node24_default_lane_executes_esm_module_loader_promoted_batch_fixture() {
     ]);
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-executes-esm-module-loader-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
+const NDS3_FORK_CYCLE8_PROMOTED_COMMON_PATHS: &[&str] =
+    &["test/es-module/test-esm-import-meta-main.mjs"];
+
+#[test]
+fn node22_supported_lane_executes_nds3_fork_cycle8_promoted_batch_fixture() {
+    let fixture_paths = NDS3_FORK_CYCLE8_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-nds3-fork-cycle8-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,
+        ESM_MODULE_LOADER_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_nds3_fork_cycle8_promoted_batch_fixture() {
+    let fixture_paths = NDS3_FORK_CYCLE8_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-nds3-fork-cycle8-promoted-batch",
         NodeCompatLane::Node24,
         &fixture_paths,
         ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES,

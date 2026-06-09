@@ -1,4 +1,5 @@
 use crate::backends::v8::embedder::{JsErrorBox, OpState, op2};
+use crate::runtime::bootstrap::state::InstalledRuntimeCapabilityPolicy;
 
 use super::support::{capability_denied_error, runtime_target_triple};
 
@@ -25,6 +26,15 @@ pub(in super::super) fn op_nimbus_runtime_exec_path() -> std::result::Result<Str
             ))
         })
         .map(|path| path.display().to_string())
+}
+
+#[op2]
+#[string]
+pub(in super::super) fn op_nimbus_runtime_cwd(state: &mut OpState) -> String {
+    state
+        .try_borrow::<InstalledRuntimeCapabilityPolicy>()
+        .map(|policy| policy.paths.cwd().display().to_string())
+        .unwrap_or_default()
 }
 
 #[op2]

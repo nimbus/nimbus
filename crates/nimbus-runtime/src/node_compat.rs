@@ -18,7 +18,8 @@ use deno_resolver::npm::{CreateInNpmPkgCheckerOptions, DenoInNpmPackageChecker};
 use node_resolver::analyze::{CjsModuleExportAnalyzer, NodeCodeTranslator, NodeCodeTranslatorMode};
 use node_resolver::cache::NodeResolutionSys;
 use node_resolver::errors::{
-    PackageFolderResolveError, PackageFolderResolveErrorKind, PackageNotFoundError,
+    NodeJsErrorCode, NodeResolveError, PackageFolderResolveError, PackageFolderResolveErrorKind,
+    PackageNotFoundError,
 };
 use node_resolver::{
     DenoIsBuiltInNodeModuleChecker, InNpmPackageChecker, NodeResolution, NodeResolutionKind,
@@ -384,13 +385,15 @@ fn resolve_node_target_with_resolver(
     ) {
         Ok(resolved) => resolved,
         Err(error) => {
-            if let Some(resolved) = try_resolve_package_subpath_without_exports(
-                path_policy,
-                specifier,
-                &referrer_url,
-                package_json_resolver.as_ref(),
-            )? {
-                return Ok(resolved);
+            if should_try_package_subpath_without_exports(&error) {
+                if let Some(resolved) = try_resolve_package_subpath_without_exports(
+                    path_policy,
+                    specifier,
+                    &referrer_url,
+                    package_json_resolver.as_ref(),
+                )? {
+                    return Ok(resolved);
+                }
             }
             return Err(JsErrorBox::from_err(error));
         }
@@ -407,6 +410,13 @@ fn resolve_node_target_with_resolver(
             Ok(ResolvedNodeTarget::Module { path, kind })
         }
     }
+}
+
+fn should_try_package_subpath_without_exports(error: &NodeResolveError) -> bool {
+    matches!(
+        error.as_kind().maybe_code(),
+        Some(NodeJsErrorCode::ERR_MODULE_NOT_FOUND)
+    )
 }
 
 pub(crate) async fn translate_commonjs_to_esm(
@@ -706,6 +716,14 @@ mod tests {
             node_code_translator_mode_for_target(RuntimeCompatibilityTarget::Node24),
             NodeCodeTranslatorMode::ModuleLoader
         ));
+    }
+
+    fn assert_error_code(error: &JsErrorBox, expected: &str) {
+        let code = error
+            .get_additional_properties()
+            .find(|(key, _)| key == "code")
+            .map(|(_, value)| value.to_string());
+        assert_eq!(code.as_deref(), Some(expected));
     }
 
     #[test]
@@ -1024,10 +1042,63 @@ mod tests {
             Some(Vec::new()),
         )
         .expect_err("empty override should preserve package exports failures");
-        let code = error
-            .get_additional_properties()
-            .find(|(key, _)| key == "code")
-            .map(|(_, value)| value.to_string());
-        assert_eq!(code.as_deref(), Some("ERR_PACKAGE_PATH_NOT_EXPORTED"));
+        assert_error_code(&error, "ERR_PACKAGE_PATH_NOT_EXPORTED");
+    }
+
+    #[test]
+    fn resolve_node_target_preserves_invalid_specifier_errors_before_no_exports_fallback() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let functions_root = app_root.join("functions");
+        let exports_root = functions_root.join("node_modules/foo");
+        std::fs::create_dir_all(&exports_root).expect("package root should build");
+        std::fs::write(
+            exports_root.join("package.json"),
+            r#"{
+              "name": "foo",
+              "exports": {
+                "./sub/*": "./*"
+              }
+            }"#,
+        )
+        .expect("package manifest should write");
+        std::fs::write(exports_root.join("asdf.js"), "export default 'asdf';\n")
+            .expect("export target should write");
+        std::fs::write(
+            functions_root.join("package.json"),
+            r##"{
+              "imports": {
+                "#subpath/*": "./sub/*"
+              }
+            }"##,
+        )
+        .expect("function package manifest should write");
+
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
+            .expect("policy should build");
+        let referrer = functions_root.join("main.mjs").display().to_string();
+
+        let exports_error = resolve_node_target_with_conditions(
+            &policy,
+            "foo/sub/./../asdf.js",
+            &referrer,
+            node_resolver::ResolutionMode::Import,
+            None,
+        )
+        .expect_err("invalid package exports specifier should not use file fallback");
+        assert_error_code(&exports_error, "ERR_INVALID_MODULE_SPECIFIER");
+
+        let imports_error = resolve_node_target_with_conditions(
+            &policy,
+            "#subpath/sub/../../../belowbase",
+            &referrer,
+            node_resolver::ResolutionMode::Import,
+            None,
+        )
+        .expect_err("invalid package imports specifier should not use file fallback");
+        assert_error_code(&imports_error, "ERR_INVALID_MODULE_SPECIFIER");
     }
 }

@@ -890,12 +890,23 @@ function seedNodeProcessCwd(nodeProcess) {
   const originalCwd = typeof nodeProcess.cwd === "function"
     ? nodeProcess.cwd.bind(nodeProcess)
     : null;
-  const originalChdir = typeof nodeProcess.chdir === "function"
-    ? nodeProcess.chdir.bind(nodeProcess)
-    : typeof nodeProcessBuiltin?.chdir === "function"
-    ? nodeProcessBuiltin.chdir.bind(nodeProcessBuiltin)
+  const policyCwd = typeof core.ops.op_nimbus_runtime_cwd === "function"
+    ? core.ops.op_nimbus_runtime_cwd()
     : null;
-  let currentCwd = originalCwd !== null ? originalCwd() : "/";
+  let currentCwd = typeof policyCwd === "string" && policyCwd.length > 0
+    ? policyCwd
+    : nimbusRuntimeCurrentCwd ??
+      (nodeProcess !== globalThis.process &&
+          globalThis.process?.[nimbusProcessCwdPatched] === true &&
+          typeof globalThis.process?.cwd === "function"
+        ? globalThis.process.cwd()
+        : null) ??
+      (originalCwd !== null &&
+          nodeProcess === globalThis.process &&
+          nodeProcess[nimbusProcessCwdPatched] === true
+        ? originalCwd()
+        : null) ??
+      "/";
   nimbusRuntimeCurrentCwd = currentCwd;
 
   Object.defineProperty(nodeProcess, "cwd", {
@@ -907,20 +918,25 @@ function seedNodeProcessCwd(nodeProcess) {
     writable: true,
   });
 
-  if (originalChdir !== null) {
-    Object.defineProperty(nodeProcess, "chdir", {
-      value(directory) {
-        const nextCwd = nodePathResolve(currentCwd, String(directory));
-        const result = originalChdir(directory);
-        currentCwd = nextCwd;
-        nimbusRuntimeCurrentCwd = currentCwd;
-        return result;
-      },
-      configurable: true,
-      enumerable: false,
-      writable: true,
-    });
-  }
+  Object.defineProperty(nodeProcess, "chdir", {
+    value(directory) {
+      const nextCwd = nodePathResolve(currentCwd, String(directory));
+      const fileInfo = runtimeFsAssertExistingCwd(nextCwd);
+      if (!fileInfo.isDirectory) {
+        const error = new Error(`ENOTDIR: not a directory, chdir '${currentCwd}' -> '${nextCwd}'`);
+        error.code = "ENOTDIR";
+        error.errno = -20;
+        error.syscall = "chdir";
+        error.path = nextCwd;
+        throw error;
+      }
+      currentCwd = nextCwd;
+      nimbusRuntimeCurrentCwd = currentCwd;
+    },
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
 
   Object.defineProperty(nodeProcess, nimbusProcessCwdPatched, {
     value: true,

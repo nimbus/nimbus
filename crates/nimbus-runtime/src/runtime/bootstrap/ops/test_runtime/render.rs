@@ -776,7 +776,9 @@ if (
         source,
         cli_args,
     } => {
-        let main_script_path = if let Some(relative_path) = relative_path {
+        let main_script_path = if plan.source_bundle_root.is_some() && !plan.permission_restricted {
+            script_path.clone()
+        } else if let Some(relative_path) = relative_path {
             let bundle_script_path = bundle_dir.join(relative_path);
             if let Some(source) = source {
                 let bundle_script_path = bundle_dir.join(relative_path);
@@ -810,11 +812,15 @@ process.argv.push(
   ...{cli_args},
 );
 require("node:module").runMain();
-if (
-  globalThis.__nimbusMainScriptPromise &&
-  typeof globalThis.__nimbusMainScriptPromise.then === "function"
+const __nimbusMainScriptPromise = globalThis.__nimbusMainScriptPromise;
+if (__nimbusMainScriptPromise instanceof Promise) {{
+  await __nimbusMainScriptPromise;
+}} else if (
+  __nimbusMainScriptPromise &&
+  Object.hasOwn(__nimbusMainScriptPromise, "then") &&
+  typeof __nimbusMainScriptPromise.then === "function"
 ) {{
-  await globalThis.__nimbusMainScriptPromise;
+  await __nimbusMainScriptPromise;
 }}
 "#,
             exec_path =
@@ -1608,6 +1614,18 @@ if (__nimbusReporterFailureArmed) {{
 __nimbusAppendAsyncFatalError(error, 1);
   }};
   const __nimbusHandleRuntimeErrorEvent = (event) => {{
+if (
+  typeof process?.listenerCount === "function" &&
+  process.listenerCount("uncaughtException") > 0
+) {{
+  return;
+}}
+if (
+  typeof process?.hasUncaughtExceptionCaptureCallback === "function" &&
+  process.hasUncaughtExceptionCaptureCallback()
+) {{
+  return;
+}}
 event?.preventDefault?.();
 __nimbusCaptureAsyncFatalError(event?.error ?? event);
   }};
@@ -1624,7 +1642,6 @@ stderr += captureChunk(chunk);
 return true;
   }};
   globalThis.__nimbusRuntimeCaptureWasiStdio = true;
-  process.on("uncaughtException", __nimbusCaptureAsyncFatalError);
   process.on("unhandledRejection", __nimbusCaptureAsyncFatalError);
   globalThis.addEventListener("error", __nimbusHandleRuntimeErrorEvent);
   globalThis.addEventListener(
@@ -1716,7 +1733,6 @@ if (exitCode !== null) {{
   }}
 }}
   }} finally {{
-process.off("uncaughtException", __nimbusCaptureAsyncFatalError);
 process.off("unhandledRejection", __nimbusCaptureAsyncFatalError);
 globalThis.removeEventListener("error", __nimbusHandleRuntimeErrorEvent);
 globalThis.removeEventListener(

@@ -1500,7 +1500,6 @@
         "test/es-module/test-esm-import-attributes-validation.js",
         "test/es-module/test-esm-import-flag.mjs",
         "test/es-module/test-esm-import-meta-main-eval.mjs",
-        "test/es-module/test-esm-import-meta-main.mjs",
         "test/es-module/test-esm-import-meta-resolve-hooks.mjs",
         "test/es-module/test-esm-import-meta-resolve.mjs",
         "test/es-module/test-esm-imports-deprecations.mjs",

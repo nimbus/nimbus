@@ -51,9 +51,17 @@ pub(super) fn prepare_runtime_test_spawn_invocation(
             state.borrow::<InstalledRuntimeContract>().clone(),
         )
     };
-    let limits = contract.limits;
-    let runtime = NimbusRuntime::with_policy(host, Arc::new(RuntimePolicy::new(limits)));
     let (tempdir, bundle_path, file_output_syncs) = write_runtime_test_spawn_bundle(&plan)?;
+    let mut limits = contract.limits;
+    if let Some(source_bundle_root) = plan.source_bundle_root.as_ref()
+        && !plan.permission_restricted
+    {
+        limits
+            .grants
+            .read
+            .push(source_bundle_root.to_string_lossy().into_owned());
+    }
+    let runtime = NimbusRuntime::with_policy(host, Arc::new(RuntimePolicy::new(limits)));
     let process_state_snapshot = RuntimeTestProcessStateSnapshot::capture();
     let request = InvocationRequest {
         kind: InvocationKind::Query,
@@ -79,11 +87,16 @@ pub(super) fn runtime_test_spawn_result_from_value(
     result: crate::error::Result<serde_json::Value>,
 ) -> std::result::Result<RuntimeTestSpawnResult, JsErrorBox> {
     match result {
-        Ok(value) => serde_json::from_value(value).map_err(|error| {
-            JsErrorBox::generic(format!(
-                "node_compat subprocess result should deserialize: {error}"
-            ))
-        }),
+        Ok(value) => {
+            let mut result: RuntimeTestSpawnResult =
+                serde_json::from_value(value).map_err(|error| {
+                    JsErrorBox::generic(format!(
+                        "node_compat subprocess result should deserialize: {error}"
+                    ))
+                })?;
+            result.stderr = normalize_subprocess_javascript_stderr(&result.stderr);
+            Ok(result)
+        }
         Err(error) => {
             // A child runtime that throws an uncaught JS exception must surface
             // Node-identical stderr (`Error: <msg>`), not the Nimbus-internal
@@ -93,7 +106,9 @@ pub(super) fn runtime_test_spawn_result_from_value(
             // every other variant keeps its full Display so timeout / heap /
             // capability / integrity diagnostics are unchanged.
             let stderr = match error {
-                crate::error::NimbusRuntimeError::JavaScript(message) => format!("{message}\n"),
+                crate::error::NimbusRuntimeError::JavaScript(message) => {
+                    format!("{}\n", normalize_subprocess_javascript_stderr(&message))
+                }
                 other => format!("{other}\n"),
             };
             Ok(RuntimeTestSpawnResult {
@@ -105,6 +120,31 @@ pub(super) fn runtime_test_spawn_result_from_value(
             })
         }
     }
+}
+
+fn normalize_subprocess_javascript_stderr(message: &str) -> String {
+    let mut removed_internal_frame = false;
+    let mut normalized = Vec::new();
+    for line in message.lines() {
+        if is_internal_subprocess_stack_frame(line) {
+            removed_internal_frame = true;
+            continue;
+        }
+        normalized.push(line);
+    }
+    if !removed_internal_frame {
+        return message.to_string();
+    }
+    let mut normalized = normalized.join("\n");
+    if message.ends_with('\n') {
+        normalized.push('\n');
+    }
+    normalized
+}
+
+fn is_internal_subprocess_stack_frame(line: &str) -> bool {
+    line.contains(" at __drainNextTickAndMacrotasks (ext:core/01_core.js:")
+        || line.contains(" at <nimbus-runtime:invoke>:")
 }
 
 pub(super) fn runtime_test_spawn_envelope(
@@ -164,5 +204,43 @@ mod tests {
         .expect("error arm always yields a spawn result");
         let first_line = result.stderr.split(['\r', '\n']).next().unwrap_or_default();
         assert_eq!(first_line, "Error: runtime JavaScript error: nested");
+    }
+
+    #[test]
+    fn javascript_error_stderr_drops_internal_runtime_drain_frame() {
+        let result = runtime_test_spawn_result_from_value(Err(NimbusRuntimeError::JavaScript(
+            "Error: child\n    at child.js:1:1\n    at __drainNextTickAndMacrotasks (ext:core/01_core.js:507:5)\n    at user.js:2:1\n    at <nimbus-runtime:invoke>:1:12".to_string(),
+        )))
+        .expect("error arm always yields a spawn result");
+        assert_eq!(
+            result.stderr,
+            "Error: child\n    at child.js:1:1\n    at user.js:2:1\n"
+        );
+    }
+
+    #[test]
+    fn successful_spawn_result_stderr_drops_internal_runtime_drain_frame() {
+        let result = runtime_test_spawn_result_from_value(Ok(serde_json::json!({
+            "pid": 0,
+            "code": 1,
+            "stdout": "",
+            "stderr": "Error: child\n    at child.js:1:1\n    at __drainNextTickAndMacrotasks (ext:core/01_core.js:507:5)\n    at <nimbus-runtime:invoke>:1:12\n",
+            "signal": null,
+        })))
+        .expect("spawn result should deserialize");
+        assert_eq!(result.stderr, "Error: child\n    at child.js:1:1\n");
+    }
+
+    #[test]
+    fn successful_spawn_result_stderr_without_runtime_frame_stays_verbatim() {
+        let result = runtime_test_spawn_result_from_value(Ok(serde_json::json!({
+            "pid": 0,
+            "code": 1,
+            "stdout": "",
+            "stderr": "Error: child\n",
+            "signal": null,
+        })))
+        .expect("spawn result should deserialize");
+        assert_eq!(result.stderr, "Error: child\n");
     }
 }
