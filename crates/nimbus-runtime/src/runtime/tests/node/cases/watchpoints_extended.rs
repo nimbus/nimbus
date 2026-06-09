@@ -2679,15 +2679,39 @@ const WEBCRYPTO_REQUIRED_GAP_NODE24_EXTRA_DIRS: &[&str] = &[
 ];
 
 const WEBCRYPTO_PROMOTED_COMMON_PATHS: &[&str] = &[
+    "test/parallel/test-webcrypto-constructors.js",
     "test/parallel/test-webcrypto-derivebits.js",
+    "test/parallel/test-webcrypto-digest.js",
     "test/parallel/test-webcrypto-getRandomValues.js",
     "test/parallel/test-webcrypto-random.js",
+];
+
+// Wave 19 broad diagnostics proved this path only on the Node22 lane. Keep it
+// lane-local until Node24's newer KMAC/raw-secret tails are fixed.
+const WEBCRYPTO_PROMOTED_NODE22_ONLY_PATHS: &[&str] = &[
+    "test/parallel/test-webcrypto-derivekey.js",
+];
+
+// Wave 19 broad diagnostics proved these Node24 paths after Deno-owned
+// WebCrypto key-view, prototype-self-call, derive, digest, and HMAC fixes.
+const WEBCRYPTO_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
+    "test/parallel/test-webcrypto-derivebits-cfrg.js",
+    "test/parallel/test-webcrypto-derivebits-ecdh.js",
+    "test/parallel/test-webcrypto-derivekey-cfrg.js",
+    "test/parallel/test-webcrypto-derivekey-ecdh.js",
+    "test/parallel/test-webcrypto-encrypt-decrypt-rsa.js",
+    "test/parallel/test-webcrypto-encrypt-decrypt.js",
+    "test/parallel/test-webcrypto-get-public-key.mjs",
+    "test/parallel/test-webcrypto-internal-slots.mjs",
+    "test/parallel/test-webcrypto-sign-verify-eddsa.js",
+    "test/parallel/test-webcrypto-sign-verify-hmac.js",
 ];
 
 #[test]
 fn node22_supported_lane_executes_webcrypto_promoted_batch_fixture() {
     let fixture_paths = WEBCRYPTO_PROMOTED_COMMON_PATHS
         .iter()
+        .chain(WEBCRYPTO_PROMOTED_NODE22_ONLY_PATHS.iter())
         .copied()
         .map(str::to_string)
         .collect::<Vec<_>>();
@@ -2704,6 +2728,7 @@ fn node22_supported_lane_executes_webcrypto_promoted_batch_fixture() {
 fn node24_default_lane_executes_webcrypto_promoted_batch_fixture() {
     let fixture_paths = WEBCRYPTO_PROMOTED_COMMON_PATHS
         .iter()
+        .chain(WEBCRYPTO_PROMOTED_NODE24_ONLY_PATHS.iter())
         .copied()
         .map(str::to_string)
         .collect::<Vec<_>>();
