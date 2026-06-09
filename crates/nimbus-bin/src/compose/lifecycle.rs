@@ -1,9 +1,6 @@
 use std::path::Path;
 
-use nimbus::{
-    Error, SandboxBackedServiceImplementation, SandboxBackend, SandboxHandle, SandboxStatus,
-    ServiceImplementation, TenantId,
-};
+use nimbus::{Error, SandboxBackend, SandboxHandle, SandboxStatus, ServiceBackend, TenantId};
 use nimbus_sandbox::backends::krun::KrunSandboxStateView;
 use serde::Serialize;
 
@@ -148,7 +145,7 @@ pub(super) async fn service_up_outcomes_for_selection(
                 }
 
                 let launch = service_catalog
-                    .service_implementation_for_tenant(&tenant, &service_name)
+                    .service_backend_for_tenant(&tenant, &service_name)
                     .ok_or_else(|| {
                         Error::InvalidInput(format!(
                             "service {} is not declared in compose project {}",
@@ -189,7 +186,7 @@ pub(super) async fn service_up_outcomes_for_selection(
                 }
 
                 let launch = service_catalog
-                    .service_implementation_for_tenant(&tenant, &service_name)
+                    .service_backend_for_tenant(&tenant, &service_name)
                     .ok_or_else(|| {
                         Error::InvalidInput(format!(
                             "service {} is not declared in compose project {}",
@@ -302,19 +299,18 @@ pub(super) async fn start_service_launch(
     backend: &dyn SandboxBackend,
     tenant: &TenantId,
     service_name: &str,
-    launch: ServiceImplementation,
+    service_backend: ServiceBackend,
 ) -> Result<SandboxHandle, Error> {
-    let implementation_kind = launch.implementation_kind();
-    let Some(sandbox_launch) = launch.into_sandbox_backed() else {
+    let backend_kind = service_backend.kind();
+    let Some(spec) = service_backend.into_sandbox_spec() else {
         return Err(Error::InvalidInput(format!(
-            "compose service {service_name} for tenant {tenant} lowered to a {implementation_kind} implementation, but compose lifecycle can only start sandbox-backed implementations"
+            "compose service {service_name} for tenant {tenant} lowered to a {backend_kind} backend, but compose lifecycle can only start sandbox-backed services"
         )));
     };
-    let spec = sandbox_launch.spec();
-    if spec.name != service_name {
+    if spec.service_name() != Some(service_name) {
         return Err(Error::InvalidInput(format!(
-            "service definition catalog returned launch spec name {} for requested service {}",
-            spec.name, service_name
+            "service definition catalog returned sandbox owner {:?} for requested service {}",
+            spec.owner, service_name
         )));
     }
     if &spec.tenant_id != tenant {
@@ -333,16 +329,10 @@ pub(super) async fn start_service_launch(
         )));
     }
 
-    match sandbox_launch {
-        SandboxBackedServiceImplementation::Image(launch) => backend
-            .start_from_image(launch)
-            .await
-            .map_err(|error| backend_operation_error("start", tenant, service_name, error)),
-        SandboxBackedServiceImplementation::Build(launch) => backend
-            .start_from_build(launch)
-            .await
-            .map_err(|error| backend_operation_error("start", tenant, service_name, error)),
-    }
+    backend
+        .start(spec)
+        .await
+        .map_err(|error| backend_operation_error("start", tenant, service_name, error))
 }
 
 pub(super) async fn stop_service_target(

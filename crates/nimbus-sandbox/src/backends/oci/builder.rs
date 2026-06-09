@@ -6,7 +6,7 @@ use super::buildah::{ImageHealthcheck, OciImageConfig, resolve_image_user_from_r
 use super::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
-use crate::spec::SandboxImageProcessOverrides;
+use crate::spec::SandboxProcessSpec;
 use nimbus_core::TenantId;
 
 const SCRATCH_IMAGE_REFERENCE: &str = "scratch";
@@ -43,7 +43,7 @@ impl OciDockerfileBuilder {
         image_name: &str,
         dockerfile_path: &Path,
         context_path: &Path,
-        overrides: &SandboxImageProcessOverrides,
+        process: &SandboxProcessSpec,
     ) -> Result<PreparedMaterializedImageLaunch> {
         let dockerfile = DockerfileRecipe::load(dockerfile_path)?;
         let (artifact, mut image_config) = if dockerfile.base_image == SCRATCH_IMAGE_REFERENCE {
@@ -76,16 +76,13 @@ impl OciDockerfileBuilder {
 
         let resolved_user = resolve_image_user_from_rootfs(
             &artifact.rootfs_path,
-            overrides.user.as_deref().or(image_config.user.as_deref()),
+            process.user.as_deref().or(image_config.user.as_deref()),
         )?;
         image_config.user = resolved_user;
 
-        let mut process_overrides = overrides.clone();
-        process_overrides.user = None;
-
         Ok(PreparedMaterializedImageLaunch {
             launch_defaults: image_config
-                .resolve_launch_defaults(&artifact.rootfs_path, &process_overrides)?,
+                .resolve_launch_defaults(&artifact.rootfs_path, process)?,
             artifact,
         })
     }
@@ -898,7 +895,7 @@ mod tests {
     use super::OciDockerfileBuilder;
     use crate::backends::oci::buildah::OciExposedPortProtocol;
     use crate::instance::SandboxId;
-    use crate::spec::SandboxImageProcessOverrides;
+    use crate::spec::SandboxProcessSpec;
 
     #[test]
     fn builder_builds_from_scratch_with_copy_and_runtime_metadata() {
@@ -932,7 +929,7 @@ HEALTHCHECK CMD ["/app/server", "--healthcheck"]
                 "demo-build",
                 &dockerfile_path,
                 &context_dir,
-                &SandboxImageProcessOverrides::default(),
+                &SandboxProcessSpec::new(Vec::<String>::new()),
             )
             .expect("scratch build should succeed");
 
@@ -1002,7 +999,7 @@ HEALTHCHECK CMD ["/app/server", "--healthcheck"]
                 "demo-base",
                 &dockerfile_path,
                 &context_dir,
-                &SandboxImageProcessOverrides::default(),
+                &SandboxProcessSpec::new(Vec::<String>::new()),
             )
             .expect("registry-backed build should succeed");
 
@@ -1062,7 +1059,7 @@ HEALTHCHECK CMD ["/app/server", "--healthcheck"]
                 "demo-run",
                 &dockerfile_path,
                 &context_dir,
-                &SandboxImageProcessOverrides::default(),
+                &SandboxProcessSpec::new(Vec::<String>::new()),
             )
             .expect_err("RUN should be rejected");
         assert!(

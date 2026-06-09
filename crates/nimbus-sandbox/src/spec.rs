@@ -10,6 +10,7 @@ use nimbus_core::TenantId;
 use crate::backend::SandboxBackendKind;
 use crate::egress::SandboxEgressPolicy;
 use crate::endpoint::PublishedEndpointProtocol;
+use crate::error::{Result, SandboxError};
 
 const DEFAULT_SANDBOX_PATH: &str =
     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -27,12 +28,12 @@ pub const DEFAULT_ACCOUNTED_SANDBOX_DISK_BYTES: u64 = 10 * BYTES_PER_GIB;
 pub const DEFAULT_ACCOUNTED_SANDBOX_LOG_BYTES: u64 = 64 * BYTES_PER_MIB;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SandboxFilesystemSpec {
+pub struct SandboxRootfsSpec {
     pub rootfs: PathBuf,
     pub readonly: bool,
 }
 
-impl SandboxFilesystemSpec {
+impl SandboxRootfsSpec {
     pub fn new(rootfs: impl Into<PathBuf>) -> Self {
         Self {
             rootfs: rootfs.into(),
@@ -50,19 +51,171 @@ impl SandboxFilesystemSpec {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SandboxImageProcessOverrides {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum SandboxRootSpec {
+    Rootfs(SandboxRootfsSpec),
+    OciImage(SandboxOciImageSpec),
+}
+
+impl SandboxRootSpec {
+    pub fn rootfs(rootfs: impl Into<PathBuf>) -> Self {
+        Self::Rootfs(SandboxRootfsSpec::new(rootfs))
+    }
+
+    pub fn oci_image(source: SandboxOciImageSource) -> Self {
+        Self::OciImage(SandboxOciImageSpec::new(source))
+    }
+
+    pub fn oci_image_reference(reference: impl Into<String>) -> Self {
+        Self::oci_image(SandboxOciImageSource::Reference(
+            SandboxOciImageReferenceSpec::new(reference),
+        ))
+    }
+
+    pub fn oci_image_build(
+        image_name: impl Into<String>,
+        dockerfile_path: impl Into<PathBuf>,
+        context_path: impl Into<PathBuf>,
+    ) -> Self {
+        Self::oci_image(SandboxOciImageSource::Build(SandboxOciBuildSpec::new(
+            image_name,
+            dockerfile_path,
+            context_path,
+        )))
+    }
+
+    pub fn rootfs_spec(&self) -> Option<&SandboxRootfsSpec> {
+        match self {
+            Self::Rootfs(rootfs) => Some(rootfs),
+            Self::OciImage(_) => None,
+        }
+    }
+
+    pub fn is_unspecified_rootfs(&self) -> bool {
+        self.rootfs_spec()
+            .is_some_and(SandboxRootfsSpec::is_unspecified)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxOciImageSpec {
+    pub source: SandboxOciImageSource,
+}
+
+impl SandboxOciImageSpec {
+    pub fn new(source: SandboxOciImageSource) -> Self {
+        Self { source }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum SandboxOciImageSource {
+    Reference(SandboxOciImageReferenceSpec),
+    Build(SandboxOciBuildSpec),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxOciImageReferenceSpec {
+    pub reference: String,
+}
+
+impl SandboxOciImageReferenceSpec {
+    pub fn new(reference: impl Into<String>) -> Self {
+        Self {
+            reference: reference.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxOciBuildSpec {
+    pub image_name: String,
+    pub dockerfile_path: PathBuf,
+    pub context_path: PathBuf,
+}
+
+impl SandboxOciBuildSpec {
+    pub fn new(
+        image_name: impl Into<String>,
+        dockerfile_path: impl Into<PathBuf>,
+        context_path: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            image_name: image_name.into(),
+            dockerfile_path: dockerfile_path.into(),
+            context_path: context_path.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum SandboxOwnerSpec {
+    Service { name: String },
+    Standalone { display_name: Option<String> },
+}
+
+impl SandboxOwnerSpec {
+    pub fn service(name: impl Into<String>) -> Self {
+        Self::Service { name: name.into() }
+    }
+
+    pub fn standalone() -> Self {
+        Self::Standalone { display_name: None }
+    }
+
+    pub fn standalone_named(display_name: impl Into<String>) -> Self {
+        Self::Standalone {
+            display_name: Some(display_name.into()),
+        }
+    }
+
+    pub fn service_name(&self) -> Option<&str> {
+        match self {
+            Self::Service { name } => Some(name.as_str()),
+            Self::Standalone { .. } => None,
+        }
+    }
+
+    pub fn display_name(&self) -> &str {
+        match self {
+            Self::Service { name } => name.as_str(),
+            Self::Standalone {
+                display_name: Some(display_name),
+            } => display_name.as_str(),
+            Self::Standalone { display_name: None } => "sandbox",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxProcessSpec {
+    pub args: Vec<String>,
+    #[serde(default)]
     pub entrypoint: Option<Vec<String>>,
-    pub cmd: Option<Vec<String>>,
     #[serde(default)]
+    pub command: Option<Vec<String>>,
     pub env: Vec<String>,
-    pub cwd: Option<PathBuf>,
+    pub cwd: PathBuf,
     pub user: Option<String>,
-    #[serde(default)]
     pub terminal: bool,
 }
 
-impl SandboxImageProcessOverrides {
+impl SandboxProcessSpec {
+    pub fn new(args: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            args: args.into_iter().map(Into::into).collect(),
+            entrypoint: None,
+            command: None,
+            env: vec![DEFAULT_SANDBOX_PATH.to_owned()],
+            cwd: PathBuf::from("/"),
+            user: None,
+            terminal: false,
+        }
+    }
+
     pub fn with_entrypoint(
         mut self,
         entrypoint: impl IntoIterator<Item = impl Into<String>>,
@@ -71,48 +224,9 @@ impl SandboxImageProcessOverrides {
         self
     }
 
-    pub fn with_cmd(mut self, cmd: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.cmd = Some(cmd.into_iter().map(Into::into).collect());
+    pub fn with_command(mut self, command: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.command = Some(command.into_iter().map(Into::into).collect());
         self
-    }
-
-    pub fn with_env(mut self, env: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.env = env.into_iter().map(Into::into).collect();
-        self
-    }
-
-    pub fn with_cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
-        self.cwd = Some(cwd.into());
-        self
-    }
-
-    pub fn with_user(mut self, user: impl Into<String>) -> Self {
-        self.user = Some(user.into());
-        self
-    }
-
-    pub fn with_terminal(mut self, terminal: bool) -> Self {
-        self.terminal = terminal;
-        self
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SandboxProcessSpec {
-    pub args: Vec<String>,
-    pub env: Vec<String>,
-    pub cwd: PathBuf,
-    pub terminal: bool,
-}
-
-impl SandboxProcessSpec {
-    pub fn new(args: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        Self {
-            args: args.into_iter().map(Into::into).collect(),
-            env: vec![DEFAULT_SANDBOX_PATH.to_owned()],
-            cwd: PathBuf::from("/"),
-            terminal: false,
-        }
     }
 
     pub fn with_env(mut self, env: impl IntoIterator<Item = impl Into<String>>) -> Self {
@@ -122,6 +236,11 @@ impl SandboxProcessSpec {
 
     pub fn with_cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
         self.cwd = cwd.into();
+        self
+    }
+
+    pub fn with_user(mut self, user: impl Into<String>) -> Self {
+        self.user = Some(user.into());
         self
     }
 
@@ -139,65 +258,33 @@ impl SandboxProcessSpec {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SandboxImageLaunchSpec {
-    pub spec: SandboxSpec,
-    pub image_reference: String,
-    #[serde(default)]
-    pub process_overrides: SandboxImageProcessOverrides,
-}
-
-impl SandboxImageLaunchSpec {
-    pub fn new(spec: SandboxSpec, image_reference: impl Into<String>) -> Self {
-        Self {
-            spec,
-            image_reference: image_reference.into(),
-            process_overrides: SandboxImageProcessOverrides::default(),
+pub(crate) fn resolve_process_without_image_defaults(
+    process: &SandboxProcessSpec,
+) -> Result<SandboxProcessSpec> {
+    let mut resolved = process.clone();
+    if resolved.args.is_empty() {
+        let mut args = Vec::new();
+        if let Some(entrypoint) = process.entrypoint.as_ref() {
+            args.extend(entrypoint.iter().cloned());
         }
-    }
-
-    pub fn with_process_overrides(
-        mut self,
-        process_overrides: SandboxImageProcessOverrides,
-    ) -> Self {
-        self.process_overrides = process_overrides;
-        self
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SandboxBuildLaunchSpec {
-    pub spec: SandboxSpec,
-    pub image_name: String,
-    pub dockerfile_path: PathBuf,
-    pub context_path: PathBuf,
-    #[serde(default)]
-    pub process_overrides: SandboxImageProcessOverrides,
-}
-
-impl SandboxBuildLaunchSpec {
-    pub fn new(
-        spec: SandboxSpec,
-        image_name: impl Into<String>,
-        dockerfile_path: impl Into<PathBuf>,
-        context_path: impl Into<PathBuf>,
-    ) -> Self {
-        Self {
-            spec,
-            image_name: image_name.into(),
-            dockerfile_path: dockerfile_path.into(),
-            context_path: context_path.into(),
-            process_overrides: SandboxImageProcessOverrides::default(),
+        if let Some(command) = process.command.as_ref() {
+            args.extend(command.iter().cloned());
         }
+        resolved.args = args;
     }
 
-    pub fn with_process_overrides(
-        mut self,
-        process_overrides: SandboxImageProcessOverrides,
-    ) -> Self {
-        self.process_overrides = process_overrides;
-        self
+    resolved.entrypoint = None;
+    resolved.command = None;
+
+    if resolved.args.is_empty() {
+        return Err(SandboxError::InvalidSpec {
+            message:
+                "rootfs-backed sandboxes must set process args or entrypoint/command to launch"
+                    .to_owned(),
+        });
     }
+
+    Ok(resolved)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -548,9 +635,9 @@ impl SandboxLifecycleSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxSpec {
     pub tenant_id: TenantId,
-    pub name: String,
+    pub owner: SandboxOwnerSpec,
     pub backend: SandboxBackendKind,
-    pub filesystem: SandboxFilesystemSpec,
+    pub root: SandboxRootSpec,
     pub process: SandboxProcessSpec,
     pub resources: SandboxResourceLimits,
     #[serde(default)]
@@ -565,16 +652,16 @@ pub struct SandboxSpec {
 impl SandboxSpec {
     pub fn new(
         tenant_id: TenantId,
-        name: impl Into<String>,
+        owner: SandboxOwnerSpec,
         backend: SandboxBackendKind,
-        filesystem: SandboxFilesystemSpec,
+        root: SandboxRootSpec,
         process: SandboxProcessSpec,
     ) -> Self {
         Self {
             tenant_id,
-            name: name.into(),
+            owner,
             backend,
-            filesystem,
+            root,
             process,
             resources: SandboxResourceLimits::default(),
             lifecycle: SandboxLifecycleSpec::default(),
@@ -582,6 +669,18 @@ impl SandboxSpec {
             mounts: Vec::new(),
             egress: SandboxEgressPolicy::default(),
         }
+    }
+
+    pub fn service_name(&self) -> Option<&str> {
+        self.owner.service_name()
+    }
+
+    pub fn display_name(&self) -> &str {
+        self.owner.display_name()
+    }
+
+    pub fn rootfs(&self) -> Option<&SandboxRootfsSpec> {
+        self.root.rootfs_spec()
     }
 
     pub fn with_resource_limits(mut self, resources: SandboxResourceLimits) -> Self {
@@ -687,8 +786,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        DEFAULT_MAX_MOUNTS_PER_SANDBOX, SandboxLifecycleSpec, SandboxMountSpec,
-        SandboxRestartPolicy, validate_sandbox_mounts,
+        DEFAULT_MAX_MOUNTS_PER_SANDBOX, SandboxLifecycleSpec, SandboxMountSpec, SandboxProcessSpec,
+        SandboxRestartPolicy, resolve_process_without_image_defaults, validate_sandbox_mounts,
     };
 
     #[test]
@@ -718,6 +817,49 @@ mod tests {
         assert!(
             error.contains("sandbox mount quota exceeded"),
             "expected mount quota error, got: {error}"
+        );
+    }
+
+    #[test]
+    fn rootfs_process_resolution_uses_entrypoint_and_command_when_args_are_empty() {
+        let process = SandboxProcessSpec::new(Vec::<String>::new())
+            .with_entrypoint(["/bin/sh", "-lc"])
+            .with_command(["exec app"]);
+
+        let resolved = resolve_process_without_image_defaults(&process)
+            .expect("entrypoint and command should resolve rootfs process args");
+
+        assert_eq!(resolved.args, vec!["/bin/sh", "-lc", "exec app"]);
+        assert_eq!(resolved.entrypoint, None);
+        assert_eq!(resolved.command, None);
+    }
+
+    #[test]
+    fn rootfs_process_resolution_prefers_explicit_args() {
+        let process = SandboxProcessSpec::new(["/usr/bin/app"])
+            .with_entrypoint(["/ignored"])
+            .with_command(["ignored"]);
+
+        let resolved = resolve_process_without_image_defaults(&process)
+            .expect("explicit args should be valid for rootfs process launch");
+
+        assert_eq!(resolved.args, vec!["/usr/bin/app"]);
+        assert_eq!(resolved.entrypoint, None);
+        assert_eq!(resolved.command, None);
+    }
+
+    #[test]
+    fn rootfs_process_resolution_rejects_empty_runtime_command() {
+        let process = SandboxProcessSpec::new(Vec::<String>::new());
+
+        let error = resolve_process_without_image_defaults(&process)
+            .expect_err("rootfs process launch requires a runtime command");
+
+        assert!(
+            error
+                .to_string()
+                .contains("rootfs-backed sandboxes must set process args"),
+            "{error}"
         );
     }
 

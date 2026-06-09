@@ -1,5 +1,5 @@
 use super::*;
-use nimbus_services::ServiceInstanceRuntimeRegistry;
+use nimbus_services::ServiceInstanceBindingRegistry;
 
 pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
 -> (TempDir, Arc<Engine>, TenantId, ConvexHostBridge) {
@@ -30,7 +30,7 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
             engine.clone(),
             registry,
             decision,
-            Arc::new(ServiceInstanceRuntimeRegistry::new(Arc::new(
+            Arc::new(ServiceInstanceBindingRegistry::new(Arc::new(
                 crate::EmptyServiceInstanceCatalog,
             ))),
         ),

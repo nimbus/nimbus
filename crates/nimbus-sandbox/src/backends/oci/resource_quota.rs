@@ -148,7 +148,10 @@ mod tests {
     use super::*;
     use crate::backend::SandboxBackendKind;
     use crate::instance::{SandboxHandle, SandboxId};
-    use crate::spec::{SandboxFilesystemSpec, SandboxProcessSpec, SandboxResourceLimits};
+    use crate::spec::{
+        SandboxOwnerSpec, SandboxProcessSpec, SandboxResourceLimits, SandboxRootSpec,
+        SandboxRootfsSpec,
+    };
 
     fn tenant_id(value: &str) -> TenantId {
         TenantId::new(value).expect("tenant id should parse")
@@ -157,9 +160,9 @@ mod tests {
     fn sample_spec(tenant: &str, service: &str) -> SandboxSpec {
         SandboxSpec::new(
             tenant_id(tenant),
-            service,
+            SandboxOwnerSpec::service(service),
             SandboxBackendKind::Krun,
-            SandboxFilesystemSpec::new(""),
+            SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("")),
             SandboxProcessSpec::new(Vec::<String>::new()),
         )
     }
@@ -182,7 +185,7 @@ mod tests {
                 "handle": SandboxHandle::new(
                     spec.tenant_id.clone(),
                     sandbox_id.clone(),
-                    spec.name.clone(),
+                    spec.display_name().to_owned(),
                     spec.backend,
                     status,
                     Vec::new(),

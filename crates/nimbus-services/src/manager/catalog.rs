@@ -10,7 +10,7 @@ use super::ServiceManager;
 impl ServiceManager {
     pub fn service_declared_for_tenant(&self, tenant_id: &TenantId, service_name: &str) -> bool {
         self.service_definitions
-            .service_implementation_for_tenant(tenant_id, service_name)
+            .service_backend_for_tenant(tenant_id, service_name)
             .is_some()
     }
 }

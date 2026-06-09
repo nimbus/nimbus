@@ -14,16 +14,17 @@ use crate::backends::oci::materializer::MaterializedImageRootfs;
 use crate::backends::oci::network::OciMachinePortForwarderConfig;
 pub(super) use crate::instance::{SandboxId, SandboxStatus};
 pub(super) use crate::spec::{
-    SandboxFilesystemSpec, SandboxMountSpec, SandboxPortBinding, SandboxProcessSpec, SandboxSpec,
+    SandboxMountSpec, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec,
+    SandboxRootfsSpec, SandboxSpec,
 };
 pub(super) use crate::spec::{SandboxResourceLimits, SandboxResourceQuotaPolicy};
 
 pub(super) fn sample_spec() -> SandboxSpec {
     SandboxSpec::new(
         TenantId::new("svc-demo").expect("tenant should parse"),
-        "db",
+        SandboxOwnerSpec::service("db"),
         SandboxBackendKind::Container,
-        SandboxFilesystemSpec::new(PathBuf::from("/tmp/rootfs")),
+        SandboxRootSpec::Rootfs(SandboxRootfsSpec::new(PathBuf::from("/tmp/rootfs"))),
         SandboxProcessSpec::new(["/bin/sh", "-c", "sleep 60"]),
     )
 }
@@ -31,16 +32,16 @@ pub(super) fn sample_spec() -> SandboxSpec {
 pub(super) fn sample_spec_for_tenant(tenant_id: &str, name: &str) -> SandboxSpec {
     SandboxSpec::new(
         TenantId::new(tenant_id).expect("tenant should parse"),
-        name,
+        SandboxOwnerSpec::service(name),
         SandboxBackendKind::Container,
-        SandboxFilesystemSpec::new(PathBuf::from("/tmp/rootfs")),
+        SandboxRootSpec::Rootfs(SandboxRootfsSpec::new(PathBuf::from("/tmp/rootfs"))),
         SandboxProcessSpec::new(["/bin/sh", "-c", "sleep 60"]),
     )
 }
 
 pub(super) fn sample_launch_defaults(rootfs_path: PathBuf) -> OciImageLaunchDefaults {
     OciImageLaunchDefaults {
-        filesystem: SandboxFilesystemSpec::new(rootfs_path),
+        rootfs: SandboxRootfsSpec::new(rootfs_path),
         process: SandboxProcessSpec::new(["/bin/sh", "-c", "sleep 60"]),
         exposed_ports: Vec::new(),
         user: None,
@@ -52,7 +53,7 @@ pub(super) fn sample_launch_defaults(rootfs_path: PathBuf) -> OciImageLaunchDefa
 
 pub(super) fn exposed_port_launch_defaults(rootfs_path: PathBuf) -> OciImageLaunchDefaults {
     OciImageLaunchDefaults {
-        filesystem: SandboxFilesystemSpec::new(rootfs_path),
+        rootfs: SandboxRootfsSpec::new(rootfs_path),
         process: SandboxProcessSpec::new(["/bin/sh", "-c", "sleep 60"]),
         exposed_ports: vec![OciExposedPort {
             port: 8080,

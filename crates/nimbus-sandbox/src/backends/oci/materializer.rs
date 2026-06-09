@@ -22,7 +22,7 @@ use super::buildah::{
 use crate::artifact_paths;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
-use crate::spec::SandboxImageProcessOverrides;
+use crate::spec::SandboxProcessSpec;
 use nimbus_core::TenantId;
 
 const OCI_IMAGE_OS: &str = "linux";
@@ -77,26 +77,22 @@ impl OciImageMaterializer {
         &self,
         sandbox_id: &SandboxId,
         image_reference: &str,
-        overrides: &SandboxImageProcessOverrides,
+        process: &SandboxProcessSpec,
     ) -> Result<PreparedMaterializedImageLaunch> {
         let prepared_rootfs = self.prepare_image_rootfs_with_config(sandbox_id, image_reference)?;
         let resolved_user = resolve_image_user_from_rootfs(
             &prepared_rootfs.artifact.rootfs_path,
-            overrides
+            process
                 .user
                 .as_deref()
                 .or(prepared_rootfs.image_config.user.as_deref()),
         )?;
         let mut config_with_resolved_user = prepared_rootfs.image_config;
         config_with_resolved_user.user = resolved_user;
-        let mut process_overrides = overrides.clone();
-        process_overrides.user = None;
 
         Ok(PreparedMaterializedImageLaunch {
-            launch_defaults: config_with_resolved_user.resolve_launch_defaults(
-                &prepared_rootfs.artifact.rootfs_path,
-                &process_overrides,
-            )?,
+            launch_defaults: config_with_resolved_user
+                .resolve_launch_defaults(&prepared_rootfs.artifact.rootfs_path, process)?,
             artifact: prepared_rootfs.artifact,
         })
     }
@@ -861,7 +857,7 @@ mod tests {
     use super::{OciImageMaterializer, current_oci_architectures};
     use crate::backends::oci::buildah::OciExposedPortProtocol;
     use crate::instance::SandboxId;
-    use crate::spec::SandboxImageProcessOverrides;
+    use crate::spec::SandboxProcessSpec;
 
     #[test]
     fn materializer_pulls_and_extracts_image_rootfs_from_registry() {
@@ -874,7 +870,7 @@ mod tests {
             .prepare_image_launch(
                 &SandboxId::new("db-01"),
                 &registry,
-                &SandboxImageProcessOverrides::default(),
+                &SandboxProcessSpec::new(Vec::<String>::new()),
             )
             .expect("image should materialize");
 
@@ -914,7 +910,7 @@ mod tests {
                 materializer.prepare_image_launch(
                     &SandboxId::new("db-02"),
                     &registry,
-                    &SandboxImageProcessOverrides::default(),
+                    &SandboxProcessSpec::new(Vec::<String>::new()),
                 )
             })
             .expect("image should materialize from within an existing runtime");

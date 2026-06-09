@@ -34,6 +34,7 @@ impl KrunSandboxStateView {
         let mut summaries = self
             .read_all_records()?
             .into_iter()
+            .filter(KrunPersistedSandboxRecord::is_service_owned)
             .map(KrunPersistedSandboxRecord::into_summary)
             .collect::<Vec<_>>();
         summaries.sort_by(compare_summary_order);
@@ -63,8 +64,9 @@ impl KrunSandboxStateView {
         else {
             return Ok(None);
         };
-        self.read_record(&manifest_path)
-            .map(|record| record.map(KrunPersistedSandboxRecord::into_details))
+        self.read_record(&manifest_path).map(|record| {
+            record.and_then(|record| record.is_service_owned().then(|| record.into_details()))
+        })
     }
 
     pub fn inspect_service(
@@ -77,7 +79,7 @@ impl KrunSandboxStateView {
             .into_iter()
             .filter(|record| {
                 record.manifest.spec.tenant_id == *tenant_id
-                    && record.manifest.spec.name == service_name
+                    && record.manifest.spec.service_name() == Some(service_name)
             })
             .max_by(compare_service_identity_preference);
 
@@ -175,11 +177,23 @@ struct KrunPersistedSandboxRecord {
 }
 
 impl KrunPersistedSandboxRecord {
+    fn is_service_owned(&self) -> bool {
+        self.manifest.spec.service_name().is_some()
+    }
+
+    fn service_name(&self) -> &str {
+        self.manifest
+            .spec
+            .service_name()
+            .expect("service sandbox state records require service owner metadata")
+    }
+
     fn into_summary(self) -> KrunSandboxSummary {
+        let service_name = self.service_name().to_owned();
         KrunSandboxSummary {
             sandbox_id: self.manifest.handle.id,
             tenant_id: self.manifest.spec.tenant_id,
-            service_name: self.manifest.spec.name,
+            service_name,
             status: self.manifest.status,
             published_endpoints: self.manifest.handle.published_endpoints,
             restart_count: self.manifest.restart_count,
@@ -189,10 +203,11 @@ impl KrunPersistedSandboxRecord {
     }
 
     fn into_details(self) -> KrunSandboxDetails {
+        let service_name = self.service_name().to_owned();
         let summary = KrunSandboxSummary {
             sandbox_id: self.manifest.handle.id,
             tenant_id: self.manifest.spec.tenant_id.clone(),
-            service_name: self.manifest.spec.name.clone(),
+            service_name,
             status: self.manifest.status,
             published_endpoints: self.manifest.handle.published_endpoints.clone(),
             restart_count: self.manifest.restart_count,
@@ -330,6 +345,62 @@ mod tests {
     }
 
     #[test]
+    fn state_view_excludes_standalone_sandboxes_from_service_projection() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        write_manifest(
+            temp_dir.path(),
+            "db-01aaa",
+            "svc-demo",
+            "db",
+            SandboxStatus::Ready,
+            None,
+        );
+        write_standalone_manifest(
+            temp_dir.path(),
+            "scratch-01aaa",
+            "svc-demo",
+            "scratch",
+            SandboxStatus::Ready,
+        );
+
+        let view = KrunSandboxStateView::new(temp_dir.path());
+        let tenant_id = TenantId::new("svc-demo").expect("tenant id should be valid");
+
+        let summaries = view.list().expect("manifest list should load");
+        assert_eq!(
+            summaries
+                .iter()
+                .map(|summary| summary.service_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["db"]
+        );
+        assert_eq!(
+            view.list_for_tenant(&tenant_id)
+                .expect("tenant manifest list should load")
+                .len(),
+            1
+        );
+        assert!(
+            view.inspect(&SandboxId::new("scratch-01aaa"))
+                .expect("inspect should succeed")
+                .is_none(),
+            "standalone sandboxes must not project as service sandbox details"
+        );
+        assert!(
+            view.log_paths(&SandboxId::new("scratch-01aaa"))
+                .expect("log path lookup should succeed")
+                .is_none(),
+            "standalone sandboxes must not expose service log paths"
+        );
+        assert!(
+            view.inspect_service(&tenant_id, "scratch")
+                .expect("service inspect should succeed")
+                .is_none(),
+            "standalone display names must not resolve as service names"
+        );
+    }
+
+    #[test]
     fn inspect_service_prefers_live_sandbox_before_newer_terminal_one() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
         write_manifest(
@@ -440,6 +511,50 @@ mod tests {
         status: SandboxStatus,
         last_exit_code: Option<i32>,
     ) {
+        write_manifest_with_owner(
+            state_root,
+            sandbox_id,
+            tenant_id,
+            service_name,
+            json!({
+                "kind": "service",
+                "name": service_name
+            }),
+            status,
+            last_exit_code,
+        );
+    }
+
+    fn write_standalone_manifest(
+        state_root: &Path,
+        sandbox_id: &str,
+        tenant_id: &str,
+        display_name: &str,
+        status: SandboxStatus,
+    ) {
+        write_manifest_with_owner(
+            state_root,
+            sandbox_id,
+            tenant_id,
+            display_name,
+            json!({
+                "kind": "standalone",
+                "display_name": display_name
+            }),
+            status,
+            None,
+        );
+    }
+
+    fn write_manifest_with_owner(
+        state_root: &Path,
+        sandbox_id: &str,
+        tenant_id: &str,
+        handle_name: &str,
+        owner: serde_json::Value,
+        status: SandboxStatus,
+        last_exit_code: Option<i32>,
+    ) {
         let tenant_id = TenantId::new(tenant_id).expect("tenant id should parse");
         let sandbox_id = SandboxId::new(sandbox_id);
         let manifest_path =
@@ -452,7 +567,7 @@ mod tests {
         let handle = SandboxHandle::new(
             tenant_id.clone(),
             sandbox_id,
-            service_name,
+            handle_name,
             crate::backend::SandboxBackendKind::Krun,
             status,
             vec![PublishedEndpoint::new(
@@ -465,9 +580,10 @@ mod tests {
             "handle": handle,
             "spec": {
                 "tenant_id": tenant_id,
-                "name": service_name,
+                "owner": owner,
                 "backend": "krun",
-                "filesystem": {
+                "root": {
+                    "kind": "rootfs",
                     "rootfs": "/tmp/rootfs",
                     "readonly": true
                 },

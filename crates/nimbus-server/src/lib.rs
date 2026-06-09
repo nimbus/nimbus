@@ -70,9 +70,9 @@ pub use nimbus_artifacts::{
     CompositeArtifactVerifierBackend,
 };
 pub use nimbus_services::{
-    BuiltInServiceImplementation, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
-    ExternalServiceImplementation, SandboxBackedServiceImplementation, ServiceDefinitionCatalog,
-    ServiceImplementation, ServiceInstanceCatalog, ServiceManager,
+    BuiltInServiceSpec, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
+    ExternalServiceSpec, ServiceBackend, ServiceDefinitionCatalog, ServiceInstanceCatalog,
+    ServiceManager,
 };
 pub use nimbus_system::SystemTenantStatusEvidenceWriter;
 pub use router::{RouterOptions, build_router};

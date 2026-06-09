@@ -35,9 +35,10 @@ changing this microVM baseline.
 ## Resource Vocabulary
 
 The Docker Compose origin of the word "service" remains valid. A Compose
-`services:` entry is a named app dependency. Nimbus lowers that dependency into
-a `ServiceImplementation`, manages it through `ServiceManager`, and starts
-it through a `SandboxBackend`.
+`services:` entry is a named app dependency. Nimbus lowers sandbox-backed
+dependencies into `ServiceBackend::Sandbox(SandboxSpec)`, manages lifecycle
+through `ServiceManager`, and starts backing sandboxes through
+`SandboxBackend::start(SandboxSpec)`.
 
 The nouns stay separate:
 

@@ -35,27 +35,34 @@ pub(super) fn http_binding(host_port: u16, guest_port: u16) -> SandboxPortBindin
     )
 }
 
-pub(super) fn empty_image_spec(name: &str) -> SandboxSpec {
+pub(super) fn rootfs_spec(name: &str, rootfs: impl Into<PathBuf>) -> SandboxSpec {
     SandboxSpec::new(
         sandbox_tenant(),
-        name,
+        SandboxOwnerSpec::standalone_named(name),
         SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new(""),
+        SandboxRootSpec::rootfs(rootfs),
         SandboxProcessSpec::new(Vec::<String>::new()),
     )
 }
 
-pub(super) fn busybox_http_overrides(guest_port: u16) -> SandboxImageProcessOverrides {
-    SandboxImageProcessOverrides {
-        cmd: Some(vec![
-            "/bin/busybox".into(),
-            "httpd".into(),
-            "-f".into(),
-            "-p".into(),
-            guest_port.to_string(),
-        ]),
-        ..Default::default()
-    }
+pub(super) fn image_spec(name: &str, image_reference: impl Into<String>) -> SandboxSpec {
+    SandboxSpec::new(
+        sandbox_tenant(),
+        SandboxOwnerSpec::standalone_named(name),
+        SandboxBackendKind::Krun,
+        SandboxRootSpec::oci_image_reference(image_reference),
+        SandboxProcessSpec::new(Vec::<String>::new()),
+    )
+}
+
+pub(super) fn busybox_http_process(guest_port: u16) -> SandboxProcessSpec {
+    SandboxProcessSpec::new(Vec::<String>::new()).with_command([
+        "/bin/busybox".into(),
+        "httpd".into(),
+        "-f".into(),
+        "-p".into(),
+        guest_port.to_string(),
+    ])
 }
 
 pub(super) fn buildah_program() -> String {

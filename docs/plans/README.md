@@ -170,7 +170,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
     `docs/architecture/sandbox/service-sandbox-session-model.md`; CB0 creates
     `bash scripts/verify-nimbus-capability-segregation.sh`.
 - `docs/plans/nimbus-sdk-resource-model-plan.md`
-  - proposed SDK/control-plane follow-on for the
+  - ready SDK/control-plane follow-on for the
     `@nimbus/nimbus` services, sandboxes, sessions, and runtime-isolate resource
     model. Canonical vocabulary lives at
     `docs/architecture/sandbox/service-sandbox-session-model.md`: services are
@@ -187,11 +187,11 @@ This directory prefers a small-number-of-plans model with clear ownership.
     registration, sandbox APIs, session target semantics, adapter export guards,
     and verifier coverage, while backend media/session mechanics remain owned by
     the relevant bands of `docs/plans/nimbus-sandbox-plan.md`. The pre-SRM
-    naming/type cleanup is owned by
+    naming/type cleanup was completed by
     `docs/plans/service-backend-and-sandbox-spec-refactor-plan.md`.
 - `docs/plans/service-backend-and-sandbox-spec-refactor-plan.md`
-  - proposed pre-launch breaking refactor for the final service/sandbox type
-    vocabulary: `ServiceImplementation` becomes `ServiceBackend`,
+  - completed pre-launch breaking refactor for the final service/sandbox type
+    vocabulary: service catalog payloads use `ServiceBackend`,
     `ServiceBackend::Sandbox` carries a complete `SandboxSpec`, sandbox
     root materialization moves into `SandboxSpec.root`, and
     `SandboxBackend` remains the single lifecycle executor interface with

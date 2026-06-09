@@ -31,9 +31,9 @@ use crate::backends::oci::buildah::{
 use crate::endpoint::PublishedEndpointProtocol;
 use crate::instance::{SandboxId, SandboxStatus};
 use crate::spec::{
-    SandboxBuildLaunchSpec, SandboxFilesystemSpec, SandboxImageLaunchSpec,
-    SandboxImageProcessOverrides, SandboxMountSpec, SandboxPortBinding, SandboxProcessSpec,
-    SandboxResourceLimits, SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxSpec,
+    SandboxMountSpec, SandboxOciBuildSpec, SandboxOciImageSource, SandboxOwnerSpec,
+    SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxResourceQuotaPolicy,
+    SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
 };
 
 #[test]
@@ -66,11 +66,8 @@ fn execute_image_launch_fails_closed_before_image_materialization() {
         temp_dir.path().to_path_buf(),
     ));
 
-    let error = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
-        sparse_image_spec("blocked-image-launch"),
-        "registry.example.com/acme/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    )))
-    .expect_err("krun execute-mode image launch should fail before image materialization");
+    let error = block_on(backend.start(sparse_image_spec("blocked-image-launch")))
+        .expect_err("krun execute-mode image launch should fail before image materialization");
     let message = error.to_string();
 
     assert!(
@@ -122,11 +119,10 @@ fn plan_only_backend_lowers_image_launch_through_generic_trait_surface() {
     config.use_buildah_unshare = false;
     let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(config));
 
-    let handle = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
-        sparse_image_spec("image-trait"),
-        &image_reference,
-    )))
-    .expect("plan-only image-backed start should succeed through the trait");
+    let mut spec = sparse_image_spec("image-trait");
+    spec.root = SandboxRootSpec::oci_image_reference(image_reference);
+    let handle = block_on(backend.start(spec.clone()))
+        .expect("plan-only image-backed start should succeed through the trait");
 
     assert_eq!(handle.backend, SandboxBackendKind::Krun);
     assert_eq!(handle.status, crate::instance::SandboxStatus::Starting);
@@ -153,14 +149,9 @@ fn plan_only_backend_lowers_build_launch_through_generic_trait_surface() {
     config.use_buildah_unshare = false;
     let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(config));
 
-    let spec = sparse_image_spec("build-trait");
-    let handle = block_on(backend.start_from_build(SandboxBuildLaunchSpec::new(
-        spec.clone(),
-        "nimbus-api",
-        &dockerfile_path,
-        &workspace,
-    )))
-    .expect("plan-only build-backed start should succeed through the trait");
+    let spec = sparse_build_spec("build-trait", "nimbus-api", &dockerfile_path, &workspace);
+    let handle = block_on(backend.start(spec.clone()))
+        .expect("plan-only build-backed start should succeed through the trait");
 
     assert_eq!(handle.backend, SandboxBackendKind::Krun);
     assert_eq!(handle.status, crate::instance::SandboxStatus::Starting);
@@ -418,6 +409,51 @@ fn plan_only_start_removes_stale_krun_vm_config_when_cpu_limit_is_unset() {
 }
 
 #[test]
+fn rootfs_plan_resolves_entrypoint_command_and_user_without_image_defaults() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let rootfs = temp_dir.path().join("rootfs");
+    fs::create_dir_all(&rootfs).expect("rootfs directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
+    ));
+    let mut spec = sample_spec_with_rootfs(&rootfs);
+    spec.process = SandboxProcessSpec::new(Vec::<String>::new())
+        .with_entrypoint(["/bin/sh", "-lc"])
+        .with_command(["exec app"])
+        .with_user("1001:1002");
+
+    let handle = block_on(backend.start(spec.clone()))
+        .expect("rootfs krun plan should lower entrypoint/command without image defaults");
+    let manifest_path = manifest_path(temp_dir.path(), &spec, &handle.id);
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(&manifest_path).expect("krun manifest should be readable"),
+    )
+    .expect("krun manifest should parse");
+
+    assert_eq!(
+        manifest["spec"]["process"]["args"],
+        json!([GUEST_USER_HELPER_GUEST_PATH, "/bin/sh", "-lc", "exec app"]),
+        "rootfs entrypoint and command must become runtime process args before guest user wrapping"
+    );
+    assert_eq!(
+        manifest["image_metadata"]["user"],
+        json!("1001:1002"),
+        "rootfs process user should flow into krun guest-user handling"
+    );
+    assert_eq!(
+        manifest["spec"]["process"]["env"]
+            .as_array()
+            .expect("env should be an array")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .filter(|entry| entry.starts_with("NIMBUS_GUEST_"))
+            .collect::<Vec<_>>(),
+        vec!["NIMBUS_GUEST_UID=1001", "NIMBUS_GUEST_GID=1002"]
+    );
+}
+
+#[test]
 fn slugify_normalizes_operator_facing_names() {
     assert_eq!(slugify("Postgres Primary"), "postgres-primary");
     assert_eq!(slugify("db__1"), "db-1");
@@ -433,9 +469,9 @@ fn plan_start_with_launch_defaults_materializes_sparse_spec_from_image_defaults(
     ));
     let spec = SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
-        "api",
+        SandboxOwnerSpec::service("api"),
         SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new(PathBuf::new()),
+        SandboxRootSpec::Rootfs(SandboxRootfsSpec::new(PathBuf::new())),
         SandboxProcessSpec::new(Vec::<String>::new()),
     );
 
@@ -444,7 +480,12 @@ fn plan_start_with_launch_defaults_materializes_sparse_spec_from_image_defaults(
         .expect("launch defaults should materialize the sparse spec");
 
     assert_eq!(
-        launch_plan.manifest.spec.filesystem.rootfs,
+        launch_plan
+            .manifest
+            .spec
+            .rootfs()
+            .expect("launch defaults should resolve a rootfs")
+            .rootfs,
         PathBuf::from("/image/rootfs")
     );
     assert_eq!(
@@ -519,9 +560,9 @@ fn plan_start_with_launch_defaults_preserves_explicit_operator_overrides() {
     ));
     let spec = SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
-        "api",
+        SandboxOwnerSpec::service("api"),
         SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new("/operator/rootfs").read_only(true),
+        SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("/operator/rootfs").read_only(true)),
         SandboxProcessSpec::new(["/bin/sh", "-lc", "exec custom-api"])
             .with_env(["PATH=/custom/bin", "APP_MODE=dev"])
             .with_cwd("/workspace"),
@@ -533,10 +574,22 @@ fn plan_start_with_launch_defaults_preserves_explicit_operator_overrides() {
         .expect("explicit operator overrides should coexist with image defaults");
 
     assert_eq!(
-        launch_plan.manifest.spec.filesystem.rootfs,
+        launch_plan
+            .manifest
+            .spec
+            .rootfs()
+            .expect("operator override should preserve a rootfs")
+            .rootfs,
         PathBuf::from("/operator/rootfs")
     );
-    assert!(launch_plan.manifest.spec.filesystem.readonly);
+    assert!(
+        launch_plan
+            .manifest
+            .spec
+            .rootfs()
+            .expect("operator override should preserve rootfs options")
+            .readonly
+    );
     assert_eq!(
         launch_plan.manifest.spec.process.args,
         vec![
@@ -578,7 +631,7 @@ fn plan_start_with_launch_defaults_preserves_explicit_operator_overrides() {
 }
 
 #[test]
-fn start_from_image_plan_only_persists_and_then_cleans_up_materialized_rootfs() {
+fn oci_image_root_plan_only_persists_and_then_cleans_up_materialized_rootfs() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let image_reference = sample_registry_image_reference();
 
@@ -589,22 +642,14 @@ fn start_from_image_plan_only_persists_and_then_cleans_up_materialized_rootfs() 
     config.use_buildah_unshare = false;
 
     let backend = KrunSandboxBackend::new(config);
-    let spec = SandboxSpec::new(
-        TenantId::new("tenant").expect("tenant id should be valid"),
-        "image-backed-api",
-        SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new(PathBuf::new()),
-        SandboxProcessSpec::new(Vec::<String>::new()),
-    )
-    .with_port_binding(SandboxPortBinding::tcp("http", 18080, 8080));
+    let spec = sparse_image_spec("image-backed-api")
+        .with_port_binding(SandboxPortBinding::tcp("http", 18080, 8080));
 
-    let handle = block_on(
-        backend.start_from_image(
-            SandboxImageLaunchSpec::new(spec.clone(), &image_reference)
-                .with_process_overrides(SandboxImageProcessOverrides::default()),
-        ),
-    )
-    .expect("plan-only image-backed start should succeed");
+    let mut spec = spec;
+    spec.root = SandboxRootSpec::oci_image_reference(image_reference);
+
+    let handle =
+        block_on(backend.start(spec.clone())).expect("plan-only image-backed start should succeed");
 
     let manifest_path = manifest_path(temp_dir.path(), &spec, &handle.id);
     let manifest_before_stop =
@@ -634,7 +679,7 @@ fn start_from_image_plan_only_persists_and_then_cleans_up_materialized_rootfs() 
 }
 
 #[test]
-fn start_from_image_plan_only_skips_krun_vm_config_prelude_for_materialized_rootfs() {
+fn oci_image_root_plan_only_skips_krun_vm_config_prelude_for_materialized_rootfs() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let image_reference = sample_registry_image_reference();
 
@@ -651,12 +696,11 @@ fn start_from_image_plan_only_skips_krun_vm_config_prelude_for_materialized_root
             .with_memory_limit_bytes(256 * 1024 * 1024),
     );
 
+    let mut spec = spec;
+    spec.root = SandboxRootSpec::oci_image_reference(image_reference);
+
     let launch_plan = backend
-        .plan_start_from_image(
-            &spec,
-            &image_reference,
-            &SandboxImageProcessOverrides::default(),
-        )
+        .plan_start(&spec)
         .expect("image-backed plan should succeed");
 
     let script = launch_plan
@@ -672,7 +716,7 @@ fn start_from_image_plan_only_skips_krun_vm_config_prelude_for_materialized_root
 }
 
 #[test]
-fn start_from_image_plan_only_auto_assigns_exposed_ports_and_reuses_released_ports() {
+fn oci_image_root_plan_only_auto_assigns_exposed_ports_and_reuses_released_ports() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let image_reference = sample_registry_image_reference();
 
@@ -685,22 +729,20 @@ fn start_from_image_plan_only_auto_assigns_exposed_ports_and_reuses_released_por
 
     let backend = KrunSandboxBackend::new(config);
 
-    let first = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
-        sparse_image_spec("first"),
-        &image_reference,
-    )))
-    .expect("first plan-only image-backed start should succeed");
+    let mut first_spec = sparse_image_spec("first");
+    first_spec.root = SandboxRootSpec::oci_image_reference(image_reference.clone());
+    let first = block_on(backend.start(first_spec))
+        .expect("first plan-only image-backed start should succeed");
     let first_inspected = block_on(backend.inspect(&first.id))
         .expect("inspect should succeed")
         .expect("first sandbox should be persisted");
     assert_eq!(first_inspected.published_endpoints.len(), 1);
     assert_eq!(first_inspected.published_endpoints[0].address.port(), 15000);
 
-    let second = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
-        sparse_image_spec("second"),
-        &image_reference,
-    )))
-    .expect("second plan-only image-backed start should succeed");
+    let mut second_spec = sparse_image_spec("second");
+    second_spec.root = SandboxRootSpec::oci_image_reference(image_reference.clone());
+    let second = block_on(backend.start(second_spec))
+        .expect("second plan-only image-backed start should succeed");
     let second_inspected = block_on(backend.inspect(&second.id))
         .expect("inspect should succeed")
         .expect("second sandbox should be persisted");
@@ -712,12 +754,10 @@ fn start_from_image_plan_only_auto_assigns_exposed_ports_and_reuses_released_por
 
     block_on(backend.stop(&first.id)).expect("stopping the first sandbox should succeed");
 
-    let third_spec = sparse_image_spec("third");
-    let third = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
-        third_spec.clone(),
-        &image_reference,
-    )))
-    .expect("third plan-only image-backed start should succeed");
+    let mut third_spec = sparse_image_spec("third");
+    third_spec.root = SandboxRootSpec::oci_image_reference(image_reference);
+    let third = block_on(backend.start(third_spec.clone()))
+        .expect("third plan-only image-backed start should succeed");
     let third_inspected = block_on(backend.inspect(&third.id))
         .expect("inspect should succeed")
         .expect("third sandbox should be persisted");
@@ -734,7 +774,7 @@ fn start_from_image_plan_only_auto_assigns_exposed_ports_and_reuses_released_por
 }
 
 #[test]
-fn start_from_image_plan_only_rejects_same_tenant_port_quota_exhaustion() {
+fn oci_image_root_plan_only_rejects_same_tenant_port_quota_exhaustion() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let image_reference = sample_registry_image_reference();
 
@@ -748,17 +788,15 @@ fn start_from_image_plan_only_rejects_same_tenant_port_quota_exhaustion() {
 
     let backend = KrunSandboxBackend::new(config);
 
-    block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
-        sparse_image_spec("first"),
-        &image_reference,
-    )))
-    .expect("first image-backed service should consume the single tenant port");
+    let mut first_spec = sparse_image_spec("first");
+    first_spec.root = SandboxRootSpec::oci_image_reference(image_reference.clone());
+    block_on(backend.start(first_spec))
+        .expect("first image-backed service should consume the single tenant port");
 
-    let error = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
-        sparse_image_spec("second"),
-        &image_reference,
-    )))
-    .expect_err("second same-tenant image-backed service should exceed the port quota");
+    let mut second_spec = sparse_image_spec("second");
+    second_spec.root = SandboxRootSpec::oci_image_reference(image_reference);
+    let error = block_on(backend.start(second_spec))
+        .expect_err("second same-tenant image-backed service should exceed the port quota");
 
     assert!(
         error.to_string().contains("published port quota exceeded")
@@ -865,9 +903,9 @@ fn parse_guest_user_rejects_non_numeric_components() {
 fn readiness_probe_target_prefers_http_endpoints() {
     let spec = SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
-        "api",
+        SandboxOwnerSpec::service("api"),
         SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new("/srv/rootfs"),
+        SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("/srv/rootfs")),
         SandboxProcessSpec::new(["/bin/service"]),
     )
     .with_port_bindings([
@@ -917,9 +955,9 @@ fn running_status_stays_starting_until_probe_passes() {
 
     let spec = SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
-        "tcp-service",
+        SandboxOwnerSpec::service("tcp-service"),
         SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new("/srv/rootfs"),
+        SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("/srv/rootfs")),
         SandboxProcessSpec::new(["/bin/service"]),
     )
     .with_port_binding(SandboxPortBinding::tcp("tcp", address.port(), 8080));
@@ -938,9 +976,9 @@ fn running_status_degrades_ready_sandboxes_to_not_ready_on_probe_failure() {
 
     let spec = SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
-        "http-service",
+        SandboxOwnerSpec::service("http-service"),
         SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new("/srv/rootfs"),
+        SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("/srv/rootfs")),
         SandboxProcessSpec::new(["/bin/service"]),
     )
     .with_port_binding(SandboxPortBinding::new(
@@ -978,9 +1016,9 @@ fn running_status_recovers_not_ready_sandboxes_when_probe_returns() {
 
     let spec = SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
-        "http-service",
+        SandboxOwnerSpec::service("http-service"),
         SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new("/srv/rootfs"),
+        SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("/srv/rootfs")),
         SandboxProcessSpec::new(["/bin/service"]),
     )
     .with_port_binding(SandboxPortBinding::new(
@@ -1093,9 +1131,13 @@ fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() 
         },
         "spec": {
             "tenant_id": "tenant",
-            "name": "legacy",
+            "owner": {
+                "kind": "standalone",
+                "display_name": "legacy",
+            },
             "backend": "krun",
-            "filesystem": {
+            "root": {
+                "kind": "rootfs",
                 "rootfs": "/srv/rootfs",
                 "readonly": false,
             },
@@ -1148,7 +1190,7 @@ fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() 
         "shutdown_requested": false,
         "status": "starting",
     }))
-    .expect("legacy manifest should deserialize with new defaults");
+    .expect("manifest should deserialize with restart defaults");
 
     assert_eq!(manifest.restart_count, 0);
     assert_eq!(
@@ -1174,9 +1216,9 @@ fn sample_spec() -> SandboxSpec {
 fn sample_spec_with_rootfs(rootfs: &Path) -> SandboxSpec {
     SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
-        "postgres-primary",
+        SandboxOwnerSpec::service("postgres-primary"),
         SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new(rootfs),
+        SandboxRootSpec::Rootfs(SandboxRootfsSpec::new(rootfs)),
         SandboxProcessSpec::new(["/usr/bin/postgres", "-D", "/var/lib/postgresql/data"])
             .with_env(["PATH=/usr/bin", "PGDATA=/var/lib/postgresql/data"]),
     )
@@ -1189,9 +1231,30 @@ fn sample_spec_with_rootfs(rootfs: &Path) -> SandboxSpec {
 fn sparse_image_spec(name: &str) -> SandboxSpec {
     SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
-        name,
+        SandboxOwnerSpec::service(name),
         SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new(PathBuf::new()),
+        SandboxRootSpec::oci_image_reference(
+            "registry.example.com/acme/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ),
+        SandboxProcessSpec::new(Vec::<String>::new()),
+    )
+}
+
+fn sparse_build_spec(
+    name: &str,
+    image_name: impl Into<String>,
+    dockerfile_path: impl Into<PathBuf>,
+    context_path: impl Into<PathBuf>,
+) -> SandboxSpec {
+    SandboxSpec::new(
+        TenantId::new("tenant").expect("tenant id should be valid"),
+        SandboxOwnerSpec::service(name),
+        SandboxBackendKind::Krun,
+        SandboxRootSpec::oci_image(SandboxOciImageSource::Build(SandboxOciBuildSpec::new(
+            image_name,
+            dockerfile_path,
+            context_path,
+        ))),
         SandboxProcessSpec::new(Vec::<String>::new()),
     )
 }
@@ -1199,9 +1262,9 @@ fn sparse_image_spec(name: &str) -> SandboxSpec {
 fn sample_spec_for_tenant(tenant_id: &str, name: &str) -> SandboxSpec {
     SandboxSpec::new(
         TenantId::new(tenant_id).expect("tenant id should be valid"),
-        name,
+        SandboxOwnerSpec::service(name),
         SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new("/srv/rootfs"),
+        SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("/srv/rootfs")),
         SandboxProcessSpec::new(["/usr/bin/service"]),
     )
 }
@@ -1222,7 +1285,7 @@ fn rootfs_artifact_path(root: &Path, spec: &SandboxSpec, sandbox_id: &SandboxId)
 
 fn sample_launch_defaults() -> OciImageLaunchDefaults {
     OciImageLaunchDefaults {
-        filesystem: SandboxFilesystemSpec::new("/image/rootfs"),
+        rootfs: SandboxRootfsSpec::new("/image/rootfs"),
         process: SandboxProcessSpec::new(["/usr/local/bin/service", "serve"])
             .with_env(["PATH=/usr/local/bin:/usr/bin", "SERVICE_MODE=prod"])
             .with_cwd("/srv/service"),
@@ -1264,7 +1327,7 @@ fn sample_manifest(spec: SandboxSpec, launch_mode: KrunLaunchMode) -> KrunSandbo
         handle: crate::instance::SandboxHandle::new(
             spec.tenant_id.clone(),
             crate::instance::SandboxId::new("sandbox-01"),
-            spec.name.clone(),
+            spec.display_name().to_owned(),
             SandboxBackendKind::Krun,
             SandboxStatus::Starting,
             endpoints,

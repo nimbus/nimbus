@@ -50,19 +50,15 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
 
     let backend = KrunSandboxBackend::new(config);
 
-    let make_spec = |name: &str| empty_image_spec(name);
+    let make_spec = |name: &str| {
+        let mut spec = image_spec(name, "localhost/nimbus-autoport:latest");
+        spec.process = busybox_http_process(8080);
+        spec
+    };
 
     // --- Sandbox A ---
-    let handle_a = block_on(
-        backend.start_from_image(
-            SandboxImageLaunchSpec::new(
-                make_spec("autoport-a"),
-                "localhost/nimbus-autoport:latest",
-            )
-            .with_process_overrides(busybox_http_overrides(8080)),
-        ),
-    )
-    .expect("sandbox A should start");
+    let handle_a =
+        block_on(backend.start(make_spec("autoport-a"))).expect("sandbox A should start");
     let cleanup_a = CleanupGuard::new(backend.clone(), handle_a.id.clone());
 
     let ready_a = wait_for_ready(&backend, &handle_a.id, Duration::from_secs(30));
@@ -87,16 +83,8 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
     eprintln!("sandbox A HTTP connectivity on port {port_a}: OK");
 
     // --- Sandbox B ---
-    let handle_b = block_on(
-        backend.start_from_image(
-            SandboxImageLaunchSpec::new(
-                make_spec("autoport-b"),
-                "localhost/nimbus-autoport:latest",
-            )
-            .with_process_overrides(busybox_http_overrides(8080)),
-        ),
-    )
-    .expect("sandbox B should start");
+    let handle_b =
+        block_on(backend.start(make_spec("autoport-b"))).expect("sandbox B should start");
     let cleanup_b = CleanupGuard::new(backend.clone(), handle_b.id.clone());
 
     let ready_b = wait_for_ready(&backend, &handle_b.id, Duration::from_secs(30));
@@ -122,16 +110,8 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
     eprintln!("sandbox A stopped, port {port_a} should be released");
 
     // --- Sandbox C: should reuse A's released port ---
-    let handle_c = block_on(
-        backend.start_from_image(
-            SandboxImageLaunchSpec::new(
-                make_spec("autoport-c"),
-                "localhost/nimbus-autoport:latest",
-            )
-            .with_process_overrides(busybox_http_overrides(8080)),
-        ),
-    )
-    .expect("sandbox C should start");
+    let handle_c =
+        block_on(backend.start(make_spec("autoport-c"))).expect("sandbox C should start");
     let cleanup_c = CleanupGuard::new(backend.clone(), handle_c.id.clone());
 
     let ready_c = wait_for_ready(&backend, &handle_c.id, Duration::from_secs(30));
@@ -174,14 +154,14 @@ fn krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints() {
 
     let backend = KrunSandboxBackend::new(smoke_backend_config(bundle_root, state_root));
     let delayed_command = format!("sleep 2; exec /bin/busybox httpd -f -p {guest_port}");
-    let spec = SandboxSpec::new(
-        sandbox_tenant(),
-        "m3-readiness-gate",
-        SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new(rootfs),
-        SandboxProcessSpec::new(["/bin/busybox", "sh", "-c", &delayed_command]),
-    )
-    .with_port_binding(http_binding(host_port, guest_port));
+    let mut spec = rootfs_spec("m3-readiness-gate", rootfs);
+    spec.process = SandboxProcessSpec::new([
+        "/bin/busybox".to_owned(),
+        "sh".to_owned(),
+        "-c".to_owned(),
+        delayed_command,
+    ]);
+    let spec = spec.with_port_binding(http_binding(host_port, guest_port));
 
     let handle = block_on(backend.start(spec)).expect("readiness-gated sandbox should start");
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
@@ -258,14 +238,14 @@ fn krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart() {
          sleep 3; \
          /bin/busybox httpd -f -p {guest_port}"
     );
-    let spec = SandboxSpec::new(
-        sandbox_tenant(),
-        "m3-liveness-gate",
-        SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new(rootfs),
-        SandboxProcessSpec::new(["/bin/busybox", "sh", "-c", &liveness_script]),
-    )
-    .with_port_binding(http_binding(host_port, guest_port));
+    let mut spec = rootfs_spec("m3-liveness-gate", rootfs);
+    spec.process = SandboxProcessSpec::new([
+        "/bin/busybox".to_owned(),
+        "sh".to_owned(),
+        "-c".to_owned(),
+        liveness_script,
+    ]);
+    let spec = spec.with_port_binding(http_binding(host_port, guest_port));
 
     let handle = block_on(backend.start(spec)).expect("liveness-gated sandbox should start");
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());

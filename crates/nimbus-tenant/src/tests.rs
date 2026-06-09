@@ -1,8 +1,8 @@
 use nimbus_core::{PrincipalContext, TenantId};
 use nimbus_runtime::{RuntimeBundle, RuntimeLimits, RuntimePolicy};
 use nimbus_sandbox::{
-    PublishedEndpointProtocol, SandboxBackendKind, SandboxFilesystemSpec, SandboxProcessSpec,
-    SandboxResourceCharge, SandboxSpec,
+    PublishedEndpointProtocol, SandboxBackendKind, SandboxOwnerSpec, SandboxProcessSpec,
+    SandboxResourceCharge, SandboxRootSpec, SandboxSpec,
 };
 
 use super::*;
@@ -10,9 +10,9 @@ use super::*;
 fn sparse_spec(tenant: &str, name: &str, backend: SandboxBackendKind) -> SandboxSpec {
     SandboxSpec::new(
         TenantId::new(tenant).expect("tenant id should parse"),
-        name,
+        SandboxOwnerSpec::service(name),
         backend,
-        SandboxFilesystemSpec::new(""),
+        SandboxRootSpec::rootfs(""),
         SandboxProcessSpec::new(Vec::<String>::new()),
     )
 }
@@ -209,7 +209,7 @@ fn tenant_isolation_decision_has_stable_decision_id_and_audit_safe_redaction() {
 }
 
 #[test]
-fn tenant_workload_identity_splits_subject_from_audit_projection() {
+fn workload_identity_splits_subject_from_audit_projection() {
     let principal = principal_with_tenant_claim("tenant_id", "tenant-a");
     let context = TenantIsolationContext::application(
         TenantId::new("tenant-a").expect("tenant id should parse"),
@@ -273,7 +273,7 @@ fn tenant_workload_identity_splits_subject_from_audit_projection() {
 }
 
 #[test]
-fn tenant_workload_identity_distinguishes_sandbox_backend_and_location() {
+fn workload_identity_distinguishes_sandbox_backend_and_location() {
     let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
     let context_a = test_application_context()
         .with_deployment_generation(9)
@@ -329,7 +329,7 @@ fn tenant_workload_identity_distinguishes_sandbox_backend_and_location() {
 }
 
 #[test]
-fn tenant_workload_identity_rejects_invalid_spiffe_trust_domains() {
+fn workload_identity_rejects_invalid_spiffe_trust_domains() {
     let context = test_application_context();
     let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
     let decision = context

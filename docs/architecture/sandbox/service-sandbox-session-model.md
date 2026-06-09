@@ -134,9 +134,8 @@ The names are intentionally precise: OCI means Open Container Initiative, so
 `OciImage` is not acronym stutter. `Rootfs` versus `OciImage` answers what kind
 of root material the sandbox uses; `Reference` versus `Build` answers how OCI
 image material is obtained. Backend lifecycle remains a single
-`SandboxBackend::start(SandboxSpec)` path. There should not be public
-`start_from_image` or `start_from_build` lifecycle APIs after the pre-launch
-refactor.
+`SandboxBackend::start(SandboxSpec)` path; image references and builds are
+selected by `SandboxSpec.root`, not by separate lifecycle methods.
 
 Compose `image:` lowers to `SandboxOciImageSource::Reference(...)`. Compose
 `build:` lowers to `SandboxOciImageSource::Build(...)` only when build admission

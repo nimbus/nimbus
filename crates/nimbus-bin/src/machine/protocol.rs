@@ -4,7 +4,7 @@ use nimbus::{
     SandboxStatus, TenantId,
 };
 #[cfg(unix)]
-use nimbus::{SandboxBuildLaunchSpec, SandboxHandle, SandboxImageLaunchSpec};
+use nimbus::{SandboxHandle, SandboxSpec};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -122,13 +122,13 @@ impl MachineApiCapabilityResponse {
 #[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiServiceSandboxImageStartRequest {
-    pub(crate) launch: SandboxImageLaunchSpec,
+    pub(crate) spec: SandboxSpec,
 }
 
 #[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiServiceSandboxBuildStartRequest {
-    pub(crate) launch: SandboxBuildLaunchSpec,
+    pub(crate) spec: SandboxSpec,
 }
 
 #[cfg(unix)]

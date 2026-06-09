@@ -2,7 +2,7 @@
 
 ## Status
 
-- **Status:** `proposed`
+- **Status:** `done`
 - **Primary goal:** make the pre-launch service/sandbox type model match the
   architecture vocabulary by replacing service "implementation" wrappers with
   declarative service backends, moving sandbox root materialization into
@@ -66,14 +66,15 @@ materialization. A sandbox backend implementation owns how the sandbox starts.
 ## Build Input Decision
 
 Current repo evidence shows that Nimbus does have build-backed execution paths:
-Compose `build:` lowers to `SandboxBuildLaunchSpec`, the macOS machine API
-offers `service-sandboxes.build-start`, and container/krun backends prepare a
-root filesystem from Dockerfile/context input. The current runtime path does
-not require the Docker daemon or Podman as the product contract; the sandbox
-code has an internal Dockerfile-subset materializer that pulls/materializes OCI
-base images and applies supported Dockerfile instructions to a sandbox rootfs.
-Buildah CLI helpers remain part of the OCI/rootfs tooling surface, but `crun`
-and `krun` are execution backends, not image builders.
+Compose `build:` lowers to `SandboxOciImageSource::Build(...)`, the macOS
+machine API offers `service-sandboxes.build-start`, and container/krun backends
+prepare a root filesystem from Dockerfile/context input. The current runtime
+path does not require the Docker daemon or Podman as the product contract; the
+sandbox code has an internal Dockerfile-subset materializer that
+pulls/materializes OCI base images and applies supported Dockerfile
+instructions to a sandbox rootfs. Buildah CLI helpers remain part of the
+OCI/rootfs tooling surface, but `crun` and `krun` are execution backends, not
+image builders.
 
 That means build input is real, so the target model must not erase it. Build is
 not a peer root kind, though. It is a way to obtain OCI image material. The
@@ -243,6 +244,11 @@ vocabulary from re-teaching the wrong model:
 - Do not allow build input to bypass image/build admission policy. Local/dev
   builds are explicit exceptions; production builds require an operator-owned
   provenance and admission story before they become allowed.
+- Do not let route-shaped machine API start operations become catch-all
+  `SandboxSpec` admission points. `service-sandboxes.image-start` accepts only
+  `SandboxOciImageSource::Reference`, `service-sandboxes.build-start` accepts
+  only `SandboxOciImageSource::Build`, and both reject mismatched roots before
+  backend dispatch.
 - Do not reuse `SandboxBackend` for declarative catalog payloads. It remains the
   executor/provider trait.
 - Do not keep a public image-launch-only process override type such as
@@ -265,12 +271,12 @@ vocabulary from re-teaching the wrong model:
 | Phase | Status | Hard dependencies | Verifiable success signal |
 | --- | --- | --- | --- |
 | SBR0 | `done` | none | Plan is registered and docs validation passes. |
-| SBR1 | `todo` | SBR0 | `nimbus-services` exposes `ServiceBackend`, `BuiltInServiceSpec`, `ExternalServiceSpec`, and `service_backend_for_tenant(...)`; old implementation names are gone. |
-| SBR2 | `todo` | SBR1 | `SandboxSpec` owns `owner: SandboxOwnerSpec` and `root: SandboxRootSpec`; rootfs/OCI-image materialization no longer uses `Launch` names. |
-| SBR3 | `todo` | SBR2 | `SandboxBackend` has one start path, `start(SandboxSpec)`, and backend implementations dispatch internally on `SandboxRootSpec`. |
-| SBR4 | `todo` | SBR3 | Compose lowering, service manager activation, verification, machine API, and runtime binding code use `ServiceBackend::Sandbox(SandboxSpec)`. |
-| SBR5 | `todo` | SBR4 | Architecture and SDK docs use the final vocabulary and examples contain no old names. |
-| SBR6 | `todo` | SBR5 | Focused Rust/docs gates and stale-name guards pass with evidence. |
+| SBR1 | `done` | SBR0 | `nimbus-services` exposes `ServiceBackend`, `BuiltInServiceSpec`, `ExternalServiceSpec`, and `service_backend_for_tenant(...)`; old implementation names are gone. |
+| SBR2 | `done` | SBR1 | `SandboxSpec` owns `owner: SandboxOwnerSpec` and `root: SandboxRootSpec`; rootfs/OCI-image materialization no longer uses `Launch` names. |
+| SBR3 | `done` | SBR2 | `SandboxBackend` has one start path, `start(SandboxSpec)`, and backend implementations dispatch internally on `SandboxRootSpec`. |
+| SBR4 | `done` | SBR3 | Compose lowering, service manager activation, verification, machine API, and runtime binding code use `ServiceBackend::Sandbox(SandboxSpec)`; machine API image/build start routes reject mismatched roots before backend dispatch. |
+| SBR5 | `done` | SBR4 | Architecture and SDK docs use the final vocabulary and examples contain no old names. |
+| SBR6 | `done` | SBR5 | Focused Rust/docs gates and stale-name guards pass with evidence. |
 
 ## Phases
 
@@ -407,6 +413,7 @@ vocabulary from re-teaching the wrong model:
   - `cargo test -p nimbus-sandbox`
   - `cargo test -p nimbus-services`
   - `cargo test -p nimbus-bin compose`
+  - `cargo test -p nimbus-bin machine`
   - `cargo test -p nimbus-server service_manager -- --nocapture`
   - `npm run docs:validate-refs:strict`
   - `git diff --check`
@@ -424,6 +431,8 @@ vocabulary from re-teaching the wrong model:
   - machine API client code uses `service_sandbox_process_snapshot(...)`, not
     `service_process_snapshot(...)`
   - private docs have no `ctx.services` examples
+  - machine API `image-start` and `build-start` routes reject cross-wired
+    `SandboxRootSpec` payloads before `SandboxBackend::start(...)`
 - Gate: all required focused gates pass, stale-name guards pass, and the plan
   execution log records exact commands and outcomes.
 
@@ -441,7 +450,8 @@ vocabulary from re-teaching the wrong model:
    require operator-owned provenance/admission before they are allowed.
 5. `SandboxBackend` exposes one start path: `start(SandboxSpec)`.
 6. Existing container, krun, and forwarded machine API paths preserve behavior
-   through the new spec shape.
+   through the new spec shape, while route-shaped machine API start operations
+   remain root-kind-specific admission boundaries.
 7. Compose services still lower to named services, but the hidden sandbox detail
    is represented by `ServiceBackend::Sandbox(SandboxSpec)`.
 8. Built-in and external services remain declarative specs and do not imply
@@ -457,13 +467,17 @@ vocabulary from re-teaching the wrong model:
 | Date | Phase | Outcome | Verification | Next step |
 | --- | --- | --- | --- | --- |
 | 2026-06-08 | Plan creation | plan-only | `npm run docs:validate-refs:strict` pass (246 working-tree Markdown files); `git diff --check -- docs/plans/service-backend-and-sandbox-spec-refactor-plan.md docs/plans/README.md` pass | Start SBR0/SBR1 when ready to implement the breaking refactor |
-| 2026-06-08 | Build input model correction | plan-only | Repo inspection found real current build-backed paths (`SandboxBuildLaunchSpec`, Compose `build:`, machine API `service-sandboxes.build-start`, and container/krun Dockerfile/context preparation), but production admission rejects local builds by default and export paths tell operators to build/tag first. This row originally removed build from the target model; it is superseded by the build-root corrections below. | Start SBR0/SBR1 after this plan reflects nested OCI image build input. |
+| 2026-06-08 | Build input model correction | plan-only | Pre-refactor repo inspection found real build-backed paths (`SandboxBuildLaunchSpec`, Compose `build:`, machine API `service-sandboxes.build-start`, and container/krun Dockerfile/context preparation), but production admission rejects local builds by default and export paths tell operators to build/tag first. This row originally removed build from the target model; it is superseded by the build-root corrections below and by the final nested `SandboxOciImageSource::Build(...)` model. | Start SBR0/SBR1 after this plan reflects nested OCI image build input. |
 | 2026-06-08 | Build root correction | plan-only | Reconciled the plan with the current build path: Compose `build:` and macOS machine `service-sandboxes.build-start` are real local/dev service-sandbox inputs. This row originally kept build as a root-level `SandboxRootSpec::OciBuild`; it is superseded by the nested OCI image correction below. | Start SBR0/SBR1 after this plan reflects `SandboxOciImageSource::Build`. |
 | 2026-06-08 | Nested OCI image build correction | plan-only | Clarified the final hierarchy: `SandboxRootSpec` has `Rootfs` and `OciImage`; `SandboxOciImageSpec` has `source: SandboxOciImageSource`; `SandboxOciImageSource` has `Reference` and `Build`. Build is now an OCI image materialization input, not a peer root kind. Verification: `npm run docs:validate-refs:strict` pass (246 working-tree Markdown files); tracked `git diff --check -- docs/plans/service-backend-and-sandbox-spec-refactor-plan.md docs/plans/nimbus-sdk-resource-model-plan.md docs/plans/README.md` pass; untracked no-index whitespace checks for this plan and `docs/plans/nimbus-sdk-resource-model-plan.md` produced no diagnostics. | Start SBR0/SBR1 when ready to implement the breaking refactor. |
 | 2026-06-08 | OCI image naming sweep | plan-only | Repo sweep confirmed `OciImage` is not acronym stutter because OCI means Open Container Initiative, not Open Container Image. Kept existing `OciImage*` code names, but refined the new plan shape so `Build` and `Reference` live under `SandboxOciImageSource` instead of making `SandboxOciImageSpec` itself an enum. Verification: `npm run docs:validate-refs:strict` pass (246 working-tree Markdown files); `git diff --check -- docs/plans/README.md` pass; untracked no-index whitespace checks for this plan and `docs/plans/nimbus-sdk-resource-model-plan.md` produced no diagnostics. | Start SBR0/SBR1 when ready to implement the breaking refactor. |
 | 2026-06-08 | Architecture propagation | plan-only | Propagated the nested root/source decision into `docs/architecture/sandbox/service-sandbox-session-model.md`, `ARCHITECTURE.md`, and `docs/operating/cli.md`. The docs now state that `OciImage` is not acronym stutter, `image:` lowers to an OCI image reference source, `build:` lowers to an OCI image build source only when admitted, and production local builds remain fail-closed by default. Verification: `npm run docs:validate-refs:strict` pass (246 working-tree Markdown files); `git diff --check -- ARCHITECTURE.md docs/architecture/sandbox/service-sandbox-session-model.md docs/operating/cli.md docs/plans/README.md` pass; untracked no-index whitespace checks for this plan and `docs/plans/nimbus-sdk-resource-model-plan.md` produced no diagnostics. | Start SBR0/SBR1 when ready to implement the breaking refactor. |
 | 2026-06-08 | SBR0 registration closeout | done | Marked SBR0 done because the plan is registered in `docs/plans/README.md`, linked to owning docs, and the docs validation/whitespace checks above pass. | Start SBR1 when ready to implement the breaking refactor. |
 | 2026-06-08 | Final audit cleanup | plan-only | Review tightened the remaining backend/implementation wording and replaced ambiguous `SandboxSpec.name` in the target model with `SandboxOwnerSpec`, so service-backed sandboxes can record owning service metadata without becoming name-addressed resources. Verification: `npm run docs:validate-refs:strict` pass (246 working-tree Markdown files); targeted `git diff --check` pass for touched tracked docs; no-index whitespace checks for new docs produced no diagnostics. | Start SBR1 when ready to implement the breaking refactor. |
+| 2026-06-09 | SBR1-SBR6 implementation | done | Completed direct breaking refactor: service catalogs use `ServiceBackend`; `ServiceBackend::Sandbox` carries complete `SandboxSpec`; `SandboxSpec` carries `SandboxOwnerSpec` and `SandboxRootSpec`; image references/builds are `SandboxOciImageSource` variants; `SandboxBackend` exposes one `start(SandboxSpec)` path; Compose, machine API, service manager, server tests, sandbox state fixtures, and smoke tests use the final model. Cleanup completed: private `ctx.services` examples replaced with explicit SDK usage; `tenant_workload_identity_*` tests renamed to `workload_identity_*`; machine/compose process-snapshot helpers use `service_sandbox_process_snapshot`. Verification: `cargo test -p nimbus-sandbox` pass (157 lib tests, 2 guest-user-switch tests); `cargo test -p nimbus-services` pass (25 tests); `cargo test -p nimbus-bin compose` pass (106 tests); `cargo test -p nimbus-bin machine` pass (185 tests); `cargo test -p nimbus-server service_manager -- --nocapture` pass (9 tests); `cargo test -p nimbus-tenant workload_identity` pass (3 tests); `npm run docs:validate-refs:strict` pass (246 working-tree Markdown files); `git diff --check` pass. Stale-name guards over `crates packages scripts` for old implementation/launch names, `tenant_workload_identity`, old machine helper calls, and private-doc `ctx.services` examples returned no matches; build input scan found only `SandboxOciImageSource::Build(SandboxOciBuildSpec)`, not a root-level build variant. | Start `docs/plans/nimbus-sdk-resource-model-plan.md` when desired. |
+| 2026-06-09 | Review cleanup | done | Closed the final audit issues: machine API `service-sandboxes.image-start` now accepts only OCI image reference specs, `service-sandboxes.build-start` accepts only OCI image build specs, and both reject cross-wired roots before `SandboxBackend::start(...)`; container and krun service-sandbox state views now project only service-owned manifests and no longer fall back from service name to standalone sandbox display name. | `cargo check -p nimbus-bin` pass; `cargo test -p nimbus-sandbox state_view -- --nocapture` pass (6 tests); `cargo test -p nimbus-bin machine_api_start_routes_reject_cross_wired_root_kinds_before_backend_start -- --nocapture` pass (1 test); `cargo test -p nimbus-bin machine -- --nocapture` pass (186 tests); `cargo test -p nimbus-sandbox` pass (159 lib tests, 2 guest-user-switch tests); `cargo test -p nimbus-services` pass (25 tests); `cargo test -p nimbus-bin compose` pass (106 tests); `cargo test -p nimbus-server service_manager -- --nocapture` pass (9 tests); `cargo test -p nimbus-tenant workload_identity` pass (3 tests); `npm run docs:validate-refs:strict` pass (246 working-tree Markdown files); `git diff --check` pass; stale-name/state guards over `crates packages scripts`, `docs/private`, and state-view display-name fallback returned no matches. | Ready for final review or commit. |
+| 2026-06-09 | Final audit fixes | done | Closed the final review findings: tenant drift scans now preserve standalone sandbox ownership and only reconcile service-owned manifests against `_nimbus/services` and `_nimbus/ports`; machine API client errors now preserve HTTP status class so guest 4xx contract errors map to `InvalidInput`/`InvalidSpec` instead of backend-unavailable; runtime service binding resolution refreshes cached handles before returning endpoints and removes vanished sandboxes from future snapshots. | `cargo test -p nimbus-services resolve_service_binding_refreshes_cached_handle_before_projecting_endpoint -- --nocapture` pass (1 test); `cargo test -p nimbus-bin client_preserves_machine_api_bad_request_as_invalid_input -- --nocapture` pass (1 test); `cargo test -p nimbus-server tenant_isolation_drift_scanner_does_not_treat_standalone_sandboxes_as_services -- --nocapture` pass (1 test); `cargo test -p nimbus-services -- --nocapture` pass (26 tests); `cargo test -p nimbus-bin machine -- --nocapture` pass (187 tests); `cargo test -p nimbus-server tenant_isolation_drift -- --nocapture` pass (3 tests); `cargo test -p nimbus-server service_manager -- --nocapture` pass (9 tests); `cargo fmt --all --check` pass; `npm run docs:validate-refs:strict` pass (246 working-tree Markdown files); `git diff --check` pass; `bash scripts/verify-nimbus-capability-segregation.sh` pass (10 passed, 0 failed). | Ready for commit. |
+| 2026-06-09 | Query-boundary audit fix | done | Closed the final audit cleanup item: the machine API client now percent-encodes query values before calling `service-sandboxes/current`, so service names containing query delimiters, spaces, slashes, or Unicode round-trip through the Unix-socket HTTP boundary instead of relying on Compose naming conventions. | `cargo test -p nimbus-bin machine_api_query_path_percent_encodes_query_delimiters -- --nocapture` pass (1 test); `cargo test -p nimbus-bin client_encodes_current_service_lookup_query_values -- --nocapture` pass (1 test); `cargo test -p nimbus-bin machine -- --nocapture` pass (189 tests); `cargo fmt --all --check` pass; `npm run docs:validate-refs:strict` pass (246 working-tree Markdown files); `git diff --check` pass; `bash scripts/verify-nimbus-capability-segregation.sh` pass (10 passed, 0 failed). | Ready for commit. |
 
 ## /goal Prompt
 

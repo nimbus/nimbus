@@ -33,23 +33,22 @@ pub use nimbus_sandbox::{
     CompiledSandboxEgressPolicy, PublishedEndpoint, PublishedEndpointProtocol,
     SANDBOX_EGRESS_ENFORCEMENT_ENV, SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
     SANDBOX_EGRESS_LEGACY_POLICY_ENV, SANDBOX_EGRESS_RESERVED_ENV_KEYS, SandboxBackend,
-    SandboxBackendKind, SandboxBuildLaunchSpec, SandboxEgressAuthorization,
-    SandboxEgressEnforcementMode, SandboxEgressEnforcementPlan, SandboxEgressPolicy,
-    SandboxEgressReloadPolicy, SandboxEgressRequest, SandboxEgressRule, SandboxError,
-    SandboxFilesystemSpec, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
-    SandboxImageProcessOverrides, SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec,
+    SandboxBackendKind, SandboxEgressAuthorization, SandboxEgressEnforcementMode,
+    SandboxEgressEnforcementPlan, SandboxEgressPolicy, SandboxEgressReloadPolicy,
+    SandboxEgressRequest, SandboxEgressRule, SandboxError, SandboxHandle, SandboxId,
+    SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec, SandboxOciBuildSpec,
+    SandboxOciImageReferenceSpec, SandboxOciImageSource, SandboxOciImageSpec, SandboxOwnerSpec,
     SandboxPortBinding, SandboxProcessSpec, SandboxResourceCharge, SandboxResourceLimits,
-    SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxSpec, SandboxStatus,
-    validate_sandbox_mounts, validate_tenant_volume_name,
+    SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec,
+    SandboxSpec, SandboxStatus, validate_sandbox_mounts, validate_tenant_volume_name,
 };
 // Server integration and transport construction helpers.
 pub use nimbus_server::{
-    BuiltInServiceImplementation, ConvexRegistry, EmptyServiceDefinitionCatalog,
-    EmptyServiceInstanceCatalog, ExternalServiceImplementation, LICENSE_FILE_ENV, LicenseDocument,
-    LicenseEntitlements, LicenseKind, LicenseLoadError, LicenseSnapshot, LicenseSourceInfo,
-    LicenseSourceKind, LicenseState, LicenseStatus, LicenseUsageSnapshot, RouterOptions,
-    SandboxBackedServiceImplementation, ServeOptions, ServiceDefinitionCatalog,
-    ServiceImplementation, ServiceInstanceCatalog, ServiceManager, build_router, serve,
+    BuiltInServiceSpec, ConvexRegistry, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
+    ExternalServiceSpec, LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind,
+    LicenseLoadError, LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState,
+    LicenseStatus, LicenseUsageSnapshot, RouterOptions, ServeOptions, ServiceBackend,
+    ServiceDefinitionCatalog, ServiceInstanceCatalog, ServiceManager, build_router, serve,
 };
 #[cfg(feature = "aws-kms")]
 pub use nimbus_storage::AwsKmsKeyProvider;

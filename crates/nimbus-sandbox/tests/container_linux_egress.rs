@@ -17,8 +17,8 @@ use nimbus_sandbox::backends::container::{
 };
 use nimbus_sandbox::{
     PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxEgressPolicy,
-    SandboxEgressRule, SandboxFilesystemSpec, SandboxId, SandboxImageLaunchSpec,
-    SandboxImageProcessOverrides, SandboxMountSpec, SandboxProcessSpec, SandboxSpec,
+    SandboxEgressRule, SandboxId, SandboxMountSpec, SandboxOwnerSpec, SandboxProcessSpec,
+    SandboxRootSpec, SandboxSpec,
 };
 
 const RESULT_VOLUME: &str = "egress-proof";
@@ -36,17 +36,6 @@ fn container_execute_mode_denies_direct_external_egress() {
 
     let backend = ContainerSandboxBackend::new(smoke_config(&workdir, 15100));
     let tenant_id = TenantId::new("egress-proof").expect("tenant id should parse");
-    let spec = SandboxSpec::new(
-        tenant_id.clone(),
-        "deny-direct-egress",
-        SandboxBackendKind::Container,
-        SandboxFilesystemSpec::new(PathBuf::new()),
-        SandboxProcessSpec::new(Vec::<String>::new()),
-    )
-    .with_mount(SandboxMountSpec::tenant_volume(
-        RESULT_VOLUME,
-        "/nimbus-egress",
-    ));
     let image = env::var("NIMBUS_CONTAINER_EGRESS_IMAGE")
         .unwrap_or_else(|_| "docker.io/library/busybox:latest".to_owned());
     let target =
@@ -54,17 +43,20 @@ fn container_execute_mode_denies_direct_external_egress() {
     let command = format!(
         "if (unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy NO_PROXY no_proxy; wget -T 4 -q -O /tmp/nimbus-egress-body {target:?}); then echo allowed > {RESULT_PATH_IN_GUEST}; else echo denied > {RESULT_PATH_IN_GUEST}; fi; sleep 30"
     );
-
-    let handle = block_on(
-        backend.start_from_image(
-            SandboxImageLaunchSpec::new(spec, image).with_process_overrides(
-                SandboxImageProcessOverrides::default()
-                    .with_entrypoint(["/bin/sh", "-c"])
-                    .with_cmd([command]),
-            ),
-        ),
+    let spec = SandboxSpec::new(
+        tenant_id.clone(),
+        SandboxOwnerSpec::standalone_named("deny-direct-egress"),
+        SandboxBackendKind::Container,
+        SandboxRootSpec::oci_image_reference(image.clone()),
+        SandboxProcessSpec::new(Vec::<String>::new())
+            .with_entrypoint(["/bin/sh", "-c"])
+            .with_command([command]),
     )
-    .expect("container should start");
+    .with_mount(SandboxMountSpec::tenant_volume(
+        RESULT_VOLUME,
+        "/nimbus-egress",
+    ));
+    let handle = block_on(backend.start(spec)).expect("container should start");
     let cleanup = CleanupGuard::new(backend.clone(), handle.id.clone(), tenant_id.clone());
 
     let result_path = tenant_volume_path(&workdir, &tenant_id, RESULT_VOLUME).join("result");
@@ -99,18 +91,6 @@ fn container_execute_mode_enforces_proxy_policy_and_live_reload() {
 
     let backend = ContainerSandboxBackend::new(smoke_config(&workdir, 15200));
     let tenant_id = TenantId::new("egress-matrix").expect("tenant id should parse");
-    let spec = SandboxSpec::new(
-        tenant_id.clone(),
-        "proxy-egress-matrix",
-        SandboxBackendKind::Container,
-        SandboxFilesystemSpec::new(PathBuf::new()),
-        SandboxProcessSpec::new(Vec::<String>::new()),
-    )
-    .with_mount(SandboxMountSpec::tenant_volume(
-        RESULT_VOLUME,
-        "/nimbus-egress",
-    ))
-    .with_egress_policy(phase_one_policy(phase_one_upstream.addr.port()));
     let image = env::var("NIMBUS_CONTAINER_EGRESS_IMAGE")
         .unwrap_or_else(|_| "docker.io/library/busybox:latest".to_owned());
     let direct_target =
@@ -120,17 +100,21 @@ fn container_execute_mode_enforces_proxy_policy_and_live_reload() {
         phase_two_upstream.addr.port(),
         &direct_target,
     );
-
-    let handle = block_on(
-        backend.start_from_image(
-            SandboxImageLaunchSpec::new(spec, image).with_process_overrides(
-                SandboxImageProcessOverrides::default()
-                    .with_entrypoint(["/bin/sh", "-c"])
-                    .with_cmd([command]),
-            ),
-        ),
+    let spec = SandboxSpec::new(
+        tenant_id.clone(),
+        SandboxOwnerSpec::standalone_named("proxy-egress-matrix"),
+        SandboxBackendKind::Container,
+        SandboxRootSpec::oci_image_reference(image.clone()),
+        SandboxProcessSpec::new(Vec::<String>::new())
+            .with_entrypoint(["/bin/sh", "-c"])
+            .with_command([command]),
     )
-    .expect("container should start");
+    .with_mount(SandboxMountSpec::tenant_volume(
+        RESULT_VOLUME,
+        "/nimbus-egress",
+    ))
+    .with_egress_policy(phase_one_policy(phase_one_upstream.addr.port()));
+    let handle = block_on(backend.start(spec)).expect("container should start");
     let cleanup = CleanupGuard::new(backend.clone(), handle.id.clone(), tenant_id.clone());
     let volume = tenant_volume_path(&workdir, &tenant_id, RESULT_VOLUME);
 

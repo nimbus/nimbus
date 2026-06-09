@@ -345,15 +345,15 @@ impl TenantServiceAccessDecision {
                 actual_backend
             )));
         }
-        if spec.name != self.service_name {
+        if spec.service_name() != Some(self.service_name.as_str()) {
             return Err(Error::InvalidInput(format!(
-                "tenant service access decision {} authorized service {}, but service definition catalog returned launch spec name {}",
+                "tenant service access decision {} authorized service {}, but service definition catalog returned sandbox owner {:?}",
                 self.decision_id.as_str(),
                 self.service_name,
-                spec.name
+                spec.owner
             )));
         }
-        self.ensure_tenant_matches(&spec.tenant_id, "sandbox-backed service launch spec")
+        self.ensure_tenant_matches(&spec.tenant_id, "sandbox-backed service sandbox spec")
     }
 }
 

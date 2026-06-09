@@ -56,16 +56,12 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
     run_host_command(&buildah, &["rm", "m2-fixture"], true);
 
     let backend = KrunSandboxBackend::new(config);
-    let spec =
-        empty_image_spec("m2-user-signal").with_port_binding(http_binding(host_port, guest_port));
+    let mut spec = image_spec("m2-user-signal", "localhost/nimbus-m2-fixture:latest")
+        .with_port_binding(http_binding(host_port, guest_port));
+    spec.process = busybox_http_process(guest_port);
 
-    let handle = block_on(
-        backend.start_from_image(
-            SandboxImageLaunchSpec::new(spec, "localhost/nimbus-m2-fixture:latest")
-                .with_process_overrides(busybox_http_overrides(guest_port)),
-        ),
-    )
-    .expect("image-backed start with non-root user should succeed");
+    let handle = block_on(backend.start(spec))
+        .expect("image-backed start with non-root user should succeed");
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));

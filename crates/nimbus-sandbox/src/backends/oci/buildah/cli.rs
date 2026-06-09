@@ -218,10 +218,10 @@ impl BuildahCli {
         &self,
         session_name: &str,
         image_reference: &str,
-        overrides: &SandboxImageProcessOverrides,
+        process: &SandboxProcessSpec,
     ) -> Result<PreparedMountedImageLaunch> {
         let mount_session = self.pull(session_name, image_reference)?;
-        self.prepare_launch_for_mount_session(mount_session, overrides)
+        self.prepare_launch_for_mount_session(mount_session, process)
     }
 
     #[cfg(test)]
@@ -231,10 +231,10 @@ impl BuildahCli {
         session_name: &str,
         dockerfile_path: &Path,
         context_path: &Path,
-        overrides: &SandboxImageProcessOverrides,
+        process: &SandboxProcessSpec,
     ) -> Result<PreparedMountedImageLaunch> {
         let mount_session = self.build(image_name, session_name, dockerfile_path, context_path)?;
-        self.prepare_launch_for_mount_session(mount_session, overrides)
+        self.prepare_launch_for_mount_session(mount_session, process)
     }
 
     #[cfg(test)]
@@ -291,7 +291,7 @@ impl BuildahCli {
     fn prepare_launch_for_mount_session(
         &self,
         mount_session: MountedRootfsSession,
-        overrides: &SandboxImageProcessOverrides,
+        process: &SandboxProcessSpec,
     ) -> Result<PreparedMountedImageLaunch> {
         let rootfs = self.mount_rootfs_session(&mount_session.session_name)?;
         let image_config = self.inspect_rootfs_session(&mount_session.session_name)?;
@@ -303,17 +303,13 @@ impl BuildahCli {
         // mount disappears.
         let resolved_user = self.resolve_image_user(
             &mount_session.session_name,
-            overrides.user.as_deref().or(image_config.user.as_deref()),
+            process.user.as_deref().or(image_config.user.as_deref()),
             &rootfs,
         )?;
 
         let mut config_with_resolved_user = image_config;
         config_with_resolved_user.user = resolved_user;
-        let mut process_overrides = overrides.clone();
-        process_overrides.user = None;
-
-        let launch_defaults =
-            config_with_resolved_user.resolve_launch_defaults(rootfs, &process_overrides)?;
+        let launch_defaults = config_with_resolved_user.resolve_launch_defaults(rootfs, process)?;
         Ok(PreparedMountedImageLaunch {
             mount_session,
             launch_defaults,

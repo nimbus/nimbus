@@ -19,7 +19,7 @@ use super::fixture::host_bridge_fixture;
 use super::*;
 use nimbus_auth::normalize_principal_context;
 use nimbus_bridge::capabilities::RuntimeServiceCapabilityHost;
-use nimbus_services::{RuntimeServiceRegistry, ServiceInstanceRuntimeRegistry};
+use nimbus_services::{RuntimeServiceRegistry, ServiceInstanceBindingRegistry};
 
 struct StaticRuntimeServiceRegistry {
     service_name: String,
@@ -315,7 +315,7 @@ fn mutation_bridge(
             engine,
             registry,
             decision,
-            Arc::new(ServiceInstanceRuntimeRegistry::new(Arc::new(
+            Arc::new(ServiceInstanceBindingRegistry::new(Arc::new(
                 crate::EmptyServiceInstanceCatalog,
             ))),
         ),
@@ -575,7 +575,7 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
             engine.clone(),
             registry,
             decision,
-            Arc::new(ServiceInstanceRuntimeRegistry::new(Arc::new(
+            Arc::new(ServiceInstanceBindingRegistry::new(Arc::new(
                 crate::EmptyServiceInstanceCatalog,
             ))),
         ),

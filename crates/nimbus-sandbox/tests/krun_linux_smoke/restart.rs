@@ -16,14 +16,15 @@ fn krun_backend_smoke_boots_http_service_and_survives_backend_restart() {
     let backend = KrunSandboxBackend::new(config.clone());
     let guest_port_str = guest_port.to_string();
     let tenant_id = sandbox_tenant();
-    let spec = SandboxSpec::new(
-        tenant_id.clone(),
-        "http-smoke",
-        SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new(rootfs),
-        SandboxProcessSpec::new(["/bin/busybox", "httpd", "-f", "-p", &guest_port_str]),
-    )
-    .with_port_binding(http_binding(host_port, guest_port));
+    let mut spec = rootfs_spec("http-smoke", rootfs);
+    spec.process = SandboxProcessSpec::new([
+        "/bin/busybox".to_owned(),
+        "httpd".to_owned(),
+        "-f".to_owned(),
+        "-p".to_owned(),
+        guest_port_str,
+    ]);
+    let spec = spec.with_port_binding(http_binding(host_port, guest_port));
 
     let handle = block_on(backend.start(spec)).expect("krun backend should start the sandbox");
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
@@ -100,16 +101,16 @@ fn krun_backend_m3_restart_policy_restarts_failed_vm() {
          if [ \"$COUNT\" -eq 1 ]; then exit 42; fi; \
          exec /bin/busybox httpd -f -p {guest_port}"
     );
-    let tenant_id = sandbox_tenant();
-    let spec = SandboxSpec::new(
-        tenant_id.clone(),
-        "m3-restart-policy",
-        SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new(rootfs),
-        SandboxProcessSpec::new(["/bin/busybox", "sh", "-c", &restart_script]),
-    )
-    .with_restart_policy(SandboxRestartPolicy::OnFailure { max_restarts: 1 })
-    .with_port_binding(http_binding(host_port, guest_port));
+    let mut spec = rootfs_spec("m3-restart-policy", rootfs);
+    spec.process = SandboxProcessSpec::new([
+        "/bin/busybox".to_owned(),
+        "sh".to_owned(),
+        "-c".to_owned(),
+        restart_script,
+    ]);
+    let spec = spec
+        .with_restart_policy(SandboxRestartPolicy::OnFailure { max_restarts: 1 })
+        .with_port_binding(http_binding(host_port, guest_port));
 
     let handle = block_on(backend.start(spec)).expect("restart-policy sandbox should start");
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
@@ -175,16 +176,16 @@ fn krun_backend_m3_restart_backoff_delays_repeated_restarts() {
          if [ \"$COUNT\" -lt 3 ]; then exit 42; fi; \
          exec /bin/busybox httpd -f -p {guest_port}"
     );
-    let tenant_id = sandbox_tenant();
-    let spec = SandboxSpec::new(
-        tenant_id.clone(),
-        "m3-restart-backoff",
-        SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new(rootfs),
-        SandboxProcessSpec::new(["/bin/busybox", "sh", "-c", &restart_script]),
-    )
-    .with_restart_policy(SandboxRestartPolicy::OnFailure { max_restarts: 2 })
-    .with_port_binding(http_binding(host_port, guest_port));
+    let mut spec = rootfs_spec("m3-restart-backoff", rootfs);
+    spec.process = SandboxProcessSpec::new([
+        "/bin/busybox".to_owned(),
+        "sh".to_owned(),
+        "-c".to_owned(),
+        restart_script,
+    ]);
+    let spec = spec
+        .with_restart_policy(SandboxRestartPolicy::OnFailure { max_restarts: 2 })
+        .with_port_binding(http_binding(host_port, guest_port));
 
     let start_elapsed = Instant::now();
     let handle = block_on(backend.start(spec)).expect("restart-backoff sandbox should start");

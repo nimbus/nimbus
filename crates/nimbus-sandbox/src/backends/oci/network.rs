@@ -1041,14 +1041,17 @@ mod tests {
         deallocate_container_ips, load_container_ips, netavark_path_env, render_netavark_failure,
     };
     use crate::backend::SandboxBackendKind;
-    use crate::spec::{SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxSpec};
+    use crate::spec::{
+        SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec,
+        SandboxRootfsSpec, SandboxSpec,
+    };
 
     fn sample_spec() -> SandboxSpec {
         SandboxSpec::new(
             TenantId::new("svc-demo").expect("tenant should parse"),
-            "db",
+            SandboxOwnerSpec::service("db"),
             SandboxBackendKind::Container,
-            SandboxFilesystemSpec::new("/tmp/rootfs"),
+            SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("/tmp/rootfs")),
             SandboxProcessSpec::new(["/bin/sh", "-c", "sleep 60"]),
         )
     }

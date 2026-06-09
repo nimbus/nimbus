@@ -31,9 +31,9 @@ pub use endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 pub use error::{Result, SandboxError};
 pub use instance::{SandboxHandle, SandboxId, SandboxStatus};
 pub use spec::{
-    SandboxBuildLaunchSpec, SandboxFilesystemSpec, SandboxImageLaunchSpec,
-    SandboxImageProcessOverrides, SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec,
+    SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec, SandboxOciBuildSpec,
+    SandboxOciImageReferenceSpec, SandboxOciImageSource, SandboxOciImageSpec, SandboxOwnerSpec,
     SandboxPortBinding, SandboxProcessSpec, SandboxResourceCharge, SandboxResourceLimits,
-    SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxSpec, validate_sandbox_mounts,
-    validate_tenant_volume_name,
+    SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec,
+    SandboxSpec, validate_sandbox_mounts, validate_tenant_volume_name,
 };

@@ -56,7 +56,7 @@ use self::quadlet_export::run_compose_export_quadlet;
 use self::render::{
     ServiceSandboxSummaryView, render_service_inspect_view,
     render_service_lifecycle_action_summary, render_service_list_view,
-    render_service_process_snapshot_view,
+    render_service_sandbox_process_snapshot_view,
 };
 use crate::compose::discovery::{ResolvedComposeSelection, resolve_compose_selection};
 pub(crate) use project::ComposeProjectContext;
@@ -589,14 +589,14 @@ fn render_compose_top_for_platform(
     machine_api_client: Option<MachineApiClient>,
 ) -> Result<String, Error> {
     let selection = resolve_required_compose_selection(command.file.as_slice())?;
-    let snapshot = self::process::resolve_service_process_snapshot_for_selection(
+    let snapshot = self::process::resolve_service_sandbox_process_snapshot_for_selection(
         command,
         &selection,
         control_data_dir,
         host_platform,
         machine_api_client,
     )?;
-    render_service_process_snapshot_view(&snapshot, command.format, command.no_heading)
+    render_service_sandbox_process_snapshot_view(&snapshot, command.format, command.no_heading)
 }
 
 #[cfg(test)]

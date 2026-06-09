@@ -130,12 +130,14 @@ impl ServiceManager {
             ActivationClaim::Claimed => {
                 let Some(launch) = self
                     .service_definitions
-                    .service_implementation_for_tenant(tenant_id, service_name)
+                    .service_backend_for_tenant(tenant_id, service_name)
                 else {
                     self.release_activation(&key);
                     return Ok(None);
                 };
-                let start_result = self.start_launch_async(&key, decision, launch).await;
+                let start_result = self
+                    .start_sandbox_service_async(&key, decision, launch)
+                    .await;
                 self.release_activation(&key);
                 start_result?;
                 self.wait_for_ready_handle_async(&key, &cancellation).await

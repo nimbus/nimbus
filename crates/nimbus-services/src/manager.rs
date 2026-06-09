@@ -100,12 +100,12 @@ mod tests {
     use nimbus_runtime::HostCallCancellation;
     use nimbus_sandbox::{
         PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
-        SandboxBuildLaunchSpec, SandboxEgressPolicy, SandboxEgressRule, SandboxError,
-        SandboxFilesystemSpec, SandboxFuture, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
-        SandboxProcessSpec, SandboxSpec, SandboxStatus,
+        SandboxEgressPolicy, SandboxEgressRule, SandboxError, SandboxFuture, SandboxHandle,
+        SandboxId, SandboxOciBuildSpec, SandboxOciImageSource, SandboxOwnerSpec,
+        SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus,
     };
 
-    use crate::{RuntimeServiceRegistry, ServiceDefinitionCatalog, ServiceImplementation};
+    use crate::{RuntimeServiceRegistry, ServiceBackend, ServiceDefinitionCatalog};
     use nimbus_tenant::{
         TenantImageVerificationEvidence, TenantImageVerificationProvider, TenantIsolationContext,
         TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, WorkloadAttributes,
@@ -114,15 +114,15 @@ mod tests {
     use super::*;
 
     struct StubServiceDefinitionCatalog {
-        launches: BTreeMap<String, ServiceImplementation>,
+        launches: BTreeMap<String, ServiceBackend>,
     }
 
     impl ServiceDefinitionCatalog for StubServiceDefinitionCatalog {
-        fn service_implementation_for_tenant(
+        fn service_backend_for_tenant(
             &self,
             _tenant_id: &TenantId,
             service_name: &str,
-        ) -> Option<ServiceImplementation> {
+        ) -> Option<ServiceBackend> {
             self.launches.get(service_name).cloned()
         }
     }
@@ -229,32 +229,23 @@ mod tests {
         }
 
         fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
-            Box::pin(async move {
-                Err(SandboxError::InvalidSpec {
-                    message: format!("rootfs launch unsupported for {}", spec.name),
-                })
-            })
-        }
-
-        fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
-            self.image_starts.fetch_add(1, Ordering::SeqCst);
+            match &spec.root {
+                SandboxRootSpec::Rootfs(_) => {
+                    let message = format!("rootfs launch unsupported for {}", spec.display_name());
+                    return Box::pin(async move { Err(SandboxError::InvalidSpec { message }) });
+                }
+                SandboxRootSpec::OciImage(image) => match &image.source {
+                    SandboxOciImageSource::Reference(_) => {
+                        self.image_starts.fetch_add(1, Ordering::SeqCst);
+                    }
+                    SandboxOciImageSource::Build(_) => {
+                        self.build_starts.fetch_add(1, Ordering::SeqCst);
+                    }
+                },
+            }
             let handle = self.sandbox_handle(
-                &launch.spec.tenant_id,
-                &launch.spec.name,
-                SandboxStatus::Starting,
-            );
-            self.handles
-                .lock()
-                .expect("backend lock should not be poisoned")
-                .insert(handle.id.as_str().to_owned(), handle.clone());
-            Box::pin(async move { Ok(handle) })
-        }
-
-        fn start_from_build(&self, launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
-            self.build_starts.fetch_add(1, Ordering::SeqCst);
-            let handle = self.sandbox_handle(
-                &launch.spec.tenant_id,
-                &launch.spec.name,
+                &spec.tenant_id,
+                spec.display_name(),
                 SandboxStatus::Starting,
             );
             self.handles
@@ -309,24 +300,68 @@ mod tests {
     }
 
     fn sparse_image_spec(name: &str) -> SandboxSpec {
+        sparse_image_spec_with_reference(name, "postgres:16")
+    }
+
+    fn sparse_image_spec_with_reference(
+        name: &str,
+        image_reference: impl Into<String>,
+    ) -> SandboxSpec {
         SandboxSpec::new(
             TenantId::new("tenant").expect("tenant id should be valid"),
-            name,
+            SandboxOwnerSpec::service(name),
             SandboxBackendKind::Krun,
-            SandboxFilesystemSpec::new(""),
+            SandboxRootSpec::oci_image_reference(image_reference),
             SandboxProcessSpec::new(Vec::<String>::new()),
         )
     }
 
+    fn sparse_build_spec(
+        name: &str,
+        image_name: impl Into<String>,
+        dockerfile_path: impl Into<std::path::PathBuf>,
+        context_path: impl Into<std::path::PathBuf>,
+    ) -> SandboxSpec {
+        SandboxSpec::new(
+            TenantId::new("tenant").expect("tenant id should be valid"),
+            SandboxOwnerSpec::service(name),
+            SandboxBackendKind::Krun,
+            SandboxRootSpec::oci_image(SandboxOciImageSource::Build(SandboxOciBuildSpec::new(
+                image_name,
+                dockerfile_path,
+                context_path,
+            ))),
+            SandboxProcessSpec::new(Vec::<String>::new()),
+        )
+    }
+
+    fn image_service_backend(name: &str, image_reference: impl Into<String>) -> ServiceBackend {
+        ServiceBackend::sandbox(sparse_image_spec_with_reference(name, image_reference))
+    }
+
+    fn build_service_backend(
+        name: &str,
+        image_name: impl Into<String>,
+        dockerfile_path: impl Into<std::path::PathBuf>,
+        context_path: impl Into<std::path::PathBuf>,
+    ) -> ServiceBackend {
+        ServiceBackend::sandbox(sparse_build_spec(
+            name,
+            image_name,
+            dockerfile_path,
+            context_path,
+        ))
+    }
+
     #[tokio::test]
-    async fn start_service_for_decision_rejects_built_in_implementation_before_launch() {
+    async fn start_service_for_decision_rejects_built_in_backend_before_launch() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(1));
         let manager = ServiceManager::new(
             Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "browser".to_owned(),
-                    ServiceImplementation::built_in("browser"),
+                    ServiceBackend::built_in("browser"),
                 )]),
             }),
             backend.clone(),
@@ -339,10 +374,10 @@ mod tests {
         let error = manager
             .start_service_for_decision_async(&decision, "browser", HostCallCancellation::default())
             .await
-            .expect_err("sandbox manager must reject built-in service implementations");
+            .expect_err("sandbox manager must reject built-in service backends");
 
         assert!(
-            error.to_string().contains("built-in implementation"),
+            error.to_string().contains("built-in backend"),
             "error should name unsupported backing: {error}"
         );
         assert_eq!(
@@ -365,10 +400,7 @@ mod tests {
             Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "cache".to_owned(),
-                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
-                        sparse_image_spec("cache"),
-                        "redis:7",
-                    )),
+                    image_service_backend("cache", "redis:7"),
                 )]),
             }),
             backend.clone(),
@@ -414,10 +446,7 @@ mod tests {
             Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
-                        sparse_image_spec("db").with_egress_policy(egress),
-                        "postgres:16",
-                    )),
+                    ServiceBackend::sandbox(sparse_image_spec("db").with_egress_policy(egress)),
                 )]),
             }),
             backend.clone(),
@@ -459,10 +488,9 @@ mod tests {
             Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
+                    ServiceBackend::sandbox(
                         sparse_image_spec("db").with_egress_policy(egress.clone()),
-                        "postgres:16",
-                    )),
+                    ),
                 )]),
             }),
             backend.clone(),
@@ -499,13 +527,7 @@ mod tests {
         let backend = Arc::new(StubSandboxBackend::new(1));
         let manager = ServiceManager::new(
             Arc::new(StubServiceDefinitionCatalog {
-                launches: BTreeMap::from([(
-                    "api".to_owned(),
-                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
-                        sparse_image_spec("api"),
-                        image,
-                    )),
-                )]),
+                launches: BTreeMap::from([("api".to_owned(), image_service_backend("api", image))]),
             }),
             backend.clone(),
         );
@@ -549,13 +571,7 @@ mod tests {
         ));
         let manager = ServiceManager::new(
             Arc::new(StubServiceDefinitionCatalog {
-                launches: BTreeMap::from([(
-                    "api".to_owned(),
-                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
-                        sparse_image_spec("api"),
-                        image,
-                    )),
-                )]),
+                launches: BTreeMap::from([("api".to_owned(), image_service_backend("api", image))]),
             }),
             backend.clone(),
         )
@@ -601,10 +617,7 @@ mod tests {
             Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
-                        sparse_image_spec("db"),
-                        "postgres:16",
-                    )),
+                    image_service_backend("db", "postgres:16"),
                 )]),
             }),
             backend.clone(),
@@ -666,10 +679,7 @@ mod tests {
             Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
-                        sparse_image_spec("db"),
-                        "postgres:16",
-                    )),
+                    image_service_backend("db", "postgres:16"),
                 )]),
             }),
             backend.clone(),
@@ -711,6 +721,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolve_service_binding_refreshes_cached_handle_before_projecting_endpoint() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
+                launches: BTreeMap::from([(
+                    "db".to_owned(),
+                    image_service_backend("db", "postgres:16"),
+                )]),
+            }),
+            backend.clone(),
+        )
+        .with_activation_poll_interval(Duration::from_millis(1))
+        .with_activation_timeout(Duration::from_secs(1));
+
+        manager
+            .ensure_service_binding_async(&tenant_id, "db", HostCallCancellation::default())
+            .await
+            .expect("service activation should succeed")
+            .expect("db binding should exist");
+        assert!(manager.snapshot_for_tenant(&tenant_id).contains_key("db"));
+
+        let sandbox_id = backend
+            .handles
+            .lock()
+            .expect("backend lock should not be poisoned")
+            .keys()
+            .next()
+            .expect("backend should have a started sandbox")
+            .clone();
+        backend
+            .handles
+            .lock()
+            .expect("backend lock should not be poisoned")
+            .remove(&sandbox_id);
+        let inspect_calls_before = backend.inspect_calls.load(Ordering::SeqCst);
+
+        let binding = manager
+            .resolve_service_binding(&tenant_id, "db")
+            .expect("service binding refresh should not fail");
+
+        assert!(
+            binding.is_none(),
+            "runtime binding resolution must not hand out endpoints for vanished sandboxes"
+        );
+        assert_eq!(
+            backend.inspect_calls.load(Ordering::SeqCst),
+            inspect_calls_before + 1,
+            "resolve_service_binding should verify cached handles with the sandbox backend"
+        );
+        assert!(
+            manager.snapshot_for_tenant(&tenant_id).is_empty(),
+            "stale handle should be removed from future snapshots"
+        );
+    }
+
+    #[tokio::test]
     async fn stop_service_for_context_async_stops_active_handle_and_clears_snapshot() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(1));
@@ -718,10 +785,7 @@ mod tests {
             Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
-                        sparse_image_spec("db"),
-                        "postgres:16",
-                    )),
+                    image_service_backend("db", "postgres:16"),
                 )]),
             }),
             backend.clone(),
@@ -759,10 +823,7 @@ mod tests {
             Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
-                        sparse_image_spec("db"),
-                        "postgres:16",
-                    )),
+                    image_service_backend("db", "postgres:16"),
                 )]),
             }),
             backend.clone(),
@@ -808,10 +869,7 @@ mod tests {
             Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
-                        sparse_image_spec("db"),
-                        "postgres:16",
-                    )),
+                    image_service_backend("db", "postgres:16"),
                 )]),
             }),
             backend.clone(),
@@ -849,10 +907,7 @@ mod tests {
             Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
-                        sparse_image_spec("db"),
-                        "postgres:16",
-                    )),
+                    image_service_backend("db", "postgres:16"),
                 )]),
             }),
             backend.clone(),
@@ -905,10 +960,7 @@ mod tests {
             Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
-                        sparse_image_spec("db"),
-                        "postgres:16",
-                    )),
+                    image_service_backend("db", "postgres:16"),
                 )]),
             }),
             backend,
@@ -937,12 +989,12 @@ mod tests {
             Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "api".to_owned(),
-                    ServiceImplementation::sandbox_build(SandboxBuildLaunchSpec::new(
-                        sparse_image_spec("api"),
+                    build_service_backend(
+                        "api",
                         "nimbus-api",
                         "/workspace/Dockerfile",
                         "/workspace",
-                    )),
+                    ),
                 )]),
             }),
             backend.clone(),
@@ -969,10 +1021,7 @@ mod tests {
             Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
-                        sparse_image_spec("db"),
-                        "postgres:16",
-                    )),
+                    image_service_backend("db", "postgres:16"),
                 )]),
             }),
             backend.clone(),
@@ -1000,10 +1049,7 @@ mod tests {
             Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
-                        sparse_image_spec("db"),
-                        "postgres:16",
-                    )),
+                    image_service_backend("db", "postgres:16"),
                 )]),
             }),
             backend.clone(),
@@ -1042,10 +1088,7 @@ mod tests {
             Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
-                        sparse_image_spec("db"),
-                        "postgres:16",
-                    )),
+                    image_service_backend("db", "postgres:16"),
                 )]),
             }),
             backend.clone(),

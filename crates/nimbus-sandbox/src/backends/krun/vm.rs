@@ -30,8 +30,8 @@ use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
 use crate::process::pid_is_alive;
 use crate::spec::{
-    SandboxBuildLaunchSpec, SandboxImageLaunchSpec, SandboxImageProcessOverrides,
-    SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxSpec,
+    SandboxOciImageSource, SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxRootSpec,
+    SandboxRootfsSpec, SandboxSpec, resolve_process_without_image_defaults,
 };
 
 mod launch;
@@ -169,26 +169,6 @@ impl KrunSandboxBackend {
         self.finish_start(launch_plan)
     }
 
-    fn start_from_image_sync(&self, launch: SandboxImageLaunchSpec) -> Result<SandboxHandle> {
-        let launch_plan = self.plan_start_from_image(
-            &launch.spec,
-            &launch.image_reference,
-            &launch.process_overrides,
-        )?;
-        self.finish_start(launch_plan)
-    }
-
-    fn start_from_build_sync(&self, launch: SandboxBuildLaunchSpec) -> Result<SandboxHandle> {
-        let launch_plan = self.plan_start_from_build(
-            &launch.spec,
-            &launch.image_name,
-            &launch.dockerfile_path,
-            &launch.context_path,
-            &launch.process_overrides,
-        )?;
-        self.finish_start(launch_plan)
-    }
-
     fn finish_start(&self, launch_plan: KrunLaunchPlan) -> Result<SandboxHandle> {
         let mut manifest = launch_plan.manifest;
         self.materialize_auto_port_bindings(&mut manifest)?;
@@ -215,16 +195,6 @@ impl KrunSandboxBackend {
             self.config.resource_quota_policy.clone(),
         )
     }
-
-    pub fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        let backend = self.clone();
-        Box::pin(async move { backend.start_from_image_sync(launch) })
-    }
-
-    pub fn start_from_build(&self, launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        let backend = self.clone();
-        Box::pin(async move { backend.start_from_build_sync(launch) })
-    }
 }
 
 impl SandboxBackend for KrunSandboxBackend {
@@ -235,16 +205,6 @@ impl SandboxBackend for KrunSandboxBackend {
     fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
         let backend = self.clone();
         Box::pin(async move { backend.start_sync(spec) })
-    }
-
-    fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        let backend = self.clone();
-        Box::pin(async move { backend.start_from_image_sync(launch) })
-    }
-
-    fn start_from_build(&self, launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        let backend = self.clone();
-        Box::pin(async move { backend.start_from_build_sync(launch) })
     }
 
     fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
