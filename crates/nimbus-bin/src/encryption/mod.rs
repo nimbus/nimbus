@@ -12,7 +12,7 @@ mod rotate;
 mod status;
 
 use clap::Subcommand;
-use nimbus::ServicePersistenceConfig;
+use nimbus::EnginePersistenceConfig;
 
 pub(crate) use migrate::{ExportCommand, MigrateCommand};
 pub(crate) use rotate::{RotateDekCommand, RotateKekCommand};
@@ -40,7 +40,7 @@ pub(crate) enum EncryptionCommand {
 /// Run an encryption admin command.
 pub(crate) async fn run_encryption_command(
     command: EncryptionCommand,
-    config: &ServicePersistenceConfig,
+    config: &EnginePersistenceConfig,
 ) -> nimbus::Result<()> {
     match command {
         EncryptionCommand::Status(cmd) => status::run_status_command(cmd, config).await,

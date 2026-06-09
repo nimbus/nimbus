@@ -26,7 +26,7 @@ pub(super) async fn handle_runtime_named_subscription(
     let query_key = named_subscription_query_key(&name, &args, page_size, cursor.as_deref());
 
     let setup = {
-        let service = ctx.state.service.clone();
+        let service = ctx.state.engine.clone();
         let registry = ctx.convex_registry.clone();
         let tenant_context_for_worker = ctx.tenant_context.clone();
         let name_for_worker = name.clone();
@@ -60,7 +60,7 @@ pub(super) async fn handle_runtime_named_subscription(
     };
 
     let handle = match subscribe_runtime_base_queries(
-        ctx.state.service.clone(),
+        ctx.state.engine.clone(),
         ctx.tenant_id.clone(),
         setup.base_queries,
         normalize_principal_context(current_auth.as_ref()),

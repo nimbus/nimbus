@@ -41,6 +41,7 @@ extract_job() {
 assert_not_contains() {
   local path="$1"
   local needle="$2"
+  [[ -f "${path}" ]] || die "${path} is required"
   if grep -Fi -- "${needle}" "${path}" >/dev/null; then
     die "${path} contains forbidden text: ${needle}"
   fi
@@ -48,6 +49,7 @@ assert_not_contains() {
 
 assert_no_stale_nimbus_serve_command() {
   local path="$1"
+  [[ -f "${path}" ]] || die "${path} is required"
   if grep -En -- 'nimbus(\.exe)?[[:space:]]+serve([^[:alnum:]_-]|$)' "${path}" >/dev/null; then
     die "${path} contains stale nimbus serve command guidance"
   fi
@@ -212,7 +214,7 @@ for current_guidance in \
   "${repo_root}/docs/plans/windows-machine-support-plan.md" \
   "${repo_root}/docs/plans/research/bundle-distribution-from-object-storage.md" \
   "${repo_root}/docs/plans/research/runtime-file-storage-surface.md" \
-  "${repo_root}/docs/plans/research/neovex-agent-prompt.md"; do
+  "${repo_root}/docs/plans/research/nimbus-agent-prompt.md"; do
   assert_no_stale_nimbus_serve_command "${current_guidance}"
   assert_not_contains "${current_guidance}" "--privileged"
   assert_not_contains "${current_guidance}" "ghcr.io/nimbus/nimbus:latest"

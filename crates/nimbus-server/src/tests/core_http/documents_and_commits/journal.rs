@@ -3,8 +3,8 @@ use nimbus_testing::BlockingFaultInjector;
 
 #[tokio::test]
 async fn journal_route_returns_ordered_cursor_pages() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -81,10 +81,10 @@ async fn journal_bootstrap_route_returns_snapshot_and_durable_cut() {
         Arc::new(ManualClock::new(nimbus_core::Timestamp(40_000))),
         faults.clone(),
     );
-    let fixture = ServiceFixture::new_with_harness(harness.clone(), |path, harness| {
-        Service::new_with_simulation(path, harness.clock(), harness.fault_injector())
+    let fixture = EngineFixture::new_with_harness(harness.clone(), |path, harness| {
+        Engine::new_with_simulation(path, harness.clock(), harness.fault_injector())
     });
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

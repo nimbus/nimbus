@@ -3,7 +3,7 @@ use nimbus_core::{CommitEntry, Document, TenantId, commit_intersects_dependency_
 use super::super::RuntimeReadSet;
 
 pub fn commit_intersects_runtime_read_set(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     tenant_id: &TenantId,
     commit: &CommitEntry,
     read_set: &RuntimeReadSet,

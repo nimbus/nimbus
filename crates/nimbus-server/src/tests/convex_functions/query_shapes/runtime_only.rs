@@ -59,7 +59,7 @@ globalThis.__nimbusInvoke = async function(request) {
       status: "ok",
       value: await handler(
         globalThis.__nimbusCreateContext({
-          sessionId: `${request.kind}:${request.function_name}`,
+          hostCallSessionId: `${request.kind}:${request.function_name}`,
         }),
         request.args ?? {},
         request,
@@ -77,10 +77,10 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let registry_for_router = registry.clone();
     let server =
-        ServerFixture::start(router_for_convex(fixture.service(), registry_for_router)).await;
+        ServerFixture::start(router_for_convex(fixture.engine(), registry_for_router)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -183,7 +183,7 @@ globalThis.__nimbusInvoke = async function(request) {
       status: "ok",
       value: await (async () => {
         const ctx = globalThis.__nimbusCreateContext({
-          sessionId: `${request.kind}:${request.function_name}`,
+          hostCallSessionId: `${request.kind}:${request.function_name}`,
         });
         return await ctx.db.query("messages").take(20);
       })(),
@@ -200,8 +200,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     let server = ServerFixture::start(router_for_convex(service.clone(), registry)).await;
     let api = HttpApiFixture::new(&server);
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
@@ -300,7 +300,7 @@ globalThis.__nimbusInvoke = async function(request) {
       status: "ok",
       value: await handler(
         globalThis.__nimbusCreateContext({
-          sessionId: `${request.kind}:${request.function_name}`,
+          hostCallSessionId: `${request.kind}:${request.function_name}`,
         }),
         request.args ?? {},
       ),
@@ -317,8 +317,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     let server = ServerFixture::start(router_for_convex(service.clone(), registry)).await;
     let api = HttpApiFixture::new(&server);
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
@@ -449,7 +449,7 @@ globalThis.__nimbusInvoke = async function(request) {
       status: "ok",
       value: await handler(
         globalThis.__nimbusCreateContext({
-          sessionId: `${request.kind}:${request.function_name}`,
+          hostCallSessionId: `${request.kind}:${request.function_name}`,
         }),
         request.args ?? {},
         request,
@@ -467,8 +467,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

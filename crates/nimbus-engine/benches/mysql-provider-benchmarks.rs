@@ -14,9 +14,10 @@ use nimbus_core::{
     Query, SequenceNumber, TableName, TableSchema, TenantId,
 };
 use nimbus_engine::{
-    ControlPlaneConfig, EmbeddedProviderKind, LocalEncryptionConfig, PersistenceDialect,
-    PersistenceTopology, PoolConfig, ProviderCredentials, Service, ServicePersistenceConfig,
-    SubscriptionRegistration, SubscriptionUpdate, TenantProviderConfig, TenantRoutingConfig,
+    ControlPlaneConfig, EmbeddedProviderKind, Engine, EnginePersistenceConfig,
+    LocalEncryptionConfig, PersistenceDialect, PersistenceTopology, PoolConfig,
+    ProviderCredentials, SubscriptionRegistration, SubscriptionUpdate, TenantProviderConfig,
+    TenantRoutingConfig,
 };
 use nimbus_storage::{MySqlProvider, MySqlProviderConfig};
 use serde_json::json;
@@ -234,7 +235,7 @@ impl WorkloadKind {
     fn notes(self) -> &'static str {
         match self {
             Self::CrudThroughput => {
-                "async insert + update + delete through the canonical service mutation path"
+                "async insert + update + delete through the canonical engine mutation path"
             }
             Self::PointReadLatency => "batched async `get_document_async` over seeded documents",
             Self::IndexedQueryLatency => {
@@ -259,7 +260,7 @@ impl WorkloadKind {
                 "concurrent per-tenant mix of point reads, indexed queries, inserts, and updates"
             }
             Self::TenantLifecycleLatency => {
-                "create a tenant, verify it opens from a peer service when the topology allows it, then delete it cleanly"
+                "create a tenant, verify it opens from a peer engine when the topology allows it, then delete it cleanly"
             }
         }
     }
@@ -283,12 +284,12 @@ impl BenchmarkLane {
 
     fn notes(self) -> &'static str {
         match self {
-            Self::SteadyState => "reuses warmed services and alternates backend order every round",
+            Self::SteadyState => "reuses warmed engines and alternates backend order every round",
             Self::ColdStart => {
-                "times a fresh service/runtime open plus the first representative execution"
+                "times a fresh engine/runtime open plus the first representative execution"
             }
             Self::RttSensitive => {
-                "compares MySQL loopback against the same service path through a local injected-latency TCP proxy"
+                "compares MySQL loopback against the same engine path through a local injected-latency TCP proxy"
             }
         }
     }
@@ -466,7 +467,7 @@ struct PoolPressureObservation {
 #[derive(Clone)]
 struct TenantFixture {
     resource: LiveResource,
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     tenant_id: TenantId,
 }
 
@@ -491,16 +492,16 @@ struct SubscriptionFixture {
 #[derive(Clone)]
 struct MixedLoadFixture {
     resource: LiveResource,
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     tenant_states: Vec<TenantState>,
 }
 
 #[derive(Clone)]
 struct TenantLifecycleFixture {
     creator_resource: LiveResource,
-    creator_service: Arc<Service>,
+    creator_engine: Arc<Engine>,
     opener_resource: LiveResource,
-    opener_service: Arc<Service>,
+    opener_engine: Arc<Engine>,
 }
 
 #[derive(Clone)]

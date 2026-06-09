@@ -15,7 +15,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use nimbus_dynamodb::{AccessKeyRegistry, DispatchContext};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
@@ -35,15 +35,15 @@ const MAX_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// registry. `Arc`-wrapped so axum can clone it cheaply per request.
 #[derive(Clone)]
 struct DynamoDbState {
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     access_keys: Arc<AccessKeyRegistry>,
 }
 
-/// Build the single-route DynamoDB axum app over the shared `Service` and the
+/// Build the single-route DynamoDB axum app over the shared `Engine` and the
 /// access-key registry that authenticates each request.
-pub fn router(service: Arc<Service>, access_keys: AccessKeyRegistry) -> Router {
+pub fn router(engine: Arc<Engine>, access_keys: AccessKeyRegistry) -> Router {
     let state = DynamoDbState {
-        service,
+        engine,
         access_keys: Arc::new(access_keys),
     };
     Router::new()
@@ -81,14 +81,14 @@ pub(crate) fn guard_lookup_is_loopback_only(
 /// Serve the DynamoDB HTTP listener until the spawned task is aborted.
 pub async fn run_listener(
     listener: TcpListener,
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     access_keys: AccessKeyRegistry,
 ) {
     info!(
         "DynamoDB listener started on {:?}",
         listener.local_addr().ok()
     );
-    if let Err(error) = axum::serve(listener, router(service, access_keys)).await {
+    if let Err(error) = axum::serve(listener, router(engine, access_keys)).await {
         error!("DynamoDB listener error: {error}");
     }
 }
@@ -96,7 +96,7 @@ pub async fn run_listener(
 /// `POST /` — authenticate by access key and dispatch by `X-Amz-Target`.
 async fn handle(State(state): State<DynamoDbState>, headers: HeaderMap, body: Bytes) -> Response {
     let ctx = DispatchContext {
-        service: &state.service,
+        engine: &state.engine,
         access_keys: &state.access_keys,
     };
     let (status, json) = nimbus_dynamodb::dispatch(&ctx, &headers, &body);
@@ -121,12 +121,12 @@ mod tests {
 
     fn test_router() -> (Router, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir should create");
-        let service = Arc::new(Service::new(temp.path()).expect("service should create"));
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
         // Synthetic `Signature=deadbeef` headers → drive the lookup escape hatch.
         let registry = AccessKeyRegistry::new()
             .bind(ACCESS_KEY, TenantId::new("test").expect("tenant"))
             .with_mode(AuthMode::LookupOnly);
-        (router(service, registry), temp)
+        (router(engine, registry), temp)
     }
 
     fn signed_authorization() -> String {

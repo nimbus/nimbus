@@ -373,7 +373,7 @@ pub(super) fn write_runtime_id_bundle() -> (tempfile::TempDir, std::path::PathBu
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   return await ctx.db.get("messages", "doc-1");
 };
@@ -411,7 +411,7 @@ pub(super) fn write_function_named_get_bundle() -> (tempfile::TempDir, std::path
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   return await ctx.db.get("messages", request.function_name);
 };

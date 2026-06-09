@@ -2,8 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn delete_tenant_sends_subscription_error() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     let create_response = api.create_tenant("demo").await;

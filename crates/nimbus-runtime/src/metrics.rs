@@ -384,6 +384,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+    use crate::runtime_capabilities::RuntimePermissionProfile;
 
     #[test]
     fn tenant_metrics_snapshot_tracks_distributions_and_cancellations() {
@@ -409,6 +410,7 @@ mod tests {
             bypasses_concurrency_limit: false,
             tenant_label: Some("demo".to_string()),
             server_request_id: Some("req-7".to_string()),
+            permission_profile: RuntimePermissionProfile::Query,
         });
         metrics.decrement_active_runtime_instances_for_tenant(Some("demo"));
         metrics.record_invocation_completed_for_tenant(Some("demo"));

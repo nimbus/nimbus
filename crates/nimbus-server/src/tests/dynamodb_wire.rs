@@ -12,7 +12,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use nimbus_core::TenantId;
 use nimbus_dynamodb::{AccessKeyRegistry, AuthMode};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_testing::DeterministicTestCase;
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -59,11 +59,11 @@ pub(crate) const DYNAMODB_STREAMS_EVENT_DELIVERY_CASE: DeterministicTestCase =
 
 fn harness_router() -> (Router, tempfile::TempDir) {
     let temp = tempfile::tempdir().expect("tempdir");
-    let service = Arc::new(Service::new(temp.path()).expect("service"));
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
     let registry = AccessKeyRegistry::new()
         .bind(ACCESS_KEY, TenantId::new("acme").expect("tenant"))
         .with_mode(AuthMode::LookupOnly);
-    (router(service, registry), temp)
+    (router(engine, registry), temp)
 }
 
 fn signed_authorization() -> String {
@@ -74,7 +74,7 @@ fn signed_authorization() -> String {
 }
 
 /// Issue one `POST /` against the shared router (state persists across calls
-/// because the cloned router shares the same `Arc<Service>`).
+/// because the cloned router shares the same `Arc<Engine>`).
 async fn call(router: &Router, operation: &str, body: &Value) -> (StatusCode, Value) {
     let request = Request::builder()
         .method("POST")

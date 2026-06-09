@@ -52,13 +52,22 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
                    │      │                         │                          │       │
                    │      │         ┌───────────────┼─────────────────┐        │       │
                    │      │         ▼               ▼                 ▼        │       │
-                   │      │ ┌─ MicroVM #1 ─┐ ┌─ MicroVM #2 ─┐ ┌─ MicroVM #3 ─┐ │       │ 
+                   │      │ ┌─ Sandbox #1 ─┐ ┌─ Sandbox #2 ─┐ ┌─ Sandbox #3 ─┐ │       │
                    │      │ │    Agent     │ │   Service    │ │    Agent     │ │       │
                    │      │ │  OCI Image   │ │  OCI Image   │ │  OCI Image   │ │       │
                    │      │ └──────────────┘ └──────────────┘ └──────────────┘ │       │
                    │      └────────────────────────────────────────────────────┘       │
                    └───────────────────────────────────────────────────────────────────┘
 ```
+
+Nimbus uses four resource nouns consistently. A **service** is a named app or
+agent dependency such as `db`, `search`, `browser`, or `api-lb`; it may be
+sandbox-backed, built in, or external. A **sandbox** is an isolated execution
+resource addressed by id/handle, not by name. A future **session** is a scoped
+interaction with either a named service or a sandbox id. A runtime **isolate**
+executes app code, but is not an SDK sandbox resource. If Nimbus later exposes
+isolate execution as a user-created sandbox, the reserved profile spelling is
+`profile: "isolate"`.
 
 ## Quick start
 

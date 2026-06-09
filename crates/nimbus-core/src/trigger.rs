@@ -180,22 +180,22 @@ impl TriggerCommitMetadata {
 /// end user whose write caused the commit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TriggerExecutionPrincipal {
-    Service { principal: PrincipalContext },
+    ServiceAccount { principal: PrincipalContext },
 }
 
 impl TriggerExecutionPrincipal {
-    pub fn service(principal: PrincipalContext) -> Self {
-        Self::Service { principal }
+    pub fn service_account(principal: PrincipalContext) -> Self {
+        Self::ServiceAccount { principal }
     }
 
     pub fn principal(&self) -> &PrincipalContext {
         match self {
-            Self::Service { principal } => principal,
+            Self::ServiceAccount { principal } => principal,
         }
     }
 
-    pub fn is_service(&self) -> bool {
-        matches!(self, Self::Service { .. })
+    pub fn is_service_account(&self) -> bool {
+        matches!(self, Self::ServiceAccount { .. })
     }
 }
 
@@ -604,10 +604,10 @@ mod tests {
             ),
             DocumentEventData::new(None, None, None),
             TriggerCommitMetadata::new(SequenceNumber(7), Timestamp(99)),
-            TriggerExecutionPrincipal::service(PrincipalContext::anonymous()),
+            TriggerExecutionPrincipal::service_account(PrincipalContext::anonymous()),
         );
 
-        assert!(event.execution.is_service());
+        assert!(event.execution.is_service_account());
         assert_eq!(event.execution.principal(), &PrincipalContext::anonymous());
         assert_eq!(event.firestore.document_path, path);
         assert_eq!(
@@ -646,7 +646,7 @@ mod tests {
             FirestoreTriggerMetadata::new("demo", "(default)", path, BTreeMap::new()),
             DocumentEventData::new(None, None, None),
             TriggerCommitMetadata::new(SequenceNumber(12), Timestamp(111)),
-            TriggerExecutionPrincipal::service(PrincipalContext::anonymous()),
+            TriggerExecutionPrincipal::service_account(PrincipalContext::anonymous()),
         );
         let record = TriggerInvocationRecord::pending(
             TriggerInvocationKey::new("deploy:users-writer", "evt-3")
@@ -715,7 +715,7 @@ mod tests {
             ),
             DocumentEventData::new(None, None, None),
             TriggerCommitMetadata::new(SequenceNumber(21), Timestamp(200)),
-            TriggerExecutionPrincipal::service(PrincipalContext::anonymous()),
+            TriggerExecutionPrincipal::service_account(PrincipalContext::anonymous()),
         );
         let mut record = TriggerInvocationRecord::pending(
             TriggerInvocationKey::new("deploy:users-updated", "evt-4")
@@ -789,7 +789,7 @@ mod tests {
             ),
             DocumentEventData::new(None, None, None),
             TriggerCommitMetadata::new(SequenceNumber(31), Timestamp(300)),
-            TriggerExecutionPrincipal::service(PrincipalContext::anonymous()),
+            TriggerExecutionPrincipal::service_account(PrincipalContext::anonymous()),
         );
         let mut record = TriggerInvocationRecord::pending(
             TriggerInvocationKey::new("deploy:users-deleted", "evt-5")
@@ -850,7 +850,7 @@ mod tests {
             FirestoreTriggerMetadata::new("demo", "(default)", path.clone(), BTreeMap::new()),
             DocumentEventData::new(Some(DocumentEventDocument::new(path, document)), None, None),
             TriggerCommitMetadata::new(sequence, timestamp),
-            TriggerExecutionPrincipal::service(PrincipalContext::anonymous()),
+            TriggerExecutionPrincipal::service_account(PrincipalContext::anonymous()),
         )
     }
 }

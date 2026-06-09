@@ -1,17 +1,18 @@
-//! Service registry and sandbox service manager primitives.
+//! Service registry and service manager primitives.
 
 mod catalog;
 mod manager;
 mod registry;
 
 pub use catalog::{
-    EmptySandboxCatalog, EmptySandboxServiceCatalog, SandboxCatalog, SandboxServiceCatalog,
-    SandboxServiceLaunch,
+    BuiltInServiceImplementation, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
+    ExternalServiceImplementation, SandboxBackedServiceImplementation, ServiceDefinitionCatalog,
+    ServiceImplementation, ServiceInstanceCatalog,
 };
 pub use manager::{
-    NoopServiceEvidenceWriter, SandboxServiceManager, ServiceEvidenceFuture, ServiceEvidenceWriter,
+    NoopServiceEvidenceWriter, ServiceEvidenceFuture, ServiceEvidenceWriter, ServiceManager,
 };
 pub use registry::{
-    RuntimeServiceBindingFuture, RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry,
+    RuntimeServiceBindingFuture, RuntimeServiceRegistry, ServiceInstanceRuntimeRegistry,
     service_binding_from_handle,
 };

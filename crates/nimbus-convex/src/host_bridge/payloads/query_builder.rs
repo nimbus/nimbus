@@ -5,7 +5,7 @@ use super::*;
 pub struct ConvexRuntimeQueryStartPayload {
     pub table: TableName,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -16,7 +16,7 @@ pub struct ConvexRuntimeQueryWithIndexPayload {
     #[serde(default)]
     pub filters: Vec<Filter>,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -26,7 +26,7 @@ pub struct ConvexRuntimeQueryFilterPayload {
     #[serde(default)]
     pub filters: Vec<Filter>,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -35,7 +35,7 @@ pub struct ConvexRuntimeQueryOrderPayload {
     pub builder_id: String,
     pub direction: OrderDirection,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -43,7 +43,7 @@ pub struct ConvexRuntimeQueryOrderPayload {
 pub struct ConvexRuntimeQueryTerminalPayload {
     pub builder_id: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -52,7 +52,7 @@ pub struct ConvexRuntimeQueryTakePayload {
     pub builder_id: String,
     pub limit: usize,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -63,5 +63,5 @@ pub struct ConvexRuntimeQueryPaginatePayload {
     #[serde(default)]
     pub cursor: Option<String>,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }

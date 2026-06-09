@@ -20,7 +20,7 @@ use extenddb_core::types::{
     ScanOutput, Select,
 };
 use nimbus_core::{StructuredQuery, TableName};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 
 use crate::attribute_value::fields_to_item;
@@ -39,13 +39,13 @@ use crate::key::sortable_key;
 /// for a missing/invalid `KeyConditionExpression`, an `IndexName` (GSI/LSI is
 /// D4), or a malformed `ExclusiveStartKey`.
 pub fn query(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: QueryInput,
 ) -> Result<QueryOutput, DynamoDbError> {
     // The query keys on the base table's schema, or the named LSI/GSI's.
     let shape = control_plane::load_index_query_shape(
-        service,
+        engine,
         context,
         &input.table_name,
         input.index_name.as_deref(),
@@ -86,7 +86,7 @@ pub fn query(
 
     // Select the partition, then apply the optional sort-key condition.
     let mut matched: Vec<Item> = Vec::new();
-    for item in enumerate(service, context, &table)? {
+    for item in enumerate(engine, context, &table)? {
         let Some(item_pk) = item.get(&hash_attr) else {
             continue;
         };
@@ -178,12 +178,12 @@ pub fn query(
 /// `ResourceNotFoundException` if the table is absent; `ValidationException`
 /// for an `IndexName` (D4) or a malformed `ExclusiveStartKey`.
 pub fn scan(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: ScanInput,
 ) -> Result<ScanOutput, DynamoDbError> {
     let shape = control_plane::load_index_query_shape(
-        service,
+        engine,
         context,
         &input.table_name,
         input.index_name.as_deref(),
@@ -208,7 +208,7 @@ pub fn scan(
 
     // Stable scan order by primary-key DocumentId for deterministic pagination.
     let mut ordered: Vec<(String, Item)> = Vec::new();
-    for item in enumerate(service, context, &table)? {
+    for item in enumerate(engine, context, &table)? {
         // Sparse index: skip items missing any of the index's key attributes.
         if !index_key_attrs.iter().all(|attr| item.contains_key(attr)) {
             continue;
@@ -386,11 +386,11 @@ fn select_items(
 
 /// Read every item stored in `table` as a decoded `Item`.
 pub(crate) fn enumerate(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table: &TableName,
 ) -> Result<Vec<Item>, DynamoDbError> {
-    let documents = match service.query_documents_structured(
+    let documents = match engine.query_documents_structured(
         context.tenant_id(),
         table,
         &StructuredQuery::default(),
@@ -547,16 +547,16 @@ mod tests {
     use nimbus_core::TenantId;
     use serde_json::json;
 
-    fn fixture() -> (Arc<Service>, TenantIsolationContext, tempfile::TempDir) {
+    fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
-        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
         let context = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
-        crate::tenant::ensure_tenant(&service, &context).expect("tenant");
-        (service, context, temp)
+        crate::tenant::ensure_tenant(&engine, &context).expect("tenant");
+        (engine, context, temp)
     }
 
     /// Table "Events" with pk (S) + sk (N) composite key.
-    fn create_events(service: &Arc<Service>, context: &TenantIsolationContext) {
+    fn create_events(engine: &Arc<Engine>, context: &TenantIsolationContext) {
         let input: CreateTableInput = serde_json::from_value(json!({
             "TableName": "Events",
             "KeySchema": [
@@ -569,12 +569,12 @@ mod tests {
             ],
         }))
         .unwrap();
-        control_plane::create_table(service, context, input).expect("create table");
+        control_plane::create_table(engine, context, input).expect("create table");
     }
 
-    fn put_event(service: &Arc<Service>, context: &TenantIsolationContext, pk: &str, sk: &str) {
+    fn put_event(engine: &Arc<Engine>, context: &TenantIsolationContext, pk: &str, sk: &str) {
         crate::commands::item::put_item(
-            service,
+            engine,
             context,
             serde_json::from_value(json!({
                 "TableName": "Events",
@@ -586,11 +586,11 @@ mod tests {
     }
 
     fn run(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         input: serde_json::Value,
     ) -> QueryOutput {
-        query(service, context, serde_json::from_value(input).unwrap()).expect("query")
+        query(engine, context, serde_json::from_value(input).unwrap()).expect("query")
     }
 
     fn sks(out: &QueryOutput) -> Vec<String> {
@@ -607,14 +607,14 @@ mod tests {
 
     #[test]
     fn query_partition_returns_sorted_items() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
         for sk in ["3", "1", "2"] {
-            put_event(&service, &ctx, "p1", sk);
+            put_event(&engine, &ctx, "p1", sk);
         }
-        put_event(&service, &ctx, "other", "9"); // different partition
+        put_event(&engine, &ctx, "other", "9"); // different partition
         let out = run(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Events",
@@ -629,13 +629,13 @@ mod tests {
 
     #[test]
     fn query_descending_with_scan_index_forward_false() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
         for sk in ["1", "2", "3"] {
-            put_event(&service, &ctx, "p1", sk);
+            put_event(&engine, &ctx, "p1", sk);
         }
         let out = run(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Events",
@@ -649,14 +649,14 @@ mod tests {
 
     #[test]
     fn query_sort_key_range_is_type_correct() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
         // Numeric ordering, not lexicographic: 2 < 10 < 100.
         for sk in ["2", "10", "100"] {
-            put_event(&service, &ctx, "p1", sk);
+            put_event(&engine, &ctx, "p1", sk);
         }
         let out = run(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Events",
@@ -673,13 +673,13 @@ mod tests {
 
     #[test]
     fn query_between_and_begins_with() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
         for sk in ["1", "5", "10", "20"] {
-            put_event(&service, &ctx, "p1", sk);
+            put_event(&engine, &ctx, "p1", sk);
         }
         let between = run(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Events",
@@ -692,13 +692,13 @@ mod tests {
 
     #[test]
     fn query_pagination_with_limit_and_exclusive_start_key() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
         for sk in ["1", "2", "3", "4"] {
-            put_event(&service, &ctx, "p1", sk);
+            put_event(&engine, &ctx, "p1", sk);
         }
         let page1 = run(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Events",
@@ -710,7 +710,7 @@ mod tests {
         assert_eq!(sks(&page1), vec!["1", "2"]);
         let cursor = page1.last_evaluated_key.expect("page truncated");
         let page2 = query(
-            &service,
+            &engine,
             &ctx,
             serde_json::from_value(json!({
                 "TableName": "Events",
@@ -730,10 +730,10 @@ mod tests {
 
     #[test]
     fn query_unknown_index_is_validation_error() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
         let err = query(
-            &service,
+            &engine,
             &ctx,
             serde_json::from_value(json!({
                 "TableName": "Events",
@@ -749,7 +749,7 @@ mod tests {
 
     /// Create a table with one GSI; `extra_attrs` are added to AttributeDefinitions.
     fn create_with_gsi(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         table: &str,
         gsi_key: serde_json::Value,
@@ -772,17 +772,17 @@ mod tests {
             }]
         }))
         .unwrap();
-        control_plane::create_table(service, context, input).expect("create with GSI");
+        control_plane::create_table(engine, context, input).expect("create with GSI");
     }
 
     fn put_json(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         table: &str,
         item: serde_json::Value,
     ) {
         crate::commands::item::put_item(
-            service,
+            engine,
             context,
             serde_json::from_value(json!({ "TableName": table, "Item": item })).unwrap(),
         )
@@ -791,10 +791,10 @@ mod tests {
 
     #[test]
     fn query_gsi_projection_keys_only_and_include() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         // GSI keyed on `g` (S); KEYS_ONLY projects only {pk, g}.
         create_with_gsi(
-            &service,
+            &engine,
             &ctx,
             "KeysOnly",
             json!([{ "AttributeName": "g", "KeyType": "HASH" }]),
@@ -802,13 +802,13 @@ mod tests {
             json!([{ "AttributeName": "g", "AttributeType": "S" }]),
         );
         put_json(
-            &service,
+            &engine,
             &ctx,
             "KeysOnly",
             json!({ "pk": {"S": "a"}, "g": {"S": "x"}, "extra": {"N": "9"} }),
         );
         let out = query(
-            &service,
+            &engine,
             &ctx,
             serde_json::from_value(json!({
                 "TableName": "KeysOnly",
@@ -828,7 +828,7 @@ mod tests {
 
         // INCLUDE projects {pk, g, extra}.
         create_with_gsi(
-            &service,
+            &engine,
             &ctx,
             "Included",
             json!([{ "AttributeName": "g", "KeyType": "HASH" }]),
@@ -836,13 +836,13 @@ mod tests {
             json!([{ "AttributeName": "g", "AttributeType": "S" }]),
         );
         put_json(
-            &service,
+            &engine,
             &ctx,
             "Included",
             json!({ "pk": {"S": "a"}, "g": {"S": "x"}, "extra": {"N": "9"}, "other": {"N": "1"} }),
         );
         let out = query(
-            &service,
+            &engine,
             &ctx,
             serde_json::from_value(json!({
                 "TableName": "Included",
@@ -863,10 +863,10 @@ mod tests {
 
     #[test]
     fn query_gsi_numeric_range_preserves_precision_beyond_f64() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         // GSI keyed on (g S, n N) — a numeric sort key.
         create_with_gsi(
-            &service,
+            &engine,
             &ctx,
             "Big",
             json!([
@@ -882,14 +882,14 @@ mod tests {
         // These 18-digit values are indistinguishable as f64 but must order.
         for (sk, n) in [("a", "100000000000000002"), ("b", "100000000000000001")] {
             put_json(
-                &service,
+                &engine,
                 &ctx,
                 "Big",
                 json!({ "pk": {"S": sk}, "g": {"S": "p"}, "n": {"N": n} }),
             );
         }
         let out = query(
-            &service,
+            &engine,
             &ctx,
             serde_json::from_value(json!({
                 "TableName": "Big",
@@ -918,10 +918,10 @@ mod tests {
 
     #[test]
     fn query_gsi_binary_range_is_byte_wise() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         // GSI keyed on (g S, b B) — a binary sort key.
         create_with_gsi(
-            &service,
+            &engine,
             &ctx,
             "Bins",
             json!([
@@ -937,14 +937,14 @@ mod tests {
         // Base64 of bytes [0x01], [0x02], [0xff]; byte-wise order is 01 < 02 < ff.
         for (sk, b64) in [("a", "/w=="), ("b", "AQ=="), ("c", "Ag==")] {
             put_json(
-                &service,
+                &engine,
                 &ctx,
                 "Bins",
                 json!({ "pk": {"S": sk}, "g": {"S": "p"}, "b": {"B": b64} }),
             );
         }
         let out = query(
-            &service,
+            &engine,
             &ctx,
             serde_json::from_value(json!({
                 "TableName": "Bins",
@@ -973,9 +973,9 @@ mod tests {
 
     #[test]
     fn scan_index_is_sparse_and_projected() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         create_with_gsi(
-            &service,
+            &engine,
             &ctx,
             "Sparse",
             json!([{ "AttributeName": "g", "KeyType": "HASH" }]),
@@ -984,20 +984,20 @@ mod tests {
         );
         // Two items have `g` (in the index), one does not (sparse).
         put_json(
-            &service,
+            &engine,
             &ctx,
             "Sparse",
             json!({ "pk": {"S": "a"}, "g": {"S": "x"}, "extra": {"N": "1"} }),
         );
         put_json(
-            &service,
+            &engine,
             &ctx,
             "Sparse",
             json!({ "pk": {"S": "b"}, "g": {"S": "y"}, "extra": {"N": "2"} }),
         );
-        put_json(&service, &ctx, "Sparse", json!({ "pk": {"S": "c"} }));
+        put_json(&engine, &ctx, "Sparse", json!({ "pk": {"S": "c"} }));
         let out = scan(
-            &service,
+            &engine,
             &ctx,
             serde_json::from_value(json!({ "TableName": "Sparse", "IndexName": "gsi" })).unwrap(),
         )
@@ -1018,9 +1018,9 @@ mod tests {
     /// than aborting the whole request with a `ValidationException`.
     #[test]
     fn query_gsi_skips_non_scalar_and_absent_index_keys() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         create_with_gsi(
-            &service,
+            &engine,
             &ctx,
             "Hetero",
             json!([{ "AttributeName": "g", "KeyType": "HASH" }]),
@@ -1030,33 +1030,33 @@ mod tests {
         // A matching scalar, a different scalar, and three items the index can't
         // key: a Map, a List, and one with no `g` at all.
         put_json(
-            &service,
+            &engine,
             &ctx,
             "Hetero",
             json!({ "pk": {"S": "a"}, "g": {"S": "match"} }),
         );
         put_json(
-            &service,
+            &engine,
             &ctx,
             "Hetero",
             json!({ "pk": {"S": "b"}, "g": {"S": "other"} }),
         );
         put_json(
-            &service,
+            &engine,
             &ctx,
             "Hetero",
             json!({ "pk": {"S": "c"}, "g": {"M": { "nested": {"S": "x"} }} }),
         );
         put_json(
-            &service,
+            &engine,
             &ctx,
             "Hetero",
             json!({ "pk": {"S": "d"}, "g": {"L": [{"S": "y"}]} }),
         );
-        put_json(&service, &ctx, "Hetero", json!({ "pk": {"S": "e"} }));
+        put_json(&engine, &ctx, "Hetero", json!({ "pk": {"S": "e"} }));
 
         let out = query(
-            &service,
+            &engine,
             &ctx,
             serde_json::from_value(json!({
                 "TableName": "Hetero",
@@ -1074,7 +1074,7 @@ mod tests {
 
     #[test]
     fn query_local_secondary_index_orders_by_index_sort_key() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         // Table "Tasks": pk (S) + sk (N), with an LSI "by_priority" on (pk, prio N).
         let input: CreateTableInput = serde_json::from_value(json!({
             "TableName": "Tasks",
@@ -1097,11 +1097,11 @@ mod tests {
             }]
         }))
         .unwrap();
-        control_plane::create_table(&service, &ctx, input).expect("create with LSI");
+        control_plane::create_table(&engine, &ctx, input).expect("create with LSI");
         // Items: sk ascending differs from prio ordering.
         for (sk, prio) in [("1", "30"), ("2", "10"), ("3", "20")] {
             crate::commands::item::put_item(
-                &service,
+                &engine,
                 &ctx,
                 serde_json::from_value(json!({
                     "TableName": "Tasks",
@@ -1112,7 +1112,7 @@ mod tests {
             .expect("put");
         }
         let out = query(
-            &service,
+            &engine,
             &ctx,
             serde_json::from_value(json!({
                 "TableName": "Tasks",
@@ -1142,14 +1142,14 @@ mod tests {
 
     /// Put an event with an extra `kind` (S) attribute for filter tests.
     fn put_kind(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         pk: &str,
         sk: &str,
         kind: &str,
     ) {
         crate::commands::item::put_item(
-            service,
+            engine,
             context,
             serde_json::from_value(json!({
                 "TableName": "Events",
@@ -1162,13 +1162,13 @@ mod tests {
 
     #[test]
     fn query_filter_expression_excludes_but_still_scans() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
-        put_kind(&service, &ctx, "p1", "1", "a");
-        put_kind(&service, &ctx, "p1", "2", "b");
-        put_kind(&service, &ctx, "p1", "3", "a");
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
+        put_kind(&engine, &ctx, "p1", "1", "a");
+        put_kind(&engine, &ctx, "p1", "2", "b");
+        put_kind(&engine, &ctx, "p1", "3", "a");
         let out = run(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Events",
@@ -1187,13 +1187,13 @@ mod tests {
 
     #[test]
     fn query_select_count_omits_items() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
         for sk in ["1", "2", "3"] {
-            put_event(&service, &ctx, "p1", sk);
+            put_event(&engine, &ctx, "p1", sk);
         }
         let out = run(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Events",
@@ -1209,12 +1209,12 @@ mod tests {
 
     #[test]
     fn query_projection_and_filter_compose() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
-        put_kind(&service, &ctx, "p1", "1", "a");
-        put_kind(&service, &ctx, "p1", "2", "b");
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
+        put_kind(&engine, &ctx, "p1", "1", "a");
+        put_kind(&engine, &ctx, "p1", "2", "b");
         let out = run(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Events",
@@ -1234,14 +1234,14 @@ mod tests {
 
     #[test]
     fn query_limit_caps_scanned_before_filter() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
         // sk 1=a, 2=b, 3=a; Limit=2 evaluates the first two, filter kind=a keeps sk 1.
-        put_kind(&service, &ctx, "p1", "1", "a");
-        put_kind(&service, &ctx, "p1", "2", "b");
-        put_kind(&service, &ctx, "p1", "3", "a");
+        put_kind(&engine, &ctx, "p1", "1", "a");
+        put_kind(&engine, &ctx, "p1", "2", "b");
+        put_kind(&engine, &ctx, "p1", "3", "a");
         let out = run(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Events",
@@ -1266,34 +1266,34 @@ mod tests {
     // ---- D2.3: Scan ----
 
     fn scan_run(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         input: serde_json::Value,
     ) -> ScanOutput {
-        scan(service, context, serde_json::from_value(input).unwrap()).expect("scan")
+        scan(engine, context, serde_json::from_value(input).unwrap()).expect("scan")
     }
 
     #[test]
     fn scan_returns_all_items_across_partitions() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
-        put_event(&service, &ctx, "p1", "1");
-        put_event(&service, &ctx, "p1", "2");
-        put_event(&service, &ctx, "p2", "1");
-        let out = scan_run(&service, &ctx, json!({ "TableName": "Events" }));
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
+        put_event(&engine, &ctx, "p1", "1");
+        put_event(&engine, &ctx, "p1", "2");
+        put_event(&engine, &ctx, "p2", "1");
+        let out = scan_run(&engine, &ctx, json!({ "TableName": "Events" }));
         assert_eq!(out.count, 3, "scan reads the whole table");
         assert_eq!(out.scanned_count, 3);
     }
 
     #[test]
     fn scan_with_filter_expression() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
-        put_kind(&service, &ctx, "p1", "1", "a");
-        put_kind(&service, &ctx, "p2", "1", "b");
-        put_kind(&service, &ctx, "p3", "1", "a");
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
+        put_kind(&engine, &ctx, "p1", "1", "a");
+        put_kind(&engine, &ctx, "p2", "1", "b");
+        put_kind(&engine, &ctx, "p3", "1", "a");
         let out = scan_run(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Events",
@@ -1307,10 +1307,10 @@ mod tests {
 
     #[test]
     fn scan_pagination_is_stable_and_complete() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
         for (pk, sk) in [("p1", "1"), ("p2", "1"), ("p3", "1"), ("p4", "1")] {
-            put_event(&service, &ctx, pk, sk);
+            put_event(&engine, &ctx, pk, sk);
         }
         // Page through with Limit=2; union must be the full table, no dupes.
         let mut seen: Vec<String> = Vec::new();
@@ -1320,7 +1320,7 @@ mod tests {
             if let Some(cursor) = &start {
                 req["ExclusiveStartKey"] = cursor.clone();
             }
-            let out = scan_run(&service, &ctx, req);
+            let out = scan_run(&engine, &ctx, req);
             for item in out.items.as_ref().unwrap() {
                 let pk = match item.get("pk") {
                     Some(AttributeValue::S(s)) => s.clone(),
@@ -1350,13 +1350,13 @@ mod tests {
 
     /// Scan one segment, returning the set of `pk` values it covers.
     fn scan_segment(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         segment: i64,
         total: i64,
     ) -> std::collections::BTreeSet<String> {
         let out = scan_run(
-            service,
+            engine,
             context,
             json!({ "TableName": "Events", "Segment": segment, "TotalSegments": total }),
         );
@@ -1372,16 +1372,16 @@ mod tests {
 
     #[test]
     fn scan_parallel_segments_are_a_stable_disjoint_cover() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
         let all: std::collections::BTreeSet<String> = (0..20)
             .map(|i| format!("p{i:02}"))
-            .inspect(|pk| put_event(&service, &ctx, pk, "1"))
+            .inspect(|pk| put_event(&engine, &ctx, pk, "1"))
             .collect();
 
         const TOTAL: i64 = 4;
         let segments: Vec<std::collections::BTreeSet<String>> = (0..TOTAL)
-            .map(|s| scan_segment(&service, &ctx, s, TOTAL))
+            .map(|s| scan_segment(&engine, &ctx, s, TOTAL))
             .collect();
 
         // Union == full table.
@@ -1400,7 +1400,7 @@ mod tests {
         // Stable across repeated runs.
         for s in 0..TOTAL {
             assert_eq!(
-                scan_segment(&service, &ctx, s, TOTAL),
+                scan_segment(&engine, &ctx, s, TOTAL),
                 segments[s as usize],
                 "segment {s} is stable across runs"
             );
@@ -1409,11 +1409,11 @@ mod tests {
 
     #[test]
     fn scan_invalid_segment_is_rejected() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
         // Segment >= TotalSegments.
         let err = scan(
-            &service,
+            &engine,
             &ctx,
             serde_json::from_value(
                 json!({ "TableName": "Events", "Segment": 4, "TotalSegments": 4 }),
@@ -1424,7 +1424,7 @@ mod tests {
         assert!(matches!(err, DynamoDbError::ValidationException(_)));
         // Segment without TotalSegments.
         let err = scan(
-            &service,
+            &engine,
             &ctx,
             serde_json::from_value(json!({ "TableName": "Events", "Segment": 0 })).unwrap(),
         )
@@ -1434,10 +1434,10 @@ mod tests {
 
     #[test]
     fn scan_index_name_is_rejected_until_d4() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
         let err = scan(
-            &service,
+            &engine,
             &ctx,
             serde_json::from_value(json!({ "TableName": "Events", "IndexName": "gsi1" })).unwrap(),
         )
@@ -1447,12 +1447,12 @@ mod tests {
 
     #[test]
     fn query_isolates_partitions() {
-        let (service, ctx, _t) = fixture();
-        create_events(&service, &ctx);
-        put_event(&service, &ctx, "p1", "1");
-        put_event(&service, &ctx, "p2", "1");
+        let (engine, ctx, _t) = fixture();
+        create_events(&engine, &ctx);
+        put_event(&engine, &ctx, "p1", "1");
+        put_event(&engine, &ctx, "p2", "1");
         let out = run(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Events",
@@ -1473,9 +1473,9 @@ mod tests {
         // on a GSI Query with ValidationException (GSIs are eventually
         // consistent). Nimbus's single store is strongly consistent, so it
         // accepts the flag and serves a consistent result — a strict upgrade.
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         create_with_gsi(
-            &service,
+            &engine,
             &ctx,
             "Strong",
             json!([{ "AttributeName": "g", "KeyType": "HASH" }]),
@@ -1483,13 +1483,13 @@ mod tests {
             json!([{ "AttributeName": "g", "AttributeType": "S" }]),
         );
         put_json(
-            &service,
+            &engine,
             &ctx,
             "Strong",
             json!({ "pk": { "S": "a" }, "g": { "S": "grp" }, "v": { "N": "1" } }),
         );
         let out = query(
-            &service,
+            &engine,
             &ctx,
             serde_json::from_value(json!({
                 "TableName": "Strong",

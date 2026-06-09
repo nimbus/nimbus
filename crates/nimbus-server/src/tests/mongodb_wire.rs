@@ -1,5 +1,5 @@
-use nimbus_engine::Service;
-use nimbus_testing::{DeterministicTestCase, ServiceFixture};
+use nimbus_engine::Engine;
+use nimbus_testing::{DeterministicTestCase, EngineFixture};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -50,10 +50,10 @@ async fn send_command(stream: &mut TcpStream, doc: &bson::Document) -> bson::Doc
 }
 
 pub(crate) async fn mongodb_wire_crud_roundtrip_inner() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
-    let service = fixture.service();
+    let service = fixture.engine();
     tokio::spawn(run_listener(listener, service));
 
     let mut stream = TcpStream::connect(addr).await.expect("connect");
@@ -88,10 +88,10 @@ pub(crate) async fn mongodb_wire_crud_roundtrip_inner() {
 }
 
 pub(crate) async fn mongodb_wire_handshake_inner() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
-    let service = fixture.service();
+    let service = fixture.engine();
     tokio::spawn(run_listener(listener, service));
 
     let mut stream = TcpStream::connect(addr).await.expect("connect");

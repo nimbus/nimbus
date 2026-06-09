@@ -4,7 +4,7 @@ use nimbus_core::{
     Document, DocumentId, Filter, FilterOp, OrderBy, OrderDirection, PrincipalContext, Query,
     TableName, TenantId, TransactionSessionToken,
 };
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 
 use super::super::super::error::{BAD_VALUE, MongoError};
 
@@ -138,7 +138,7 @@ pub(super) fn matches_simple_filters(doc: &Document, filters: &[Filter]) -> bool
 }
 
 pub(super) fn query_documents(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
     filter_doc: &bson::Document,
@@ -154,14 +154,14 @@ pub(super) fn query_documents(
         let id_str = bson_id_to_string(id_val);
         if let Ok(doc_id) = DocumentId::from_key(&id_str) {
             let result = match transaction_token {
-                Some(transaction_token) => service.get_document_in_transaction(
+                Some(transaction_token) => engine.get_document_in_transaction(
                     tenant_id,
                     transaction_token,
                     &principal,
                     table,
                     doc_id,
                 ),
-                None => service
+                None => engine
                     .get_document_with_principal(tenant_id, table, doc_id, &principal)
                     .map(Some),
             };
@@ -192,9 +192,9 @@ pub(super) fn query_documents(
     };
     let mut docs = match transaction_token {
         Some(transaction_token) => {
-            service.query_documents_in_transaction(tenant_id, transaction_token, &principal, &query)
+            engine.query_documents_in_transaction(tenant_id, transaction_token, &principal, &query)
         }
-        None => service.query_documents_with_principal(tenant_id, &query, &principal),
+        None => engine.query_documents_with_principal(tenant_id, &query, &principal),
     }
     .map_err(MongoError::from)?;
 

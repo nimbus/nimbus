@@ -7,7 +7,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeDbGetPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table.clone();
         let document_id = match resolve_convex_document_id(&table, payload.id) {
@@ -43,7 +43,7 @@ impl ConvexHostBridge {
             None => {
                 let check_cancellation = cancellation.clone();
                 match self
-                    .service()
+                    .engine()
                     .get_document_async_cancellable_with_principal(
                         self.tenant_id().clone(),
                         table.clone(),
@@ -85,7 +85,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeDbGetPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table.clone();
         let document_id = match resolve_convex_document_id(&table, payload.id) {
@@ -97,7 +97,7 @@ impl ConvexHostBridge {
         };
         let response = match self.mutation_execution_unit().map_or_else(
             || {
-                self.service().get_document_with_principal(
+                self.engine().get_document_with_principal(
                     self.tenant_id(),
                     &table,
                     document_id.clone(),
@@ -131,7 +131,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeDbInsertPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table;
         let table_for_id = table.clone();
@@ -146,7 +146,7 @@ impl ConvexHostBridge {
                     cancellation.cancelled().await;
                 }
             };
-            self.service()
+            self.engine()
                 .insert_document_async_with(
                     self.tenant_id().clone(),
                     table,
@@ -181,7 +181,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeDbInsertPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table;
         let table_for_id = table.clone();
@@ -189,7 +189,7 @@ impl ConvexHostBridge {
         let response = if let Some(execution_unit) = self.mutation_execution_unit() {
             execution_unit.insert_document(table, fields)
         } else {
-            self.service().insert_document_with(
+            self.engine().insert_document_with(
                 self.tenant_id(),
                 table,
                 None,
@@ -210,7 +210,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeDbPatchPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table;
         let id = match resolve_convex_document_id(&table, payload.id) {
@@ -229,7 +229,7 @@ impl ConvexHostBridge {
                     cancellation.cancelled().await;
                 }
             };
-            self.service()
+            self.engine()
                 .update_document_async_with(
                     self.tenant_id().clone(),
                     table,
@@ -264,7 +264,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeDbPatchPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table;
         let id = match resolve_convex_document_id(&table, payload.id) {
@@ -276,7 +276,7 @@ impl ConvexHostBridge {
         let response = if let Some(execution_unit) = self.mutation_execution_unit() {
             execution_unit.update_document(table, id, patch)
         } else {
-            self.service().update_document_with(
+            self.engine().update_document_with(
                 self.tenant_id(),
                 table,
                 id,
@@ -297,7 +297,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeDbDeletePayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table;
         let id = match resolve_convex_document_id(&table, payload.id) {
@@ -314,7 +314,7 @@ impl ConvexHostBridge {
                     cancellation.cancelled().await;
                 }
             };
-            self.service()
+            self.engine()
                 .delete_document_async_with(
                     self.tenant_id().clone(),
                     table,
@@ -345,7 +345,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeDbDeletePayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table;
         let id = match resolve_convex_document_id(&table, payload.id) {
@@ -355,7 +355,7 @@ impl ConvexHostBridge {
         let response = if let Some(execution_unit) = self.mutation_execution_unit() {
             execution_unit.delete_document(table, id)
         } else {
-            self.service().delete_document_with(
+            self.engine().delete_document_with(
                 self.tenant_id(),
                 table,
                 id,

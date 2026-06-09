@@ -8,7 +8,7 @@ use nimbus_tenant::{
     TenantAuditRedactionPolicy, TenantIsolationDecision, TenantIsolationDecisionId,
     TenantIsolationEvent, TenantIsolationEventKind, TenantIsolationEventResult,
     TenantIsolationEventValue, TenantQuotaPolicyDecision, TenantServiceAccessDecision,
-    TenantStorageAccessDecision, TenantWorkloadStableIdentity,
+    TenantStorageAccessDecision, WorkloadIdentity,
 };
 
 mod direct_process;
@@ -76,11 +76,11 @@ pub struct TenantWorkloadUid(String);
 
 impl TenantWorkloadUid {
     fn for_admitted_identity(
-        identity: &TenantWorkloadStableIdentity,
+        identity: &WorkloadIdentity,
         decision_id: &TenantIsolationDecisionId,
     ) -> Self {
         let mut digest = Sha256::new();
-        digest.update(identity.stable_id().as_bytes());
+        digest.update(identity.subject().as_bytes());
         digest.update(b"\0");
         digest.update(decision_id.as_str().as_bytes());
         Self(format!("twu_{:x}", digest.finalize()))
@@ -148,7 +148,7 @@ impl LocalEnforcementBinding {
                 "credential projection request is missing redaction metadata".to_string(),
             ));
         }
-        if request.echo_back_subject.is_some() {
+        if request.echo_back_workload_subject.is_some() {
             return Err(Error::PermissionDenied(
                 "credential projection request attempted to echo back a subject".to_string(),
             ));
@@ -162,7 +162,7 @@ impl LocalEnforcementBinding {
             generation: self.spec.generation,
             decision_id: self.spec.decision_id.clone(),
             scope: scope.clone(),
-            subject: self.spec.workload_stable_identity.stable_id(),
+            workload_subject: self.spec.workload_identity.subject(),
             redacted_fields: self.spec.audit_redactions.redacted_fields().to_vec(),
         })
     }
@@ -183,7 +183,7 @@ impl LocalEnforcementBinding {
             surface: self.spec.surface.clone(),
             authority_class: self.spec.authority_class.clone(),
             workload_uid: self.spec.workload_uid.clone(),
-            workload_stable_id: self.spec.workload_stable_identity.stable_id(),
+            workload_subject: self.spec.workload_identity.subject(),
             generation: self.spec.generation,
             redacted_fields: self.spec.audit_redactions.redacted_fields().to_vec(),
         }
@@ -196,7 +196,7 @@ pub struct TenantWorkloadSpec {
     tenant_id: TenantId,
     surface: String,
     authority_class: String,
-    workload_stable_identity: TenantWorkloadStableIdentity,
+    workload_identity: WorkloadIdentity,
     workload_uid: TenantWorkloadUid,
     generation: TenantWorkloadGeneration,
     assigned_node_id: Option<NodeIdentity>,
@@ -211,28 +211,23 @@ pub struct TenantWorkloadSpec {
 
 impl TenantWorkloadSpec {
     pub fn from_decision(decision: &TenantIsolationDecision) -> Result<Self> {
-        let workload_stable_identity = decision.workload_stable_identity();
+        let workload_identity = decision.workload_identity();
         let workload_uid =
-            TenantWorkloadUid::for_admitted_identity(&workload_stable_identity, decision.id());
-        let generation = TenantWorkloadGeneration::new(
-            workload_stable_identity
-                .deployment_generation()
-                .unwrap_or(0),
-        );
-        let assigned_node_id = workload_stable_identity
+            TenantWorkloadUid::for_admitted_identity(&workload_identity, decision.id());
+        let generation =
+            TenantWorkloadGeneration::new(workload_identity.deployment_generation().unwrap_or(0));
+        let assigned_node_id = workload_identity
             .node_id()
             .map(NodeIdentity::new)
             .transpose()?;
-        let runtime_invocation_id = workload_stable_identity
-            .invocation_id()
-            .map(ToOwned::to_owned);
+        let runtime_invocation_id = workload_identity.invocation_id().map(ToOwned::to_owned);
         let service_projection = TenantServiceProjection::from_decision(decision)?;
         Ok(Self {
             decision_id: decision.id().clone(),
             tenant_id: decision.tenant_id().clone(),
             surface: decision.surface().to_owned(),
             authority_class: decision.authority_class().to_owned(),
-            workload_stable_identity,
+            workload_identity,
             workload_uid,
             generation,
             assigned_node_id,
@@ -284,8 +279,8 @@ impl TenantWorkloadSpec {
         &self.workload_uid
     }
 
-    pub fn workload_stable_identity(&self) -> &TenantWorkloadStableIdentity {
-        &self.workload_stable_identity
+    pub fn workload_identity(&self) -> &WorkloadIdentity {
+        &self.workload_identity
     }
 
     pub fn generation(&self) -> TenantWorkloadGeneration {
@@ -476,7 +471,7 @@ pub struct TenantCredentialProjectionRequest {
     provider: String,
     audience: String,
     redaction_metadata_present: bool,
-    echo_back_subject: Option<String>,
+    echo_back_workload_subject: Option<String>,
 }
 
 impl TenantCredentialProjectionRequest {
@@ -516,7 +511,7 @@ impl TenantCredentialProjectionRequest {
             provider: non_empty(provider, "credential provider")?,
             audience: non_empty(audience, "credential audience")?,
             redaction_metadata_present: true,
-            echo_back_subject: None,
+            echo_back_workload_subject: None,
         })
     }
 
@@ -550,8 +545,8 @@ impl TenantCredentialProjectionRequest {
         self
     }
 
-    pub fn with_echo_back_subject(mut self, subject: impl Into<String>) -> Self {
-        self.echo_back_subject = Some(subject.into());
+    pub fn with_echo_back_workload_subject(mut self, subject: impl Into<String>) -> Self {
+        self.echo_back_workload_subject = Some(subject.into());
         self
     }
 }
@@ -562,7 +557,7 @@ pub struct TenantCredentialProjectionBinding {
     generation: TenantWorkloadGeneration,
     decision_id: TenantIsolationDecisionId,
     scope: TenantCredentialProjectionScope,
-    subject: String,
+    workload_subject: String,
     redacted_fields: Vec<String>,
 }
 
@@ -583,8 +578,8 @@ impl TenantCredentialProjectionBinding {
         &self.scope
     }
 
-    pub fn subject(&self) -> &str {
-        &self.subject
+    pub fn workload_subject(&self) -> &str {
+        &self.workload_subject
     }
 
     pub fn redacted_fields(&self) -> &[String] {
@@ -1313,7 +1308,7 @@ pub struct TenantSystemEvidenceProjection {
     surface: String,
     authority_class: String,
     workload_uid: TenantWorkloadUid,
-    workload_stable_id: String,
+    workload_subject: String,
     generation: TenantWorkloadGeneration,
     redacted_fields: Vec<String>,
 }
@@ -1339,8 +1334,8 @@ impl TenantSystemEvidenceProjection {
         &self.workload_uid
     }
 
-    pub fn workload_stable_id(&self) -> &str {
-        &self.workload_stable_id
+    pub fn workload_subject(&self) -> &str {
+        &self.workload_subject
     }
 
     pub fn generation(&self) -> TenantWorkloadGeneration {

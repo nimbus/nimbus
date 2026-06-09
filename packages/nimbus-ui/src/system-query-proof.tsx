@@ -5,7 +5,7 @@ import {
   useNimbusConnectionState,
   useQueries,
   useQuery,
-} from "nimbus/react";
+} from "@nimbus/nimbus/react";
 import { createElement } from "react";
 
 import { api } from "../convex/_generated/api";

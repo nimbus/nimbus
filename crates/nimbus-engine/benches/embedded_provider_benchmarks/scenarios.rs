@@ -3,13 +3,13 @@ use super::support::TenantState;
 use super::*;
 
 pub(super) async fn exercise_crud_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
 ) -> BenchResult<()> {
     let mut ids = Vec::with_capacity(CRUD_DOCUMENTS);
     for rank in 0..CRUD_DOCUMENTS {
         ids.push(
-            service
+            engine
                 .insert_document_async(
                     tenant_id.clone(),
                     tasks_table(),
@@ -23,7 +23,7 @@ pub(super) async fn exercise_crud_sample(
         );
     }
     for (rank, id) in ids.iter().cloned().enumerate() {
-        let _ = service
+        let _ = engine
             .update_document_async(
                 tenant_id.clone(),
                 tasks_table(),
@@ -33,7 +33,7 @@ pub(super) async fn exercise_crud_sample(
             .await?;
     }
     for id in ids {
-        service
+        engine
             .delete_document_async(tenant_id.clone(), tasks_table(), id)
             .await?;
     }
@@ -41,13 +41,13 @@ pub(super) async fn exercise_crud_sample(
 }
 
 pub(super) async fn exercise_point_read_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     ids: &[DocumentId],
 ) -> BenchResult<()> {
     for step in 0..POINT_READ_BATCH_SIZE {
         let id = ids[(step * 17) % ids.len()].clone();
-        let document = service
+        let document = engine
             .get_document_async(tenant_id.clone(), tasks_table(), id)
             .await?;
         black_box(document);
@@ -56,13 +56,13 @@ pub(super) async fn exercise_point_read_sample(
 }
 
 pub(super) async fn exercise_query_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     query: &Query,
     batch_size: usize,
 ) -> BenchResult<()> {
     for _ in 0..batch_size {
-        let documents = service
+        let documents = engine
             .query_documents_async(tenant_id.clone(), query.clone())
             .await?;
         black_box(documents);
@@ -71,10 +71,10 @@ pub(super) async fn exercise_query_sample(
 }
 
 pub(super) async fn exercise_journal_stream_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
 ) -> BenchResult<()> {
-    let page = service
+    let page = engine
         .stream_durable_journal_async(tenant_id.clone(), SequenceNumber(0), JOURNAL_STREAM_LIMIT)
         .await?;
     black_box(page);
@@ -82,10 +82,10 @@ pub(super) async fn exercise_journal_stream_sample(
 }
 
 pub(super) async fn exercise_journal_bootstrap_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
 ) -> BenchResult<()> {
-    let bootstrap = service
+    let bootstrap = engine
         .export_durable_journal_bootstrap_async(tenant_id.clone())
         .await?;
     black_box(bootstrap);
@@ -93,10 +93,10 @@ pub(super) async fn exercise_journal_bootstrap_sample(
 }
 
 pub(super) async fn seed_subscription_fixture(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
 ) -> BenchResult<()> {
-    service
+    engine
         .insert_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -107,7 +107,7 @@ pub(super) async fn seed_subscription_fixture(
 }
 
 pub(super) async fn register_subscription_receivers(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
 ) -> BenchResult<(
     Vec<SubscriptionRegistration>,
@@ -123,7 +123,7 @@ pub(super) async fn register_subscription_receivers(
     let mut receivers = Vec::with_capacity(SUBSCRIPTION_FANOUT_COUNT);
     for index in 0..SUBSCRIPTION_FANOUT_COUNT {
         let (sender, mut receiver) = mpsc::channel(8);
-        let registration = service
+        let registration = engine
             .subscribe_async(
                 tenant_id.clone(),
                 query.clone(),
@@ -143,11 +143,11 @@ pub(super) async fn register_subscription_receivers(
 }
 
 pub(super) async fn exercise_subscription_fanout_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     receivers: &mut [mpsc::Receiver<SubscriptionUpdate>],
 ) -> BenchResult<()> {
-    let _ = service
+    let _ = engine
         .insert_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -176,12 +176,12 @@ pub(super) async fn exercise_subscription_fanout_sample(
 }
 
 pub(super) async fn exercise_mixed_load_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_states: &[TenantState],
 ) -> BenchResult<()> {
     let mut handles = Vec::with_capacity(tenant_states.len());
     for (task_index, state) in tenant_states.iter().cloned().enumerate() {
-        let service = service.clone();
+        let engine = engine.clone();
         handles.push(tokio::spawn(async move {
             let query = Query {
                 table: tasks_table(),
@@ -193,19 +193,19 @@ pub(super) async fn exercise_mixed_load_sample(
                 let id = state.ids[step % state.ids.len()].clone();
                 match step % 4 {
                     0 => {
-                        let document = service
+                        let document = engine
                             .get_document_async(state.tenant_id.clone(), tasks_table(), id)
                             .await?;
                         black_box(document);
                     }
                     1 => {
-                        let documents = service
+                        let documents = engine
                             .query_documents_async(state.tenant_id.clone(), query.clone())
                             .await?;
                         black_box(documents);
                     }
                     2 => {
-                        let _ = service
+                        let _ = engine
                             .insert_document_async(
                                 state.tenant_id.clone(),
                                 tasks_table(),
@@ -224,7 +224,7 @@ pub(super) async fn exercise_mixed_load_sample(
                             .await?;
                     }
                     _ => {
-                        let _ = service
+                        let _ = engine
                             .update_document_async(
                                 state.tenant_id.clone(),
                                 tasks_table(),

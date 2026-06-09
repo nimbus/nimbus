@@ -4,7 +4,7 @@ use super::common::{
 use super::config::BenchmarkEnvironment;
 use super::models::MeasuredBackend;
 use super::support::{
-    benchmark_libsql_provider_config, libsql_replica_service_config, quiesce_service,
+    benchmark_libsql_provider_config, libsql_replica_engine_config, quiesce_engine,
     register_libsql_replica_cleanup, slugify_label,
 };
 use super::*;
@@ -14,7 +14,7 @@ use nimbus_storage::libsql::libsql_transport_connector;
 #[derive(Clone)]
 pub(super) struct TenantFixture {
     pub(super) resource: LiveResource,
-    pub(super) service: Arc<Service>,
+    pub(super) engine: Arc<Engine>,
     pub(super) tenant_id: TenantId,
 }
 
@@ -33,7 +33,7 @@ pub(super) struct QueryFixture {
 #[derive(Clone)]
 pub(super) struct MixedLoadFixture {
     pub(super) resource: LiveResource,
-    pub(super) service: Arc<Service>,
+    pub(super) engine: Arc<Engine>,
     pub(super) tenant_states: Vec<TenantState>,
 }
 
@@ -65,9 +65,9 @@ pub(super) struct TenantState {
 
 pub(super) struct PeerCatchUpFixture {
     creator_resource: LiveResource,
-    pub(super) creator_service: Arc<Service>,
+    pub(super) creator_engine: Arc<Engine>,
     opener_resource: LiveResource,
-    pub(super) opener_service: Arc<Service>,
+    pub(super) opener_engine: Arc<Engine>,
     pub(super) tenant_id: TenantId,
 }
 
@@ -135,7 +135,7 @@ impl Drop for BenchDir {
     }
 }
 
-pub(super) async fn create_tenant_service(
+pub(super) async fn create_tenant_engine(
     label: &str,
     tenant_label: &str,
     backend: MeasuredBackend,
@@ -145,21 +145,21 @@ pub(super) async fn create_tenant_service(
         MeasuredBackend::Sqlite => {
             let bench_dir = Arc::new(BenchDir::new(&format!("{label}-sqlite"))?);
             let data_dir = bench_dir.path().to_path_buf();
-            let service = Arc::new(
-                Service::new_with_persistence_config(ServicePersistenceConfig::embedded(
+            let engine = Arc::new(
+                Engine::new_with_persistence_config(EnginePersistenceConfig::embedded(
                     &data_dir,
                     EmbeddedProviderKind::Sqlite,
                 ))
                 .await?,
             );
             let tenant_id = benchmark_tenant_id(tenant_label)?;
-            service.create_tenant_async(tenant_id.clone()).await?;
+            engine.create_tenant_async(tenant_id.clone()).await?;
             Ok(TenantFixture {
                 resource: LiveResource::Sqlite {
                     bench_dir,
                     data_dir,
                 },
-                service,
+                engine,
                 tenant_id,
             })
         }
@@ -168,22 +168,22 @@ pub(super) async fn create_tenant_service(
             let replica_cache_dir = Arc::new(BenchDir::new(&format!("{label}-replica-cache"))?);
             let provider_config =
                 benchmark_libsql_provider_config(label, environment, replica_cache_dir.path());
-            let service = Arc::new(
-                Service::new_with_persistence_config(libsql_replica_service_config(
+            let engine = Arc::new(
+                Engine::new_with_persistence_config(libsql_replica_engine_config(
                     control_dir.path(),
                     &provider_config,
                 )?)
                 .await?,
             );
             let tenant_id = benchmark_tenant_id(tenant_label)?;
-            service.create_tenant_async(tenant_id.clone()).await?;
+            engine.create_tenant_async(tenant_id.clone()).await?;
             Ok(TenantFixture {
                 resource: LiveResource::LibsqlReplica {
                     control_dir,
                     replica_cache_dir,
                     provider_config,
                 },
-                service,
+                engine,
                 tenant_id,
             })
         }
@@ -196,7 +196,7 @@ pub(super) async fn create_crud_fixture(
     backend: MeasuredBackend,
     environment: &BenchmarkEnvironment,
 ) -> BenchResult<TenantFixture> {
-    create_tenant_service(label, tenant_label, backend, environment).await
+    create_tenant_engine(label, tenant_label, backend, environment).await
 }
 
 pub(super) async fn create_point_read_fixture(
@@ -207,12 +207,12 @@ pub(super) async fn create_point_read_fixture(
 ) -> BenchResult<PointReadFixture> {
     let (tenant, ids) = match backend {
         MeasuredBackend::Sqlite => {
-            let tenant = create_tenant_service(label, tenant_label, backend, environment).await?;
+            let tenant = create_tenant_engine(label, tenant_label, backend, environment).await?;
             let mut ids = Vec::with_capacity(POINT_READ_DOCUMENTS);
             for rank in 0..POINT_READ_DOCUMENTS {
                 ids.push(
                     tenant
-                        .service
+                        .engine
                         .insert_document_async(
                             tenant.tenant_id.clone(),
                             tasks_table(),
@@ -250,7 +250,7 @@ pub(super) async fn create_point_read_fixture(
                     ]),
                 ));
             }
-            let tenant = create_seeded_libsql_replica_tenant_service(
+            let tenant = create_seeded_libsql_replica_tenant_engine(
                 label,
                 tenant_label,
                 environment,
@@ -272,14 +272,14 @@ pub(super) async fn create_indexed_query_fixture(
 ) -> BenchResult<QueryFixture> {
     let tenant = match backend {
         MeasuredBackend::Sqlite => {
-            let tenant = create_tenant_service(label, tenant_label, backend, environment).await?;
+            let tenant = create_tenant_engine(label, tenant_label, backend, environment).await?;
             tenant
-                .service
+                .engine
                 .set_table_schema_async(tenant.tenant_id.clone(), single_field_schema())
                 .await?;
             for rank in 0..INDEXED_QUERY_DOCUMENTS {
                 tenant
-                    .service
+                    .engine
                     .insert_document_async(
                         tenant.tenant_id.clone(),
                         tasks_table(),
@@ -311,7 +311,7 @@ pub(super) async fn create_indexed_query_fixture(
                     ]),
                 ));
             }
-            create_seeded_libsql_replica_tenant_service(
+            create_seeded_libsql_replica_tenant_engine(
                 label,
                 tenant_label,
                 environment,
@@ -340,16 +340,16 @@ pub(super) async fn create_composite_query_fixture(
 ) -> BenchResult<QueryFixture> {
     let tenant = match backend {
         MeasuredBackend::Sqlite => {
-            let tenant = create_tenant_service(label, tenant_label, backend, environment).await?;
+            let tenant = create_tenant_engine(label, tenant_label, backend, environment).await?;
             tenant
-                .service
+                .engine
                 .set_table_schema_async(tenant.tenant_id.clone(), composite_schema())
                 .await?;
             for rank in 0..INDEXED_QUERY_DOCUMENTS {
                 let team = if rank % 2 == 0 { "alpha" } else { "beta" };
                 let status = if rank % 3 == 0 { "open" } else { "done" };
                 tenant
-                    .service
+                    .engine
                     .insert_document_async(
                         tenant.tenant_id.clone(),
                         tasks_table(),
@@ -379,7 +379,7 @@ pub(super) async fn create_composite_query_fixture(
                     ]),
                 ));
             }
-            create_seeded_libsql_replica_tenant_service(
+            create_seeded_libsql_replica_tenant_engine(
                 label,
                 tenant_label,
                 environment,
@@ -413,12 +413,12 @@ pub(super) async fn create_mixed_load_fixture(
     backend: MeasuredBackend,
     environment: &BenchmarkEnvironment,
 ) -> BenchResult<MixedLoadFixture> {
-    let (resource, service) = match backend {
+    let (resource, engine) = match backend {
         MeasuredBackend::Sqlite => {
             let bench_dir = Arc::new(BenchDir::new(&format!("{label}-sqlite"))?);
             let data_dir = bench_dir.path().to_path_buf();
-            let service = Arc::new(
-                Service::new_with_persistence_config(ServicePersistenceConfig::embedded(
+            let engine = Arc::new(
+                Engine::new_with_persistence_config(EnginePersistenceConfig::embedded(
                     &data_dir,
                     EmbeddedProviderKind::Sqlite,
                 ))
@@ -429,7 +429,7 @@ pub(super) async fn create_mixed_load_fixture(
                     bench_dir,
                     data_dir,
                 },
-                service,
+                engine,
             )
         }
         MeasuredBackend::LibsqlReplica => {
@@ -437,8 +437,8 @@ pub(super) async fn create_mixed_load_fixture(
             let replica_cache_dir = Arc::new(BenchDir::new(&format!("{label}-replica-cache"))?);
             let provider_config =
                 benchmark_libsql_provider_config(label, environment, replica_cache_dir.path());
-            let service = Arc::new(
-                Service::new_with_persistence_config(libsql_replica_service_config(
+            let engine = Arc::new(
+                Engine::new_with_persistence_config(libsql_replica_engine_config(
                     control_dir.path(),
                     &provider_config,
                 )?)
@@ -450,7 +450,7 @@ pub(super) async fn create_mixed_load_fixture(
                     replica_cache_dir,
                     provider_config,
                 },
-                service,
+                engine,
             )
         }
     };
@@ -458,14 +458,14 @@ pub(super) async fn create_mixed_load_fixture(
     let mut tenant_states = Vec::with_capacity(MIXED_LOAD_TENANTS);
     for tenant_index in 0..MIXED_LOAD_TENANTS {
         let tenant_id = TenantId::new(format!("tenant-{tenant_index}"))?;
-        service.create_tenant_async(tenant_id.clone()).await?;
-        service
+        engine.create_tenant_async(tenant_id.clone()).await?;
+        engine
             .set_table_schema_async(tenant_id.clone(), single_field_schema())
             .await?;
         let mut ids = Vec::with_capacity(MIXED_LOAD_OPS_PER_TENANT);
         for rank in 0..MIXED_LOAD_OPS_PER_TENANT {
             ids.push(
-                service
+                engine
                     .insert_document_async(
                         tenant_id.clone(),
                         tasks_table(),
@@ -489,7 +489,7 @@ pub(super) async fn create_mixed_load_fixture(
 
     Ok(MixedLoadFixture {
         resource,
-        service,
+        engine,
         tenant_states,
     })
 }
@@ -523,15 +523,15 @@ pub(super) async fn create_peer_catch_up_fixture(
         ..creator_provider_config.clone()
     };
 
-    let creator_service = Arc::new(
-        Service::new_with_persistence_config(libsql_replica_service_config(
+    let creator_engine = Arc::new(
+        Engine::new_with_persistence_config(libsql_replica_engine_config(
             creator_control.path(),
             &creator_provider_config,
         )?)
         .await?,
     );
-    let opener_service = Arc::new(
-        Service::new_with_persistence_config(libsql_replica_service_config(
+    let opener_engine = Arc::new(
+        Engine::new_with_persistence_config(libsql_replica_engine_config(
             opener_control.path(),
             &opener_provider_config,
         )?)
@@ -539,16 +539,16 @@ pub(super) async fn create_peer_catch_up_fixture(
     );
 
     let tenant_id = benchmark_tenant_id("peer-catch-up")?;
-    creator_service
+    creator_engine
         .create_tenant_async(tenant_id.clone())
         .await?;
-    creator_service
+    creator_engine
         .set_table_schema_async(tenant_id.clone(), single_field_schema())
         .await?;
-    opener_service
+    opener_engine
         .ensure_tenant_exists_async(tenant_id.clone())
         .await?;
-    let _ = opener_service.get_schema_async(tenant_id.clone()).await?;
+    let _ = opener_engine.get_schema_async(tenant_id.clone()).await?;
 
     Ok(PeerCatchUpFixture {
         creator_resource: LiveResource::LibsqlReplica {
@@ -556,13 +556,13 @@ pub(super) async fn create_peer_catch_up_fixture(
             replica_cache_dir: creator_cache,
             provider_config: creator_provider_config,
         },
-        creator_service,
+        creator_engine,
         opener_resource: LiveResource::LibsqlReplica {
             control_dir: opener_control,
             replica_cache_dir: opener_cache,
             provider_config: opener_provider_config,
         },
-        opener_service,
+        opener_engine,
         tenant_id,
     })
 }
@@ -572,8 +572,8 @@ pub(super) async fn freeze_point_read_seed(
     context: &str,
 ) -> BenchResult<PointReadSeed> {
     let PointReadFixture { tenant, ids } = fixture;
-    quiesce_service(&tenant.service, context).await?;
-    drop(tenant.service);
+    quiesce_engine(&tenant.engine, context).await?;
+    drop(tenant.engine);
     Ok(PointReadSeed {
         resource: tenant.resource.into_seed_resource(),
         tenant_id: tenant.tenant_id,
@@ -586,8 +586,8 @@ pub(super) async fn freeze_query_seed(
     context: &str,
 ) -> BenchResult<QuerySeed> {
     let QueryFixture { tenant, query } = fixture;
-    quiesce_service(&tenant.service, context).await?;
-    drop(tenant.service);
+    quiesce_engine(&tenant.engine, context).await?;
+    drop(tenant.engine);
     Ok(QuerySeed {
         resource: tenant.resource.into_seed_resource(),
         tenant_id: tenant.tenant_id,
@@ -601,11 +601,11 @@ pub(super) async fn freeze_mixed_load_seed(
 ) -> BenchResult<MixedLoadSeed> {
     let MixedLoadFixture {
         resource,
-        service,
+        engine,
         tenant_states,
     } = fixture;
-    quiesce_service(&service, context).await?;
-    drop(service);
+    quiesce_engine(&engine, context).await?;
+    drop(engine);
     Ok(MixedLoadSeed {
         resource: resource.into_seed_resource(),
         tenant_states,
@@ -613,9 +613,9 @@ pub(super) async fn freeze_mixed_load_seed(
 }
 
 impl LiveResource {
-    pub(super) async fn cleanup(&self, service: Arc<Service>, context: &str) -> BenchResult<()> {
-        quiesce_service(&service, context).await?;
-        drop(service);
+    pub(super) async fn cleanup(&self, engine: Arc<Engine>, context: &str) -> BenchResult<()> {
+        quiesce_engine(&engine, context).await?;
+        drop(engine);
         match self {
             Self::Sqlite {
                 bench_dir,
@@ -654,12 +654,12 @@ impl LiveResource {
 }
 
 impl SeedResource {
-    pub(super) async fn reopen_service(
+    pub(super) async fn reopen_engine(
         &self,
         label: &str,
         backend: MeasuredBackend,
         environment: &BenchmarkEnvironment,
-    ) -> BenchResult<(Arc<Service>, ReopenedResource)> {
+    ) -> BenchResult<(Arc<Engine>, ReopenedResource)> {
         match self {
             Self::Sqlite { data_dir, .. } => {
                 let cloned = Arc::new(BenchDir::new(&format!(
@@ -667,14 +667,14 @@ impl SeedResource {
                     backend.label().replace(' ', "-")
                 ))?);
                 copy_dir_all(data_dir, cloned.path())?;
-                let service = Arc::new(
-                    Service::new_with_persistence_config(ServicePersistenceConfig::embedded(
+                let engine = Arc::new(
+                    Engine::new_with_persistence_config(EnginePersistenceConfig::embedded(
                         cloned.path(),
                         EmbeddedProviderKind::Sqlite,
                     ))
                     .await?,
                 );
-                Ok((service, ReopenedResource::Sqlite { bench_dir: cloned }))
+                Ok((engine, ReopenedResource::Sqlite { bench_dir: cloned }))
             }
             Self::LibsqlReplica { provider_config } => {
                 let control_dir = Arc::new(BenchDir::new(&format!("{label}-replica-control"))?);
@@ -685,15 +685,15 @@ impl SeedResource {
                 reopened_config.admin_api_url = environment.admin_api_url.clone();
                 reopened_config.admin_auth_header = environment.admin_auth_header.clone();
                 reopened_config.replica_cache_dir = replica_cache_dir.path().to_path_buf();
-                let service = Arc::new(
-                    Service::new_with_persistence_config(libsql_replica_service_config(
+                let engine = Arc::new(
+                    Engine::new_with_persistence_config(libsql_replica_engine_config(
                         control_dir.path(),
                         &reopened_config,
                     )?)
                     .await?,
                 );
                 Ok((
-                    service,
+                    engine,
                     ReopenedResource::LibsqlReplica {
                         control_dir,
                         replica_cache_dir,
@@ -721,9 +721,9 @@ impl SeedResource {
 }
 
 impl ReopenedResource {
-    pub(super) async fn cleanup(self, service: Arc<Service>, context: &str) -> BenchResult<()> {
-        quiesce_service(&service, context).await?;
-        drop(service);
+    pub(super) async fn cleanup(self, engine: Arc<Engine>, context: &str) -> BenchResult<()> {
+        quiesce_engine(&engine, context).await?;
+        drop(engine);
         match self {
             Self::Sqlite { bench_dir } => {
                 drop(bench_dir);
@@ -744,9 +744,9 @@ impl Clone for PeerCatchUpFixture {
     fn clone(&self) -> Self {
         Self {
             creator_resource: self.creator_resource.clone(),
-            creator_service: self.creator_service.clone(),
+            creator_engine: self.creator_engine.clone(),
             opener_resource: self.opener_resource.clone(),
-            opener_service: self.opener_service.clone(),
+            opener_engine: self.opener_engine.clone(),
             tenant_id: self.tenant_id.clone(),
         }
     }
@@ -755,16 +755,16 @@ impl Clone for PeerCatchUpFixture {
 impl PeerCatchUpFixture {
     pub(super) async fn cleanup(self, context: &str) -> BenchResult<()> {
         self.creator_resource
-            .cleanup(self.creator_service.clone(), &format!("{context} creator"))
+            .cleanup(self.creator_engine.clone(), &format!("{context} creator"))
             .await?;
         self.opener_resource
-            .cleanup(self.opener_service.clone(), &format!("{context} opener"))
+            .cleanup(self.opener_engine.clone(), &format!("{context} opener"))
             .await?;
         Ok(())
     }
 }
 
-async fn create_seeded_libsql_replica_tenant_service(
+async fn create_seeded_libsql_replica_tenant_engine(
     label: &str,
     tenant_label: &str,
     environment: &BenchmarkEnvironment,
@@ -787,23 +787,21 @@ async fn create_seeded_libsql_replica_tenant_service(
     .await?;
     drop(provider);
 
-    let service = Arc::new(
-        Service::new_with_persistence_config(libsql_replica_service_config(
+    let engine = Arc::new(
+        Engine::new_with_persistence_config(libsql_replica_engine_config(
             control_dir.path(),
             &provider_config,
         )?)
         .await?,
     );
-    service
-        .ensure_tenant_exists_async(tenant_id.clone())
-        .await?;
+    engine.ensure_tenant_exists_async(tenant_id.clone()).await?;
     Ok(TenantFixture {
         resource: LiveResource::LibsqlReplica {
             control_dir,
             replica_cache_dir,
             provider_config,
         },
-        service,
+        engine,
         tenant_id,
     })
 }

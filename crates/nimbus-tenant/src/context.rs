@@ -7,7 +7,7 @@ use super::authority::TenantIsolationAuthority;
 use super::{
     RuntimeIsolationTier, RuntimePolicyAdmission, TenantIsolationDecision, TenantIsolationMode,
     TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision,
-    TenantWorkloadIdentity, TenantWorkloadLocation, runtime_admission,
+    WorkloadAttributes, WorkloadLocation, runtime_admission,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,7 +16,7 @@ pub struct TenantIsolationContext {
     pub(super) authority: TenantIsolationAuthority,
     pub(super) surface: &'static str,
     pub(super) deployment_generation: Option<u64>,
-    pub(super) location: TenantWorkloadLocation,
+    pub(super) location: WorkloadLocation,
 }
 
 impl TenantIsolationContext {
@@ -26,7 +26,7 @@ impl TenantIsolationContext {
             authority: TenantIsolationAuthority::Operator,
             surface,
             deployment_generation: None,
-            location: TenantWorkloadLocation::default(),
+            location: WorkloadLocation::default(),
         }
     }
 
@@ -40,7 +40,7 @@ impl TenantIsolationContext {
             authority: TenantIsolationAuthority::Application { principal },
             surface,
             deployment_generation: None,
-            location: TenantWorkloadLocation::default(),
+            location: WorkloadLocation::default(),
         }
     }
 
@@ -50,7 +50,7 @@ impl TenantIsolationContext {
             authority: TenantIsolationAuthority::System,
             surface,
             deployment_generation: None,
-            location: TenantWorkloadLocation::default(),
+            location: WorkloadLocation::default(),
         }
     }
 
@@ -86,7 +86,7 @@ impl TenantIsolationContext {
         self
     }
 
-    pub fn with_workload_location(mut self, location: TenantWorkloadLocation) -> Self {
+    pub fn with_workload_location(mut self, location: WorkloadLocation) -> Self {
         self.location = location;
         self
     }
@@ -161,12 +161,31 @@ impl TenantIsolationContext {
         }
     }
 
-    pub fn ensure_application_principal_tenant_access(&self, context: &str) -> Result<()> {
+    pub fn validate_principal_claim_if_present(&self, context: &str) -> Result<()> {
         let TenantIsolationAuthority::Application { principal } = &self.authority else {
             return Ok(());
         };
         let Some(claim) = principal_tenant_claim(principal) else {
             return Ok(());
+        };
+        if claim.value == self.tenant_id.as_str() {
+            return Ok(());
+        }
+        Err(Error::PermissionDenied(format!(
+            "application principal claim `{}` authorizes tenant `{}`, but {context} targeted tenant `{}`",
+            claim.name, claim.value, self.tenant_id
+        )))
+    }
+
+    pub fn require_matching_principal_claim(&self, context: &str) -> Result<()> {
+        let TenantIsolationAuthority::Application { principal } = &self.authority else {
+            return Ok(());
+        };
+        let Some(claim) = principal_tenant_claim(principal) else {
+            return Err(Error::PermissionDenied(format!(
+                "application principal has no tenant claim, but {context} targeted tenant `{}`",
+                self.tenant_id
+            )));
         };
         if claim.value == self.tenant_id.as_str() {
             return Ok(());
@@ -213,7 +232,7 @@ pub fn admit_runtime_invocation_decision(
     let mut admitted_services = BTreeSet::new();
     admitted_services.extend(policy.limits().grants.service.iter().cloned());
     admitted_services.extend(service_names);
-    let mut workload = TenantWorkloadIdentity::runtime_function(function_name, tier);
+    let mut workload = WorkloadAttributes::runtime_function(function_name, tier);
     if let Some(invocation_id) = invocation_id {
         workload = workload.with_invocation_id(invocation_id);
     }

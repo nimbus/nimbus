@@ -45,7 +45,7 @@ Why this directory exists:
 
 Current demos:
 
-- `nimbus/html/`: Vite-based browser playground using `nimbus/rest` SDK for tenant setup, schema install, document inserts, scheduled inserts, and live WebSocket subscriptions
+- `nimbus/html/`: Vite-based browser playground using `@nimbus/nimbus/transports/rest` for tenant setup, schema install, document inserts, scheduled inserts, and live WebSocket subscriptions
 - `firebase/html/`: browser demo using `@nimbus/firebase` against a local Nimbus server
   - exercises `connectFirestoreEmulator`, `addDoc`, `getDocs`, `onSnapshot`, `writeBatch`, `runTransaction`, `deleteDoc`, and the supported `FieldValue` sentinels
   - unary calls can switch between REST and gRPC-Web, while live query updates use the documented WebSocket `Listen` bridge

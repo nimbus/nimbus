@@ -6,7 +6,7 @@ use nimbus_tenant::{TenantIsolationContext, TenantIsolationMode};
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_async(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     registry: &Arc<ConvexRegistry>,
     runtime_service_registry: &Arc<dyn RuntimeServiceRegistry>,
     tenant_context: &TenantIsolationContext,

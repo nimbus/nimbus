@@ -1,12 +1,12 @@
 use std::fs;
 use std::sync::Arc;
 
-use nimbus_engine::{Service, run_scheduler};
+use nimbus_engine::{Engine, run_scheduler};
 use nimbus_runtime::RuntimeBundle;
 use nimbus_server::{ConvexRegistry, RouterOptions, build_router};
 use nimbus_testing::{
-    BlockingFaultInjector, DeterministicHarness, HttpApiFixture, ScenarioMetadata, ServerFixture,
-    ServiceFixture, WebSocketFixture, run_to_completion_snapshot_runtime_test_limits,
+    BlockingFaultInjector, DeterministicHarness, EngineFixture, HttpApiFixture, ScenarioMetadata,
+    ServerFixture, WebSocketFixture, run_to_completion_snapshot_runtime_test_limits,
     wait_for_value,
 };
 use serde_json::json;
@@ -19,12 +19,12 @@ fn convex_registry(functions: serde_json::Value) -> ConvexRegistry {
     convex_registry_with_bundle(functions, None)
 }
 
-fn router_for_service(service: Arc<Service>) -> axum::Router {
-    build_router(RouterOptions::new(service))
+fn router_for_engine(engine: Arc<Engine>) -> axum::Router {
+    build_router(RouterOptions::new(engine))
 }
 
-fn router_for_convex(service: Arc<Service>, convex_registry: ConvexRegistry) -> axum::Router {
-    build_router(RouterOptions::new(service).with_convex_registry(convex_registry))
+fn router_for_convex(engine: Arc<Engine>, convex_registry: ConvexRegistry) -> axum::Router {
+    build_router(RouterOptions::new(engine).with_convex_registry(convex_registry))
 }
 
 fn convex_registry_with_bundle(
@@ -59,7 +59,7 @@ fn convex_registry_with_bundle(
 }
 
 async fn wait_for_active_subscription_count(
-    service: &std::sync::Arc<Service>,
+    service: &std::sync::Arc<Engine>,
     tenant_id: &nimbus_core::TenantId,
     description: &str,
     expected_count: usize,

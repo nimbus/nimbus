@@ -3,7 +3,7 @@ use nimbus_auth::normalize_principal_context;
 
 #[cfg(test)]
 pub(in crate::adapters::convex) fn execute_named_action_request_direct(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     name: &str,
@@ -15,7 +15,7 @@ pub(in crate::adapters::convex) fn execute_named_action_request_direct(
 
 #[cfg(test)]
 pub(in crate::adapters::convex) fn execute_convex_action(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     action: ConvexExecutableAction,
@@ -42,7 +42,7 @@ pub(in crate::adapters::convex) fn execute_convex_action(
 
 #[cfg(test)]
 pub(in crate::adapters::convex) fn execute_convex_action_cancellable(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     action: ConvexExecutableAction,
@@ -59,7 +59,7 @@ pub(in crate::adapters::convex) fn execute_convex_action_cancellable(
 }
 
 pub(in crate::adapters::convex) fn execute_convex_action_cancellable_with_auth(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     action: ConvexExecutableAction,

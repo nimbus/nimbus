@@ -2,8 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn convex_mutation_dispatches_existing_document_operations() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_convex(service.clone(), ConvexRegistry::empty())).await;
     let api = HttpApiFixture::new(&server);

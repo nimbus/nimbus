@@ -124,7 +124,7 @@ export const list = defineQuery("messages:list", () => ({
     nimbusGeneratedApi,
     /makeQueryReference<\{\}, unknown\[]>\("messages:list", "public"\)/,
   );
-  assert.match(nimbusGeneratedApi, /from "nimbus\/browser"/);
+  assert.match(nimbusGeneratedApi, /from "@nimbus\/nimbus\/browser"/);
 }
 
 async function typecheckConvexSurface() {

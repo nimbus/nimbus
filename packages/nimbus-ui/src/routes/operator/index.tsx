@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useNimbusConnectionState, useQuery } from "nimbus/react";
+import { useNimbusConnectionState, useQuery } from "@nimbus/nimbus/react";
 import { useEffect, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";

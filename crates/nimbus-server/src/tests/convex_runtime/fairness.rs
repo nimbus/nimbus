@@ -1,6 +1,6 @@
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_testing::{
-    DeterministicTestCase, HttpApiFixture, ServerFixture, ServiceFixture, WebSocketFixture,
+    DeterministicTestCase, EngineFixture, HttpApiFixture, ServerFixture, WebSocketFixture,
     bounded_fairness_runtime_test_limits,
 };
 use reqwest::StatusCode;
@@ -133,8 +133,8 @@ async fn convex_runtime_http_rejections_return_too_many_requests() {
 
 pub(crate) async fn convex_runtime_http_rejections_return_too_many_requests_inner() {
     let registry = fairness_runtime_registry();
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry.clone())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -221,8 +221,8 @@ async fn convex_runtime_websocket_bootstrap_rejections_send_error_frames() {
 
 pub(crate) async fn convex_runtime_websocket_bootstrap_rejections_send_error_frames_inner() {
     let registry = fairness_runtime_registry();
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry.clone())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

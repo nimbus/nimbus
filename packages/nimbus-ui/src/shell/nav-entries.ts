@@ -13,7 +13,7 @@ import {
   Settings,
 } from "lucide-react";
 
-import { queryEntry, type QueryEntry } from "nimbus/browser";
+import { queryEntry, type QueryEntry } from "@nimbus/nimbus/browser";
 
 import { api } from "../../convex/_generated/api";
 

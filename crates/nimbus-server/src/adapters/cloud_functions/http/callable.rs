@@ -82,7 +82,7 @@ pub(super) async fn handle_callable_target(
         }
     };
     match execute_http_target(ServerCloudFunctionsHttpInvocation {
-        service: state.service.clone(),
+        engine: state.engine.clone(),
         runtime_service_registry: state.runtime_service_registry(),
         tenant_isolation_mode: state.tenant_isolation_mode,
         registry,

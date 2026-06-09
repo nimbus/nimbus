@@ -5,16 +5,16 @@ use deno_web::InMemoryBroadcastChannel;
 use sys_traits::impls::RealSys;
 
 use crate::backends::v8::embedder::Extension;
-use crate::limits::RuntimeCompatibilityTarget;
+use crate::limits::{RuntimeCompatibilityTarget, RuntimeLimits};
 use crate::node_compat::{
     ScopedInNpmPackageChecker, ScopedNodeModulesResolver, build_node_init_services,
 };
 use crate::runtime_capabilities::RuntimePathPolicy;
 
 use super::node22_runtime::node22_runtime_bootstrap_extension;
-use super::ops::runtime_extension;
 #[cfg(test)]
 use super::ops::runtime_test_extension;
+use super::ops::{runtime_extension, service_extension};
 
 fn install_rustls_default_provider_once() {
     static RUSTLS_PROVIDER: OnceLock<()> = OnceLock::new();
@@ -63,6 +63,7 @@ pub(crate) fn snapshot_extensions(target: RuntimeCompatibilityTarget) -> Vec<Ext
 pub(crate) fn execution_extensions(
     target: RuntimeCompatibilityTarget,
     path_policy: &RuntimePathPolicy,
+    limits: &RuntimeLimits,
 ) -> Vec<Extension> {
     let mut extensions = Vec::new();
     if target.is_node() {
@@ -101,5 +102,8 @@ pub(crate) fn execution_extensions(
     extensions.push(runtime_extension());
     #[cfg(test)]
     extensions.push(runtime_test_extension());
+    if limits.service_capability_enabled && limits.grants.has_service_grants() {
+        extensions.push(service_extension());
+    }
     extensions
 }

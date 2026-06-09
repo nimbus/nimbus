@@ -92,7 +92,7 @@ const fn default_host_call_abi_version() -> u16 {
 pub struct RuntimeAsyncQueryPayload {
     pub query: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -102,7 +102,7 @@ pub struct RuntimeAsyncPaginatedQueryPayload {
     #[serde(default)]
     pub cursor: Option<String>,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -110,21 +110,21 @@ pub struct RuntimeAsyncDbGetPayload {
     pub table: String,
     pub id: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeAsyncMutationPayload {
     pub mutation: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeAsyncActionPayload {
     pub action: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -138,7 +138,7 @@ pub struct RuntimeAsyncDbInsertPayload {
     pub table: String,
     pub fields: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -147,7 +147,7 @@ pub struct RuntimeAsyncDbPatchPayload {
     pub id: String,
     pub patch: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -155,7 +155,7 @@ pub struct RuntimeAsyncDbDeletePayload {
     pub table: String,
     pub id: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -170,7 +170,7 @@ pub struct RuntimeAsyncExtensionPayload {
 pub struct RuntimeSyncQueryStartPayload {
     pub table: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -180,7 +180,7 @@ pub struct RuntimeSyncQueryWithIndexPayload {
     #[serde(default)]
     pub filters: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -189,7 +189,7 @@ pub struct RuntimeSyncQueryFilterPayload {
     #[serde(default)]
     pub filters: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -197,7 +197,7 @@ pub struct RuntimeSyncQueryOrderPayload {
     pub builder_id: String,
     pub direction: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -208,7 +208,7 @@ pub struct RuntimeAsyncSchedulerRunAfterPayload {
     #[serde(default)]
     pub args: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -219,21 +219,21 @@ pub struct RuntimeAsyncSchedulerRunAtPayload {
     #[serde(default)]
     pub args: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeAsyncSchedulerCancelPayload {
     pub job_id: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeAsyncServiceLookupPayload {
     pub service_name: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -243,7 +243,7 @@ pub struct RuntimeAsyncFunctionCallPayload {
     #[serde(default)]
     pub args: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<InvocationAuth>,
 }
@@ -253,14 +253,14 @@ pub struct RuntimeSyncNestedCallPayload {
     pub name: String,
     pub visibility: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeAsyncQueryTerminalPayload {
     pub builder_id: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -268,7 +268,7 @@ pub struct RuntimeAsyncQueryTakePayload {
     pub builder_id: String,
     pub limit: usize,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -278,7 +278,7 @@ pub struct RuntimeAsyncQueryPaginatePayload {
     #[serde(default)]
     pub cursor: Option<String>,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -346,34 +346,34 @@ impl HostCallPayload {
         }
     }
 
-    pub fn session_id(&self) -> Option<&str> {
+    pub fn host_call_session_id(&self) -> Option<&str> {
         match self {
             Self::HttpRoute(_) | Self::RuntimeExtensionCall(_) => None,
-            Self::CtxQuery(payload) => payload.session_id.as_deref(),
-            Self::CtxPaginatedQuery(payload) => payload.session_id.as_deref(),
-            Self::CtxMutation(payload) => payload.session_id.as_deref(),
-            Self::CtxAction(payload) => payload.session_id.as_deref(),
-            Self::CtxRunQuery(payload) => payload.session_id.as_deref(),
-            Self::CtxRunMutation(payload) => payload.session_id.as_deref(),
-            Self::CtxRunAction(payload) => payload.session_id.as_deref(),
-            Self::DocumentGet(payload) => payload.session_id.as_deref(),
-            Self::QueryBuilderStart(payload) => payload.session_id.as_deref(),
-            Self::QueryBuilderWithIndex(payload) => payload.session_id.as_deref(),
-            Self::QueryBuilderFilter(payload) => payload.session_id.as_deref(),
-            Self::QueryBuilderOrder(payload) => payload.session_id.as_deref(),
-            Self::QueryReadCollect(payload) => payload.session_id.as_deref(),
-            Self::QueryReadTake(payload) => payload.session_id.as_deref(),
-            Self::QueryReadPaginate(payload) => payload.session_id.as_deref(),
-            Self::QueryReadFirst(payload) => payload.session_id.as_deref(),
-            Self::QueryReadUnique(payload) => payload.session_id.as_deref(),
-            Self::DocumentInsert(payload) => payload.session_id.as_deref(),
-            Self::DocumentPatch(payload) => payload.session_id.as_deref(),
-            Self::DocumentDelete(payload) => payload.session_id.as_deref(),
-            Self::CtxSchedulerRunAfter(payload) => payload.session_id.as_deref(),
-            Self::CtxSchedulerRunAt(payload) => payload.session_id.as_deref(),
-            Self::CtxSchedulerCancel(payload) => payload.session_id.as_deref(),
-            Self::CtxServiceLookup(payload) => payload.session_id.as_deref(),
-            Self::CtxRuntimeEnterNestedCall(payload) => payload.session_id.as_deref(),
+            Self::CtxQuery(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxPaginatedQuery(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxMutation(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxAction(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxRunQuery(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxRunMutation(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxRunAction(payload) => payload.host_call_session_id.as_deref(),
+            Self::DocumentGet(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryBuilderStart(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryBuilderWithIndex(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryBuilderFilter(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryBuilderOrder(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryReadCollect(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryReadTake(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryReadPaginate(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryReadFirst(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryReadUnique(payload) => payload.host_call_session_id.as_deref(),
+            Self::DocumentInsert(payload) => payload.host_call_session_id.as_deref(),
+            Self::DocumentPatch(payload) => payload.host_call_session_id.as_deref(),
+            Self::DocumentDelete(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxSchedulerRunAfter(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxSchedulerRunAt(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxSchedulerCancel(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxServiceLookup(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxRuntimeEnterNestedCall(payload) => payload.host_call_session_id.as_deref(),
         }
     }
 
@@ -585,7 +585,7 @@ mod tests {
             super::HostCallPayload::DocumentGet(RuntimeAsyncDbGetPayload {
                 table: "messages".to_string(),
                 id: "doc-1".to_string(),
-                session_id: None,
+                host_call_session_id: None,
             })
         );
     }

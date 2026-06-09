@@ -56,7 +56,7 @@ export {};
 }
 
 #[tokio::test]
-async fn pooled_runtime_invocations_reset_auth_and_session_state() {
+async fn pooled_runtime_invocations_reset_auth_and_host_call_session_state() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -68,7 +68,7 @@ globalThis.__nimbusInvoke = async function (request) {
   const host = await ctx.db.get("messages", "doc-1");
   return {
     token: user?.tokenIdentifier ?? null,
-    session: host.payload.session_id,
+    session: host.payload.host_call_session_id,
   };
 };
 
@@ -122,14 +122,14 @@ export {};
         first,
         serde_json::json!({
             "token": "token-1",
-            "session": "session-1",
+            "session": "host-call-session-1",
         })
     );
     assert_eq!(
         second,
         serde_json::json!({
             "token": "token-2",
-            "session": "session-1",
+            "session": "host-call-session-1",
         })
     );
     let metrics = executor.policy().metrics_snapshot();
@@ -237,7 +237,7 @@ async fn reused_runtime_refreshes_invocation_cancellation_state_before_next_invo
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   return await ctx.db.get("messages", "doc-1");
 };
@@ -332,7 +332,7 @@ export {};
             "payload": {
                 "table": "messages",
                 "id": "doc-1",
-                "session_id": "query:messages:get",
+                "host_call_session_id": "query:messages:get",
             },
         })
     );
@@ -340,7 +340,7 @@ export {};
 }
 
 #[tokio::test]
-async fn reused_runtime_refreshes_bootstrap_session_state_before_next_invoke() {
+async fn reused_runtime_refreshes_bootstrap_host_call_session_state_before_next_invoke() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(&bundle_path, "export {};").expect("bundle should write");
@@ -389,7 +389,7 @@ async fn reused_runtime_refreshes_bootstrap_session_state_before_next_invoke() {
             "payload": {
                 "table": "messages",
                 "id": "doc-1",
-                "session_id": "session-1",
+                "host_call_session_id": "host-call-session-1",
             },
         })
     );
@@ -400,7 +400,7 @@ async fn reused_runtime_refreshes_bootstrap_session_state_before_next_invoke() {
             "payload": {
                 "table": "messages",
                 "id": "doc-1",
-                "session_id": "session-2",
+                "host_call_session_id": "host-call-session-2",
             },
         })
     );
@@ -411,7 +411,7 @@ async fn reused_runtime_refreshes_bootstrap_session_state_before_next_invoke() {
             "payload": {
                 "table": "messages",
                 "id": "doc-1",
-                "session_id": "session-1",
+                "host_call_session_id": "host-call-session-1",
             },
         })
     );

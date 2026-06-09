@@ -815,7 +815,7 @@ mod tests {
     use nimbus_tenant::{
         RuntimeIsolationTier, TenantIsolationContext, TenantIsolationDecision, TenantIsolationMode,
         TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision,
-        TenantWorkloadIdentity, TenantWorkloadLocation,
+        WorkloadAttributes, WorkloadLocation,
     };
 
     #[derive(Default, Clone)]
@@ -919,9 +919,9 @@ mod tests {
             "convex.runtime",
         )
         .with_deployment_generation(9)
-        .with_workload_location(TenantWorkloadLocation::new().with_node_id("node-a"));
+        .with_workload_location(WorkloadLocation::new().with_node_id("node-a"));
         let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
-        let workload = TenantWorkloadIdentity::runtime_function(
+        let workload = WorkloadAttributes::runtime_function(
             "messages:send",
             RuntimeIsolationTier::InProcessUntrusted,
         )

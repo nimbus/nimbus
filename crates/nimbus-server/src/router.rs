@@ -5,7 +5,7 @@ use axum::http::{HeaderName, HeaderValue, Method, header};
 use axum::middleware;
 use axum::routing::{any, delete, get, post};
 use axum::{Extension, Router};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use tokio::sync::watch;
 use tower::ServiceBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -27,61 +27,53 @@ use crate::system::version_check::VersionCheckConfig;
 use crate::tenant::TenantIsolationMode;
 use crate::{http, ws};
 use nimbus_auth::ApplicationAuthVerifier;
-use nimbus_services::{EmptySandboxCatalog, SandboxCatalog, SandboxServiceManager};
-use nimbus_services::{RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry};
+use nimbus_services::{EmptyServiceInstanceCatalog, ServiceInstanceCatalog, ServiceManager};
+use nimbus_services::{RuntimeServiceRegistry, ServiceInstanceRuntimeRegistry};
 
 const DEMOS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../demos");
 
 enum RuntimeServiceSource {
-    SandboxCatalog(Arc<dyn SandboxCatalog>),
-    SandboxServiceManager(Arc<SandboxServiceManager>),
-    #[cfg(test)]
-    RuntimeServiceRegistry(Arc<dyn RuntimeServiceRegistry>),
+    ServiceInstanceCatalog(Arc<dyn ServiceInstanceCatalog>),
+    ServiceManager(Arc<ServiceManager>),
 }
 
 impl RuntimeServiceSource {
-    fn sandbox_service_manager(&self) -> Option<Arc<SandboxServiceManager>> {
+    fn service_manager(&self) -> Option<Arc<ServiceManager>> {
         match self {
-            Self::SandboxServiceManager(sandbox_service_manager) => {
-                Some(sandbox_service_manager.clone())
-            }
-            Self::SandboxCatalog(_) => None,
-            #[cfg(test)]
-            Self::RuntimeServiceRegistry(_) => None,
+            Self::ServiceManager(service_manager) => Some(service_manager.clone()),
+            Self::ServiceInstanceCatalog(_) => None,
         }
     }
 
     fn into_runtime_service_registry(
         self,
-        system_state_service: Arc<Service>,
+        system_state_engine: Arc<Engine>,
     ) -> Arc<dyn RuntimeServiceRegistry> {
         match self {
-            Self::SandboxCatalog(sandbox_catalog) => {
-                Arc::new(SandboxCatalogRuntimeServiceRegistry::new(sandbox_catalog))
+            Self::ServiceInstanceCatalog(service_instances) => {
+                Arc::new(ServiceInstanceRuntimeRegistry::new(service_instances))
             }
-            Self::SandboxServiceManager(sandbox_service_manager) => {
-                crate::service_manager::attach_system_state_service(
-                    &sandbox_service_manager,
-                    system_state_service,
+            Self::ServiceManager(service_manager) => {
+                crate::service_manager::attach_system_state_engine(
+                    &service_manager,
+                    system_state_engine,
                 );
-                sandbox_service_manager
+                service_manager
             }
-            #[cfg(test)]
-            Self::RuntimeServiceRegistry(runtime_service_registry) => runtime_service_registry,
         }
     }
 }
 
 /// Canonical public option bundle for building a Nimbus HTTP/WebSocket router.
 pub struct RouterOptions {
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     convex_registry: Option<ConvexRegistry>,
     system_convex_registry: Option<ConvexRegistry>,
     cloud_functions_registry: Option<CloudFunctionsRegistry>,
     firebase_config: Option<FirebaseConfig>,
     license_state: LicenseState,
-    sandbox_catalog: Option<Arc<dyn SandboxCatalog>>,
-    sandbox_service_manager: Option<Arc<SandboxServiceManager>>,
+    service_instances: Option<Arc<dyn ServiceInstanceCatalog>>,
+    service_manager: Option<Arc<ServiceManager>>,
     machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
     deploy_admin_token: Option<String>,
     local_server_security: Option<Arc<LocalServerSecurityState>>,
@@ -89,16 +81,16 @@ pub struct RouterOptions {
 }
 
 impl RouterOptions {
-    pub fn new(service: Arc<Service>) -> Self {
+    pub fn new(engine: Arc<Engine>) -> Self {
         Self {
-            service,
+            engine,
             convex_registry: None,
             system_convex_registry: None,
             cloud_functions_registry: None,
             firebase_config: None,
             license_state: LicenseState::community(),
-            sandbox_catalog: None,
-            sandbox_service_manager: None,
+            service_instances: None,
+            service_manager: None,
             machine_lifecycle_manager: None,
             deploy_admin_token: None,
             local_server_security: None,
@@ -134,18 +126,18 @@ impl RouterOptions {
         self
     }
 
-    pub fn with_sandbox_catalog(mut self, sandbox_catalog: Arc<dyn SandboxCatalog>) -> Self {
-        self.sandbox_catalog = Some(sandbox_catalog);
-        self.sandbox_service_manager = None;
+    pub fn with_service_instance_catalog(
+        mut self,
+        service_instances: Arc<dyn ServiceInstanceCatalog>,
+    ) -> Self {
+        self.service_instances = Some(service_instances);
+        self.service_manager = None;
         self
     }
 
-    pub fn with_sandbox_service_manager(
-        mut self,
-        sandbox_service_manager: Arc<SandboxServiceManager>,
-    ) -> Self {
-        self.sandbox_service_manager = Some(sandbox_service_manager);
-        self.sandbox_catalog = None;
+    pub fn with_service_manager(mut self, service_manager: Arc<ServiceManager>) -> Self {
+        self.service_manager = Some(service_manager);
+        self.service_instances = None;
         self
     }
 
@@ -175,8 +167,8 @@ impl RouterOptions {
         self
     }
 
-    pub(crate) fn service(&self) -> Arc<Service> {
-        Arc::clone(&self.service)
+    pub(crate) fn engine(&self) -> Arc<Engine> {
+        Arc::clone(&self.engine)
     }
 
     pub(crate) fn has_system_convex_registry(&self) -> bool {
@@ -184,7 +176,7 @@ impl RouterOptions {
     }
 
     pub(crate) fn into_build_config(self) -> RouterBuildConfig {
-        let mut config = RouterBuildConfig::core(self.service).with_license(self.license_state);
+        let mut config = RouterBuildConfig::core(self.engine).with_license(self.license_state);
         if let Some(system_convex_registry) = self.system_convex_registry {
             config = config.with_system_convex_registry(system_convex_registry);
         }
@@ -206,10 +198,10 @@ impl RouterOptions {
             config = config.with_local_server_security(local_server_security);
         }
         config = config.with_tenant_isolation_mode(self.tenant_isolation_mode);
-        if let Some(sandbox_service_manager) = self.sandbox_service_manager {
-            config = config.with_sandbox_service_manager(sandbox_service_manager);
-        } else if let Some(sandbox_catalog) = self.sandbox_catalog {
-            config = config.with_sandbox_catalog(sandbox_catalog);
+        if let Some(service_manager) = self.service_manager {
+            config = config.with_service_manager(service_manager);
+        } else if let Some(service_instances) = self.service_instances {
+            config = config.with_service_instance_catalog(service_instances);
         }
         if let Some(machine_lifecycle_manager) = self.machine_lifecycle_manager {
             config = config.with_machine_lifecycle_manager(machine_lifecycle_manager);
@@ -219,7 +211,7 @@ impl RouterOptions {
 }
 
 pub(crate) struct RouterBuildConfig {
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     convex_registry: Option<ConvexRegistry>,
     system_convex_registry: Option<ConvexRegistry>,
     application_auth_verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
@@ -236,17 +228,17 @@ pub(crate) struct RouterBuildConfig {
 }
 
 impl RouterBuildConfig {
-    pub(crate) fn core(service: Arc<Service>) -> Self {
+    pub(crate) fn core(engine: Arc<Engine>) -> Self {
         Self {
-            service,
+            engine,
             convex_registry: None,
             system_convex_registry: None,
             application_auth_verifier: None,
             cloud_functions_registry: None,
             firebase_config: None,
             license_state: LicenseState::community(),
-            runtime_service_source: RuntimeServiceSource::SandboxCatalog(Arc::new(
-                EmptySandboxCatalog,
+            runtime_service_source: RuntimeServiceSource::ServiceInstanceCatalog(Arc::new(
+                EmptyServiceInstanceCatalog,
             )),
             machine_lifecycle_manager: None,
             deploy_admin_token: std::env::var("NIMBUS_DEPLOY_TOKEN").ok(),
@@ -296,8 +288,12 @@ impl RouterBuildConfig {
         self
     }
 
-    pub(crate) fn with_sandbox_catalog(mut self, sandbox_catalog: Arc<dyn SandboxCatalog>) -> Self {
-        self.runtime_service_source = RuntimeServiceSource::SandboxCatalog(sandbox_catalog);
+    pub(crate) fn with_service_instance_catalog(
+        mut self,
+        service_instances: Arc<dyn ServiceInstanceCatalog>,
+    ) -> Self {
+        self.runtime_service_source =
+            RuntimeServiceSource::ServiceInstanceCatalog(service_instances);
         self
     }
 
@@ -335,12 +331,8 @@ impl RouterBuildConfig {
         self
     }
 
-    pub(crate) fn with_sandbox_service_manager(
-        mut self,
-        sandbox_service_manager: Arc<SandboxServiceManager>,
-    ) -> Self {
-        self.runtime_service_source =
-            RuntimeServiceSource::SandboxServiceManager(sandbox_service_manager);
+    pub(crate) fn with_service_manager(mut self, service_manager: Arc<ServiceManager>) -> Self {
+        self.runtime_service_source = RuntimeServiceSource::ServiceManager(service_manager);
         self
     }
 
@@ -353,11 +345,11 @@ impl RouterBuildConfig {
     }
 
     pub(crate) async fn prepare_system_tenant(&self) -> nimbus_core::Result<()> {
-        nimbus_system::prepare_system_tenant_async(&self.service, self.listen_addr).await?;
+        nimbus_system::prepare_system_tenant_async(&self.engine, self.listen_addr).await?;
         if let Some(registry) = self.convex_registry.as_ref() {
             let summary = registry.deploy_summary();
             let input = convex::convex_system_deployment_record_input(&summary, "startup");
-            nimbus_system::record_deployment_state_async(&self.service, &input).await?;
+            nimbus_system::record_deployment_state_async(&self.engine, &input).await?;
         }
         let Some(listen_addr) = self.listen_addr else {
             return Ok(());
@@ -365,7 +357,7 @@ impl RouterBuildConfig {
         let version = env!("CARGO_PKG_VERSION");
         if self.convex_registry.is_some() || self.system_convex_registry.is_some() {
             nimbus_system::record_listener_state_async(
-                &self.service,
+                &self.engine,
                 "convex",
                 "websocket",
                 &listen_addr.to_string(),
@@ -377,7 +369,7 @@ impl RouterBuildConfig {
         }
         if self.firebase_config.is_some() {
             nimbus_system::record_listener_state_async(
-                &self.service,
+                &self.engine,
                 "firebase",
                 "http+websocket",
                 &listen_addr.to_string(),
@@ -389,7 +381,7 @@ impl RouterBuildConfig {
         }
         if self.cloud_functions_registry.is_some() {
             nimbus_system::record_listener_state_async(
-                &self.service,
+                &self.engine,
                 "cloud-functions",
                 "http",
                 &listen_addr.to_string(),
@@ -402,23 +394,13 @@ impl RouterBuildConfig {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_runtime_service_registry(
-        mut self,
-        runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
-    ) -> Self {
-        self.runtime_service_source =
-            RuntimeServiceSource::RuntimeServiceRegistry(runtime_service_registry);
-        self
-    }
-
     pub(crate) fn build(self) -> Router {
-        let service = self.service.clone();
-        nimbus_system::install_table_projection_observer(&service);
-        let sandbox_service_manager = self.runtime_service_source.sandbox_service_manager();
+        let engine = self.engine.clone();
+        nimbus_system::install_table_projection_observer(&engine);
+        let service_manager = self.runtime_service_source.service_manager();
         let version_check = build_version_check();
         let state = Arc::new(AppState::from_config(AppStateConfig {
-            service: self.service,
+            engine: self.engine,
             convex_registry: self.convex_registry,
             system_convex_registry: self.system_convex_registry,
             application_auth_verifier: self.application_auth_verifier,
@@ -427,8 +409,8 @@ impl RouterBuildConfig {
             license_state: self.license_state,
             runtime_service_registry: self
                 .runtime_service_source
-                .into_runtime_service_registry(service),
-            sandbox_service_manager,
+                .into_runtime_service_registry(engine),
+            service_manager,
             machine_lifecycle_manager: self.machine_lifecycle_manager,
             deploy_admin_token: self.deploy_admin_token,
             local_server_security: self.local_server_security,
@@ -461,6 +443,7 @@ impl RouterBuildConfig {
                         server_access_extract_middleware,
                     )),
             )
+            .merge(build_service_control_router())
             .merge(
                 build_deploy_router()
                     .route_layer(middleware::from_fn_with_state(
@@ -505,17 +488,6 @@ fn build_version_check() -> Arc<VersionCheck> {
 /// Builds the Nimbus HTTP/WebSocket router from the canonical option bundle.
 pub fn build_router(options: RouterOptions) -> Router {
     options.into_build_config().build()
-}
-
-#[cfg(test)]
-pub(crate) fn build_router_for_test_runtime(
-    options: RouterOptions,
-    runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
-) -> Router {
-    options
-        .into_build_config()
-        .with_runtime_service_registry(runtime_service_registry)
-        .build()
 }
 
 fn build_cors_layer() -> CorsLayer {
@@ -624,18 +596,6 @@ fn build_local_admin_router() -> Router<Arc<AppState>> {
         .route("/api/machines/{name}/stop", post(http::stop_machine))
         .route("/api/machines/{name}/restart", post(http::restart_machine))
         .route(
-            "/api/tenants/{tenant_id}/services/{service_name}/start",
-            post(http::start_service),
-        )
-        .route(
-            "/api/tenants/{tenant_id}/services/{service_name}/stop",
-            post(http::stop_service),
-        )
-        .route(
-            "/api/tenants/{tenant_id}/services/{service_name}/restart",
-            post(http::restart_service),
-        )
-        .route(
             "/api/tenants/{tenant_id}/schedule",
             post(http::schedule_mutation).get(http::list_scheduled_jobs),
         )
@@ -690,6 +650,26 @@ fn build_local_admin_router() -> Router<Arc<AppState>> {
             post(http::query_documents_paginated),
         )
         .route("/ws", get(ws::ws_handler))
+}
+
+fn build_service_control_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route(
+            "/api/tenants/{tenant_id}/services/{service_name}",
+            get(http::get_service),
+        )
+        .route(
+            "/api/tenants/{tenant_id}/services/{service_name}/start",
+            post(http::start_service),
+        )
+        .route(
+            "/api/tenants/{tenant_id}/services/{service_name}/stop",
+            post(http::stop_service),
+        )
+        .route(
+            "/api/tenants/{tenant_id}/services/{service_name}/restart",
+            post(http::restart_service),
+        )
 }
 
 fn build_deploy_router() -> Router<Arc<AppState>> {

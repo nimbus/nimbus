@@ -1,10 +1,10 @@
 use super::*;
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 
 impl ConvexRegistry {
     pub async fn apply_schema_to_tenant_async(
         &self,
-        service: &Arc<Service>,
+        service: &Arc<Engine>,
         tenant_id: TenantId,
     ) -> Result<(), Error> {
         let Some(schema) = &self.schema else {

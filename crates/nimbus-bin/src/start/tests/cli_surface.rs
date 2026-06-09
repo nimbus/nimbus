@@ -11,7 +11,7 @@ fn cli_defaults_to_embedded_sqlite() {
     .expect("default sqlite config should build");
     assert_eq!(
         config,
-        nimbus::ServicePersistenceConfig::embedded("./data", nimbus::EmbeddedProviderKind::Sqlite)
+        nimbus::EnginePersistenceConfig::embedded("./data", nimbus::EmbeddedProviderKind::Sqlite)
     );
 }
 
@@ -42,7 +42,7 @@ fn production_start_compose_manager_rejects_tag_only_image_before_backend_setup(
         .expect("compose fixture should write");
     let selection = crate::compose::discovery::ResolvedComposeSelection::explicit(compose);
 
-    let error = match super::boot::load_sandbox_service_manager(
+    let error = match super::boot::load_service_manager(
         Some(&selection),
         &tempdir.path().join("control"),
         nimbus_server::TenantIsolationMode::Production,

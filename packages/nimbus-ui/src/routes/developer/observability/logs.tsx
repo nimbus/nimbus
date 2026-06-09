@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useQuery } from "nimbus/react";
+import { useQuery } from "@nimbus/nimbus/react";
 import {
   type MouseEvent as ReactMouseEvent,
   useCallback,

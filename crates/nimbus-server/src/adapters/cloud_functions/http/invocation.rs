@@ -6,7 +6,7 @@ use nimbus_cloud_functions::http::{
     execute_http_target as execute_adapter_http_target,
 };
 use nimbus_core::TenantId;
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_runtime::InvocationAuth;
 use serde_json::Value;
 
@@ -19,7 +19,7 @@ use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::TenantIsolationMode;
 
 pub(super) struct ServerCloudFunctionsHttpInvocation {
-    pub service: Arc<Service>,
+    pub engine: Arc<Engine>,
     pub runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     pub tenant_isolation_mode: TenantIsolationMode,
     pub registry: Arc<CloudFunctionsRegistry>,
@@ -34,7 +34,7 @@ pub(super) fn execute_http_target(
     invocation: ServerCloudFunctionsHttpInvocation,
 ) -> std::result::Result<Response, AppError> {
     let ServerCloudFunctionsHttpInvocation {
-        service,
+        engine,
         runtime_service_registry,
         tenant_isolation_mode,
         registry,
@@ -46,7 +46,7 @@ pub(super) fn execute_http_target(
     } = invocation;
     let server_request_id = next_runtime_server_request_id("cloud-functions-http");
     let runtime_context = CloudFunctionsRuntimeContext::new(
-        service,
+        engine,
         runtime_service_registry,
         tenant_isolation_mode,
         Arc::new(ServerCloudFunctionsRuntimeInvoker),

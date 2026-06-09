@@ -156,7 +156,7 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeActionPayload =
             prepare_direct_ctx_payload(self, payload, cancellation)?;
         let response = execute_convex_action_async(
-            self.service(),
+            self.engine(),
             self.registry(),
             self.tenant_id(),
             payload.action,
@@ -182,7 +182,7 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeActionPayload =
             prepare_direct_ctx_payload(self, payload, cancellation)?;
         let response = execute_convex_action_cancellable_with_auth(
-            self.service(),
+            self.engine(),
             self.registry(),
             self.tenant_id(),
             payload.action,
@@ -194,30 +194,30 @@ impl ConvexHostBridge {
 }
 
 trait DirectCtxPayload {
-    fn session_id(&self) -> Option<&str>;
+    fn host_call_session_id(&self) -> Option<&str>;
 }
 
 impl DirectCtxPayload for ConvexRuntimeQueryPayload {
-    fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
+    fn host_call_session_id(&self) -> Option<&str> {
+        self.host_call_session_id.as_deref()
     }
 }
 
 impl DirectCtxPayload for ConvexRuntimePaginatedQueryPayload {
-    fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
+    fn host_call_session_id(&self) -> Option<&str> {
+        self.host_call_session_id.as_deref()
     }
 }
 
 impl DirectCtxPayload for ConvexRuntimeMutationPayload {
-    fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
+    fn host_call_session_id(&self) -> Option<&str> {
+        self.host_call_session_id.as_deref()
     }
 }
 
 impl DirectCtxPayload for ConvexRuntimeActionPayload {
-    fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
+    fn host_call_session_id(&self) -> Option<&str> {
+        self.host_call_session_id.as_deref()
     }
 }
 
@@ -243,7 +243,7 @@ where
     P: DeserializeOwned + DirectCtxPayload,
 {
     let payload: P = serde_json::from_value(payload)?;
-    bridge.validate_session(payload.session_id())?;
+    bridge.validate_host_call_session(payload.host_call_session_id())?;
     ensure_runtime_host_not_cancelled(cancellation)?;
     Ok(payload)
 }

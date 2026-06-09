@@ -9,7 +9,7 @@ pub(crate) async fn ws(
     ws: WebSocketUpgrade,
 ) -> Result<Response, AppError> {
     let negotiated_protocol = crate::ws::negotiate(&headers)?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let (registry, auth, tenant_context) = registry_and_auth_for_path(
         &state,
         crate::local_server::LocalServerRouteFamily::ConvexWebSocket,

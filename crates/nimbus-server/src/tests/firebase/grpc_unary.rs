@@ -2,9 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn firebase_grpc_commit_executes_atomic_batch_and_consumes_transaction_token() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
@@ -63,9 +63,9 @@ async fn firebase_grpc_commit_executes_atomic_batch_and_consumes_transaction_tok
 
 #[tokio::test]
 async fn firebase_grpc_batch_get_documents_reads_found_missing_and_rolls_back_sessions() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -178,9 +178,9 @@ async fn firebase_grpc_batch_get_documents_reads_found_missing_and_rolls_back_se
 
 #[tokio::test]
 async fn firebase_grpc_run_query_supports_transaction_selector_with_pinned_snapshot() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -269,9 +269,9 @@ async fn firebase_grpc_run_query_supports_transaction_selector_with_pinned_snaps
 
 #[tokio::test]
 async fn firebase_grpc_batch_write_reports_partial_success_and_rejects_duplicates() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
@@ -336,9 +336,9 @@ async fn firebase_grpc_batch_write_reports_partial_success_and_rejects_duplicate
 
 #[tokio::test]
 async fn firebase_grpc_run_query_streams_documents_and_empty_results() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -432,9 +432,9 @@ async fn firebase_grpc_run_query_streams_documents_and_empty_results() {
 
 #[tokio::test]
 async fn firebase_grpc_run_query_supports_document_id_filters_and_implicit_name_ordering() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -525,9 +525,9 @@ async fn firebase_grpc_run_query_supports_document_id_filters_and_implicit_name_
 
 #[tokio::test]
 async fn firebase_grpc_run_query_supports_collection_group_cursors_with_full_document_names() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -615,9 +615,9 @@ async fn firebase_grpc_run_query_supports_collection_group_cursors_with_full_doc
 
 #[tokio::test]
 async fn firebase_grpc_run_query_reports_missing_index_for_compound_query() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let cities_table = crate::adapters::firebase::storage_table_for_collection_path(
@@ -702,9 +702,9 @@ async fn firebase_grpc_run_query_reports_missing_index_for_compound_query() {
 
 #[tokio::test]
 async fn firebase_grpc_run_aggregation_query_counts_filtered_results_with_aliases() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -777,13 +777,10 @@ async fn firebase_grpc_run_aggregation_query_counts_filtered_results_with_aliase
 
 #[tokio::test]
 async fn firebase_grpc_unary_requests_reject_deferred_selectors() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(router_for_firebase(
-        fixture.service(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
 
     let batch_get_error = client
@@ -869,9 +866,9 @@ async fn firebase_grpc_unary_requests_reject_deferred_selectors() {
 
 #[tokio::test]
 async fn firebase_grpc_get_document_returns_masked_fields_and_honors_transaction_selector() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -882,11 +879,8 @@ async fn firebase_grpc_get_document_returns_masked_fields_and_honors_transaction
             ("state", json!("CA")),
         ],
     );
-    let server = ServerFixture::start(router_for_firebase(
-        fixture.service(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
     let transaction = client
         .begin_transaction(GrpcBeginTransactionRequest {
@@ -932,9 +926,9 @@ async fn firebase_grpc_get_document_returns_masked_fields_and_honors_transaction
 
 #[tokio::test]
 async fn firebase_grpc_point_crud_handles_explicit_and_generated_ids_masks_and_preconditions() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
@@ -1064,9 +1058,9 @@ async fn firebase_grpc_point_crud_handles_explicit_and_generated_ids_masks_and_p
 
 #[tokio::test]
 async fn firebase_grpc_list_documents_lists_root_and_nested_collections_with_masks() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -1139,13 +1133,10 @@ async fn firebase_grpc_list_documents_lists_root_and_nested_collections_with_mas
 
 #[tokio::test]
 async fn firebase_grpc_list_documents_rejects_deferred_selectors() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(router_for_firebase(
-        fixture.service(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
 
     let page_size_error = client
@@ -1188,9 +1179,9 @@ async fn firebase_grpc_list_documents_rejects_deferred_selectors() {
 
 #[tokio::test]
 async fn firebase_grpc_list_collection_ids_lists_root_and_nested_parents_with_pagination() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -1285,13 +1276,10 @@ async fn firebase_grpc_list_collection_ids_lists_root_and_nested_parents_with_pa
 
 #[tokio::test]
 async fn firebase_grpc_list_collection_ids_rejects_invalid_page_tokens_and_read_time() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(router_for_firebase(
-        fixture.service(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
 
     let invalid_page_token_error = client

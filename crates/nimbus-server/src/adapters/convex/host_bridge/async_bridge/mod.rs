@@ -41,7 +41,7 @@ impl HostBridge for ConvexHostBridge {
                 "convex_runtime_async_host_call",
                 tenant = %bridge.tenant_id(),
                 server_request_id = ?bridge.server_request_id(),
-                session_id = %bridge.session_id(),
+                host_call_session_id = %bridge.host_call_session_id(),
                 operation = %convex_host_operation_name(request.operation),
                 host_call_id = NEXT_ASYNC_HOST_CALL_ID.fetch_add(1, Ordering::Relaxed),
             ),

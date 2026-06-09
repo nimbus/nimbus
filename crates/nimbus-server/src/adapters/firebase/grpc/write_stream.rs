@@ -11,7 +11,7 @@ pub(super) async fn handle_write(
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
     Ok(Response::new(
         nimbus_firebase::grpc::write_stream::write_response_stream(
-            state.service.clone(),
+            state.engine.clone(),
             service.write_streams.clone(),
             request.into_inner(),
             auth.principal,

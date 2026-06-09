@@ -91,7 +91,7 @@ pub(crate) async fn commit(
     }
 
     let outcome = commit_batch_for_database(
-        &state.service,
+        &state.engine,
         &tenant_context,
         &parsed_commit.database,
         &auth.principal,
@@ -153,7 +153,7 @@ pub(crate) async fn batch_write(
     };
 
     match batch_write_for_database(
-        &state.service,
+        &state.engine,
         &tenant_context,
         &parsed_request.database,
         &auth.principal,
@@ -207,7 +207,7 @@ pub(crate) async fn batch_get_documents(
             }
         };
     let outcome = match batch_get_documents_for_database(
-        &state.service,
+        &state.engine,
         &tenant_context,
         &route_database,
         &auth.principal,
@@ -287,7 +287,7 @@ pub(crate) async fn begin_transaction(
         }
     };
     let session = match begin_transaction_session_for_database(
-        &state.service,
+        &state.engine,
         &tenant_context,
         &parsed_request.database,
         &auth.principal,
@@ -341,7 +341,7 @@ pub(crate) async fn rollback(
             }
         };
     match rollback_transaction_session_for_database(
-        &state.service,
+        &state.engine,
         &tenant_context,
         &parsed_request.database,
         &auth.principal,
@@ -495,7 +495,7 @@ async fn list_collection_ids_for_parent_document(
             }
         };
     let page = match list_collection_ids_for_database(
-        &state.service,
+        &state.engine,
         &tenant_context,
         &route_database,
         parent_document_path.as_ref(),
@@ -565,7 +565,7 @@ async fn run_query_for_parent_document(
         }
     };
     let outcome = match run_query_documents_for_database(
-        &state.service,
+        &state.engine,
         &tenant_context,
         &route_database,
         &auth.principal,
@@ -651,7 +651,7 @@ async fn run_aggregation_query_for_parent_document(
             }
         };
     let outcome = match run_aggregation_query_for_database(
-        &state.service,
+        &state.engine,
         &tenant_context,
         &route_database,
         &auth.principal,

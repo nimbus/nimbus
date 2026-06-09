@@ -36,7 +36,7 @@ export async function prepareOverlay(convexDemosDir, demoName) {
   await fs.mkdir(nimbusScopeDir, { recursive: true });
 
   await safeSymlink(path.join(repoRoot, "packages", "convex"), path.join(nodeModulesDir, "convex"));
-  await safeSymlink(path.join(repoRoot, "packages", "nimbus"), path.join(nodeModulesDir, "nimbus"));
+  await safeSymlink(path.join(repoRoot, "packages", "nimbus"), path.join(nimbusScopeDir, "nimbus"));
   await safeSymlink(
     path.join(repoRoot, "packages", "codegen"),
     path.join(nimbusScopeDir, "codegen"),

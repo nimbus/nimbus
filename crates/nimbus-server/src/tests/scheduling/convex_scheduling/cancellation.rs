@@ -17,9 +17,9 @@ async fn convex_cancel_scheduled_job_removes_pending_named_mutation() {
             }
         }
     ]));
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_convex(registry)
             .with_system_convex_registry(
                 ConvexRegistry::from_embedded_system_bundle()
@@ -130,8 +130,8 @@ async fn convex_named_mutation_can_cancel_scheduled_job() {
             }
         }
     ]));
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

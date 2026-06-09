@@ -31,7 +31,7 @@ pub(crate) async fn ws_handler(
         "native_websocket",
     );
     let negotiated_protocol = negotiate(&headers)?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let tenant_check = tenant_context.tenant_id().clone();
     service.ensure_tenant_exists_async(tenant_check).await?;
     let tenant_id = tenant_context.tenant_id().clone();

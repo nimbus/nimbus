@@ -65,7 +65,7 @@ async function executeResolvedQueryPlan(ctx, plan) {
   }
   return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_query", {
     query: plan,
-    session_id: "convex-runtime-query-plan",
+    host_call_session_id: "convex-runtime-query-plan",
   });
 }`;
 }

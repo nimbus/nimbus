@@ -2,9 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn firebase_listen_websocket_streams_binary_protobuf_frames_and_remove_target() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -126,9 +126,9 @@ async fn firebase_listen_websocket_streams_binary_protobuf_frames_and_remove_tar
 
 #[tokio::test]
 async fn firebase_listen_websocket_resume_token_reconnects_via_shared_transport_state() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -251,9 +251,9 @@ async fn firebase_listen_websocket_resume_token_reconnects_via_shared_transport_
 
 #[tokio::test]
 async fn firebase_listen_websocket_accepts_loopback_browser_origin_and_bootstraps() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -306,13 +306,10 @@ async fn firebase_listen_websocket_accepts_loopback_browser_origin_and_bootstrap
 
 #[tokio::test]
 async fn firebase_listen_websocket_text_frames_close_with_unsupported_code() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(router_for_firebase(
-        fixture.service(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
 
     let mut socket =
         WebSocketFixture::connect_raw(&server.ws_url("/google.firestore.v1.Firestore/Listen"))
@@ -326,13 +323,10 @@ async fn firebase_listen_websocket_text_frames_close_with_unsupported_code() {
 
 #[tokio::test]
 async fn firebase_listen_websocket_invalid_protobuf_frames_close_with_policy_code() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(router_for_firebase(
-        fixture.service(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
 
     let mut socket =
         WebSocketFixture::connect_raw(&server.ws_url("/google.firestore.v1.Firestore/Listen"))
@@ -346,9 +340,9 @@ async fn firebase_listen_websocket_invalid_protobuf_frames_close_with_policy_cod
 
 #[tokio::test]
 async fn firebase_listen_websocket_backpressure_closes_with_error_code() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,

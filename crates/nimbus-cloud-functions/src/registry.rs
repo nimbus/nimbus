@@ -228,7 +228,7 @@ mod tests {
     use crate::{
         CLOUD_FUNCTIONS_ARTIFACT_MANIFEST_FILE, CLOUD_FUNCTIONS_INTERNAL_ARTIFACT_DIR,
         CLOUD_FUNCTIONS_TARGETS_MANIFEST_FILE, CloudFunctionsArtifactManifest,
-        CloudFunctionsAuthoringSurface, CloudFunctionsExecutionBinding,
+        CloudFunctionsAuthoringSurface, CloudFunctionsExecutionPrincipal,
         CloudFunctionsSignatureType, CloudFunctionsTargetBinding, CloudFunctionsTargetDefinition,
         CloudFunctionsTargetsManifest,
     };
@@ -248,7 +248,7 @@ mod tests {
                     database: "(default)".to_string(),
                     document: "users/{userId}".to_string(),
                     namespace: None,
-                    execution: CloudFunctionsExecutionBinding::Service,
+                    execution: CloudFunctionsExecutionPrincipal::ServiceAccount,
                 },
             }],
             r#"

@@ -40,8 +40,8 @@ async fn convex_named_indexed_filter_unique_query_resolves_exact_match() {
             }
         }
     ]));
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -176,8 +176,8 @@ async fn convex_app_schema_manifest_bootstraps_indexed_queries_for_new_tenants()
             }
         })),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

@@ -21,8 +21,8 @@
   },
   "dependencies": {
     "@nimbus/codegen": "0.1.33",
-    "esbuild": "0.28.0",
-    "nimbus": "0.1.33"
+    "@nimbus/nimbus": "0.1.33",
+    "esbuild": "0.28.0"
   },
   "devDependencies": {
     "typescript": "6.0.3"

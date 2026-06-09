@@ -16,7 +16,29 @@ use sys_traits::impls::RealSys;
 
 use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::{RuntimeGrants, RuntimeLimits};
-use crate::runtime::RuntimeBundle;
+use crate::runtime::{InvocationKind, RuntimeBundle};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RuntimePermissionProfile {
+    Query,
+    Mutation,
+    Action,
+}
+
+impl RuntimePermissionProfile {
+    pub(crate) fn for_invocation_kind(kind: &InvocationKind) -> Self {
+        match kind {
+            InvocationKind::Query | InvocationKind::PaginatedQuery => Self::Query,
+            InvocationKind::Mutation => Self::Mutation,
+            InvocationKind::Action => Self::Action,
+        }
+    }
+
+    fn allows_configured_ambient_authority(self) -> bool {
+        matches!(self, Self::Action)
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct RuntimeContractPathsDescriptor {
@@ -433,21 +455,35 @@ impl PermissionDescriptorParser for RuntimePermissionDescriptorParser {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn build_permissions_container(
     paths: &RuntimePathPolicy,
     env: &RuntimeEnvPolicy,
     limits: &RuntimeLimits,
 ) -> Result<PermissionsContainer> {
+    build_permissions_container_for_profile(paths, env, limits, RuntimePermissionProfile::Action)
+}
+
+pub(crate) fn build_permissions_container_for_profile(
+    paths: &RuntimePathPolicy,
+    env: &RuntimeEnvPolicy,
+    limits: &RuntimeLimits,
+    permission_profile: RuntimePermissionProfile,
+) -> Result<PermissionsContainer> {
     let parser = Arc::new(RuntimePermissionDescriptorParser::new(paths.cwd.clone()));
+    let ambient_authority_allowed = permission_profile.allows_configured_ambient_authority();
     let options = PermissionsOptions {
         allow_env: (!env.allowed_names.is_empty()).then(|| env.allowed_names()),
         deny_env: None,
         ignore_env: None,
-        allow_net: allowed_net_descriptors(&limits.grants),
+        allow_net: ambient_authority_allowed
+            .then(|| allowed_net_descriptors(&limits.grants))
+            .flatten(),
         deny_net: None,
-        allow_ffi: (!limits.grants.ffi.is_empty()).then(|| limits.grants.ffi.clone()),
+        allow_ffi: (ambient_authority_allowed && !limits.grants.ffi.is_empty())
+            .then(|| limits.grants.ffi.clone()),
         deny_ffi: None,
-        allow_read: (!paths.read_roots().is_empty()).then(|| {
+        allow_read: (ambient_authority_allowed && !paths.read_roots().is_empty()).then(|| {
             paths
                 .read_roots()
                 .iter()
@@ -458,7 +494,7 @@ pub(crate) fn build_permissions_container(
         ignore_read: None,
         allow_sys: (!limits.grants.sys.is_empty()).then(|| limits.grants.sys.clone()),
         deny_sys: None,
-        allow_write: (!paths.write_roots().is_empty()).then(|| {
+        allow_write: (ambient_authority_allowed && !paths.write_roots().is_empty()).then(|| {
             paths
                 .write_roots()
                 .iter()
@@ -466,7 +502,7 @@ pub(crate) fn build_permissions_container(
                 .collect()
         }),
         deny_write: None,
-        allow_run: (!paths.run_targets().is_empty()).then(|| {
+        allow_run: (ambient_authority_allowed && !paths.run_targets().is_empty()).then(|| {
             paths
                 .run_targets()
                 .iter()
@@ -793,6 +829,157 @@ mod tests {
     use crate::RuntimeLimits;
     use deno_permissions::OpenAccessKind;
     use std::path::PathBuf;
+
+    fn privileged_permission_profile_fixture() -> (
+        tempfile::TempDir,
+        RuntimePathPolicy,
+        RuntimeEnvPolicy,
+        RuntimeLimits,
+        PathBuf,
+    ) {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let bundle_root = tempdir.path().join("app/.nimbus/convex");
+        std::fs::create_dir_all(&bundle_root).expect("bundle root should build");
+        let bundle_path = bundle_root.join("bundle.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+
+        let mut limits = RuntimeLimits::privileged_operator();
+        limits.grants.read = vec!["$generated_root".to_string()];
+        limits.grants.write = vec!["$generated_root".to_string()];
+        limits.grants.net_connect = vec!["127.0.0.1".to_string()];
+        limits.grants.run = vec!["$runtime_host_exec".to_string()];
+        limits.grants.ffi = vec![
+            bundle_path
+                .canonicalize()
+                .expect("bundle path should canonicalize")
+                .display()
+                .to_string(),
+        ];
+
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &limits).expect("policy should build");
+        let env = RuntimeEnvPolicy::for_grants(&limits.grants);
+        (tempdir, policy, env, limits, bundle_path)
+    }
+
+    fn assert_profile_denies_ambient_net_fs_run_ffi(profile: RuntimePermissionProfile) {
+        let (_tempdir, policy, env, limits, bundle_path) = privileged_permission_profile_fixture();
+        let mut permissions =
+            build_permissions_container_for_profile(&policy, &env, &limits, profile)
+                .expect("permissions should build");
+
+        let net = permissions
+            .check_net(&("127.0.0.1", Some(8080)), "test")
+            .expect_err("query/mutation permission profile should deny net access");
+        assert!(
+            net.to_string().contains("Requires net access"),
+            "unexpected net denial: {net}"
+        );
+
+        let read = permissions
+            .check_open(
+                Cow::Borrowed(Path::new("./bundle.mjs")),
+                OpenAccessKind::Read,
+                Some("test"),
+            )
+            .expect_err("query/mutation permission profile should deny fs read access");
+        assert!(
+            read.to_string().contains("Requires read access"),
+            "unexpected read denial: {read}"
+        );
+
+        let write = permissions
+            .check_open(
+                Cow::Borrowed(Path::new("./created.txt")),
+                OpenAccessKind::Write,
+                Some("test"),
+            )
+            .expect_err("query/mutation permission profile should deny fs write access");
+        assert!(
+            write.to_string().contains("Requires write access"),
+            "unexpected write denial: {write}"
+        );
+
+        let parser = RuntimePermissionDescriptorParser::new(policy.cwd().to_path_buf());
+        let run_path = policy.run_targets()[0].to_string_lossy().into_owned();
+        let run_query = parser
+            .parse_run_query(run_path.as_str())
+            .expect("runtime host exec query should parse");
+        let run = permissions
+            .check_run(&run_query, "test")
+            .expect_err("query/mutation permission profile should deny run access");
+        assert!(
+            run.to_string().contains("Requires run access"),
+            "unexpected run denial: {run}"
+        );
+
+        let ffi_path = bundle_path
+            .canonicalize()
+            .expect("bundle path should canonicalize");
+        let ffi = permissions
+            .check_ffi(Cow::Borrowed(ffi_path.as_path()))
+            .expect_err("query/mutation permission profile should deny ffi access");
+        assert!(
+            ffi.to_string().contains("Requires ffi access"),
+            "unexpected ffi denial: {ffi}"
+        );
+    }
+
+    #[test]
+    fn query_permission_profile_denies_net_fs_run_ffi() {
+        assert_profile_denies_ambient_net_fs_run_ffi(RuntimePermissionProfile::Query);
+    }
+
+    #[test]
+    fn mutation_permission_profile_denies_net_fs_run_ffi() {
+        assert_profile_denies_ambient_net_fs_run_ffi(RuntimePermissionProfile::Mutation);
+    }
+
+    #[test]
+    fn action_permission_profile_preserves_configured_authority() {
+        let (_tempdir, policy, env, limits, bundle_path) = privileged_permission_profile_fixture();
+        let mut permissions = build_permissions_container_for_profile(
+            &policy,
+            &env,
+            &limits,
+            RuntimePermissionProfile::Action,
+        )
+        .expect("permissions should build");
+
+        permissions
+            .check_net(&("127.0.0.1", Some(8080)), "test")
+            .expect("action permission profile should preserve configured net authority");
+        permissions
+            .check_open(
+                Cow::Borrowed(Path::new("./bundle.mjs")),
+                OpenAccessKind::Read,
+                Some("test"),
+            )
+            .expect("action permission profile should preserve configured fs read authority");
+        permissions
+            .check_open(
+                Cow::Borrowed(Path::new("./created.txt")),
+                OpenAccessKind::Write,
+                Some("test"),
+            )
+            .expect("action permission profile should preserve configured fs write authority");
+
+        let parser = RuntimePermissionDescriptorParser::new(policy.cwd().to_path_buf());
+        let run_path = policy.run_targets()[0].to_string_lossy().into_owned();
+        let run_query = parser
+            .parse_run_query(run_path.as_str())
+            .expect("runtime host exec query should parse");
+        permissions
+            .check_run(&run_query, "test")
+            .expect("action permission profile should preserve configured run authority");
+
+        let ffi_path = bundle_path
+            .canonicalize()
+            .expect("bundle path should canonicalize");
+        permissions
+            .check_ffi(Cow::Borrowed(ffi_path.as_path()))
+            .expect("action permission profile should preserve configured ffi authority");
+    }
 
     #[test]
     fn application_preset_roots_stay_within_generated_bundle_root() {

@@ -1,4 +1,4 @@
-import { NimbusReactClient } from "nimbus/react";
+import { NimbusReactClient } from "@nimbus/nimbus/react";
 
 const SYSTEM_TENANT = "_nimbus";
 

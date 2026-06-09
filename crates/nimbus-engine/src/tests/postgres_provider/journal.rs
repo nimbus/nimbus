@@ -3,24 +3,24 @@ use super::support::*;
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
 async fn typed_postgres_config_supports_async_schema_mutation_journal_and_scheduler_paths() {
-    with_postgres_service_config(|service_config, _provider_config| async move {
+    with_postgres_engine_config(|engine_config, _provider_config| async move {
         let tenant_id = TenantId::new("pg-mutations").expect("tenant id should build");
-        let service = Arc::new(
-            Service::new_with_persistence_config(service_config)
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config)
                 .await
-                .expect("postgres-backed service should create"),
+                .expect("postgres-backed engine should create"),
         );
 
-        service
+        engine
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
-        service
+        engine
             .set_table_schema_async(tenant_id.clone(), tasks_schema())
             .await
             .expect("schema write should succeed");
 
-        let inserted_id = service
+        let inserted_id = engine
             .insert_document_async(
                 tenant_id.clone(),
                 tasks_table(),
@@ -28,7 +28,7 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
             )
             .await
             .expect("insert should succeed");
-        service
+        engine
             .update_document_async(
                 tenant_id.clone(),
                 tasks_table(),
@@ -38,7 +38,7 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
             .await
             .expect("update should succeed");
 
-        let scheduled_job_id = service
+        let scheduled_job_id = engine
             .schedule_mutation_async(
                 tenant_id.clone(),
                 ScheduleRequest {
@@ -56,7 +56,7 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
             .await
             .expect("scheduled mutation should persist");
         assert_eq!(
-            service
+            engine
                 .list_scheduled_jobs_async(tenant_id.clone())
                 .await
                 .expect("pending jobs should load")
@@ -64,12 +64,12 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
             1
         );
 
-        let claimed = service
+        let claimed = engine
             .claim_due_jobs_async(tenant_id.clone(), Timestamp(u64::MAX))
             .await
             .expect("claim should succeed");
         assert_eq!(claimed.len(), 1);
-        service
+        engine
             .record_scheduled_job_result_async(
                 tenant_id.clone(),
                 nimbus_core::ScheduledJobResult {
@@ -83,12 +83,12 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
             )
             .await
             .expect("scheduled result should persist");
-        service
+        engine
             .complete_scheduled_job_async(tenant_id.clone(), scheduled_job_id.clone())
             .await
             .expect("scheduled completion should persist");
         assert_eq!(
-            service
+            engine
                 .get_scheduled_job_result_async(tenant_id.clone(), scheduled_job_id.clone())
                 .await
                 .expect("scheduled result should load")
@@ -96,7 +96,7 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
             ScheduledJobOutcome::Completed
         );
 
-        let documents = service
+        let documents = engine
             .query_documents_async(tenant_id.clone(), query_for("tasks"))
             .await
             .expect("query should succeed");
@@ -109,18 +109,18 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
             Some("Renamed")
         );
 
-        let bootstrap = service
+        let bootstrap = engine
             .export_durable_journal_bootstrap_async(tenant_id.clone())
             .await
             .expect("bootstrap should export");
-        let latest_sequence = service
+        let latest_sequence = engine
             .latest_sequence_async(tenant_id.clone())
             .await
             .expect("latest sequence should load");
         assert_eq!(bootstrap.bootstrap_cut, latest_sequence);
         assert_eq!(bootstrap.resume_after, latest_sequence);
 
-        service.quiesce().await;
+        engine.quiesce().await;
     })
     .await;
 }
@@ -128,41 +128,41 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
 async fn postgres_notifications_refresh_loaded_runtime_schema_and_journal_state() {
-    with_shared_postgres_service_configs(
-        |service_config_a, service_config_b, _provider_config| async move {
+    with_shared_postgres_engine_configs(
+        |engine_config_a, engine_config_b, _provider_config| async move {
             let tenant_id = TenantId::new("pg-notify-journal").expect("tenant id should build");
-            let service_a = Arc::new(
-                Service::new_with_persistence_config(service_config_a)
+            let engine_a = Arc::new(
+                Engine::new_with_persistence_config(engine_config_a)
                     .await
-                    .expect("first postgres-backed service should create"),
+                    .expect("first postgres-backed engine should create"),
             );
-            let service_b = Arc::new(
-                Service::new_with_persistence_config(service_config_b)
+            let engine_b = Arc::new(
+                Engine::new_with_persistence_config(engine_config_b)
                     .await
-                    .expect("second postgres-backed service should create"),
+                    .expect("second postgres-backed engine should create"),
             );
 
-            service_a
+            engine_a
                 .create_tenant_async(tenant_id.clone())
                 .await
                 .expect("tenant should create");
-            service_b
+            engine_b
                 .ensure_tenant_exists_async(tenant_id.clone())
                 .await
-                .expect("second service should load tenant");
+                .expect("second engine should load tenant");
             assert_eq!(
-                service_b
+                engine_b
                     .get_schema_async(tenant_id.clone())
                     .await
                     .expect("empty schema should load"),
                 Schema::default()
             );
 
-            service_a
+            engine_a
                 .set_table_schema_async(tenant_id.clone(), tasks_schema())
                 .await
                 .expect("schema write should succeed");
-            service_a
+            engine_a
                 .insert_document_async(
                     tenant_id.clone(),
                     tasks_table(),
@@ -176,10 +176,10 @@ async fn postgres_notifications_refresh_loaded_runtime_schema_and_journal_state(
                 Duration::from_secs(2),
                 Duration::from_millis(25),
                 || {
-                    let service = service_b.clone();
+                    let engine = engine_b.clone();
                     let tenant_id = tenant_id.clone();
                     async move {
-                        service
+                        engine
                             .get_schema_async(tenant_id)
                             .await
                             .expect("schema should load")
@@ -189,14 +189,14 @@ async fn postgres_notifications_refresh_loaded_runtime_schema_and_journal_state(
             )
             .await;
             wait_for_mutation_journal_stats(
-                &service_b,
+                &engine_b,
                 &tenant_id,
                 "postgres notification should catch up journal heads",
                 |stats| stats.durable_head.0 >= 2 && stats.applied_head.0 >= 2,
             )
             .await;
 
-            let documents = service_b
+            let documents = engine_b
                 .query_documents_async(tenant_id.clone(), query_for("tasks"))
                 .await
                 .expect("caught-up query should succeed");
@@ -209,12 +209,12 @@ async fn postgres_notifications_refresh_loaded_runtime_schema_and_journal_state(
                 Some("External")
             );
 
-            tokio::time::timeout(Duration::from_secs(2), service_a.quiesce())
+            tokio::time::timeout(Duration::from_secs(2), engine_a.quiesce())
                 .await
-                .expect("first service should quiesce after reconnect test");
-            tokio::time::timeout(Duration::from_secs(2), service_b.quiesce())
+                .expect("first engine should quiesce after reconnect test");
+            tokio::time::timeout(Duration::from_secs(2), engine_b.quiesce())
                 .await
-                .expect("second service should quiesce after reconnect test");
+                .expect("second engine should quiesce after reconnect test");
         },
     )
     .await;
@@ -223,24 +223,24 @@ async fn postgres_notifications_refresh_loaded_runtime_schema_and_journal_state(
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
 async fn postgres_listener_reconnect_recovers_missed_schema_and_journal_hints() {
-    with_postgres_service_config(|service_config, provider_config| async move {
+    with_postgres_engine_config(|engine_config, provider_config| async move {
         let tenant_id = TenantId::new("pg-notify-reconnect").expect("tenant id should build");
-        let service = Arc::new(
-            Service::new_with_persistence_config(service_config)
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config)
                 .await
-                .expect("postgres-backed service should create"),
+                .expect("postgres-backed engine should create"),
         );
 
-        service
+        engine
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
-        service
+        engine
             .ensure_tenant_exists_async(tenant_id.clone())
             .await
-            .expect("service should load tenant");
+            .expect("engine should load tenant");
         assert_eq!(
-            service
+            engine
                 .get_schema_async(tenant_id.clone())
                 .await
                 .expect("empty schema should load"),
@@ -307,10 +307,10 @@ async fn postgres_listener_reconnect_recovers_missed_schema_and_journal_hints() 
             Duration::from_secs(4),
             Duration::from_millis(25),
             || {
-                let service = service.clone();
+                let engine = engine.clone();
                 let tenant_id = tenant_id.clone();
                 async move {
-                    service
+                    engine
                         .get_schema_async(tenant_id)
                         .await
                         .expect("schema should load")
@@ -324,10 +324,10 @@ async fn postgres_listener_reconnect_recovers_missed_schema_and_journal_hints() 
             Duration::from_secs(4),
             Duration::from_millis(25),
             || {
-                let service = service.clone();
+                let engine = engine.clone();
                 let tenant_id = tenant_id.clone();
                 async move {
-                    service
+                    engine
                         .mutation_journal_stats_for_testing(&tenant_id)
                         .expect("mutation journal stats should load")
                 }
@@ -340,10 +340,10 @@ async fn postgres_listener_reconnect_recovers_missed_schema_and_journal_hints() 
             Duration::from_secs(4),
             Duration::from_millis(25),
             || {
-                let service = service.clone();
+                let engine = engine.clone();
                 let tenant_id = tenant_id.clone();
                 async move {
-                    service
+                    engine
                         .query_documents_async(tenant_id, query_for("tasks"))
                         .await
                         .expect("query should succeed")
@@ -361,9 +361,9 @@ async fn postgres_listener_reconnect_recovers_missed_schema_and_journal_hints() 
         )
         .await;
 
-        tokio::time::timeout(Duration::from_secs(2), service.quiesce())
+        tokio::time::timeout(Duration::from_secs(2), engine.quiesce())
             .await
-            .expect("service should quiesce after reconnect test");
+            .expect("engine should quiesce after reconnect test");
     })
     .await;
 }

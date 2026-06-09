@@ -2,11 +2,11 @@ use super::*;
 
 #[tokio::test]
 async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_journal() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    let first_document_id = service
+    let first_document_id = engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -16,7 +16,7 @@ async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_jo
             ]),
         )
         .expect("first fixture insert should succeed");
-    let second_document_id = service
+    let second_document_id = engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -28,7 +28,7 @@ async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_jo
         .expect("second fixture insert should succeed");
 
     let (tx, mut rx) = subscription_channel();
-    let _subscription = service
+    let _subscription = engine
         .subscribe(
             &tenant_id,
             Query {
@@ -52,17 +52,17 @@ async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_jo
         other => panic!("unexpected initial subscription update: {other:?}"),
     }
 
-    let pause = service
+    let pause = engine
         .mutation_journal_pause_handle_for_testing(&tenant_id)
         .expect("journal pause handle should load");
     pause.arm();
 
     let first_delete_document_id = first_document_id.clone();
     let first_delete = {
-        let service = Arc::clone(&service);
+        let engine = Arc::clone(&engine);
         let tenant_id = tenant_id.clone();
         tokio::spawn(async move {
-            service
+            engine
                 .delete_document_async(tenant_id, tasks_table(), first_delete_document_id)
                 .await
         })
@@ -78,10 +78,10 @@ async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_jo
 
     let second_delete_document_id = second_document_id.clone();
     let second_delete = {
-        let service = Arc::clone(&service);
+        let engine = Arc::clone(&engine);
         let tenant_id = tenant_id.clone();
         tokio::spawn(async move {
-            service
+            engine
                 .delete_document_async(tenant_id, tasks_table(), second_delete_document_id)
                 .await
         })
@@ -104,7 +104,7 @@ async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_jo
     .await
     .expect("queued deletes should complete once the journal worker is released");
 
-    let delete_sequence = durable_journal_commits(&service, &tenant_id, SequenceNumber(0))
+    let delete_sequence = durable_journal_commits(&engine, &tenant_id, SequenceNumber(0))
         .into_iter()
         .filter(|commit| {
             commit.writes.iter().any(|write| {
@@ -162,12 +162,12 @@ async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_jo
 }
 
 #[tokio::test]
-async fn service_does_not_fail_committed_mutation_when_subscription_re_evaluation_errors() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_does_not_fail_committed_mutation_when_subscription_re_evaluation_errors() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             TableName::new("tasks").expect("table name should be valid"),
@@ -186,7 +186,7 @@ async fn service_does_not_fail_committed_mutation_when_subscription_re_evaluatio
         limit: None,
     };
 
-    let _subscription = service
+    let _subscription = engine
         .subscribe(&tenant_id, query, "req-3".to_string(), tx)
         .expect("subscribe should succeed");
     let _ = rx
@@ -194,7 +194,7 @@ async fn service_does_not_fail_committed_mutation_when_subscription_re_evaluatio
         .await
         .expect("initial subscription result should arrive");
 
-    let result = service.insert_document(
+    let result = engine.insert_document(
         &tenant_id,
         TableName::new("tasks").expect("table name should be valid"),
         serde_json::Map::from_iter([("rank".to_string(), json!(2))]),
@@ -212,7 +212,7 @@ async fn service_does_not_fail_committed_mutation_when_subscription_re_evaluatio
         other => panic!("unexpected subscription event: {other:?}"),
     }
 
-    service
+    engine
         .update_document(
             &tenant_id,
             TableName::new("tasks").expect("table name should be valid"),

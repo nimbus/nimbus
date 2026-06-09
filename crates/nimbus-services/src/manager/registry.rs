@@ -3,17 +3,17 @@ use nimbus_core::{Error, TenantId};
 use nimbus_runtime::{HostCallCancellation, InvocationServiceBinding, InvocationServices};
 use nimbus_sandbox::SandboxStatus;
 
-use crate::SandboxCatalog;
+use crate::ServiceInstanceCatalog;
 use crate::registry::{
     RuntimeServiceBindingFuture, RuntimeServiceRegistry, service_binding_from_handle,
 };
 
-use super::SandboxServiceManager;
+use super::ServiceManager;
 use super::types::{TenantServiceKey, sandbox_backend_error};
 
-impl RuntimeServiceRegistry for SandboxServiceManager {
+impl RuntimeServiceRegistry for ServiceManager {
     fn snapshot_for_tenant(&self, tenant_id: &TenantId) -> InvocationServices {
-        self.sandboxes_for_tenant(tenant_id)
+        self.service_instances_for_tenant(tenant_id)
             .into_iter()
             .filter_map(|(service_name, handle)| {
                 service_binding_from_handle(&handle).map(|binding| (service_name, binding))

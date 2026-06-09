@@ -9,7 +9,7 @@ pub(crate) async fn query(
     headers: HeaderMap,
     Json(request): Json<ConvexQueryRequest>,
 ) -> Result<Json<Value>, AppError> {
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let auth_timer = budgeted_segment(LatencySegment::Auth);
     let (registry, auth, tenant_context) = registry_and_auth_for_path(
         &state,
@@ -103,7 +103,7 @@ pub(crate) async fn paginated_query(
     headers: HeaderMap,
     Json(request): Json<ConvexPaginatedQueryRequest>,
 ) -> Result<Json<nimbus_core::Page>, AppError> {
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let (registry, auth, tenant_context) = registry_and_auth_for_path(
         &state,
         crate::local_server::LocalServerRouteFamily::ConvexHttp,

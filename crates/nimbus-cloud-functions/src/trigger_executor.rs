@@ -3,7 +3,7 @@ use std::sync::Arc;
 use nimbus_bridge::admission::RuntimeExecutionAdmission;
 use nimbus_bridge::{RuntimeHostInvocation, RuntimeHostScope};
 use nimbus_core::{Error, Result, StorageErrorKind, TenantId, TriggerInvocationRecord};
-use nimbus_engine::{Service, TriggerInvocationExecution, TriggerInvocationExecutor};
+use nimbus_engine::{Engine, TriggerInvocationExecution, TriggerInvocationExecutor};
 use nimbus_runtime::{InvocationKind, InvocationRequest};
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::{
@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub struct CloudFunctionsTriggerExecutor {
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     registry: Arc<CloudFunctionsRegistry>,
     deployment_generation: u64,
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
@@ -27,7 +27,7 @@ pub struct CloudFunctionsTriggerExecutor {
 
 impl CloudFunctionsTriggerExecutor {
     pub fn new(
-        service: Arc<Service>,
+        engine: Arc<Engine>,
         registry: Arc<CloudFunctionsRegistry>,
         deployment_generation: u64,
         runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
@@ -35,7 +35,7 @@ impl CloudFunctionsTriggerExecutor {
         runtime_invoker: Arc<dyn CloudFunctionsRuntimeInvoker>,
     ) -> Self {
         Self {
-            service,
+            engine,
             registry,
             deployment_generation,
             runtime_service_registry,
@@ -111,7 +111,7 @@ impl CloudFunctionsTriggerExecutor {
         };
         let bridge = Arc::new(CloudFunctionsHostBridge::build(
             RuntimeHostScope::new(
-                self.service.clone(),
+                self.engine.clone(),
                 self.registry.runtime_policy(),
                 decision.clone(),
             ),

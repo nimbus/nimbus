@@ -2,7 +2,7 @@ use super::*;
 
 #[cfg(test)]
 pub(super) fn execute_function_call(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     command: ConvexFunctionCallCommand,
@@ -48,7 +48,7 @@ pub(super) fn execute_function_call(
 }
 
 pub(super) fn execute_function_call_cancellable(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     command: ConvexFunctionCallCommand,

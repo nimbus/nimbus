@@ -2,9 +2,9 @@ use super::*;
 
 const DEPLOY_TOKEN: &str = "test-deploy-token";
 
-fn deploy_router(service: Arc<Service>, registry: Option<ConvexRegistry>) -> axum::Router {
+fn deploy_router(engine: Arc<Engine>, registry: Option<ConvexRegistry>) -> axum::Router {
     let mut config =
-        crate::router::RouterBuildConfig::core(service).with_deploy_admin_token(DEPLOY_TOKEN);
+        crate::router::RouterBuildConfig::core(engine).with_deploy_admin_token(DEPLOY_TOKEN);
     if let Some(registry) = registry {
         config = config
             .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
@@ -16,10 +16,10 @@ fn deploy_router(service: Arc<Service>, registry: Option<ConvexRegistry>) -> axu
 }
 
 fn deploy_router_with_system_registry(
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     registry: Option<ConvexRegistry>,
 ) -> axum::Router {
-    let mut config = crate::router::RouterBuildConfig::core(service)
+    let mut config = crate::router::RouterBuildConfig::core(engine)
         .with_deploy_admin_token(DEPLOY_TOKEN)
         .with_system_convex_registry(
             ConvexRegistry::from_embedded_system_bundle()
@@ -95,7 +95,7 @@ fn cloud_functions_request(bundle: &str, bundle_sha256: &str) -> serde_json::Val
                             "event_type": "google.cloud.firestore.document.v1.written",
                             "database": "(default)",
                             "document": "users/{userId}",
-                            "execution": "service"
+                            "execution": "service_account"
                         }
                     }]
                 },
@@ -144,10 +144,10 @@ async fn deploy(
 
 #[tokio::test]
 async fn deploy_admin_requires_configured_token() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let registry = convex_registry(json!([]));
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(fixture.service())
+        crate::router::RouterBuildConfig::core(fixture.engine())
             .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
                 &registry,
             ))
@@ -174,9 +174,9 @@ async fn deploy_admin_requires_configured_token() {
 
 #[tokio::test]
 async fn deploy_dry_run_validates_and_diffs_without_activation() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(deploy_router(
-        fixture.service(),
+        fixture.engine(),
         Some(convex_registry(json!([query_function(
             "messages:list",
             "messages"
@@ -236,9 +236,9 @@ async fn deploy_dry_run_validates_and_diffs_without_activation() {
 
 #[tokio::test]
 async fn deploy_activation_swaps_new_requests_to_new_generation() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(deploy_router_with_system_registry(
-        fixture.service(),
+        fixture.engine(),
         Some(convex_registry(json!([query_function(
             "messages:list",
             "messages"
@@ -350,9 +350,9 @@ async fn deploy_activation_swaps_new_requests_to_new_generation() {
 
 #[tokio::test]
 async fn deploy_validation_failure_leaves_previous_generation_live() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(deploy_router(
-        fixture.service(),
+        fixture.engine(),
         Some(convex_registry(json!([query_function(
             "messages:list",
             "messages"
@@ -397,8 +397,8 @@ async fn deploy_validation_failure_leaves_previous_generation_live() {
 
 #[tokio::test]
 async fn deploy_activation_accepts_cloud_functions_artifacts() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(deploy_router(fixture.service(), None)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(deploy_router(fixture.engine(), None)).await;
     let bundle_source =
         "globalThis.__nimbusInvoke = async function () { return { ok: true }; };\nexport {};\n";
     let temp = tempfile::tempdir().expect("bundle tempdir should build");
@@ -426,9 +426,9 @@ async fn deploy_activation_accepts_cloud_functions_artifacts() {
 
 #[tokio::test]
 async fn deploy_schema_validation_failure_leaves_previous_generation_live() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(deploy_router(
-        fixture.service(),
+        fixture.engine(),
         Some(convex_registry(json!([query_function(
             "messages:list",
             "messages"
@@ -503,15 +503,15 @@ async fn deploy_schema_validation_failure_leaves_previous_generation_live() {
 //      pins the current contract so a future autostart change can
 //      relax assertion (2) honestly instead of silently.
 #[tokio::test]
-async fn deploy_persists_across_service_restart_without_app_dir() {
+async fn deploy_persists_across_engine_restart_without_app_dir() {
     let data_dir = tempfile::tempdir().expect("data dir tempdir should create");
 
     {
-        let service_a = Arc::new(
-            Service::new(data_dir.path()).expect("first service should build on shared data dir"),
+        let engine_a = Arc::new(
+            Engine::new(data_dir.path()).expect("first engine should build on shared data dir"),
         );
         let server_a =
-            ServerFixture::start(deploy_router_with_system_registry(service_a.clone(), None)).await;
+            ServerFixture::start(deploy_router_with_system_registry(engine_a.clone(), None)).await;
         let api_a = HttpApiFixture::new(&server_a);
         assert_eq!(
             api_a.create_tenant("demo").await.status(),
@@ -561,20 +561,20 @@ async fn deploy_persists_across_service_restart_without_app_dir() {
         assert_eq!(bundles_a[0]["status"], json!("active"));
         assert_eq!(bundles_a[0]["sourceRef"], json!("deploy:generation:1"));
     }
-    // `server_a` and `service_a` drop here. The data dir survives — it is
+    // `server_a` and `engine_a` drop here. The data dir survives — it is
     // owned by `data_dir` for the rest of the test, mimicking `nimbus start`
     // being killed while its persistent storage stays on disk.
 
-    let service_b = Arc::new(
-        Service::new(data_dir.path()).expect("second service should reopen the same data dir"),
+    let engine_b = Arc::new(
+        Engine::new(data_dir.path()).expect("second engine should reopen the same data dir"),
     );
     let server_b =
-        ServerFixture::start(deploy_router_with_system_registry(service_b.clone(), None)).await;
+        ServerFixture::start(deploy_router_with_system_registry(engine_b.clone(), None)).await;
     let api_b = HttpApiFixture::new(&server_b);
 
-    // The deploy record written on service A is durable in shared storage.
+    // The deploy record written on engine A is durable in shared storage.
     // (Tenant durability is exercised implicitly: the redeploy below targets
-    // the same `demo` tenant created on service A and the subsequent named-
+    // the same `demo` tenant created on engine A and the subsequent named-
     // query against it must succeed.)
     let bundles_b_before = api_b
         .convex_named_query(
@@ -595,7 +595,7 @@ async fn deploy_persists_across_service_restart_without_app_dir() {
         bundles_b_before
             .iter()
             .any(|bundle| bundle["sourceRef"] == json!("deploy:generation:1")),
-        "service A's deploy must persist in `_nimbus.bundles` post-restart: {bundles_b_before:?}"
+        "engine A's deploy must persist in `_nimbus.bundles` post-restart: {bundles_b_before:?}"
     );
 
     // Auto-rehydration of the previously deployed bundle on startup is NOT
@@ -657,11 +657,11 @@ async fn deploy_persists_across_service_restart_without_app_dir() {
     let bundles_b_after = bundles_b_after
         .as_array()
         .expect("post-redeploy bundles should be an array");
-    // The deploy artifacts are byte-identical across service A and B, so
+    // The deploy artifacts are byte-identical across engine A and B, so
     // `_nimbus.bundles` deduplicates on sha256 and only one row remains.
     // The relevant durability assertion is that the row's status is
     // `active` post-redeploy and its sourceRef advances to the new
-    // generation recorded by service B.
+    // generation recorded by engine B.
     assert_eq!(
         bundles_b_after.len(),
         1,

@@ -9,9 +9,9 @@ pub(crate) const SCHEDULED_JOB_HISTORY_FAILURE_CASE: DeterministicTestCase =
 
 #[tokio::test]
 async fn cron_endpoints_create_list_and_delete_jobs() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_system_convex_registry(
                 ConvexRegistry::from_embedded_system_bundle()
                     .expect("embedded system Convex registry should load"),
@@ -127,8 +127,8 @@ async fn scheduled_job_history_endpoint_reports_failures() {
 }
 
 pub(crate) async fn scheduled_job_history_endpoint_reports_failures_inner() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let scheduler_handle = tokio::spawn(run_scheduler(service.clone(), shutdown_rx));
     let server = ServerFixture::start(

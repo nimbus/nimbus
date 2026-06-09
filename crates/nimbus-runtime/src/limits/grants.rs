@@ -48,6 +48,17 @@ impl RuntimeGrants {
         Self::default()
     }
 
+    pub(crate) fn sorted_service_grants(&self) -> Vec<String> {
+        let mut grants = self.service.clone();
+        grants.sort();
+        grants.dedup();
+        grants
+    }
+
+    pub(crate) fn has_service_grants(&self) -> bool {
+        !self.service.is_empty()
+    }
+
     fn application_base() -> Self {
         Self {
             read: vec!["$generated_root".to_string()],

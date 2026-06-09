@@ -2,9 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn firebase_write_stream_handshakes_and_applies_ordered_writes() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
@@ -108,13 +108,10 @@ async fn firebase_write_stream_handshakes_and_applies_ordered_writes() {
 }
 #[tokio::test]
 async fn firebase_write_stream_rejects_missing_post_handshake_token() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(router_for_firebase(
-        fixture.service(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
@@ -153,13 +150,10 @@ async fn firebase_write_stream_rejects_missing_post_handshake_token() {
 
 #[tokio::test]
 async fn firebase_write_stream_replays_unacknowledged_responses_on_resume() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(router_for_firebase(
-        fixture.service(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
 
     let mut initial_client = firestore_grpc_client(&server).await;
     let (initial_sender, initial_receiver) = mpsc::unbounded();
@@ -258,9 +252,9 @@ async fn firebase_write_stream_replays_unacknowledged_responses_on_resume() {
 
 #[tokio::test]
 async fn firebase_write_stream_executes_transform_only_writes_and_returns_transform_results() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
@@ -329,9 +323,9 @@ async fn firebase_write_stream_executes_transform_only_writes_and_returns_transf
 
 #[tokio::test]
 async fn firebase_write_stream_roundtrips_server_timestamp_transform_results_and_reads() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
@@ -410,9 +404,9 @@ async fn firebase_write_stream_roundtrips_server_timestamp_transform_results_and
 
 #[tokio::test]
 async fn firebase_write_stream_roundtrips_special_double_transform_results_and_reads() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
@@ -475,9 +469,9 @@ async fn firebase_write_stream_roundtrips_special_double_transform_results_and_r
 
 #[tokio::test]
 async fn firebase_commit_roundtrips_typed_scalar_transform_results_and_document_reads() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
@@ -582,13 +576,10 @@ async fn firebase_commit_roundtrips_typed_scalar_transform_results_and_document_
 
 #[tokio::test]
 async fn firebase_write_stream_closes_cleanly_after_handshake_when_sender_drops() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(router_for_firebase(
-        fixture.service(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client

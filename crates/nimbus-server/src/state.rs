@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 
 use axum::response::{IntoResponse, Response};
 use nimbus_core::Error;
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_runtime::{HostCallCancellation, InvocationAuth};
 use tokio::sync::watch;
 use tracing::warn;
@@ -21,10 +21,10 @@ use crate::system::VersionCheck;
 use crate::tenant::TenantIsolationMode;
 use nimbus_auth::ApplicationAuthVerifier;
 use nimbus_services::RuntimeServiceRegistry;
-use nimbus_services::SandboxServiceManager;
+use nimbus_services::ServiceManager;
 
 pub(crate) struct AppStateConfig {
-    pub(crate) service: Arc<Service>,
+    pub(crate) engine: Arc<Engine>,
     pub(crate) convex_registry: Option<ConvexRegistry>,
     pub(crate) system_convex_registry: Option<ConvexRegistry>,
     pub(crate) application_auth_verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
@@ -32,7 +32,7 @@ pub(crate) struct AppStateConfig {
     pub(crate) firebase_config: Option<FirebaseConfig>,
     pub(crate) license_state: LicenseState,
     pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
-    pub(crate) sandbox_service_manager: Option<Arc<SandboxServiceManager>>,
+    pub(crate) service_manager: Option<Arc<ServiceManager>>,
     pub(crate) machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
     pub(crate) deploy_admin_token: Option<String>,
     pub(crate) local_server_security: Option<Arc<LocalServerSecurityState>>,
@@ -44,12 +44,12 @@ pub(crate) struct AppStateConfig {
 
 /// Shared application state.
 pub(crate) struct AppState {
-    pub(crate) service: Arc<Service>,
+    pub(crate) engine: Arc<Engine>,
     pub(crate) active_deployment: Arc<ActiveDeployment>,
     system_convex_registry: Option<Arc<ConvexRegistry>>,
     pub(crate) license_state: Arc<LicenseState>,
     pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
-    sandbox_service_manager: Option<Arc<SandboxServiceManager>>,
+    service_manager: Option<Arc<ServiceManager>>,
     machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
     pub(crate) deploy_admin_token: Option<String>,
     pub(crate) local_server_security: Option<Arc<LocalServerSecurityState>>,
@@ -62,7 +62,7 @@ pub(crate) struct AppState {
 impl AppState {
     pub(crate) fn from_config(config: AppStateConfig) -> Self {
         let AppStateConfig {
-            service,
+            engine,
             convex_registry,
             system_convex_registry,
             application_auth_verifier,
@@ -70,7 +70,7 @@ impl AppState {
             firebase_config,
             license_state,
             runtime_service_registry,
-            sandbox_service_manager,
+            service_manager,
             machine_lifecycle_manager,
             deploy_admin_token,
             local_server_security,
@@ -91,12 +91,12 @@ impl AppState {
             firebase_config: firebase_config.map(Arc::new),
         };
         Self {
-            service,
+            engine,
             active_deployment: Arc::new(ActiveDeployment::new(active_deployment)),
             system_convex_registry,
             license_state: Arc::new(license_state),
             runtime_service_registry,
-            sandbox_service_manager,
+            service_manager,
             machine_lifecycle_manager,
             deploy_admin_token,
             local_server_security,
@@ -115,8 +115,8 @@ impl AppState {
         self.runtime_service_registry.clone()
     }
 
-    pub(crate) fn sandbox_service_manager(&self) -> Option<Arc<SandboxServiceManager>> {
-        self.sandbox_service_manager.clone()
+    pub(crate) fn service_manager(&self) -> Option<Arc<ServiceManager>> {
+        self.service_manager.clone()
     }
 
     pub(crate) fn machine_lifecycle_manager(&self) -> Option<Arc<dyn MachineLifecycleManager>> {
@@ -142,11 +142,11 @@ impl AppState {
         registry: Arc<CloudFunctionsRegistry>,
     ) -> std::result::Result<(), AppError> {
         let deployment_generation = self.current_deployment().generation;
-        self.service
+        self.engine
             .install_trigger_registrations(registry.trigger_registrations()?)?;
-        self.service.install_trigger_invocation_executor(Arc::new(
+        self.engine.install_trigger_invocation_executor(Arc::new(
             crate::adapters::cloud_functions::CloudFunctionsTriggerExecutor::new(
-                self.service.clone(),
+                self.engine.clone(),
                 registry,
                 deployment_generation,
                 self.runtime_service_registry(),
@@ -333,9 +333,9 @@ mod tests {
     #[test]
     fn app_state_does_not_infer_application_auth_verifier_from_convex_registry() {
         let temp = tempdir().expect("service tempdir should build");
-        let service = Arc::new(Service::new(temp.path()).expect("service should build"));
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
         let state = AppState::from_config(AppStateConfig {
-            service,
+            engine,
             convex_registry: Some(ConvexRegistry::empty()),
             system_convex_registry: None,
             application_auth_verifier: None,
@@ -343,11 +343,11 @@ mod tests {
             firebase_config: None,
             license_state: LicenseState::community(),
             runtime_service_registry: Arc::new(
-                nimbus_services::SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
-                    nimbus_services::EmptySandboxCatalog,
+                nimbus_services::ServiceInstanceRuntimeRegistry::new(Arc::new(
+                    nimbus_services::EmptyServiceInstanceCatalog,
                 )),
             ),
-            sandbox_service_manager: None,
+            service_manager: None,
             machine_lifecycle_manager: None,
             deploy_admin_token: None,
             local_server_security: None,
@@ -412,7 +412,7 @@ pub(crate) async fn record_authenticated_usage(
         return;
     };
 
-    let service = state.service.clone();
+    let service = state.engine.clone();
     if let Err(error) = service
         .record_monthly_active_user_async(token_identifier)
         .await

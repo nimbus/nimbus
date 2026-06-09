@@ -16,7 +16,7 @@ use std::sync::Arc;
 use http::{HeaderMap, HeaderValue};
 use nimbus_core::TenantId;
 use nimbus_dynamodb::{AccessKeyRegistry, AuthMode, DispatchContext, dispatch};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use serde_json::{Value, json};
 
 const KEY: &str = "AKIATEST";
@@ -49,13 +49,13 @@ struct Golden {
     expect: Vec<(&'static str, Value)>,
 }
 
-fn fixture() -> (Arc<Service>, AccessKeyRegistry, tempfile::TempDir) {
+fn fixture() -> (Arc<Engine>, AccessKeyRegistry, tempfile::TempDir) {
     let temp = tempfile::tempdir().expect("tempdir");
-    let service = Arc::new(Service::new(temp.path()).expect("service"));
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
     let registry = AccessKeyRegistry::new()
         .bind(KEY, TenantId::new("acme").expect("tenant"))
         .with_mode(AuthMode::LookupOnly);
-    (service, registry, temp)
+    (engine, registry, temp)
 }
 
 /// Replay one golden entry and diff it against the captured contract.
@@ -91,9 +91,9 @@ fn replay(ctx: &DispatchContext<'_>, golden: &Golden) {
 
 #[test]
 fn ground_truth_corpus_matches_the_dynamodb_contract() {
-    let (service, registry, _temp) = fixture();
+    let (engine, registry, _temp) = fixture();
     let ctx = DispatchContext {
-        service: &service,
+        engine: &engine,
         access_keys: &registry,
     };
 

@@ -15,7 +15,7 @@ use extenddb_core::types::{
     UpdateTimeToLiveOutput, extract_key,
 };
 use nimbus_core::{DocumentId, StructuredQuery, TableName};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 use serde_json::{Map, Value};
 
@@ -39,11 +39,11 @@ fn ttl_id(table_name: &str) -> Result<DocumentId, DynamoDbError> {
 /// Drop `table_name`'s TTL configuration document when the table is deleted, so
 /// a table recreated under the same name does not inherit stale TTL state (F4).
 pub(crate) fn reclaim_for_table(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<(), DynamoDbError> {
-    match service.delete_document(context.tenant_id(), ttl_table()?, ttl_id(table_name)?) {
+    match engine.delete_document(context.tenant_id(), ttl_table()?, ttl_id(table_name)?) {
         Ok(()) | Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
             Ok(())
         }
@@ -54,11 +54,11 @@ pub(crate) fn reclaim_for_table(
 /// The persisted TTL state for a table: `(enabled, attribute_name)`. Disabled
 /// with no attribute when TTL was never configured.
 fn load_ttl_state(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<(bool, Option<String>), DynamoDbError> {
-    match service.get_document(context.tenant_id(), &ttl_table()?, ttl_id(table_name)?) {
+    match engine.get_document(context.tenant_id(), &ttl_table()?, ttl_id(table_name)?) {
         Ok(document) => {
             let enabled = document
                 .fields
@@ -85,13 +85,13 @@ fn load_ttl_state(
 /// # Errors
 /// `ResourceNotFoundException` if the table does not exist.
 pub fn describe_time_to_live(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: DescribeTimeToLiveInput,
 ) -> Result<DescribeTimeToLiveOutput, DynamoDbError> {
     // Existence check — an unknown table is a 404, not a silent DISABLED.
-    control_plane::load_table_description(service, context, &input.table_name)?;
-    let (enabled, attribute_name) = load_ttl_state(service, context, &input.table_name)?;
+    control_plane::load_table_description(engine, context, &input.table_name)?;
+    let (enabled, attribute_name) = load_ttl_state(engine, context, &input.table_name)?;
     let description = if enabled {
         TimeToLiveDescription {
             time_to_live_status: TimeToLiveStatus::Enabled,
@@ -117,11 +117,11 @@ pub fn describe_time_to_live(
 /// `ResourceNotFoundException` if the table does not exist; `ValidationException`
 /// if the attribute name is empty or longer than 255 characters.
 pub fn update_time_to_live(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: UpdateTimeToLiveInput,
 ) -> Result<UpdateTimeToLiveOutput, DynamoDbError> {
-    control_plane::load_table_description(service, context, &input.table_name)?;
+    control_plane::load_table_description(engine, context, &input.table_name)?;
     let spec = input.time_to_live_specification;
     let attribute_name = spec.attribute_name;
     if attribute_name.is_empty() || attribute_name.chars().count() > MAX_TTL_ATTRIBUTE_LEN {
@@ -135,7 +135,7 @@ pub fn update_time_to_live(
         "attribute_name".to_owned(),
         Value::String(attribute_name.clone()),
     );
-    upsert_ttl_state(service, context, &input.table_name, fields)?;
+    upsert_ttl_state(engine, context, &input.table_name, fields)?;
     Ok(UpdateTimeToLiveOutput {
         time_to_live_specification: TimeToLiveSpecificationOutput {
             attribute_name,
@@ -145,21 +145,21 @@ pub fn update_time_to_live(
 }
 
 fn upsert_ttl_state(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
     fields: Map<String, Value>,
 ) -> Result<(), DynamoDbError> {
     let table = ttl_table()?;
     let id = ttl_id(table_name)?;
-    match service.get_document(context.tenant_id(), &table, id.clone()) {
+    match engine.get_document(context.tenant_id(), &table, id.clone()) {
         Ok(_) => {
-            service
+            engine
                 .update_document(context.tenant_id(), table, id, fields)
                 .map_err(map_core_error)?;
         }
         Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
-            service
+            engine
                 .insert_document_with_id(context.tenant_id(), table, id, fields)
                 .map_err(map_core_error)?;
         }
@@ -171,11 +171,11 @@ fn upsert_ttl_state(
 /// The TTL attribute name a sweep should honor for `table_name`, or `None` when
 /// TTL is disabled.
 fn enabled_ttl_attribute(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<Option<String>, DynamoDbError> {
-    let (enabled, attribute_name) = load_ttl_state(service, context, table_name)?;
+    let (enabled, attribute_name) = load_ttl_state(engine, context, table_name)?;
     Ok(if enabled { attribute_name } else { None })
 }
 
@@ -199,17 +199,17 @@ fn is_expired(item: &extenddb_core::types::Item, attribute: &str, now: i64) -> b
 /// # Errors
 /// A mapped engine error if the table cannot be scanned or an item deleted.
 pub fn sweep_table(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
     now: i64,
 ) -> Result<usize, DynamoDbError> {
-    let Some(attribute) = enabled_ttl_attribute(service, context, table_name)? else {
+    let Some(attribute) = enabled_ttl_attribute(engine, context, table_name)? else {
         return Ok(0);
     };
-    let key_schema = control_plane::load_key_schema(service, context, table_name)?;
+    let key_schema = control_plane::load_key_schema(engine, context, table_name)?;
     let table = TableName::new(table_name).map_err(map_core_error)?;
-    let documents = match service.query_documents_structured(
+    let documents = match engine.query_documents_structured(
         context.tenant_id(),
         &table,
         &StructuredQuery::default(),
@@ -227,14 +227,14 @@ pub fn sweep_table(
         if !is_expired(&item, &attribute, now) {
             continue;
         }
-        service
+        engine
             .delete_document(context.tenant_id(), table.clone(), document.id.clone())
             .map_err(map_core_error)?;
         // A TTL deletion is a service-originated REMOVE; the deleted item is the
         // old image (DynamoDB carries it for NEW_AND_OLD_IMAGES / OLD_IMAGE).
         let keys = extract_key(&item, &key_schema);
         stream::capture_event(
-            service,
+            engine,
             context,
             table_name,
             stream::ChangeEvent {
@@ -255,13 +255,13 @@ pub fn sweep_table(
 /// # Errors
 /// A mapped engine error if the catalog cannot be enumerated or a sweep fails.
 pub fn sweep_tenant(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     now: i64,
 ) -> Result<usize, DynamoDbError> {
     let mut swept = 0;
-    for description in control_plane::list_table_descriptions(service, context)? {
-        swept += sweep_table(service, context, &description.table_name, now)?;
+    for description in control_plane::list_table_descriptions(engine, context)? {
+        swept += sweep_table(engine, context, &description.table_name, now)?;
     }
     Ok(swept)
 }
@@ -272,7 +272,7 @@ pub fn sweep_tenant(
 /// the driver logs the errors and keeps the schedule.
 #[must_use]
 pub fn sweep_all_tenants(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     access_keys: &crate::AccessKeyRegistry,
     now: i64,
 ) -> (usize, Vec<(nimbus_core::TenantId, DynamoDbError)>) {
@@ -280,7 +280,7 @@ pub fn sweep_all_tenants(
     let mut errors = Vec::new();
     for tenant in access_keys.tenants() {
         let context = crate::tenant::tenant_context(tenant.clone(), "ttl-sweeper");
-        match sweep_tenant(service, &context, now) {
+        match sweep_tenant(engine, &context, now) {
             Ok(count) => swept += count,
             Err(error) => errors.push((tenant, error)),
         }
@@ -295,33 +295,33 @@ mod tests {
     use nimbus_core::TenantId;
     use serde_json::json;
 
-    fn fixture() -> (Arc<Service>, TenantIsolationContext, tempfile::TempDir) {
+    fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
-        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
         let context = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
-        crate::tenant::ensure_tenant(&service, &context).expect("tenant");
-        (service, context, temp)
+        crate::tenant::ensure_tenant(&engine, &context).expect("tenant");
+        (engine, context, temp)
     }
 
-    fn create_table(service: &Arc<Service>, context: &TenantIsolationContext, name: &str) {
+    fn create_table(engine: &Arc<Engine>, context: &TenantIsolationContext, name: &str) {
         let input: CreateTableInput = serde_json::from_value(json!({
             "TableName": name,
             "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
             "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
         }))
         .unwrap();
-        control_plane::create_table(service, context, input).expect("create");
+        control_plane::create_table(engine, context, input).expect("create");
     }
 
     fn update(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         table: &str,
         enabled: bool,
         attribute_name: &str,
     ) -> Result<UpdateTimeToLiveOutput, DynamoDbError> {
         update_time_to_live(
-            service,
+            engine,
             context,
             UpdateTimeToLiveInput {
                 table_name: table.to_owned(),
@@ -334,12 +334,12 @@ mod tests {
     }
 
     fn describe(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         table: &str,
     ) -> TimeToLiveDescription {
         describe_time_to_live(
-            service,
+            engine,
             context,
             DescribeTimeToLiveInput {
                 table_name: table.to_owned(),
@@ -351,9 +351,9 @@ mod tests {
 
     #[test]
     fn describe_defaults_to_disabled_when_never_configured() {
-        let (service, ctx, _t) = fixture();
-        create_table(&service, &ctx, "Sessions");
-        let desc = describe(&service, &ctx, "Sessions");
+        let (engine, ctx, _t) = fixture();
+        create_table(&engine, &ctx, "Sessions");
+        let desc = describe(&engine, &ctx, "Sessions");
         assert_eq!(desc.time_to_live_status, TimeToLiveStatus::Disabled);
         assert!(
             desc.attribute_name.is_none(),
@@ -363,26 +363,26 @@ mod tests {
 
     #[test]
     fn update_enables_ttl_and_describe_reports_it() {
-        let (service, ctx, _t) = fixture();
-        create_table(&service, &ctx, "Sessions");
-        let out = update(&service, &ctx, "Sessions", true, "expiresAt").expect("enable");
+        let (engine, ctx, _t) = fixture();
+        create_table(&engine, &ctx, "Sessions");
+        let out = update(&engine, &ctx, "Sessions", true, "expiresAt").expect("enable");
         let spec = out.time_to_live_specification;
         assert!(spec.enabled);
         assert_eq!(spec.attribute_name, "expiresAt", "the request is echoed");
 
-        let desc = describe(&service, &ctx, "Sessions");
+        let desc = describe(&engine, &ctx, "Sessions");
         assert_eq!(desc.time_to_live_status, TimeToLiveStatus::Enabled);
         assert_eq!(desc.attribute_name.as_deref(), Some("expiresAt"));
     }
 
     #[test]
     fn update_disable_then_describe_reports_disabled_without_attribute() {
-        let (service, ctx, _t) = fixture();
-        create_table(&service, &ctx, "Sessions");
-        update(&service, &ctx, "Sessions", true, "expiresAt").expect("enable");
-        update(&service, &ctx, "Sessions", false, "expiresAt").expect("disable");
+        let (engine, ctx, _t) = fixture();
+        create_table(&engine, &ctx, "Sessions");
+        update(&engine, &ctx, "Sessions", true, "expiresAt").expect("enable");
+        update(&engine, &ctx, "Sessions", false, "expiresAt").expect("disable");
 
-        let desc = describe(&service, &ctx, "Sessions");
+        let desc = describe(&engine, &ctx, "Sessions");
         assert_eq!(desc.time_to_live_status, TimeToLiveStatus::Disabled);
         assert!(
             desc.attribute_name.is_none(),
@@ -394,13 +394,13 @@ mod tests {
     fn update_is_idempotent_with_no_cooldown() {
         // DDB-DIV-009: DynamoDB rejects rapid re-toggling with a cooldown
         // ValidationException; Nimbus applies every change immediately.
-        let (service, ctx, _t) = fixture();
-        create_table(&service, &ctx, "Sessions");
-        update(&service, &ctx, "Sessions", true, "expiresAt").expect("enable");
-        update(&service, &ctx, "Sessions", true, "expiresAt").expect("re-enable, no cooldown");
-        update(&service, &ctx, "Sessions", false, "expiresAt").expect("disable, no cooldown");
-        update(&service, &ctx, "Sessions", true, "ttl").expect("re-enable new attr, no cooldown");
-        let desc = describe(&service, &ctx, "Sessions");
+        let (engine, ctx, _t) = fixture();
+        create_table(&engine, &ctx, "Sessions");
+        update(&engine, &ctx, "Sessions", true, "expiresAt").expect("enable");
+        update(&engine, &ctx, "Sessions", true, "expiresAt").expect("re-enable, no cooldown");
+        update(&engine, &ctx, "Sessions", false, "expiresAt").expect("disable, no cooldown");
+        update(&engine, &ctx, "Sessions", true, "ttl").expect("re-enable new attr, no cooldown");
+        let desc = describe(&engine, &ctx, "Sessions");
         assert_eq!(desc.time_to_live_status, TimeToLiveStatus::Enabled);
         assert_eq!(desc.attribute_name.as_deref(), Some("ttl"));
     }
@@ -409,12 +409,12 @@ mod tests {
     fn update_accepts_any_utf8_attribute_name() {
         // DDB-DIV-008: the TTL attribute-name charset is unrestricted (DynamoDB
         // allows any UTF-8; Nimbus has no SQL surface to defend).
-        let (service, ctx, _t) = fixture();
-        create_table(&service, &ctx, "Sessions");
+        let (engine, ctx, _t) = fixture();
+        create_table(&engine, &ctx, "Sessions");
         let exotic = "期限-✓.expires_at";
-        update(&service, &ctx, "Sessions", true, exotic).expect("exotic attr accepted");
+        update(&engine, &ctx, "Sessions", true, exotic).expect("exotic attr accepted");
         assert_eq!(
-            describe(&service, &ctx, "Sessions")
+            describe(&engine, &ctx, "Sessions")
                 .attribute_name
                 .as_deref(),
             Some(exotic)
@@ -423,24 +423,24 @@ mod tests {
 
     #[test]
     fn update_rejects_empty_attribute_name() {
-        let (service, ctx, _t) = fixture();
-        create_table(&service, &ctx, "Sessions");
-        let err = update(&service, &ctx, "Sessions", true, "").expect_err("empty rejected");
+        let (engine, ctx, _t) = fixture();
+        create_table(&engine, &ctx, "Sessions");
+        let err = update(&engine, &ctx, "Sessions", true, "").expect_err("empty rejected");
         assert!(matches!(err, DynamoDbError::ValidationException(_)));
     }
 
     #[test]
     fn update_on_missing_table_is_resource_not_found() {
-        let (service, ctx, _t) = fixture();
-        let err = update(&service, &ctx, "Ghost", true, "expiresAt").expect_err("missing table");
+        let (engine, ctx, _t) = fixture();
+        let err = update(&engine, &ctx, "Ghost", true, "expiresAt").expect_err("missing table");
         assert!(matches!(err, DynamoDbError::ResourceNotFoundException(_)));
     }
 
     #[test]
     fn describe_on_missing_table_is_resource_not_found() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         let err = describe_time_to_live(
-            &service,
+            &engine,
             &ctx,
             DescribeTimeToLiveInput {
                 table_name: "Ghost".to_owned(),
@@ -452,22 +452,22 @@ mod tests {
 
     #[test]
     fn ttl_state_is_tenant_isolated() {
-        let (service, _ctx, _t) = fixture();
+        let (engine, _ctx, _t) = fixture();
         let acme = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
         let globex = crate::tenant::tenant_context(TenantId::new("globex").unwrap(), "test");
-        crate::tenant::ensure_tenant(&service, &acme).expect("acme");
-        crate::tenant::ensure_tenant(&service, &globex).expect("globex");
-        create_table(&service, &acme, "Sessions");
-        create_table(&service, &globex, "Sessions");
+        crate::tenant::ensure_tenant(&engine, &acme).expect("acme");
+        crate::tenant::ensure_tenant(&engine, &globex).expect("globex");
+        create_table(&engine, &acme, "Sessions");
+        create_table(&engine, &globex, "Sessions");
 
-        update(&service, &acme, "Sessions", true, "expiresAt").expect("acme enables");
+        update(&engine, &acme, "Sessions", true, "expiresAt").expect("acme enables");
         assert_eq!(
-            describe(&service, &acme, "Sessions").time_to_live_status,
+            describe(&engine, &acme, "Sessions").time_to_live_status,
             TimeToLiveStatus::Enabled
         );
         // globex's identically-named table is untouched.
         assert_eq!(
-            describe(&service, &globex, "Sessions").time_to_live_status,
+            describe(&engine, &globex, "Sessions").time_to_live_status,
             TimeToLiveStatus::Disabled,
             "another tenant's TTL config is invisible"
         );
@@ -477,7 +477,7 @@ mod tests {
 
     /// Put an item `pk` with an optional `expiresAt` TTL value (epoch seconds).
     fn put(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         table: &str,
         pk: &str,
@@ -488,7 +488,7 @@ mod tests {
             item["expiresAt"] = json!({ "N": epoch.to_string() });
         }
         crate::commands::item::put_item(
-            service,
+            engine,
             context,
             serde_json::from_value(json!({ "TableName": table, "Item": item })).unwrap(),
         )
@@ -496,13 +496,13 @@ mod tests {
     }
 
     fn exists(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         table: &str,
         pk: &str,
     ) -> bool {
         crate::commands::item::get_item(
-            service,
+            engine,
             context,
             serde_json::from_value(json!({ "TableName": table, "Key": { "pk": { "S": pk } } }))
                 .unwrap(),
@@ -514,78 +514,78 @@ mod tests {
 
     #[test]
     fn sweep_deletes_expired_items_and_leaves_the_rest() {
-        let (service, ctx, _t) = fixture();
-        create_table(&service, &ctx, "Sessions");
-        update(&service, &ctx, "Sessions", true, "expiresAt").expect("enable");
+        let (engine, ctx, _t) = fixture();
+        create_table(&engine, &ctx, "Sessions");
+        update(&engine, &ctx, "Sessions", true, "expiresAt").expect("enable");
         let now = 1_700_000_000;
-        put(&service, &ctx, "Sessions", "old", Some(now - 10)); // expired
-        put(&service, &ctx, "Sessions", "edge", Some(now)); // expires exactly now → expired
-        put(&service, &ctx, "Sessions", "fresh", Some(now + 10_000)); // future
-        put(&service, &ctx, "Sessions", "noattr", None); // no TTL attribute
+        put(&engine, &ctx, "Sessions", "old", Some(now - 10)); // expired
+        put(&engine, &ctx, "Sessions", "edge", Some(now)); // expires exactly now → expired
+        put(&engine, &ctx, "Sessions", "fresh", Some(now + 10_000)); // future
+        put(&engine, &ctx, "Sessions", "noattr", None); // no TTL attribute
 
-        let swept = sweep_table(&service, &ctx, "Sessions", now).expect("sweep");
+        let swept = sweep_table(&engine, &ctx, "Sessions", now).expect("sweep");
         assert_eq!(swept, 2, "the past and exactly-now items are reclaimed");
-        assert!(!exists(&service, &ctx, "Sessions", "old"));
-        assert!(!exists(&service, &ctx, "Sessions", "edge"));
+        assert!(!exists(&engine, &ctx, "Sessions", "old"));
+        assert!(!exists(&engine, &ctx, "Sessions", "edge"));
         assert!(
-            exists(&service, &ctx, "Sessions", "fresh"),
+            exists(&engine, &ctx, "Sessions", "fresh"),
             "future item kept"
         );
         assert!(
-            exists(&service, &ctx, "Sessions", "noattr"),
+            exists(&engine, &ctx, "Sessions", "noattr"),
             "an item without the TTL attribute is never expired"
         );
     }
 
     #[test]
     fn sweep_is_a_noop_when_ttl_is_disabled() {
-        let (service, ctx, _t) = fixture();
-        create_table(&service, &ctx, "Sessions");
+        let (engine, ctx, _t) = fixture();
+        create_table(&engine, &ctx, "Sessions");
         let now = 1_700_000_000;
-        put(&service, &ctx, "Sessions", "old", Some(now - 10));
-        let swept = sweep_table(&service, &ctx, "Sessions", now).expect("sweep");
+        put(&engine, &ctx, "Sessions", "old", Some(now - 10));
+        let swept = sweep_table(&engine, &ctx, "Sessions", now).expect("sweep");
         assert_eq!(swept, 0, "no TTL configured → nothing is reclaimed");
-        assert!(exists(&service, &ctx, "Sessions", "old"));
+        assert!(exists(&engine, &ctx, "Sessions", "old"));
     }
 
     #[test]
     fn sweep_tenant_covers_every_table() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         let now = 1_700_000_000;
         for table in ["Sessions", "Carts"] {
-            create_table(&service, &ctx, table);
-            update(&service, &ctx, table, true, "expiresAt").expect("enable");
-            put(&service, &ctx, table, "old", Some(now - 10));
-            put(&service, &ctx, table, "fresh", Some(now + 10_000));
+            create_table(&engine, &ctx, table);
+            update(&engine, &ctx, table, true, "expiresAt").expect("enable");
+            put(&engine, &ctx, table, "old", Some(now - 10));
+            put(&engine, &ctx, table, "fresh", Some(now + 10_000));
         }
-        let swept = sweep_tenant(&service, &ctx, now).expect("sweep tenant");
+        let swept = sweep_tenant(&engine, &ctx, now).expect("sweep tenant");
         assert_eq!(swept, 2, "one expired item per table");
-        assert!(!exists(&service, &ctx, "Sessions", "old"));
-        assert!(!exists(&service, &ctx, "Carts", "old"));
+        assert!(!exists(&engine, &ctx, "Sessions", "old"));
+        assert!(!exists(&engine, &ctx, "Carts", "old"));
     }
 
     #[test]
     fn sweep_all_tenants_aggregates_and_isolates() {
-        let (service, _ctx, _t) = fixture();
+        let (engine, _ctx, _t) = fixture();
         let acme = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
         let globex = crate::tenant::tenant_context(TenantId::new("globex").unwrap(), "test");
-        crate::tenant::ensure_tenant(&service, &acme).expect("acme");
-        crate::tenant::ensure_tenant(&service, &globex).expect("globex");
+        crate::tenant::ensure_tenant(&engine, &acme).expect("acme");
+        crate::tenant::ensure_tenant(&engine, &globex).expect("globex");
         let now = 1_700_000_000;
         for ctx in [&acme, &globex] {
-            create_table(&service, ctx, "Sessions");
-            update(&service, ctx, "Sessions", true, "expiresAt").expect("enable");
-            put(&service, ctx, "Sessions", "old", Some(now - 10));
+            create_table(&engine, ctx, "Sessions");
+            update(&engine, ctx, "Sessions", true, "expiresAt").expect("enable");
+            put(&engine, ctx, "Sessions", "old", Some(now - 10));
         }
 
         let registry = crate::AccessKeyRegistry::new()
             .bind("AKIAACME", TenantId::new("acme").unwrap())
             .bind("AKIAGLOBEX", TenantId::new("globex").unwrap());
-        let (swept, errors) = sweep_all_tenants(&service, &registry, now);
+        let (swept, errors) = sweep_all_tenants(&engine, &registry, now);
         assert_eq!(swept, 2, "one expired item reclaimed per tenant");
         assert!(errors.is_empty(), "no per-tenant errors: {errors:?}");
-        assert!(!exists(&service, &acme, "Sessions", "old"));
-        assert!(!exists(&service, &globex, "Sessions", "old"));
+        assert!(!exists(&engine, &acme, "Sessions", "old"));
+        assert!(!exists(&engine, &globex, "Sessions", "old"));
     }
 
     #[test]
@@ -595,7 +595,7 @@ mod tests {
             StreamEventName,
         };
 
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         // Stream-enabled (both images) + TTL-enabled table.
         let input: CreateTableInput = serde_json::from_value(json!({
             "TableName": "Sessions",
@@ -604,21 +604,21 @@ mod tests {
             "StreamSpecification": { "StreamEnabled": true, "StreamViewType": "NEW_AND_OLD_IMAGES" }
         }))
         .unwrap();
-        let arn = control_plane::create_table(&service, &ctx, input)
+        let arn = control_plane::create_table(&engine, &ctx, input)
             .expect("create")
             .table_description
             .latest_stream_arn
             .expect("stream arn");
-        update(&service, &ctx, "Sessions", true, "expiresAt").expect("enable ttl");
+        update(&engine, &ctx, "Sessions", true, "expiresAt").expect("enable ttl");
 
         let now = 1_700_000_000;
-        put(&service, &ctx, "Sessions", "old", Some(now - 10));
-        let swept = sweep_table(&service, &ctx, "Sessions", now).expect("sweep");
+        put(&engine, &ctx, "Sessions", "old", Some(now - 10));
+        let swept = sweep_table(&engine, &ctx, "Sessions", now).expect("sweep");
         assert_eq!(swept, 1);
 
         // Read the stream back: the last record is the TTL REMOVE.
         let shard = stream::describe_stream(
-            &service,
+            &engine,
             &ctx,
             DescribeStreamInput {
                 stream_arn: arn.clone(),
@@ -632,7 +632,7 @@ mod tests {
             .shard_id
             .clone();
         let iterator = stream::get_shard_iterator(
-            &service,
+            &engine,
             &ctx,
             GetShardIteratorInput {
                 stream_arn: arn.clone(),
@@ -645,7 +645,7 @@ mod tests {
         .shard_iterator
         .expect("iterator");
         let records = stream::get_records(
-            &service,
+            &engine,
             &ctx,
             GetRecordsInput {
                 shard_iterator: iterator,

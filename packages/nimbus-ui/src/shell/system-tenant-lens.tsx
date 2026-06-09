@@ -1,6 +1,6 @@
 import { useRouterState } from "@tanstack/react-router";
 import { X } from "lucide-react";
-import { useQuery } from "nimbus/react";
+import { useQuery } from "@nimbus/nimbus/react";
 import { useEffect, useRef } from "react";
 
 import { api } from "../../convex/_generated/api";

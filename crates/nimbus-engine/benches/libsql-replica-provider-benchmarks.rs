@@ -11,9 +11,10 @@ use nimbus_core::{
     OrderBy, OrderDirection, Query, TableName, TableSchema, TenantId,
 };
 use nimbus_engine::{
-    ControlPlaneConfig, EmbeddedProviderKind, LocalEncryptionConfig, LocalKeyProviderConfig,
-    MasterKeyFileConfig, PersistenceDialect, PersistenceTopology, PoolConfig, ProviderCredentials,
-    Service, ServicePersistenceConfig, TenantProviderConfig, TenantRoutingConfig,
+    ControlPlaneConfig, EmbeddedProviderKind, Engine, EnginePersistenceConfig,
+    LocalEncryptionConfig, LocalKeyProviderConfig, MasterKeyFileConfig, PersistenceDialect,
+    PersistenceTopology, PoolConfig, ProviderCredentials, TenantProviderConfig,
+    TenantRoutingConfig,
 };
 use nimbus_storage::{LibsqlReplicaProvider, LibsqlReplicaProviderConfig};
 use serde_json::json;

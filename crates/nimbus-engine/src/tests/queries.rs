@@ -2,9 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn query_uses_index_for_equality_filter() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let schema = TableSchema {
         table: tasks_table(),
         fields: vec![FieldSchema {
@@ -20,13 +20,13 @@ async fn query_uses_index_for_equality_filter() {
         }],
         access_policy: None,
     };
-    service
+    engine
         .set_table_schema(&tenant_id, schema)
         .expect("schema should save");
 
     for index in 0..100 {
         let status = if index < 10 { "active" } else { "inactive" };
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -35,7 +35,7 @@ async fn query_uses_index_for_equality_filter() {
             .expect("insert should succeed");
     }
 
-    let documents = service
+    let documents = engine
         .query_documents(
             &tenant_id,
             &Query {
@@ -51,13 +51,13 @@ async fn query_uses_index_for_equality_filter() {
 
 #[tokio::test]
 async fn set_table_schema_publishes_reconciled_index_identity() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let table = tasks_table();
     let initial_index_id = nimbus_core::IndexId::new();
     let replacement_index_id = nimbus_core::IndexId::new();
-    service
+    engine
         .set_table_schema(
             &tenant_id,
             TableSchema {
@@ -77,7 +77,7 @@ async fn set_table_schema_publishes_reconciled_index_identity() {
             },
         )
         .expect("initial schema should save");
-    service
+    engine
         .set_table_schema(
             &tenant_id,
             TableSchema {
@@ -98,7 +98,7 @@ async fn set_table_schema_publishes_reconciled_index_identity() {
         )
         .expect("replacement schema should save");
 
-    let runtime_schema = service
+    let runtime_schema = engine
         .get_table_schema(&tenant_id, &table)
         .expect("runtime schema should load");
     assert_eq!(runtime_schema.indexes[0].id, initial_index_id);
@@ -107,10 +107,10 @@ async fn set_table_schema_publishes_reconciled_index_identity() {
 
 #[tokio::test]
 async fn structured_query_executes_supported_subset() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    service
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    engine
         .set_table_schema(
             &tenant_id,
             TableSchema {
@@ -139,7 +139,7 @@ async fn structured_query_executes_supported_subset() {
         .expect("compound structured-query schema should save");
 
     for (status, rank) in [("active", 3), ("inactive", 2), ("active", 1)] {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -151,7 +151,7 @@ async fn structured_query_executes_supported_subset() {
             .expect("insert should succeed");
     }
 
-    let documents = service
+    let documents = engine
         .query_documents_structured(
             &tenant_id,
             &tasks_table(),
@@ -188,10 +188,10 @@ async fn structured_query_executes_supported_subset() {
 
 #[tokio::test]
 async fn structured_query_supports_repeated_order_cursor_offset_and_projection() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    service
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    engine
         .set_table_schema(
             &tenant_id,
             TableSchema {
@@ -226,7 +226,7 @@ async fn structured_query_supports_repeated_order_cursor_offset_and_projection()
         ("delta", 2),
         ("echo", 1),
     ] {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -239,7 +239,7 @@ async fn structured_query_supports_repeated_order_cursor_offset_and_projection()
             .expect("insert should succeed");
     }
 
-    let documents = service
+    let documents = engine
         .query_documents_structured(
             &tenant_id,
             &tasks_table(),
@@ -295,9 +295,9 @@ async fn structured_query_supports_repeated_order_cursor_offset_and_projection()
 
 #[tokio::test]
 async fn subscription_initial_evaluation_uses_indexed_query_path() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let schema = TableSchema {
         table: tasks_table(),
         fields: vec![FieldSchema {
@@ -313,12 +313,12 @@ async fn subscription_initial_evaluation_uses_indexed_query_path() {
         }],
         access_policy: None,
     };
-    service
+    engine
         .set_table_schema(&tenant_id, schema)
         .expect("schema should save");
 
     for status in ["active", "inactive", "active"] {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -328,7 +328,7 @@ async fn subscription_initial_evaluation_uses_indexed_query_path() {
     }
 
     let (tx, mut rx) = subscription_channel();
-    let subscription = service
+    let subscription = engine
         .subscribe(
             &tenant_id,
             Query {
@@ -366,11 +366,11 @@ async fn subscription_initial_evaluation_uses_indexed_query_path() {
 
 #[test]
 fn subscription_initial_evaluation_uses_materialized_serving_path_for_full_scan_shape() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -380,7 +380,7 @@ fn subscription_initial_evaluation_uses_materialized_serving_path_for_full_scan_
 
     let query = query_for("tasks");
     let (tx, mut rx) = subscription_channel();
-    let subscription = service
+    let subscription = engine
         .subscribe(&tenant_id, query, "sub-fullscan-sync".to_string(), tx)
         .expect("subscribe should succeed");
 
@@ -401,14 +401,14 @@ fn subscription_initial_evaluation_uses_materialized_serving_path_for_full_scan_
         other => panic!("unexpected initial subscription event: {other:?}"),
     }
 
-    let surface_stats = service
+    let surface_stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(surface_stats.loaded_table_count, 1);
     assert_eq!(surface_stats.table_load_count, 1);
     assert_eq!(surface_stats.evaluation_count, 1);
 
-    let planning_stats = service
+    let planning_stats = engine
         .query_planning_stats_for_testing(&tenant_id)
         .expect("query planning stats should load");
     assert_eq!(planning_stats.query_full_scan_count, 1);
@@ -417,11 +417,11 @@ fn subscription_initial_evaluation_uses_materialized_serving_path_for_full_scan_
 #[tokio::test]
 async fn subscription_async_initial_evaluation_uses_materialized_serving_path_for_full_scan_shape()
 {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -430,7 +430,7 @@ async fn subscription_async_initial_evaluation_uses_materialized_serving_path_fo
         .expect("seed insert should succeed");
 
     let (tx, mut rx) = subscription_channel();
-    let subscription = service
+    let subscription = engine
         .subscribe_async(
             tenant_id.clone(),
             query_for("tasks"),
@@ -457,14 +457,14 @@ async fn subscription_async_initial_evaluation_uses_materialized_serving_path_fo
         other => panic!("unexpected initial subscription event: {other:?}"),
     }
 
-    let surface_stats = service
+    let surface_stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(surface_stats.loaded_table_count, 1);
     assert_eq!(surface_stats.table_load_count, 1);
     assert_eq!(surface_stats.evaluation_count, 1);
 
-    let planning_stats = service
+    let planning_stats = engine
         .query_planning_stats_for_testing(&tenant_id)
         .expect("query planning stats should load");
     assert_eq!(planning_stats.query_full_scan_count, 1);
@@ -472,12 +472,12 @@ async fn subscription_async_initial_evaluation_uses_materialized_serving_path_fo
 
 #[tokio::test]
 async fn setting_schema_backfills_indexes_for_existing_documents() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
     for status in ["active", "inactive", "active"] {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -501,11 +501,11 @@ async fn setting_schema_backfills_indexes_for_existing_documents() {
         }],
         access_policy: None,
     };
-    service
+    engine
         .set_table_schema(&tenant_id, schema)
         .expect("schema should save");
 
-    let documents = service
+    let documents = engine
         .query_documents(
             &tenant_id,
             &Query {
@@ -521,9 +521,9 @@ async fn setting_schema_backfills_indexes_for_existing_documents() {
 
 #[tokio::test]
 async fn query_uses_index_for_range_filter() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let schema = TableSchema {
         table: tasks_table(),
         fields: vec![FieldSchema {
@@ -539,12 +539,12 @@ async fn query_uses_index_for_range_filter() {
         }],
         access_policy: None,
     };
-    service
+    engine
         .set_table_schema(&tenant_id, schema)
         .expect("schema should save");
 
     for rank in 0..100 {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -553,7 +553,7 @@ async fn query_uses_index_for_range_filter() {
             .expect("insert should succeed");
     }
 
-    let documents = service
+    let documents = engine
         .query_documents(
             &tenant_id,
             &Query {
@@ -574,9 +574,9 @@ async fn query_uses_index_for_range_filter() {
 
 #[tokio::test]
 async fn query_uses_index_for_eq_filter_and_still_applies_remaining_filters() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let schema = TableSchema {
         table: tasks_table(),
         fields: vec![
@@ -599,12 +599,12 @@ async fn query_uses_index_for_eq_filter_and_still_applies_remaining_filters() {
         }],
         access_policy: None,
     };
-    service
+    engine
         .set_table_schema(&tenant_id, schema)
         .expect("schema should save");
 
     for (status, rank) in [("active", 1), ("active", 2), ("inactive", 2)] {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -616,7 +616,7 @@ async fn query_uses_index_for_eq_filter_and_still_applies_remaining_filters() {
             .expect("insert should succeed");
     }
 
-    let documents = service
+    let documents = engine
         .query_documents(
             &tenant_id,
             &Query {
@@ -641,9 +641,9 @@ async fn query_uses_index_for_eq_filter_and_still_applies_remaining_filters() {
 
 #[tokio::test]
 async fn subscription_re_evaluation_uses_indexed_query_path() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let schema = TableSchema {
         table: tasks_table(),
         fields: vec![FieldSchema {
@@ -659,11 +659,11 @@ async fn subscription_re_evaluation_uses_indexed_query_path() {
         }],
         access_policy: None,
     };
-    service
+    engine
         .set_table_schema(&tenant_id, schema)
         .expect("schema should save");
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -672,7 +672,7 @@ async fn subscription_re_evaluation_uses_indexed_query_path() {
         .expect("seed insert should succeed");
 
     let (tx, mut rx) = subscription_channel();
-    let _subscription = service
+    let _subscription = engine
         .subscribe(
             &tenant_id,
             Query {
@@ -687,7 +687,7 @@ async fn subscription_re_evaluation_uses_indexed_query_path() {
         .expect("subscribe should succeed");
     let _ = rx.recv().await.expect("initial update should arrive");
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -707,7 +707,7 @@ async fn subscription_re_evaluation_uses_indexed_query_path() {
         other => panic!("unexpected active update: {other:?}"),
     }
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -723,11 +723,11 @@ async fn subscription_re_evaluation_uses_indexed_query_path() {
 
 #[tokio::test]
 async fn subscription_re_evaluation_uses_materialized_serving_path_for_full_scan_shape() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -736,7 +736,7 @@ async fn subscription_re_evaluation_uses_materialized_serving_path_for_full_scan
         .expect("seed insert should succeed");
 
     let (tx, mut rx) = subscription_channel();
-    let _subscription = service
+    let _subscription = engine
         .subscribe(
             &tenant_id,
             query_for("tasks"),
@@ -746,13 +746,13 @@ async fn subscription_re_evaluation_uses_materialized_serving_path_for_full_scan
         .expect("subscribe should succeed");
     let _ = rx.recv().await.expect("initial update should arrive");
 
-    let initial_surface_stats = service
+    let initial_surface_stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(initial_surface_stats.table_load_count, 1);
     assert_eq!(initial_surface_stats.evaluation_count, 1);
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -769,13 +769,13 @@ async fn subscription_re_evaluation_uses_materialized_serving_path_for_full_scan
         other => panic!("unexpected subscription event: {other:?}"),
     }
 
-    let surface_stats = service
+    let surface_stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(surface_stats.table_load_count, 1);
     assert_eq!(surface_stats.evaluation_count, 2);
 
-    let planning_stats = service
+    let planning_stats = engine
         .query_planning_stats_for_testing(&tenant_id)
         .expect("query planning stats should load");
     assert_eq!(planning_stats.query_full_scan_count, 2);
@@ -783,9 +783,9 @@ async fn subscription_re_evaluation_uses_materialized_serving_path_for_full_scan
 
 #[tokio::test]
 async fn query_uses_index_for_bounded_range_filter() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let schema = TableSchema {
         table: tasks_table(),
         fields: vec![FieldSchema {
@@ -801,12 +801,12 @@ async fn query_uses_index_for_bounded_range_filter() {
         }],
         access_policy: None,
     };
-    service
+    engine
         .set_table_schema(&tenant_id, schema)
         .expect("schema should save");
 
     for rank in 0..50 {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -815,7 +815,7 @@ async fn query_uses_index_for_bounded_range_filter() {
             .expect("insert should succeed");
     }
 
-    let documents = service
+    let documents = engine
         .query_documents(
             &tenant_id,
             &Query {
@@ -839,9 +839,9 @@ async fn query_uses_index_for_bounded_range_filter() {
 
 #[tokio::test]
 async fn query_uses_three_field_composite_range_index_through_planner() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let schema = TableSchema {
         table: tasks_table(),
         fields: vec![
@@ -869,7 +869,7 @@ async fn query_uses_three_field_composite_range_index_through_planner() {
         }],
         access_policy: None,
     };
-    service
+    engine
         .set_table_schema(&tenant_id, schema)
         .expect("schema should save");
 
@@ -880,7 +880,7 @@ async fn query_uses_three_field_composite_range_index_through_planner() {
         ("alpha", "done", 2),
         ("beta", "open", 2),
     ] {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -893,7 +893,7 @@ async fn query_uses_three_field_composite_range_index_through_planner() {
             .expect("insert should succeed");
     }
 
-    let documents = service
+    let documents = engine
         .query_documents(
             &tenant_id,
             &Query {
@@ -917,7 +917,7 @@ async fn query_uses_three_field_composite_range_index_through_planner() {
     assert_eq!(documents[0].fields.get("rank"), Some(&json!(2)));
     assert_eq!(documents[1].fields.get("rank"), Some(&json!(3)));
 
-    let stats = service
+    let stats = engine
         .query_planning_stats_for_testing(&tenant_id)
         .expect("query planning stats should load");
     assert_eq!(stats.query_composite_index_count, 1);
@@ -927,9 +927,9 @@ async fn query_uses_three_field_composite_range_index_through_planner() {
 
 #[tokio::test]
 async fn query_documents_cancellable_stops_during_index_scan() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let schema = TableSchema {
         table: tasks_table(),
         fields: vec![FieldSchema {
@@ -945,12 +945,12 @@ async fn query_documents_cancellable_stops_during_index_scan() {
         }],
         access_policy: None,
     };
-    service
+    engine
         .set_table_schema(&tenant_id, schema)
         .expect("schema should save");
 
     for rank in 0..64 {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -960,7 +960,7 @@ async fn query_documents_cancellable_stops_during_index_scan() {
     }
 
     let mut checks = 0usize;
-    let error = service
+    let error = engine
         .query_documents_cancellable(
             &tenant_id,
             &Query {
@@ -988,12 +988,12 @@ async fn query_documents_cancellable_stops_during_index_scan() {
 
 #[tokio::test]
 async fn query_documents_async_cancellable_returns_cancelled_while_blocking_work_unwinds() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
     for rank in 0..32 {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -1004,12 +1004,12 @@ async fn query_documents_async_cancellable_returns_cancelled_while_blocking_work
 
     let probe = BlockingCancellationProbe::new();
     let handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         let probe_for_wait = probe.clone();
         let probe_for_check = probe.clone();
         async move {
-            service
+            engine
                 .query_documents_async_cancellable(
                     tenant_id,
                     query_for("tasks"),
@@ -1043,10 +1043,10 @@ async fn query_documents_async_cancellable_returns_cancelled_while_blocking_work
 
 #[tokio::test]
 async fn query_documents_async_cancellable_returns_cancelled_during_index_scan() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    service
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    engine
         .set_table_schema(
             &tenant_id,
             TableSchema {
@@ -1068,7 +1068,7 @@ async fn query_documents_async_cancellable_returns_cancelled_during_index_scan()
         .expect("schema should save");
 
     for rank in 0..32 {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -1079,12 +1079,12 @@ async fn query_documents_async_cancellable_returns_cancelled_during_index_scan()
 
     let probe = BlockingCancellationProbe::new();
     let handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         let probe_for_wait = probe.clone();
         let probe_for_check = probe.clone();
         async move {
-            service
+            engine
                 .query_documents_async_cancellable(
                     tenant_id,
                     Query {
@@ -1126,9 +1126,9 @@ async fn query_documents_async_cancellable_returns_cancelled_during_index_scan()
 
 #[tokio::test]
 async fn paginated_query_uses_index_for_range_filter() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let schema = TableSchema {
         table: tasks_table(),
         fields: vec![FieldSchema {
@@ -1144,12 +1144,12 @@ async fn paginated_query_uses_index_for_range_filter() {
         }],
         access_policy: None,
     };
-    service
+    engine
         .set_table_schema(&tenant_id, schema)
         .expect("schema should save");
 
     for rank in 0..10 {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -1158,7 +1158,7 @@ async fn paginated_query_uses_index_for_range_filter() {
             .expect("insert should succeed");
     }
 
-    let first_page = service
+    let first_page = engine
         .paginate_documents(
             &tenant_id,
             &PaginatedQuery {
@@ -1181,7 +1181,7 @@ async fn paginated_query_uses_index_for_range_filter() {
     assert_eq!(first_page.data[1]["rank"], json!(6));
     assert!(first_page.has_more);
 
-    let second_page = service
+    let second_page = engine
         .paginate_documents(
             &tenant_id,
             &PaginatedQuery {
@@ -1206,9 +1206,9 @@ async fn paginated_query_uses_index_for_range_filter() {
 
 #[tokio::test]
 async fn paginated_query_uses_composite_index_for_exact_prefix_and_cursor_progress() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let schema = TableSchema {
         table: tasks_table(),
         fields: vec![
@@ -1231,7 +1231,7 @@ async fn paginated_query_uses_composite_index_for_exact_prefix_and_cursor_progre
         }],
         access_policy: None,
     };
-    service
+    engine
         .set_table_schema(&tenant_id, schema)
         .expect("schema should save");
 
@@ -1243,7 +1243,7 @@ async fn paginated_query_uses_composite_index_for_exact_prefix_and_cursor_progre
         ("done", 0),
         ("done", 5),
     ] {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -1255,7 +1255,7 @@ async fn paginated_query_uses_composite_index_for_exact_prefix_and_cursor_progre
             .expect("insert should succeed");
     }
 
-    let first_page = service
+    let first_page = engine
         .paginate_documents(
             &tenant_id,
             &PaginatedQuery {
@@ -1280,7 +1280,7 @@ async fn paginated_query_uses_composite_index_for_exact_prefix_and_cursor_progre
     assert_eq!(first_page.data[1]["rank"], json!(2));
     assert!(first_page.has_more);
 
-    let second_page = service
+    let second_page = engine
         .paginate_documents(
             &tenant_id,
             &PaginatedQuery {
@@ -1309,9 +1309,9 @@ async fn paginated_query_uses_composite_index_for_exact_prefix_and_cursor_progre
 
 #[test]
 fn query_planning_stats_distinguish_composite_single_field_and_fallback_paths() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let schema = TableSchema {
         table: tasks_table(),
         fields: vec![
@@ -1347,7 +1347,7 @@ fn query_planning_stats_distinguish_composite_single_field_and_fallback_paths() 
         ],
         access_policy: None,
     };
-    service
+    engine
         .set_table_schema(&tenant_id, schema)
         .expect("schema should save");
 
@@ -1357,7 +1357,7 @@ fn query_planning_stats_distinguish_composite_single_field_and_fallback_paths() 
         ("open", 3, "c"),
         ("done", 4, "d"),
     ] {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -1370,7 +1370,7 @@ fn query_planning_stats_distinguish_composite_single_field_and_fallback_paths() 
             .expect("insert should succeed");
     }
 
-    let composite = service
+    let composite = engine
         .query_documents(
             &tenant_id,
             &Query {
@@ -1386,7 +1386,7 @@ fn query_planning_stats_distinguish_composite_single_field_and_fallback_paths() 
         .expect("composite query should succeed");
     assert_eq!(composite.len(), 3);
 
-    let single_field = service
+    let single_field = engine
         .query_documents(
             &tenant_id,
             &Query {
@@ -1402,7 +1402,7 @@ fn query_planning_stats_distinguish_composite_single_field_and_fallback_paths() 
         .expect("single-field query should succeed");
     assert_eq!(single_field.len(), 3);
 
-    let fallback = service
+    let fallback = engine
         .query_documents(
             &tenant_id,
             &Query {
@@ -1415,7 +1415,7 @@ fn query_planning_stats_distinguish_composite_single_field_and_fallback_paths() 
         .expect("fallback query should succeed");
     assert_eq!(fallback.len(), 1);
 
-    let page = service
+    let page = engine
         .paginate_documents(
             &tenant_id,
             &PaginatedQuery {
@@ -1435,7 +1435,7 @@ fn query_planning_stats_distinguish_composite_single_field_and_fallback_paths() 
         .expect("paginated composite query should succeed");
     assert_eq!(page.data.len(), 2);
 
-    let stats = service
+    let stats = engine
         .query_planning_stats_for_testing(&tenant_id)
         .expect("query planning stats should load");
     assert_eq!(stats.query_composite_index_count, 1);

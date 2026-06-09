@@ -1,25 +1,25 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_server::adapters_mongodb::listener::run_listener;
-use nimbus_testing::ServiceFixture;
+use nimbus_testing::EngineFixture;
 use tokio::net::TcpListener;
 
 use super::runner::{self, SpecTest, SpecTestFile, TestResult};
 use super::wire_client::WireClient;
 
 pub struct SpecTestFixture {
-    _fixture: ServiceFixture<Service>,
+    _fixture: EngineFixture<Engine>,
     pub addr: SocketAddr,
 }
 
 impl SpecTestFixture {
     pub async fn new() -> Self {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("local addr");
-        let service = fixture.service();
+        let service = fixture.engine();
         tokio::spawn(run_listener(listener, service));
 
         Self {

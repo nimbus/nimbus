@@ -9,6 +9,22 @@ pub(super) const CROSS_TENANT_WARM_POOL_CASE: IsolatedRuntimeTestCase =
         "runtime::tests::warm_pool::warm_pool_cross_tenant_isolation_subprocess",
     );
 
+pub(super) const SERVICE_GRANT_WARM_POOL_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-warm-pool-service-grant-partition",
+        "cooperative-warm-pool",
+        "warm-pool entries stay isolated by service-op state and exact service grants",
+        "runtime::tests::warm_pool::warm_pool_partitions_by_exact_service_grants_subprocess",
+    );
+
+pub(super) const PERMISSION_PROFILE_WARM_POOL_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-warm-pool-permission-profile-partition",
+        "cooperative-warm-pool",
+        "warm-pool entries stay isolated by query/mutation/action permission profile",
+        "runtime::tests::warm_pool::warm_pool_partitions_by_permission_profile_subprocess",
+    );
+
 #[test]
 #[should_panic(expected = "WarmPool requires CooperativeLocker")]
 fn warm_pool_with_run_to_completion_fails_fast() {
@@ -80,6 +96,16 @@ fn warm_pool_cross_tenant_isolation() {
 }
 
 #[test]
+fn warm_pool_partitions_by_exact_service_grants() {
+    run_v8_sensitive_runtime_test_in_subprocess(SERVICE_GRANT_WARM_POOL_CASE);
+}
+
+#[test]
+fn warm_pool_partitions_by_permission_profile() {
+    run_v8_sensitive_runtime_test_in_subprocess(PERMISSION_PROFILE_WARM_POOL_CASE);
+}
+
+#[test]
 #[ignore = "runs in a subprocess to isolate warm-pool locker V8 state"]
 fn warm_pool_cross_tenant_isolation_subprocess() {
     tokio::runtime::Builder::new_current_thread()
@@ -87,6 +113,26 @@ fn warm_pool_cross_tenant_isolation_subprocess() {
         .build()
         .expect("tokio runtime should build")
         .block_on(warm_pool_cross_tenant_isolation_inner());
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate warm-pool locker V8 state"]
+fn warm_pool_partitions_by_exact_service_grants_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(warm_pool_partitions_by_exact_service_grants_inner());
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate warm-pool locker V8 state"]
+fn warm_pool_partitions_by_permission_profile_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(warm_pool_partitions_by_permission_profile_inner());
 }
 
 async fn warm_pool_cross_tenant_isolation_inner() {
@@ -98,7 +144,7 @@ async fn warm_pool_cross_tenant_isolation_inner() {
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   return await ctx.db.get("messages", "doc-1");
 };
@@ -183,4 +229,198 @@ export {};
 
     // Pool should now have 1 entry (tenant-B's).
     assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 1);
+}
+
+async fn warm_pool_partitions_by_exact_service_grants_inner() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function () {
+  return {};
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let bundle = RuntimeBundle::new(&bundle_path);
+
+    let mut native_limits = cooperative_warm_pool_runtime_test_limits();
+    native_limits.max_concurrent_runtime_instances = 1;
+    native_limits.worker_threads = 1;
+    native_limits.service_capability_enabled = true;
+    native_limits.grants.service = vec!["db".to_string()];
+    let native_policy = Arc::new(RuntimePolicy::new(native_limits));
+    let native_runtime = NimbusRuntime::with_policy(Arc::new(AsyncEchoHost), native_policy);
+
+    let mut adapter_granted_limits = cooperative_warm_pool_runtime_test_limits();
+    adapter_granted_limits.max_concurrent_runtime_instances = 1;
+    adapter_granted_limits.worker_threads = 1;
+    adapter_granted_limits.grants.service = vec!["db".to_string()];
+    let adapter_granted_policy = Arc::new(RuntimePolicy::new(adapter_granted_limits));
+    let adapter_granted_runtime =
+        NimbusRuntime::with_policy(Arc::new(AsyncEchoHost), adapter_granted_policy);
+
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+
+    let native = v8_runtime_pool
+        .take_runtime_with_options(&native_runtime, &bundle, true)
+        .expect("native service runtime cold take should succeed");
+    let native_metrics_after_cold = native_runtime.policy.metrics_snapshot();
+    assert_eq!(native_metrics_after_cold.warm_pool_misses, 1);
+    assert_eq!(native_metrics_after_cold.warm_pool_hits, 0);
+
+    v8_runtime_pool.return_runtime_for_invocation(&native_runtime, &bundle, None, native);
+    assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 1);
+
+    let adapter_granted = v8_runtime_pool
+        .take_runtime_with_options(&adapter_granted_runtime, &bundle, true)
+        .expect("adapter-granted runtime cold take should succeed");
+    let adapter_granted_metrics = adapter_granted_runtime.policy.metrics_snapshot();
+    assert_eq!(
+        adapter_granted_metrics.warm_pool_misses, 1,
+        "adapter-created invocation must not reuse a runtime built with native service ops"
+    );
+    assert_eq!(
+        adapter_granted_metrics.warm_pool_hits, 0,
+        "matching exact grants without native service-op state must still be partitioned"
+    );
+    assert_eq!(
+        v8_runtime_pool.warm_pool_count_for_test(),
+        1,
+        "native service entry should remain retained after the adapter-granted cold miss"
+    );
+
+    v8_runtime_pool.return_runtime_for_invocation(
+        &adapter_granted_runtime,
+        &bundle,
+        None,
+        adapter_granted,
+    );
+    assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 2);
+
+    let _native_again = v8_runtime_pool
+        .take_runtime_with_options(&native_runtime, &bundle, true)
+        .expect("same service-op state and exact service grants should reuse the native runtime");
+    let native_metrics_after_reuse = native_runtime.policy.metrics_snapshot();
+    assert_eq!(
+        native_metrics_after_reuse.warm_pool_hits, 1,
+        "matching service-op state and exact service grants should produce a warm hit"
+    );
+    assert_eq!(native_metrics_after_reuse.warm_pool_misses, 1);
+}
+
+async fn warm_pool_partitions_by_permission_profile_inner() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function () {
+  return {};
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let bundle = RuntimeBundle::new(&bundle_path);
+
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
+    let policy = Arc::new(RuntimePolicy::new(limits));
+    let runtime_owner = NimbusRuntime::with_policy(Arc::new(AsyncEchoHost), policy);
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+
+    let query_request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "messages:list".to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: None,
+        services: Default::default(),
+    };
+    let query_context = RuntimeInvocationContext::top_level(&query_request);
+    let action_request = InvocationRequest {
+        kind: InvocationKind::Action,
+        function_name: "messages:warm".to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: None,
+        services: Default::default(),
+    };
+    let action_context = RuntimeInvocationContext::top_level(&action_request);
+
+    let query = v8_runtime_pool
+        .take_runtime_with_options_for_invocation(
+            &runtime_owner,
+            &bundle,
+            Some(&query_context),
+            true,
+        )
+        .expect("query-profile runtime cold take should succeed");
+    let metrics_after_query_cold = runtime_owner.policy.metrics_snapshot();
+    assert_eq!(metrics_after_query_cold.warm_pool_misses, 1);
+    assert_eq!(metrics_after_query_cold.warm_pool_hits, 0);
+
+    v8_runtime_pool.return_runtime_for_invocation(
+        &runtime_owner,
+        &bundle,
+        Some(&query_context),
+        query,
+    );
+    assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 1);
+
+    let action = v8_runtime_pool
+        .take_runtime_with_options_for_invocation(
+            &runtime_owner,
+            &bundle,
+            Some(&action_context),
+            true,
+        )
+        .expect("action-profile runtime cold take should succeed");
+    let metrics_after_action_take = runtime_owner.policy.metrics_snapshot();
+    assert_eq!(
+        metrics_after_action_take.warm_pool_misses, 2,
+        "action permission profile must not reuse a query-profile runtime"
+    );
+    assert_eq!(
+        metrics_after_action_take.warm_pool_hits, 0,
+        "mismatched permission profile must not produce a warm hit"
+    );
+    assert_eq!(
+        v8_runtime_pool.warm_pool_count_for_test(),
+        1,
+        "query-profile entry should remain retained after action cold miss"
+    );
+
+    v8_runtime_pool.return_runtime_for_invocation(
+        &runtime_owner,
+        &bundle,
+        Some(&action_context),
+        action,
+    );
+    assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 2);
+
+    let _query_again = v8_runtime_pool
+        .take_runtime_with_options_for_invocation(
+            &runtime_owner,
+            &bundle,
+            Some(&query_context),
+            true,
+        )
+        .expect("same query permission profile should reuse the query runtime");
+    let metrics_after_query_reuse = runtime_owner.policy.metrics_snapshot();
+    assert_eq!(
+        metrics_after_query_reuse.warm_pool_hits, 1,
+        "matching permission profile should produce a warm hit"
+    );
+    assert_eq!(metrics_after_query_reuse.warm_pool_misses, 2);
 }

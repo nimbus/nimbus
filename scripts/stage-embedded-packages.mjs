@@ -14,11 +14,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { assertNimbusRootSdkArtifactText } from "./nimbus-root-sdk-artifact-policy.mjs";
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT_DIR = path.join(REPO_ROOT, "crates", "nimbus-assets", "embedded", "packages");
 
-// Package source dirs whose `dist/` is provisioned into developer apps.
-const PROVISIONED = ["convex", "nimbus", "firebase", "mongodb", "dynamodb"];
+// Package source dirs whose `dist/` is provisioned into developer apps. Scoped
+// npm package names use scoped staging dirs while keeping the source dir stable.
+const PROVISIONED = [
+  { sourceDir: "convex", stageDir: "convex" },
+  { sourceDir: "nimbus", stageDir: "@nimbus/nimbus" },
+  { sourceDir: "firebase", stageDir: "@nimbus/firebase" },
+  { sourceDir: "mongodb", stageDir: "@nimbus/mongodb" },
+  { sourceDir: "dynamodb", stageDir: "@nimbus/dynamodb" },
+];
 
 // Third-party runtime roots co-provisioned as embedded packages so the
 // Nimbus-owned packages that depend on them install offline (closure). These
@@ -89,17 +98,29 @@ fs.rmSync(OUT_DIR, { recursive: true, force: true });
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
 const packages = [];
-for (const dir of PROVISIONED) {
-  const distDir = path.join(REPO_ROOT, "packages", dir, "dist");
+for (const pkg of PROVISIONED) {
+  const distDir = path.join(REPO_ROOT, "packages", pkg.sourceDir, "dist");
   const distManifestPath = path.join(distDir, "package.json");
   if (!fs.existsSync(distManifestPath)) {
     fail(`missing ${path.relative(REPO_ROOT, distManifestPath)} — run the package builds first (npm run build)`);
   }
   const distManifest = JSON.parse(fs.readFileSync(distManifestPath, "utf8"));
   const files = [];
-  copyTree(distDir, path.join(OUT_DIR, dir), "", files);
+  const stagedDir = path.join(OUT_DIR, pkg.stageDir);
+  copyTree(distDir, stagedDir, "", files);
+  if (distManifest.name === "@nimbus/nimbus") {
+    verifyNimbusRootSdkArtifact(path.join(stagedDir, "index.js"), true);
+    verifyNimbusRootSdkArtifact(path.join(stagedDir, "index.d.ts"), false);
+  }
   files.sort((a, b) => a.path.localeCompare(b.path));
-  packages.push({ dir, name: distManifest.name, version: distManifest.version, thirdParty: false, files });
+  packages.push({
+    dir: pkg.stageDir,
+    sourceDir: pkg.sourceDir,
+    name: distManifest.name,
+    version: distManifest.version,
+    thirdParty: false,
+    files,
+  });
 }
 
 for (const name of THIRD_PARTY) {
@@ -177,3 +198,17 @@ fs.writeFileSync(path.join(OUT_DIR, "manifest.json"), `${JSON.stringify(manifest
 const total = packages.reduce((n, p) => n + p.files.length, 0);
 console.log(`staged ${packages.length} packages (${total} files) → ${path.relative(REPO_ROOT, OUT_DIR)}`);
 for (const p of packages) console.log(`  ${p.name}@${p.version} (${p.files.length} files)`);
+
+function verifyNimbusRootSdkArtifact(filePath, runtime) {
+  const artifact = fs.readFileSync(filePath, "utf8");
+  try {
+    assertNimbusRootSdkArtifactText(path.relative(REPO_ROOT, filePath), artifact, {
+      runtime,
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      fail(error.message);
+    }
+    throw error;
+  }
+}

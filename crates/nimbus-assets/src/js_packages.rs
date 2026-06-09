@@ -41,6 +41,11 @@ pub struct EmbeddedTooling {
 pub struct EmbeddedPackage {
     /// Staging directory name (e.g. `convex`, `mongodb`, `@connectrpc/connect`).
     pub dir: String,
+    /// Source workspace directory for Nimbus-owned packages when it differs from
+    /// the npm staging directory (for example `packages/nimbus` ->
+    /// `@nimbus/nimbus`).
+    #[serde(rename = "sourceDir", default)]
+    pub source_dir: Option<String>,
     /// Logical npm package name (e.g. `convex`, `@nimbus/mongodb`).
     pub name: String,
     pub version: String,
@@ -247,7 +252,7 @@ mod tests {
 
     const EXPECTED: &[&str] = &[
         "convex",
-        "nimbus",
+        "@nimbus/nimbus",
         "@nimbus/firebase",
         "@nimbus/mongodb",
         "@nimbus/dynamodb",
@@ -326,10 +331,11 @@ mod tests {
             if package.third_party {
                 continue;
             }
+            let source_dir = package.source_dir.as_deref().unwrap_or(&package.dir);
             let src_path = format!(
                 "{}/../../packages/{}/package.json",
                 env!("CARGO_MANIFEST_DIR"),
-                package.dir
+                source_dir
             );
             let src = std::fs::read_to_string(&src_path)
                 .unwrap_or_else(|error| panic!("read {src_path}: {error}"));
@@ -354,14 +360,14 @@ mod tests {
         let mongodb = manifest
             .packages
             .iter()
-            .find(|package| package.dir == "mongodb")
+            .find(|package| package.dir == "@nimbus/mongodb")
             .expect("mongodb staged");
         let uri = mongodb
             .files
             .iter()
             .find(|file| file.path == "uri.js")
             .expect("uri.js listed");
-        let bytes = file_bytes("mongodb", "uri.js").expect("uri.js present");
+        let bytes = file_bytes("@nimbus/mongodb", "uri.js").expect("uri.js present");
         assert_eq!(sha256_hex(&bytes), uri.sha256);
         let mut tampered = bytes.clone();
         tampered.push(b'X');

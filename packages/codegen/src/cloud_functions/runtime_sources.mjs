@@ -172,7 +172,7 @@ function defineFirestoreDocumentTarget(eventType, documentOrOptions, handler) {
         event_type: eventType,
         database: options.database,
         document: options.document,
-        execution: "service",
+        execution: "service_account",
       },
     },
     invoke: async (args, request) => handler(materializeFirebaseFirestoreEvent(args), request),
@@ -231,7 +231,7 @@ function defineFirebaseHttpsRequestTarget(optionsOrHandler, maybeHandler) {
       binding: {
         binding_kind: "https",
         exposure: "http",
-        execution: "request",
+        execution: "request_principal",
       },
     },
     invoke: async (args) => {
@@ -258,7 +258,7 @@ function defineFirebaseHttpsCallableTarget(optionsOrHandler, maybeHandler) {
       binding: {
         binding_kind: "https",
         exposure: "callable",
-        execution: "request",
+        execution: "request_principal",
       },
     },
     invoke: async (args) => {

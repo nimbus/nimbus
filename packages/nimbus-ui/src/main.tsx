@@ -1,5 +1,5 @@
 import { createRouter, RouterProvider } from "@tanstack/react-router";
-import { NimbusProvider } from "nimbus/react";
+import { NimbusProvider } from "@nimbus/nimbus/react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 

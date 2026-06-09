@@ -10,7 +10,7 @@ mod tenant;
 
 use std::sync::Arc;
 
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 
 use super::AuthConfig;
 use super::auth;
@@ -21,10 +21,10 @@ pub async fn dispatch(
     command_name: &str,
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     auth: &AuthConfig,
 ) -> Result<bson::Document, MongoError> {
-    session::handle_start_transaction(body, conn, service)?;
+    session::handle_start_transaction(body, conn, engine)?;
 
     match command_name {
         "hello" => handshake::hello(body, conn),
@@ -40,28 +40,28 @@ pub async fn dispatch(
         "getLog" => admin::get_log(body),
         "saslStart" => auth::sasl_start(body, conn, auth),
         "saslContinue" => auth::sasl_continue(body, conn, auth),
-        "insert" => crud::insert(body, conn, service),
-        "find" => crud::find(body, conn, service),
-        "update" => crud::update(body, conn, service),
-        "delete" => crud::delete(body, conn, service),
-        "findAndModify" | "findandmodify" => crud::find_and_modify(body, conn, service),
-        "count" => crud::count(body, service),
-        "distinct" => crud::distinct(body, service),
-        "aggregate" => aggregation::aggregate(body, conn, service),
-        "create" => collection::create(body, service),
-        "drop" => collection::drop_collection(body, service),
-        "listCollections" => collection::list_collections(body, service),
-        "listDatabases" => collection::list_databases(body, service),
-        "createIndexes" | "createindexes" => index::create_indexes(body, service),
-        "dropIndexes" | "dropindexes" => index::drop_indexes(body, service),
-        "listIndexes" | "listindexes" => index::list_indexes(body, service),
+        "insert" => crud::insert(body, conn, engine),
+        "find" => crud::find(body, conn, engine),
+        "update" => crud::update(body, conn, engine),
+        "delete" => crud::delete(body, conn, engine),
+        "findAndModify" | "findandmodify" => crud::find_and_modify(body, conn, engine),
+        "count" => crud::count(body, engine),
+        "distinct" => crud::distinct(body, engine),
+        "aggregate" => aggregation::aggregate(body, conn, engine),
+        "create" => collection::create(body, engine),
+        "drop" => collection::drop_collection(body, engine),
+        "listCollections" => collection::list_collections(body, engine),
+        "listDatabases" => collection::list_databases(body, engine),
+        "createIndexes" | "createindexes" => index::create_indexes(body, engine),
+        "dropIndexes" | "dropindexes" => index::drop_indexes(body, engine),
+        "listIndexes" | "listindexes" => index::list_indexes(body, engine),
         "getMore" => cursor::get_more(body, conn),
         "killCursors" => cursor::kill_cursors(body, conn),
         "startSession" => session::start_session(body, conn),
-        "endSessions" => session::end_sessions(body, conn, service),
+        "endSessions" => session::end_sessions(body, conn, engine),
         "refreshSessions" => session::refresh_sessions(body, conn),
-        "commitTransaction" => session::commit_transaction(body, conn, service),
-        "abortTransaction" => session::abort_transaction(body, conn, service),
+        "commitTransaction" => session::commit_transaction(body, conn, engine),
+        "abortTransaction" => session::abort_transaction(body, conn, engine),
         _ => Err(MongoError::command_not_found(command_name)),
     }
 }
@@ -73,7 +73,7 @@ pub fn extract_command_name(doc: &bson::Document) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nimbus_testing::ServiceFixture;
+    use nimbus_testing::EngineFixture;
 
     fn test_conn() -> ConnectionState {
         ConnectionState::new(([127, 0, 0, 1], 12345).into())
@@ -97,10 +97,10 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_ping_returns_ok() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let auth = test_auth();
         let doc = bson::doc! { "ping": 1 };
-        let result = dispatch("ping", &doc, &mut test_conn(), &fixture.service(), &auth)
+        let result = dispatch("ping", &doc, &mut test_conn(), &fixture.engine(), &auth)
             .await
             .unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
@@ -108,10 +108,10 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_unknown_returns_command_not_found() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let auth = test_auth();
         let doc = bson::doc! { "foobar": 1 };
-        let err = dispatch("foobar", &doc, &mut test_conn(), &fixture.service(), &auth)
+        let err = dispatch("foobar", &doc, &mut test_conn(), &fixture.engine(), &auth)
             .await
             .unwrap_err();
         match err {
@@ -127,10 +127,10 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_hello_returns_writable_primary() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let auth = test_auth();
         let doc = bson::doc! { "hello": 1 };
-        let result = dispatch("hello", &doc, &mut test_conn(), &fixture.service(), &auth)
+        let result = dispatch("hello", &doc, &mut test_conn(), &fixture.engine(), &auth)
             .await
             .unwrap();
         assert!(result.get_bool("isWritablePrimary").unwrap());
@@ -139,15 +139,15 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_ismaster_case_insensitive() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let auth = test_auth();
         let mut conn = test_conn();
         let doc1 = bson::doc! { "isMaster": 1 };
         let doc2 = bson::doc! { "ismaster": 1 };
-        let r1 = dispatch("isMaster", &doc1, &mut conn, &fixture.service(), &auth)
+        let r1 = dispatch("isMaster", &doc1, &mut conn, &fixture.engine(), &auth)
             .await
             .unwrap();
-        let r2 = dispatch("ismaster", &doc2, &mut conn, &fixture.service(), &auth)
+        let r2 = dispatch("ismaster", &doc2, &mut conn, &fixture.engine(), &auth)
             .await
             .unwrap();
         assert!(r1.get_bool("ismaster").unwrap());
@@ -156,14 +156,14 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_build_info() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let auth = test_auth();
         let doc = bson::doc! { "buildInfo": 1 };
         let result = dispatch(
             "buildInfo",
             &doc,
             &mut test_conn(),
-            &fixture.service(),
+            &fixture.engine(),
             &auth,
         )
         .await
@@ -173,7 +173,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_sasl_start() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let auth = test_auth();
         let mut conn = test_conn();
         let body = bson::doc! {
@@ -181,7 +181,7 @@ mod tests {
             "mechanism": "SCRAM-SHA-256",
             "payload": bson::Binary { subtype: bson::spec::BinarySubtype::Generic, bytes: b"n,,n=admin,r=nonce123".to_vec() },
         };
-        let result = dispatch("saslStart", &body, &mut conn, &fixture.service(), &auth)
+        let result = dispatch("saslStart", &body, &mut conn, &fixture.engine(), &auth)
             .await
             .unwrap();
         assert!(!result.get_bool("done").unwrap());

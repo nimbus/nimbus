@@ -22,7 +22,7 @@ async fn runtime_loads_bundle_and_invokes_host_bridge() {
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   const host = await ctx.db.get("messages", "doc-1");
   return {
@@ -66,7 +66,7 @@ export {};
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
-                    "session_id": "query:messages:list",
+                    "host_call_session_id": "query:messages:list",
                 }
             }
         })
@@ -84,7 +84,7 @@ export {};
             serde_json::json!({
                 "table": "messages",
                 "id": "doc-1",
-                "session_id": "query:messages:list",
+                "host_call_session_id": "query:messages:list",
             }),
         )]
     );
@@ -134,7 +134,7 @@ async fn runtime_awaits_async_bundle_handlers() {
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   const value = await ctx.db.get("messages", "doc-1");
   return {
@@ -179,7 +179,7 @@ export {};
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
-                    "session_id": "query:messages:list",
+                    "host_call_session_id": "query:messages:list",
                 }
             }
         })

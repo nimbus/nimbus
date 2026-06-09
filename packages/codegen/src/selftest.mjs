@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runActionFixtures } from "./selftest/action_fixtures.mjs";
+import { runCapabilityBoundaryFixtures } from "./selftest/capability_boundary_fixtures.mjs";
 import { runCodegenChecks } from "./selftest/check_fixtures.mjs";
 import { runCloudFunctionsFixtures } from "./selftest/cloud_functions_fixtures.mjs";
 import { runCoreFixtures } from "./selftest/core_fixtures.mjs";
@@ -18,6 +19,7 @@ async function main() {
   if (typecheckOnly) {
     return;
   }
+  await runCapabilityBoundaryFixtures();
   await runCloudFunctionsFixtures();
   await runCoreFixtures();
   await runDatabaseFixtures();

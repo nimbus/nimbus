@@ -6,7 +6,7 @@ use std::sync::Arc;
 #[cfg(unix)]
 use std::{env, process};
 
-use nimbus::{ConvexRegistry, Error, LicenseState, Service, TenantId, run_scheduler};
+use nimbus::{ConvexRegistry, Engine, Error, LicenseState, TenantId, run_scheduler};
 use nimbus_server::{
     CloudFunctionsRegistry, LocalServerPaths, LocalServerSecurityState, ServeOptions,
     ServerDiscoveryLease, load_or_create_local_admin_token, serve,
@@ -24,7 +24,7 @@ use crate::codegen::{CodegenOptions, run_codegen_for_app_dir_with_options};
 use crate::compose::discovery::{
     ResolvedComposeSelection, compose_selection_summary, resolve_compose_selection,
 };
-use crate::compose::load_host_backed_sandbox_service_manager_for_selection_with_isolation_mode;
+use crate::compose::load_host_backed_service_manager_for_selection_with_isolation_mode;
 use crate::deploy::resolve_deploy_app_dir;
 use crate::dirs;
 
@@ -55,7 +55,7 @@ pub(crate) async fn run_start_command(
     let persistence_config = persistence_config_from_start_command(&command)?;
     let compose_control_data_dir =
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
-    // Snapshot first-boot before `Service::new_with_persistence_config`
+    // Snapshot first-boot before `Engine::new_with_persistence_config`
     // touches the data dir; otherwise the marker landscape we observe
     // would always say "second boot" because Service initialization
     // would have already populated the dir. The H5 banner is fired
@@ -75,7 +75,7 @@ pub(crate) async fn run_start_command(
     let cloud_functions_registry =
         load_cloud_functions_registry(&command, resolved_app_dir.as_ref(), &runtime_limits)?;
     let compose_selection = resolve_optional_compose_selection(&command)?;
-    let sandbox_service_manager = load_sandbox_service_manager(
+    let service_manager = load_service_manager(
         compose_selection.as_ref(),
         &compose_control_data_dir,
         command.tenant_isolation_mode,
@@ -107,7 +107,7 @@ pub(crate) async fn run_start_command(
         local_server_paths.clone(),
         local_admin_token,
     ));
-    let service = Arc::new(Service::new_with_persistence_config(persistence_config).await?);
+    let service = Arc::new(Engine::new_with_persistence_config(persistence_config).await?);
     let shutdown_service = service.clone();
     service.recover_scheduled_work_on_startup_async().await?;
     if let Some(tenant_name) = &command.auto_tenant {
@@ -160,8 +160,8 @@ pub(crate) async fn run_start_command(
     if let Some(registry) = cloud_functions_registry {
         serve_options = serve_options.with_cloud_functions_registry(registry);
     }
-    if let Some(manager) = sandbox_service_manager {
-        serve_options = serve_options.with_sandbox_service_manager(manager);
+    if let Some(manager) = service_manager {
+        serve_options = serve_options.with_service_manager(manager);
     }
     serve_options = serve_options.with_machine_lifecycle_manager(machine_lifecycle_manager);
     if let Some(token) = command.deploy_admin_token {
@@ -254,14 +254,14 @@ pub(crate) fn resolve_optional_compose_selection(
         .map_err(|error| Error::InvalidInput(error.to_string()))
 }
 
-pub(super) fn load_sandbox_service_manager(
+pub(super) fn load_service_manager(
     compose_selection: Option<&ResolvedComposeSelection>,
     compose_control_data_dir: &std::path::Path,
     tenant_isolation_mode: nimbus_server::TenantIsolationMode,
-) -> Result<Option<Arc<nimbus::SandboxServiceManager>>, Error> {
+) -> Result<Option<Arc<nimbus::ServiceManager>>, Error> {
     compose_selection
         .map(|selection| {
-            load_host_backed_sandbox_service_manager_for_selection_with_isolation_mode(
+            load_host_backed_service_manager_for_selection_with_isolation_mode(
                 selection,
                 compose_control_data_dir,
                 tenant_isolation_mode,
@@ -546,7 +546,7 @@ fn package_declares_functions_framework(package_json_path: &Path) -> bool {
 }
 
 fn ensure_auto_tenant(
-    service: &Service,
+    service: &Engine,
     tenant_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tenant_id = TenantId::new(tenant_name)?;

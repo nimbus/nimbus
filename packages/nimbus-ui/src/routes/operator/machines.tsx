@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "nimbus/react";
+import { useQuery } from "@nimbus/nimbus/react";
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 

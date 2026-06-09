@@ -10,7 +10,7 @@ pub struct ConvexRuntimeSchedulerRunAfterPayload {
     #[serde(default = "empty_args")]
     pub args: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -23,7 +23,7 @@ pub struct ConvexRuntimeSchedulerRunAtPayload {
     #[serde(default = "empty_args")]
     pub args: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -31,5 +31,5 @@ pub struct ConvexRuntimeSchedulerRunAtPayload {
 pub struct ConvexRuntimeSchedulerCancelPayload {
     pub job_id: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }

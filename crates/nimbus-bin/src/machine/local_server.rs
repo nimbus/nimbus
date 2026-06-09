@@ -226,7 +226,7 @@ mod tests {
     use std::net::Ipv4Addr;
     use std::sync::{Arc, Mutex};
 
-    use nimbus::Service;
+    use nimbus::Engine;
     use nimbus_server::{
         LocalServerSecurityState, MachineCreateRequest, MachineLifecycleFuture,
         MachineLifecycleManager, MachineLifecycleSnapshot, MachineUpdateRequest, ServeOptions,
@@ -363,7 +363,7 @@ mod tests {
         );
         let manager = StubMachineLifecycleManager::new(roots.clone());
         let service =
-            Arc::new(Service::new(temp.path().join("data")).expect("service should create"));
+            Arc::new(Engine::new(temp.path().join("data")).expect("service should create"));
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("listener should bind");

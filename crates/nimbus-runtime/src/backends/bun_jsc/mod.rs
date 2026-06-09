@@ -274,6 +274,33 @@ mod tests {
     }
 
     #[test]
+    fn bun_jsc_service_grants_do_not_enable_service_capability_path() {
+        let mut limits = RuntimeLimits::application_bun_jsc();
+        limits.grants.service = vec!["db".to_string()];
+        let policy = crate::limits::RuntimePolicy::new(limits);
+
+        assert_eq!(
+            policy.limits().grants.sorted_service_grants(),
+            vec!["db".to_string()]
+        );
+        assert!(
+            !policy.limits().service_capability_enabled,
+            "Bun/JSC service grants must not expose the V8-only service capability path"
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "service_capability_enabled is currently supported only by the V8 runtime backend"
+    )]
+    fn bun_jsc_rejects_service_capability_enabled_before_any_host_path() {
+        let mut limits = RuntimeLimits::application_bun_jsc();
+        limits.service_capability_enabled = true;
+        limits.grants.service = vec!["db".to_string()];
+        let _policy = crate::limits::RuntimePolicy::new(limits);
+    }
+
+    #[test]
     fn bun_jsc_lifecycle_is_ack_driven_and_ordered() {
         let mut pool = BunJscPool::new();
         assert_eq!(pool.lifecycle_state(), BunJscLifecycleState::Created);

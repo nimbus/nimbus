@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use nimbus_core::{PrincipalContext, TenantId};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 
 use super::super::error::MongoError;
@@ -45,10 +45,10 @@ pub fn ensure_database_matches_context(
 }
 
 pub fn ensure_tenant(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
 ) -> Result<(), MongoError> {
-    match service.create_tenant(context.tenant_id().clone()) {
+    match engine.create_tenant(context.tenant_id().clone()) {
         Ok(()) => Ok(()),
         Err(nimbus_core::Error::AlreadyExists(_)) => Ok(()),
         Err(e) => Err(MongoError::from(e)),

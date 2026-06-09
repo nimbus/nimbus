@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use super::{
     RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode, TenantRuntimePolicyDecision,
-    TenantWorkloadIdentity,
+    WorkloadAttributes,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -257,7 +257,7 @@ impl Default for TenantAuditRedactionPolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenantIsolationPolicyInput {
-    pub(super) workload: TenantWorkloadIdentity,
+    pub(super) workload: WorkloadAttributes,
     pub(super) runtime: TenantRuntimePolicyDecision,
     pub(super) services: TenantServiceGrantPolicyDecision,
     pub(super) network: TenantNetworkPolicyDecision,
@@ -270,7 +270,7 @@ pub struct TenantIsolationPolicyInput {
 }
 
 impl TenantIsolationPolicyInput {
-    pub fn new(workload: TenantWorkloadIdentity) -> Self {
+    pub fn new(workload: WorkloadAttributes) -> Self {
         Self {
             workload,
             runtime: TenantRuntimePolicyDecision::not_applicable(),

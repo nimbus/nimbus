@@ -158,7 +158,7 @@ async fn runtime_cooperative_locker_slot_parks_and_resumes_after_async_host_comp
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   const host = await ctx.db.get("messages", "doc-1");
   return {
@@ -261,7 +261,7 @@ export {};
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
-                    "session_id": "query:messages:list",
+                    "host_call_session_id": "query:messages:list",
                 }
             }
         })
@@ -305,7 +305,7 @@ async fn runtime_cooperative_locker_slot_completes_immediate_async_host_work_wit
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   return await ctx.db.get("messages", "doc-1");
 };
@@ -373,7 +373,7 @@ export {};
             "payload": {
                 "table": "messages",
                 "id": "doc-1",
-                "session_id": "query:messages:list",
+                "host_call_session_id": "query:messages:list",
             },
         })
     );
@@ -404,7 +404,7 @@ async fn warm_pool_cooperative_async_host_two_cycles_inner() {
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   return await ctx.db.get("messages", "doc-1");
 };
@@ -437,7 +437,7 @@ export {};
         "payload": {
             "table": "messages",
             "id": "doc-1",
-            "session_id": "query:messages:list",
+            "host_call_session_id": "query:messages:list",
         },
     });
 
@@ -530,7 +530,7 @@ fn cooperative_concurrent_dispatch_does_not_deadlock_subprocess() {
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   const host = await ctx.db.get("messages", "doc-1");
   return {

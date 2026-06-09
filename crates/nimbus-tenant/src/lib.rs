@@ -32,10 +32,7 @@ pub use decision::{
     TenantIsolationAuditRecord, TenantIsolationDecision, TenantIsolationDecisionId,
     TenantServiceAccessDecision, TenantStorageAccessDecision,
 };
-pub use identity::{
-    TenantWorkloadIdentity, TenantWorkloadKind, TenantWorkloadLocation,
-    TenantWorkloadStableIdentity,
-};
+pub use identity::{WorkloadAttributes, WorkloadIdentity, WorkloadKind, WorkloadLocation};
 pub use image_admission::{
     TenantImageAdmission, TenantImageAdmissionSource, TenantImageAttestationEvidence,
     TenantImageProvenanceRequirement, TenantImageSignatureEvidence,

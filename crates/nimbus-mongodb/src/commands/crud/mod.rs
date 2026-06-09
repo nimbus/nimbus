@@ -4,7 +4,7 @@ use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, Document, DocumentId, DocumentLocator,
     Error, PrincipalContext, TableName, TenantId, WriteKey, WriteSetMode,
 };
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 
 use super::super::bson_bridge;
 use super::super::connection::ConnectionState;
@@ -20,12 +20,12 @@ use update::{build_operator_write, build_replacement_write};
 fn execute_or_stage_writes(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     writes: Vec<AtomicWrite>,
 ) -> Result<AtomicWriteBatchOutcome, MongoError> {
     if let Some(transaction_token) = conn.session_store.active_transaction_token(body) {
-        return service
+        return engine
             .stage_atomic_write_batch_in_transaction(
                 tenant_id,
                 &transaction_token,
@@ -36,7 +36,7 @@ fn execute_or_stage_writes(
     }
     let batch = AtomicWriteBatch { writes };
     let principal = PrincipalContext::system();
-    let eu = service
+    let eu = engine
         .begin_mutation_execution_unit(tenant_id.clone(), principal)
         .map_err(MongoError::from)?;
     eu.execute_atomic_write_batch(batch)
@@ -46,14 +46,14 @@ fn execute_or_stage_writes(
 fn get_document_after_find_and_modify_write(
     body: &bson::Document,
     conn: &ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
     document_id: DocumentId,
     principal: &PrincipalContext,
 ) -> Result<Option<Document>, MongoError> {
     if let Some(transaction_token) = conn.session_store.active_transaction_token(body) {
-        return service
+        return engine
             .get_document_in_transaction(
                 tenant_id,
                 &transaction_token,
@@ -63,7 +63,7 @@ fn get_document_after_find_and_modify_write(
             )
             .map_err(MongoError::from);
     }
-    match service.get_document_with_principal(tenant_id, table, document_id, principal) {
+    match engine.get_document_with_principal(tenant_id, table, document_id, principal) {
         Ok(document) => Ok(Some(document)),
         Err(Error::DocumentNotFound(_) | Error::NotFound(_)) => Ok(None),
         Err(error) => Err(MongoError::from(error)),
@@ -73,7 +73,7 @@ fn get_document_after_find_and_modify_write(
 pub fn insert(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
 ) -> Result<bson::Document, MongoError> {
     let collection = body.get_str("insert").map_err(|_| MongoError::Command {
         code: BAD_VALUE.code,
@@ -96,20 +96,20 @@ pub fn insert(
 
     let ordered = body.get_bool("ordered").unwrap_or(true);
 
-    ensure_tenant(service, &tenant_context)?;
-    ensure_table_schema(service, &tenant_id, &table)?;
+    ensure_tenant(engine, &tenant_context)?;
+    ensure_table_schema(engine, &tenant_id, &table)?;
 
     if ordered {
-        insert_ordered(body, conn, service, &tenant_id, &table, documents)
+        insert_ordered(body, conn, engine, &tenant_id, &table, documents)
     } else {
-        insert_unordered(body, conn, service, &tenant_id, &table, documents)
+        insert_unordered(body, conn, engine, &tenant_id, &table, documents)
     }
 }
 
 pub fn find(
     body: &bson::Document,
     conn: &mut super::super::connection::ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
 ) -> Result<bson::Document, MongoError> {
     let collection = body.get_str("find").map_err(|_| MongoError::Command {
         code: BAD_VALUE.code,
@@ -146,13 +146,13 @@ pub fn find(
 
     let projection = body.get_document("projection").ok();
 
-    ensure_tenant(service, &tenant_context)?;
+    ensure_tenant(engine, &tenant_context)?;
 
     let empty_filter = bson::Document::new();
     let effective_filter = filter_doc.unwrap_or(&empty_filter);
     let transaction_token = conn.session_store.active_transaction_token(body);
     let documents = query_documents(
-        service,
+        engine,
         &tenant_id,
         &table,
         effective_filter,
@@ -229,7 +229,7 @@ pub fn apply_projection(doc: &mut bson::Document, projection: &bson::Document) {
 pub fn update(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
 ) -> Result<bson::Document, MongoError> {
     let collection = body.get_str("update").map_err(|_| MongoError::Command {
         code: BAD_VALUE.code,
@@ -250,7 +250,7 @@ pub fn update(
 
     let ordered = body.get_bool("ordered").unwrap_or(true);
 
-    ensure_tenant(service, &tenant_context)?;
+    ensure_tenant(engine, &tenant_context)?;
 
     let mut n: i32 = 0;
     let mut n_modified: i32 = 0;
@@ -273,7 +273,7 @@ pub fn update(
             }
         };
 
-        match execute_single_update(body, conn, service, &tenant_id, &table, update_doc) {
+        match execute_single_update(body, conn, engine, &tenant_id, &table, update_doc) {
             Ok(result) => {
                 n += result.n;
                 n_modified += result.n_modified;
@@ -325,7 +325,7 @@ struct UpdateResult {
 fn execute_single_update(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
     update_doc: &bson::Document,
@@ -362,7 +362,7 @@ fn execute_single_update(
     let limit = if multi { None } else { Some(1) };
     let transaction_token = conn.session_store.active_transaction_token(body);
     let matched = query_documents(
-        service,
+        engine,
         tenant_id,
         table,
         filter_doc,
@@ -376,7 +376,7 @@ fn execute_single_update(
             return execute_upsert(
                 body,
                 conn,
-                service,
+                engine,
                 tenant_id,
                 table,
                 filter_doc,
@@ -404,7 +404,7 @@ fn execute_single_update(
             build_operator_write(write_key, u_doc, Some(doc))?
         };
 
-        execute_or_stage_writes(body, conn, service, tenant_id, vec![write])?;
+        execute_or_stage_writes(body, conn, engine, tenant_id, vec![write])?;
         n_modified += 1;
     }
 
@@ -419,7 +419,7 @@ fn execute_single_update(
 fn execute_upsert(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
     filter_doc: &bson::Document,
@@ -477,7 +477,7 @@ fn execute_upsert(
         transforms: vec![],
     };
 
-    execute_or_stage_writes(body, conn, service, tenant_id, vec![write])?;
+    execute_or_stage_writes(body, conn, engine, tenant_id, vec![write])?;
 
     Ok(UpdateResult {
         n: 1,
@@ -489,7 +489,7 @@ fn execute_upsert(
 pub fn delete(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
 ) -> Result<bson::Document, MongoError> {
     let collection = body.get_str("delete").map_err(|_| MongoError::Command {
         code: BAD_VALUE.code,
@@ -510,7 +510,7 @@ pub fn delete(
 
     let ordered = body.get_bool("ordered").unwrap_or(true);
 
-    ensure_tenant(service, &tenant_context)?;
+    ensure_tenant(engine, &tenant_context)?;
 
     let mut n: i32 = 0;
     let mut write_errors: Vec<bson::Document> = Vec::new();
@@ -531,7 +531,7 @@ pub fn delete(
             }
         };
 
-        match execute_single_delete(body, conn, service, &tenant_id, &table, del_doc) {
+        match execute_single_delete(body, conn, engine, &tenant_id, &table, del_doc) {
             Ok(count) => n += count,
             Err(e) => {
                 let (code, msg) = error_to_code_msg(&e);
@@ -559,7 +559,7 @@ pub fn delete(
 fn execute_single_delete(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
     del_doc: &bson::Document,
@@ -580,7 +580,7 @@ fn execute_single_delete(
     let query_limit = if limit_val == 1 { Some(1) } else { None };
     let transaction_token = conn.session_store.active_transaction_token(body);
     let matched = query_documents(
-        service,
+        engine,
         tenant_id,
         table,
         filter_doc,
@@ -609,7 +609,7 @@ fn execute_single_delete(
             missing_ok: true,
         };
 
-        execute_or_stage_writes(body, conn, service, tenant_id, vec![write])?;
+        execute_or_stage_writes(body, conn, engine, tenant_id, vec![write])?;
     }
 
     Ok(docs_to_delete.len() as i32)
@@ -618,7 +618,7 @@ fn execute_single_delete(
 pub fn find_and_modify(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
 ) -> Result<bson::Document, MongoError> {
     let collection = body
         .get_str("findAndModify")
@@ -641,13 +641,13 @@ pub fn find_and_modify(
     let upsert = body.get_bool("upsert").unwrap_or(false);
     let fields = body.get_document("fields").ok();
 
-    ensure_tenant(service, &tenant_context)?;
+    ensure_tenant(engine, &tenant_context)?;
 
     let empty_filter = bson::Document::new();
     let effective_filter = filter_doc.unwrap_or(&empty_filter);
     let transaction_token = conn.session_store.active_transaction_token(body);
     let matched = query_documents(
-        service,
+        engine,
         &tenant_id,
         &table,
         effective_filter,
@@ -657,7 +657,7 @@ pub fn find_and_modify(
     )?;
 
     if remove {
-        return find_and_remove(body, conn, service, &tenant_id, &table, &matched, fields);
+        return find_and_remove(body, conn, engine, &tenant_id, &table, &matched, fields);
     }
 
     let u_doc = body
@@ -677,7 +677,7 @@ pub fn find_and_modify(
         return find_and_upsert(
             body,
             conn,
-            service,
+            engine,
             &tenant_id,
             &table,
             effective_filter,
@@ -700,14 +700,14 @@ pub fn find_and_modify(
         build_operator_write(write_key, u_doc, Some(doc))?
     };
 
-    execute_or_stage_writes(body, conn, service, &tenant_id, vec![write])?;
+    execute_or_stage_writes(body, conn, engine, &tenant_id, vec![write])?;
 
     let principal = PrincipalContext::system();
     let value = if return_new {
         match get_document_after_find_and_modify_write(
             body,
             conn,
-            service,
+            engine,
             &tenant_id,
             &table,
             doc.id.clone(),
@@ -740,7 +740,7 @@ pub fn find_and_modify(
 fn find_and_remove(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
     matched: &[Document],
@@ -764,7 +764,7 @@ fn find_and_remove(
         missing_ok: true,
     };
 
-    execute_or_stage_writes(body, conn, service, tenant_id, vec![write])?;
+    execute_or_stage_writes(body, conn, engine, tenant_id, vec![write])?;
 
     Ok(bson::doc! {
         "value": old_bson,
@@ -777,7 +777,7 @@ fn find_and_remove(
 fn find_and_upsert(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
     filter_doc: &bson::Document,
@@ -832,12 +832,12 @@ fn find_and_upsert(
         transforms: vec![],
     };
 
-    execute_or_stage_writes(body, conn, service, tenant_id, vec![write])?;
+    execute_or_stage_writes(body, conn, engine, tenant_id, vec![write])?;
 
     let principal = PrincipalContext::system();
     let value = if return_new {
         match get_document_after_find_and_modify_write(
-            body, conn, service, tenant_id, table, doc_id, &principal,
+            body, conn, engine, tenant_id, table, doc_id, &principal,
         )? {
             Some(new_doc) => {
                 let mut bson_doc = bson_bridge::document_to_bson_doc(&new_doc);
@@ -864,7 +864,7 @@ fn find_and_upsert(
     })
 }
 
-pub fn count(body: &bson::Document, service: &Arc<Service>) -> Result<bson::Document, MongoError> {
+pub fn count(body: &bson::Document, engine: &Arc<Engine>) -> Result<bson::Document, MongoError> {
     let collection = body.get_str("count").map_err(|_| MongoError::Command {
         code: BAD_VALUE.code,
         code_name: BAD_VALUE.code_name.into(),
@@ -890,7 +890,7 @@ pub fn count(body: &bson::Document, service: &Arc<Service>) -> Result<bson::Docu
         _ => None,
     };
 
-    ensure_tenant(service, &tenant_context)?;
+    ensure_tenant(engine, &tenant_context)?;
 
     let empty_filter = bson::Document::new();
     let effective_filter = filter_doc.unwrap_or(&empty_filter);
@@ -902,7 +902,7 @@ pub fn count(body: &bson::Document, service: &Arc<Service>) -> Result<bson::Docu
     };
 
     let documents = query_documents(
-        service,
+        engine,
         &tenant_id,
         &table,
         effective_filter,
@@ -922,10 +922,7 @@ pub fn count(body: &bson::Document, service: &Arc<Service>) -> Result<bson::Docu
     Ok(bson::doc! { "n": n as i64, "ok": 1.0 })
 }
 
-pub fn distinct(
-    body: &bson::Document,
-    service: &Arc<Service>,
-) -> Result<bson::Document, MongoError> {
+pub fn distinct(body: &bson::Document, engine: &Arc<Engine>) -> Result<bson::Document, MongoError> {
     let collection = body.get_str("distinct").map_err(|_| MongoError::Command {
         code: BAD_VALUE.code,
         code_name: BAD_VALUE.code_name.into(),
@@ -945,12 +942,12 @@ pub fn distinct(
 
     let filter_doc = body.get_document("query").ok();
 
-    ensure_tenant(service, &tenant_context)?;
+    ensure_tenant(engine, &tenant_context)?;
 
     let empty_filter = bson::Document::new();
     let effective_filter = filter_doc.unwrap_or(&empty_filter);
     let documents = query_documents(
-        service,
+        engine,
         &tenant_id,
         &table,
         effective_filter,
@@ -988,7 +985,7 @@ pub fn distinct(
 fn insert_ordered(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
     documents: &[bson::Bson],
@@ -1009,7 +1006,7 @@ fn insert_ordered(
             }
         };
 
-        match insert_single_doc(body, conn, service, tenant_id, table, bson_doc) {
+        match insert_single_doc(body, conn, engine, tenant_id, table, bson_doc) {
             Ok(()) => n += 1,
             Err(e) => {
                 let (code, msg) = error_to_code_msg(&e);
@@ -1025,7 +1022,7 @@ fn insert_ordered(
 fn insert_unordered(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
     documents: &[bson::Bson],
@@ -1046,7 +1043,7 @@ fn insert_unordered(
             }
         };
 
-        match insert_single_doc(body, conn, service, tenant_id, table, bson_doc) {
+        match insert_single_doc(body, conn, engine, tenant_id, table, bson_doc) {
             Ok(()) => n += 1,
             Err(e) => {
                 let (code, msg) = error_to_code_msg(&e);
@@ -1061,7 +1058,7 @@ fn insert_unordered(
 fn insert_single_doc(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
     bson_doc: &bson::Document,
@@ -1081,16 +1078,16 @@ fn insert_single_doc(
         transforms: vec![],
     };
 
-    execute_or_stage_writes(body, conn, service, tenant_id, vec![write])?;
+    execute_or_stage_writes(body, conn, engine, tenant_id, vec![write])?;
     Ok(())
 }
 
 fn ensure_table_schema(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
 ) -> Result<(), MongoError> {
-    match service.get_table_schema(tenant_id, table) {
+    match engine.get_table_schema(tenant_id, table) {
         Ok(_) => Ok(()),
         Err(nimbus_core::Error::SchemaNotFound(_)) => {
             let schema = nimbus_core::TableSchema {
@@ -1099,7 +1096,7 @@ fn ensure_table_schema(
                 indexes: vec![],
                 access_policy: None,
             };
-            service
+            engine
                 .set_table_schema(tenant_id, schema)
                 .map_err(MongoError::from)
         }

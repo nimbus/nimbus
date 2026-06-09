@@ -2,9 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn firebase_mock_user_token_requires_explicit_server_opt_in() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let request_body = json!({
         "database": "projects/demo/databases/(default)",
         "writes": [
@@ -61,9 +61,9 @@ async fn firebase_rest_commit_and_batch_get_respect_bearer_principal() {
     let application_id = "nimbus-firebase-test";
     let (token, jwks_data_url) =
         auth::issue_es256_test_token(issuer, application_id, "user-123", json!({}));
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     service
         .set_table_schema(
             &tenant_id,
@@ -180,10 +180,10 @@ async fn firebase_rest_batch_get_rejects_application_bearer_for_different_tenant
         "user-123",
         json!({ "tenant_id": "tenant-b" }),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("tenant-a", Service::create_tenant);
-    fixture.create_tenant("tenant-b", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("tenant-a", Engine::create_tenant);
+    fixture.create_tenant("tenant-b", Engine::create_tenant);
+    let service = fixture.engine();
     let registry = convex_registry_with_routes_and_bundle_and_auth(
         json!([]),
         json!([]),
@@ -275,9 +275,9 @@ async fn firebase_grpc_get_document_respects_bearer_principal() {
     let application_id = "nimbus-firebase-test";
     let (token, jwks_data_url) =
         auth::issue_es256_test_token(issuer, application_id, "user-123", json!({}));
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     service
         .set_table_schema(
             &tenant_id,
@@ -360,10 +360,10 @@ async fn firebase_grpc_get_document_rejects_application_bearer_for_different_ten
         "user-123",
         json!({ "tenant_id": "tenant-b" }),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("tenant-a", Service::create_tenant);
-    let tenant_b = fixture.create_tenant("tenant-b", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("tenant-a", Engine::create_tenant);
+    let tenant_b = fixture.create_tenant("tenant-b", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_b,
@@ -444,9 +444,9 @@ async fn firebase_grpc_write_stream_respects_bearer_principal() {
     let application_id = "nimbus-firebase-test";
     let (token, jwks_data_url) =
         auth::issue_es256_test_token(issuer, application_id, "user-123", json!({}));
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     service
         .set_table_schema(
             &tenant_id,
@@ -587,9 +587,9 @@ async fn firebase_listen_websocket_auth_offer_controls_bootstrap_visibility() {
     let application_id = "nimbus-firebase-test";
     let (token, jwks_data_url) =
         auth::issue_es256_test_token(issuer, application_id, "user-123", json!({}));
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     service
         .set_table_schema(
             &tenant_id,
@@ -714,10 +714,10 @@ async fn firebase_listen_websocket_rejects_application_bearer_for_different_tena
         "user-123",
         json!({ "tenant_id": "tenant-b" }),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("tenant-a", Service::create_tenant);
-    let tenant_b = fixture.create_tenant("tenant-b", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("tenant-a", Engine::create_tenant);
+    let tenant_b = fixture.create_tenant("tenant-b", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_b,
@@ -863,9 +863,9 @@ fn firebase_tenant_listen_query_request(
 
 #[tokio::test]
 async fn firebase_listen_websocket_mock_user_token_requires_explicit_server_opt_in() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     service
         .set_table_schema(
             &tenant_id,
@@ -962,8 +962,8 @@ async fn firebase_listen_websocket_mock_user_token_requires_explicit_server_opt_
 
 #[tokio::test]
 async fn firebase_rest_routes_return_not_found_when_adapter_is_disabled() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
 
     for path in [
         "/v1/projects/demo/databases/(default)/documents:commit",
@@ -989,13 +989,10 @@ async fn firebase_rest_routes_return_not_found_when_adapter_is_disabled() {
 
 #[tokio::test]
 async fn firebase_rest_routes_are_registered_when_adapter_is_enabled() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(router_for_firebase(
-        fixture.service(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
 
     for path in [
         "/v1/projects/demo/databases/(default)/documents:commit",
@@ -1059,12 +1056,9 @@ async fn firebase_rest_routes_are_registered_when_adapter_is_enabled() {
 
 #[tokio::test]
 async fn firebase_commit_rejects_malformed_commit_json() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_firebase(
-        fixture.service(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
 
     let response = server
         .client()

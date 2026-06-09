@@ -166,6 +166,11 @@ impl RestrictedModuleLoader {
         specifier: &str,
         referrer: &str,
     ) -> Result<ModuleSpecifier, JsErrorBox> {
+        if is_tenant_bundle_operator_only_specifier(specifier) {
+            return Err(JsErrorBox::generic(format!(
+                "tenant bundle admission rejected operator-only Nimbus transport import {specifier}; use the high-level @nimbus/nimbus SDK with workload identity"
+            )));
+        }
         match resolve_node_target(
             &self.path_policy,
             specifier,
@@ -311,6 +316,15 @@ fn is_bare_package_specifier(specifier: &str) -> bool {
         && !has_url_like_scheme(specifier)
 }
 
+fn is_tenant_bundle_operator_only_specifier(specifier: &str) -> bool {
+    specifier == "nimbus/rest"
+        || specifier.starts_with("nimbus/rest/")
+        || specifier == "nimbus/transports"
+        || specifier.starts_with("nimbus/transports/")
+        || specifier == "@nimbus/nimbus/transports"
+        || specifier.starts_with("@nimbus/nimbus/transports/")
+}
+
 fn has_url_like_scheme(specifier: &str) -> bool {
     let Some((scheme, _)) = specifier.split_once(':') else {
         return false;
@@ -333,5 +347,26 @@ mod tests {
         assert!(!is_bare_package_specifier("data:text/javascript,export{}"));
         assert!(is_bare_package_specifier("@scope/pkg/subpath"));
         assert!(is_bare_package_specifier("minimatch"));
+    }
+
+    #[test]
+    fn tenant_bundle_admission_rejects_operator_only_transport_imports() {
+        assert!(is_tenant_bundle_operator_only_specifier("nimbus/rest"));
+        assert!(is_tenant_bundle_operator_only_specifier(
+            "@nimbus/nimbus/transports/rest"
+        ));
+        assert!(is_tenant_bundle_operator_only_specifier(
+            "@nimbus/nimbus/transports/rest/internal"
+        ));
+        assert!(is_tenant_bundle_operator_only_specifier(
+            "@nimbus/nimbus/transports/host"
+        ));
+        assert!(is_tenant_bundle_operator_only_specifier(
+            "@nimbus/nimbus/transports/grpc"
+        ));
+        assert!(!is_tenant_bundle_operator_only_specifier("@nimbus/nimbus"));
+        assert!(!is_tenant_bundle_operator_only_specifier(
+            "@nimbus/nimbus/server"
+        ));
     }
 }

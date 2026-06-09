@@ -35,7 +35,7 @@ pub(crate) async fn benchmark_point_read_latency(
                     };
                     let started = Instant::now();
                     exercise_point_read_sample(
-                        &fixture.tenant.service,
+                        &fixture.tenant.engine,
                         &fixture.tenant.tenant_id,
                         &fixture.ids,
                         POINT_READ_BATCH_SIZE,
@@ -50,7 +50,7 @@ pub(crate) async fn benchmark_point_read_latency(
             .tenant
             .resource
             .cleanup(
-                sqlite_fixture.tenant.service.clone(),
+                sqlite_fixture.tenant.engine.clone(),
                 "point-read steady-state sqlite teardown",
             )
             .await?;
@@ -58,7 +58,7 @@ pub(crate) async fn benchmark_point_read_latency(
             .tenant
             .resource
             .cleanup(
-                postgres_fixture.tenant.service.clone(),
+                postgres_fixture.tenant.engine.clone(),
                 "point-read steady-state postgres teardown",
             )
             .await?;
@@ -98,13 +98,13 @@ pub(crate) async fn benchmark_point_read_latency(
                         MeasuredBackend::PostgresLoopback => postgres_seed,
                         MeasuredBackend::PostgresInjectedRtt => unreachable!(),
                     };
-                    let (service, reopened_resource) = seed
+                    let (engine, reopened_resource) = seed
                         .resource
-                        .reopen_service("point-read-cold-sample", backend, environment)
+                        .reopen_engine("point-read-cold-sample", backend, environment)
                         .await?;
                     let started = Instant::now();
                     exercise_point_read_sample(
-                        &service,
+                        &engine,
                         &seed.tenant_id,
                         &seed.ids,
                         POINT_READ_BATCH_SIZE,
@@ -112,7 +112,7 @@ pub(crate) async fn benchmark_point_read_latency(
                     .await?;
                     let elapsed = started.elapsed();
                     reopened_resource
-                        .cleanup(service, "point-read cold-start reopened teardown")
+                        .cleanup(engine, "point-read cold-start reopened teardown")
                         .await?;
                     Ok(elapsed)
                 }
@@ -160,13 +160,13 @@ pub(crate) async fn benchmark_point_read_latency(
                         MeasuredBackend::PostgresInjectedRtt => rtt_seed,
                         MeasuredBackend::Sqlite => unreachable!(),
                     };
-                    let (service, reopened_resource) = seed
+                    let (engine, reopened_resource) = seed
                         .resource
-                        .reopen_service("point-read-rtt-sample", backend, environment)
+                        .reopen_engine("point-read-rtt-sample", backend, environment)
                         .await?;
                     let started = Instant::now();
                     exercise_point_read_sample(
-                        &service,
+                        &engine,
                         &seed.tenant_id,
                         &seed.ids,
                         POINT_READ_RTT_BATCH_SIZE,
@@ -174,7 +174,7 @@ pub(crate) async fn benchmark_point_read_latency(
                     .await?;
                     let elapsed = started.elapsed();
                     reopened_resource
-                        .cleanup(service, "point-read RTT reopened teardown")
+                        .cleanup(engine, "point-read RTT reopened teardown")
                         .await?;
                     Ok(elapsed)
                 }
@@ -349,7 +349,7 @@ where
                     };
                     let started = Instant::now();
                     exercise_query_sample(
-                        &fixture.tenant.service,
+                        &fixture.tenant.engine,
                         &fixture.tenant.tenant_id,
                         &fixture.query,
                         INDEXED_QUERY_BATCH_SIZE,
@@ -364,7 +364,7 @@ where
             .tenant
             .resource
             .cleanup(
-                sqlite_fixture.tenant.service.clone(),
+                sqlite_fixture.tenant.engine.clone(),
                 "query steady-state sqlite teardown",
             )
             .await?;
@@ -372,7 +372,7 @@ where
             .tenant
             .resource
             .cleanup(
-                postgres_fixture.tenant.service.clone(),
+                postgres_fixture.tenant.engine.clone(),
                 "query steady-state postgres teardown",
             )
             .await?;
@@ -394,13 +394,13 @@ where
                         MeasuredBackend::PostgresLoopback => postgres_seed,
                         MeasuredBackend::PostgresInjectedRtt => unreachable!(),
                     };
-                    let (service, reopened_resource) = seed
+                    let (engine, reopened_resource) = seed
                         .resource
-                        .reopen_service("query-cold-sample", backend, environment)
+                        .reopen_engine("query-cold-sample", backend, environment)
                         .await?;
                     let started = Instant::now();
                     exercise_query_sample(
-                        &service,
+                        &engine,
                         &seed.tenant_id,
                         &seed.query,
                         INDEXED_QUERY_BATCH_SIZE,
@@ -408,7 +408,7 @@ where
                     .await?;
                     let elapsed = started.elapsed();
                     reopened_resource
-                        .cleanup(service, "query cold-start reopened teardown")
+                        .cleanup(engine, "query cold-start reopened teardown")
                         .await?;
                     Ok(elapsed)
                 }
@@ -438,13 +438,13 @@ where
                         MeasuredBackend::PostgresInjectedRtt => rtt_seed,
                         MeasuredBackend::Sqlite => unreachable!(),
                     };
-                    let (service, reopened_resource) = seed
+                    let (engine, reopened_resource) = seed
                         .resource
-                        .reopen_service("query-rtt-sample", backend, environment)
+                        .reopen_engine("query-rtt-sample", backend, environment)
                         .await?;
                     let started = Instant::now();
                     exercise_query_sample(
-                        &service,
+                        &engine,
                         &seed.tenant_id,
                         &seed.query,
                         INDEXED_QUERY_RTT_BATCH_SIZE,
@@ -452,7 +452,7 @@ where
                     .await?;
                     let elapsed = started.elapsed();
                     reopened_resource
-                        .cleanup(service, "query RTT reopened teardown")
+                        .cleanup(engine, "query RTT reopened teardown")
                         .await?;
                     Ok(elapsed)
                 }

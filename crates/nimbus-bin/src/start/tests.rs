@@ -23,7 +23,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 #[cfg(target_os = "linux")]
-use nimbus::{ConvexRegistry, RuntimeBundle, SandboxCatalog};
+use nimbus::{ConvexRegistry, RuntimeBundle, ServiceInstanceCatalog};
 #[cfg(target_os = "linux")]
 use nimbus_testing::run_to_completion_snapshot_runtime_test_limits;
 
@@ -219,7 +219,7 @@ fn write_framework_cloud_functions_fixture(app_dir: &Path) {
         "event_type": "google.cloud.firestore.document.v1.written",
         "database": "(default)",
         "document": "users/{userId}",
-        "execution": "service"
+        "execution": "service_account"
       }
     }
   ]
@@ -249,7 +249,7 @@ fn write_convex_service_query_fixture(app_dir: &Path) -> ConvexRegistry {
                 "name": "services:activate",
                 "kind": "query",
                 "plan": null,
-                "runtime_handler": "async (ctx) => ctx.services.db.port"
+                "runtime_handler": "async (ctx, _args, request) => ({ ctxServicesType: typeof ctx.services, hasCtxServices: Object.prototype.hasOwnProperty.call(ctx, \"services\"), requestServicesType: typeof request.services })"
             }]
         }))
         .expect("convex manifest json should serialize"),
@@ -270,7 +270,7 @@ const definitions = new Map([
   ["services:activate", {
     name: "services:activate",
     kind: "query",
-    runtime_handler: "async (ctx) => ctx.services.db.port",
+    runtime_handler: "async (ctx, _args, request) => ({ ctxServicesType: typeof ctx.services, hasCtxServices: Object.prototype.hasOwnProperty.call(ctx, \"services\"), requestServicesType: typeof request.services })",
   }],
 ]);
 

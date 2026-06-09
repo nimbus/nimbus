@@ -2,9 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn schedule_endpoint_returns_job_id_and_lists_pending_job() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_system_convex_registry(
                 ConvexRegistry::from_embedded_system_bundle()
                     .expect("embedded system Convex registry should load"),
@@ -79,8 +79,8 @@ async fn schedule_endpoint_returns_job_id_and_lists_pending_job() {
 
 #[tokio::test]
 async fn schedule_endpoint_returns_not_found_for_unknown_tenant() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     let response = api
@@ -101,9 +101,9 @@ async fn schedule_endpoint_returns_not_found_for_unknown_tenant() {
 
 #[tokio::test]
 async fn cancel_scheduled_job_endpoint_removes_pending_job() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_system_convex_registry(
                 ConvexRegistry::from_embedded_system_bundle()
                     .expect("embedded system Convex registry should load"),

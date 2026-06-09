@@ -96,7 +96,7 @@ impl RuntimeSubscriptionHandle {
 }
 
 pub(crate) async fn subscribe_runtime_base_queries(
-    service: Arc<nimbus_engine::Service>,
+    service: Arc<nimbus_engine::Engine>,
     tenant_id: TenantId,
     base_queries: Vec<Query>,
     principal: PrincipalContext,

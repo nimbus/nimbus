@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use nimbus_sandbox::backends::krun::{KrunLaunchMode, KrunSandboxBackend};
 use nimbus_server::{RouterOptions, build_router};
-use nimbus_testing::{HttpApiFixture, ServerFixture, ServiceFixture, wait_for_condition};
+use nimbus_testing::{EngineFixture, HttpApiFixture, ServerFixture, wait_for_condition};
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -53,20 +53,20 @@ async fn convex_runtime_query_starts_real_krun_service_from_compose_file_and_tea
         config.buildah_path = buildah_path.into();
     }
 
-    let sandbox_service_manager = Arc::new(
-        crate::compose::load_sandbox_service_manager(
+    let service_manager = Arc::new(
+        crate::compose::load_service_manager(
             &compose_path,
             Arc::new(KrunSandboxBackend::new(config)),
         )
-        .expect("compose-backed sandbox service manager should load")
+        .expect("compose-backed service manager should load")
         .with_activation_poll_interval(Duration::from_millis(50))
         .with_activation_timeout(Duration::from_secs(30)),
     );
-    let fixture = ServiceFixture::new(|path| nimbus::Service::new(path));
+    let fixture = EngineFixture::new(|path| nimbus::Engine::new(path));
     let server = ServerFixture::start(build_router(
-        RouterOptions::new(fixture.service())
+        RouterOptions::new(fixture.engine())
             .with_convex_registry(registry)
-            .with_sandbox_service_manager(sandbox_service_manager.clone()),
+            .with_service_manager(service_manager.clone()),
     ))
     .await;
     let api = HttpApiFixture::new(&server);
@@ -94,8 +94,8 @@ async fn convex_runtime_query_starts_real_krun_service_from_compose_file_and_tea
         "expected HTTP response from compose-backed krun service, got: {http_response}"
     );
     assert!(
-        sandbox_service_manager
-            .sandboxes_for_tenant(&tenant_id)
+        service_manager
+            .service_instances_for_tenant(&tenant_id)
             .contains_key("db"),
         "compose-backed manager should expose the declared db binding"
     );
@@ -110,8 +110,8 @@ async fn convex_runtime_query_starts_real_krun_service_from_compose_file_and_tea
             reqwest::get(format!("http://127.0.0.1:{host_port}/"))
                 .await
                 .is_err()
-                && sandbox_service_manager
-                    .sandboxes_for_tenant(&tenant_id)
+                && service_manager
+                    .service_instances_for_tenant(&tenant_id)
                     .is_empty()
         },
     )

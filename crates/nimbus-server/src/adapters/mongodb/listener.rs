@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use tokio::io::{BufReader, BufWriter};
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, warn};
@@ -12,13 +12,13 @@ use nimbus_mongodb::connection::{ConnectionState, next_request_id};
 use nimbus_mongodb::error::MongoError;
 use nimbus_mongodb::wire::{self, WireError};
 
-pub async fn run_listener(listener: TcpListener, service: Arc<Service>) {
-    run_listener_with_auth(listener, service, Arc::new(AuthConfig::default())).await;
+pub async fn run_listener(listener: TcpListener, engine: Arc<Engine>) {
+    run_listener_with_auth(listener, engine, Arc::new(AuthConfig::default())).await;
 }
 
 pub async fn run_listener_with_auth(
     listener: TcpListener,
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     auth: Arc<AuthConfig>,
 ) {
     let local_addr = listener.local_addr().ok();
@@ -27,11 +27,11 @@ pub async fn run_listener_with_auth(
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
-                let svc = service.clone();
+                let engine_handle = engine.clone();
                 let auth_cfg = auth.clone();
                 debug!("MongoDB connection from {addr}");
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, addr, svc, auth_cfg).await {
+                    if let Err(e) = handle_connection(stream, addr, engine_handle, auth_cfg).await {
                         match e {
                             WireError::ConnectionClosed => {
                                 debug!("MongoDB connection from {addr} closed");
@@ -53,7 +53,7 @@ pub async fn run_listener_with_auth(
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     addr: SocketAddr,
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     auth: Arc<AuthConfig>,
 ) -> Result<(), WireError> {
     let (read_half, write_half) = stream.into_split();
@@ -72,7 +72,7 @@ async fn handle_connection(
         let command_name = commands::extract_command_name(&body_doc);
         let response_doc = match &command_name {
             Some(name) => {
-                match commands::dispatch(name, &body_doc, &mut conn, &service, &auth).await {
+                match commands::dispatch(name, &body_doc, &mut conn, &engine, &auth).await {
                     Ok(doc) => doc,
                     Err(e) => e.to_error_doc(),
                 }
@@ -91,7 +91,7 @@ async fn handle_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nimbus_testing::ServiceFixture;
+    use nimbus_testing::EngineFixture;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -148,11 +148,11 @@ mod tests {
 
     #[tokio::test]
     async fn listener_handles_ping() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        tokio::spawn(run_listener(listener, fixture.service()));
+        tokio::spawn(run_listener(listener, fixture.engine()));
 
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         let msg = make_op_msg_from_doc(1, &bson::doc! { "ping": 1 });
@@ -166,11 +166,11 @@ mod tests {
 
     #[tokio::test]
     async fn listener_rejects_unknown_command() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        tokio::spawn(run_listener(listener, fixture.service()));
+        tokio::spawn(run_listener(listener, fixture.engine()));
 
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         let msg = make_op_msg_from_doc(2, &bson::doc! { "foobar": 1 });
@@ -183,11 +183,11 @@ mod tests {
 
     #[tokio::test]
     async fn listener_rejects_legacy_opcode() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        tokio::spawn(run_listener(listener, fixture.service()));
+        tokio::spawn(run_listener(listener, fixture.engine()));
 
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         stream.write_all(&make_legacy_insert_msg()).await.unwrap();

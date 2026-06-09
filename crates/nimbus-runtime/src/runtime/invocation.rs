@@ -35,7 +35,7 @@ pub struct InvocationRequest {
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<InvocationAuth>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default, skip_serializing)]
     pub services: InvocationServices,
 }
 

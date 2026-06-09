@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use nimbus_core::{DocumentId, Error, PrincipalContext, TableName, TenantId};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
 use serde_json::{Value, json};
 
@@ -13,8 +13,8 @@ use nimbus_node::{
 };
 use nimbus_tenant::{
     RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode, TenantIsolationPolicyInput,
-    TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision, TenantWorkloadIdentity,
-    TenantWorkloadLocation,
+    TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision, WorkloadAttributes,
+    WorkloadLocation,
 };
 
 use super::*;
@@ -61,16 +61,16 @@ fn system_table_schemas_are_valid_and_cover_control_plane_contract() {
 #[tokio::test]
 async fn ensure_system_tenant_creates_reserved_tenant_and_schemas_idempotently() {
     let temp = tempfile::tempdir().expect("tempdir should create");
-    let service = Arc::new(Service::new(temp.path()).expect("service should create"));
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
 
-    ensure_system_tenant_async(&service)
+    ensure_system_tenant_async(&engine)
         .await
         .expect("system tenant should initialize");
-    ensure_system_tenant_async(&service)
+    ensure_system_tenant_async(&engine)
         .await
         .expect("system tenant initialization should be idempotent");
 
-    let tenants = service
+    let tenants = engine
         .list_tenants_async()
         .await
         .expect("tenants should list");
@@ -79,7 +79,7 @@ async fn ensure_system_tenant_creates_reserved_tenant_and_schemas_idempotently()
         vec![system_tenant_id().expect("system id should parse")]
     );
 
-    let schema = service
+    let schema = engine
         .get_schema_async(system_tenant_id().expect("system id should parse"))
         .await
         .expect("system tenant schema should load");
@@ -104,18 +104,18 @@ async fn ensure_system_tenant_creates_reserved_tenant_and_schemas_idempotently()
 #[tokio::test]
 async fn prepare_system_tenant_seeds_network_and_adapter_posture_documents() {
     let temp = tempfile::tempdir().expect("tempdir should create");
-    let service = Arc::new(Service::new(temp.path()).expect("service should create"));
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
     let listen_addr = "127.0.0.1:34567".parse().expect("listen addr should parse");
 
-    prepare_system_tenant_async(&service, Some(listen_addr))
+    prepare_system_tenant_async(&engine, Some(listen_addr))
         .await
         .expect("system tenant should prepare");
-    prepare_system_tenant_async(&service, Some(listen_addr))
+    prepare_system_tenant_async(&engine, Some(listen_addr))
         .await
         .expect("system tenant preparation should be idempotent");
 
     let tenant_id = system_tenant_id().expect("system id should parse");
-    let routes = service
+    let routes = engine
         .list_documents_async(
             tenant_id.clone(),
             TableName::new("routes").expect("table should parse"),
@@ -128,7 +128,7 @@ async fn prepare_system_tenant_seeds_network_and_adapter_posture_documents() {
             && document.fields.get("method") == Some(&json!("GET"))
     }));
 
-    let capabilities = service
+    let capabilities = engine
         .list_documents_async(
             tenant_id.clone(),
             TableName::new("adapter_capabilities").expect("table should parse"),
@@ -141,7 +141,7 @@ async fn prepare_system_tenant_seeds_network_and_adapter_posture_documents() {
             && document.fields.get("feature") == Some(&json!("bootc-macos-machine"))
     }));
 
-    let listeners = service
+    let listeners = engine
         .list_documents_async(
             tenant_id.clone(),
             TableName::new("listeners").expect("table should parse"),
@@ -155,7 +155,7 @@ async fn prepare_system_tenant_seeds_network_and_adapter_posture_documents() {
     );
     assert_eq!(listeners[0].fields.get("state"), Some(&json!("listening")));
 
-    let status = service
+    let status = engine
         .get_document_async(
             tenant_id,
             TableName::new("system_status").expect("table should parse"),
@@ -178,7 +178,7 @@ async fn prepare_system_tenant_seeds_network_and_adapter_posture_documents() {
 #[tokio::test]
 async fn record_deployment_state_projects_neutral_bundle_and_functions() {
     let temp = tempfile::tempdir().expect("tempdir should create");
-    let service = Arc::new(Service::new(temp.path()).expect("service should create"));
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
 
     let input = SystemDeploymentRecordInput {
         source_ref: "deploy:test",
@@ -202,12 +202,12 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
         index_fingerprint: Some("indexes-v1"),
         runtime_bundle_fingerprint: Some("runtime-bundle-sha"),
     };
-    record_deployment_state_async(&service, &input)
+    record_deployment_state_async(&engine, &input)
         .await
         .expect("neutral deployment state should project");
 
     let tenant_id = system_tenant_id().expect("system id should parse");
-    let bundles = service
+    let bundles = engine
         .list_documents_async(
             tenant_id.clone(),
             TableName::new("bundles").expect("table should parse"),
@@ -224,7 +224,7 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
         Some(&json!("deploy:test"))
     );
 
-    let functions = service
+    let functions = engine
         .list_documents_async(
             tenant_id.clone(),
             TableName::new("functions").expect("table should parse"),
@@ -253,11 +253,11 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
         index_fingerprint: Some("indexes-v2"),
         runtime_bundle_fingerprint: None,
     };
-    record_deployment_state_async(&service, &fallback_input)
+    record_deployment_state_async(&engine, &fallback_input)
         .await
         .expect("fallback deployment hash should project");
 
-    let bundles = service
+    let bundles = engine
         .list_documents_async(
             tenant_id.clone(),
             TableName::new("bundles").expect("table should parse"),
@@ -276,7 +276,7 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
         Some(&json!("deploy:fallback"))
     );
 
-    let functions = service
+    let functions = engine
         .list_documents_async(
             tenant_id,
             TableName::new("functions").expect("table should parse"),
@@ -294,7 +294,7 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
 #[tokio::test]
 async fn record_machine_state_projects_machine_listener_and_port_documents() {
     let temp = tempfile::tempdir().expect("tempdir should create");
-    let service = Arc::new(Service::new(temp.path()).expect("service should create"));
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
     let roots = nimbus_machine::MachineRootLayout::new(
         temp.path().join("config"),
         temp.path().join("state"),
@@ -324,12 +324,12 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
     };
     let mut state = nimbus_machine::MachineStateRecord::initialized();
 
-    record_machine_state_async(&service, &config, &state)
+    record_machine_state_async(&engine, &config, &state)
         .await
         .expect("stopped machine state should project");
 
     let tenant_id = system_tenant_id().expect("system id should parse");
-    let machine = service
+    let machine = engine
         .get_document_async(
             tenant_id.clone(),
             TableName::new("machines").expect("table should parse"),
@@ -359,11 +359,11 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
         ready_vsock_port: 1025,
     });
 
-    record_machine_state_async(&service, &config, &state)
+    record_machine_state_async(&engine, &config, &state)
         .await
         .expect("running machine state should project");
 
-    let listener = service
+    let listener = engine
         .get_document_async(
             tenant_id.clone(),
             TableName::new("listeners").expect("table should parse"),
@@ -375,7 +375,7 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
     assert_eq!(listener.fields.get("protocol"), Some(&json!("unix")));
     assert_eq!(listener.fields.get("state"), Some(&json!("listening")));
 
-    let ssh_port = service
+    let ssh_port = engine
         .get_document_async(
             tenant_id,
             TableName::new("ports").expect("table should parse"),
@@ -393,11 +393,11 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
 #[tokio::test]
 async fn record_subscription_state_projects_live_subscription_document() {
     let temp = tempfile::tempdir().expect("tempdir should create");
-    let service = Arc::new(Service::new(temp.path()).expect("service should create"));
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
     let tenant_id = TenantId::new("demo").expect("tenant should parse");
 
     record_subscription_state_async(
-        &service,
+        &engine,
         &tenant_id,
         "convex",
         42,
@@ -406,7 +406,7 @@ async fn record_subscription_state_projects_live_subscription_document() {
     .await
     .expect("subscription state should project");
 
-    let document = service
+    let document = engine
         .get_document_async(
             system_tenant_id().expect("system id should parse"),
             TableName::new("subscriptions").expect("table should parse"),
@@ -419,10 +419,10 @@ async fn record_subscription_state_projects_live_subscription_document() {
     assert_eq!(document.fields.get("adapter"), Some(&json!("convex")));
     assert_eq!(document.fields.get("clientCount"), Some(&json!(1)));
 
-    delete_subscription_state_async(&service, &tenant_id, "convex", 42)
+    delete_subscription_state_async(&engine, &tenant_id, "convex", 42)
         .await
         .expect("subscription state should delete");
-    let deleted = service
+    let deleted = engine
         .get_document_async(
             system_tenant_id().expect("system id should parse"),
             TableName::new("subscriptions").expect("table should parse"),
@@ -436,7 +436,7 @@ async fn record_subscription_state_projects_live_subscription_document() {
 #[tokio::test]
 async fn workload_status_projection_requires_system_or_operator_authority() {
     let temp = tempfile::tempdir().expect("tempdir should create");
-    let service = Arc::new(Service::new(temp.path()).expect("service should create"));
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
     let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
     let context = TenantIsolationContext::application(
         tenant_id.clone(),
@@ -448,12 +448,12 @@ async fn workload_status_projection_requires_system_or_operator_authority() {
         "system_tenant.workload_status.test",
     )
     .with_deployment_generation(3)
-    .with_workload_location(TenantWorkloadLocation::new().with_node_id("node-a"));
+    .with_workload_location(WorkloadLocation::new().with_node_id("node-a"));
     let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
     let decision = context
         .admit_decision(
             TenantIsolationPolicyInput::new(
-                TenantWorkloadIdentity::runtime_function(
+                WorkloadAttributes::runtime_function(
                     "messages:send",
                     RuntimeIsolationTier::InProcessUntrusted,
                 )
@@ -506,7 +506,7 @@ async fn workload_status_projection_requires_system_or_operator_authority() {
         .expect("node status should authorize");
     let projection = binding.system_evidence_projection();
 
-    let application_writer = SystemTenantStatusEvidenceWriter::new(service.clone(), context);
+    let application_writer = SystemTenantStatusEvidenceWriter::new(engine.clone(), context);
     let application_error = application_writer
         .write_status(
             StatusEvidenceWrite::new(&projection, &status)
@@ -525,7 +525,7 @@ async fn workload_status_projection_requires_system_or_operator_authority() {
         system_tenant_id().expect("system tenant should parse"),
         "system_tenant.workload_status.test",
     );
-    let operator_writer = SystemTenantStatusEvidenceWriter::new(service.clone(), operator);
+    let operator_writer = SystemTenantStatusEvidenceWriter::new(engine.clone(), operator);
     operator_writer
         .write_status(
             StatusEvidenceWrite::new(&projection, &status)
@@ -534,7 +534,7 @@ async fn workload_status_projection_requires_system_or_operator_authority() {
         .await
         .expect("operator authority should project workload status");
 
-    let document = service
+    let document = engine
         .get_document_async(
             system_tenant_id().expect("system tenant should parse"),
             TableName::new("workload_status").expect("table should parse"),

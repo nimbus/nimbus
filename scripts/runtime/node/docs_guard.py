@@ -18,7 +18,7 @@ SUPPORT_DOCS = (
     "docs/runtimes/nodejs/reference/node-apis.md",
     "docs/runtimes/nodejs/reference/packages.md",
     "docs/architecture/runtime/node-compat-surface-matrix.md",
-    "docs/architecture/runtime/deno-vs-neovex-node-compat.md",
+    "docs/architecture/runtime/deno-vs-nimbus-node-compat.md",
     "docs/architecture/runtime/node-lts-compat/node-lts-lanes.md",
 )
 
@@ -107,7 +107,7 @@ REQUIRED_SNIPPETS = {
         "Product default is a routing default, not an evidence priority.",
         "Node22 and Node24 are the current supported LTS lanes",
     ),
-    "docs/architecture/runtime/deno-vs-neovex-node-compat.md": (
+    "docs/architecture/runtime/deno-vs-nimbus-node-compat.md": (
         "it must not carry hand-maintained pass rates",
         "Product default is a routing default, not an evidence priority.",
     ),

@@ -5,9 +5,9 @@ mod websocket;
 
 #[tokio::test]
 async fn firebase_listen_add_target_bootstraps_documents_and_honors_explicit_target_id() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -89,13 +89,10 @@ async fn firebase_listen_add_target_bootstraps_documents_and_honors_explicit_tar
 }
 #[tokio::test]
 async fn firebase_listen_assigns_target_id_when_client_uses_zero() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(router_for_firebase(
-        fixture.service(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
 
     let mut client = firestore_grpc_client(&server).await;
     let (sender, receiver) = mpsc::unbounded();
@@ -141,9 +138,9 @@ async fn firebase_listen_assigns_target_id_when_client_uses_zero() {
 
 #[tokio::test]
 async fn firebase_listen_remove_target_cleans_up_registration() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -243,9 +240,9 @@ async fn firebase_listen_remove_target_cleans_up_registration() {
 
 #[tokio::test]
 async fn firebase_listen_stream_closure_cleans_up_active_registration() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -320,9 +317,9 @@ async fn firebase_listen_stream_closure_cleans_up_active_registration() {
 
 #[tokio::test]
 async fn firebase_listen_once_target_auto_removes_after_current_snapshot() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -413,9 +410,9 @@ async fn firebase_listen_once_target_auto_removes_after_current_snapshot() {
 
 #[tokio::test]
 async fn firebase_listen_resume_count_mismatch_emits_filter_then_resets() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -529,9 +526,9 @@ async fn firebase_listen_resume_count_mismatch_emits_filter_then_resets() {
 
 #[tokio::test]
 async fn firebase_listen_reports_resource_exhausted_when_client_falls_too_far_behind() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -600,9 +597,9 @@ async fn firebase_listen_reports_resource_exhausted_when_client_falls_too_far_be
 
 #[tokio::test]
 async fn firebase_listen_allows_multiple_targets_with_distinct_server_assigned_ids() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -680,9 +677,9 @@ async fn firebase_listen_allows_multiple_targets_with_distinct_server_assigned_i
 
 #[tokio::test]
 async fn firebase_listen_routes_updates_and_cleanup_per_target_across_overlapping_queries() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -908,9 +905,9 @@ async fn firebase_listen_routes_updates_and_cleanup_per_target_across_overlappin
 
 #[tokio::test]
 async fn firebase_listen_resume_token_reconnects_with_delta_only() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -1056,9 +1053,9 @@ async fn firebase_listen_resume_token_reconnects_with_delta_only() {
 
 #[tokio::test]
 async fn firebase_listen_stale_resume_token_resets_before_full_bootstrap() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -1194,9 +1191,9 @@ async fn firebase_listen_stale_resume_token_resets_before_full_bootstrap() {
 
 #[tokio::test]
 async fn firebase_listen_no_change_tokens_and_read_times_advance_monotonically() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,

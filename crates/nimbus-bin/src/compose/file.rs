@@ -8,8 +8,8 @@ use nimbus::{
     Error, PublishedEndpointProtocol, SandboxBackendKind, SandboxBuildLaunchSpec,
     SandboxEgressPolicy, SandboxEgressRule, SandboxFilesystemSpec, SandboxImageLaunchSpec,
     SandboxImageProcessOverrides, SandboxLifecycleSpec, SandboxMountSpec, SandboxPortBinding,
-    SandboxProcessSpec, SandboxRestartPolicy, SandboxServiceCatalog, SandboxServiceLaunch,
-    SandboxSpec, TenantId, validate_tenant_volume_name,
+    SandboxProcessSpec, SandboxRestartPolicy, SandboxSpec, ServiceDefinitionCatalog,
+    ServiceImplementation, TenantId, validate_tenant_volume_name,
 };
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;

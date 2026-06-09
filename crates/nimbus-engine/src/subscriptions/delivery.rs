@@ -7,7 +7,7 @@ use nimbus_core::{
 };
 use tokio::sync::mpsc;
 
-use crate::service::evaluate_with_index_cancellable_for_principal;
+use crate::engine::evaluate_with_index_cancellable_for_principal;
 use crate::tenant::TenantRuntime;
 
 use super::dependencies::subscription_dependencies;

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use nimbus_core::{PrincipalContext, Result, TenantId, TriggerWriteOrigin};
-use nimbus_engine::{MutationExecutionUnit, Service};
+use nimbus_engine::{Engine, MutationExecutionUnit};
 use nimbus_runtime::{InvocationKind, RuntimePolicy};
 
 pub mod abi;
@@ -25,31 +25,31 @@ pub struct RuntimeHostBootstrap {
 }
 
 pub struct RuntimeHostBootstrapRequest<'a> {
-    pub service: &'a Arc<Service>,
+    pub engine: &'a Arc<Engine>,
     pub tenant_id: &'a TenantId,
     pub principal: PrincipalContext,
     pub server_request_id: Option<String>,
     pub invocation_kind: InvocationKind,
     pub trigger_write_origin: Option<TriggerWriteOrigin>,
     pub max_nested_runtime_invocations: usize,
-    pub session_prefix: &'a str,
+    pub host_call_session_prefix: &'a str,
 }
 
 pub fn build_runtime_host_bootstrap(
     request: RuntimeHostBootstrapRequest<'_>,
 ) -> Result<RuntimeHostBootstrap> {
     let RuntimeHostBootstrapRequest {
-        service,
+        engine,
         tenant_id,
         principal,
         server_request_id,
         invocation_kind,
         trigger_write_origin,
         max_nested_runtime_invocations,
-        session_prefix,
+        host_call_session_prefix,
     } = request;
     let execution_unit = matches!(invocation_kind, InvocationKind::Mutation)
-        .then(|| service.begin_mutation_execution_unit(tenant_id.clone(), principal.clone()))
+        .then(|| engine.begin_mutation_execution_unit(tenant_id.clone(), principal.clone()))
         .transpose()?;
     if let (Some(execution_unit), Some(trigger_write_origin)) =
         (execution_unit.as_ref(), trigger_write_origin.as_ref())
@@ -60,7 +60,7 @@ pub fn build_runtime_host_bootstrap(
         principal,
         execution_unit,
         state: Arc::new(RuntimeHostState::new(
-            session_prefix,
+            host_call_session_prefix,
             server_request_id,
             max_nested_runtime_invocations,
         )),
@@ -78,19 +78,19 @@ pub fn commit_runtime_mutation_execution_unit(
 
 #[derive(Clone)]
 pub struct RuntimeHostScope {
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     runtime_policy: Arc<RuntimePolicy>,
     decision: TenantIsolationDecision,
 }
 
 impl RuntimeHostScope {
     pub fn new(
-        service: Arc<Service>,
+        engine: Arc<Engine>,
         runtime_policy: Arc<RuntimePolicy>,
         decision: TenantIsolationDecision,
     ) -> Self {
         Self {
-            service,
+            engine,
             runtime_policy,
             decision,
         }
@@ -131,7 +131,7 @@ impl RuntimeHostInvocation {
 
 #[derive(Clone)]
 pub struct RuntimeHostContext {
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     tenant_id: TenantId,
     storage_access: TenantStorageAccessDecision,
     principal: nimbus_core::PrincipalContext,
@@ -143,11 +143,11 @@ impl RuntimeHostContext {
     pub fn build(
         scope: RuntimeHostScope,
         invocation: RuntimeHostInvocation,
-        session_prefix: &str,
+        host_call_session_prefix: &str,
     ) -> Result<Self> {
         let binding = LocalEnforcementBinding::from_decision(&scope.decision)?;
         let bootstrap = build_runtime_host_bootstrap(RuntimeHostBootstrapRequest {
-            service: &scope.service,
+            engine: &scope.engine,
             tenant_id: scope.decision.tenant_id(),
             principal: invocation.principal,
             server_request_id: invocation.server_request_id,
@@ -157,10 +157,10 @@ impl RuntimeHostContext {
                 .runtime_policy
                 .limits()
                 .max_nested_runtime_invocations,
-            session_prefix,
+            host_call_session_prefix,
         })?;
         Ok(Self {
-            service: scope.service,
+            engine: scope.engine,
             tenant_id: scope.decision.tenant_id().clone(),
             storage_access: binding.storage_access().clone(),
             principal: bootstrap.principal,
@@ -177,8 +177,8 @@ impl RuntimeHostContext {
         self.state.server_request_id()
     }
 
-    pub fn session_id(&self) -> &str {
-        self.state.session_id()
+    pub fn host_call_session_id(&self) -> &str {
+        self.state.host_call_session_id()
     }
 
     pub fn tenant_id(&self) -> &TenantId {
@@ -189,28 +189,29 @@ impl RuntimeHostContext {
         &self.storage_access
     }
 
-    pub fn validate_session(
+    pub fn validate_host_call_session(
         &self,
-        session_id: Option<&str>,
+        host_call_session_id: Option<&str>,
     ) -> std::result::Result<(), nimbus_runtime::NimbusRuntimeError> {
-        self.state.validate_session(&self.tenant_id, session_id)
+        self.state
+            .validate_host_call_session(&self.tenant_id, host_call_session_id)
     }
 }
 
 impl capabilities::RuntimeCapabilityHost for RuntimeHostContext {
-    fn validate_session(
+    fn validate_host_call_session(
         &self,
-        session_id: Option<&str>,
+        host_call_session_id: Option<&str>,
     ) -> std::result::Result<(), nimbus_runtime::NimbusRuntimeError> {
-        RuntimeHostContext::validate_session(self, session_id)
+        RuntimeHostContext::validate_host_call_session(self, host_call_session_id)
     }
 
     fn mutation_execution_unit(&self) -> Option<&Arc<nimbus_engine::MutationExecutionUnit>> {
         self.execution_unit.as_ref()
     }
 
-    fn service(&self) -> &Arc<Service> {
-        &self.service
+    fn engine(&self) -> &Arc<Engine> {
+        &self.engine
     }
 
     fn storage_access(&self) -> &TenantStorageAccessDecision {
@@ -223,7 +224,7 @@ impl capabilities::RuntimeCapabilityHost for RuntimeHostContext {
 
     fn record_document_read(&self, locator: &nimbus_core::DocumentLocator) {
         let table_id = self
-            .service
+            .engine
             .table_id(&self.tenant_id, &locator.table)
             .ok()
             .flatten();

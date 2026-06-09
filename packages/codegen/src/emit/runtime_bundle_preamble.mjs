@@ -18,7 +18,7 @@ const runtimeHandlersByName = new Map(
 function createRuntimeContext(request) {
   return globalThis.__nimbusCreateContext({
     request,
-    sessionId: \`\${request.kind}:\${request.function_name}\`,
+    hostCallSessionId: \`\${request.kind}:\${request.function_name}\`,
   });
 }
 

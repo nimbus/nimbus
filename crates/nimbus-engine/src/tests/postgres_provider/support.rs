@@ -23,20 +23,20 @@ use crate::{
 const TEST_POSTGRES_URL_ENV: &str = "NIMBUS_TEST_POSTGRES_URL";
 static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-pub(super) async fn with_postgres_service_config<F, Fut>(test: F)
+pub(super) async fn with_postgres_engine_config<F, Fut>(test: F)
 where
-    F: FnOnce(ServicePersistenceConfig, PostgresProviderConfig) -> Fut,
+    F: FnOnce(EnginePersistenceConfig, PostgresProviderConfig) -> Fut,
     Fut: Future<Output = ()>,
 {
-    with_shared_postgres_service_configs(|service_config, _unused, provider_config| async move {
-        test(service_config, provider_config).await;
+    with_shared_postgres_engine_configs(|engine_config, _unused, provider_config| async move {
+        test(engine_config, provider_config).await;
     })
     .await;
 }
 
-pub(super) async fn with_shared_postgres_service_configs<F, Fut>(test: F)
+pub(super) async fn with_shared_postgres_engine_configs<F, Fut>(test: F)
 where
-    F: FnOnce(ServicePersistenceConfig, ServicePersistenceConfig, PostgresProviderConfig) -> Fut,
+    F: FnOnce(EnginePersistenceConfig, EnginePersistenceConfig, PostgresProviderConfig) -> Fut,
     Fut: Future<Output = ()>,
 {
     let connection = match test_connection().await {
@@ -55,7 +55,7 @@ where
     };
     let control_dir_a = tempdir().expect("first temporary control dir should create");
     let control_dir_b = tempdir().expect("second temporary control dir should create");
-    let service_config_a = ServicePersistenceConfig {
+    let engine_config_a = EnginePersistenceConfig {
         tenant_provider: TenantProviderConfig {
             dialect: PersistenceDialect::Postgres,
             topology: PersistenceTopology::ExternalPrimary,
@@ -74,13 +74,13 @@ where
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_a.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
     };
-    let service_config_b = ServicePersistenceConfig {
-        tenant_provider: service_config_a.tenant_provider.clone(),
+    let engine_config_b = EnginePersistenceConfig {
+        tenant_provider: engine_config_a.tenant_provider.clone(),
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_b.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
     };
 
-    test(service_config_a, service_config_b, provider_config.clone()).await;
+    test(engine_config_a, engine_config_b, provider_config.clone()).await;
 
     PostgresProvider::connect(provider_config.clone())
         .await

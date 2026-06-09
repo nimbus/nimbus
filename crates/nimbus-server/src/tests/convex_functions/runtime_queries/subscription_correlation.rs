@@ -48,7 +48,7 @@ globalThis.__nimbusInvoke = async function(request) {
       status: "ok",
       value: await handler(
         globalThis.__nimbusCreateContext({
-          sessionId: `${request.kind}:${request.function_name}`,
+          hostCallSessionId: `${request.kind}:${request.function_name}`,
         }),
         request.args ?? {},
         request,
@@ -66,8 +66,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry.clone())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -242,7 +242,7 @@ globalThis.__nimbusInvoke = async function(request) {
       status: "ok",
       value: await handler(
         globalThis.__nimbusCreateContext({
-          sessionId: `${request.kind}:${request.function_name}`,
+          hostCallSessionId: `${request.kind}:${request.function_name}`,
         }),
         request.args ?? {},
         request,
@@ -260,8 +260,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry.clone())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -478,7 +478,7 @@ async function executeResolvedQueryPlan(ctx, plan) {
   }
   return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_query", {
     query: plan,
-    session_id: "convex-runtime-query-plan",
+    host_call_session_id: "convex-runtime-query-plan",
   });
 }
 
@@ -488,7 +488,7 @@ async function executeResolvedMutationPlan(ctx, plan) {
   }
   return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_mutation", {
     mutation: plan,
-    session_id: "convex-runtime-mutation-plan",
+    host_call_session_id: "convex-runtime-mutation-plan",
   });
 }
 
@@ -497,7 +497,7 @@ globalThis.__nimbusInvoke = async function(request) {
     const handler = handlers.get(request.function_name);
     const ctx = globalThis.__nimbusCreateContext({
       request,
-      sessionId: `${request.kind}:${request.function_name}`,
+      hostCallSessionId: `${request.kind}:${request.function_name}`,
     });
     if (handler) {
       return {
@@ -543,8 +543,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry.clone())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

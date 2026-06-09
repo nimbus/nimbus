@@ -148,7 +148,7 @@ impl LocalCacheEncryptionMode {
                 "uses the current plaintext cache path for the local replica copy and control-plane files"
             }
             Self::TempMasterKeyFile => {
-                "enables the real service startup path with a benchmark-only master key file so control-plane redb and replica cache SQLite files both reopen through manifest-backed DEKs"
+                "enables the real engine startup path with a benchmark-only master key file so control-plane redb and replica cache SQLite files both reopen through manifest-backed DEKs"
             }
         }
     }
@@ -208,7 +208,7 @@ impl WorkloadKind {
             Self::IndexedQueryLatency => "indexed query latency",
             Self::CompositeIndexedQueryLatency => "composite indexed query latency",
             Self::MixedMultiTenantLoad => "concurrent multi-tenant mixed read/write load",
-            Self::BarrierRefreshLatency => "same-service barrier refresh latency",
+            Self::BarrierRefreshLatency => "same-engine barrier refresh latency",
             Self::PeerCatchUpLatency => "peer catch-up / delegated-write visibility latency",
         }
     }
@@ -228,7 +228,7 @@ impl WorkloadKind {
     pub(super) fn notes(self) -> &'static str {
         match self {
             Self::CrudThroughput => {
-                "async insert + update + delete through the canonical service mutation path"
+                "async insert + update + delete through the canonical engine mutation path"
             }
             Self::PointReadLatency => "batched async `get_document_async` over seeded documents",
             Self::IndexedQueryLatency => {
@@ -241,10 +241,10 @@ impl WorkloadKind {
                 "concurrent per-tenant mix of point reads, indexed queries, inserts, and updates"
             }
             Self::BarrierRefreshLatency => {
-                "time from a committed replica-backed write returning to the first same-service read completing against a refreshed derivative cache"
+                "time from a committed replica-backed write returning to the first same-engine read completing against a refreshed derivative cache"
             }
             Self::PeerCatchUpLatency => {
-                "time from a delegated write on one replica-backed service to visibility on a second service through poll-driven catch-up"
+                "time from a delegated write on one replica-backed engine to visibility on a second engine through poll-driven catch-up"
             }
         }
     }
@@ -268,12 +268,12 @@ impl BenchmarkLane {
 
     pub(super) fn notes(self) -> &'static str {
         match self {
-            Self::SteadyState => "reuses warmed services and alternates backend order every round",
+            Self::SteadyState => "reuses warmed engines and alternates backend order every round",
             Self::ColdStart => {
-                "times a fresh service/runtime open plus the first representative execution"
+                "times a fresh engine/runtime open plus the first representative execution"
             }
             Self::ReplicaOperational => {
-                "reuses warmed replica-backed services and measures the explicit refresh/catch-up drills that define semantic freshness for this provider family"
+                "reuses warmed replica-backed engines and measures the explicit refresh/catch-up drills that define semantic freshness for this provider family"
             }
         }
     }

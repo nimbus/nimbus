@@ -1,7 +1,7 @@
 //! Encryption status inspection command.
 
 use clap::Args;
-use nimbus::{EncryptionConfigDescriptor, LocalPersistenceFamily, ServicePersistenceConfig};
+use nimbus::{EncryptionConfigDescriptor, EnginePersistenceConfig, LocalPersistenceFamily};
 
 /// Inspect encryption coverage and status.
 #[derive(Debug, Args)]
@@ -21,7 +21,7 @@ enum OutputFormat {
 /// Run the encryption status command.
 pub(crate) async fn run_status_command(
     command: StatusCommand,
-    config: &ServicePersistenceConfig,
+    config: &EnginePersistenceConfig,
 ) -> nimbus::Result<()> {
     let enabled = config.local_encryption.is_enabled();
     let encryptable_families = config.encryptable_families();

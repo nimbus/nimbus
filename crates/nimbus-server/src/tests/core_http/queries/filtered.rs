@@ -2,8 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn query_endpoint_returns_filtered_results() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

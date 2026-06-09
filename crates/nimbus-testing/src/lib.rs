@@ -1,14 +1,15 @@
+mod engine_fixture;
 mod eventual;
 mod faults;
 mod http_api_fixture;
 mod repro;
 mod runtime_profiles;
 mod server_fixture;
-mod service_fixture;
 mod simulation;
 mod timing;
 mod websocket_fixture;
 
+pub use engine_fixture::EngineFixture;
 pub use eventual::{wait_for_condition, wait_for_value};
 pub use faults::{ArmedBlockingFaultInjector, BlockingFaultInjector};
 pub use http_api_fixture::HttpApiFixture;
@@ -19,7 +20,6 @@ pub use runtime_profiles::{
     run_to_completion_snapshot_runtime_test_limits,
 };
 pub use server_fixture::ServerFixture;
-pub use service_fixture::ServiceFixture;
 pub use simulation::{
     DeterministicHarness, GeneratedTaskHistory, GeneratedTaskHistoryModel,
     GeneratedTaskHistorySeedCase, GeneratedTaskHistoryStep, GeneratedTaskPageExpectation,

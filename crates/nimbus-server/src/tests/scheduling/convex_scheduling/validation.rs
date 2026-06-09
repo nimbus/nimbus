@@ -17,8 +17,8 @@ async fn convex_schedule_endpoints_reject_internal_mutations() {
             }
         }
     ]));
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -66,7 +66,7 @@ async fn convex_schedule_endpoints_reject_runtime_only_mutations_without_manifes
             r#"
 globalThis.__nimbusInvoke = async function(request) {
   const ctx = globalThis.__nimbusCreateContext({
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   return {
     status: "ok",
@@ -78,8 +78,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
