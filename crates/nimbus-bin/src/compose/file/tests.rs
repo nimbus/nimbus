@@ -1,6 +1,7 @@
 use super::parse::compose_lifecycle_spec;
 use super::*;
 use crate::compose::discovery::{ResolvedComposeSelection, resolve_compose_selection};
+use nimbus::SandboxBackedServiceImplementation;
 
 fn write_compose_fixture(tempdir: &tempfile::TempDir, name: &str, contents: &str) -> PathBuf {
     let path = tempdir.path().join(name);
@@ -272,11 +273,16 @@ services:
         .into_service_catalog()
         .expect("compose project should lower into a service catalog");
     let launch = match catalog
-        .sandbox_service_for_tenant(&tenant_id, "db")
+        .service_implementation_for_tenant(&tenant_id, "db")
         .expect("db launch should exist")
     {
-        SandboxServiceLaunch::Image(launch) => launch,
-        SandboxServiceLaunch::Build(_) => panic!("db should lower as an image-backed launch"),
+        ServiceImplementation::SandboxBacked(SandboxBackedServiceImplementation::Image(launch)) => {
+            launch
+        }
+        ServiceImplementation::SandboxBacked(SandboxBackedServiceImplementation::Build(_)) => {
+            panic!("db should lower as an image-backed launch")
+        }
+        other => panic!("db should lower as an image-backed launch, got {other:?}"),
     };
 
     assert_eq!(
@@ -665,11 +671,16 @@ volumes:
         .into_service_catalog()
         .expect("compose project should lower into a service catalog");
     let db = catalog
-        .sandbox_service_for_tenant(&tenant_id, "db")
+        .service_implementation_for_tenant(&tenant_id, "db")
         .expect("db launch should exist");
     let launch = match db {
-        SandboxServiceLaunch::Image(launch) => launch,
-        SandboxServiceLaunch::Build(_) => panic!("db should lower as an image-backed launch"),
+        ServiceImplementation::SandboxBacked(SandboxBackedServiceImplementation::Image(launch)) => {
+            launch
+        }
+        ServiceImplementation::SandboxBacked(SandboxBackedServiceImplementation::Build(_)) => {
+            panic!("db should lower as an image-backed launch")
+        }
+        other => panic!("db should lower as an image-backed launch, got {other:?}"),
     };
 
     assert_eq!(launch.spec.mounts.len(), 2);
@@ -872,11 +883,11 @@ services:
         .into_service_catalog()
         .expect("compose project should lower into a service catalog");
     let launch = catalog
-        .sandbox_service_for_tenant(&tenant_id, "api")
+        .service_implementation_for_tenant(&tenant_id, "api")
         .expect("api launch should exist");
 
     match launch {
-        SandboxServiceLaunch::Image(launch) => {
+        ServiceImplementation::SandboxBacked(SandboxBackedServiceImplementation::Image(launch)) => {
             assert_eq!(launch.spec.egress.rules().len(), 1);
             let rule = &launch.spec.egress.rules()[0];
             assert_eq!(rule.name, "stripe-api");
@@ -884,7 +895,10 @@ services:
             assert_eq!(rule.methods, vec!["POST".to_string()]);
             assert_eq!(rule.path_prefixes, vec!["/v1/".to_string()]);
         }
-        SandboxServiceLaunch::Build(_) => panic!("api should lower as an image-backed launch"),
+        ServiceImplementation::SandboxBacked(SandboxBackedServiceImplementation::Build(_)) => {
+            panic!("api should lower as an image-backed launch")
+        }
+        other => panic!("api should lower as an image-backed launch, got {other:?}"),
     }
 }
 
@@ -1026,7 +1040,7 @@ services:
 }
 
 #[test]
-fn compose_project_lowers_into_sandbox_service_catalog() {
+fn compose_project_lowers_into_service_definition_catalog() {
     let tempdir = tempfile::tempdir().expect("tempdir should build");
     let compose = write_compose_fixture(
         &tempdir,
@@ -1067,10 +1081,10 @@ services:
     assert_eq!(catalog.project.project_name, "demo-app");
 
     let db = catalog
-        .sandbox_service_for_tenant(&tenant_id, "db")
+        .service_implementation_for_tenant(&tenant_id, "db")
         .expect("db launch should exist");
     match db {
-        SandboxServiceLaunch::Image(launch) => {
+        ServiceImplementation::SandboxBacked(SandboxBackedServiceImplementation::Image(launch)) => {
             assert_eq!(launch.image_reference, "postgres:16");
             assert_eq!(launch.spec.tenant_id, tenant_id);
             assert_eq!(launch.spec.name, "db");
@@ -1091,14 +1105,17 @@ services:
             assert_eq!(launch.spec.port_bindings[0].host_port, 5432);
             assert_eq!(launch.spec.port_bindings[0].guest_port, 5432);
         }
-        SandboxServiceLaunch::Build(_) => panic!("db should lower as an image-backed launch"),
+        ServiceImplementation::SandboxBacked(SandboxBackedServiceImplementation::Build(_)) => {
+            panic!("db should lower as an image-backed launch")
+        }
+        other => panic!("db should lower as an image-backed launch, got {other:?}"),
     }
 
     let api = catalog
-        .sandbox_service_for_tenant(&tenant_id, "api")
+        .service_implementation_for_tenant(&tenant_id, "api")
         .expect("api launch should exist");
     match api {
-        SandboxServiceLaunch::Build(launch) => {
+        ServiceImplementation::SandboxBacked(SandboxBackedServiceImplementation::Build(launch)) => {
             assert_eq!(launch.image_name, "nimbus-demo-app-api");
             assert_eq!(
                 launch.dockerfile_path,
@@ -1119,18 +1136,24 @@ services:
             );
             assert_eq!(launch.process_overrides.user.as_deref(), Some("1000:1000"));
         }
-        SandboxServiceLaunch::Image(_) => panic!("api should lower as a build-backed launch"),
+        ServiceImplementation::SandboxBacked(SandboxBackedServiceImplementation::Image(_)) => {
+            panic!("api should lower as a build-backed launch")
+        }
+        other => panic!("api should lower as a build-backed launch, got {other:?}"),
     }
 
     let other_tenant = TenantId::new("other").expect("tenant id should be valid");
     let other_db = catalog
-        .sandbox_service_for_tenant(&other_tenant, "db")
+        .service_implementation_for_tenant(&other_tenant, "db")
         .expect("catalog should lower the same service plan for another tenant");
     match other_db {
-        SandboxServiceLaunch::Image(launch) => {
+        ServiceImplementation::SandboxBacked(SandboxBackedServiceImplementation::Image(launch)) => {
             assert_eq!(launch.spec.tenant_id, other_tenant);
             assert_eq!(launch.spec.name, "db");
         }
-        SandboxServiceLaunch::Build(_) => panic!("db should stay image-backed across tenants"),
+        ServiceImplementation::SandboxBacked(SandboxBackedServiceImplementation::Build(_)) => {
+            panic!("db should stay image-backed across tenants")
+        }
+        other => panic!("db should stay image-backed across tenants, got {other:?}"),
     }
 }

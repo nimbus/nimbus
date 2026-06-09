@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use nimbus_core::{Document, PrincipalContext, Query, TableName, TenantId};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 
 use super::super::bson_bridge;
 use super::super::connection::ConnectionState;
@@ -13,7 +13,7 @@ use super::tenant::{DEFAULT_TENANT, ensure_tenant, resolve_tenant_context};
 pub fn aggregate(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
 ) -> Result<bson::Document, MongoError> {
     let collection = body.get_str("aggregate").map_err(|_| MongoError::Command {
         code: BAD_VALUE.code,
@@ -44,7 +44,7 @@ pub fn aggregate(
         _ => None,
     };
 
-    ensure_tenant(service, &tenant_context)?;
+    ensure_tenant(engine, &tenant_context)?;
 
     if is_change_stream_pipeline(pipeline) {
         return Err(MongoError::Command {
@@ -56,7 +56,7 @@ pub fn aggregate(
 
     let stages = parse_pipeline(pipeline)?;
 
-    let documents = load_initial_documents(service, &tenant_id, &table, &stages)?;
+    let documents = load_initial_documents(engine, &tenant_id, &table, &stages)?;
 
     let mut bson_docs: Vec<bson::Document> = documents
         .into_iter()
@@ -264,7 +264,7 @@ fn parse_pipeline(pipeline: &[bson::Bson]) -> Result<Vec<Stage>, MongoError> {
 }
 
 fn load_initial_documents(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
     _stages: &[Stage],
@@ -276,7 +276,7 @@ fn load_initial_documents(
         order: None,
         limit: None,
     };
-    service
+    engine
         .query_documents_with_principal(tenant_id, &query, &principal)
         .map_err(MongoError::from)
 }

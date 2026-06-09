@@ -19,7 +19,7 @@ vi.mock("@tanstack/react-router", () => ({
     }),
 }));
 
-vi.mock("nimbus/react", () => ({
+vi.mock("@nimbus/nimbus/react", () => ({
   useNimbus: () => ({ url: "http://localhost:9000" }),
   useNimbusConnectionState: () => ({
     isWebSocketConnected: true,

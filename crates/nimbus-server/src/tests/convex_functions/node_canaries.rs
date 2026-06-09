@@ -243,7 +243,7 @@ globalThis.__nimbusInvoke = async function(request) {
     const value = await handler(
       globalThis.__nimbusCreateContext({
         request,
-        sessionId: `${request.kind}:${request.function_name}`,
+        hostCallSessionId: `${request.kind}:${request.function_name}`,
       }),
       request.args ?? {},
       request,
@@ -452,8 +452,8 @@ async fn run_convex_use_node_real_app_canary(
         "Convex use-node production canary must not require broad network grants"
     );
 
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let scheduler_handle = tokio::spawn(run_scheduler(service.clone(), shutdown_rx));
     let server = ServerFixture::start(router_for_convex(service, app.registry.clone())).await;
@@ -580,8 +580,8 @@ async fn run_convex_use_node_dangling_promise_canary(
             .major,
         expected_node_major as u16
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), app.registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), app.registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

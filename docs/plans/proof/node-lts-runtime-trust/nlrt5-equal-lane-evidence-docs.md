@@ -45,7 +45,7 @@ slice.
 - `crates/nimbus-runtime/src/runtime/tests/node/manifest_report.rs`
 - `crates/nimbus-runtime/src/runtime/tests/node/manifest_report_tests.rs`
 - `crates/nimbus-runtime/src/runtime/tests/node/oracle.rs`
-- `docs/architecture/runtime/deno-vs-neovex-node-compat.md`
+- `docs/architecture/runtime/deno-vs-nimbus-node-compat.md`
 - `docs/architecture/runtime/node-compat-surface-matrix.md`
 - `docs/architecture/runtime/permission-model.md`
 - `docs/runtimes/nodejs/README.md`

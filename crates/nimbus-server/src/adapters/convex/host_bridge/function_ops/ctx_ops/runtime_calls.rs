@@ -1,4 +1,5 @@
 use super::*;
+use nimbus_bridge::capabilities::RuntimeServiceCapabilityHost;
 
 impl ConvexHostBridge {
     pub(in crate::adapters::convex) async fn invoke_ctx_service_lookup_async_cancellable(
@@ -7,17 +8,19 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeServiceLookupPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
-        let service_access = match self
-            .local_enforcement()
-            .service_access(&payload.service_name)
-        {
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
+        let Some(service_capabilities) = self.service_capabilities() else {
+            return encode_runtime_core_result(Err(Error::PermissionDenied(
+                "runtime service capability was not granted for this invocation".to_string(),
+            )));
+        };
+        let service_access = match service_capabilities.service_access(&payload.service_name) {
             Ok(service_access) => service_access,
             Err(error) => return encode_runtime_core_result(Err(error)),
         };
         let response = self
             .runtime_service_registry()
-            .ensure_service_binding_for_decision_async(service_access, cancellation.clone())
+            .ensure_service_binding_for_decision_async(&service_access, cancellation.clone())
             .await
             .and_then(|binding| {
                 serde_json::to_value(binding)
@@ -31,17 +34,19 @@ impl ConvexHostBridge {
         payload: Value,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeServiceLookupPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
-        let service_access = match self
-            .local_enforcement()
-            .service_access(&payload.service_name)
-        {
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
+        let Some(service_capabilities) = self.service_capabilities() else {
+            return encode_runtime_core_result(Err(Error::PermissionDenied(
+                "runtime service capability was not granted for this invocation".to_string(),
+            )));
+        };
+        let service_access = match service_capabilities.service_access(&payload.service_name) {
             Ok(service_access) => service_access,
             Err(error) => return encode_runtime_core_result(Err(error)),
         };
         let response = self
             .runtime_service_registry()
-            .resolve_service_binding_for_decision(service_access)
+            .resolve_service_binding_for_decision(&service_access)
             .and_then(|binding| {
                 serde_json::to_value(binding)
                     .map_err(|error| Error::Serialization(error.to_string()))
@@ -55,7 +60,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeFunctionCallPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         let response = self
             .execute_runtime_function_call_async_cancellable(
                 InvocationKind::Query,
@@ -85,7 +90,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeFunctionCallPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         let response = self.execute_runtime_function_call_cancellable(
             InvocationKind::Query,
             &payload.name,
@@ -104,7 +109,7 @@ impl ConvexHostBridge {
         payload: Value,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeFunctionCallPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         self.registry()
             .runtime_policy()
             .metrics()
@@ -129,7 +134,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeFunctionCallPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         let response = self
             .execute_runtime_function_call_async_cancellable(
                 InvocationKind::Mutation,
@@ -159,7 +164,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeFunctionCallPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         let response = self.execute_runtime_function_call_cancellable(
             InvocationKind::Mutation,
             &payload.name,
@@ -179,7 +184,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeFunctionCallPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         let response = self
             .execute_runtime_function_call_async_cancellable(
                 InvocationKind::Action,
@@ -209,7 +214,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeFunctionCallPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         let response = self.execute_runtime_function_call_cancellable(
             InvocationKind::Action,
             &payload.name,

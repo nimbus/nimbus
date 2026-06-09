@@ -30,7 +30,7 @@
     "cmdk": "1.1.1",
     "convex": "*",
     "lucide-react": "1.16.0",
-    "nimbus": "*",
+    "@nimbus/nimbus": "*",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "shiki": "4.0.2",

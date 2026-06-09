@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useNimbusConnectionState, useQuery } from "nimbus/react";
+import { useNimbusConnectionState, useQuery } from "@nimbus/nimbus/react";
 
 import { api } from "../../../convex/_generated/api";
 import { CopyChip } from "../../components/copy-chip";

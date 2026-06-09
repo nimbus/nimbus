@@ -4,9 +4,9 @@ use nimbus_tenant::{
     TenantImageVerificationRequest, TenantIsolationDecision,
 };
 
-use crate::SandboxServiceLaunch;
+use crate::SandboxBackedServiceImplementation;
 
-use super::SandboxServiceManager;
+use super::ServiceManager;
 
 #[derive(Debug, Default)]
 pub(super) struct DefaultTenantImageVerificationProvider;
@@ -20,17 +20,17 @@ impl TenantImageVerificationProvider for DefaultTenantImageVerificationProvider 
     }
 }
 
-impl SandboxServiceManager {
+impl ServiceManager {
     pub(super) fn admit_launch_image(
         &self,
         decision: &TenantIsolationDecision,
-        launch: &SandboxServiceLaunch,
+        launch: &SandboxBackedServiceImplementation,
     ) -> Result<(), Error> {
         let source = match launch {
-            SandboxServiceLaunch::Image(launch) => {
+            SandboxBackedServiceImplementation::Image(launch) => {
                 TenantImageAdmissionSource::registry(launch.image_reference.as_str())
             }
-            SandboxServiceLaunch::Build(launch) => {
+            SandboxBackedServiceImplementation::Build(launch) => {
                 TenantImageAdmissionSource::local_build(launch.image_name.as_str())
             }
         };

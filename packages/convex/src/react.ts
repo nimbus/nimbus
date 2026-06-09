@@ -12,7 +12,7 @@ import {
   usePaginatedQuery as useNimbusPaginatedQuery,
   useQueries as useNimbusQueries,
   useQuery as useNimbusQuery,
-} from "nimbus/react";
+} from "@nimbus/nimbus/react";
 
 import { ConvexReactClient } from "./browser.ts";
 import type {

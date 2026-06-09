@@ -3,33 +3,33 @@ use super::support::*;
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
 async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
-    with_shared_postgres_service_configs(
-        |service_config_a, service_config_b, _provider_config| async move {
+    with_shared_postgres_engine_configs(
+        |engine_config_a, engine_config_b, _provider_config| async move {
             let tenant_id = TenantId::new("pg-notify-scheduler").expect("tenant id should build");
-            let service_a = Arc::new(
-                Service::new_with_persistence_config(service_config_a)
+            let engine_a = Arc::new(
+                Engine::new_with_persistence_config(engine_config_a)
                     .await
-                    .expect("first postgres-backed service should create"),
+                    .expect("first postgres-backed engine should create"),
             );
-            let service_b = Arc::new(
-                Service::new_with_persistence_config(service_config_b)
+            let engine_b = Arc::new(
+                Engine::new_with_persistence_config(engine_config_b)
                     .await
-                    .expect("second postgres-backed service should create"),
+                    .expect("second postgres-backed engine should create"),
             );
 
-            service_b
+            engine_b
                 .load_tenants_with_scheduled_work_async()
                 .await
                 .expect("initial scheduled-work preload should succeed");
-            service_a
+            engine_a
                 .create_tenant_async(tenant_id.clone())
                 .await
                 .expect("tenant should create");
 
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
             let scheduler_handle =
-                tokio::spawn(crate::run_scheduler(service_b.clone(), shutdown_rx));
-            service_a
+                tokio::spawn(crate::run_scheduler(engine_b.clone(), shutdown_rx));
+            engine_a
                 .schedule_mutation_async(
                     tenant_id.clone(),
                     ScheduleRequest {
@@ -52,10 +52,10 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
                 Duration::from_secs(2),
                 Duration::from_millis(25),
                 || {
-                    let service = service_a.clone();
+                    let engine = engine_a.clone();
                     let tenant_id = tenant_id.clone();
                     async move {
-                        service
+                        engine
                             .query_documents_async(tenant_id, query_for("tasks"))
                             .await
                             .expect("query should succeed")
@@ -73,12 +73,12 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
             )
             .await;
             wait_for_value(
-                "postgres notification should load the scheduled tenant into the second service",
+                "postgres notification should load the scheduled tenant into the second engine",
                 Duration::from_secs(2),
                 Duration::from_millis(25),
                 || {
-                    let service = service_b.clone();
-                    async move { service.loaded_tenant_ids() }
+                    let engine = engine_b.clone();
+                    async move { engine.loaded_tenant_ids() }
                 },
                 |tenant_ids| tenant_ids.contains(&tenant_id),
             )
@@ -86,8 +86,8 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
 
             let _ = shutdown_tx.send(true);
             scheduler_handle.await.expect("scheduler should shut down");
-            service_a.quiesce().await;
-            service_b.quiesce().await;
+            engine_a.quiesce().await;
+            engine_b.quiesce().await;
         },
     )
     .await;
@@ -96,23 +96,23 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
 async fn postgres_restart_recovers_due_scheduler_work_after_reopen() {
-    with_postgres_service_config(|service_config, _provider_config| async move {
+    with_postgres_engine_config(|engine_config, _provider_config| async move {
         let tenant_id = TenantId::new("pg-restart-scheduler").expect("tenant id should build");
-        let service = Arc::new(
-            Service::new_with_persistence_config(service_config.clone())
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config.clone())
                 .await
-                .expect("postgres-backed service should create"),
+                .expect("postgres-backed engine should create"),
         );
 
-        service
+        engine
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
-        service
+        engine
             .set_table_schema_async(tenant_id.clone(), tasks_schema())
             .await
             .expect("schema write should succeed");
-        let scheduled_job_id = service
+        let scheduled_job_id = engine
             .schedule_mutation_async(
                 tenant_id.clone(),
                 ScheduleRequest {
@@ -130,7 +130,7 @@ async fn postgres_restart_recovers_due_scheduler_work_after_reopen() {
             .await
             .expect("scheduled mutation should persist");
         assert_eq!(
-            service
+            engine
                 .list_scheduled_jobs_async(tenant_id.clone())
                 .await
                 .expect("pending jobs should load")
@@ -138,15 +138,15 @@ async fn postgres_restart_recovers_due_scheduler_work_after_reopen() {
             1
         );
 
-        tokio::time::timeout(Duration::from_secs(2), service.quiesce())
+        tokio::time::timeout(Duration::from_secs(2), engine.quiesce())
             .await
-            .expect("service should quiesce before restart");
-        drop(service);
+            .expect("engine should quiesce before restart");
+        drop(engine);
 
         let reopened = Arc::new(
-            Service::new_with_persistence_config(service_config)
+            Engine::new_with_persistence_config(engine_config)
                 .await
-                .expect("postgres-backed service should reopen"),
+                .expect("postgres-backed engine should reopen"),
         );
         // External-provider startup recovery preloads scheduled-work tenants
         // and running-job recovery across real Postgres connections. Allow a

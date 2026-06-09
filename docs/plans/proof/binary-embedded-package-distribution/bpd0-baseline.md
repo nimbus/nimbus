@@ -98,7 +98,7 @@ Verifier shipped: `scripts/verify-binary-embedded-package-distribution.sh`
 
 - `AGENTS.md:285` references `docs/plans/archive/nimbus-init-plan.md`, which does
   not exist; the real archived file is
-  `docs/plans/archive/neovex-init-plan.md`. Routing fix tracked for BPD8
+  `docs/plans/archive/nimbus-init-plan.md`. Routing fix tracked for BPD8
   docs-refs closeout.
 
 ## `^0.1.33` vs `^1.0.0` is test-fixture-only (not a production bug)

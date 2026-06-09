@@ -32,7 +32,7 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
                     run_mixed_load_sample(
                         &format!("mixed-load steady-state {}", backend.label()),
                         exercise_mixed_load_sample(
-                            &fixture.service,
+                            &fixture.engine,
                             &fixture.tenant_states,
                             MIXED_LOAD_TENANTS,
                             MIXED_LOAD_OPS_PER_TENANT,
@@ -47,14 +47,14 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
         sqlite_fixture
             .resource
             .cleanup(
-                sqlite_fixture.service.clone(),
+                sqlite_fixture.engine.clone(),
                 "mixed-load steady-state sqlite teardown",
             )
             .await?;
         mysql_fixture
             .resource
             .cleanup(
-                mysql_fixture.service.clone(),
+                mysql_fixture.engine.clone(),
                 "mixed-load steady-state mysql teardown",
             )
             .await?;
@@ -88,10 +88,10 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
                         MeasuredBackend::MySqlLoopback => mysql_seed,
                         MeasuredBackend::MySqlInjectedRtt => unreachable!(),
                     };
-                    let (service, reopened_resource) = tokio::time::timeout(
+                    let (engine, reopened_resource) = tokio::time::timeout(
                         Duration::from_secs(BENCHMARK_REOPEN_TIMEOUT_SECS),
                         seed.resource
-                            .reopen_service("mixed-load-cold-sample", backend, environment),
+                            .reopen_engine("mixed-load-cold-sample", backend, environment),
                     )
                     .await
                     .map_err(|_| -> Box<dyn std::error::Error> {
@@ -105,7 +105,7 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
                     run_mixed_load_sample(
                         &format!("mixed-load cold-start {}", backend.label()),
                         exercise_mixed_load_sample(
-                            &service,
+                            &engine,
                             &seed.tenant_states,
                             MIXED_LOAD_TENANTS,
                             MIXED_LOAD_OPS_PER_TENANT,
@@ -115,7 +115,7 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
                     let elapsed = started.elapsed();
                     tokio::time::timeout(
                         Duration::from_secs(BENCHMARK_REOPEN_TIMEOUT_SECS),
-                        reopened_resource.cleanup(service, "mixed-load cold-start reopened teardown"),
+                        reopened_resource.cleanup(engine, "mixed-load cold-start reopened teardown"),
                     )
                     .await
                     .map_err(|_| -> Box<dyn std::error::Error> {
@@ -169,10 +169,10 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
                         MeasuredBackend::MySqlInjectedRtt => rtt_seed,
                         MeasuredBackend::Sqlite => unreachable!(),
                     };
-                    let (service, reopened_resource) = tokio::time::timeout(
+                    let (engine, reopened_resource) = tokio::time::timeout(
                         Duration::from_secs(BENCHMARK_REOPEN_TIMEOUT_SECS),
                         seed.resource
-                            .reopen_service("mixed-load-rtt-sample", backend, environment),
+                            .reopen_engine("mixed-load-rtt-sample", backend, environment),
                     )
                     .await
                     .map_err(|_| -> Box<dyn std::error::Error> {
@@ -186,7 +186,7 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
                     run_mixed_load_sample(
                         &format!("mixed-load RTT {}", backend.label()),
                         exercise_mixed_load_sample(
-                            &service,
+                            &engine,
                             &seed.tenant_states,
                             MIXED_LOAD_RTT_TENANTS,
                             MIXED_LOAD_RTT_OPS_PER_TENANT,
@@ -196,7 +196,7 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
                     let elapsed = started.elapsed();
                     tokio::time::timeout(
                         Duration::from_secs(BENCHMARK_REOPEN_TIMEOUT_SECS),
-                        reopened_resource.cleanup(service, "mixed-load RTT reopened teardown"),
+                        reopened_resource.cleanup(engine, "mixed-load RTT reopened teardown"),
                     )
                     .await
                     .map_err(|_| -> Box<dyn std::error::Error> {
@@ -278,8 +278,8 @@ pub(crate) async fn benchmark_tenant_lifecycle_latency(
                     };
                     let started = Instant::now();
                     exercise_tenant_lifecycle_sample(
-                        &fixture.creator_service,
-                        &fixture.opener_service,
+                        &fixture.creator_engine,
+                        &fixture.opener_engine,
                     )
                     .await?;
                     Ok(started.elapsed())
@@ -303,7 +303,7 @@ pub(crate) async fn benchmark_tenant_lifecycle_latency(
                     create_tenant_lifecycle_fixture("tenant-lifecycle-cold", backend, environment)
                         .await?;
                 let started = Instant::now();
-                exercise_tenant_lifecycle_sample(&fixture.creator_service, &fixture.opener_service)
+                exercise_tenant_lifecycle_sample(&fixture.creator_engine, &fixture.opener_engine)
                     .await?;
                 let elapsed = started.elapsed();
                 fixture
@@ -343,8 +343,8 @@ pub(crate) async fn benchmark_tenant_lifecycle_latency(
                     };
                     let started = Instant::now();
                     exercise_tenant_lifecycle_sample(
-                        &fixture.creator_service,
-                        &fixture.opener_service,
+                        &fixture.creator_engine,
+                        &fixture.opener_engine,
                     )
                     .await?;
                     Ok(started.elapsed())

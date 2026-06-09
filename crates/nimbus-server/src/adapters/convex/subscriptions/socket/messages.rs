@@ -118,7 +118,7 @@ async fn handle_plain_subscription(
     );
     let query_key = plain_subscription_query_key(&query);
     let request_id_for_worker = request_id.clone();
-    let service = ctx.state.service.clone();
+    let service = ctx.state.engine.clone();
     let tenant_id = ctx.tenant_id.clone();
     let sender = ctx.subscription_tx.clone();
     let principal = normalize_principal_context(current_auth.as_ref());
@@ -164,7 +164,7 @@ async fn reset_active_subscriptions_for_auth_change(
 
     let to_unsubscribe = std::mem::take(active_subscriptions);
     forwarding::unsubscribe_active_subscriptions(
-        &ctx.state.service,
+        &ctx.state.engine,
         ctx.tenant_id,
         to_unsubscribe,
         ctx.outbound_tx,
@@ -189,7 +189,7 @@ async fn handle_unsubscribe(
 ) {
     if let Some(active_subscription) = active_subscriptions.remove(&subscription_id) {
         forwarding::unsubscribe_active_subscriptions(
-            &ctx.state.service,
+            &ctx.state.engine,
             ctx.tenant_id,
             HashMap::from([(subscription_id, active_subscription)]),
             ctx.outbound_tx,

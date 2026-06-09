@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use nimbus::{
-    Error, SandboxBackend, SandboxServiceCatalog, SandboxServiceManager, ServicePersistenceConfig,
+    EnginePersistenceConfig, Error, SandboxBackend, ServiceDefinitionCatalog, ServiceManager,
 };
 #[cfg(test)]
 use nimbus::{SandboxHandle, TenantId};
@@ -33,8 +33,8 @@ use self::commands::{
 use self::commands::{ComposeInspectOutputFormat, ComposePsOutputFormat, ComposeTopOutputFormat};
 use self::execution::{
     ServiceExecutionSurface, ServiceHostPlatform,
-    load_host_backed_sandbox_service_manager_for_platform_selection_with_admission,
-    load_sandbox_service_catalog_for_execution_platform, lookup_current_remote_service_details,
+    load_host_backed_service_manager_for_platform_selection_with_admission,
+    load_service_definition_catalog_for_execution_platform, lookup_current_remote_service_details,
     machine_api_operation_error, missing_persisted_service_error, render_state_lookup_error,
     requested_service_names, require_krun_backend_for_service_operation,
     resolve_remote_service_down_targets, resolve_service_down_targets,
@@ -63,7 +63,7 @@ pub(crate) use project::ComposeProjectContext;
 
 pub(crate) async fn run_compose_command(
     command: ComposeCommand,
-    persistence_config: &ServicePersistenceConfig,
+    persistence_config: &EnginePersistenceConfig,
 ) -> Result<(), Error> {
     let control_data_dir = control_data_dir_from_persistence_config(persistence_config);
     match command.command {
@@ -79,41 +79,41 @@ pub(crate) async fn run_compose_command(
 }
 
 #[allow(dead_code)]
-pub(crate) fn load_sandbox_service_catalog(
+pub(crate) fn load_service_definition_catalog(
     file: &std::path::Path,
-) -> Result<Arc<dyn SandboxServiceCatalog>, Error> {
-    load_sandbox_service_catalog_for_selection(&ResolvedComposeSelection::explicit(
+) -> Result<Arc<dyn ServiceDefinitionCatalog>, Error> {
+    load_service_definition_catalog_for_selection(&ResolvedComposeSelection::explicit(
         file.to_path_buf(),
     ))
 }
 
 #[allow(dead_code)]
-pub(crate) fn load_sandbox_service_catalog_for_selection(
+pub(crate) fn load_service_definition_catalog_for_selection(
     selection: &ResolvedComposeSelection,
-) -> Result<Arc<dyn SandboxServiceCatalog>, Error> {
+) -> Result<Arc<dyn ServiceDefinitionCatalog>, Error> {
     Ok(Arc::new(
         file::ComposeProjectPlan::load_selection(selection)?.into_service_catalog()?,
     ))
 }
 
 #[allow(dead_code)]
-pub(crate) fn load_sandbox_service_manager(
+pub(crate) fn load_service_manager(
     file: &std::path::Path,
     sandbox_backend: Arc<dyn SandboxBackend>,
-) -> Result<SandboxServiceManager, Error> {
-    load_sandbox_service_manager_for_selection(
+) -> Result<ServiceManager, Error> {
+    load_service_manager_for_selection(
         &ResolvedComposeSelection::explicit(file.to_path_buf()),
         sandbox_backend,
     )
 }
 
 #[allow(dead_code)]
-pub(crate) fn load_sandbox_service_manager_for_selection(
+pub(crate) fn load_service_manager_for_selection(
     selection: &ResolvedComposeSelection,
     sandbox_backend: Arc<dyn SandboxBackend>,
-) -> Result<SandboxServiceManager, Error> {
-    Ok(SandboxServiceManager::new(
-        load_sandbox_service_catalog_for_selection(selection)?,
+) -> Result<ServiceManager, Error> {
+    Ok(ServiceManager::new(
+        load_service_definition_catalog_for_selection(selection)?,
         sandbox_backend,
     ))
 }
@@ -137,11 +137,11 @@ pub(crate) fn load_compose_project_context_for_selection(
 }
 
 #[allow(dead_code)]
-pub(crate) fn load_host_backed_sandbox_service_manager_for_selection(
+pub(crate) fn load_host_backed_service_manager_for_selection(
     selection: &ResolvedComposeSelection,
     control_data_dir: &std::path::Path,
-) -> Result<SandboxServiceManager, Error> {
-    load_host_backed_sandbox_service_manager_for_selection_with_admission(
+) -> Result<ServiceManager, Error> {
+    load_host_backed_service_manager_for_selection_with_admission(
         selection,
         control_data_dir,
         file::ComposeAdmissionMode::LocalDevelopment,
@@ -149,12 +149,12 @@ pub(crate) fn load_host_backed_sandbox_service_manager_for_selection(
 }
 
 #[allow(dead_code)]
-pub(crate) fn load_host_backed_sandbox_service_manager_for_selection_with_admission(
+pub(crate) fn load_host_backed_service_manager_for_selection_with_admission(
     selection: &ResolvedComposeSelection,
     control_data_dir: &std::path::Path,
     admission_mode: file::ComposeAdmissionMode,
-) -> Result<SandboxServiceManager, Error> {
-    load_host_backed_sandbox_service_manager_for_platform_selection_with_admission(
+) -> Result<ServiceManager, Error> {
+    load_host_backed_service_manager_for_platform_selection_with_admission(
         selection,
         control_data_dir,
         ServiceHostPlatform::current(),
@@ -163,12 +163,12 @@ pub(crate) fn load_host_backed_sandbox_service_manager_for_selection_with_admiss
     )
 }
 
-pub(crate) fn load_host_backed_sandbox_service_manager_for_selection_with_isolation_mode(
+pub(crate) fn load_host_backed_service_manager_for_selection_with_isolation_mode(
     selection: &ResolvedComposeSelection,
     control_data_dir: &std::path::Path,
     tenant_isolation_mode: nimbus_server::TenantIsolationMode,
-) -> Result<SandboxServiceManager, Error> {
-    load_host_backed_sandbox_service_manager_for_platform_selection_with_admission(
+) -> Result<ServiceManager, Error> {
+    load_host_backed_service_manager_for_platform_selection_with_admission(
         selection,
         control_data_dir,
         ServiceHostPlatform::current(),
@@ -629,7 +629,7 @@ async fn service_down_outcomes(
     .await
 }
 
-fn control_data_dir_from_persistence_config(config: &ServicePersistenceConfig) -> &Path {
+fn control_data_dir_from_persistence_config(config: &EnginePersistenceConfig) -> &Path {
     match &config.control_plane {
         nimbus::ControlPlaneConfig::EmbeddedRedb { data_dir } => data_dir.as_path(),
     }

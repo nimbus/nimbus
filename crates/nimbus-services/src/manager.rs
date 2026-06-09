@@ -14,12 +14,12 @@ mod types;
 mod verification;
 
 #[cfg(test)]
-use activation::service_activation_decision;
+use activation::service_lifecycle_decision;
 
-use crate::SandboxServiceCatalog;
+use crate::ServiceDefinitionCatalog;
 use nimbus_tenant::TenantImageVerificationProvider;
 
-use types::SandboxServiceManagerState;
+use types::ServiceManagerState;
 use verification::DefaultTenantImageVerificationProvider;
 
 pub use system_state::{NoopServiceEvidenceWriter, ServiceEvidenceFuture, ServiceEvidenceWriter};
@@ -27,29 +27,29 @@ pub use system_state::{NoopServiceEvidenceWriter, ServiceEvidenceFuture, Service
 const DEFAULT_ACTIVATION_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_ACTIVATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
-pub struct SandboxServiceManager {
-    service_catalog: Arc<dyn SandboxServiceCatalog>,
+pub struct ServiceManager {
+    service_definitions: Arc<dyn ServiceDefinitionCatalog>,
     sandbox_backend: Arc<dyn SandboxBackend>,
     image_verification_provider: Arc<dyn TenantImageVerificationProvider>,
     activation_timeout: Duration,
     activation_poll_interval: Duration,
-    state: Mutex<SandboxServiceManagerState>,
+    state: Mutex<ServiceManagerState>,
     service_evidence_writer: Mutex<Arc<dyn ServiceEvidenceWriter>>,
     activation_notify: Notify,
 }
 
-impl SandboxServiceManager {
+impl ServiceManager {
     pub fn new(
-        service_catalog: Arc<dyn SandboxServiceCatalog>,
+        service_definitions: Arc<dyn ServiceDefinitionCatalog>,
         sandbox_backend: Arc<dyn SandboxBackend>,
     ) -> Self {
         Self {
-            service_catalog,
+            service_definitions,
             sandbox_backend,
             image_verification_provider: Arc::new(DefaultTenantImageVerificationProvider),
             activation_timeout: DEFAULT_ACTIVATION_TIMEOUT,
             activation_poll_interval: DEFAULT_ACTIVATION_POLL_INTERVAL,
-            state: Mutex::new(SandboxServiceManagerState::default()),
+            state: Mutex::new(ServiceManagerState::default()),
             service_evidence_writer: Mutex::new(Arc::new(NoopServiceEvidenceWriter)),
             activation_notify: Notify::new(),
         }
@@ -105,24 +105,24 @@ mod tests {
         SandboxProcessSpec, SandboxSpec, SandboxStatus,
     };
 
-    use crate::{RuntimeServiceRegistry, SandboxServiceCatalog, SandboxServiceLaunch};
+    use crate::{RuntimeServiceRegistry, ServiceDefinitionCatalog, ServiceImplementation};
     use nimbus_tenant::{
         TenantImageVerificationEvidence, TenantImageVerificationProvider, TenantIsolationContext,
-        TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantWorkloadIdentity,
+        TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, WorkloadAttributes,
     };
 
     use super::*;
 
-    struct StubSandboxServiceCatalog {
-        launches: BTreeMap<String, SandboxServiceLaunch>,
+    struct StubServiceDefinitionCatalog {
+        launches: BTreeMap<String, ServiceImplementation>,
     }
 
-    impl SandboxServiceCatalog for StubSandboxServiceCatalog {
-        fn sandbox_service_for_tenant(
+    impl ServiceDefinitionCatalog for StubServiceDefinitionCatalog {
+        fn service_implementation_for_tenant(
             &self,
             _tenant_id: &TenantId,
             service_name: &str,
-        ) -> Option<SandboxServiceLaunch> {
+        ) -> Option<ServiceImplementation> {
             self.launches.get(service_name).cloned()
         }
     }
@@ -319,14 +319,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn start_service_for_decision_rejects_built_in_implementation_before_launch() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
+                launches: BTreeMap::from([(
+                    "browser".to_owned(),
+                    ServiceImplementation::built_in("browser"),
+                )]),
+            }),
+            backend.clone(),
+        );
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+        let decision = service_lifecycle_decision(&isolation, "browser")
+            .expect("browser service activation decision should build");
+
+        let error = manager
+            .start_service_for_decision_async(&decision, "browser", HostCallCancellation::default())
+            .await
+            .expect_err("sandbox manager must reject built-in service implementations");
+
+        assert!(
+            error.to_string().contains("built-in implementation"),
+            "error should name unsupported backing: {error}"
+        );
+        assert_eq!(
+            backend.image_starts.load(Ordering::SeqCst),
+            0,
+            "built-in services must not reach image launch"
+        );
+        assert_eq!(
+            backend.build_starts.load(Ordering::SeqCst),
+            0,
+            "built-in services must not reach build launch"
+        );
+    }
+
+    #[tokio::test]
     async fn start_service_for_decision_rejects_unadmitted_service_before_launch() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(1));
-        let manager = SandboxServiceManager::new(
-            Arc::new(StubSandboxServiceCatalog {
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "cache".to_owned(),
-                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
                         sparse_image_spec("cache"),
                         "redis:7",
                     )),
@@ -336,7 +375,7 @@ mod tests {
         );
         let isolation =
             TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
-        let decision = service_activation_decision(&isolation, "db")
+        let decision = service_lifecycle_decision(&isolation, "db")
             .expect("db service activation decision should build");
 
         let error = manager
@@ -371,11 +410,11 @@ mod tests {
             "api.stripe.com",
             443,
         )]);
-        let manager = SandboxServiceManager::new(
-            Arc::new(StubSandboxServiceCatalog {
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
                         sparse_image_spec("db").with_egress_policy(egress),
                         "postgres:16",
                     )),
@@ -385,7 +424,7 @@ mod tests {
         );
         let isolation =
             TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
-        let decision = service_activation_decision(&isolation, "db")
+        let decision = service_lifecycle_decision(&isolation, "db")
             .expect("db service activation decision should build");
 
         let error = manager
@@ -416,11 +455,11 @@ mod tests {
             "api.stripe.com",
             443,
         )]);
-        let manager = SandboxServiceManager::new(
-            Arc::new(StubSandboxServiceCatalog {
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
                         sparse_image_spec("db").with_egress_policy(egress.clone()),
                         "postgres:16",
                     )),
@@ -434,16 +473,13 @@ mod tests {
             TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
         let decision = isolation
             .admit_decision(
-                TenantIsolationPolicyInput::new(TenantWorkloadIdentity::sandbox_service(
-                    "db",
-                    "activation",
-                ))
-                .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
-                .with_network(
-                    nimbus_tenant::TenantNetworkPolicyDecision::default()
-                        .with_sandbox_egress(egress)
-                        .expect("test egress policy should compile"),
-                ),
+                TenantIsolationPolicyInput::new(WorkloadAttributes::service("db"))
+                    .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
+                    .with_network(
+                        nimbus_tenant::TenantNetworkPolicyDecision::default()
+                            .with_sandbox_egress(egress)
+                            .expect("test egress policy should compile"),
+                    ),
             )
             .expect("decision with matching egress should admit");
 
@@ -461,11 +497,11 @@ mod tests {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let image = "registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let backend = Arc::new(StubSandboxBackend::new(1));
-        let manager = SandboxServiceManager::new(
-            Arc::new(StubSandboxServiceCatalog {
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "api".to_owned(),
-                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
                         sparse_image_spec("api"),
                         image,
                     )),
@@ -477,15 +513,12 @@ mod tests {
             TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
         let decision = isolation
             .admit_decision(
-                TenantIsolationPolicyInput::new(TenantWorkloadIdentity::sandbox_service(
-                    "api",
-                    "activation",
-                ))
-                .with_services(TenantServiceGrantPolicyDecision::new(["api"]))
-                .with_image(
-                    nimbus_tenant::TenantImagePolicyDecision::digest_pinned(image)
-                        .require_signature("https://issuer.example.com", "repo:nimbus/api"),
-                ),
+                TenantIsolationPolicyInput::new(WorkloadAttributes::service("api"))
+                    .with_services(TenantServiceGrantPolicyDecision::new(["api"]))
+                    .with_image(
+                        nimbus_tenant::TenantImagePolicyDecision::digest_pinned(image)
+                            .require_signature("https://issuer.example.com", "repo:nimbus/api"),
+                    ),
             )
             .expect("image policy decision should admit");
 
@@ -514,11 +547,11 @@ mod tests {
             TenantImageVerificationEvidence::new()
                 .with_signature("https://issuer.example.com", "repo:nimbus/api"),
         ));
-        let manager = SandboxServiceManager::new(
-            Arc::new(StubSandboxServiceCatalog {
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "api".to_owned(),
-                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
                         sparse_image_spec("api"),
                         image,
                     )),
@@ -533,15 +566,12 @@ mod tests {
             TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
         let decision = isolation
             .admit_decision(
-                TenantIsolationPolicyInput::new(TenantWorkloadIdentity::sandbox_service(
-                    "api",
-                    "activation",
-                ))
-                .with_services(TenantServiceGrantPolicyDecision::new(["api"]))
-                .with_image(
-                    nimbus_tenant::TenantImagePolicyDecision::digest_pinned(image)
-                        .require_signature("https://issuer.example.com", "repo:nimbus/api"),
-                ),
+                TenantIsolationPolicyInput::new(WorkloadAttributes::service("api"))
+                    .with_services(TenantServiceGrantPolicyDecision::new(["api"]))
+                    .with_image(
+                        nimbus_tenant::TenantImagePolicyDecision::digest_pinned(image)
+                            .require_signature("https://issuer.example.com", "repo:nimbus/api"),
+                    ),
             )
             .expect("image policy decision should admit");
 
@@ -567,11 +597,11 @@ mod tests {
     async fn reload_service_egress_for_decision_updates_active_backend_policy() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(1));
-        let manager = SandboxServiceManager::new(
-            Arc::new(StubSandboxServiceCatalog {
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
                         sparse_image_spec("db"),
                         "postgres:16",
                     )),
@@ -583,7 +613,7 @@ mod tests {
         .with_activation_timeout(Duration::from_secs(1));
         let isolation =
             TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
-        let start_decision = service_activation_decision(&isolation, "db")
+        let start_decision = service_lifecycle_decision(&isolation, "db")
             .expect("db service activation decision should build");
         let handle = manager
             .start_service_for_decision_async(
@@ -602,16 +632,13 @@ mod tests {
         )]);
         let reload_decision = isolation
             .admit_decision(
-                TenantIsolationPolicyInput::new(TenantWorkloadIdentity::sandbox_service(
-                    "db",
-                    "egress-reload",
-                ))
-                .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
-                .with_network(
-                    nimbus_tenant::TenantNetworkPolicyDecision::default()
-                        .with_sandbox_egress(egress.clone())
-                        .expect("test egress policy should compile"),
-                ),
+                TenantIsolationPolicyInput::new(WorkloadAttributes::service("db"))
+                    .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
+                    .with_network(
+                        nimbus_tenant::TenantNetworkPolicyDecision::default()
+                            .with_sandbox_egress(egress.clone())
+                            .expect("test egress policy should compile"),
+                    ),
             )
             .expect("reload decision with egress should admit");
 
@@ -635,11 +662,11 @@ mod tests {
     async fn ensure_service_binding_async_starts_declared_image_service_once() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(2));
-        let manager = SandboxServiceManager::new(
-            Arc::new(StubSandboxServiceCatalog {
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
                         sparse_image_spec("db"),
                         "postgres:16",
                     )),
@@ -687,11 +714,11 @@ mod tests {
     async fn stop_service_for_context_async_stops_active_handle_and_clears_snapshot() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(1));
-        let manager = SandboxServiceManager::new(
-            Arc::new(StubSandboxServiceCatalog {
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
                         sparse_image_spec("db"),
                         "postgres:16",
                     )),
@@ -725,14 +752,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stop_service_for_decision_async_requires_exact_service_grant() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
+                launches: BTreeMap::from([(
+                    "db".to_owned(),
+                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("db"),
+                        "postgres:16",
+                    )),
+                )]),
+            }),
+            backend.clone(),
+        )
+        .with_activation_poll_interval(Duration::from_millis(1))
+        .with_activation_timeout(Duration::from_secs(1));
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+        manager
+            .start_service_for_context_async(&isolation, "db", HostCallCancellation::default())
+            .await
+            .expect("service should start")
+            .expect("active handle should exist");
+        let denied_decision = isolation
+            .admit_decision(
+                TenantIsolationPolicyInput::new(WorkloadAttributes::service("db")).with_image(
+                    nimbus_tenant::TenantImagePolicyDecision::default().allow_local_build(),
+                ),
+            )
+            .expect("decision without service grant should still build");
+
+        let error = manager
+            .stop_service_for_decision_async(&denied_decision, "db")
+            .await
+            .expect_err("stop must require an exact service grant");
+
+        assert!(
+            error.to_string().contains("db"),
+            "service grant error should name the denied service: {error}"
+        );
+        assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 0);
+        assert!(
+            !manager.snapshot_for_tenant(&tenant_id).is_empty(),
+            "denied stop must leave the active service snapshot intact"
+        );
+    }
+
+    #[tokio::test]
     async fn restart_service_for_context_async_stops_then_starts_service() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(1));
-        let manager = SandboxServiceManager::new(
-            Arc::new(StubSandboxServiceCatalog {
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
                         sparse_image_spec("db"),
                         "postgres:16",
                     )),
@@ -761,7 +837,61 @@ mod tests {
         assert_eq!(
             backend.image_starts.load(Ordering::SeqCst),
             2,
-            "restart should materialize a fresh sandbox service"
+            "restart should materialize a fresh sandbox-backed service"
+        );
+    }
+
+    #[tokio::test]
+    async fn restart_service_for_decision_async_requires_exact_service_grant_before_stop() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
+                launches: BTreeMap::from([(
+                    "db".to_owned(),
+                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("db"),
+                        "postgres:16",
+                    )),
+                )]),
+            }),
+            backend.clone(),
+        )
+        .with_activation_poll_interval(Duration::from_millis(1))
+        .with_activation_timeout(Duration::from_secs(1));
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+        manager
+            .start_service_for_context_async(&isolation, "db", HostCallCancellation::default())
+            .await
+            .expect("service should start")
+            .expect("active handle should exist");
+        let denied_decision = isolation
+            .admit_decision(
+                TenantIsolationPolicyInput::new(WorkloadAttributes::service("db")).with_image(
+                    nimbus_tenant::TenantImagePolicyDecision::default().allow_local_build(),
+                ),
+            )
+            .expect("decision without service grant should still build");
+
+        manager
+            .restart_service_for_decision_async(
+                &denied_decision,
+                "db",
+                HostCallCancellation::default(),
+            )
+            .await
+            .expect_err("restart must require an exact service grant before stopping");
+
+        assert_eq!(
+            backend.stop_calls.load(Ordering::SeqCst),
+            0,
+            "denied restart must not stop the active sandbox first"
+        );
+        assert_eq!(
+            backend.image_starts.load(Ordering::SeqCst),
+            1,
+            "denied restart must not materialize a replacement sandbox"
         );
     }
 
@@ -771,11 +901,11 @@ mod tests {
         let backend = Arc::new(StubSandboxBackend::new(1).with_handle_tenant_override(
             TenantId::new("tenant-b").expect("tenant id should be valid"),
         ));
-        let manager = SandboxServiceManager::new(
-            Arc::new(StubSandboxServiceCatalog {
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
                         sparse_image_spec("db"),
                         "postgres:16",
                     )),
@@ -803,11 +933,11 @@ mod tests {
     async fn ensure_service_binding_async_uses_build_launch_for_build_backed_service() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(1));
-        let manager = SandboxServiceManager::new(
-            Arc::new(StubSandboxServiceCatalog {
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "api".to_owned(),
-                    SandboxServiceLaunch::build(SandboxBuildLaunchSpec::new(
+                    ServiceImplementation::sandbox_build(SandboxBuildLaunchSpec::new(
                         sparse_image_spec("api"),
                         "nimbus-api",
                         "/workspace/Dockerfile",
@@ -835,11 +965,11 @@ mod tests {
     async fn ensure_service_binding_sync_lookup_stays_snapshot_only_for_missing_service() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(1));
-        let manager = SandboxServiceManager::new(
-            Arc::new(StubSandboxServiceCatalog {
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
                         sparse_image_spec("db"),
                         "postgres:16",
                     )),
@@ -866,11 +996,11 @@ mod tests {
     async fn ensure_service_binding_async_can_be_cancelled_while_waiting_for_readiness() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(usize::MAX));
-        let manager = SandboxServiceManager::new(
-            Arc::new(StubSandboxServiceCatalog {
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
                         sparse_image_spec("db"),
                         "postgres:16",
                     )),
@@ -908,11 +1038,11 @@ mod tests {
     async fn teardown_tenant_stops_tracked_sandboxes_and_clears_snapshot() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(1));
-        let manager = SandboxServiceManager::new(
-            Arc::new(StubSandboxServiceCatalog {
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
                 launches: BTreeMap::from([(
                     "db".to_owned(),
-                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                    ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
                         sparse_image_spec("db"),
                         "postgres:16",
                     )),

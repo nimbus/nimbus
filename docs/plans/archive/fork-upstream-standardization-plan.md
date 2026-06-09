@@ -281,7 +281,7 @@ Nimbus rusty_v8 delta over `v147.4.0`:
 - Adds panic-safety, compile-fail tests, scope annex initialization, and
   Enter/Exit ordering hardening for the locker path.
 - Adds weak-handle teardown hardening through active weak handle tracking.
-- Includes CI and release-contract changes, plus `agentstation`/`neovex` to
+- Includes CI and release-contract changes, plus retired predecessor to
   `nimbus` rename work.
 - Touches upstream-overlap files including `Cargo.toml`, `build.rs`,
   `src/binding.cc`, `src/handle.rs`, `src/isolate.rs`, `src/lib.rs`,

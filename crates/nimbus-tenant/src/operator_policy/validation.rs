@@ -14,7 +14,7 @@ use super::{
     OperatorSandboxPolicy, OperatorSecretPolicy, OperatorServicePolicy, OperatorStoragePolicy,
     OperatorVolumePolicy,
 };
-use crate::{RuntimeIsolationTier, TenantIsolationMode, TenantWorkloadKind};
+use crate::{RuntimeIsolationTier, TenantIsolationMode, WorkloadKind};
 
 impl OperatorPolicyDocument {
     pub fn validate(&self) -> Result<()> {
@@ -94,12 +94,7 @@ impl OperatorRuntimePolicy {
 }
 
 impl OperatorSandboxPolicy {
-    fn validate(&self, workload_key: &str, kind: TenantWorkloadKind) -> Result<()> {
-        if matches!(kind, TenantWorkloadKind::SandboxService) && self.sandbox_id.is_none() {
-            return invalid_policy(format!(
-                "workload `{workload_key}` is a sandbox_service and must set sandbox.sandbox_id"
-            ));
-        }
+    fn validate(&self, workload_key: &str, _kind: WorkloadKind) -> Result<()> {
         if let Some(sandbox_id) = &self.sandbox_id
             && sandbox_id.trim().is_empty()
         {

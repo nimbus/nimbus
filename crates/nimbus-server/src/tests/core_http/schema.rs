@@ -80,8 +80,8 @@ async fn wait_for_system_table_by_name(
 
 #[tokio::test]
 async fn schema_crud_via_http() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -144,8 +144,8 @@ async fn schema_crud_via_http() {
 
 #[tokio::test]
 async fn schema_and_document_writes_project_table_state_into_system_tenant() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     crate::system_tenant::prepare_system_tenant_async(&service, None)
         .await
         .expect("system tenant should prepare before subscribing");
@@ -287,8 +287,8 @@ async fn schema_and_document_writes_project_table_state_into_system_tenant() {
 
 #[tokio::test]
 async fn table_state_projection_is_queryable_through_system_convex_bundle() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     let server = ServerFixture::start(
         RouterBuildConfig::core(service)
             .with_system_convex_registry(

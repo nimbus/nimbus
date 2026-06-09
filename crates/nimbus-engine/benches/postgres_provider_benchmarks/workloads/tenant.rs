@@ -30,7 +30,7 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
                     };
                     let started = Instant::now();
                     exercise_mixed_load_sample(
-                        &fixture.service,
+                        &fixture.engine,
                         &fixture.tenant_states,
                         MIXED_LOAD_TENANTS,
                         MIXED_LOAD_OPS_PER_TENANT,
@@ -44,14 +44,14 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
         sqlite_fixture
             .resource
             .cleanup(
-                sqlite_fixture.service.clone(),
+                sqlite_fixture.engine.clone(),
                 "mixed-load steady-state sqlite teardown",
             )
             .await?;
         postgres_fixture
             .resource
             .cleanup(
-                postgres_fixture.service.clone(),
+                postgres_fixture.engine.clone(),
                 "mixed-load steady-state postgres teardown",
             )
             .await?;
@@ -85,13 +85,13 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
                         MeasuredBackend::PostgresLoopback => postgres_seed,
                         MeasuredBackend::PostgresInjectedRtt => unreachable!(),
                     };
-                    let (service, reopened_resource) = seed
+                    let (engine, reopened_resource) = seed
                         .resource
-                        .reopen_service("mixed-load-cold-sample", backend, environment)
+                        .reopen_engine("mixed-load-cold-sample", backend, environment)
                         .await?;
                     let started = Instant::now();
                     exercise_mixed_load_sample(
-                        &service,
+                        &engine,
                         &seed.tenant_states,
                         MIXED_LOAD_TENANTS,
                         MIXED_LOAD_OPS_PER_TENANT,
@@ -99,7 +99,7 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
                     .await?;
                     let elapsed = started.elapsed();
                     reopened_resource
-                        .cleanup(service, "mixed-load cold-start reopened teardown")
+                        .cleanup(engine, "mixed-load cold-start reopened teardown")
                         .await?;
                     Ok(elapsed)
                 }
@@ -145,13 +145,13 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
                         MeasuredBackend::PostgresInjectedRtt => rtt_seed,
                         MeasuredBackend::Sqlite => unreachable!(),
                     };
-                    let (service, reopened_resource) = seed
+                    let (engine, reopened_resource) = seed
                         .resource
-                        .reopen_service("mixed-load-rtt-sample", backend, environment)
+                        .reopen_engine("mixed-load-rtt-sample", backend, environment)
                         .await?;
                     let started = Instant::now();
                     exercise_mixed_load_sample(
-                        &service,
+                        &engine,
                         &seed.tenant_states,
                         MIXED_LOAD_RTT_TENANTS,
                         MIXED_LOAD_RTT_OPS_PER_TENANT,
@@ -159,7 +159,7 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
                     .await?;
                     let elapsed = started.elapsed();
                     reopened_resource
-                        .cleanup(service, "mixed-load RTT reopened teardown")
+                        .cleanup(engine, "mixed-load RTT reopened teardown")
                         .await?;
                     Ok(elapsed)
                 }
@@ -233,8 +233,8 @@ pub(crate) async fn benchmark_tenant_lifecycle_latency(
                     };
                     let started = Instant::now();
                     exercise_tenant_lifecycle_sample(
-                        &fixture.creator_service,
-                        &fixture.opener_service,
+                        &fixture.creator_engine,
+                        &fixture.opener_engine,
                     )
                     .await?;
                     Ok(started.elapsed())
@@ -258,7 +258,7 @@ pub(crate) async fn benchmark_tenant_lifecycle_latency(
                     create_tenant_lifecycle_fixture("tenant-lifecycle-cold", backend, environment)
                         .await?;
                 let started = Instant::now();
-                exercise_tenant_lifecycle_sample(&fixture.creator_service, &fixture.opener_service)
+                exercise_tenant_lifecycle_sample(&fixture.creator_engine, &fixture.opener_engine)
                     .await?;
                 let elapsed = started.elapsed();
                 fixture
@@ -298,8 +298,8 @@ pub(crate) async fn benchmark_tenant_lifecycle_latency(
                     };
                     let started = Instant::now();
                     exercise_tenant_lifecycle_sample(
-                        &fixture.creator_service,
-                        &fixture.opener_service,
+                        &fixture.creator_engine,
+                        &fixture.opener_engine,
                     )
                     .await?;
                     Ok(started.elapsed())

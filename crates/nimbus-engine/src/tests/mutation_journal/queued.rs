@@ -1,16 +1,16 @@
 use super::support::{
     assert_future_stays_pending, expect_blocking_wait_reaches_state, expect_catch_up_future_within,
-    expect_future_within, new_faulted_service,
+    expect_future_within, new_faulted_engine,
 };
 use super::*;
 
 #[tokio::test]
 async fn async_schema_write_advances_runtime_journal_before_next_queued_document_write() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    service
+    engine
         .set_table_schema_async(
             tenant_id.clone(),
             TableSchema {
@@ -27,7 +27,7 @@ async fn async_schema_write_advances_runtime_journal_before_next_queued_document
         .await
         .expect("async schema write should succeed");
 
-    let after_schema = service
+    let after_schema = engine
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("journal stats should load after schema write");
     assert!(after_schema.durable_head.0 >= 1);
@@ -35,7 +35,7 @@ async fn async_schema_write_advances_runtime_journal_before_next_queued_document
     assert_eq!(after_schema.apply_lag, 0);
     let schema_head = after_schema.durable_head;
 
-    service
+    engine
         .insert_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -45,14 +45,14 @@ async fn async_schema_write_advances_runtime_journal_before_next_queued_document
         .expect("queued document write should follow the schema commit sequence");
 
     let after_insert = wait_for_mutation_journal_stats(
-        &service,
+        &engine,
         &tenant_id,
         "queued insert should advance after schema commit",
         |stats| stats.durable_head.0 > schema_head.0 && stats.applied_head == stats.durable_head,
     )
     .await;
     assert_eq!(
-        durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0)).len(),
+        durable_journal_commits(engine.as_ref(), &tenant_id, SequenceNumber(0)).len(),
         1
     );
     assert_eq!(after_insert.queue_depth, 0);
@@ -62,23 +62,23 @@ async fn async_schema_write_advances_runtime_journal_before_next_queued_document
 #[tokio::test]
 async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_in_flight_response()
 {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    service
+    engine
         .set_mutation_journal_queue_capacity_for_testing(&tenant_id, 1)
         .expect("queue capacity should be configurable for tests");
-    let pause = service
+    let pause = engine
         .mutation_journal_pause_handle_for_testing(&tenant_id)
         .expect("journal pause handle should load");
     pause.arm();
 
     let first_insert = {
-        let service = Arc::clone(&service);
+        let engine = Arc::clone(&engine);
         let tenant_id = tenant_id.clone();
         tokio::spawn(async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -97,7 +97,7 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
     )
     .await;
 
-    let blocked_stats = service
+    let blocked_stats = engine
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("journal stats should load while the queue is paused");
     assert_eq!(blocked_stats.queue_depth, 1);
@@ -111,10 +111,10 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
     assert_eq!(blocked_stats.worker_failure_count, 0);
 
     let mut second_insert = tokio::spawn({
-        let service = Arc::clone(&service);
+        let engine = Arc::clone(&engine);
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -125,7 +125,7 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
     });
 
     wait_for_mutation_admission_stats(
-        &service,
+        &engine,
         &tenant_id,
         "second mutation should remain buffered at the admission gate",
         |stats| stats.queue_depth == 1,
@@ -138,7 +138,7 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
     )
     .await;
 
-    let buffered_stats = service
+    let buffered_stats = engine
         .mutation_admission_stats_for_testing(&tenant_id)
         .expect("admission stats should load after the second mutation is buffered");
     assert_eq!(buffered_stats.queue_depth, 1);
@@ -167,7 +167,7 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
     .expect("second mutation task should join successfully")
     .expect("second mutation should succeed");
 
-    let visible = service
+    let visible = engine
         .query_documents_async(tenant_id.clone(), query_for("tasks"))
         .await
         .expect("final query should succeed after the buffered mutation drains");
@@ -181,7 +181,7 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
     );
 
     let final_stats = wait_for_mutation_journal_stats(
-        &service,
+        &engine,
         &tenant_id,
         "mutation journal worker to go idle after the buffered queue drains",
         |stats| !stats.worker_running,
@@ -200,11 +200,11 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
     assert_eq!(final_stats.queue_rejection_count, 0);
     assert_eq!(final_stats.worker_failure_count, 0);
     assert_eq!(
-        durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0)).len(),
+        durable_journal_commits(engine.as_ref(), &tenant_id, SequenceNumber(0)).len(),
         2
     );
 
-    let final_admission_stats = service
+    let final_admission_stats = engine
         .mutation_admission_stats_for_testing(&tenant_id)
         .expect("admission stats should load after the gate drains");
     assert_eq!(final_admission_stats.queue_depth, 0);
@@ -214,27 +214,27 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
 
 #[tokio::test]
 async fn mutation_journal_never_expires_admitted_work() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    service
+    engine
         .set_mutation_admission_codel_for_testing(
             &tenant_id,
             Duration::from_millis(5),
             Duration::from_millis(10),
         )
         .expect("admission CoDel should be configurable for tests");
-    let pause = service
+    let pause = engine
         .mutation_journal_pause_handle_for_testing(&tenant_id)
         .expect("journal pause handle should load");
     pause.arm();
 
     let mut admitted_insert = {
-        let service = Arc::clone(&service);
+        let engine = Arc::clone(&engine);
         let tenant_id = tenant_id.clone();
         tokio::spawn(async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -268,21 +268,21 @@ async fn mutation_journal_never_expires_admitted_work() {
     .expect("admitted mutation task should join successfully")
     .expect("admitted mutation should still succeed");
 
-    let visible = service
+    let visible = engine
         .query_documents_async(tenant_id.clone(), query_for("tasks"))
         .await
         .expect("final query should succeed after the admitted mutation drains");
     assert_eq!(visible.len(), 1);
     assert_eq!(visible[0].id, document_id);
 
-    let admission_stats = service
+    let admission_stats = engine
         .mutation_admission_stats_for_testing(&tenant_id)
         .expect("admission stats should load after the queue drains");
     assert_eq!(admission_stats.queue_depth, 0);
     assert_eq!(admission_stats.shed_count, 0);
     assert_eq!(admission_stats.queue_rejection_count, 0);
 
-    let journal_stats = service
+    let journal_stats = engine
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("journal stats should load after the admitted mutation commits");
     assert!(journal_stats.durable_head.0 >= 1);
@@ -290,20 +290,20 @@ async fn mutation_journal_never_expires_admitted_work() {
     assert_eq!(journal_stats.apply_lag, 0);
     assert_eq!(journal_stats.queue_depth, 0);
     assert_eq!(
-        durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0)).len(),
+        durable_journal_commits(engine.as_ref(), &tenant_id, SequenceNumber(0)).len(),
         1
     );
 }
 
 #[tokio::test]
 async fn queued_mutation_response_still_resolves_after_blocked_read_catches_up() {
-    let (_data_dir, service, tenant_id, faults) = new_faulted_service(42_500);
+    let (_data_dir, engine, tenant_id, faults) = new_faulted_engine(42_500);
 
     let mut first_insert = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -325,10 +325,10 @@ async fn queued_mutation_response_still_resolves_after_blocked_read_catches_up()
     .await;
 
     let mut blocked_query = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .query_documents_async(tenant_id, query_for("tasks"))
                 .await
         }
@@ -340,10 +340,10 @@ async fn queued_mutation_response_still_resolves_after_blocked_read_catches_up()
     .await;
 
     let mut second_insert = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -386,7 +386,7 @@ async fn queued_mutation_response_still_resolves_after_blocked_read_catches_up()
             .expect("second mutation task should join successfully")
             .expect("second mutation should succeed"),
         Err(error) => {
-            let visible = service
+            let visible = engine
                 .query_documents_async(tenant_id.clone(), query_for("tasks"))
                 .await
                 .expect("live query should still succeed");
@@ -405,7 +405,7 @@ async fn queued_mutation_response_still_resolves_after_blocked_read_catches_up()
         }
     };
 
-    let visible = service
+    let visible = engine
         .query_documents_async(tenant_id, query_for("tasks"))
         .await
         .expect("final query should succeed");
@@ -416,26 +416,26 @@ async fn queued_mutation_response_still_resolves_after_blocked_read_catches_up()
 
 #[tokio::test]
 async fn queued_cancellable_mutation_response_still_resolves_after_blocked_read_catches_up() {
-    let data_dir = tempdir().expect("service tempdir should build");
+    let data_dir = tempdir().expect("engine tempdir should build");
     let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
-    let service = Arc::new(
-        Service::new_with_simulation(
+    let engine = Arc::new(
+        Engine::new_with_simulation(
             data_dir.path(),
             Arc::new(ManualClock::new(Timestamp(42_750))),
             faults.clone(),
         )
-        .expect("service should create"),
+        .expect("engine should create"),
     );
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
     let mut first_insert = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async_with(
                     tenant_id,
                     tasks_table(),
@@ -459,10 +459,10 @@ async fn queued_cancellable_mutation_response_still_resolves_after_blocked_read_
     .await;
 
     let mut blocked_query = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .query_documents_async(tenant_id, query_for("tasks"))
                 .await
         }
@@ -474,10 +474,10 @@ async fn queued_cancellable_mutation_response_still_resolves_after_blocked_read_
     .await;
 
     let mut second_insert = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async_with(
                     tenant_id,
                     tasks_table(),
@@ -525,7 +525,7 @@ async fn queued_cancellable_mutation_response_still_resolves_after_blocked_read_
             .expect("second cancellable mutation task should join successfully")
             .expect("second cancellable mutation should succeed"),
         Err(error) => {
-            let visible = service
+            let visible = engine
                 .query_documents_async(tenant_id.clone(), query_for("tasks"))
                 .await
                 .expect("live query should still succeed");
@@ -544,7 +544,7 @@ async fn queued_cancellable_mutation_response_still_resolves_after_blocked_read_
         }
     };
 
-    let visible = service
+    let visible = engine
         .query_documents_async(tenant_id, query_for("tasks"))
         .await
         .expect("final query should succeed");
@@ -555,26 +555,26 @@ async fn queued_cancellable_mutation_response_still_resolves_after_blocked_read_
 
 #[tokio::test]
 async fn queued_mutation_response_still_resolves_after_blocked_cancellable_read_catches_up() {
-    let data_dir = tempdir().expect("service tempdir should build");
+    let data_dir = tempdir().expect("engine tempdir should build");
     let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
-    let service = Arc::new(
-        Service::new_with_simulation(
+    let engine = Arc::new(
+        Engine::new_with_simulation(
             data_dir.path(),
             Arc::new(ManualClock::new(Timestamp(42_900))),
             faults.clone(),
         )
-        .expect("service should create"),
+        .expect("engine should create"),
     );
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
     let mut first_insert = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -599,10 +599,10 @@ async fn queued_mutation_response_still_resolves_after_blocked_cancellable_read_
     .await;
 
     let mut blocked_query = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .query_documents_async_cancellable(
                     tenant_id,
                     query_for("tasks"),
@@ -619,10 +619,10 @@ async fn queued_mutation_response_still_resolves_after_blocked_cancellable_read_
     .await;
 
     let mut second_insert = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -668,7 +668,7 @@ async fn queued_mutation_response_still_resolves_after_blocked_cancellable_read_
             .expect("second mutation task should join successfully")
             .expect("second mutation should succeed"),
         Err(error) => {
-            let visible = service
+            let visible = engine
                 .query_documents_async(tenant_id.clone(), query_for("tasks"))
                 .await
                 .expect("live query should still succeed");
@@ -687,7 +687,7 @@ async fn queued_mutation_response_still_resolves_after_blocked_cancellable_read_
         }
     };
 
-    let visible = service
+    let visible = engine
         .query_documents_async(tenant_id, query_for("tasks"))
         .await
         .expect("final query should succeed");
@@ -699,23 +699,23 @@ async fn queued_mutation_response_still_resolves_after_blocked_cancellable_read_
 #[tokio::test]
 async fn queued_mutation_response_resolves_when_worker_starts_on_ephemeral_current_thread_runtime()
 {
-    let data_dir = tempdir().expect("service tempdir should build");
+    let data_dir = tempdir().expect("engine tempdir should build");
     let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
-    let service = Arc::new(
-        Service::new_with_simulation(
+    let engine = Arc::new(
+        Engine::new_with_simulation(
             data_dir.path(),
             Arc::new(ManualClock::new(Timestamp(43_050))),
             faults.clone(),
         )
-        .expect("service should create"),
+        .expect("engine should create"),
     );
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
     let first_runtime = std::thread::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -723,7 +723,7 @@ async fn queued_mutation_response_resolves_when_worker_starts_on_ephemeral_curre
                 .build()
                 .expect("ephemeral current-thread runtime should build");
             runtime.block_on(async move {
-                service
+                engine
                     .insert_document_async(
                         tenant_id,
                         tasks_table(),
@@ -744,10 +744,10 @@ async fn queued_mutation_response_resolves_when_worker_starts_on_ephemeral_curre
     .await;
 
     let mut second_insert = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -783,7 +783,7 @@ async fn queued_mutation_response_resolves_when_worker_starts_on_ephemeral_curre
     .expect("second mutation task should join successfully")
     .expect("second mutation should succeed");
 
-    let visible = service
+    let visible = engine
         .query_documents_async(tenant_id, query_for("tasks"))
         .await
         .expect("final query should succeed");

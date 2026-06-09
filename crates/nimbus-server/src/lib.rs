@@ -70,8 +70,9 @@ pub use nimbus_artifacts::{
     CompositeArtifactVerifierBackend,
 };
 pub use nimbus_services::{
-    EmptySandboxCatalog, EmptySandboxServiceCatalog, SandboxCatalog, SandboxServiceCatalog,
-    SandboxServiceLaunch, SandboxServiceManager,
+    BuiltInServiceImplementation, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
+    ExternalServiceImplementation, SandboxBackedServiceImplementation, ServiceDefinitionCatalog,
+    ServiceImplementation, ServiceInstanceCatalog, ServiceManager,
 };
 pub use nimbus_system::SystemTenantStatusEvidenceWriter;
 pub use router::{RouterOptions, build_router};
@@ -104,9 +105,9 @@ pub use tenant::{
     TenantNetworkEndpointDecision, TenantNetworkPolicyDecision, TenantQuotaPolicyDecision,
     TenantRuntimePolicyAdmission, TenantRuntimePolicyDecision, TenantSecretPolicyDecision,
     TenantServiceAccessDecision, TenantServiceGrantPolicyDecision, TenantStorageAccessDecision,
-    TenantStoragePolicyDecision, TenantVolumePolicyDecision, TenantWorkloadIdentity,
-    TenantWorkloadKind, TenantWorkloadLocation, TenantWorkloadStableIdentity,
-    admit_artifact_subject, normalize_artifact_sha256, redact_artifact_verifier_output,
+    TenantStoragePolicyDecision, TenantVolumePolicyDecision, WorkloadAttributes, WorkloadIdentity,
+    WorkloadKind, WorkloadLocation, admit_artifact_subject, normalize_artifact_sha256,
+    redact_artifact_verifier_output,
 };
 pub use tenant_isolation_drift::{
     TenantIsolationDriftReport, TenantIsolationDriftScanConfig, TenantIsolationDriftSurface,

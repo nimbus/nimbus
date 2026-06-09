@@ -90,7 +90,7 @@ scheduled/manual Node compatibility evidence workflow.
 The first concrete seam layer now lives in `nimbus-storage::simulation`.
 `Clock` and `FaultInjector` are production-owned interfaces, not ad hoc test
 helpers. `TenantStore::*_with_simulation(...)` and
-`Service::new_with_simulation(...)` accept deterministic implementations,
+`Engine::new_with_simulation(...)` accept deterministic implementations,
 storage commit visibility exposes named fault points, and engine scheduler
 tests can advance time without wall-clock sleeps.
 
@@ -164,7 +164,7 @@ app, can start an official local Convex deployment automatically from a nearby
 subset across mutations, queries, manual pagination, and subscriptions.
 
 Nimbus now also has its first online trust-but-verify path for authoritative
-and derived state. `Service::verify_consistency_async(...)` captures one
+and derived state. `Engine::verify_consistency_async(...)` captures one
 durable bootstrap cut, rebuilds an authoritative in-memory projection from the
 raw materialized snapshot plus journal suffix, then compares that projection
 against a shadow-materializer replay and an embedded replica built from the

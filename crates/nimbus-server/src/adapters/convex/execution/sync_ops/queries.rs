@@ -3,7 +3,7 @@ use nimbus_auth::normalize_principal_context;
 
 #[cfg(test)]
 pub(in crate::adapters::convex) fn execute_named_query_request_direct(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     name: &str,
@@ -15,7 +15,7 @@ pub(in crate::adapters::convex) fn execute_named_query_request_direct(
 
 #[cfg(test)]
 pub(in crate::adapters::convex) fn execute_named_paginated_query_request_direct(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     name: &str,
@@ -29,7 +29,7 @@ pub(in crate::adapters::convex) fn execute_named_paginated_query_request_direct(
 
 #[cfg(test)]
 pub(in crate::adapters::convex) fn execute_query_result(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     tenant_id: &TenantId,
     query: ConvexExecutableQuery,
 ) -> Result<Value, Error> {
@@ -38,7 +38,7 @@ pub(in crate::adapters::convex) fn execute_query_result(
 
 #[cfg(test)]
 pub(in crate::adapters::convex) fn execute_query_result_cancellable(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     tenant_id: &TenantId,
     query: ConvexExecutableQuery,
     check_cancel: &mut dyn FnMut() -> std::result::Result<(), Error>,
@@ -47,7 +47,7 @@ pub(in crate::adapters::convex) fn execute_query_result_cancellable(
 }
 
 pub(in crate::adapters::convex) fn execute_query_result_cancellable_with_auth(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     tenant_id: &TenantId,
     query: ConvexExecutableQuery,
     auth: Option<&InvocationAuth>,

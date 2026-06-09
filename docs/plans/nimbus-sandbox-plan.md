@@ -27,7 +27,7 @@ three previously-separate plans: `nimbus-libkrun-snapshot-port-plan.md`,
   - [`docs/plans/research/nimbus-libkrun-fork-inventory.md`](./research/nimbus-libkrun-fork-inventory.md) — fork patch inventory and anticipated-patch list
   - [`docs/plans/research/macos-host-vs-guest-control-plane-rationale.md`](./research/macos-host-vs-guest-control-plane-rationale.md) — Option-A host topology rationale
 - **References (architecture / upstream):**
-  - [`docs/architecture/sandbox/microvm-service-baseline.md`](../architecture/sandbox/microvm-service-baseline.md), [`docs/architecture/sandbox/macos-machine-flow.md`](../architecture/sandbox/macos-machine-flow.md)
+  - [`docs/architecture/sandbox/service-sandbox-session-model.md`](../architecture/sandbox/service-sandbox-session-model.md), [`docs/architecture/sandbox/microvm-service-baseline.md`](../architecture/sandbox/microvm-service-baseline.md), [`docs/architecture/sandbox/macos-machine-flow.md`](../architecture/sandbox/macos-machine-flow.md)
   - libkrun v1.18.1 (`~/src/github.com/nimbus/nimbus-libkrun`, branch `nimbus/v1.18.1`)
   - Firecracker `snapshot-support.md` and `src/vmm/src/persist.rs` (`~/src/github.com/firecracker-microvm/firecracker`, head `eaa62396d`, Apache-2.0)
   - zeroboot prototype (`~/src/github.com/zerobootdev/zeroboot`, Apache-2.0)
@@ -54,6 +54,18 @@ without execution per D2.
 Do not build a separate `computer_use` backend or a separate
 `firecracker_snapshot` backend. The three profiles are the same
 `libkrun_session` backend with different spec options.
+
+Resource vocabulary follows
+[`service-sandbox-session-model.md`](../architecture/sandbox/service-sandbox-session-model.md):
+services are named tenant dependencies managed by `nimbus-services` with
+sandbox-backed, built-in, or external implementations; sandboxes are isolated
+execution resources addressed by id/handle; sessions are scoped interaction
+leases over a target; runtime isolates are not SDK sandboxes. This plan owns
+sandbox/session backend mechanics for desktop/GPU/lambda profiles; it does not
+rename Compose services, implement built-in services, or make arbitrary
+sandboxes resolvable by name. A future isolate-backed user-created sandbox
+profile is reserved as `profile: "isolate"`; ordinary runtime invocation
+isolates remain internal `nimbus-runtime` execution domains.
 
 ## Per-Host Topology (D11 + D12)
 
@@ -363,7 +375,7 @@ AI-agent computer-use workloads.
 ```mermaid
 flowchart TD
     Agent["Agent runner\n(model orchestrator on host or remote)"] --> Api
-    Api["nimbus-server\nctx.sandboxes.session(...)"] --> Admission
+    Api["nimbus-server\nsession API / SDK"] --> Admission
     Admission["Tenant admission +\nartifact provenance"] --> Backend
     Backend["libkrun_session backend\n(nimbus-sandbox)"] --> Vm
 
@@ -382,6 +394,16 @@ flowchart TD
 
 - Sessions are tenant-scoped: one VM per (tenant, session) pair; no
   shared writable state across tenants.
+- Sessions target a sandbox id/handle created by the sandbox lifecycle. They do
+  not resolve sandboxes by name. Named app dependencies stay in the service
+  model and may be session targets only through `{ service: { name } }` in the
+  future SDK/control-plane plan.
+- Runtime isolates are not SDK sandboxes. If a future runtime worker is deployed
+  inside a sandbox backend for operational isolation, that remains a deployment
+  choice and does not create a user-addressable sandbox resource.
+- If Nimbus later adds an explicit isolate-backed sandbox resource, its profile
+  is `profile: "isolate"` and it must be created, inspected, stopped, audited,
+  and session-targeted by sandbox id/handle like every other sandbox.
 - Frame capture and input injection only flow over the per-session vsock
   channel; tenants cannot read another tenant's screencast pipe.
 - Untrusted-by-default guest network: passt with the tenant's

@@ -1,16 +1,21 @@
 //! Nimbus engine crate.
 
+mod engine;
 mod evaluator;
 mod persistence;
 mod persistence_config;
 mod replica;
 pub mod scheduler;
-mod service;
 mod subscriptions;
 mod tenant;
 mod triggers;
 mod verification;
 
+pub use engine::{
+    AsyncMutationContext, CommittedMutationEvent, CommittedMutationObserver, EncryptionStatus,
+    Engine, InitializedKeyProvider, MutationActor, MutationExecutionUnit,
+    SubscriptionBootstrapCancellation, TableSchemaChangeEvent, TableSchemaChangeObserver,
+};
 pub use evaluator::{
     encode_cursor, evaluate_paginated, evaluate_paginated_with_docs, evaluate_query,
     evaluate_query_with_docs,
@@ -26,18 +31,13 @@ pub use nimbus_storage::{
 };
 pub use persistence_config::{
     AwsKmsConfig, ControlPlaneConfig, EncryptionConfigDescriptor, EncryptionValidationError,
-    KeyDirectoryConfig, KeyProviderDescriptor, LocalEncryptionConfig, LocalKeyProviderConfig,
-    LocalPersistenceFamily, MasterKeyFileConfig, PersistenceDialect, PersistenceTopology,
-    PoolConfig, ProviderCredentials, ServicePersistenceConfig, TenantProviderConfig,
+    EnginePersistenceConfig, KeyDirectoryConfig, KeyProviderDescriptor, LocalEncryptionConfig,
+    LocalKeyProviderConfig, LocalPersistenceFamily, MasterKeyFileConfig, PersistenceDialect,
+    PersistenceTopology, PoolConfig, ProviderCredentials, TenantProviderConfig,
     TenantRoutingConfig,
 };
 pub use replica::EmbeddedReplica;
 pub use scheduler::run_scheduler;
-pub use service::{
-    AsyncMutationContext, CommittedMutationEvent, CommittedMutationObserver, EncryptionStatus,
-    InitializedKeyProvider, MutationActor, MutationExecutionUnit, Service,
-    SubscriptionBootstrapCancellation, TableSchemaChangeEvent, TableSchemaChangeObserver,
-};
 pub use subscriptions::{
     DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, SubscriptionCleanupHandle, SubscriptionRegistration,
     SubscriptionUpdate,

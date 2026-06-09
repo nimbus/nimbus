@@ -3,7 +3,7 @@ use super::config::{BenchmarkEnvironment, BenchmarkLane, WorkloadKind};
 use super::fixtures::{
     create_composite_query_fixture, create_crud_fixture, create_indexed_query_fixture,
     create_mixed_load_fixture, create_peer_catch_up_fixture, create_point_read_fixture,
-    create_tenant_service, freeze_mixed_load_seed, freeze_point_read_seed, freeze_query_seed,
+    create_tenant_engine, freeze_mixed_load_seed, freeze_point_read_seed, freeze_query_seed,
 };
 use super::models::{BenchmarkReport, MeasuredBackend};
 use super::scenarios::{
@@ -44,7 +44,7 @@ pub(super) async fn benchmark_crud_throughput(
                         MeasuredBackend::LibsqlReplica => replica_fixture,
                     };
                     let started = Instant::now();
-                    exercise_crud_sample(&fixture.service, &fixture.tenant_id, CRUD_DOCUMENTS)
+                    exercise_crud_sample(&fixture.engine, &fixture.tenant_id, CRUD_DOCUMENTS)
                         .await?;
                     Ok(started.elapsed())
                 }
@@ -54,14 +54,14 @@ pub(super) async fn benchmark_crud_throughput(
         sqlite_fixture
             .resource
             .cleanup(
-                sqlite_fixture.service.clone(),
+                sqlite_fixture.engine.clone(),
                 "CRUD steady-state sqlite teardown",
             )
             .await?;
         replica_fixture
             .resource
             .cleanup(
-                replica_fixture.service.clone(),
+                replica_fixture.engine.clone(),
                 "CRUD steady-state libsql-replica teardown",
             )
             .await?;
@@ -74,11 +74,11 @@ pub(super) async fn benchmark_crud_throughput(
                 let fixture =
                     create_crud_fixture("crud-cold", "crud", backend, environment).await?;
                 let started = Instant::now();
-                exercise_crud_sample(&fixture.service, &fixture.tenant_id, CRUD_DOCUMENTS).await?;
+                exercise_crud_sample(&fixture.engine, &fixture.tenant_id, CRUD_DOCUMENTS).await?;
                 let elapsed = started.elapsed();
                 fixture
                     .resource
-                    .cleanup(fixture.service.clone(), "CRUD cold-start teardown")
+                    .cleanup(fixture.engine.clone(), "CRUD cold-start teardown")
                     .await?;
                 Ok(elapsed)
             },
@@ -139,7 +139,7 @@ pub(super) async fn benchmark_point_read_latency(
                     };
                     let started = Instant::now();
                     exercise_point_read_sample(
-                        &fixture.tenant.service,
+                        &fixture.tenant.engine,
                         &fixture.tenant.tenant_id,
                         &fixture.ids,
                         POINT_READ_BATCH_SIZE,
@@ -154,7 +154,7 @@ pub(super) async fn benchmark_point_read_latency(
             .tenant
             .resource
             .cleanup(
-                sqlite_fixture.tenant.service.clone(),
+                sqlite_fixture.tenant.engine.clone(),
                 "point-read steady-state sqlite teardown",
             )
             .await?;
@@ -162,7 +162,7 @@ pub(super) async fn benchmark_point_read_latency(
             .tenant
             .resource
             .cleanup(
-                replica_fixture.tenant.service.clone(),
+                replica_fixture.tenant.engine.clone(),
                 "point-read steady-state libsql-replica teardown",
             )
             .await?;
@@ -201,13 +201,13 @@ pub(super) async fn benchmark_point_read_latency(
                         MeasuredBackend::Sqlite => sqlite_seed,
                         MeasuredBackend::LibsqlReplica => replica_seed,
                     };
-                    let (service, resource) = seed
+                    let (engine, resource) = seed
                         .resource
-                        .reopen_service("point-read-cold", backend, environment)
+                        .reopen_engine("point-read-cold", backend, environment)
                         .await?;
                     let started = Instant::now();
                     exercise_point_read_sample(
-                        &service,
+                        &engine,
                         &seed.tenant_id,
                         &seed.ids,
                         POINT_READ_BATCH_SIZE,
@@ -215,7 +215,7 @@ pub(super) async fn benchmark_point_read_latency(
                     .await?;
                     let elapsed = started.elapsed();
                     resource
-                        .cleanup(service, "point-read cold-start teardown")
+                        .cleanup(engine, "point-read cold-start teardown")
                         .await?;
                     Ok(elapsed)
                 }
@@ -315,7 +315,7 @@ async fn benchmark_query_latency(
                     };
                     let started = Instant::now();
                     exercise_query_sample(
-                        &fixture.tenant.service,
+                        &fixture.tenant.engine,
                         &fixture.tenant.tenant_id,
                         &fixture.query,
                         INDEXED_QUERY_BATCH_SIZE,
@@ -330,7 +330,7 @@ async fn benchmark_query_latency(
             .tenant
             .resource
             .cleanup(
-                sqlite_fixture.tenant.service.clone(),
+                sqlite_fixture.tenant.engine.clone(),
                 "query steady-state sqlite teardown",
             )
             .await?;
@@ -338,7 +338,7 @@ async fn benchmark_query_latency(
             .tenant
             .resource
             .cleanup(
-                replica_fixture.tenant.service.clone(),
+                replica_fixture.tenant.engine.clone(),
                 "query steady-state libsql-replica teardown",
             )
             .await?;
@@ -379,13 +379,13 @@ async fn benchmark_query_latency(
                         MeasuredBackend::Sqlite => sqlite_seed,
                         MeasuredBackend::LibsqlReplica => replica_seed,
                     };
-                    let (service, resource) = seed
+                    let (engine, resource) = seed
                         .resource
-                        .reopen_service("query-cold", backend, environment)
+                        .reopen_engine("query-cold", backend, environment)
                         .await?;
                     let started = Instant::now();
                     exercise_query_sample(
-                        &service,
+                        &engine,
                         &seed.tenant_id,
                         &seed.query,
                         INDEXED_QUERY_BATCH_SIZE,
@@ -393,7 +393,7 @@ async fn benchmark_query_latency(
                     .await?;
                     let elapsed = started.elapsed();
                     resource
-                        .cleanup(service, "query cold-start teardown")
+                        .cleanup(engine, "query cold-start teardown")
                         .await?;
                     Ok(elapsed)
                 }
@@ -471,7 +471,7 @@ pub(super) async fn benchmark_mixed_multi_tenant_load(
                     run_mixed_load_sample(
                         "mixed-load steady-state sample",
                         exercise_mixed_load_sample(
-                            &fixture.service,
+                            &fixture.engine,
                             &fixture.tenant_states,
                             MIXED_LOAD_TENANTS,
                             MIXED_LOAD_OPS_PER_TENANT,
@@ -486,14 +486,14 @@ pub(super) async fn benchmark_mixed_multi_tenant_load(
         sqlite_fixture
             .resource
             .cleanup(
-                sqlite_fixture.service.clone(),
+                sqlite_fixture.engine.clone(),
                 "mixed-load steady-state sqlite teardown",
             )
             .await?;
         replica_fixture
             .resource
             .cleanup(
-                replica_fixture.service.clone(),
+                replica_fixture.engine.clone(),
                 "mixed-load steady-state libsql-replica teardown",
             )
             .await?;
@@ -526,15 +526,15 @@ pub(super) async fn benchmark_mixed_multi_tenant_load(
                         MeasuredBackend::Sqlite => sqlite_seed,
                         MeasuredBackend::LibsqlReplica => replica_seed,
                     };
-                    let (service, resource) = seed
+                    let (engine, resource) = seed
                         .resource
-                        .reopen_service("mixed-load-cold", backend, environment)
+                        .reopen_engine("mixed-load-cold", backend, environment)
                         .await?;
                     let started = Instant::now();
                     run_mixed_load_sample(
                         "mixed-load cold-start sample",
                         exercise_mixed_load_sample(
-                            &service,
+                            &engine,
                             &seed.tenant_states,
                             MIXED_LOAD_TENANTS,
                             MIXED_LOAD_OPS_PER_TENANT,
@@ -543,7 +543,7 @@ pub(super) async fn benchmark_mixed_multi_tenant_load(
                     .await?;
                     let elapsed = started.elapsed();
                     resource
-                        .cleanup(service, "mixed-load cold-start teardown")
+                        .cleanup(engine, "mixed-load cold-start teardown")
                         .await?;
                     Ok(elapsed)
                 }
@@ -579,7 +579,7 @@ pub(super) async fn benchmark_barrier_refresh_latency(
     report: &mut BenchmarkReport,
 ) -> BenchResult<()> {
     run_workload(WorkloadKind::BarrierRefreshLatency, async {
-        let fixture = create_tenant_service(
+        let fixture = create_tenant_engine(
             "barrier-refresh",
             "barrier-refresh",
             MeasuredBackend::LibsqlReplica,
@@ -593,7 +593,7 @@ pub(super) async fn benchmark_barrier_refresh_latency(
                 let fixture = fixture.clone();
                 async move {
                     let created_id = fixture
-                        .service
+                        .engine
                         .insert_document_async(
                             fixture.tenant_id.clone(),
                             tasks_table(),
@@ -611,7 +611,7 @@ pub(super) async fn benchmark_barrier_refresh_latency(
                         .await?;
                     let started = Instant::now();
                     let document = fixture
-                        .service
+                        .engine
                         .get_document_async(fixture.tenant_id.clone(), tasks_table(), created_id)
                         .await?;
                     black_box(document);
@@ -623,7 +623,7 @@ pub(super) async fn benchmark_barrier_refresh_latency(
         fixture
             .resource
             .cleanup(
-                fixture.service.clone(),
+                fixture.engine.clone(),
                 "barrier-refresh libsql-replica teardown",
             )
             .await?;

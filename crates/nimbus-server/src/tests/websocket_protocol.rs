@@ -55,8 +55,8 @@ async fn wait_for_subscription_documents(
 
 #[tokio::test]
 async fn websocket_protocol_rejects_no_overlap_with_structured_http_error() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());
@@ -94,8 +94,8 @@ async fn websocket_protocol_rejects_no_overlap_with_structured_http_error() {
 
 #[tokio::test]
 async fn websocket_protocol_v2_echoes_subprotocol_and_sends_hello_immediately() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());
@@ -181,8 +181,8 @@ async fn convex_websocket_subscription_projects_live_system_subscription_state()
         "subscriptions:list",
         "subscriptions"
     )]));
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     crate::system_tenant::prepare_system_tenant_async(&service, None)
         .await
         .expect("system tenant should prepare");
@@ -332,8 +332,8 @@ async fn convex_websocket_subscription_projects_live_system_subscription_state()
 
 #[tokio::test]
 async fn websocket_protocol_v2_times_out_missing_client_hello() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());
@@ -384,12 +384,9 @@ async fn websocket_protocol_v2_times_out_missing_client_hello() {
 
 #[tokio::test]
 async fn websocket_protocol_rejects_missing_subprotocol_header() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(
-        fixture.service(),
-        ConvexRegistry::empty(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server =
+        ServerFixture::start(router_for_convex(fixture.engine(), ConvexRegistry::empty())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());
@@ -417,8 +414,8 @@ async fn websocket_protocol_rejects_missing_subprotocol_header() {
 
 #[tokio::test]
 async fn websocket_protocol_rejects_explicit_v1_only_offer() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());

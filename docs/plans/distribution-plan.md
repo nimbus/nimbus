@@ -353,8 +353,9 @@ feature. The machine VM itself provides the isolation boundary from macOS.
 The nimbus server inside the VM is the **same binary** as on Linux
 production. The only difference is that services use crun's standard
 container mode (namespaces + cgroups) instead of the krun handler
-(microVMs). The API surface is identical — `ctx.services.db.port` works
-the same way.
+(microVMs). The service capability contract is identical — declared service
+bindings are reached through the explicit Nimbus SDK or Nimbus-native
+service/session surface.
 
 #### Podman parity
 
@@ -1015,7 +1016,7 @@ needed beyond keeping the archive layout guard in the release workflow.
 | D3: COPR (Fedora) | `in_progress` | D1 | shared `nfpm`-based package builder, deterministic Fedora/COPR SRPM bridge, release-driven mirror workflow, and `nimbus-libkrun` SRPM/RPM lane landed; live COPR publication and first `dnf copr enable ...` proof remain |
 | D4a: Homebrew + krunkit | `done` | D1 | Apple Silicon, macOS 14+ cask ships bundled `gvproxy`, owns `krunkit`, auto-updates from the release workflow, and now has both isolated release-proof and real `brew upgrade` validation |
 | D4b: Guest VM image | `done` | D4a | current macOS v1 contract is the pinned Podman machine image plus host-managed guest-binary sync; `nimbus/machine-os` remains the future Nimbus-owned bootc supply-side track |
-| D4c: API + port forwarding | `done` | D4b | `nimbus start` now auto-starts an initialized macOS machine for container-backed Compose projects, then proves host `/health`, forwarded machine API, `ctx.services` activation, localhost service reachability, native `/ws` push, and tenant teardown on the real host |
+| D4c: API + port forwarding | `done` | D4b | `nimbus start` now auto-starts an initialized macOS machine for container-backed Compose projects, then proves host `/health`, forwarded machine API, declared service binding readiness, localhost service reachability, native `/ws` push, and tenant teardown on the real host |
 | D5: Cloud VM images | `todo` | D2 or D3 | Packer |
 
 ---

@@ -66,7 +66,7 @@ pub(super) fn parse_port_binding(
 
     if index > 0 {
         warnings.push(format!(
-            "ports[{index}]: additional exposed port {guest_port} will be available through ctx.services.<name>.endpoints"
+            "ports[{index}]: additional exposed port {guest_port} will be available through the declared service binding"
         ));
     }
 

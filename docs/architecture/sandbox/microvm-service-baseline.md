@@ -11,6 +11,13 @@ phase-by-phase closeout evidence live in the archived plans:
 - [`docs/plans/archive/service-control-plane-plan.md`](../../plans/archive/service-control-plane-plan.md)
 - [`docs/plans/archive/macos-machine-support-plan.md`](../../plans/archive/macos-machine-support-plan.md)
 
+Resource vocabulary for services, sandboxes, future sessions, and runtime
+isolates is canonical in
+[`service-sandbox-session-model.md`](service-sandbox-session-model.md). This
+baseline describes the current sandbox-backed service implementation; future
+built-in and external service implementations use the same service noun without
+changing this microVM baseline.
+
 ## Scope
 
 - Linux is the production platform for hardware-isolated service microVMs.
@@ -19,10 +26,37 @@ phase-by-phase closeout evidence live in the archived plans:
   same way Podman works on macOS today.
 - `nimbus-runtime` stays execution-only.
 - `nimbus-sandbox` stays isolation-only.
-- `nimbus-server` owns service activation, request-time binding, and
-  `ctx.services.*` projection.
+- `nimbus-server` owns service activation, request-time binding, SDK
+  control-plane routing, and any explicit Nimbus-managed isolate host transport.
+  Adapter-created contexts do not receive Nimbus service shortcuts.
 - `nimbus-bin` owns Compose parsing, service CLI commands, and server startup
   wiring such as `--compose-file`.
+
+## Resource Vocabulary
+
+The Docker Compose origin of the word "service" remains valid. A Compose
+`services:` entry is a named app dependency. Nimbus lowers that dependency into
+a `ServiceImplementation`, manages it through `ServiceManager`, and starts
+it through a `SandboxBackend`.
+
+The nouns stay separate:
+
+- **Service:** tenant plus service name, readiness, lifecycle, and endpoints.
+  Services are name-addressable because app dependencies are name-addressable.
+  Compose-backed services are sandbox-backed, while the broader service model
+  also allows built-in and external implementations.
+- **Sandbox:** isolated execution resource and backend handle. Sandboxes are
+  addressed by sandbox id or returned handle, not by name.
+- **Session:** future scoped lease/interactions channel over a service or
+  sandbox. A service-targeted session uses a service name as its target; a
+  sandbox-targeted session uses a sandbox id.
+- **Runtime isolate:** invocation execution domain. It is not a service, not a
+  user-addressable sandbox, and not a session target. A future explicit
+  isolate-backed sandbox would use `profile: "isolate"` and the normal sandbox
+  lifecycle/policy contract.
+
+Today, Compose-backed services are sandbox-backed. That does not make a sandbox
+name-resolvable, and creating a sandbox does not implicitly publish a service.
 
 ## Architecture
 
@@ -33,7 +67,7 @@ Current implementation by layer:
 | Execution runtime | V8 backend in `nimbus-runtime` | code execution only |
 | Isolation backend | krun backend in `nimbus-sandbox` | OCI lowering, lifecycle, logs, manifests |
 | VM launch stack | `buildah` + `conmon` + `nimbus-crun` + `nimbus-libkrun` | private Nimbus runtime stack orchestration |
-| Service manager | `SandboxServiceManager` in `nimbus-server` | declared services, activation, readiness, teardown |
+| Service manager | `ServiceManager` in `nimbus-server` | declared services, activation, readiness, teardown |
 | Developer/operator UX | `nimbus-bin` | Compose validation and `nimbus compose ...` |
 
 Linux request path:
@@ -42,8 +76,8 @@ Linux request path:
 compose.yaml / image / build context
   -> nimbus-bin validates and lowers service intent
   -> nimbus-server owns declared services and activation
-  -> runtime snapshots ready bindings for ctx.services.<name>
-  -> await ctx.services.get("<name>") triggers cancellable activation when needed
+  -> SDK/control-plane requests or explicit isolate host transport trigger cancellable activation when needed
+  -> declared service bindings return tenant-scoped endpoints
   -> nimbus-sandbox krun backend materializes OCI bundle + state
   -> conmon -> patched /usr/libexec/nimbus/crun -> private nimbus-libkrun VM
   -> guest service answers via TSI-mapped host port
@@ -119,10 +153,15 @@ Preferred probe hierarchy by platform:
 - `nimbus-sandbox` must expose generic sandbox nouns, not krun-specific public
   API.
 - The server owns the service registry and activation lifecycle.
-- `ctx.services.<name>` exposes only bindings that were already resolved before
-  invocation; `await ctx.services.get("<name>")` is the activation path for
-  missing declared services. Protocol-specific clients remain the application's
-  responsibility.
+- Declared service bindings are available only through the explicit
+  `@nimbus/nimbus` SDK/control plane or a Nimbus-managed isolate host transport
+  that is installed for an allowed tier, principal, and exact service grant set.
+  Protocol-specific clients remain the application's responsibility. Adapter
+  public APIs must not grow Nimbus-specific service shortcuts; see the
+  capability segregation plan for the boundary.
+- Service resolution is tenant plus service name. Sandbox operations target
+  sandbox ids/handles. Future sessions target either `{ service: { name } }` or
+  `{ sandbox: { id } }`; sessions are not a separate name registry.
 - The guest service is not treated as ready just because OCI/crun reports
   `"running"`; readiness is gated on actual service reachability.
 - Host-side krun bundles stay root for `/dev/kvm`; image `USER` is preserved
@@ -180,8 +219,8 @@ Production tenant isolation requires these additional boundaries:
   `docs/plans/archive/enterprise-policy-and-sandbox-egress-plan.md`.
 - **HostBridge and runtime grants:** in-process runtime code receives only the
   invocation tenant and exact grants. It cannot request another tenant's
-  service binding, and network grants must not let it bypass `ctx.services` by
-  scanning localhost ports.
+  service binding, and network grants must not let it bypass the service
+  capability route by scanning localhost ports.
 - **Cleanup:** tenant deletion stops tenant-owned services, releases ports,
   removes tenant-owned sandbox artifacts and volumes, and does not touch other
   tenants.
@@ -232,9 +271,8 @@ Nimbus currently exposes three operator paths relevant to services and macOS
 developer machines:
 
 - `nimbus start --compose-file ./compose.yaml`
-  starts the server with a declared service catalog available for
-  snapshot projection through `ctx.services.<name>` and request-time activation
-  through `ctx.services.get(...)`
+  starts the server with a declared service catalog available to explicit
+  Nimbus SDK or Nimbus-native service/session surfaces
 - `nimbus compose ...`
   manages those services explicitly through the same backend-owned state model
 - `nimbus machine ...`

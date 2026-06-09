@@ -114,7 +114,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
         subscription_rx,
         outbound_tx.clone(),
         transforms.clone(),
-        state.service.clone(),
+        state.engine.clone(),
         convex_registry.clone(),
         state.runtime_service_registry(),
         tenant_context.clone(),
@@ -161,7 +161,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
 
     runtime_cancellation.cancel_due_to_disconnect();
     forwarding::unsubscribe_active_subscriptions(
-        &state.service,
+        &state.engine,
         &tenant_id,
         active_subscriptions,
         &outbound_tx,
@@ -187,7 +187,7 @@ pub(super) async fn record_active_subscription_status(
         query_key,
     };
     if let Err(error) = nimbus_system::record_subscription_state_async(
-        &ctx.state.service,
+        &ctx.state.engine,
         &record.tenant_id,
         record.adapter,
         record.subscription_id,
@@ -222,7 +222,7 @@ fn subscription_status(
 }
 
 async fn record_subscription_delivery_status(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     statuses: &SubscriptionStatuses,
     subscription_id: u64,
 ) {
@@ -240,7 +240,7 @@ async fn record_subscription_delivery_status(
 }
 
 async fn record_subscription_error_status(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     statuses: &SubscriptionStatuses,
     subscription_id: u64,
     message: &str,
@@ -260,7 +260,7 @@ async fn record_subscription_error_status(
 }
 
 async fn delete_subscription_status(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     statuses: &SubscriptionStatuses,
     subscription_id: u64,
 ) {

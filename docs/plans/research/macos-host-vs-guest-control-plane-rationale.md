@@ -160,7 +160,8 @@ That second meaning is the more important one for architecture.
 
 The current baseline says:
 
-- `nimbus-server` owns service activation and `ctx.services.*`
+- `nimbus-server` owns service activation plus SDK/native service capability
+  routing
 - Linux request-time activation runs through the local server-owned service
   manager
 - macOS v1 should not add a second host-side orchestration path
@@ -175,7 +176,7 @@ The Linux request path today is:
 compose.yaml / image / build context
   -> nimbus-bin validates and lowers service intent
   -> nimbus-server owns declared services and activation
-  -> ctx.services.<name> triggers ensure_service_binding(...)
+  -> explicit Nimbus SDK/native service request triggers ensure_service_binding(...)
   -> nimbus-sandbox krun backend materializes OCI bundle + state
   -> conmon -> patched crun -> libkrun VM
   -> guest service answers via host-side binding
@@ -411,7 +412,7 @@ Repo outputs:
 
 - mac-aware host-resident `nimbus serve`
 - host runtime/storage path remains authoritative on macOS
-- `ctx.services.*` activation routes through the guest machine-API client
+- SDK/native service activation routes through the guest machine-API client
 - docs for hybrid host-runtime plus guest-services workflow
 
 Acceptance criteria:

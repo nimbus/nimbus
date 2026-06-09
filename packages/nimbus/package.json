@@ -1,5 +1,5 @@
 {
-  "name": "nimbus",
+  "name": "@nimbus/nimbus",
   "version": "0.1.33",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
@@ -10,11 +10,12 @@
     "typecheck": "node ./src/selftest.mjs --typecheck-only"
   },
   "exports": {
+    ".": "./src/index.ts",
     "./react": "./src/react.ts",
     "./browser": "./src/browser.ts",
     "./server": "./src/server.ts",
     "./values": "./src/values.ts",
-    "./rest": "./src/rest.ts"
+    "./transports/rest": "./src/transports/rest.ts"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",

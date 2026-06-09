@@ -6,7 +6,7 @@ use nimbus_core::{
     CronJob, CronSchedule, DocumentId, Error, Mutation, Result, ScheduledJob, ScheduledJobOutcome,
     ScheduledJobResult, TableName, TenantId,
 };
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_machine::{MachineConfigRecord, MachineLifecycle, MachineStateRecord};
 use nimbus_sandbox::{PublishedEndpointProtocol, SandboxBackendKind, SandboxHandle, SandboxStatus};
 use serde_json::{Map, Value, json};
@@ -28,15 +28,15 @@ use super::keys::{
 };
 use super::schema::system_table_schemas;
 
-pub async fn ensure_system_tenant_async(service: &Arc<Service>) -> Result<()> {
+pub async fn ensure_system_tenant_async(engine: &Arc<Engine>) -> Result<()> {
     let tenant_id = system_tenant_id()?;
-    match service.create_tenant_async(tenant_id.clone()).await {
+    match engine.create_tenant_async(tenant_id.clone()).await {
         Ok(()) | Err(Error::AlreadyExists(_)) => {}
         Err(error) => return Err(error),
     }
 
     for schema in system_table_schemas()? {
-        service
+        engine
             .set_table_schema_async(tenant_id.clone(), schema)
             .await?;
     }
@@ -45,27 +45,27 @@ pub async fn ensure_system_tenant_async(service: &Arc<Service>) -> Result<()> {
 }
 
 pub async fn prepare_system_tenant_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     listen_addr: Option<SocketAddr>,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
-    record_system_status_async(service, listen_addr).await?;
-    seed_system_documents_async(service, listen_addr).await?;
-    sync_all_scheduler_state_async(service).await
+    ensure_system_tenant_async(engine).await?;
+    record_system_status_async(engine, listen_addr).await?;
+    seed_system_documents_async(engine, listen_addr).await?;
+    sync_all_scheduler_state_async(engine).await
 }
 
 pub(crate) async fn record_system_status_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     listen_addr: Option<SocketAddr>,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
-    let started_at = existing_system_started_at_async(service).await?;
+    ensure_system_tenant_async(engine).await?;
+    let started_at = existing_system_started_at_async(engine).await?;
     let mut details = Map::new();
     if let Some(listen_addr) = listen_addr {
         details.insert("listenAddress".to_owned(), json!(listen_addr.to_string()));
     }
     upsert_system_document_async(
-        service,
+        engine,
         "system_status",
         "system:server",
         object_fields(json!({
@@ -81,13 +81,13 @@ pub(crate) async fn record_system_status_async(
 }
 
 pub async fn record_service_handle_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     handle: &SandboxHandle,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
+    ensure_system_tenant_async(engine).await?;
     let service_id = service_document_id(tenant_id, &handle.name);
-    delete_service_port_documents_async(service, &service_id).await?;
+    delete_service_port_documents_async(engine, &service_id).await?;
     let endpoints = handle
         .published_endpoints
         .iter()
@@ -102,7 +102,7 @@ pub async fn record_service_handle_async(
         .collect::<Vec<_>>();
 
     upsert_system_document_async(
-        service,
+        engine,
         "services",
         &service_id,
         object_fields(json!({
@@ -134,7 +134,7 @@ pub async fn record_service_handle_async(
             fields.insert("guestPort".to_owned(), json!(guest_port));
         }
         upsert_system_document_async(
-            service,
+            engine,
             "ports",
             &service_port_document_id(tenant_id, &handle.name, &endpoint.name),
             fields,
@@ -146,14 +146,14 @@ pub async fn record_service_handle_async(
 }
 
 pub async fn record_machine_state_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     config: &MachineConfigRecord,
     state: &MachineStateRecord,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
+    ensure_system_tenant_async(engine).await?;
     let paths = config.roots.paths(&config.name);
     upsert_system_document_async(
-        service,
+        engine,
         "machines",
         &machine_document_id(&config.name),
         object_fields(json!({
@@ -183,7 +183,7 @@ pub async fn record_machine_state_async(
         state.lifecycle.as_str()
     };
     upsert_system_document_async(
-        service,
+        engine,
         "listeners",
         &machine_listener_document_id(&config.name),
         object_fields(json!({
@@ -198,7 +198,7 @@ pub async fn record_machine_state_async(
 
     if let Some(runtime) = state.runtime.as_ref() {
         upsert_system_document_async(
-            service,
+            engine,
             "ports",
             &machine_port_document_id(&config.name, "ssh"),
             object_fields(json!({
@@ -215,26 +215,22 @@ pub async fn record_machine_state_async(
     Ok(())
 }
 
-pub async fn delete_machine_state_async(service: &Arc<Service>, name: &str) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
-    delete_system_document_if_exists_async(service, "machines", &machine_document_id(name)).await?;
+pub async fn delete_machine_state_async(engine: &Arc<Engine>, name: &str) -> Result<()> {
+    ensure_system_tenant_async(engine).await?;
+    delete_system_document_if_exists_async(engine, "machines", &machine_document_id(name)).await?;
     delete_system_document_if_exists_async(
-        service,
+        engine,
         "listeners",
         &machine_listener_document_id(name),
     )
     .await?;
-    delete_system_document_if_exists_async(
-        service,
-        "ports",
-        &machine_port_document_id(name, "ssh"),
-    )
-    .await?;
+    delete_system_document_if_exists_async(engine, "ports", &machine_port_document_id(name, "ssh"))
+        .await?;
     Ok(())
 }
 
 pub async fn record_system_event_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     source: &str,
     level: &str,
     category: &str,
@@ -242,8 +238,8 @@ pub async fn record_system_event_async(
     data: Value,
     correlation_id: Option<&str>,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
-    service
+    ensure_system_tenant_async(engine).await?;
+    engine
         .insert_document_async(
             system_tenant_id()?,
             TableName::new("events")?,
@@ -263,18 +259,18 @@ pub async fn record_system_event_async(
 
 #[derive(Clone)]
 pub struct SystemTenantStatusEvidenceWriter {
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     authority: TenantIsolationContext,
 }
 
 impl SystemTenantStatusEvidenceWriter {
-    pub fn new(service: Arc<Service>, authority: TenantIsolationContext) -> Self {
-        Self { service, authority }
+    pub fn new(engine: Arc<Engine>, authority: TenantIsolationContext) -> Self {
+        Self { engine, authority }
     }
 
-    pub fn operator(service: Arc<Service>, surface: &'static str) -> Result<Self> {
+    pub fn operator(engine: Arc<Engine>, surface: &'static str) -> Result<Self> {
         Ok(Self::new(
-            service,
+            engine,
             TenantIsolationContext::operator(system_tenant_id()?, surface),
         ))
     }
@@ -284,7 +280,7 @@ impl StatusEvidenceWriter for SystemTenantStatusEvidenceWriter {
     fn write_status<'a>(&'a self, write: StatusEvidenceWrite<'a>) -> HostLifecycleFuture<'a, ()> {
         Box::pin(async move {
             record_tenant_workload_status_async(
-                &self.service,
+                &self.engine,
                 &self.authority,
                 write.projection(),
                 write.status(),
@@ -295,14 +291,14 @@ impl StatusEvidenceWriter for SystemTenantStatusEvidenceWriter {
 }
 
 pub(crate) async fn record_tenant_workload_status_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     authority: &TenantIsolationContext,
     projection: &TenantSystemEvidenceProjection,
     status: &TenantWorkloadStatus,
 ) -> Result<()> {
     authority.ensure_system_or_operator_authority("_nimbus workload status projection")?;
     projection.ensure_status_matches(status)?;
-    ensure_system_tenant_async(service).await?;
+    ensure_system_tenant_async(engine).await?;
 
     let evidence = json!({
         "lifecycle": status.lifecycle_evidence(),
@@ -310,12 +306,12 @@ pub(crate) async fn record_tenant_workload_status_async(
         "cleanupProgress": status.cleanup_progress(),
         "correlationIds": status.evidence_correlation_ids(),
         "redactedFields": projection.redacted_fields(),
-        "workloadStableId": projection.workload_stable_id(),
+        "workloadSubject": projection.workload_subject(),
     });
     let diagnostics = serde_json::to_value(status.diagnostics())
         .map_err(|error| Error::Serialization(error.to_string()))?;
     upsert_system_document_async(
-        service,
+        engine,
         "workload_status",
         &workload_status_document_id(projection.tenant_id(), projection.workload_uid().as_str()),
         object_fields(json!({
@@ -335,12 +331,12 @@ pub(crate) async fn record_tenant_workload_status_async(
 }
 
 pub async fn record_table_state_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
-    let schema = match service
+    ensure_system_tenant_async(engine).await?;
+    let schema = match engine
         .get_table_schema_async(tenant_id.clone(), table.clone())
         .await
     {
@@ -348,12 +344,12 @@ pub async fn record_table_state_async(
         Err(Error::SchemaNotFound(_)) => None,
         Err(error) => return Err(error),
     };
-    let row_count = service
+    let row_count = engine
         .count_table_documents_async(tenant_id.clone(), table.clone())
         .await?;
     let document_id = table_document_id(tenant_id, table);
     if schema.is_none() && row_count == 0 {
-        delete_system_document_if_exists_async(service, "tables", &document_id).await?;
+        delete_system_document_if_exists_async(engine, "tables", &document_id).await?;
         return Ok(());
     }
 
@@ -370,7 +366,7 @@ pub async fn record_table_state_async(
                 .map_err(|error| Error::Serialization(error.to_string()))?,
         );
     }
-    upsert_system_document_async(service, "tables", &document_id, fields).await
+    upsert_system_document_async(engine, "tables", &document_id, fields).await
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -397,13 +393,13 @@ pub struct SystemDeploymentHttpRouteRecordInput<'a> {
 }
 
 pub async fn record_deployment_state_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     input: &SystemDeploymentRecordInput<'_>,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
+    ensure_system_tenant_async(engine).await?;
     let bundle_sha256 = deployment_bundle_sha256(input);
     upsert_system_document_async(
-        service,
+        engine,
         "bundles",
         &bundle_document_id(&bundle_sha256),
         object_fields(json!({
@@ -421,7 +417,7 @@ pub async fn record_deployment_state_async(
         .collect::<std::collections::BTreeSet<_>>();
     for function in &input.functions {
         upsert_system_document_async(
-            service,
+            engine,
             "functions",
             &function_document_id(&bundle_sha256, function.name),
             object_fields(json!({
@@ -432,7 +428,7 @@ pub async fn record_deployment_state_async(
         )
         .await?;
     }
-    delete_stale_deployment_documents_async(service, &bundle_sha256, &active_function_ids).await
+    delete_stale_deployment_documents_async(engine, &bundle_sha256, &active_function_ids).await
 }
 
 pub struct RunRecord<'a> {
@@ -445,11 +441,11 @@ pub struct RunRecord<'a> {
     pub error: Option<&'a str>,
 }
 
-pub async fn record_run_async(service: &Arc<Service>, record: RunRecord<'_>) -> Result<()> {
+pub async fn record_run_async(engine: &Arc<Engine>, record: RunRecord<'_>) -> Result<()> {
     if is_system_tenant_id(record.tenant_id) {
         return Ok(());
     }
-    ensure_system_tenant_async(service).await?;
+    ensure_system_tenant_async(engine).await?;
     let mut fields = object_fields(json!({
         "functionPath": record.function_path,
         "kind": record.kind,
@@ -460,20 +456,20 @@ pub async fn record_run_async(service: &Arc<Service>, record: RunRecord<'_>) -> 
     if let Some(error) = record.error {
         fields.insert("error".to_owned(), json!({ "message": error }));
     }
-    service
+    engine
         .insert_document_async(system_tenant_id()?, TableName::new("runs")?, fields)
         .await?;
     Ok(())
 }
 
 pub(crate) async fn record_scheduled_job_state_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     job: &ScheduledJob,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
+    ensure_system_tenant_async(engine).await?;
     upsert_system_document_async(
-        service,
+        engine,
         "scheduled_jobs",
         &scheduled_job_document_id(tenant_id, &job.id),
         scheduled_job_fields(tenant_id, &job.run_at, &job.mutation, "pending", None)?,
@@ -482,17 +478,17 @@ pub(crate) async fn record_scheduled_job_state_async(
 }
 
 pub async fn record_scheduled_job_result_state_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     result: &ScheduledJobResult,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
+    ensure_system_tenant_async(engine).await?;
     let status = match result.outcome {
         ScheduledJobOutcome::Completed => "completed",
         ScheduledJobOutcome::Failed => "failed",
     };
     upsert_system_document_async(
-        service,
+        engine,
         "scheduled_jobs",
         &scheduled_job_document_id(tenant_id, &result.id),
         scheduled_job_fields(
@@ -507,13 +503,13 @@ pub async fn record_scheduled_job_result_state_async(
 }
 
 pub async fn delete_scheduled_job_state_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     job_id: &DocumentId,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
+    ensure_system_tenant_async(engine).await?;
     delete_system_document_if_exists_async(
-        service,
+        engine,
         "scheduled_jobs",
         &scheduled_job_document_id(tenant_id, job_id),
     )
@@ -521,13 +517,13 @@ pub async fn delete_scheduled_job_state_async(
 }
 
 pub(crate) async fn record_cron_job_state_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     cron: &CronJob,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
+    ensure_system_tenant_async(engine).await?;
     upsert_system_document_async(
-        service,
+        engine,
         "cron_jobs",
         &cron_job_document_id(tenant_id, &cron.name),
         cron_job_fields(tenant_id, cron)?,
@@ -536,13 +532,13 @@ pub(crate) async fn record_cron_job_state_async(
 }
 
 pub async fn delete_cron_job_state_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     name: &str,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
+    ensure_system_tenant_async(engine).await?;
     delete_system_document_if_exists_async(
-        service,
+        engine,
         "cron_jobs",
         &cron_job_document_id(tenant_id, name),
     )
@@ -550,20 +546,20 @@ pub async fn delete_cron_job_state_async(
 }
 
 pub async fn sync_scheduler_state_for_tenant_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
-    let scheduled_jobs = service.list_scheduled_jobs_async(tenant_id.clone()).await?;
+    ensure_system_tenant_async(engine).await?;
+    let scheduled_jobs = engine.list_scheduled_jobs_async(tenant_id.clone()).await?;
     let active_scheduled_ids = scheduled_jobs
         .iter()
         .map(|job| scheduled_job_document_id(tenant_id, &job.id))
         .collect::<std::collections::BTreeSet<_>>();
     for job in &scheduled_jobs {
-        record_scheduled_job_state_async(service, tenant_id, job).await?;
+        record_scheduled_job_state_async(engine, tenant_id, job).await?;
     }
     delete_stale_scheduler_documents_async(
-        service,
+        engine,
         "scheduled_jobs",
         tenant_id,
         "pending",
@@ -571,16 +567,16 @@ pub async fn sync_scheduler_state_for_tenant_async(
     )
     .await?;
 
-    let cron_jobs = service.list_cron_jobs_async(tenant_id.clone()).await?;
+    let cron_jobs = engine.list_cron_jobs_async(tenant_id.clone()).await?;
     let active_cron_ids = cron_jobs
         .iter()
         .map(|cron| cron_job_document_id(tenant_id, &cron.name))
         .collect::<std::collections::BTreeSet<_>>();
     for cron in &cron_jobs {
-        record_cron_job_state_async(service, tenant_id, cron).await?;
+        record_cron_job_state_async(engine, tenant_id, cron).await?;
     }
     delete_stale_scheduler_documents_async(
-        service,
+        engine,
         "cron_jobs",
         tenant_id,
         "active",
@@ -590,7 +586,7 @@ pub async fn sync_scheduler_state_for_tenant_async(
 }
 
 pub async fn record_listener_state_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     adapter: &str,
     protocol: &str,
     address: &str,
@@ -598,7 +594,7 @@ pub async fn record_listener_state_async(
     version: Option<&str>,
     error: Option<&str>,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
+    ensure_system_tenant_async(engine).await?;
     let mut fields = object_fields(json!({
         "adapter": adapter,
         "protocol": protocol,
@@ -612,7 +608,7 @@ pub async fn record_listener_state_async(
         fields.insert("error".to_owned(), json!(error));
     }
     upsert_system_document_async(
-        service,
+        engine,
         "listeners",
         &listener_document_id(adapter, protocol),
         fields,
@@ -621,15 +617,15 @@ pub async fn record_listener_state_async(
 }
 
 pub async fn record_subscription_state_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     adapter: &str,
     subscription_id: u64,
     query_key: &str,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
+    ensure_system_tenant_async(engine).await?;
     upsert_system_document_async(
-        service,
+        engine,
         "subscriptions",
         &subscription_document_id(adapter, tenant_id, subscription_id),
         object_fields(json!({
@@ -644,7 +640,7 @@ pub async fn record_subscription_state_async(
 }
 
 pub async fn record_subscription_delivery_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     adapter: &str,
     subscription_id: u64,
@@ -653,20 +649,20 @@ pub async fn record_subscription_delivery_async(
     if is_system_tenant_id(tenant_id) {
         return Ok(());
     }
-    record_subscription_state_async(service, tenant_id, adapter, subscription_id, query_key).await
+    record_subscription_state_async(engine, tenant_id, adapter, subscription_id, query_key).await
 }
 
 pub async fn record_subscription_error_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     adapter: &str,
     subscription_id: u64,
     query_key: &str,
     error: &str,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
+    ensure_system_tenant_async(engine).await?;
     upsert_system_document_async(
-        service,
+        engine,
         "subscriptions",
         &subscription_document_id(adapter, tenant_id, subscription_id),
         object_fields(json!({
@@ -682,14 +678,14 @@ pub async fn record_subscription_error_async(
 }
 
 pub async fn delete_subscription_state_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     adapter: &str,
     subscription_id: u64,
 ) -> Result<()> {
-    ensure_system_tenant_async(service).await?;
+    ensure_system_tenant_async(engine).await?;
     delete_system_document_if_exists_async(
-        service,
+        engine,
         "subscriptions",
         &subscription_document_id(adapter, tenant_id, subscription_id),
     )
@@ -697,14 +693,14 @@ pub async fn delete_subscription_state_async(
 }
 
 async fn delete_system_document_if_exists_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     table: &str,
     document_id: &str,
 ) -> Result<()> {
     let tenant_id = system_tenant_id()?;
     let table = TableName::new(table.to_owned())?;
     let document_id = DocumentId::from_key(document_id.to_owned())?;
-    match service
+    match engine
         .delete_document_async(tenant_id, table, document_id)
         .await
     {
@@ -713,18 +709,15 @@ async fn delete_system_document_if_exists_async(
     }
 }
 
-async fn delete_service_port_documents_async(
-    service: &Arc<Service>,
-    service_id: &str,
-) -> Result<()> {
+async fn delete_service_port_documents_async(engine: &Arc<Engine>, service_id: &str) -> Result<()> {
     let tenant_id = system_tenant_id()?;
     let table = TableName::new("ports")?;
-    let documents = service
+    let documents = engine
         .list_documents_async(tenant_id.clone(), table.clone())
         .await?;
     for document in documents {
         if document.fields.get("serviceId") == Some(&json!(service_id)) {
-            service
+            engine
                 .delete_document_async(tenant_id.clone(), table.clone(), document.id)
                 .await?;
         }
@@ -732,22 +725,22 @@ async fn delete_service_port_documents_async(
     Ok(())
 }
 
-async fn sync_all_scheduler_state_async(service: &Arc<Service>) -> Result<()> {
-    let tenants = service.list_tenants_async().await?;
+async fn sync_all_scheduler_state_async(engine: &Arc<Engine>) -> Result<()> {
+    let tenants = engine.list_tenants_async().await?;
     for tenant_id in tenants {
         if is_reserved_tenant_id(&tenant_id) {
             continue;
         }
-        sync_scheduler_state_for_tenant_async(service, &tenant_id).await?;
+        sync_scheduler_state_for_tenant_async(engine, &tenant_id).await?;
     }
     Ok(())
 }
 
-async fn existing_system_started_at_async(service: &Arc<Service>) -> Result<u64> {
+async fn existing_system_started_at_async(engine: &Arc<Engine>) -> Result<u64> {
     let system_tenant = system_tenant_id()?;
     let table = TableName::new("system_status")?;
     let document_id = DocumentId::from_key("system:server")?;
-    match service
+    match engine
         .get_document_async(system_tenant, table, document_id)
         .await
     {
@@ -762,13 +755,13 @@ async fn existing_system_started_at_async(service: &Arc<Service>) -> Result<u64>
 }
 
 async fn delete_stale_deployment_documents_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     active_bundle_sha256: &str,
     active_function_ids: &std::collections::BTreeSet<String>,
 ) -> Result<()> {
     let system_tenant = system_tenant_id()?;
     let bundles_table = TableName::new("bundles")?;
-    let bundles = service
+    let bundles = engine
         .list_documents_async(system_tenant.clone(), bundles_table.clone())
         .await?;
     for bundle in bundles {
@@ -777,13 +770,13 @@ async fn delete_stale_deployment_documents_async(
         {
             continue;
         }
-        service
+        engine
             .delete_document_async(system_tenant.clone(), bundles_table.clone(), bundle.id)
             .await?;
     }
 
     let functions_table = TableName::new("functions")?;
-    let functions = service
+    let functions = engine
         .list_documents_async(system_tenant.clone(), functions_table.clone())
         .await?;
     for function in functions {
@@ -792,7 +785,7 @@ async fn delete_stale_deployment_documents_async(
         {
             continue;
         }
-        service
+        engine
             .delete_document_async(system_tenant.clone(), functions_table.clone(), function.id)
             .await?;
     }
@@ -801,7 +794,7 @@ async fn delete_stale_deployment_documents_async(
 }
 
 async fn delete_stale_scheduler_documents_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     table: &str,
     tenant_id: &TenantId,
     stale_status: &str,
@@ -809,7 +802,7 @@ async fn delete_stale_scheduler_documents_async(
 ) -> Result<()> {
     let system_tenant = system_tenant_id()?;
     let table_name = TableName::new(table.to_owned())?;
-    let documents = service
+    let documents = engine
         .list_documents_async(system_tenant.clone(), table_name.clone())
         .await?;
     for document in documents {
@@ -819,7 +812,7 @@ async fn delete_stale_scheduler_documents_async(
         {
             continue;
         }
-        service
+        engine
             .delete_document_async(system_tenant.clone(), table_name.clone(), document.id)
             .await?;
     }
@@ -921,12 +914,12 @@ fn cron_schedule_label(schedule: &CronSchedule) -> String {
 }
 
 async fn seed_system_documents_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     listen_addr: Option<SocketAddr>,
 ) -> Result<()> {
     for route in route_inventory() {
         upsert_system_document_async(
-            service,
+            engine,
             "routes",
             &route.document_id(),
             object_fields(json!({
@@ -942,7 +935,7 @@ async fn seed_system_documents_async(
 
     for capability in adapter_capability_inventory() {
         upsert_system_document_async(
-            service,
+            engine,
             "adapter_capabilities",
             &capability.document_id(),
             object_fields(json!({
@@ -958,7 +951,7 @@ async fn seed_system_documents_async(
 
     if let Some(listen_addr) = listen_addr {
         upsert_system_document_async(
-            service,
+            engine,
             "listeners",
             "listener:http",
             object_fields(json!({
@@ -983,7 +976,7 @@ fn unix_time_millis() -> Result<u64> {
 }
 
 async fn upsert_system_document_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     table: &str,
     document_id: &str,
     fields: Map<String, Value>,
@@ -992,13 +985,13 @@ async fn upsert_system_document_async(
     let table = TableName::new(table.to_owned())?;
     let document_id = DocumentId::from_key(document_id.to_owned())?;
 
-    match service
+    match engine
         .get_document_async(tenant_id.clone(), table.clone(), document_id.clone())
         .await
     {
         Ok(document) if document.fields == fields => return Ok(()),
         Ok(_) => {
-            service
+            engine
                 .update_document_async(tenant_id, table, document_id, fields)
                 .await?;
             return Ok(());
@@ -1007,7 +1000,7 @@ async fn upsert_system_document_async(
         Err(error) => return Err(error),
     }
 
-    match service
+    match engine
         .insert_document_async_with_id(
             tenant_id.clone(),
             table.clone(),
@@ -1018,7 +1011,7 @@ async fn upsert_system_document_async(
     {
         Ok(_) => Ok(()),
         Err(Error::AlreadyExists(_)) => {
-            service
+            engine
                 .update_document_async(tenant_id, table, document_id, fields)
                 .await?;
             Ok(())

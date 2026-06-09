@@ -222,7 +222,7 @@ See the [HTTP and WebSocket API reference](http-api.md) for the full route catal
 
 The native `nimbus/` source root is the preferred authoring mode for new Nimbus-native projects. When codegen detects both `nimbus/` and `convex/` directories, `nimbus/` takes priority. Generated files import from `nimbus/*` instead of `convex/*`.
 
-This is experimental. See the [source directory story](../../plans/stories/support-neovex-source-directory.md) for the full contract.
+This is experimental. See the [source directory story](../../plans/stories/support-nimbus-source-directory.md) for the full contract.
 
 ## Related Docs
 

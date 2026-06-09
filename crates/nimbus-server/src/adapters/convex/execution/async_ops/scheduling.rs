@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::adapters::convex) async fn execute_schedule_command_async(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     command: ConvexScheduledCommand,

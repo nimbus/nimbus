@@ -2,12 +2,12 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use nimbus_core::{Query, TableName};
-use nimbus_testing::ServiceFixture;
+use nimbus_testing::EngineFixture;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, timeout};
 
-use crate::{Service, SubscriptionUpdate};
+use crate::{Engine, SubscriptionUpdate};
 
 fn tasks_table() -> TableName {
     TableName::new("tasks").expect("table name should be valid")
@@ -30,14 +30,14 @@ fn subscription_channel() -> (
 }
 
 async fn wait_for_subscription_delivery_stats(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &nimbus_core::TenantId,
     description: &str,
     predicate: impl Fn(&crate::tenant::SubscriptionDeliveryStats) -> bool,
 ) -> crate::tenant::SubscriptionDeliveryStats {
     let started_at = tokio::time::Instant::now();
     loop {
-        let stats = service
+        let stats = engine
             .subscription_delivery_stats_for_testing(tenant_id)
             .expect("subscription delivery stats should load");
         if predicate(&stats) {
@@ -52,12 +52,12 @@ async fn wait_for_subscription_delivery_stats(
 }
 
 #[tokio::test]
-async fn service_mutation_returns_while_subscription_delivery_worker_is_blocked() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_mutation_returns_while_subscription_delivery_worker_is_blocked() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    let document_id = service
+    let document_id = engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -66,7 +66,7 @@ async fn service_mutation_returns_while_subscription_delivery_worker_is_blocked(
         .expect("seed insert should succeed");
 
     let (tx, mut rx) = subscription_channel();
-    let _subscription = service
+    let _subscription = engine
         .subscribe(&tenant_id, query_for("tasks"), "async-sub".to_string(), tx)
         .expect("subscribe should succeed");
     let _ = rx
@@ -74,12 +74,12 @@ async fn service_mutation_returns_while_subscription_delivery_worker_is_blocked(
         .await
         .expect("initial subscription update should arrive");
 
-    let pause = service
+    let pause = engine
         .subscription_delivery_pause_handle_for_testing(&tenant_id)
         .expect("pause handle should load");
     pause.arm();
 
-    service
+    engine
         .update_document(
             &tenant_id,
             tasks_table(),
@@ -119,7 +119,7 @@ async fn service_mutation_returns_while_subscription_delivery_worker_is_blocked(
     }
 
     let stats = wait_for_subscription_delivery_stats(
-        &service,
+        &engine,
         &tenant_id,
         "blocked worker reevaluation stats",
         |stats| stats.reevaluation_count >= 1 && stats.total_reevaluation_nanos > 0,
@@ -140,11 +140,11 @@ async fn service_mutation_returns_while_subscription_delivery_worker_is_blocked(
 
 #[tokio::test]
 async fn subscription_delivery_queue_overflow_falls_back_without_regressing_monotonicity() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    let document_id = service
+    let document_id = engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -153,7 +153,7 @@ async fn subscription_delivery_queue_overflow_falls_back_without_regressing_mono
         .expect("seed insert should succeed");
 
     let (tx, mut rx) = subscription_channel();
-    let _subscription = service
+    let _subscription = engine
         .subscribe(
             &tenant_id,
             query_for("tasks"),
@@ -166,15 +166,15 @@ async fn subscription_delivery_queue_overflow_falls_back_without_regressing_mono
         .await
         .expect("initial subscription update should arrive");
 
-    service
+    engine
         .set_subscription_delivery_queue_capacity_for_testing(&tenant_id, 1)
         .expect("queue capacity should be configurable for the test");
-    let pause = service
+    let pause = engine
         .subscription_delivery_pause_handle_for_testing(&tenant_id)
         .expect("pause handle should load");
     pause.arm();
 
-    service
+    engine
         .update_document(
             &tenant_id,
             tasks_table(),
@@ -187,7 +187,7 @@ async fn subscription_delivery_queue_overflow_falls_back_without_regressing_mono
         "worker should block on the first queued delivery"
     );
 
-    service
+    engine
         .update_document(
             &tenant_id,
             tasks_table(),
@@ -196,7 +196,7 @@ async fn subscription_delivery_queue_overflow_falls_back_without_regressing_mono
         )
         .expect("second update should queue behind the blocked delivery");
 
-    service
+    engine
         .update_document(
             &tenant_id,
             tasks_table(),
@@ -263,7 +263,7 @@ async fn subscription_delivery_queue_overflow_falls_back_without_regressing_mono
     );
 
     let stats = wait_for_subscription_delivery_stats(
-        &service,
+        &engine,
         &tenant_id,
         "overflow delivery stats",
         |stats| {
@@ -291,11 +291,11 @@ async fn subscription_delivery_queue_overflow_falls_back_without_regressing_mono
 
 #[tokio::test]
 async fn subscription_delivery_queue_merge_coalesces_overlapping_work_items() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    let document_id = service
+    let document_id = engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -304,7 +304,7 @@ async fn subscription_delivery_queue_merge_coalesces_overlapping_work_items() {
         .expect("seed insert should succeed");
 
     let (tx, mut rx) = subscription_channel();
-    let _subscription = service
+    let _subscription = engine
         .subscribe(
             &tenant_id,
             query_for("tasks"),
@@ -317,12 +317,12 @@ async fn subscription_delivery_queue_merge_coalesces_overlapping_work_items() {
         .await
         .expect("initial subscription update should arrive");
 
-    let pause = service
+    let pause = engine
         .subscription_delivery_pause_handle_for_testing(&tenant_id)
         .expect("pause handle should load");
     pause.arm();
 
-    service
+    engine
         .update_document(
             &tenant_id,
             tasks_table(),
@@ -335,7 +335,7 @@ async fn subscription_delivery_queue_merge_coalesces_overlapping_work_items() {
         "worker should pause after popping the first delivery item"
     );
 
-    service
+    engine
         .update_document(
             &tenant_id,
             tasks_table(),
@@ -371,7 +371,7 @@ async fn subscription_delivery_queue_merge_coalesces_overlapping_work_items() {
     );
 
     let stats =
-        wait_for_subscription_delivery_stats(&service, &tenant_id, "queue merge stats", |stats| {
+        wait_for_subscription_delivery_stats(&engine, &tenant_id, "queue merge stats", |stats| {
             stats.queue_depth == 0
                 && stats.queue_level_merge_count == 1
                 && stats.coalesced_work_count == 0
@@ -388,12 +388,12 @@ async fn subscription_delivery_queue_merge_coalesces_overlapping_work_items() {
 
 #[tokio::test]
 async fn journal_batch_coalesces_subscription_delivery_into_one_update() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
     let (tx, mut rx) = subscription_channel();
-    let _subscription = service
+    let _subscription = engine
         .subscribe(&tenant_id, query_for("tasks"), "batch-sub".to_string(), tx)
         .expect("subscribe should succeed");
     let _ = rx
@@ -401,16 +401,16 @@ async fn journal_batch_coalesces_subscription_delivery_into_one_update() {
         .await
         .expect("initial subscription update should arrive");
 
-    let pause = service
+    let pause = engine
         .mutation_journal_pause_handle_for_testing(&tenant_id)
         .expect("journal pause handle should load");
     pause.arm();
 
     let first_insert = {
-        let service = Arc::clone(&service);
+        let engine = Arc::clone(&engine);
         let tenant_id = tenant_id.clone();
         tokio::spawn(async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -429,10 +429,10 @@ async fn journal_batch_coalesces_subscription_delivery_into_one_update() {
     );
 
     let second_insert = {
-        let service = Arc::clone(&service);
+        let engine = Arc::clone(&engine);
         let tenant_id = tenant_id.clone();
         tokio::spawn(async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -442,10 +442,10 @@ async fn journal_batch_coalesces_subscription_delivery_into_one_update() {
         })
     };
     let third_insert = {
-        let service = Arc::clone(&service);
+        let engine = Arc::clone(&engine);
         let tenant_id = tenant_id.clone();
         tokio::spawn(async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -528,7 +528,7 @@ async fn journal_batch_coalesces_subscription_delivery_into_one_update() {
     );
 
     let stats = wait_for_subscription_delivery_stats(
-        &service,
+        &engine,
         &tenant_id,
         "journal batch coalescing stats",
         |stats| {

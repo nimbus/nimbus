@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use extenddb_core::error::DynamoDbError;
 use nimbus_core::{PrincipalContext, TenantId};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 
 use crate::error::map_core_error;
@@ -211,10 +211,10 @@ pub fn tenant_context(tenant: TenantId, surface: &'static str) -> TenantIsolatio
 /// A mapped `DynamoDbError` if tenant creation fails for any reason other than
 /// the tenant already existing.
 pub fn ensure_tenant(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
 ) -> Result<(), DynamoDbError> {
-    match service.create_tenant(context.tenant_id().clone()) {
+    match engine.create_tenant(context.tenant_id().clone()) {
         Ok(()) | Err(nimbus_core::Error::AlreadyExists(_)) => Ok(()),
         Err(error) => Err(map_core_error(error)),
     }
@@ -321,9 +321,9 @@ mod tests {
     #[test]
     fn ensure_tenant_is_idempotent() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
         let context = tenant_context(tenant("acme"), "DynamoDB test");
-        ensure_tenant(&service, &context).expect("first create");
-        ensure_tenant(&service, &context).expect("idempotent second create");
+        ensure_tenant(&engine, &context).expect("first create");
+        ensure_tenant(&engine, &context).expect("idempotent second create");
     }
 }

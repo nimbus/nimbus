@@ -74,6 +74,27 @@ Shared capabilities then execute those generic inputs and return generic
 results. Provider shims own the last-mile translation back into
 provider-observable result shapes.
 
+### Tenant Bundles Stay Non-Operator Realms
+
+Tenant runtime bundles are a tenant/spawned-workload realm. They may import the
+high-level `@nimbus/nimbus` SDK and authenticate through workload identity, but
+they must not import low-level or operator-only transport entries such as
+`@nimbus/nimbus/transports/rest`, and they must not package local-admin tokens,
+operator session material, static Nimbus control-plane tokens, or
+`LocalAdminTokenRecord`-class credential objects.
+
+The guard is enforced in two places:
+
+- codegen tenant bundle admission rejects static imports, dynamic imports,
+  requires, and re-exports of operator-only Nimbus transport entries, plus
+  obvious operator credential markers;
+- the V8 runtime module loader repeats the operator-only transport denylist so a
+  bundle cannot reach that low-level path by bypassing codegen.
+
+This is a realm-separation rule, not a substitute for server authorization:
+route policy still resolves the caller's principal class and exact grants
+server-side.
+
 ## Naming Rules
 
 - Shared modules must use provider-neutral names.

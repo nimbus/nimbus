@@ -45,18 +45,39 @@ The current landed architecture now reflects the following settled rules:
 
 ## Tenant Workload Identity
 
-Tenant-isolated work now has one canonical workload/audit identity projection:
-`TenantWorkloadStableIdentity`, produced from an admitted
-`TenantIsolationDecision`.
+Tenant-isolated work now uses two explicit workload identity shapes:
 
-The admitted decision/audit ID format is:
+- `WorkloadAttributes` is the pre-admission description of the requested work:
+  kind, name, runtime tier, sandbox backend, sandbox ID, and invocation ID.
+- `WorkloadIdentity` is the admitted identity projection produced only from a
+  `TenantIsolationDecision`. It is tenant-scoped by construction and is the
+  source for provider subjects, SPIFFE paths, credential claims, and audit
+  evidence.
+
+`WorkloadIdentity.subject()` is the low-cardinality provider-policy subject. It
+intentionally excludes placement and per-invocation fields:
 
 ```text
 nimbus-workload:v1
   /tenant/<tenant_id>
   /deployment/<generation|none>
   /surface/<admission_surface>
-  /kind/<runtime_function|sandbox_service|http_request|system_task>
+  /kind/<runtime_function|service|http_request|system_task>
+  /name/<percent-escaped service-or-function>
+  /runtime-tier/<tier|none>
+  /runtime-backend/<backend|none>
+  /sandbox-backend/<backend|none>
+```
+
+`WorkloadIdentity.audit_projection()` is the full evidence projection. It keeps
+the same prefix and appends placement/invocation fields:
+
+```text
+nimbus-workload-audit:v1
+  /tenant/<tenant_id>
+  /deployment/<generation|none>
+  /surface/<admission_surface>
+  /kind/<runtime_function|service|http_request|system_task>
   /name/<percent-escaped service-or-function>
   /runtime-tier/<tier|none>
   /runtime-backend/<backend|none>
@@ -67,22 +88,22 @@ nimbus-workload:v1
   /invocation/<invocation_id|none>
 ```
 
-The same projection can render a SPIFFE-style audit path:
+The subject can render a SPIFFE-style workload path:
 
 ```text
-/nimbus/workload/v1/tenant/.../invocation/...
+/nimbus/workload/v1/tenant/.../sandbox-backend/...
 ```
 
-and a full ID when a trust domain is configured:
+and a full SPIFFE ID when a trust domain is configured:
 
 ```text
-spiffe://<trust-domain>/nimbus/workload/v1/tenant/.../invocation/...
+spiffe://<trust-domain>/nimbus/workload/v1/tenant/.../sandbox-backend/...
 ```
 
 Rules:
 
-- The admitted workload/audit identity is derived only after tenant admission;
-  lower seams do not assemble it from caller-supplied tenant strings.
+- The admitted workload identity is derived only after tenant admission; lower
+  seams do not assemble it from caller-supplied tenant strings.
 - Tenant ID, deployment generation, admission surface, service/function name,
   runtime tier/backend, sandbox backend, node/machine, sandbox, and invocation
   IDs are explicit fields. Fields that do not apply render as `none`, rather
@@ -93,11 +114,11 @@ Rules:
   for one execution location cannot be silently reused as another admitted
   execution context.
 - Future service-identity providers must derive provider-auth subjects from
-  this admitted projection, but the provider policy subject should be a stable,
-  low-cardinality workload projection. Placement and per-invocation fields
-  (`node_id`, `machine_id`, `sandbox_id`, `invocation_id`, decision ID) belong
-  in signed credential/audit claims unless a provider explicitly requires a
-  stronger placement-bound subject.
+  `WorkloadIdentity.subject()`. Placement and per-invocation fields
+  (`node_id`, `machine_id`, `sandbox_id`, `invocation_id`, decision ID, and
+  `WorkloadIdentity.audit_projection()`) belong in signed credential/audit
+  claims unless a provider explicitly requires a stronger placement-bound
+  subject.
 - Secret-management and service-identity providers must not mint credentials
   from only `tenant_id`, raw bearer claims, or process-local runtime context.
 
@@ -123,9 +144,9 @@ Event kinds are:
 
 Every event carries tenant ID, surface, principal class, result, reason code,
 correlation IDs, audit redaction fields, and any available decision ID,
-stable workload ID, workload kind/name, runtime tier, sandbox ID, invocation
-ID, and service name. Decision-backed events derive those fields from the
-admitted decision, not from caller-supplied strings.
+workload subject, workload audit projection, workload kind/name, runtime tier,
+sandbox ID, invocation ID, and service name. Decision-backed events derive those
+fields from the admitted decision, not from caller-supplied strings.
 
 Sensitive attributes are redacted by the event schema. Attribute and
 correlation-ID keys that name bearer claims, authorization headers, cookies,

@@ -168,13 +168,17 @@ define the versioned operation family that engines must preserve. The transport
 is engine-specific:
 
 - Deno/V8 transports host calls through Deno ops.
-- Bun/JSC should transport host calls through JSC host functions.
+- Bun/JSC should transport host calls through JSC host functions only after the
+  backend proves the same capability gating, exact-grant checks, partitioning,
+  and tests as the Deno/V8 path. Until then, service-capability enablement fails
+  closed for Bun/JSC.
 - wasmtime should project host calls into typed WIT imports.
 
 The transport must preserve:
 
 - ABI version rejection
 - operation/payload mismatch rejection before adapter dispatch
+- absence of ungranted host-call families from the engine instance
 - sync versus async call behavior
 - cancellation propagation
 - `SharedInvocationPermit` pause/resume semantics during async host I/O
@@ -233,7 +237,7 @@ conceptual contract:
 | Responsibility | Deno/V8 implementation today | Future Bun/JSC equivalent | Future wasmtime equivalent |
 | --- | --- | --- | --- |
 | VM construction | `deno_core::JsRuntime` options, V8 snapshots, Deno extensions. | Bun/JSC VM initialization without Bun CLI process ownership. | `wasmtime::Engine`, component compilation, Store creation. |
-| Host calls | Deno ops backed by `HostBridge`. | JSC host functions backed by `HostBridge`. | WIT imports backed by `HostBridge` or typed capability adapters. |
+| Host calls | Deno ops backed by `HostBridge`, installed only for the admitted invocation capability set. | JSC host functions backed by `HostBridge`, installed only after an equivalent capability gate exists. | WIT imports backed by `HostBridge` or typed capability adapters. |
 | Bootstrap | Deno-op-backed JS installs `__nimbusCreateContext` and runtime globals. | JSC-host-function-backed JS installs the same Nimbus context contract. | Guest ABI bindings expose typed host capabilities. |
 | Module loading | Restricted `deno_core` loader, Node resolver, code cache. | Bun module loader/evaluator with Nimbus bundle root and package policy. | Component/module cache keyed by bundle hash. |
 | Event-loop progress | Deno/V8 event loop polling and promise settlement. | Bun/JSC event loop driving and promise settlement. | Store call/fuel loop or async component execution. |
@@ -256,12 +260,18 @@ split bootstrap ownership into two layers:
    - installs `__nimbusCreateContext`
    - defines stale-context generation checks
    - builds `ctx.db`, `ctx.scheduler`, `ctx.runQuery`, `ctx.runMutation`,
-     `ctx.runAction`, service-binding access, and runtime error normalization
+     `ctx.runAction`, and runtime error normalization
+   - keeps adapter-created contexts adapter-shaped; Nimbus service, sandbox, and
+     session lifecycle authority comes from the explicit `@nimbus/nimbus` SDK or
+     a separately gated Nimbus-managed isolate SDK host transport, not from
+     adapter `ctx` shortcuts
    - depends only on injected sync and async host-call primitives
 
 2. **Engine-owned host-call transport**
    - Deno/V8: injected primitives call Deno ops
-   - Bun/JSC: injected primitives call JSC host functions
+   - Bun/JSC: injected primitives call JSC host functions only after that
+     backend has equivalent host-transport gating, exact-grant checks,
+     partitioning, and tests
    - wasmtime: equivalent contract is typed imports rather than JavaScript
      globals
 

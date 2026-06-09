@@ -52,9 +52,9 @@ fn query_function(name: &str, table: &str) -> serde_json::Value {
 async fn bad_origin_returns_forbidden_before_local_admin_auth() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, _token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_firebase(FirebaseConfig::new())
             .with_local_server_security(local_server_security)
             .build(),
@@ -78,9 +78,9 @@ async fn bad_origin_returns_forbidden_before_local_admin_auth() {
 async fn native_api_and_debug_routes_require_local_admin_auth() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_firebase(FirebaseConfig::new())
             .with_local_server_security(local_server_security)
             .build(),
@@ -148,9 +148,9 @@ async fn deploy_admin_requires_local_admin_header_even_with_deploy_bearer() {
     let session = local_server_security
         .create_session_for_local_admin_token(&token.token)
         .expect("local session cookie should issue");
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .with_deploy_admin_token(DEPLOY_TOKEN)
             .build(),
@@ -206,9 +206,9 @@ async fn deploy_admin_requires_local_admin_header_even_with_deploy_bearer() {
 async fn native_websocket_requires_local_admin_auth() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, _token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -236,9 +236,9 @@ async fn native_websocket_requires_local_admin_auth() {
 async fn firebase_routes_remain_application_surfaces_without_local_admin_auth() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, _token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_firebase(FirebaseConfig::new())
             .with_local_server_security(local_server_security)
             .build(),
@@ -305,9 +305,9 @@ async fn firebase_routes_remain_application_surfaces_without_local_admin_auth() 
 async fn firebase_websocket_bad_origin_is_rejected_before_auth() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, _token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_firebase(FirebaseConfig::new())
             .with_local_server_security(local_server_security)
             .build(),
@@ -378,9 +378,9 @@ async fn convex_routes_keep_application_auth_and_reject_local_admin_bearers() {
             ]
         })),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
                 &registry,
             ))
@@ -466,9 +466,9 @@ async fn convex_route_rejects_application_bearer_for_different_tenant() {
             ]
         })),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
                 &registry,
             ))
@@ -578,8 +578,8 @@ async fn convex_http_action_rejects_application_bearer_for_different_tenant() {
             ]
         })),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     for tenant in ["tenant-a", "tenant-b"] {
         service
             .create_tenant(TenantId::new(tenant).expect("tenant id should parse"))
@@ -644,8 +644,8 @@ async fn convex_http_action_rejects_application_bearer_for_different_tenant() {
 async fn system_tenant_convex_routes_use_system_registry_not_application_registry() {
     let system_registry = convex_registry(json!([query_function("routes:list", "routes")]));
     let application_registry = convex_registry(json!([query_function("notes:list", "notes")]));
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     crate::system_tenant::prepare_system_tenant_async(&service, None)
         .await
         .expect("system tenant should prepare");
@@ -704,8 +704,8 @@ async fn system_tenant_convex_routes_require_local_admin_auth_when_configured() 
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, token) = local_server_security(temp.path());
     let system_registry = convex_registry(json!([query_function("routes:list", "routes")]));
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     crate::system_tenant::prepare_system_tenant_async(&service, None)
         .await
         .expect("system tenant should prepare");
@@ -774,7 +774,7 @@ globalThis.__nimbusInvoke = async function(request) {
       order: null,
       limit: null,
     },
-    session_id: `${request.kind}:${request.function_name}`,
+    host_call_session_id: `${request.kind}:${request.function_name}`,
   });
   return {
     status: "ok",
@@ -786,9 +786,9 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     crate::system_tenant::prepare_system_tenant_async(&service, None)
         .await
         .expect("system tenant should prepare");
@@ -856,9 +856,9 @@ async fn convex_websocket_bad_origin_is_rejected_before_auth() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, token) = local_server_security(temp.path());
     let registry = convex_registry(json!([]));
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
                 &registry,
             ))

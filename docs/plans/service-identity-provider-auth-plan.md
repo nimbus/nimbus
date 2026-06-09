@@ -3,10 +3,11 @@
 Canonical deferred design and execution plan for workload identity minting and
 provider-auth exchange in Nimbus.
 
-The tenant-isolation enterprise hardening work introduced
-`TenantWorkloadStableIdentity`, an admitted workload/audit projection derived
-from a `TenantIsolationDecision`. This plan owns the next layer:
-low-cardinality provider subjects, short-lived credentials, and service identity.
+The tenant-isolation enterprise hardening work introduced `WorkloadAttributes`
+for pre-admission workload facts and `WorkloadIdentity` for the admitted
+identity projection derived from a `TenantIsolationDecision`. This plan owns the
+next layer: low-cardinality provider subjects, short-lived credentials, and
+service identity.
 Secret management owns secret values and references; this plan owns identity
 minting and provider authentication.
 
@@ -21,8 +22,8 @@ minting and provider authentication.
   AWS IRSA/OIDC, GCP Workload Identity Federation, Azure federated
   credentials, SPIFFE/SPIRE SVIDs, mTLS client certificates, or signed
   service-account tokens.
-- **Canonical source:** `TenantWorkloadStableIdentity`
-- **Provider subject:** stable workload projection defined by SI0;
+- **Canonical source:** admitted `WorkloadIdentity`
+- **Provider subject:** `WorkloadIdentity.subject()` as defined by SI0;
   per-invocation and placement fields become credential claims, not the cloud
   provider allow-policy subject.
 - **Current posture reference:** `docs/tenant-isolation.md`
@@ -94,8 +95,8 @@ promoting implementation. The intended dependency posture is:
 
 ## Identity Contract
 
-The provider-auth subject is a stable workload projection derived from the
-admitted `TenantWorkloadStableIdentity`, not the full decision/audit string.
+The provider-auth subject is `WorkloadIdentity.subject()`, derived from the
+admitted `WorkloadIdentity`, not the full decision/audit projection.
 It intentionally excludes placement and per-credential fields such as
 `node_id`, `machine_id`, `sandbox_id`, and `invocation_id` so cloud provider
 policies do not need to change on every invocation or reschedule:
@@ -105,7 +106,7 @@ nimbus-workload:v1
   /tenant/<tenant_id>
   /deployment/<generation|none>
   /surface/<admission_surface>
-  /kind/<runtime_function|sandbox_service|http_request|system_task>
+  /kind/<runtime_function|service|http_request|system_task>
   /name/<percent-escaped service-or-function>
   /runtime-tier/<tier|none>
   /runtime-backend/<backend|none>
@@ -128,8 +129,8 @@ aud=<provider audience>
 exp=<short ttl>
 jti=<credential instance id>
 nimbus_decision_id=<tenant isolation decision id>
-nimbus_workload_stable_id=<stable workload subject>
-nimbus_workload_audit_projection_id=<full admitted audit projection>
+nimbus_workload_subject=<stable workload subject>
+nimbus_workload_audit_projection=<full admitted audit projection>
 nimbus_node_id=<node_id|none>
 nimbus_machine_id=<machine_id|none>
 nimbus_sandbox_id=<sandbox_id|none>
@@ -154,7 +155,7 @@ This plan is expected to cover the follow-up topics below when promoted:
 | Node and machine identity | Canonical `node_id` and `machine_id`; identity source for local machines, Linux hosts, microVM guests, and future cluster nodes; key rotation and compromised-node recovery. |
 | Runtime identity propagation | V8/Deno/Node, future Bun/JSC, and Wasm receive only scoped identity context; `HostBridge` rechecks the admitted identity projection on every host operation; raw service tokens do not enter guests or runtimes unless explicitly minted by this plan. |
 | Sandbox identity propagation | Server-owned OCI annotations/labels, microVM metadata, cgroup or sandbox audit labels, and denial of tenant-controlled identity fields. |
-| Audit and observability | Stable workload identity and decision ID in admission, runtime, sandbox, storage, HostBridge, mint, exchange, and secret-read events; redaction rules and enterprise evidence trail. |
+| Audit and observability | Workload subject, workload audit projection, and decision ID in admission, runtime, sandbox, storage, HostBridge, mint, exchange, and secret-read events; redaction rules and enterprise evidence trail. |
 | Policy admission | Matrix of which identities can request secret, service, network, and storage grants; deny-by-default behavior; conformance tests for forged tenant/workload/node identities. |
 
 ## Phase Ledger
@@ -179,8 +180,8 @@ This plan is expected to cover the follow-up topics below when promoted:
 - WASI agent HTTP/client credentials require service identity for production
   provider exchange; agent workloads must not invent identity from session IDs.
 - Browser session credentials remain secret references or provider-auth
-  projections, and browser operations audit against the stable workload
-  identity.
+  projections, and browser operations audit against the admitted
+  `WorkloadIdentity` subject and audit projection.
 - Wasmtime WIT host state carries workload identity internally; guest access to
   identity requires an explicit imported capability.
 - HostBridge implementations must recheck tenant, workload, grant, and
@@ -194,7 +195,7 @@ This plan is expected to cover the follow-up topics below when promoted:
 ## Acceptance Criteria
 
 - Every minted credential is short-lived and tied to an admitted
-  `TenantWorkloadStableIdentity` through a stable workload subject plus signed
+  `WorkloadIdentity` through a stable workload subject plus signed
   decision, placement, and invocation claims.
 - Every provider exchange records tenant ID, decision ID, workload subject,
   provider, audience, expiry, and result in tenant-safe audit events.

@@ -36,8 +36,8 @@ Reviewed against:
 
 The current macOS architecture is a hybrid control plane:
 
-- the macOS host owns the main Nimbus server, runtime, storage, and
-  the `ctx.services` snapshot plus activation path
+- the macOS host owns the main Nimbus server, runtime, storage, declared
+  service catalog, and SDK/native service capability routing
 - the Linux guest owns a narrow machine API and standard-container execution
   lane for service workloads
 - the current bring-up image comes from `nimbus/machine-os`, published to
@@ -173,9 +173,8 @@ Current implementation note:
   Nimbus bootc digest above
 - the full start-time convergence contract has now been proved end to end for
   the bootc-native path, including machine-config apply, forwarded machine-API
-  readiness, host service control, runtime `ctx.services.<name>.port` snapshot
-  reads, `await ctx.services.get("<name>")` activation, and the supported
-  recreate drill on isolated roots
+  readiness, host service control, declared service binding readiness, and the
+  supported recreate drill on isolated roots
 
 ### Important Packaging Contract
 
@@ -341,9 +340,9 @@ The host control path uses:
 
 ```mermaid
 flowchart TD
-    A["developer or runtime code on macOS host"] --> B["host nimbus server"]
-    B --> C["await ctx.services.get(\"db\")"]
-    C --> D["SandboxServiceManager on host"]
+    A["developer, SDK client, or allowed isolate host transport on macOS host"] --> B["host nimbus server"]
+    B --> C["SDK/control-plane or service-session request"]
+    C --> D["ServiceManager on host"]
     D --> E["ForwardedMachineApiSandboxBackend"]
     E --> F["MachineApiClient"]
     F --> G["host <machine>-api.sock"]
@@ -364,7 +363,7 @@ Host:
 - main Nimbus API
 - runtime execution
 - storage
-- `ctx.services` snapshot plus `ctx.services.get(...)` activation
+- SDK/native service capability routing
 - service catalog and manager orchestration
 
 Guest:
@@ -382,12 +381,12 @@ and forwards only the service-execution seam into the guest.
 
 ```mermaid
 flowchart TD
-    A["Linux host nimbus"] --> B["SandboxServiceManager"]
+    A["Linux host nimbus"] --> B["ServiceManager"]
     B --> C["krun-backed sandbox backend"]
     C --> D["conmon -> crun -> libkrun or KVM path"]
     D --> E["per-service microVM"]
     E --> F["published endpoint"]
-    F --> G["ctx.services.<name>.port snapshot"]
+    F --> G["declared service binding"]
 ```
 
 macOS is different:

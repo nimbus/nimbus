@@ -28,44 +28,44 @@ static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(mysql_provider)]
 async fn typed_mysql_config_supports_async_tenant_lifecycle_and_empty_read_paths() {
-    with_mysql_service_config(|service_config, _provider_config| async move {
+    with_mysql_engine_config(|engine_config, _provider_config| async move {
         let tenant_id = TenantId::new("mysql-tenant").expect("tenant id should build");
-        let service = Arc::new(
-            Service::new_with_persistence_config(service_config.clone())
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config.clone())
                 .await
-                .expect("mysql-backed service should create"),
+                .expect("mysql-backed engine should create"),
         );
 
-        service
+        engine
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
         assert_eq!(
-            service
+            engine
                 .list_tenants_async()
                 .await
                 .expect("tenant list should load"),
             vec![tenant_id.clone()]
         );
-        service
+        engine
             .ensure_tenant_exists_async(tenant_id.clone())
             .await
             .expect("tenant existence should verify");
         assert_eq!(
-            service
+            engine
                 .latest_sequence_async(tenant_id.clone())
                 .await
                 .expect("latest sequence should read"),
             SequenceNumber(0)
         );
         assert!(
-            service
+            engine
                 .query_documents_async(tenant_id.clone(), query_for("tasks"))
                 .await
                 .expect("empty query should succeed")
                 .is_empty()
         );
-        let bootstrap = service
+        let bootstrap = engine
             .export_durable_journal_bootstrap_async(tenant_id.clone())
             .await
             .expect("bootstrap should export");
@@ -74,13 +74,13 @@ async fn typed_mysql_config_supports_async_tenant_lifecycle_and_empty_read_paths
         assert_eq!(bootstrap.cursor_floor, SequenceNumber(0));
         assert!(bootstrap.snapshot.documents.is_empty());
 
-        service.quiesce().await;
-        drop(service);
+        engine.quiesce().await;
+        drop(engine);
 
         let reopened = Arc::new(
-            Service::new_with_persistence_config(service_config)
+            Engine::new_with_persistence_config(engine_config)
                 .await
-                .expect("mysql-backed service should reopen"),
+                .expect("mysql-backed engine should reopen"),
         );
         assert_eq!(
             reopened
@@ -108,24 +108,24 @@ async fn typed_mysql_config_supports_async_tenant_lifecycle_and_empty_read_paths
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(mysql_provider)]
 async fn typed_mysql_config_supports_async_schema_mutation_journal_and_scheduler_paths() {
-    with_mysql_service_config(|service_config, _provider_config| async move {
+    with_mysql_engine_config(|engine_config, _provider_config| async move {
         let tenant_id = TenantId::new("mysql-mutations").expect("tenant id should build");
-        let service = Arc::new(
-            Service::new_with_persistence_config(service_config)
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config)
                 .await
-                .expect("mysql-backed service should create"),
+                .expect("mysql-backed engine should create"),
         );
 
-        service
+        engine
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
-        service
+        engine
             .set_table_schema_async(tenant_id.clone(), tasks_schema())
             .await
             .expect("schema write should succeed");
 
-        let inserted_id = service
+        let inserted_id = engine
             .insert_document_async(
                 tenant_id.clone(),
                 tasks_table(),
@@ -133,7 +133,7 @@ async fn typed_mysql_config_supports_async_schema_mutation_journal_and_scheduler
             )
             .await
             .expect("insert should succeed");
-        service
+        engine
             .update_document_async(
                 tenant_id.clone(),
                 tasks_table(),
@@ -143,7 +143,7 @@ async fn typed_mysql_config_supports_async_schema_mutation_journal_and_scheduler
             .await
             .expect("update should succeed");
 
-        let scheduled_job_id = service
+        let scheduled_job_id = engine
             .schedule_mutation_async(
                 tenant_id.clone(),
                 ScheduleRequest {
@@ -161,7 +161,7 @@ async fn typed_mysql_config_supports_async_schema_mutation_journal_and_scheduler
             .await
             .expect("scheduled mutation should persist");
         assert_eq!(
-            service
+            engine
                 .list_scheduled_jobs_async(tenant_id.clone())
                 .await
                 .expect("pending jobs should load")
@@ -169,12 +169,12 @@ async fn typed_mysql_config_supports_async_schema_mutation_journal_and_scheduler
             1
         );
 
-        let claimed = service
+        let claimed = engine
             .claim_due_jobs_async(tenant_id.clone(), Timestamp(u64::MAX))
             .await
             .expect("claim should succeed");
         assert_eq!(claimed.len(), 1);
-        service
+        engine
             .record_scheduled_job_result_async(
                 tenant_id.clone(),
                 nimbus_core::ScheduledJobResult {
@@ -188,12 +188,12 @@ async fn typed_mysql_config_supports_async_schema_mutation_journal_and_scheduler
             )
             .await
             .expect("scheduled result should persist");
-        service
+        engine
             .complete_scheduled_job_async(tenant_id.clone(), scheduled_job_id.clone())
             .await
             .expect("scheduled completion should persist");
         assert_eq!(
-            service
+            engine
                 .get_scheduled_job_result_async(tenant_id.clone(), scheduled_job_id.clone())
                 .await
                 .expect("scheduled result should load")
@@ -201,7 +201,7 @@ async fn typed_mysql_config_supports_async_schema_mutation_journal_and_scheduler
             ScheduledJobOutcome::Completed
         );
 
-        let documents = service
+        let documents = engine
             .query_documents_async(tenant_id.clone(), query_for("tasks"))
             .await
             .expect("query should succeed");
@@ -214,18 +214,18 @@ async fn typed_mysql_config_supports_async_schema_mutation_journal_and_scheduler
             Some("Renamed")
         );
 
-        let bootstrap = service
+        let bootstrap = engine
             .export_durable_journal_bootstrap_async(tenant_id.clone())
             .await
             .expect("bootstrap should export");
-        let latest_sequence = service
+        let latest_sequence = engine
             .latest_sequence_async(tenant_id.clone())
             .await
             .expect("latest sequence should load");
         assert_eq!(bootstrap.bootstrap_cut, latest_sequence);
         assert_eq!(bootstrap.resume_after, latest_sequence);
 
-        service.quiesce().await;
+        engine.quiesce().await;
     })
     .await;
 }
@@ -233,14 +233,14 @@ async fn typed_mysql_config_supports_async_schema_mutation_journal_and_scheduler
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(mysql_provider)]
 async fn typed_mysql_config_collection_group_queries_use_path_binding_metadata() {
-    with_mysql_service_config(|service_config, _provider_config| async move {
+    with_mysql_engine_config(|engine_config, _provider_config| async move {
         let tenant_id = TenantId::new("mysql-collection-group").expect("tenant id should build");
-        let service = Arc::new(
-            Service::new_with_persistence_config(service_config)
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config)
                 .await
-                .expect("mysql-backed service should create"),
+                .expect("mysql-backed engine should create"),
         );
-        service
+        engine
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
@@ -249,7 +249,7 @@ async fn typed_mysql_config_collection_group_queries_use_path_binding_metadata()
         let nested_table = TableName::new("landmarks_nested").expect("table name should build");
         let other_table = TableName::new("landmarks_other").expect("table name should build");
         for table in [&direct_table, &nested_table, &other_table] {
-            service
+            engine
                 .set_table_schema_async(
                     tenant_id.clone(),
                     TableSchema {
@@ -271,7 +271,7 @@ async fn typed_mysql_config_collection_group_queries_use_path_binding_metadata()
         }
 
         seed_bound_collection_group_document(
-            &service,
+            &engine,
             &tenant_id,
             direct_table.clone(),
             "aa-top",
@@ -279,7 +279,7 @@ async fn typed_mysql_config_collection_group_queries_use_path_binding_metadata()
             [("rank", json!(1))],
         );
         seed_bound_collection_group_document(
-            &service,
+            &engine,
             &tenant_id,
             direct_table,
             "bb-top",
@@ -287,7 +287,7 @@ async fn typed_mysql_config_collection_group_queries_use_path_binding_metadata()
             [("rank", json!(2))],
         );
         seed_bound_collection_group_document(
-            &service,
+            &engine,
             &tenant_id,
             nested_table,
             "zz-top",
@@ -295,7 +295,7 @@ async fn typed_mysql_config_collection_group_queries_use_path_binding_metadata()
             [("rank", json!(3))],
         );
         seed_bound_collection_group_document(
-            &service,
+            &engine,
             &tenant_id,
             other_table,
             "cc-top",
@@ -303,7 +303,7 @@ async fn typed_mysql_config_collection_group_queries_use_path_binding_metadata()
             [("rank", json!(4))],
         );
 
-        let rows = service
+        let rows = engine
             .query_collection_group_documents_structured_with_principal_cancellable(
                 &tenant_id,
                 &CollectionName::new("landmarks").expect("collection group should parse"),
@@ -338,7 +338,7 @@ async fn typed_mysql_config_collection_group_queries_use_path_binding_metadata()
             "mysql collection-group queries should use the persisted path bindings and full document-path cursors"
         );
 
-        service.quiesce().await;
+        engine.quiesce().await;
     })
     .await;
 }
@@ -346,41 +346,41 @@ async fn typed_mysql_config_collection_group_queries_use_path_binding_metadata()
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(mysql_provider)]
 async fn mysql_background_poll_refreshes_loaded_runtime_schema_and_journal_state() {
-    with_shared_mysql_service_configs(
-        |service_config_a, service_config_b, _provider_config| async move {
+    with_shared_mysql_engine_configs(
+        |engine_config_a, engine_config_b, _provider_config| async move {
             let tenant_id = TenantId::new("mysql-poll-journal").expect("tenant id should build");
-            let service_a = Arc::new(
-                Service::new_with_persistence_config(service_config_a)
+            let engine_a = Arc::new(
+                Engine::new_with_persistence_config(engine_config_a)
                     .await
-                    .expect("first mysql-backed service should create"),
+                    .expect("first mysql-backed engine should create"),
             );
-            let service_b = Arc::new(
-                Service::new_with_persistence_config(service_config_b)
+            let engine_b = Arc::new(
+                Engine::new_with_persistence_config(engine_config_b)
                     .await
-                    .expect("second mysql-backed service should create"),
+                    .expect("second mysql-backed engine should create"),
             );
 
-            service_a
+            engine_a
                 .create_tenant_async(tenant_id.clone())
                 .await
                 .expect("tenant should create");
-            service_b
+            engine_b
                 .ensure_tenant_exists_async(tenant_id.clone())
                 .await
-                .expect("second service should load tenant");
+                .expect("second engine should load tenant");
             assert_eq!(
-                service_b
+                engine_b
                     .get_schema_async(tenant_id.clone())
                     .await
                     .expect("empty schema should load"),
                 nimbus_core::Schema::default()
             );
 
-            service_a
+            engine_a
                 .set_table_schema_async(tenant_id.clone(), tasks_schema())
                 .await
                 .expect("schema write should succeed");
-            service_a
+            engine_a
                 .insert_document_async(
                     tenant_id.clone(),
                     tasks_table(),
@@ -394,10 +394,10 @@ async fn mysql_background_poll_refreshes_loaded_runtime_schema_and_journal_state
                 Duration::from_secs(3),
                 Duration::from_millis(25),
                 || {
-                    let service = service_b.clone();
+                    let engine = engine_b.clone();
                     let tenant_id = tenant_id.clone();
                     async move {
-                        service
+                        engine
                             .get_schema_async(tenant_id)
                             .await
                             .expect("schema should load")
@@ -407,14 +407,14 @@ async fn mysql_background_poll_refreshes_loaded_runtime_schema_and_journal_state
             )
             .await;
             wait_for_mutation_journal_stats(
-                &service_b,
+                &engine_b,
                 &tenant_id,
                 "mysql poll should catch up journal heads",
                 |stats| stats.durable_head.0 >= 2 && stats.applied_head.0 >= 2,
             )
             .await;
 
-            let documents = service_b
+            let documents = engine_b
                 .query_documents_async(tenant_id.clone(), query_for("tasks"))
                 .await
                 .expect("caught-up query should succeed");
@@ -427,8 +427,8 @@ async fn mysql_background_poll_refreshes_loaded_runtime_schema_and_journal_state
                 Some("External")
             );
 
-            service_a.quiesce().await;
-            service_b.quiesce().await;
+            engine_a.quiesce().await;
+            engine_b.quiesce().await;
         },
     )
     .await;
@@ -437,33 +437,33 @@ async fn mysql_background_poll_refreshes_loaded_runtime_schema_and_journal_state
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(mysql_provider)]
 async fn mysql_background_poll_loads_unloaded_tenants_with_scheduled_work() {
-    with_shared_mysql_service_configs(
-        |service_config_a, service_config_b, _provider_config| async move {
+    with_shared_mysql_engine_configs(
+        |engine_config_a, engine_config_b, _provider_config| async move {
             let tenant_id = TenantId::new("mysql-poll-scheduler").expect("tenant id should build");
-            let service_a = Arc::new(
-                Service::new_with_persistence_config(service_config_a)
+            let engine_a = Arc::new(
+                Engine::new_with_persistence_config(engine_config_a)
                     .await
-                    .expect("first mysql-backed service should create"),
+                    .expect("first mysql-backed engine should create"),
             );
-            let service_b = Arc::new(
-                Service::new_with_persistence_config(service_config_b)
+            let engine_b = Arc::new(
+                Engine::new_with_persistence_config(engine_config_b)
                     .await
-                    .expect("second mysql-backed service should create"),
+                    .expect("second mysql-backed engine should create"),
             );
 
-            service_b
+            engine_b
                 .load_tenants_with_scheduled_work_async()
                 .await
                 .expect("initial scheduled-work preload should succeed");
-            service_a
+            engine_a
                 .create_tenant_async(tenant_id.clone())
                 .await
                 .expect("tenant should create");
 
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
             let scheduler_handle =
-                tokio::spawn(crate::run_scheduler(service_b.clone(), shutdown_rx));
-            service_a
+                tokio::spawn(crate::run_scheduler(engine_b.clone(), shutdown_rx));
+            engine_a
                 .schedule_mutation_async(
                     tenant_id.clone(),
                     ScheduleRequest {
@@ -482,25 +482,25 @@ async fn mysql_background_poll_loads_unloaded_tenants_with_scheduled_work() {
                 .expect("scheduled mutation should persist");
 
             wait_for_value(
-                "mysql poll should load the scheduled tenant into the second service",
+                "mysql poll should load the scheduled tenant into the second engine",
                 Duration::from_secs(3),
                 Duration::from_millis(25),
                 || {
-                    let service = service_b.clone();
-                    async move { service.loaded_tenant_ids() }
+                    let engine = engine_b.clone();
+                    async move { engine.loaded_tenant_ids() }
                 },
                 |tenant_ids| tenant_ids.contains(&tenant_id),
             )
             .await;
             wait_for_value(
-                "mysql poll should execute scheduled work on the second service",
+                "mysql poll should execute scheduled work on the second engine",
                 Duration::from_secs(3),
                 Duration::from_millis(25),
                 || {
-                    let service = service_b.clone();
+                    let engine = engine_b.clone();
                     let tenant_id = tenant_id.clone();
                     async move {
-                        service
+                        engine
                             .query_documents_async(tenant_id, query_for("tasks"))
                             .await
                             .expect("query should succeed")
@@ -520,27 +520,27 @@ async fn mysql_background_poll_loads_unloaded_tenants_with_scheduled_work() {
 
             let _ = shutdown_tx.send(true);
             scheduler_handle.await.expect("scheduler should shut down");
-            service_a.quiesce().await;
-            service_b.quiesce().await;
+            engine_a.quiesce().await;
+            engine_b.quiesce().await;
         },
     )
     .await;
 }
 
-async fn with_mysql_service_config<F, Fut>(test: F)
+async fn with_mysql_engine_config<F, Fut>(test: F)
 where
-    F: FnOnce(ServicePersistenceConfig, MySqlProviderConfig) -> Fut,
+    F: FnOnce(EnginePersistenceConfig, MySqlProviderConfig) -> Fut,
     Fut: Future<Output = ()>,
 {
-    with_shared_mysql_service_configs(|service_config, _unused, provider_config| async move {
-        test(service_config, provider_config).await;
+    with_shared_mysql_engine_configs(|engine_config, _unused, provider_config| async move {
+        test(engine_config, provider_config).await;
     })
     .await;
 }
 
-async fn with_shared_mysql_service_configs<F, Fut>(test: F)
+async fn with_shared_mysql_engine_configs<F, Fut>(test: F)
 where
-    F: FnOnce(ServicePersistenceConfig, ServicePersistenceConfig, MySqlProviderConfig) -> Fut,
+    F: FnOnce(EnginePersistenceConfig, EnginePersistenceConfig, MySqlProviderConfig) -> Fut,
     Fut: Future<Output = ()>,
 {
     let connection = match test_connection().await {
@@ -559,7 +559,7 @@ where
     };
     let control_dir_a = tempdir().expect("first control tempdir should build");
     let control_dir_b = tempdir().expect("second control tempdir should build");
-    let service_config_a = ServicePersistenceConfig {
+    let engine_config_a = EnginePersistenceConfig {
         tenant_provider: TenantProviderConfig {
             dialect: PersistenceDialect::MySql,
             topology: PersistenceTopology::ExternalPrimary,
@@ -578,13 +578,13 @@ where
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_a.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
     };
-    let service_config_b = ServicePersistenceConfig {
-        tenant_provider: service_config_a.tenant_provider.clone(),
+    let engine_config_b = EnginePersistenceConfig {
+        tenant_provider: engine_config_a.tenant_provider.clone(),
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_b.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
     };
 
-    test(service_config_a, service_config_b, provider_config.clone()).await;
+    test(engine_config_a, engine_config_b, provider_config.clone()).await;
 
     MySqlProvider::connect(provider_config)
         .await
@@ -677,7 +677,7 @@ fn unique_suffix() -> String {
 }
 
 fn seed_bound_collection_group_document(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: TableName,
     document_id: &str,
@@ -702,7 +702,7 @@ fn seed_bound_collection_group_document(
         transforms: Vec::new(),
     }])
     .expect("seed write batch should build");
-    service
+    engine
         .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
         .expect("seed execution unit should begin")
         .execute_atomic_write_batch(batch)

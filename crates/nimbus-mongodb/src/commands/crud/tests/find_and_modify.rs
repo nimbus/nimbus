@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn find_and_modify_update_returns_old() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -11,7 +11,7 @@ fn find_and_modify_update_returns_old() {
         "query": { "_id": "u1" },
         "update": { "$set": { "age": 99 } },
     };
-    let result = find_and_modify(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find_and_modify(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_f64("ok").unwrap(), 1.0);
     let value = result.get_document("value").unwrap();
     assert_eq!(value.get_i32("age").unwrap(), 30);
@@ -22,7 +22,7 @@ fn find_and_modify_update_returns_old() {
 
 #[test]
 fn find_and_modify_update_returns_new() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -32,14 +32,14 @@ fn find_and_modify_update_returns_new() {
         "update": { "$set": { "age": 99 } },
         "new": true,
     };
-    let result = find_and_modify(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find_and_modify(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let value = result.get_document("value").unwrap();
     assert_eq!(value.get_i32("age").unwrap(), 99);
 }
 
 #[test]
 fn find_and_modify_return_new_reads_transaction_overlay() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
     let mut conn = test_conn();
     let lsid = start_transaction(&mut conn, &fixture);
@@ -52,7 +52,7 @@ fn find_and_modify_return_new_reads_transaction_overlay() {
         "update": { "$set": { "age": 77 } },
         "new": true,
     };
-    let result = find_and_modify(&body, &mut conn, &fixture.service()).unwrap();
+    let result = find_and_modify(&body, &mut conn, &fixture.engine()).unwrap();
     let value = result.get_document("value").unwrap();
     assert_eq!(
         value.get_i32("age").unwrap(),
@@ -74,7 +74,7 @@ fn find_and_modify_return_new_reads_transaction_overlay() {
 
 #[test]
 fn find_and_modify_remove() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -83,7 +83,7 @@ fn find_and_modify_remove() {
         "query": { "_id": "u1" },
         "remove": true,
     };
-    let result = find_and_modify(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find_and_modify(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let value = result.get_document("value").unwrap();
     assert_eq!(value.get_str("name").unwrap(), "Alice");
 
@@ -93,7 +93,7 @@ fn find_and_modify_remove() {
 
 #[test]
 fn find_and_modify_no_match_returns_null() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -102,13 +102,13 @@ fn find_and_modify_no_match_returns_null() {
         "query": { "_id": "nonexistent" },
         "update": { "$set": { "x": 1 } },
     };
-    let result = find_and_modify(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find_and_modify(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert!(result.get("value").unwrap().as_null().is_some());
 }
 
 #[test]
 fn find_and_modify_upsert() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -119,7 +119,7 @@ fn find_and_modify_upsert() {
         "upsert": true,
         "new": true,
     };
-    let result = find_and_modify(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find_and_modify(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let value = result.get_document("value").unwrap();
     assert_eq!(value.get_str("name").unwrap(), "Upserted");
 
@@ -129,7 +129,7 @@ fn find_and_modify_upsert() {
 
 #[test]
 fn find_and_modify_upsert_return_new_reads_transaction_overlay() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
     let mut conn = test_conn();
     let lsid = start_transaction(&mut conn, &fixture);
@@ -143,7 +143,7 @@ fn find_and_modify_upsert_return_new_reads_transaction_overlay() {
         "upsert": true,
         "new": true,
     };
-    let result = find_and_modify(&body, &mut conn, &fixture.service()).unwrap();
+    let result = find_and_modify(&body, &mut conn, &fixture.engine()).unwrap();
     let value = result.get_document("value").unwrap();
     assert_eq!(
         value.get_str("name").unwrap(),
@@ -165,7 +165,7 @@ fn find_and_modify_upsert_return_new_reads_transaction_overlay() {
 
 #[test]
 fn find_and_modify_with_fields_projection() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -175,7 +175,7 @@ fn find_and_modify_with_fields_projection() {
         "update": { "$set": { "age": 99 } },
         "fields": { "name": 1 },
     };
-    let result = find_and_modify(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find_and_modify(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let value = result.get_document("value").unwrap();
     assert_eq!(value.get_str("name").unwrap(), "Alice");
     assert!(value.get("_id").is_some());
@@ -184,7 +184,7 @@ fn find_and_modify_with_fields_projection() {
 
 #[test]
 fn find_and_modify_replacement() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -194,7 +194,7 @@ fn find_and_modify_replacement() {
         "update": { "name": "Replaced", "score": 42 },
         "new": true,
     };
-    let result = find_and_modify(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find_and_modify(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let value = result.get_document("value").unwrap();
     assert_eq!(value.get_str("name").unwrap(), "Replaced");
     assert_eq!(value.get_i32("score").unwrap(), 42);
@@ -203,7 +203,7 @@ fn find_and_modify_replacement() {
 
 fn start_transaction(
     conn: &mut ConnectionState,
-    fixture: &ServiceFixture<Service>,
+    fixture: &EngineFixture<Engine>,
 ) -> bson::Document {
     let session_body = bson::doc! { "startSession": 1, "$db": "admin" };
     let session =
@@ -219,14 +219,14 @@ fn start_transaction(
         "lsid": lsid_field(&lsid),
         "documents": [],
     };
-    crate::commands::session::handle_start_transaction(&start_body, conn, &fixture.service())
+    crate::commands::session::handle_start_transaction(&start_body, conn, &fixture.engine())
         .expect("transaction should start");
     lsid
 }
 
 fn commit_transaction(
     conn: &mut ConnectionState,
-    fixture: &ServiceFixture<Service>,
+    fixture: &EngineFixture<Engine>,
     lsid: &bson::Document,
 ) {
     let commit_body = bson::doc! {
@@ -234,7 +234,7 @@ fn commit_transaction(
         "$db": "admin",
         "lsid": lsid_field(lsid),
     };
-    crate::commands::session::commit_transaction(&commit_body, conn, &fixture.service())
+    crate::commands::session::commit_transaction(&commit_body, conn, &fixture.engine())
         .expect("transaction should commit");
 }
 

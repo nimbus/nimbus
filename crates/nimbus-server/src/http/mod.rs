@@ -54,7 +54,7 @@ pub(crate) use scheduling::{
     list_cron_jobs, list_scheduled_jobs, schedule_mutation,
 };
 pub(crate) use schema::{delete_table_schema, get_schema, get_table_schema, set_table_schema};
-pub(crate) use services::{restart_service, start_service, stop_service};
+pub(crate) use services::{get_service, restart_service, start_service, stop_service};
 pub(crate) use tenants::{create_tenant, delete_tenant, list_tenants};
 pub(crate) use ui::{
     consume_ui_launch_ticket, create_ui_session, mint_ui_launch_ticket, ui_auth, ui_auth_script,

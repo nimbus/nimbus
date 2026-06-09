@@ -508,7 +508,7 @@ Verification evidence:
 
 - `cargo test -p nimbus-sandbox -- --nocapture`
   - result: pass; 98 passed, 0 failed, 0 ignored in `src/lib.rs`; 2 passed,
-    0 failed in `src/bin/neovex-guest-user-switch.rs`; Linux smoke target and
+    0 failed in `src/bin/nimbus-guest-user-switch.rs`; Linux smoke target and
     doc tests had 0 runnable tests on this macOS host.
 - `cargo test -p nimbus-server service_manager -- --nocapture`
   - result: pass; 7 passed, 0 failed, 704 filtered out; MongoDB spec and
@@ -676,7 +676,7 @@ Verification evidence:
     MongoDB spec and reactive-loop integration targets had 0 matching tests.
 - `cargo test -p nimbus-sandbox -- --nocapture`
   - result: pass; 102 passed, 0 failed, 0 ignored in `src/lib.rs`; 2 passed,
-    0 failed in `src/bin/neovex-guest-user-switch.rs`; Linux smoke target and
+    0 failed in `src/bin/nimbus-guest-user-switch.rs`; Linux smoke target and
     doc tests had 0 runnable tests on this macOS host.
 - `cargo fmt --all --check`
   - result: pass
@@ -718,7 +718,7 @@ Verification evidence:
     guest-user-switch and Linux smoke targets had 0 matching tests.
 - `cargo test -p nimbus-sandbox -- --nocapture`
   - result: pass; 105 passed, 0 failed, 0 ignored in `src/lib.rs`; 2 passed,
-    0 failed in `src/bin/neovex-guest-user-switch.rs`; Linux smoke target and
+    0 failed in `src/bin/nimbus-guest-user-switch.rs`; Linux smoke target and
     doc tests had 0 runnable tests on this macOS host.
 
 Remaining after TIC3:
@@ -1574,7 +1574,7 @@ Verification evidence:
   - result: pass; `Finished dev profile` in 8.34s.
 - `cargo test -p nimbus-sandbox --no-run`
   - result: pass; `Finished test profile` in 3.69s; built lib,
-    `neovex-guest-user-switch`, and `krun_linux_smoke` test executables.
+    `nimbus-guest-user-switch`, and `krun_linux_smoke` test executables.
 - `cargo test -p nimbus-server --no-run`
   - result: pass; `Finished test profile` in 28.82s.
 - `cargo test -p nimbus-bin --no-run`

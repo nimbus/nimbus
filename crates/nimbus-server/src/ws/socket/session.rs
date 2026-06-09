@@ -70,7 +70,7 @@ impl GenericSocketSession {
         for subscription_id in active_subscriptions.keys().copied().collect::<Vec<_>>() {
             let _ = self
                 .state
-                .service
+                .engine
                 .unsubscribe_async(self.tenant_id.clone(), subscription_id)
                 .await;
         }
@@ -131,7 +131,7 @@ impl GenericSocketSession {
         query: Query,
     ) {
         let request_id_for_worker = request_id.clone();
-        let service = self.state.service.clone();
+        let service = self.state.engine.clone();
         let tenant_id = self.tenant_id.clone();
         let sender = self.subscription_tx.clone();
         let pending_subscription_tx = self.pending_subscription_tx.clone();
@@ -201,7 +201,7 @@ impl GenericSocketSession {
         }
         if let Err(error) = self
             .state
-            .service
+            .engine
             .unsubscribe_async(self.tenant_id.clone(), subscription_id)
             .await
         {

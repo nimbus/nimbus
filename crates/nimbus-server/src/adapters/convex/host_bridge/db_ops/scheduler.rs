@@ -49,7 +49,7 @@ impl ConvexHostBridge {
         }
 
         execute_schedule_command_async(
-            self.service(),
+            self.engine(),
             self.registry(),
             self.tenant_id(),
             command,
@@ -104,7 +104,7 @@ impl ConvexHostBridge {
             };
         }
 
-        execute_schedule_command(self.service(), self.registry(), self.tenant_id(), command)
+        execute_schedule_command(self.engine(), self.registry(), self.tenant_id(), command)
     }
 
     pub(in crate::adapters::convex) async fn invoke_ctx_scheduler_run_after_async_cancellable(
@@ -113,7 +113,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeSchedulerRunAfterPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let response = self
             .execute_schedule_command_with_execution_context_async(
@@ -143,7 +143,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeSchedulerRunAfterPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let response = self.execute_schedule_command_with_execution_context(
             ConvexScheduledCommand::RunAfter {
@@ -162,7 +162,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeSchedulerRunAtPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let response = self
             .execute_schedule_command_with_execution_context_async(
@@ -192,7 +192,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeSchedulerRunAtPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let response =
             self.execute_schedule_command_with_execution_context(ConvexScheduledCommand::RunAt {
@@ -210,7 +210,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeSchedulerCancelPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let response = self
             .execute_schedule_command_with_execution_context_async(
@@ -237,7 +237,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeSchedulerCancelPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let response =
             self.execute_schedule_command_with_execution_context(ConvexScheduledCommand::Cancel {

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use nimbus_core::{Document, Error, Result, TableName, TenantId};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_sandbox::{
     SandboxHandle, SandboxSpec, SandboxStatus, validate_sandbox_mounts, validate_tenant_volume_name,
 };
@@ -87,14 +87,14 @@ pub enum TenantIsolationDriftSurface {
 }
 
 pub async fn scan_tenant_isolation_drift_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     config: &TenantIsolationDriftScanConfig,
 ) -> Result<TenantIsolationDriftReport> {
     let mut report = TenantIsolationDriftReport::default();
     let observed = scan_sandbox_state_roots(config, &mut report);
-    let services = list_system_documents(service, "services", &mut report).await?;
-    let ports = list_system_documents(service, "ports", &mut report).await?;
-    let routes = list_system_documents(service, "routes", &mut report).await?;
+    let services = list_system_documents(engine, "services", &mut report).await?;
+    let ports = list_system_documents(engine, "ports", &mut report).await?;
+    let routes = list_system_documents(engine, "routes", &mut report).await?;
 
     let service_records = parse_service_records(&services, config, &mut report);
     let port_records = parse_port_records(&ports, &service_records, &observed, &mut report);
@@ -113,16 +113,13 @@ pub async fn scan_tenant_isolation_drift_async(
 }
 
 async fn list_system_documents(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     table: &str,
     report: &mut TenantIsolationDriftReport,
 ) -> Result<Vec<Document>> {
     let system_tenant = crate::system_tenant::system_tenant_id()?;
     let table_name = TableName::new(table.to_owned())?;
-    match service
-        .list_documents_async(system_tenant, table_name)
-        .await
-    {
+    match engine.list_documents_async(system_tenant, table_name).await {
         Ok(documents) => Ok(documents),
         Err(Error::TenantNotFound(_)) | Err(Error::SchemaNotFound(_)) => {
             let surface = match table {
@@ -604,7 +601,7 @@ fn validate_observed_manifests(
         {
             report.push(
                 SandboxManifest,
-                "duplicate_active_sandbox_service_manifest",
+                "duplicate_active_service_manifest",
                 &location,
                 format!(
                     "multiple active manifests claim tenant `{}` service `{}`",
@@ -896,8 +893,8 @@ mod tests {
     #[tokio::test]
     async fn tenant_isolation_drift_scanner_accepts_clean_projection() {
         let temp = tempdir().expect("tempdir should create");
-        let service = Arc::new(Service::new(temp.path()).expect("service should create"));
-        crate::system_tenant::prepare_system_tenant_async(&service, None)
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+        crate::system_tenant::prepare_system_tenant_async(&engine, None)
             .await
             .expect("system tenant should prepare");
         let state_root = temp.path().join("sandbox-state");
@@ -937,12 +934,12 @@ mod tests {
             &handle,
             &spec,
         );
-        crate::system_tenant::record_service_handle_async(&service, &tenant_id, &handle)
+        crate::system_tenant::record_service_handle_async(&engine, &tenant_id, &handle)
             .await
             .expect("service handle should record");
 
         let report = scan_tenant_isolation_drift_async(
-            &service,
+            &engine,
             &TenantIsolationDriftScanConfig::new().with_sandbox_state_root(&state_root),
         )
         .await
@@ -958,8 +955,8 @@ mod tests {
     #[tokio::test]
     async fn tenant_isolation_drift_scanner_reports_malformed_state_without_mutating() {
         let temp = tempdir().expect("tempdir should create");
-        let service = Arc::new(Service::new(temp.path()).expect("service should create"));
-        crate::system_tenant::prepare_system_tenant_async(&service, None)
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+        crate::system_tenant::prepare_system_tenant_async(&engine, None)
             .await
             .expect("system tenant should prepare");
         let state_root = temp.path().join("sandbox-state");
@@ -967,12 +964,12 @@ mod tests {
         create_tenant_volume_root(&state_root, "tenant-a", "bad name");
         write_mismatched_manifest(&state_root);
         write_bad_manifest(&state_root);
-        insert_bad_service_document(&service).await;
-        insert_bad_port_document(&service).await;
-        corrupt_health_route(&service).await;
+        insert_bad_service_document(&engine).await;
+        insert_bad_port_document(&engine).await;
+        corrupt_health_route(&engine).await;
 
         let report = scan_tenant_isolation_drift_async(
-            &service,
+            &engine,
             &TenantIsolationDriftScanConfig::new()
                 .with_sandbox_state_root(&state_root)
                 .require_decision_audit_records(true),
@@ -1003,7 +1000,7 @@ mod tests {
             );
         }
 
-        let routes = service
+        let routes = engine
             .list_documents_async(
                 crate::system_tenant::system_tenant_id().expect("system id should parse"),
                 TableName::new("routes").expect("table should parse"),
@@ -1106,8 +1103,8 @@ mod tests {
         .expect("volume root should create");
     }
 
-    async fn insert_bad_service_document(service: &Arc<Service>) {
-        service
+    async fn insert_bad_service_document(engine: &Arc<Engine>) {
+        engine
             .insert_document_async_with_id(
                 crate::system_tenant::system_tenant_id().expect("system id should parse"),
                 TableName::new("services").expect("table should parse"),
@@ -1130,8 +1127,8 @@ mod tests {
             .expect("bad service document should insert");
     }
 
-    async fn insert_bad_port_document(service: &Arc<Service>) {
-        service
+    async fn insert_bad_port_document(engine: &Arc<Engine>) {
+        engine
             .insert_document_async_with_id(
                 crate::system_tenant::system_tenant_id().expect("system id should parse"),
                 TableName::new("ports").expect("table should parse"),
@@ -1152,8 +1149,8 @@ mod tests {
             .expect("bad port document should insert");
     }
 
-    async fn corrupt_health_route(service: &Arc<Service>) {
-        service
+    async fn corrupt_health_route(engine: &Arc<Engine>) {
+        engine
             .update_document_async(
                 crate::system_tenant::system_tenant_id().expect("system id should parse"),
                 TableName::new("routes").expect("table should parse"),

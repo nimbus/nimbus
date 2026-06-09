@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     OperatorNetworkEndpointPolicy, OperatorPolicyDocument, OperatorPolicyWorkload,
-    RuntimeIsolationTier, TenantWorkloadKind,
+    RuntimeIsolationTier, WorkloadKind,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -237,7 +237,7 @@ fn prove_write_bypass(
     accepted: &BTreeMap<String, OperatorPolicyAcceptedRisk>,
     advisories: &mut Vec<OperatorPolicyAdvisory>,
 ) {
-    if !matches!(workload.kind, TenantWorkloadKind::RuntimeFunction) {
+    if !matches!(workload.kind, WorkloadKind::RuntimeFunction) {
         return;
     }
     let workload_key = workload.key();
@@ -259,7 +259,7 @@ fn prove_write_bypass(
             OperatorPolicyAdvisorySeverity::High,
             workload_key.clone(),
             format!(
-                "runtime workload publishes direct database endpoint `{endpoint_key}`; prefer HostBridge/ctx.services write mediation"
+                "runtime workload publishes direct database endpoint `{endpoint_key}`; prefer HostBridge-mediated storage or explicit Nimbus SDK service control"
             ),
         );
     }

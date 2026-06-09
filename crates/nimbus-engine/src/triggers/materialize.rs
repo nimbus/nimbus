@@ -49,7 +49,7 @@ pub(crate) fn build_trigger_invocation_records(
             ),
             candidate.data.clone(),
             candidate.commit,
-            TriggerExecutionPrincipal::service(nimbus_core::PrincipalContext::system()),
+            TriggerExecutionPrincipal::service_account(nimbus_core::PrincipalContext::system()),
         );
         let ancestry = candidate.write_origin.as_ref().map(|origin| {
             TriggerInvocationAncestry::new(origin.invocation.clone(), origin.child_depth())

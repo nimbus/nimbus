@@ -27,7 +27,7 @@ async fn convex_named_query_uses_runtime_bundle_when_available() {
 globalThis.__nimbusInvoke = async function(request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   return {
     status: "ok",
@@ -45,8 +45,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry.clone())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

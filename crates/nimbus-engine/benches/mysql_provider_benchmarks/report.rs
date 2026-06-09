@@ -32,7 +32,7 @@ pub(super) fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport
     markdown.push_str("```\n\n");
     markdown.push_str("## Methodology\n\n");
     markdown.push_str(&format!(
-        "- steady-state lane compares `sqlite` against `mysql (loopback)` with alternating backend order\n- cold-start lane compares `sqlite` against `mysql (loopback)` and includes fresh service open plus the first representative execution\n- RTT-sensitive lane compares `mysql (loopback)` against `mysql (injected RTT)` using a local TCP proxy that delays each forwarded chunk by `{}`\n- RTT-sensitive lanes use reduced representative sample sizes documented below so network sensitivity stays measurable without turning the readiness gate into an hours-long run\n- steady-state warmup rounds: `{}`; steady-state measured rounds: `{}`\n- cold-start warmup rounds: `{}`; cold-start measured rounds: `{}`\n- RTT warmup rounds: `{}`; RTT measured rounds: `{}`\n- 95% confidence intervals use a two-sided Student-t interval on mean per-operation latency\n",
+        "- steady-state lane compares `sqlite` against `mysql (loopback)` with alternating backend order\n- cold-start lane compares `sqlite` against `mysql (loopback)` and includes fresh engine open plus the first representative execution\n- RTT-sensitive lane compares `mysql (loopback)` against `mysql (injected RTT)` using a local TCP proxy that delays each forwarded chunk by `{}`\n- RTT-sensitive lanes use reduced representative sample sizes documented below so network sensitivity stays measurable without turning the readiness gate into an hours-long run\n- steady-state warmup rounds: `{}`; steady-state measured rounds: `{}`\n- cold-start warmup rounds: `{}`; cold-start measured rounds: `{}`\n- RTT warmup rounds: `{}`; RTT measured rounds: `{}`\n- 95% confidence intervals use a two-sided Student-t interval on mean per-operation latency\n",
         format_duration(config.rtt_delay),
         BenchmarkLane::SteadyState.warmup_rounds(),
         BenchmarkLane::SteadyState.measure_rounds(),
@@ -48,7 +48,7 @@ pub(super) fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport
     ));
     if workloads.contains(&WorkloadKind::TenantLifecycleLatency) {
         markdown.push_str(
-            "- tenant-lifecycle sqlite contrast uses same-service open verification because the embedded redb control plane is single-open within one process; the MySQL lane uses a distinct peer service\n",
+            "- tenant-lifecycle sqlite contrast uses same-engine open verification because the embedded redb control plane is single-open within one process; the MySQL lane uses a distinct peer engine\n",
         );
     }
     if let Some(path) = &config.markdown_output {
@@ -217,7 +217,7 @@ pub(super) fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport
 
     markdown.push_str("## Operator Assumptions\n\n");
     markdown.push_str(
-        "- MySQL tenant persistence is benchmarked with the global usage/control path still local and redb-backed.\n- The service-path benchmark includes provider-owned pooling, typed construction, scheduler/journal semantics, and the provider background poll wake path; authoritative recovery still comes from durable journal progress rather than from wake signals.\n- Companion operational drills for poll catch-up, restart recovery, transient backend failure, unloaded-tenant scheduler wake, and tenant cleanup are covered by focused storage/engine verification and recorded in `/Users/jack/src/github.com/nimbus/nimbus/docs/plans/archive/mysql-storage-provider-plan.md`.\n",
+        "- MySQL tenant persistence is benchmarked with the global usage/control path still local and redb-backed.\n- The engine-path benchmark includes provider-owned pooling, typed construction, scheduler/journal semantics, and the provider background poll wake path; authoritative recovery still comes from durable journal progress rather than from wake signals.\n- Companion operational drills for poll catch-up, restart recovery, transient backend failure, unloaded-tenant scheduler wake, and tenant cleanup are covered by focused storage/engine verification and recorded in `/Users/jack/src/github.com/nimbus/nimbus/docs/plans/archive/mysql-storage-provider-plan.md`.\n",
     );
 
     markdown

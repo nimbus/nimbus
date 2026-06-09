@@ -9,8 +9,8 @@ use nimbus_storage::{
     TenantStore,
 };
 
-use crate::Service;
-use crate::service::{
+use crate::Engine;
+use crate::engine::{
     paginate_documents_for_store_with_principal, query_documents_for_store_with_principal,
 };
 
@@ -23,9 +23,9 @@ pub struct EmbeddedReplica {
 
 impl EmbeddedReplica {
     /// Bootstraps an in-memory replica for a tenant from the authoritative journal source.
-    pub async fn bootstrap_in_memory(service: &Arc<Service>, tenant_id: TenantId) -> Result<Self> {
+    pub async fn bootstrap_in_memory(engine: &Arc<Engine>, tenant_id: TenantId) -> Result<Self> {
         Self::bootstrap_with_store(
-            service,
+            engine,
             tenant_id,
             TenantStore::create_in_memory()?,
             DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT,
@@ -35,12 +35,12 @@ impl EmbeddedReplica {
 
     /// Bootstraps a replica into the provided local store.
     pub async fn bootstrap_with_store(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         tenant_id: TenantId,
         store: TenantStore,
         stream_limit: usize,
     ) -> Result<Self> {
-        let bootstrap = service
+        let bootstrap = engine
             .export_durable_journal_bootstrap_async(tenant_id.clone())
             .await?;
         store.restore_materialized_journal_from_snapshot(&bootstrap.snapshot)?;
@@ -51,19 +51,17 @@ impl EmbeddedReplica {
             sequence_cursor: bootstrap.resume_after,
         };
         replica
-            .catch_up_to_sequence(service, bootstrap.bootstrap_cut, stream_limit)
+            .catch_up_to_sequence(engine, bootstrap.bootstrap_cut, stream_limit)
             .await?;
         Ok(replica)
     }
 
     /// Replays the latest durable journal suffix into the local replica.
-    pub async fn catch_up(&mut self, service: &Arc<Service>, stream_limit: usize) -> Result<()> {
-        let latest = service
-            .latest_sequence_async(self.tenant_id.clone())
+    pub async fn catch_up(&mut self, engine: &Arc<Engine>, stream_limit: usize) -> Result<()> {
+        let latest = engine.latest_sequence_async(self.tenant_id.clone()).await?;
+        self.catch_up_to_sequence(engine, latest, stream_limit)
             .await?;
-        self.catch_up_to_sequence(service, latest, stream_limit)
-            .await?;
-        self.refresh_schema(service).await
+        self.refresh_schema(engine).await
     }
 
     /// Evaluates a query locally against the replica store.
@@ -130,12 +128,12 @@ impl EmbeddedReplica {
 
     async fn catch_up_to_sequence(
         &mut self,
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         target_sequence: SequenceNumber,
         stream_limit: usize,
     ) -> Result<()> {
         while self.sequence_cursor.0 < target_sequence.0 {
-            let page = service
+            let page = engine
                 .stream_durable_journal_async(
                     self.tenant_id.clone(),
                     self.sequence_cursor,
@@ -162,8 +160,8 @@ impl EmbeddedReplica {
         Ok(())
     }
 
-    async fn refresh_schema(&self, service: &Arc<Service>) -> Result<()> {
-        let schema = service.get_schema_async(self.tenant_id.clone()).await?;
+    async fn refresh_schema(&self, engine: &Arc<Engine>) -> Result<()> {
+        let schema = engine.get_schema_async(self.tenant_id.clone()).await?;
         self.store.replace_schema(&schema)
     }
 }

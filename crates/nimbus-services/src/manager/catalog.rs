@@ -3,12 +3,23 @@ use std::collections::BTreeMap;
 use nimbus_core::TenantId;
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 
-use crate::SandboxCatalog;
+use crate::ServiceInstanceCatalog;
 
-use super::SandboxServiceManager;
+use super::ServiceManager;
 
-impl SandboxCatalog for SandboxServiceManager {
-    fn sandboxes_for_tenant(&self, tenant_id: &TenantId) -> BTreeMap<String, SandboxHandle> {
+impl ServiceManager {
+    pub fn service_declared_for_tenant(&self, tenant_id: &TenantId, service_name: &str) -> bool {
+        self.service_definitions
+            .service_implementation_for_tenant(tenant_id, service_name)
+            .is_some()
+    }
+}
+
+impl ServiceInstanceCatalog for ServiceManager {
+    fn service_instances_for_tenant(
+        &self,
+        tenant_id: &TenantId,
+    ) -> BTreeMap<String, SandboxHandle> {
         let keys = {
             self.state
                 .lock()

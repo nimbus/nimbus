@@ -2,6 +2,15 @@ export interface RequestOptions extends Omit<RequestInit, "headers"> {
   headers?: Record<string, string>;
 }
 
+export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+export interface NimbusRestClientOptions {
+  fetch?: FetchLike;
+  headers?: Record<string, string>;
+  token?: string;
+  apiKey?: string;
+}
+
 export interface TableSchema {
   table: string;
   fields: { name: string; field_type: string; required: boolean }[];
@@ -54,18 +63,28 @@ function websocketUrlFromBase(baseUrl: string): URL {
 
 export class NimbusRestClient {
   readonly baseUrl: string;
+  private readonly fetchImpl: FetchLike;
+  private readonly defaultHeaders: Record<string, string>;
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, options: NimbusRestClientOptions = {}) {
     this.baseUrl = stripTrailingSlash(baseUrl);
+    this.fetchImpl = options.fetch ?? fetch.bind(globalThis);
+    this.defaultHeaders = {
+      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+      ...(options.apiKey ? { "X-Nimbus-Api-Key": options.apiKey } : {}),
+      ...(options.headers ?? {}),
+    };
   }
 
   async request<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const { headers, ...requestOptions } = options;
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      ...requestOptions,
       headers: {
         "Content-Type": "application/json",
-        ...(options.headers ?? {}),
+        ...this.defaultHeaders,
+        ...(headers ?? {}),
       },
-      ...options,
     });
 
     if (response.status === 204) {

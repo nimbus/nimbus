@@ -9,22 +9,22 @@ use std::sync::Arc;
 use http::{HeaderMap, HeaderValue};
 use nimbus_core::TenantId;
 use nimbus_dynamodb::{AccessKeyRegistry, AuthMode, DispatchContext, dispatch};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use serde_json::{Value, json};
 
 const ACME_KEY: &str = "AKIAACME";
 const GLOBEX_KEY: &str = "AKIAGLOBEX";
 
-fn fixture() -> (Arc<Service>, AccessKeyRegistry, tempfile::TempDir) {
+fn fixture() -> (Arc<Engine>, AccessKeyRegistry, tempfile::TempDir) {
     let temp = tempfile::tempdir().expect("tempdir");
-    let service = Arc::new(Service::new(temp.path()).expect("service"));
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
     // Synthetic-signature requests exercise tenant scoping through the lookup
     // escape hatch; cross-tenant isolation holds independently of auth mode.
     let registry = AccessKeyRegistry::new()
         .bind(ACME_KEY, TenantId::new("acme").expect("tenant"))
         .bind(GLOBEX_KEY, TenantId::new("globex").expect("tenant"))
         .with_mode(AuthMode::LookupOnly);
-    (service, registry, temp)
+    (engine, registry, temp)
 }
 
 fn signed_as(key: &str) -> String {
@@ -49,14 +49,14 @@ fn headers(key: &str, target: &str) -> HeaderMap {
 
 /// Dispatch `operation` for `key` with `body`, returning `(status, json)`.
 fn call(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     registry: &AccessKeyRegistry,
     key: &str,
     operation: &str,
     body: &Value,
 ) -> (u16, Value) {
     let ctx = DispatchContext {
-        service,
+        engine,
         access_keys: registry,
     };
     dispatch(&ctx, &headers(key, operation), body.to_string().as_bytes())
@@ -77,25 +77,39 @@ fn error_type(body: &Value) -> String {
 
 #[test]
 fn tables_and_items_are_isolated_across_tenants() {
-    let (svc, reg, _t) = fixture();
+    let (engine_handle, reg, _t) = fixture();
     // Both tenants create a table with the SAME name and put a DIFFERENT item.
     assert_eq!(
-        call(&svc, &reg, ACME_KEY, "CreateTable", &table("Shared")).0,
+        call(
+            &engine_handle,
+            &reg,
+            ACME_KEY,
+            "CreateTable",
+            &table("Shared")
+        )
+        .0,
         200
     );
     assert_eq!(
-        call(&svc, &reg, GLOBEX_KEY, "CreateTable", &table("Shared")).0,
+        call(
+            &engine_handle,
+            &reg,
+            GLOBEX_KEY,
+            "CreateTable",
+            &table("Shared")
+        )
+        .0,
         200
     );
     call(
-        &svc,
+        &engine_handle,
         &reg,
         ACME_KEY,
         "PutItem",
         &json!({ "TableName": "Shared", "Item": { "pk": { "S": "k" }, "owner": { "S": "acme" } } }),
     );
     call(
-        &svc,
+        &engine_handle,
         &reg,
         GLOBEX_KEY,
         "PutItem",
@@ -104,7 +118,7 @@ fn tables_and_items_are_isolated_across_tenants() {
 
     // Each tenant reads back ONLY its own value — no cross-read.
     let (_s, acme_item) = call(
-        &svc,
+        &engine_handle,
         &reg,
         ACME_KEY,
         "GetItem",
@@ -112,7 +126,7 @@ fn tables_and_items_are_isolated_across_tenants() {
     );
     assert_eq!(acme_item["Item"]["owner"]["S"], "acme", "{acme_item}");
     let (_s, globex_item) = call(
-        &svc,
+        &engine_handle,
         &reg,
         GLOBEX_KEY,
         "GetItem",
@@ -123,15 +137,22 @@ fn tables_and_items_are_isolated_across_tenants() {
 
 #[test]
 fn one_tenants_table_is_invisible_to_another() {
-    let (svc, reg, _t) = fixture();
+    let (engine_handle, reg, _t) = fixture();
     assert_eq!(
-        call(&svc, &reg, ACME_KEY, "CreateTable", &table("Private")).0,
+        call(
+            &engine_handle,
+            &reg,
+            ACME_KEY,
+            "CreateTable",
+            &table("Private")
+        )
+        .0,
         200
     );
 
     // globex cannot describe, read, or list acme's table.
     let (status, body) = call(
-        &svc,
+        &engine_handle,
         &reg,
         GLOBEX_KEY,
         "DescribeTable",
@@ -142,7 +163,7 @@ fn one_tenants_table_is_invisible_to_another() {
         "cross-tenant describe must 404: {status} {body}"
     );
 
-    let (_s, listed) = call(&svc, &reg, GLOBEX_KEY, "ListTables", &json!({}));
+    let (_s, listed) = call(&engine_handle, &reg, GLOBEX_KEY, "ListTables", &json!({}));
     assert!(
         !listed["TableNames"]
             .as_array()
@@ -154,7 +175,7 @@ fn one_tenants_table_is_invisible_to_another() {
 
     // acme still sees its own table.
     let (status, _) = call(
-        &svc,
+        &engine_handle,
         &reg,
         ACME_KEY,
         "DescribeTable",
@@ -165,27 +186,41 @@ fn one_tenants_table_is_invisible_to_another() {
 
 #[test]
 fn ttl_and_tag_metadata_are_isolated() {
-    let (svc, reg, _t) = fixture();
+    let (engine_handle, reg, _t) = fixture();
     assert_eq!(
-        call(&svc, &reg, ACME_KEY, "CreateTable", &table("Meta")).0,
+        call(
+            &engine_handle,
+            &reg,
+            ACME_KEY,
+            "CreateTable",
+            &table("Meta")
+        )
+        .0,
         200
     );
     assert_eq!(
-        call(&svc, &reg, GLOBEX_KEY, "CreateTable", &table("Meta")).0,
+        call(
+            &engine_handle,
+            &reg,
+            GLOBEX_KEY,
+            "CreateTable",
+            &table("Meta")
+        )
+        .0,
         200
     );
     let arn = "arn:aws:dynamodb:ddblocal:000000000000:table/Meta";
 
     // acme enables TTL and tags its table.
     call(
-        &svc,
+        &engine_handle,
         &reg,
         ACME_KEY,
         "UpdateTimeToLive",
         &json!({ "TableName": "Meta", "TimeToLiveSpecification": { "Enabled": true, "AttributeName": "ttl" } }),
     );
     call(
-        &svc,
+        &engine_handle,
         &reg,
         ACME_KEY,
         "TagResource",
@@ -194,7 +229,7 @@ fn ttl_and_tag_metadata_are_isolated() {
 
     // globex's identically-named table sees neither the TTL config nor the tags.
     let (_s, ttl) = call(
-        &svc,
+        &engine_handle,
         &reg,
         GLOBEX_KEY,
         "DescribeTimeToLive",
@@ -205,7 +240,7 @@ fn ttl_and_tag_metadata_are_isolated() {
         "another tenant's TTL config must not leak: {ttl}"
     );
     let (_s, tags) = call(
-        &svc,
+        &engine_handle,
         &reg,
         GLOBEX_KEY,
         "ListTagsOfResource",
@@ -219,10 +254,16 @@ fn ttl_and_tag_metadata_are_isolated() {
 
 #[test]
 fn wrong_access_key_cannot_act_as_another_tenant() {
-    let (svc, reg, _t) = fixture();
+    let (engine_handle, reg, _t) = fixture();
     // An access key absent from the registry is rejected outright — it cannot
     // borrow any tenant's identity.
-    let (_status, body) = call(&svc, &reg, "AKIAINTRUDER", "ListTables", &json!({}));
+    let (_status, body) = call(
+        &engine_handle,
+        &reg,
+        "AKIAINTRUDER",
+        "ListTables",
+        &json!({}),
+    );
     assert!(
         error_type(&body).ends_with("UnrecognizedClientException"),
         "an unbound key must be UnrecognizedClientException: {body}"

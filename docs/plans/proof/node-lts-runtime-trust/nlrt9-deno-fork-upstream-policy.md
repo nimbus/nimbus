@@ -15,7 +15,7 @@ repin, or changelog proof.
 
 - `docs/operating/deno-fork-workflow.md`
 - `docs/architecture/runtime/deno-fork-bump-ledger.md`
-- `docs/architecture/runtime/deno-vs-neovex-node-compat.md`
+- `docs/architecture/runtime/deno-vs-nimbus-node-compat.md`
 - `docs/README.md`
 - `scripts/verify-deno-fork-upstream-policy.sh`
 - `docs/plans/node-lts-runtime-trust-plan.md`

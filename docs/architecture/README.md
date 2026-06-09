@@ -23,9 +23,16 @@ and moves behavior into concept-owned modules:
   public server construction seams: `ServeOptions::new(service)` plus
   `serve(listener, options)`, and `RouterOptions::new(service)` plus
   `build_router(options)`.
-- `nimbus-server::service_manager` remains the sandbox service facade while
+- `nimbus-server::service_manager` remains the sandbox-backed service facade while
   activation, launch materialization, handle refresh, catalog, registry,
   verification, and system-state recording live under `service_manager/`.
+- `nimbus-services` currently owns the named lifecycle for sandbox-backed
+  Compose services. The canonical service model also reserves built-in and
+  external implementation kinds for future SDK/control-plane work; services are
+  addressed by tenant plus service name, while sandboxes remain
+  id/handle-addressed isolated execution resources. Runtime isolates are
+  invocation execution domains, not SDK sandbox resources; future explicit
+  isolate-backed sandbox resources reserve `profile: "isolate"`.
 - `nimbus-runtime::limits` owns backend axes, grants, resource budgets,
   adapter diagnostics, and policy wrappers without workspace dependencies.
 - `nimbus-bin::dev` and `nimbus-bin::machine::handlers` delegate workflow
@@ -44,7 +51,7 @@ justification.
 | Directory | Crate | What's here |
 |-----------|-------|-------------|
 | [server/](server/) | `nimbus-server` | Adapter contracts, tenant isolation, local enforcement, auth/runtime trust boundary |
-| [runtime/](runtime/) | `nimbus-runtime` | Runtime engine seam, V8 host capability ownership, adapter boundary |
+| [runtime/](runtime/) | `nimbus-runtime` | Runtime engine seam, host capability ownership, adapter boundary |
 | [storage/](storage/) | `nimbus-storage` | Encryption design, persistence engine, provider topologies |
-| [sandbox/](sandbox/) | `nimbus-sandbox` | MicroVM baseline, macOS machine flow, krun validation |
+| [sandbox/](sandbox/) | `nimbus-sandbox` / `nimbus-services` | Service/sandbox/session/runtime-isolate model, microVM baseline, macOS machine flow, krun validation |
 | [testing/](testing/) | `nimbus-testing` | Verification harness, reliability posture, CI failure playbook |

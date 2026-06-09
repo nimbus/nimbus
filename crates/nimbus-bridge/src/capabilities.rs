@@ -4,8 +4,10 @@ use nimbus_core::{
     AtomicWriteBatch, AtomicWriteBatchOutcome, Document, DocumentLocator, Error, PrincipalContext,
     Result, TableName,
 };
-use nimbus_engine::{MutationExecutionUnit, Service};
+use nimbus_engine::{Engine, MutationExecutionUnit};
+use nimbus_node::LocalEnforcementBinding;
 use nimbus_runtime::{HostCallCancellation, NimbusRuntimeError};
+use nimbus_tenant::TenantServiceAccessDecision;
 use serde_json::{Map, Value};
 
 use nimbus_tenant::TenantStorageAccessDecision;
@@ -13,14 +15,14 @@ use nimbus_tenant::TenantStorageAccessDecision;
 use super::cancellation::{check_host_cancellation, ensure_runtime_host_not_cancelled};
 
 pub trait RuntimeCapabilityHost {
-    fn validate_session(
+    fn validate_host_call_session(
         &self,
-        session_id: Option<&str>,
+        host_call_session_id: Option<&str>,
     ) -> std::result::Result<(), NimbusRuntimeError>;
 
     fn mutation_execution_unit(&self) -> Option<&Arc<MutationExecutionUnit>>;
 
-    fn service(&self) -> &Arc<Service>;
+    fn engine(&self) -> &Arc<Engine>;
 
     fn storage_access(&self) -> &TenantStorageAccessDecision;
 
@@ -29,15 +31,43 @@ pub trait RuntimeCapabilityHost {
     fn record_document_read(&self, locator: &DocumentLocator);
 }
 
+pub trait RuntimeServiceCapabilityHost {
+    fn service_access(&self, service_name: &str) -> Result<TenantServiceAccessDecision>;
+}
+
+pub struct GrantedRuntimeServiceCapabilities<'a> {
+    local_enforcement: &'a LocalEnforcementBinding,
+}
+
+impl<'a> GrantedRuntimeServiceCapabilities<'a> {
+    pub fn from_local_enforcement(local_enforcement: &'a LocalEnforcementBinding) -> Option<Self> {
+        if local_enforcement
+            .spec()
+            .service_projection()
+            .services()
+            .is_empty()
+        {
+            return None;
+        }
+        Some(Self { local_enforcement })
+    }
+}
+
+impl RuntimeServiceCapabilityHost for GrantedRuntimeServiceCapabilities<'_> {
+    fn service_access(&self, service_name: &str) -> Result<TenantServiceAccessDecision> {
+        self.local_enforcement.service_access(service_name).cloned()
+    }
+}
+
 pub fn validate_runtime_capability_access<H>(
     host: &H,
-    session_id: Option<&str>,
+    host_call_session_id: Option<&str>,
     cancellation: &HostCallCancellation,
 ) -> std::result::Result<(), NimbusRuntimeError>
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    host.validate_session(session_id)?;
+    host.validate_host_call_session(host_call_session_id)?;
     ensure_runtime_host_not_cancelled(cancellation)
 }
 
@@ -48,7 +78,7 @@ where
     host.mutation_execution_unit()
         .map_or_else(
             || {
-                host.service()
+                host.engine()
                     .get_document_with_principal(
                         host.storage_access().tenant_id(),
                         &locator.table,
@@ -89,7 +119,7 @@ where
     }
 
     let check_cancellation = cancellation.clone();
-    host.service()
+    host.engine()
         .get_document_async_cancellable_with_principal(
             host.storage_access().tenant_id().clone(),
             locator.table.clone(),
@@ -121,7 +151,7 @@ where
     if let Some(execution_unit) = host.mutation_execution_unit() {
         execution_unit.stage_atomic_write_batch(batch)
     } else {
-        host.service()
+        host.engine()
             .begin_mutation_execution_unit(
                 host.storage_access().tenant_id().clone(),
                 host.principal().clone(),
@@ -158,7 +188,7 @@ where
     if let Some(execution_unit) = host.mutation_execution_unit() {
         execution_unit.insert_document(table, fields)
     } else {
-        host.service().insert_document_with(
+        host.engine().insert_document_with(
             host.storage_access().tenant_id(),
             table,
             None,
@@ -188,7 +218,7 @@ where
             cancellation.cancelled().await;
         }
     };
-    host.service()
+    host.engine()
         .insert_document_async_with(
             host.storage_access().tenant_id().clone(),
             table,
@@ -215,7 +245,7 @@ where
     if let Some(execution_unit) = host.mutation_execution_unit() {
         execution_unit.update_document(table, document_id, patch)
     } else {
-        host.service().update_document_with(
+        host.engine().update_document_with(
             host.storage_access().tenant_id(),
             table,
             document_id,
@@ -246,7 +276,7 @@ where
             cancellation.cancelled().await;
         }
     };
-    host.service()
+    host.engine()
         .update_document_async_with(
             host.storage_access().tenant_id().clone(),
             table,
@@ -272,7 +302,7 @@ where
     if let Some(execution_unit) = host.mutation_execution_unit() {
         execution_unit.delete_document(table, document_id)
     } else {
-        host.service().delete_document_with(
+        host.engine().delete_document_with(
             host.storage_access().tenant_id(),
             table,
             document_id,
@@ -301,7 +331,7 @@ where
             cancellation.cancelled().await;
         }
     };
-    host.service()
+    host.engine()
         .delete_document_async_with(
             host.storage_access().tenant_id().clone(),
             table,

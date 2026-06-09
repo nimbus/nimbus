@@ -97,7 +97,11 @@ fn invoke_document_get_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     let locator = match resolve_runtime_input(runtime_document_locator(&payload.table, &payload.id))
     {
         Ok(locator) => locator,
@@ -117,7 +121,11 @@ async fn invoke_document_get_async_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     let locator = match resolve_runtime_input(runtime_document_locator(&payload.table, &payload.id))
     {
         Ok(locator) => locator,
@@ -149,7 +157,11 @@ fn invoke_document_insert_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     let table = match resolve_runtime_input(TableName::new(payload.table)) {
         Ok(table) => table,
         Err(response) => return response,
@@ -172,7 +184,11 @@ async fn invoke_document_insert_async_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     let table = match resolve_runtime_input(TableName::new(payload.table)) {
         Ok(table) => table,
         Err(response) => return response,
@@ -208,7 +224,11 @@ fn invoke_document_patch_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     let table = match resolve_runtime_input(TableName::new(payload.table)) {
         Ok(table) => table,
         Err(response) => return response,
@@ -234,7 +254,11 @@ async fn invoke_document_patch_async_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     let table = match resolve_runtime_input(TableName::new(payload.table)) {
         Ok(table) => table,
         Err(response) => return response,
@@ -273,7 +297,11 @@ fn invoke_document_delete_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     let table = match resolve_runtime_input(TableName::new(payload.table)) {
         Ok(table) => table,
         Err(response) => return response,
@@ -293,7 +321,11 @@ async fn invoke_document_delete_async_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     let table = match resolve_runtime_input(TableName::new(payload.table)) {
         Ok(table) => table,
         Err(response) => return response,

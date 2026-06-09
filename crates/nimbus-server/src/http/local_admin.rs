@@ -72,7 +72,7 @@ pub(crate) async fn shutdown_system(
     headers: HeaderMap,
 ) -> Result<Json<ShutdownSystemResponse>, AppError> {
     if let Err(error) = nimbus_system::record_system_event_async(
-        &state.service,
+        &state.engine,
         "system",
         "info",
         "lifecycle",

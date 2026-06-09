@@ -13,14 +13,14 @@ use std::sync::Arc;
 use http::{HeaderMap, HeaderValue};
 use nimbus_core::TenantId;
 use nimbus_dynamodb::{AccessKeyRegistry, AuthMode, DispatchContext, dispatch};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use serde_json::{Value, json};
 
 const KEY: &str = "AKIATEST";
 
-fn service() -> (Arc<Service>, tempfile::TempDir) {
+fn engine() -> (Arc<Engine>, tempfile::TempDir) {
     let temp = tempfile::tempdir().expect("tempdir");
-    (Arc::new(Service::new(temp.path()).expect("service")), temp)
+    (Arc::new(Engine::new(temp.path()).expect("engine")), temp)
 }
 
 fn registry() -> AccessKeyRegistry {
@@ -75,10 +75,10 @@ fn assert_modeled_failure(status: u16, body: &Value, expected_suffix: &str) {
 
 #[test]
 fn malformed_json_body_is_serialization_exception() {
-    let (svc, _t) = service();
+    let (engine_handle, _t) = engine();
     let reg = registry();
     let ctx = DispatchContext {
-        service: &svc,
+        engine: &engine_handle,
         access_keys: &reg,
     };
     let (status, body) = dispatch(
@@ -91,10 +91,10 @@ fn malformed_json_body_is_serialization_exception() {
 
 #[test]
 fn unknown_operation_is_unknown_operation_exception() {
-    let (svc, _t) = service();
+    let (engine_handle, _t) = engine();
     let reg = registry();
     let ctx = DispatchContext {
-        service: &svc,
+        engine: &engine_handle,
         access_keys: &reg,
     };
     let (status, body) = dispatch(&ctx, &headers("Frobnicate", Some(&signed_as(KEY))), b"{}");
@@ -103,10 +103,10 @@ fn unknown_operation_is_unknown_operation_exception() {
 
 #[test]
 fn missing_authentication_token_is_rejected() {
-    let (svc, _t) = service();
+    let (engine_handle, _t) = engine();
     let reg = registry();
     let ctx = DispatchContext {
-        service: &svc,
+        engine: &engine_handle,
         access_keys: &reg,
     };
     let (status, body) = dispatch(&ctx, &headers("PutItem", None), b"{}");
@@ -115,10 +115,10 @@ fn missing_authentication_token_is_rejected() {
 
 #[test]
 fn unbound_access_key_is_unrecognized_client() {
-    let (svc, _t) = service();
+    let (engine_handle, _t) = engine();
     let reg = registry();
     let ctx = DispatchContext {
-        service: &svc,
+        engine: &engine_handle,
         access_keys: &reg,
     };
     let (status, body) = dispatch(
@@ -131,10 +131,10 @@ fn unbound_access_key_is_unrecognized_client() {
 
 #[test]
 fn oversize_partition_key_is_validation_exception() {
-    let (svc, _t) = service();
+    let (engine_handle, _t) = engine();
     let reg = registry();
     let ctx = DispatchContext {
-        service: &svc,
+        engine: &engine_handle,
         access_keys: &reg,
     };
     let create = json!({
@@ -163,10 +163,10 @@ fn oversize_partition_key_is_validation_exception() {
 
 #[test]
 fn condition_failed_transaction_cancels_without_partial_writes() {
-    let (svc, _t) = service();
+    let (engine_handle, _t) = engine();
     let reg = registry();
     let ctx = DispatchContext {
-        service: &svc,
+        engine: &engine_handle,
         access_keys: &reg,
     };
     let create = json!({
@@ -220,12 +220,12 @@ fn strict_mode_missing_amz_date_fails_closed_with_incomplete_signature() {
     // absence fails closed before any handler runs. (A wrong-secret signature
     // surfacing InvalidSignatureException is proven end-to-end through the real
     // SDK in the parity runner; here we prove the fail-closed timestamp gate.)
-    let (svc, _t) = service();
+    let (engine_handle, _t) = engine();
     let reg = AccessKeyRegistry::new()
         .bind_signed(KEY, TenantId::new("acme").expect("tenant"), "real-secret")
         .with_mode(AuthMode::Strict);
     let ctx = DispatchContext {
-        service: &svc,
+        engine: &engine_handle,
         access_keys: &reg,
     };
     let (status, body) = dispatch(&ctx, &headers("CreateTable", Some(&signed_as(KEY))), b"{}");

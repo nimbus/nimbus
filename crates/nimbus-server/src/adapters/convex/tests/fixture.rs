@@ -1,12 +1,12 @@
 use super::*;
-use nimbus_services::SandboxCatalogRuntimeServiceRegistry;
+use nimbus_services::ServiceInstanceRuntimeRegistry;
 
 pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
--> (TempDir, Arc<Service>, TenantId, ConvexHostBridge) {
+-> (TempDir, Arc<Engine>, TenantId, ConvexHostBridge) {
     let tempdir = tempdir().expect("runtime action tempdir should build");
-    let service = Arc::new(Service::new(tempdir.path()).expect("service should build"));
+    let engine = Arc::new(Engine::new(tempdir.path()).expect("engine should build"));
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should be created");
     let registry = Arc::new(ConvexRegistry::empty());
@@ -27,11 +27,11 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
     .expect("fixture tenant isolation decision should build");
     let bridge = ConvexHostBridge::new(
         ConvexHostBridgeScope::new(
-            service.clone(),
+            engine.clone(),
             registry,
             decision,
-            Arc::new(SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
-                crate::EmptySandboxCatalog,
+            Arc::new(ServiceInstanceRuntimeRegistry::new(Arc::new(
+                crate::EmptyServiceInstanceCatalog,
             ))),
         ),
         ConvexHostBridgeInvocation::new(
@@ -42,5 +42,5 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
             InvocationKind::Query,
         ),
     );
-    (tempdir, service, tenant_id, bridge)
+    (tempdir, engine, tenant_id, bridge)
 }

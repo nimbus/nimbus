@@ -3,8 +3,8 @@ use nimbus_testing::BlockingFaultInjector;
 
 #[tokio::test]
 async fn create_tenant_and_run_document_lifecycle() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     let create_response = api.create_tenant("demo").await;
@@ -61,8 +61,8 @@ async fn create_tenant_and_run_document_lifecycle() {
 
 #[tokio::test]
 async fn get_nonexistent_document_returns_not_found() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -80,15 +80,15 @@ async fn get_nonexistent_document_returns_not_found() {
 async fn dropped_http_insert_after_commit_still_persists_the_document() {
     let faults = BlockingFaultInjector::new(FaultPoint::StorageCommitAfterVisibilityBeforeReturn);
     let faults_for_builder = faults.clone();
-    let fixture = ServiceFixture::new(move |path| {
-        Service::new_with_simulation(
+    let fixture = EngineFixture::new(move |path| {
+        Engine::new_with_simulation(
             path,
             Arc::new(ManualClock::new(nimbus_core::Timestamp(30_000))),
             faults_for_builder,
         )
     });
-    let service = fixture.service();
-    let server = ServerFixture::start(router_for_service(service.clone())).await;
+    let service = fixture.engine();
+    let server = ServerFixture::start(router_for_engine(service.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

@@ -19,7 +19,7 @@ impl TenantServiceKey {
 }
 
 #[derive(Default)]
-pub(super) struct SandboxServiceManagerState {
+pub(super) struct ServiceManagerState {
     pub(super) handles: BTreeMap<TenantServiceKey, SandboxHandle>,
     pub(super) activations_in_progress: BTreeSet<TenantServiceKey>,
 }
@@ -35,7 +35,7 @@ pub(super) fn sandbox_backend_error(
     error: &SandboxError,
 ) -> Error {
     Error::Internal(format!(
-        "failed to {operation} sandbox service {} for tenant {}: {error}",
+        "failed to {operation} sandbox-backed service {} for tenant {}: {error}",
         key.service_name, key.tenant_id
     ))
 }

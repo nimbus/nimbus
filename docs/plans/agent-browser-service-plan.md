@@ -1,13 +1,13 @@
 # Plan: Agent Browser Service
 
-Canonical deferred design and execution plan for adding a first-class
-**browser session** resource to Nimbus that agent workloads can consume
-ergonomically through the runtime host bridge.
+Canonical deferred design and execution plan for adding a built-in
+**browser service** to Nimbus that provides first-class browser sessions for
+apps and agent workloads.
 
 This document owns the durable forward-looking context for the
-`BrowserService`, the `BrowserProvider` trait, the `ctx.browser` host
-op, browser-session storage state in `nimbus-storage`, and the
-sandbox-tier supervision of Chrome/Brave behind `nimbus-sandbox`.
+`BrowserService`, the `BrowserProvider` trait, SDK/session facades,
+browser-session storage state in `nimbus-storage`, and the sandbox-tier
+supervision of Chrome/Brave behind `nimbus-sandbox`.
 
 Paired research: `docs/plans/research/agent-browser-service-prior-art.md`.
 
@@ -53,7 +53,9 @@ workstream. The source of truth is:
 3. `ARCHITECTURE.md` for the landed runtime architecture
 4. `docs/architecture/sandbox/microvm-service-baseline.md` for the
    sandbox tier this plan integrates with
-5. `docs/plans/research/agent-browser-service-prior-art.md` for the
+5. `docs/architecture/sandbox/service-sandbox-session-model.md` for the
+   service/sandbox/session/runtime-isolate vocabulary
+6. `docs/plans/research/agent-browser-service-prior-art.md` for the
    north-star research and prior-art survey
 
 Do not rely on prior chat transcripts as progress state.
@@ -98,10 +100,12 @@ viable workarounds are all wrong for Nimbus:
 | `fetch()` plus DOM parsing | Fails on every modern web app. |
 
 Adding a BrowserService inside Nimbus gives agents a real browser as a
-first-class resource — addressable as `ctx.browser`, audited through
-the engine mutation journal, sandboxed behind `nimbus-sandbox`,
-persisted in `nimbus-storage`. Same trust and observability story as
-`ctx.db`.
+first-class built-in service. The high-level SDK reaches it through
+service-targeted sessions, for example `nimbus.sessions.open({ target:
+{ service: { name: "browser" } }, ... })`; a future high-level SDK browser facade can
+layer on the same service/session authority model. Browser work is audited
+through the engine mutation journal, sandboxed behind `nimbus-sandbox` in
+production, and persisted in `nimbus-storage`.
 
 This is additive. Functions that do not import the browser capability
 never see it. The default tenant trust posture is "no browser" — the
@@ -116,15 +120,21 @@ capabilities admission gate in `docs/plans/wasi-agent-capabilities-plan.md`.
   `nimbus-sandbox`.
 - The `BrowserProvider` trait and at least one concrete provider
   (`SubprocessChromeProvider`).
+- The built-in `browser` service definition, service admission, and service
+  session policy.
 - The session registry, BrowserContext multiplexing, warm pool, and
   recycle policy.
-- The `ctx.browser` host bridge op family.
-- The storage state schema for durable named sessions in
+- SDK/session facades on `@nimbus/nimbus`. Built-in browser service access stays
+  a service/session capability, not an adapter or runtime `ctx.browser`
+  shortcut.
+- The storage state schema for durable browser profiles/session state in
   `nimbus-storage`.
 - The browser-tenant admission flag and ACL on session ownership.
 - The browser-op extension to the mutation journal.
-- The JS facade in `packages/nimbus/` (and a thin Convex-compat shim if
-  needed in `packages/convex/`).
+- The JS facade in `packages/nimbus/` published as `@nimbus/nimbus`. Compat
+  adapter packages stay
+  adapter-shaped; adding adapter-specific browser shortcuts requires a separate
+  adapter plan.
 
 ### What this plan does NOT own
 
@@ -132,8 +142,9 @@ capabilities admission gate in `docs/plans/wasi-agent-capabilities-plan.md`.
   If the BrowserService needs a sandbox capability that does not exist
   (e.g., GPU passthrough), open a separate plan against the sandbox
   layer.
-- The `nimbus-runtime` V8 surface — only the new host bridge op is
-  added; no new V8 features.
+- The runtime isolate host-call surface. The authoritative control model is the
+  built-in service plus SDK sessions, and no adapter or runtime ctx surface is
+  widened by this plan.
 - The agent DOM extraction format itself — this plan emits a stable
   serialised form, but agent loops that consume it (a Browser-Use-like
   library) are user space.
@@ -149,8 +160,8 @@ full survey. Short summary of what each contributes here:
 | System | What this plan borrows |
 |---|---|
 | Browserless v2 | Single-Chrome-many-BrowserContexts production proof. CDP WebSocket proxying as a workable seam. |
-| Browserbase + Stagehand | Stateful named sessions as the user-facing primitive. Storage-state durability. Session video replay as an audit precedent. |
-| Cloudflare Browser Rendering (containers retrospective) | Runtime-binding ergonomics (`ctx.browser` shape). Warm pool to hide cold start. Composite "Quick Actions" host ops to collapse round-trips. **Negative lesson:** eventually-consistent KV is wrong for hot-path session claiming; use a strongly-consistent path. **Negative lesson:** the right isolation unit is the *trust boundary*, not a fixed level of the browser hierarchy. |
+| Browserbase + Stagehand | Stateful browser sessions as the user-facing primitive. Storage-state durability. Session video replay as an audit precedent. Nimbus translates their profile-backed session ergonomics into session IDs plus optional profile/storage-state names. |
+| Cloudflare Browser Rendering (containers retrospective) | Runtime-binding ergonomics translated into Nimbus's service/session SDK shape, with an optional native wrapper. Warm pool to hide cold start. Composite "Quick Actions" host ops to collapse round-trips. **Negative lesson:** eventually-consistent KV is wrong for hot-path session claiming; use a strongly-consistent path. **Negative lesson:** the right isolation unit is the *trust boundary*, not a fixed level of the browser hierarchy. |
 | Steel.dev | Open-source single-binary supervisor pattern. Multi-protocol surface. |
 | Playwright | `BrowserContext` abstraction. `storageState` serialisation format. |
 | Chrome DevTools Protocol | The wire protocol the provider speaks. |
@@ -205,22 +216,42 @@ All ops receive `tenant_id` + `session_id` for scoping. Trait is
 | Provider | Backing | Phase |
 |---|---|---|
 | `SubprocessChromeProvider` | Local `chrome` or `chromium` subprocess on the host, no sandbox | B2 — dev/test |
-| `SandboxedBrowserProvider` | Chrome inside `nimbus-sandbox` (krun microVM on Linux, Virtualization.framework on macOS) | B5 — production |
+| `SandboxedBrowserProvider` | Chrome inside `nimbus-sandbox` (Linux production microVM; macOS dev container inside the outer machine-os VM) | B5 — production |
 | `BraveProvider` *(optional)* | Same as sandboxed but with Brave binary; gated on a per-session policy flag | not in initial scope |
 
-The provider is selected per-tenant or globally via configuration. The
-host bridge contract is identical regardless of which provider is
-active.
+The provider is selected per-tenant or globally via configuration. The service
+and session contract is identical regardless of which provider is active.
 
-### `ctx.browser` host bridge surface
+### Browser service and session surface
 
-Sketch only. Exact API resolves at B3.
+Sketch only. Exact API resolves at B3/B4 and must follow
+`docs/architecture/sandbox/service-sandbox-session-model.md`.
+
+```ts
+const browserSession = await nimbus.sessions.open({
+  target: { service: { name: "browser" } },
+  channels: ["cdp", "page", "files"],
+  profile: "research",
+});
+
+// Optional high-level wrapper over the same built-in service target.
+const browserViaFacade = await nimbus.browsers.open({ profile: "research" });
+```
+
+`profile: "research"` names durable browser storage state. It is not the
+session authority name. `sessions.open(...)` returns a session id/handle; later
+reconnects target that session id, or open a new session from the same profile
+according to the profile's single-writer/rebind policy.
+
+A future high-level SDK browser facade can exist, but it must delegate to the
+same built-in service/session model:
 
 ```text
-ctx.browser.session(name: string, opts?: SessionOpts) -> Session
+nimbus.browser.open(opts?: BrowserSessionOpts) -> BrowserSession
 
-// Primitive ops — one host-bridge crossing each, used for fine-grained agent loops
-Session:
+// Primitive ops -- one SDK/control-plane or private host-transport crossing
+// each, used for fine-grained agent loops.
+BrowserSession:
   goto(url, opts?) -> NavigationResult
   click(selector | a11y_id, opts?) -> void
   type(selector | a11y_id, text, opts?) -> void
@@ -231,24 +262,20 @@ Session:
   close() -> void           // close context; final snapshot
   pages: PageHandle[]
 
-// Composite ops — single host-bridge crossing for canonical multi-step flows
+// Composite ops -- single crossing for canonical multi-step flows
 // (Cloudflare's "Quick Actions" lesson: round-trips dominate latency)
-ctx.browser.snapshot(url, opts?) -> View          // launch+goto+extract+close
-ctx.browser.screenshot(url, opts?) -> bytes       // launch+goto+screenshot+close
-ctx.browser.pdf(url, opts?) -> bytes              // launch+goto+pdf+close
-ctx.browser.run(session, steps[], opts?) -> R     // batched step list, one crossing
+nimbus.browser.snapshot(url, opts?) -> View       // launch+goto+extract+close
+nimbus.browser.screenshot(url, opts?) -> bytes    // launch+goto+screenshot+close
+nimbus.browser.pdf(url, opts?) -> bytes           // launch+goto+pdf+close
+nimbus.browser.run(session, steps[], opts?) -> R  // batched step list, one crossing
 ```
 
-Composite ops are not sugar — they are the fast path. An agent that issues
-`goto`/`click`/`extract` as three separate calls incurs three host-bridge
+Composite ops are not sugar -- they are the fast path. An agent that issues
+`goto`/`click`/`extract` as three separate calls incurs three SDK/control-plane
 crossings; the same flow through `run` executes inside `BrowserService` with
 one. Provide both; primitives for interactive agent loops, composites for
-canonical flows.
-
-`ctx.browser.session("research")` is idempotent — first call creates,
-subsequent calls in the same or future invocations resume the same
-storage state. Sessions are tenant-scoped; cross-tenant session
-references error.
+canonical flows. The browser facade is a Nimbus SDK capability, not an adapter
+or runtime `ctx` API surface; compat adapters must not grow browser shortcuts.
 
 ### Engine mutation-journal integration
 
@@ -264,7 +291,7 @@ mutations so they replay deterministically.
 table _nimbus.browser_sessions {
   session_id:       SessionId    (PK)
   tenant_id:        TenantId
-  display_name:     string
+  profile_name:     string?      // durable storage-state profile, not authority
   storage_state:    bytes        // Playwright-compatible JSON, zstd-compressed
   context_options:  json         // viewport, ua, locale, timezone, proxy
   acl:              json         // who/what can open this session
@@ -288,16 +315,22 @@ tenant — they are infrastructure, not user data.
 
 ```text
 TenantCapabilities (extended):
-  browser_enabled: bool         // gate: tenant may use ctx.browser at all
+  browser_enabled: bool         // gate: tenant may use browser sessions/facade
   browser_proxy:   Option<Url>  // forced proxy, if any
   browser_quota:   BrowserQuota // max concurrent sessions, max storage, etc.
 ```
 
-A tenant without `browser_enabled` calling `ctx.browser.*` gets a
-capability-denied error, not a runtime panic. This matches the
-`nimbus:agent` admission model exactly.
+A tenant without `browser_enabled` opening a `browser` service session or
+calling any SDK browser facade method gets a capability-denied error, not a
+runtime panic. This matches the `nimbus:agent` admission model exactly.
 
 ### Sandbox integration
+
+BrowserService is a built-in service implementation, but browser execution is
+not treated as safe to run unsandboxed in production. Built-in means Nimbus owns
+admission, quotas, session lifecycle, storage-state policy, and the SDK/native
+facade. It does not mean Chrome is embedded into or trusted inside the Nimbus
+process.
 
 The `SandboxedBrowserProvider` consumes the sandbox layer's existing
 "run a process inside an isolated VM" surface. The browser is
@@ -427,9 +460,9 @@ session registry gains:
   flight requests at the moment of failure error out — sessions are
   durable across failures but individual CDP commands are not.
 
-These extensions are additive and live behind the same `BrowserService`
-API. Function code calling `ctx.browser.session("research")` is
-unchanged.
+These extensions are additive and live behind the same `BrowserService` API.
+Function code opening a `browser` service session, or using a native wrapper that
+delegates to that session target, is unchanged.
 
 #### Gossip and Raft topic conventions
 
@@ -500,7 +533,13 @@ does require two things:
 ## Required Invariants
 
 - The browser capability is strictly additive. Tenants without
-  `browser_enabled` must never reach a `ctx.browser` code path.
+  `browser_enabled` must never open a `browser` service session or reach a
+  browser SDK facade path.
+- Browser is a built-in service that provides sessions. Browser profiles may
+  name durable storage state, but they are not authority-bearing session names.
+- Any high-level browser convenience API is an `@nimbus/nimbus` SDK facade over
+  the built-in service/session model. Compat adapters and runtime `ctx` surfaces
+  must not grow browser shortcuts.
 - Cross-tenant session access must be impossible — session IDs are
   unique per tenant and the engine rejects cross-tenant references at
   the bridge boundary.
@@ -542,10 +581,10 @@ These must resolve before promoting this plan from `deferred`:
 
 1. **Default browser binary:** Chrome or Brave? Default position:
    Chrome for the MVP; Brave as a per-session policy override later.
-2. **Wire-protocol fidelity:** Playwright-compatible at the host
-   surface, or Nimbus-native? Default position: Nimbus-native
-   `ctx.browser` shape, with the *provider* speaking CDP under the
-   hood. A Playwright-compatible facade can layer on top later.
+2. **Wire-protocol fidelity:** Playwright-compatible at the SDK/session
+   surface, or Nimbus-native? Default position: Nimbus-native SDK/session
+   facade over the built-in `browser` service, with the *provider* speaking CDP
+   under the hood. A Playwright-compatible facade can layer on top later.
 3. **Per-Chrome sandbox unit vs shared:** decided at B5 with
    measurements, not in advance.
 4. **Extractor ordering:** a11y tree first (cheap, broadly sufficient)
@@ -553,10 +592,12 @@ These must resolve before promoting this plan from `deferred`:
 5. **Crate location:** confirm `crates/nimbus-browser/` rather than
    folding into `nimbus-engine` or `nimbus-sandbox`. Default position:
    own crate; the surface is large enough.
-6. **Capability namespace:** `ctx.browser` vs `ctx.agent.browser` vs a
-   separate `nimbus:browser` WIT package. Default position:
-   `ctx.browser` for the V8 surface; reserve `nimbus:browser` WIT
-   package for the wasmtime path.
+6. **SDK browser convenience namespace:** whether to expose `nimbus.browser`
+   or only the SDK/session API. Default position:
+   service-targeted `nimbus.sessions.open({ target: { service: { name: "browser" } } })`
+   is canonical; `nimbus.browser` may exist only as an SDK facade over the same
+   service/session model; reserve `nimbus:browser` WIT package for the wasmtime
+   path.
 
 ## Phase Status Ledger
 
@@ -565,10 +606,10 @@ These must resolve before promoting this plan from `deferred`:
 | B0 | `todo` | Decision gate — resolve every item in `Open Decisions` and record outcomes in this plan before any code lands | activation gate met | this is a no-code phase; output is a decision log appended below |
 | B1 | `todo` | Scaffolding — `crates/nimbus-browser/` crate with `BrowserProvider` trait, types, no provider impl | B0 | crate compiles, trait shape reviewed against the prior-art research |
 | B2 | `todo` | `SubprocessChromeProvider` — local Chrome subprocess, CDP client, single BrowserContext per call, no pool, no sandbox | B1 | host-only dev provider; refuses to start in production; smoke test: launch Chrome, open page, extract title |
-| B3 | `todo` | Session registry + BrowserContext multiplexing — named sessions, context per session, ephemeral storage state, tenant scoping enforced at the bridge | B2 | two concurrent sessions in one Chrome with cookie isolation verified; tenant cross-access rejected |
-| B4 | `todo` | `ctx.browser` host bridge op + JS facade — `Session`, `goto`, `click`, `type`, `eval`, `extract` exposed to `nimbus-runtime`; admission gated on `browser_enabled` | B3 | demo agent reaches a page and extracts text; tenant without capability errors at deploy/invocation time |
-| B5 | `todo` | `SandboxedBrowserProvider` — Chrome behind `nimbus-sandbox` (krun on Linux, VZ.framework on macOS); CDP over vsock or loopback; per-Chrome sandbox-unit policy decided here with measurements | B4 | sandboxed provider runs the same smoke and tenant tests as B2/B3; isolation verified by attempt to read host fs from inside Chrome |
-| B6 | `todo` | Durable storage state — snapshot on close, periodic snapshot, `commit()` host op; hydration on session open; encrypted at rest | B3 | named session survives Chrome restart and Nimbus restart with cookies intact |
+| B3 | `todo` | Session registry + BrowserContext multiplexing — session ids, optional profile/storage-state names, context per session, ephemeral storage state, tenant scoping enforced at the bridge | B2 | two concurrent sessions in one Chrome with cookie isolation verified; tenant cross-access rejected |
+| B4 | `todo` | SDK/session facade plus optional `nimbus.browser` SDK facade — browser sessions expose `goto`, `click`, `type`, `eval`, `extract`; admission gated on `browser_enabled` | B3 | demo agent reaches a page and extracts text; tenant without capability errors at deploy/invocation time |
+| B5 | `todo` | `SandboxedBrowserProvider` — Chrome behind `nimbus-sandbox` (Linux production microVM; macOS dev container inside the outer machine-os VM); CDP over vsock or loopback; per-Chrome sandbox-unit policy decided here with measurements | B4 | sandboxed provider runs the same smoke and tenant tests as B2/B3; isolation verified by attempt to read host fs from inside Chrome |
+| B6 | `todo` | Durable storage state — snapshot on close, periodic snapshot, `commit()` host op; hydration on session open; encrypted at rest | B3 | a session/profile survives Chrome restart and Nimbus restart with cookies intact |
 | B7 | `todo` | Warm pool + recycle policy — pre-launched Chromes (and/or pre-created BrowserContexts) sized by `BrowserQuota`; recycle on context close or N pages or M minutes | B6 | warm-pool latency under 200 ms steady-state proven via bench |
 | B8 | `todo` | Extraction cache — a11y tree extractor first, cleaned-DOM extractor next; cache keyed by `(session_id, page_url, dom_revision)`; serialised LLM-friendly format | B4 | cache hit on repeated extract of the same page; format documented |
 | B9 | `todo` | Mutation-journal integration + ACL — browser ops as `BrowserOp` journal entries; session ACL per tenant; replay-safe ordering | B4, B6 | journal replay reproduces session lifecycle; ACL enforced at the bridge |
@@ -583,7 +624,7 @@ Activation gate met
         └── B1 nimbus-browser scaffolding + BrowserProvider trait
               └── B2 SubprocessChromeProvider (dev only)
                     └── B3 Session registry + context multiplexing
-                          ├── B4 ctx.browser host bridge + JS facade
+                          ├── B4 SDK/session facade + optional native wrapper
                           │     ├── B5 SandboxedBrowserProvider (production)
                           │     ├── B8 Extraction cache
                           │     └── B9 Mutation-journal + ACL
@@ -624,6 +665,8 @@ independent and can run in parallel once B4/B5/B6 land.
 | 2026-05-19 | meta | refined | Decoupled activation gate from `wasi-agent-capabilities-plan.md` after recognising the two are siblings, not parent/child (different substrates, different gates). Folded in lessons from Cloudflare's `blog.cloudflare.com/browser-run-containers/` container retrospective: (a) tightened the isolation rule to "one Chrome per trust unit (tenant), many BrowserContexts within"; (b) added composite/Quick-Action host ops alongside primitives to collapse host-bridge round-trips; (c) added an explicit "Why this plan does not need a KV or Durable-Object equivalent" section explaining that the engine's mutation path already provides what Cloudflare's DO layer provides. | review against the Cloudflare blog post and `docs/plans/research/agent-browser-service-prior-art.md`; no code changes | hold deferred until activation gate is met |
 | 2026-05-19 | meta | refined | Added explicit "Horizontal-scaling and cross-node state" section mapping single-writer-with-affinity browser sessions onto the iroh+openraft+iroh-blobs primitives already committed in `docs/architecture/horizontal-scaling.md` (no new cluster primitives introduced by this plan). Added the "routing-over-proxying" rule citing Cloudflare's SASE-mode-QUIC retrospective (`blog.cloudflare.com/faster-sase-proxy-mode-quic/`) — cross-node CDP must ride a dedicated iroh QUIC stream, never wrapped inside another framed RPC channel. Added "Secret-management dependency" section documenting the three classes of secrets the plan exposes, the MVP workaround via the existing `secret`-grant + KMS-encrypted env table, and the breaking-change migration to first-class `secret_ref` references when a real secret-store plan lands. Authored the paired research note `docs/plans/research/secret-management-shape.md` capturing the gap. Added four matching `Required Invariants` covering credential-leak prevention, cross-node CDP transport, single-writer session ownership, and the no-wrap rule. | review against `docs/architecture/horizontal-scaling.md` §§3–4, the Cloudflare SASE post, and `docs/plans/research/secret-management-shape.md`; no code changes | hold deferred until activation gate is met |
 | 2026-05-19 | meta | refined | Horizontal-scaling coherence audit. Re-pointed secret-management references to the new canonical `docs/plans/secret-management-plan.md` (the shape note was superseded). Added a storage-state snapshot trigger policy (explicit checkpoint, close, idle, or 30s/100-mutations-since-last threshold) to close an ambiguity in the multi-node section. Added explicit gossip topic conventions (`topic:<tenant_id>:browser_sessions`, `topic:cluster:state`) matching the canonical naming in `horizontal-scaling.md` §3. Added a multi-Raft forward note tracking Open Question 1 in `horizontal-scaling.md`: tenant-Raft partitioning at 10+ nodes requires no plan-level change because session IDs are already tenant-scoped. | cross-checked against the new Consumer Plans section of `horizontal-scaling.md` and against `secret-management-plan.md`'s identical multi-Raft note; no code changes | hold deferred until activation gate is met |
+| 2026-06-07 | meta | refined | Reframed BrowserService as a built-in `browser` service that provides sessions. The canonical app shape is service-targeted sessions or a high-level SDK browser facade; compat adapters and runtime `ctx` surfaces stay adapter-shaped and do not grow browser shortcuts. Browser profiles now name durable storage state, not authority-bearing sessions. Production browser execution remains sandbox-backed; Linux production uses microVMs and macOS dev uses containers inside the outer machine-os VM. | `npm run docs:validate-refs:strict` pass (245 working-tree Markdown files); `git diff --check` pass for touched tracked docs | hold deferred until activation gate is met |
+| 2026-06-08 | meta | refined | Removed the optional native `ctx.browser` direction. Browser remains a built-in service that provides sessions; any convenience API is an `@nimbus/nimbus` SDK facade such as future `nimbus.browser`, while adapter and runtime `ctx` surfaces stay free of browser shortcuts. | `npm run docs:validate-refs:strict` pass (245 working-tree Markdown files); touched-doc `git diff --check` pass | hold deferred until activation gate is met |
 
 ## Verification Expectations
 
@@ -684,9 +727,8 @@ without:
   sandbox tier the production provider sits behind. No changes to the
   sandbox layer are assumed by this plan; if any are required they
   open a separate plan against the sandbox layer.
-- **`docs/architecture/runtime/adapter-boundary.md`**: the host-bridge
-  boundary `ctx.browser` crosses. Update when B4 lands to document the
-  new op family.
+- **`docs/plans/nimbus-capability-segregation-plan.md`**: the SDK authority,
+  adapter-context, and private host-transport boundary that B4 must preserve.
 - **`docs/architecture/horizontal-scaling.md`**: the cluster substrate
   this plan defers to for the multi-node future. BrowserService
   introduces no new cluster primitives; it is a consumer of iroh

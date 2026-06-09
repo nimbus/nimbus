@@ -102,8 +102,11 @@ Confusing terms used inconsistently across the industry:
   durable if hydrated from storage state at create time and snapshotted
   on close.
 
-The Nimbus "profile" concept in this research means *the durable storage
-state bound to a named session*, not Chrome's `--user-data-dir`.
+The Nimbus "profile" concept in this research means *durable storage state used
+when opening a browser session*, not Chrome's `--user-data-dir`. Per
+`docs/architecture/sandbox/service-sandbox-session-model.md`, a profile name is
+not an authority-bearing session name; Nimbus sessions have ids/handles, and the
+built-in `browser` service provides those sessions.
 
 ---
 
@@ -150,9 +153,9 @@ implementation decisions on any single line.
   file download capture.
 - **Lessons for Nimbus:** This is the closest analog to what a Nimbus
   BrowserService would look like from the agent's perspective. Stateful
-  named sessions are the abstraction that matters. The "session video
-  replay" feature is interesting for audit parity with Nimbus's
-  mutation journal.
+  sessions plus durable profile/storage-state names are the abstraction that
+  matters. The "session video replay" feature is interesting for audit parity
+  with Nimbus's mutation journal.
 
 ### Cloudflare Browser Rendering
 
@@ -166,10 +169,12 @@ implementation decisions on any single line.
 - **Sandbox:** Their multi-tenant Workers isolate model plus whatever
   pod/VM tier holds the Chrome fleet. Not publicly documented in
   detail.
-- **Lessons for Nimbus:** Demonstrates a runtime binding (`env.BROWSER`)
-  rather than a separate API as the right ergonomic shape when the
-  runtime owner already trusts the browser layer. Maps cleanly to a
-  Nimbus `ctx.browser` host-bridge op.
+- **Lessons for Nimbus:** Demonstrates that browser access is ergonomic when
+  the platform owns the binding, warm pool, and session policy. For Nimbus,
+  the canonical shape is now a built-in `browser` service that provides
+  service-targeted sessions through the high-level SDK. A future
+  `nimbus.browser` convenience facade may exist later, but only as an SDK
+  facade over the same service/session authority model.
 
 #### Containers retrospective (2026)
 
@@ -198,9 +203,9 @@ original BISO-shared infrastructure. Findings worth borrowing:
   `proxy_url` and `solve_captcha` per session.
 - **Sandbox:** Docker container.
 - **Lessons for Nimbus:** The clearest open-source reference for the
-  shape Nimbus would build. Session lifecycle, named sessions,
-  cookie persistence between sessions, and the multi-protocol
-  surface are all directly applicable patterns.
+  shape Nimbus would build. Session lifecycle, resumable session IDs, durable
+  profile/storage-state names, cookie persistence between sessions, and the
+  multi-protocol surface are all directly applicable patterns.
 
 ### Anchor Browser, Hyperbrowser, others
 
@@ -287,8 +292,11 @@ properties. Nimbus should match them unless there is a specific reason
 not to.
 
 1. **BrowserContext is the session unit.** Not a process, not a tab.
-2. **Named, addressable sessions.** Sessions have IDs that survive
-   reconnects, restarts, and (where supported) host failover.
+2. **Durable, addressable sessions.** Sessions have IDs that survive
+   reconnects, restarts, and (where supported) host failover. Many prior-art
+   systems conflate durable browser storage-state names with session names;
+   Nimbus translates that into service-targeted sessions plus optional profile
+   names.
 3. **Storage state is durable and serialisable.** Cookies + localStorage
    + IndexedDB can be snapshotted to a blob and rehydrated into a fresh
    context.
@@ -466,12 +474,13 @@ The survey makes clear that the *shape* of a BrowserService is
 well-understood. What makes a Nimbus BrowserService non-redundant is
 the integration story:
 
-1. **Engine-owned, not a separate service.** Browser ops flow through
-   the same `apply_mutation` path as DB writes. Replay, scheduler,
-   audit all "just work."
-2. **`ctx.browser` is a runtime host-bridge op.** Agents inside
-   `nimbus-runtime` reach it the same way they reach `ctx.db`. No
-   separate auth, no separate URL.
+1. **Nimbus-owned built-in service, not an external SaaS dependency.**
+   Browser ops flow through the same admission, grant, storage, and audit
+   systems as other Nimbus-owned resources.
+2. **Sessions are the canonical app shape.** Apps and agents open a scoped
+   session against the named `browser` service through the high-level SDK.
+   A future `nimbus.browser` facade is optional SDK convenience, not an adapter
+   or runtime `ctx` API and not the source of authority.
 3. **Storage is `nimbus-storage`.** Session blobs live next to user
    documents, with the same atomicity guarantees.
 4. **Sandbox is `nimbus-sandbox`.** Same isolation tier as user
@@ -542,8 +551,9 @@ Internal references:
 
 - `docs/architecture/sandbox/microvm-service-baseline.md` — the
   sandbox tier the BrowserService would sit behind.
-- `docs/architecture/runtime/adapter-boundary.md` — the runtime
-  boundary `ctx.browser` would cross.
+- `docs/plans/nimbus-capability-segregation-plan.md` — the SDK authority,
+  adapter-context, and private host-transport boundary that any future browser
+  SDK facade must preserve.
 - `docs/plans/wasi-agent-capabilities-plan.md` — adjacent agent
   capability work; the browser is the next obvious capability after
   filesystem/process/http.

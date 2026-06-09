@@ -1,4 +1,4 @@
-import { useNimbusConnectionState } from "nimbus/react";
+import { useNimbusConnectionState } from "@nimbus/nimbus/react";
 
 import { StateDot } from "../components/state-dot";
 

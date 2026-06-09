@@ -20,7 +20,7 @@ import type {
   TableDefinition as NimbusTableDefinition,
   UserIdentity as NimbusUserIdentity,
   UserIdentityAttributes as NimbusUserIdentityAttributes,
-} from "nimbus/server";
+} from "@nimbus/nimbus/server";
 import {
   action as nimbusAction,
   defineSchema as nimbusDefineSchema,
@@ -36,7 +36,7 @@ import {
   paginationOptsValidator as nimbusPaginationOptsValidator,
   paginationResultValidator as nimbusPaginationResultValidator,
   query as nimbusQuery,
-} from "nimbus/server";
+} from "@nimbus/nimbus/server";
 
 import type {
   ConvexActionReference,

@@ -61,7 +61,7 @@ impl ConvexHostBridge {
                     .registry()
                     .resolve_action_for_visibility(name, args, visibility)?;
                 execute_convex_action_async(
-                    self.service(),
+                    self.engine(),
                     self.registry(),
                     self.tenant_id(),
                     action,
@@ -124,7 +124,7 @@ impl ConvexHostBridge {
                     .registry()
                     .resolve_action_for_visibility(name, args, visibility)?;
                 execute_convex_action_cancellable_with_auth(
-                    self.service(),
+                    self.engine(),
                     self.registry(),
                     self.tenant_id(),
                     action,

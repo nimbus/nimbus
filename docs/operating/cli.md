@@ -749,12 +749,13 @@ startup, it:
 When a Compose selection is present, Nimbus validates it through the same
 adapter used by `nimbus compose config`, lowers it into a typed
 declared-service catalog, and wires that catalog into the server-owned sandbox
-manager. With `--app-dir`, ready declared-service bindings appear in
-`ctx.services.<name>`, and missing bindings can be activated explicitly through
-`await ctx.services.get("<name>")`. The app directory may use `nimbus/` as the
-native user source root or `convex/` as the compatibility root; in both cases
-the runtime registry still loads the generated manifests from
-`.nimbus/convex/`. The
+manager. Compose does not add Nimbus-specific service shortcuts to adapter
+contexts. Apps that need Nimbus service operations use the explicit
+`@nimbus/nimbus` SDK or a future Nimbus-native runtime/session surface; Convex,
+Firebase, MongoDB, DynamoDB, and Cloud Functions compatibility contexts remain
+adapter-shaped. The app directory may use `nimbus/` as the native user source
+root or `convex/` as the compatibility root; in both cases the runtime registry
+still loads the generated manifests from `.nimbus/convex/`. The
 explicit `nimbus compose up/down/...` commands share that same Compose
 discovery, lowering, deterministic project identity, and project-scoped
 backend root instead of inventing a second lifecycle control plane.
@@ -770,8 +771,8 @@ now starts the machine first and only then wires the forwarded guest manager.
 This is why `start` and `compose` are not the same concept:
 
 - server startup owns the Nimbus API surface itself: HTTP, WebSocket,
-  Convex-compatible routes, runtime execution, and the `ctx.services` snapshot
-  plus activation surface
+  Convex-compatible routes, runtime execution, and SDK/native service
+  capability routing
 - `compose` commands manage declared backing workloads that Nimbus may start,
   stop, inspect, or log
 
@@ -819,7 +820,11 @@ validation plus explicit lifecycle control:
 
 Current scope:
 
-- validates `image` and `build` sources
+- validates Compose `image` and `build` sources. `image:` lowers to an OCI image
+  reference source; `build:` lowers to an OCI image build source only when build
+  admission allows it. Production tenant isolation keeps local builds
+  fail-closed by default until an operator-owned provenance/admission policy is
+  configured.
 - resolves `environment` plus `env_file`
 - validates lowerable `command`, `entrypoint`, `working_dir`, and `user`
   process overrides

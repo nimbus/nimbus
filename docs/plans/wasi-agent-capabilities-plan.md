@@ -582,8 +582,8 @@ When promoted, the agent capabilities should not be considered viable without:
   production provider-auth credentials used by `nimbus:agent/http-client`,
   sidecars, or sandboxed OS providers. Agent workloads must not derive provider
   identity from session IDs, browser sessions, or caller input alone; any
-  identity-bearing credential is minted from the admitted stable workload
-  identity and then consumed by the secret-management or provider adapter layer.
+  identity-bearing credential is minted from the admitted `WorkloadIdentity`
+  subject and then consumed by the secret-management or provider adapter layer.
 - **`docs/architecture/horizontal-scaling.md`**: no direct dependency
   for the WIT surface itself, but agent-OS sidecar lifecycle under
   multi-node clustering (where the sidecar lives, how it reattaches on

@@ -278,8 +278,9 @@ rather than the krun patch audit:
 - Loopback service publication is the default. Public or LAN exposure is an
   explicit operator policy decision, not a Compose default.
 - Runtime `service` grants and network grants are separate. A tenant runtime
-  must not be able to bypass `ctx.services` by scanning localhost ports unless
-  the network grant explicitly admits the same tenant-owned endpoint.
+  must not be able to bypass the service capability route by scanning localhost
+  ports unless the network grant explicitly admits the same tenant-owned
+  endpoint.
 - HostBridge operations must use the server-owned invocation tenant. Tenant ID
   must not be accepted from JavaScript payloads.
 - Native HTTP/API entrypoints must bind a verified principal/session to the

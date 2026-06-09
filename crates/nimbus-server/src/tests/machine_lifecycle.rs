@@ -139,7 +139,7 @@ impl MachineLifecycleManager for StubMachineLifecycleManager {
 #[tokio::test]
 async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
     let temp = tempdir().expect("tempdir should build");
-    let service = Arc::new(Service::new(temp.path()).expect("service should create"));
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
     let roots = nimbus_machine::MachineRootLayout::new(
         temp.path().join("machine-config"),
         temp.path().join("machine-state"),
@@ -147,17 +147,17 @@ async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
     );
     let manager = StubMachineLifecycleManager::new(roots);
     let server = ServerFixture::start(
-        RouterBuildConfig::core(service.clone())
+        RouterBuildConfig::core(engine.clone())
             .with_machine_lifecycle_manager(Arc::new(manager.clone()))
             .build(),
     )
     .await;
-    crate::system_tenant::prepare_system_tenant_async(&service, None)
+    crate::system_tenant::prepare_system_tenant_async(&engine, None)
         .await
         .expect("system tenant should prepare before subscribing");
     let (system_tx, mut system_rx) =
         tokio::sync::mpsc::channel(nimbus_engine::DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
-    let system_subscription = service
+    let system_subscription = engine
         .subscribe_async(
             crate::system_tenant::system_tenant_id().expect("system id should parse"),
             nimbus_core::Query {
@@ -201,14 +201,14 @@ async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
     assert_eq!(start_body["runtime"]["sshPort"], json!(10022));
 
     assert_eq!(manager.calls(), vec!["start:demo"]);
-    assert_system_machine_state(&service, "running", "listening", "running").await;
+    assert_system_machine_state(&engine, "running", "listening", "running").await;
     wait_for_system_machine_state(
         &mut system_rx,
         "running machine subscription update",
         "running",
     )
     .await;
-    assert_system_events(&service, &[("machine.lifecycle", "start", "running")]).await;
+    assert_system_events(&engine, &[("machine.lifecycle", "start", "running")]).await;
 
     let stop = server
         .client()
@@ -225,7 +225,7 @@ async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
     assert_eq!(stop_body["manager"], json!("helpers-resolved"));
 
     assert_eq!(manager.calls(), vec!["start:demo", "stop:demo"]);
-    assert_system_machine_state(&service, "stopped", "stopped", "stopped").await;
+    assert_system_machine_state(&engine, "stopped", "stopped", "stopped").await;
     wait_for_system_machine_state(
         &mut system_rx,
         "stopped machine subscription update",
@@ -233,7 +233,7 @@ async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
     )
     .await;
     assert_system_events(
-        &service,
+        &engine,
         &[
             ("machine.lifecycle", "start", "running"),
             ("machine.lifecycle", "stop", "stopped"),
@@ -246,7 +246,7 @@ async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
 #[tokio::test]
 async fn machine_config_routes_create_update_delete_and_project_system_state() {
     let temp = tempdir().expect("tempdir should build");
-    let service = Arc::new(Service::new(temp.path()).expect("service should create"));
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
     let roots = nimbus_machine::MachineRootLayout::new(
         temp.path().join("machine-config"),
         temp.path().join("machine-state"),
@@ -254,7 +254,7 @@ async fn machine_config_routes_create_update_delete_and_project_system_state() {
     );
     let manager = StubMachineLifecycleManager::new(roots);
     let server = ServerFixture::start(
-        RouterBuildConfig::core(service.clone())
+        RouterBuildConfig::core(engine.clone())
             .with_machine_lifecycle_manager(Arc::new(manager.clone()))
             .build(),
     )
@@ -282,7 +282,7 @@ async fn machine_config_routes_create_update_delete_and_project_system_state() {
     assert_eq!(create_body["resources"]["cpus"], json!(4));
     assert_eq!(create_body["resources"]["memoryMiB"], json!(4096));
     assert_eq!(create_body["resources"]["diskGiB"], json!(50));
-    assert_system_machine_document(&service, "team-a", "stopped", 4, 4096, 50).await;
+    assert_system_machine_document(&engine, "team-a", "stopped", 4, 4096, 50).await;
 
     let update = server
         .client()
@@ -303,7 +303,7 @@ async fn machine_config_routes_create_update_delete_and_project_system_state() {
     assert_eq!(update_body["resources"]["cpus"], json!(6));
     assert_eq!(update_body["resources"]["memoryMiB"], json!(8192));
     assert_eq!(update_body["resources"]["diskGiB"], json!(80));
-    assert_system_machine_document(&service, "team-a", "stopped", 6, 8192, 80).await;
+    assert_system_machine_document(&engine, "team-a", "stopped", 6, 8192, 80).await;
 
     let delete = server
         .client()
@@ -323,9 +323,9 @@ async fn machine_config_routes_create_update_delete_and_project_system_state() {
         manager.calls(),
         vec!["create:team-a", "update:team-a", "delete:team-a"]
     );
-    assert_system_machine_deleted(&service, "team-a").await;
+    assert_system_machine_deleted(&engine, "team-a").await;
     assert_system_events_for_machine(
-        &service,
+        &engine,
         "team-a",
         &[
             ("machine.lifecycle", "create", "stopped"),
@@ -338,8 +338,8 @@ async fn machine_config_routes_create_update_delete_and_project_system_state() {
 
 #[tokio::test]
 async fn machine_lifecycle_routes_require_configured_manager() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(RouterBuildConfig::core(fixture.service()).build()).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(RouterBuildConfig::core(fixture.engine()).build()).await;
 
     let response = server
         .client()
@@ -416,13 +416,13 @@ fn snapshot_for_resources(
 }
 
 async fn assert_system_machine_state(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     machine_state: &str,
     listener_state: &str,
     port_state: &str,
 ) {
     let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
-    let machines = service
+    let machines = engine
         .list_documents_async(
             tenant_id.clone(),
             TableName::new("machines").expect("table should parse"),
@@ -433,7 +433,7 @@ async fn assert_system_machine_state(
     assert_eq!(machines[0].fields.get("name"), Some(&json!("demo")));
     assert_eq!(machines[0].fields.get("state"), Some(&json!(machine_state)));
 
-    let listeners = service
+    let listeners = engine
         .list_documents_async(
             tenant_id.clone(),
             TableName::new("listeners").expect("table should parse"),
@@ -447,7 +447,7 @@ async fn assert_system_machine_state(
         Some(&json!(listener_state))
     );
 
-    let ports = service
+    let ports = engine
         .list_documents_async(
             tenant_id,
             TableName::new("ports").expect("table should parse"),
@@ -461,14 +461,14 @@ async fn assert_system_machine_state(
 }
 
 async fn assert_system_machine_document(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     name: &str,
     state: &str,
     cpus: u8,
     memory_mib: u32,
     disk_gib: u32,
 ) {
-    let machine = service
+    let machine = engine
         .get_document_async(
             crate::system_tenant::system_tenant_id().expect("system id should parse"),
             TableName::new("machines").expect("table should parse"),
@@ -483,14 +483,14 @@ async fn assert_system_machine_document(
     assert_eq!(machine.fields["resources"]["diskGiB"], json!(disk_gib));
 }
 
-async fn assert_system_machine_deleted(service: &Arc<Service>, name: &str) {
+async fn assert_system_machine_deleted(engine: &Arc<Engine>, name: &str) {
     let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
     for (table, document_id) in [
         ("machines", format!("machine:{name}")),
         ("listeners", format!("listener:machine-api:{name}")),
         ("ports", format!("port:machine:{name}:ssh")),
     ] {
-        let missing = service
+        let missing = engine
             .get_document_async(
                 tenant_id.clone(),
                 TableName::new(table).expect("table should parse"),
@@ -505,16 +505,16 @@ async fn assert_system_machine_deleted(service: &Arc<Service>, name: &str) {
     }
 }
 
-async fn assert_system_events(service: &Arc<Service>, expected: &[(&str, &str, &str)]) {
-    assert_system_events_for_machine(service, "demo", expected).await;
+async fn assert_system_events(engine: &Arc<Engine>, expected: &[(&str, &str, &str)]) {
+    assert_system_events_for_machine(engine, "demo", expected).await;
 }
 
 async fn assert_system_events_for_machine(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     machine_name: &str,
     expected: &[(&str, &str, &str)],
 ) {
-    let events = service
+    let events = engine
         .list_documents_async(
             crate::system_tenant::system_tenant_id().expect("system id should parse"),
             TableName::new("events").expect("table should parse"),

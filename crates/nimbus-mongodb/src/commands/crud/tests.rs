@@ -1,6 +1,6 @@
 use super::super::super::connection::ConnectionState;
 use super::*;
-use nimbus_testing::ServiceFixture;
+use nimbus_testing::EngineFixture;
 
 fn test_conn() -> ConnectionState {
     ConnectionState::new(([127, 0, 0, 1], 12345).into())
@@ -14,7 +14,7 @@ mod find_and_modify;
 mod insert;
 mod update;
 
-fn seed_users(fixture: &ServiceFixture<Service>) {
+fn seed_users(fixture: &EngineFixture<Engine>) {
     let body = bson::doc! {
         "insert": "users",
         "$db": "testdb",
@@ -24,15 +24,15 @@ fn seed_users(fixture: &ServiceFixture<Service>) {
             { "_id": "u3", "name": "Charlie", "age": 35 },
         ],
     };
-    insert(&body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&body, &mut test_conn(), &fixture.engine()).unwrap();
 }
 
-fn find_doc(fixture: &ServiceFixture<Service>, filter: bson::Document) -> Vec<bson::Document> {
+fn find_doc(fixture: &EngineFixture<Engine>, filter: bson::Document) -> Vec<bson::Document> {
     find_in(fixture, "users", filter)
 }
 
 fn find_in(
-    fixture: &ServiceFixture<Service>,
+    fixture: &EngineFixture<Engine>,
     collection: &str,
     filter: bson::Document,
 ) -> Vec<bson::Document> {
@@ -41,7 +41,7 @@ fn find_in(
         "$db": "testdb",
         "filter": filter,
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     cursor
         .get_array("firstBatch")

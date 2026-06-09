@@ -2,7 +2,7 @@
 //!
 //! This crate owns DynamoDB wire semantics, AttributeValue conversion,
 //! expression bridging, operation dispatch, SigV4 verification, and stream
-//! shaping over explicit Nimbus capabilities (e.g. `Arc<Service>`). It is
+//! shaping over explicit Nimbus capabilities (e.g. `Arc<Engine>`). It is
 //! transport-agnostic: it exposes a dispatch entrypoint rather than an HTTP
 //! router, and must not depend on `nimbus-server` or `axum`. `nimbus-server`
 //! mounts the dispatch on its own `POST /` route (see

@@ -1,4 +1,4 @@
-//! DynamoDB control-plane handlers (table lifecycle) over the Nimbus `Service`.
+//! DynamoDB control-plane handlers (table lifecycle) over the Nimbus `Engine`.
 //!
 //! Each DynamoDB table's metadata (`TableDescription`) is persisted as one
 //! document in a tenant-scoped catalog table (`_ddb_catalog`), keyed by the
@@ -22,7 +22,7 @@ use extenddb_core::types::{
     TableStatus, UpdateTableInput, UpdateTableOutput,
 };
 use nimbus_core::{Document, DocumentId, StructuredQuery, TableName, WritePrecondition};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 use serde_json::Value;
 
@@ -36,7 +36,7 @@ const CATALOG_TABLE: &str = "_ddb_catalog";
 /// CreateTable: validate, ensure the tenant, reject a duplicate, persist the
 /// `TableDescription`, and return it.
 pub fn create_table(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: CreateTableInput,
 ) -> Result<CreateTableOutput, DynamoDbError> {
@@ -45,10 +45,10 @@ pub fn create_table(
     validate_key_attributes_defined(&input.key_schema, &input.attribute_definitions)?;
     validate_secondary_indexes(&input)?;
 
-    crate::tenant::ensure_tenant(service, context)?;
+    crate::tenant::ensure_tenant(engine, context)?;
     let id = catalog_id(&input.table_name)?;
 
-    match service.get_document(context.tenant_id(), &catalog_table(), id.clone()) {
+    match engine.get_document(context.tenant_id(), &catalog_table(), id.clone()) {
         Ok(_) => {
             return Err(DynamoDbError::ResourceInUseException(format!(
                 "Table already exists: {}",
@@ -61,7 +61,7 @@ pub fn create_table(
 
     let description = build_table_description(&input);
     let fields = description_to_fields(&description)?;
-    service
+    engine
         .insert_document_with_id(context.tenant_id(), catalog_table(), id, fields)
         .map_err(map_core_error)?;
 
@@ -72,11 +72,11 @@ pub fn create_table(
 
 /// DescribeTable: read the persisted `TableDescription`.
 pub fn describe_table(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: DescribeTableInput,
 ) -> Result<DescribeTableOutput, DynamoDbError> {
-    let description = load_description(service, context, &input.table_name)?;
+    let description = load_description(engine, context, &input.table_name)?;
     Ok(DescribeTableOutput { table: description })
 }
 
@@ -84,25 +84,25 @@ pub fn describe_table(
 /// `DELETING` status. (Bulk deletion of the table's data items via the
 /// `deleting` lifecycle is refined in a later item — see the plan.)
 pub fn delete_table(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: DeleteTableInput,
 ) -> Result<DeleteTableOutput, DynamoDbError> {
-    let mut description = load_description(service, context, &input.table_name)?;
+    let mut description = load_description(engine, context, &input.table_name)?;
     // Reclaim the table's data items first (bulk delete over the shared
     // `documents` table — the `deleting` lifecycle, not a physical DROP TABLE),
     // so a failure here leaves the table describable and the delete retryable.
-    reclaim_table_items(service, context, &input.table_name)?;
+    reclaim_table_items(engine, context, &input.table_name)?;
     // Reclaim the table's sidecar state so a table later recreated under the
     // same name starts clean — stream events + the `_ddb_streamseq_` high-water
     // counter, the `_ddb_ttl` config doc, and the `_ddb_tags` entries (F4).
     // Otherwise a recreated table would inherit a stale stream sequence and
     // orphaned TTL/tag metadata.
-    stream::reclaim_for_table(service, context, &input.table_name)?;
-    ttl::reclaim_for_table(service, context, &input.table_name)?;
-    tag::reclaim_for_table(service, context, &input.table_name)?;
+    stream::reclaim_for_table(engine, context, &input.table_name)?;
+    ttl::reclaim_for_table(engine, context, &input.table_name)?;
+    tag::reclaim_for_table(engine, context, &input.table_name)?;
     let id = catalog_id(&input.table_name)?;
-    service
+    engine
         .delete_document(context.tenant_id(), catalog_table(), id)
         .map_err(map_core_error)?;
     description.table_status = TableStatus::Deleting;
@@ -114,11 +114,11 @@ pub fn delete_table(
 /// ListTables: enumerate the tenant's tables (catalog doc ids), sorted, with
 /// `ExclusiveStartTableName`/`Limit` pagination (Limit clamped to 1..=100).
 pub fn list_tables(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: ListTablesInput,
 ) -> Result<ListTablesOutput, DynamoDbError> {
-    let documents = match service.query_documents_structured(
+    let documents = match engine.query_documents_structured(
         context.tenant_id(),
         &catalog_table(),
         &StructuredQuery::default(),
@@ -156,11 +156,11 @@ pub fn list_tables(
 /// protection, stream specification) and re-persist. GSI updates are deferred to
 /// D4 and rejected for now.
 pub fn update_table(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: UpdateTableInput,
 ) -> Result<UpdateTableOutput, DynamoDbError> {
-    let mut description = load_description(service, context, &input.table_name)?;
+    let mut description = load_description(engine, context, &input.table_name)?;
 
     // Merge any new attribute definitions (a new GSI may key on new attributes).
     if let Some(new_defs) = &input.attribute_definitions {
@@ -218,7 +218,7 @@ pub fn update_table(
     let fields = description_to_fields(&description)?;
     let id = catalog_id(&input.table_name)?;
     item::atomic_overwrite(
-        service,
+        engine,
         context,
         catalog_table(),
         id,
@@ -248,11 +248,11 @@ fn catalog_id(table_name: &str) -> Result<DocumentId, DynamoDbError> {
 /// # Errors
 /// `ResourceNotFoundException` if the table does not exist.
 pub fn load_key_schema(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<Vec<KeySchemaElement>, DynamoDbError> {
-    Ok(load_description(service, context, table_name)?.key_schema)
+    Ok(load_description(engine, context, table_name)?.key_schema)
 }
 
 /// The key schema + projected-attribute set a Query/Scan reads through. For the
@@ -276,12 +276,12 @@ pub struct IndexQueryShape {
 /// `ResourceNotFoundException` if the table is absent; `ValidationException` if
 /// the named index does not exist on the table.
 pub fn load_index_query_shape(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
     index_name: Option<&str>,
 ) -> Result<IndexQueryShape, DynamoDbError> {
-    let description = load_description(service, context, table_name)?;
+    let description = load_description(engine, context, table_name)?;
     let table_key_schema = description.key_schema.clone();
     let Some(name) = index_name else {
         return Ok(IndexQueryShape {
@@ -356,11 +356,11 @@ fn projected_set(
 /// # Errors
 /// `ResourceNotFoundException` if the table does not exist.
 pub fn load_table_description(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<TableDescription, DynamoDbError> {
-    load_description(service, context, table_name)
+    load_description(engine, context, table_name)
 }
 
 /// Enumerate every table's `TableDescription` from the catalog (tenant-scoped).
@@ -369,10 +369,10 @@ pub fn load_table_description(
 /// # Errors
 /// A mapped engine error if the catalog cannot be read or a record is corrupt.
 pub fn list_table_descriptions(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
 ) -> Result<Vec<TableDescription>, DynamoDbError> {
-    let documents = match service.query_documents_structured(
+    let documents = match engine.query_documents_structured(
         context.tenant_id(),
         &catalog_table(),
         &StructuredQuery::default(),
@@ -387,12 +387,12 @@ pub fn list_table_descriptions(
 }
 
 fn load_description(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<TableDescription, DynamoDbError> {
     let id = catalog_id(table_name)?;
-    match service.get_document(context.tenant_id(), &catalog_table(), id) {
+    match engine.get_document(context.tenant_id(), &catalog_table(), id) {
         Ok(document) => description_from_doc(&document),
         Err(nimbus_core::Error::DocumentNotFound(_)) => Err(resource_not_found(table_name)),
         Err(error) => Err(map_core_error(error)),
@@ -405,12 +405,12 @@ fn load_description(
 /// TABLE; the same `TableName` D1's item writes target. A data table that was
 /// never materialized (no writes) reclaims nothing. Returns the count reclaimed.
 fn reclaim_table_items(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<usize, DynamoDbError> {
     let table = TableName::new(table_name).map_err(map_core_error)?;
-    let documents = match service.query_documents_structured(
+    let documents = match engine.query_documents_structured(
         context.tenant_id(),
         &table,
         &StructuredQuery::default(),
@@ -424,7 +424,7 @@ fn reclaim_table_items(
     };
     let mut reclaimed = 0;
     for document in documents {
-        service
+        engine
             .delete_document(context.tenant_id(), table.clone(), document.id)
             .map_err(map_core_error)?;
         reclaimed += 1;
@@ -752,12 +752,12 @@ mod tests {
     use super::*;
     use nimbus_core::TenantId;
 
-    fn fixture() -> (Arc<Service>, TenantIsolationContext, tempfile::TempDir) {
+    fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
-        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
         let context = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
-        crate::tenant::ensure_tenant(&service, &context).expect("tenant");
-        (service, context, temp)
+        crate::tenant::ensure_tenant(&engine, &context).expect("tenant");
+        (engine, context, temp)
     }
 
     fn input(name: &str, with_sort: bool) -> CreateTableInput {
@@ -783,7 +783,7 @@ mod tests {
 
     #[test]
     fn create_with_stream_records_spec_and_arn() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         let input: CreateTableInput = serde_json::from_value(serde_json::json!({
             "TableName": "events",
             "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
@@ -791,7 +791,7 @@ mod tests {
             "StreamSpecification": { "StreamEnabled": true, "StreamViewType": "NEW_AND_OLD_IMAGES" }
         }))
         .unwrap();
-        let created = create_table(&service, &ctx, input).expect("create with stream");
+        let created = create_table(&engine, &ctx, input).expect("create with stream");
         let desc = &created.table_description;
         let spec = desc.stream_specification.as_ref().expect("stream spec");
         assert!(spec.stream_enabled);
@@ -806,15 +806,15 @@ mod tests {
 
     #[test]
     fn update_table_enables_then_disables_stream() {
-        let (service, ctx, _t) = fixture();
-        create_table(&service, &ctx, input("orders", false)).expect("create");
+        let (engine, ctx, _t) = fixture();
+        create_table(&engine, &ctx, input("orders", false)).expect("create");
         // Enable a stream.
         let enable: UpdateTableInput = serde_json::from_value(serde_json::json!({
             "TableName": "orders",
             "StreamSpecification": { "StreamEnabled": true, "StreamViewType": "KEYS_ONLY" }
         }))
         .unwrap();
-        let enabled = update_table(&service, &ctx, enable).expect("enable stream");
+        let enabled = update_table(&engine, &ctx, enable).expect("enable stream");
         assert!(enabled.table_description.latest_stream_arn.is_some());
         // Disable it.
         let disable: UpdateTableInput = serde_json::from_value(serde_json::json!({
@@ -822,7 +822,7 @@ mod tests {
             "StreamSpecification": { "StreamEnabled": false }
         }))
         .unwrap();
-        let disabled = update_table(&service, &ctx, disable).expect("disable stream");
+        let disabled = update_table(&engine, &ctx, disable).expect("disable stream");
         assert!(
             disabled.table_description.latest_stream_arn.is_none(),
             "disabling clears the stream ARN"
@@ -831,7 +831,7 @@ mod tests {
 
     #[test]
     fn create_with_lsi_persists_and_describes() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         let input: CreateTableInput = serde_json::from_value(serde_json::json!({
             "TableName": "tasks",
             "KeySchema": [
@@ -853,7 +853,7 @@ mod tests {
             }]
         }))
         .unwrap();
-        let created = create_table(&service, &ctx, input).expect("create with LSI");
+        let created = create_table(&engine, &ctx, input).expect("create with LSI");
         let lsis = created
             .table_description
             .local_secondary_indexes
@@ -864,7 +864,7 @@ mod tests {
 
         // DescribeTable returns the LSI too.
         let described = describe_table(
-            &service,
+            &engine,
             &ctx,
             DescribeTableInput {
                 table_name: "tasks".to_owned(),
@@ -883,7 +883,7 @@ mod tests {
 
     #[test]
     fn create_lsi_with_mismatched_partition_key_is_rejected() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         let input: CreateTableInput = serde_json::from_value(serde_json::json!({
             "TableName": "tasks",
             "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
@@ -903,21 +903,21 @@ mod tests {
         }))
         .unwrap();
         assert!(matches!(
-            create_table(&service, &ctx, input),
+            create_table(&engine, &ctx, input),
             Err(DynamoDbError::ValidationException(_))
         ));
     }
 
     #[test]
     fn create_then_describe_roundtrips() {
-        let (service, ctx, _t) = fixture();
-        let created = create_table(&service, &ctx, input("orders", true)).expect("create");
+        let (engine, ctx, _t) = fixture();
+        let created = create_table(&engine, &ctx, input("orders", true)).expect("create");
         assert_eq!(created.table_description.table_name, "orders");
         assert_eq!(created.table_description.table_status, TableStatus::Active);
         assert_eq!(created.table_description.key_schema.len(), 2);
 
         let described = describe_table(
-            &service,
+            &engine,
             &ctx,
             DescribeTableInput {
                 table_name: "orders".to_owned(),
@@ -934,17 +934,17 @@ mod tests {
 
     #[test]
     fn duplicate_create_is_resource_in_use() {
-        let (service, ctx, _t) = fixture();
-        create_table(&service, &ctx, input("orders", false)).expect("first create");
-        let err = create_table(&service, &ctx, input("orders", false)).unwrap_err();
+        let (engine, ctx, _t) = fixture();
+        create_table(&engine, &ctx, input("orders", false)).expect("first create");
+        let err = create_table(&engine, &ctx, input("orders", false)).unwrap_err();
         assert!(matches!(err, DynamoDbError::ResourceInUseException(_)));
     }
 
     #[test]
     fn describe_missing_is_resource_not_found() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         let err = describe_table(
-            &service,
+            &engine,
             &ctx,
             DescribeTableInput {
                 table_name: "ghost".to_owned(),
@@ -956,10 +956,10 @@ mod tests {
 
     #[test]
     fn delete_removes_the_table() {
-        let (service, ctx, _t) = fixture();
-        create_table(&service, &ctx, input("orders", false)).expect("create");
+        let (engine, ctx, _t) = fixture();
+        create_table(&engine, &ctx, input("orders", false)).expect("create");
         let deleted = delete_table(
-            &service,
+            &engine,
             &ctx,
             DeleteTableInput {
                 table_name: "orders".to_owned(),
@@ -973,7 +973,7 @@ mod tests {
         // Subsequent describe is ResourceNotFoundException.
         assert!(matches!(
             describe_table(
-                &service,
+                &engine,
                 &ctx,
                 DescribeTableInput {
                     table_name: "orders".to_owned()
@@ -989,13 +989,13 @@ mod tests {
         // bulk delete), not just drop the catalog entry. Seed items directly via
         // the engine (the same `TableName` D1's PutItem will write to), delete,
         // and assert the rows are gone and the table is no longer describable.
-        let (service, ctx, _t) = fixture();
-        create_table(&service, &ctx, input("orders", false)).expect("create");
+        let (engine, ctx, _t) = fixture();
+        create_table(&engine, &ctx, input("orders", false)).expect("create");
         let table = TableName::new("orders").unwrap();
         for key in ["item-1", "item-2", "item-3"] {
             let mut fields = serde_json::Map::new();
             fields.insert("v".to_owned(), Value::String(key.to_owned()));
-            service
+            engine
                 .insert_document_with_id(
                     ctx.tenant_id(),
                     table.clone(),
@@ -1004,10 +1004,10 @@ mod tests {
                 )
                 .expect("seed data item");
         }
-        assert_eq!(count_items(&service, &ctx, "orders"), 3);
+        assert_eq!(count_items(&engine, &ctx, "orders"), 3);
 
         delete_table(
-            &service,
+            &engine,
             &ctx,
             DeleteTableInput {
                 table_name: "orders".to_owned(),
@@ -1016,13 +1016,13 @@ mod tests {
         .expect("delete");
 
         assert_eq!(
-            count_items(&service, &ctx, "orders"),
+            count_items(&engine, &ctx, "orders"),
             0,
             "DeleteTable must reclaim every data item"
         );
         assert!(matches!(
             describe_table(
-                &service,
+                &engine,
                 &ctx,
                 DescribeTableInput {
                     table_name: "orders".to_owned()
@@ -1038,7 +1038,7 @@ mod tests {
         // `_ddb_streamseq_` high-water counter, the `_ddb_ttl` config doc, and
         // the `_ddb_tags` entry — so a table recreated under the same name does
         // not inherit a stale stream sequence or orphaned TTL/tag metadata.
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         let streamed: CreateTableInput = serde_json::from_value(serde_json::json!({
             "TableName": "events",
             "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
@@ -1046,12 +1046,12 @@ mod tests {
             "StreamSpecification": { "StreamEnabled": true, "StreamViewType": "NEW_IMAGE" }
         }))
         .unwrap();
-        create_table(&service, &ctx, streamed.clone()).expect("create");
+        create_table(&engine, &ctx, streamed.clone()).expect("create");
 
         // Writes capture stream events and advance the sequence counter.
         for pk in ["a", "b", "c"] {
             crate::commands::item::put_item(
-                &service,
+                &engine,
                 &ctx,
                 serde_json::from_value(
                     serde_json::json!({ "TableName": "events", "Item": { "pk": {"S": pk} } }),
@@ -1064,7 +1064,7 @@ mod tests {
         for sidecar in ["_ddb_ttl", "_ddb_tags"] {
             let mut fields = serde_json::Map::new();
             fields.insert("seeded".to_owned(), Value::Bool(true));
-            service
+            engine
                 .insert_document_with_id(
                     ctx.tenant_id(),
                     TableName::new(sidecar).unwrap(),
@@ -1074,14 +1074,14 @@ mod tests {
                 .expect("seed sidecar");
         }
         assert_eq!(
-            stream::next_sequence_value(&service, &ctx, "events").unwrap(),
+            stream::next_sequence_value(&engine, &ctx, "events").unwrap(),
             3,
             "counter advanced by the three writes"
         );
-        assert_eq!(count_items(&service, &ctx, "_ddb_stream_events"), 3);
+        assert_eq!(count_items(&engine, &ctx, "_ddb_stream_events"), 3);
 
         delete_table(
-            &service,
+            &engine,
             &ctx,
             DeleteTableInput {
                 table_name: "events".to_owned(),
@@ -1091,30 +1091,26 @@ mod tests {
 
         // Every sidecar is reclaimed.
         assert_eq!(
-            count_items(&service, &ctx, "_ddb_stream_events"),
+            count_items(&engine, &ctx, "_ddb_stream_events"),
             0,
             "stream events reclaimed"
         );
         assert_eq!(
-            stream::next_sequence_value(&service, &ctx, "events").unwrap(),
+            stream::next_sequence_value(&engine, &ctx, "events").unwrap(),
             0,
             "sequence high-water counter reclaimed"
         );
         assert_eq!(
-            count_items(&service, &ctx, "_ddb_ttl"),
+            count_items(&engine, &ctx, "_ddb_ttl"),
             0,
             "TTL config reclaimed"
         );
-        assert_eq!(
-            count_items(&service, &ctx, "_ddb_tags"),
-            0,
-            "tags reclaimed"
-        );
+        assert_eq!(count_items(&engine, &ctx, "_ddb_tags"), 0, "tags reclaimed");
 
         // Recreate under the same name → a fresh stream starting at sequence 0.
-        create_table(&service, &ctx, streamed).expect("recreate");
+        create_table(&engine, &ctx, streamed).expect("recreate");
         crate::commands::item::put_item(
-            &service,
+            &engine,
             &ctx,
             serde_json::from_value(
                 serde_json::json!({ "TableName": "events", "Item": { "pk": {"S": "fresh"} } }),
@@ -1123,14 +1119,14 @@ mod tests {
         )
         .expect("put after recreate");
         assert_eq!(
-            stream::next_sequence_value(&service, &ctx, "events").unwrap(),
+            stream::next_sequence_value(&engine, &ctx, "events").unwrap(),
             1,
             "the recreated stream restarted at 0 (now 1 after one write), not the stale mark"
         );
     }
 
-    fn count_items(service: &Arc<Service>, ctx: &TenantIsolationContext, table: &str) -> usize {
-        match service.query_documents_structured(
+    fn count_items(engine: &Arc<Engine>, ctx: &TenantIsolationContext, table: &str) -> usize {
+        match engine.query_documents_structured(
             ctx.tenant_id(),
             &TableName::new(table).unwrap(),
             &StructuredQuery::default(),
@@ -1143,9 +1139,9 @@ mod tests {
 
     #[test]
     fn reserved_prefix_and_bad_key_schema_rejected() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         assert!(matches!(
-            create_table(&service, &ctx, input("_ddb_secret", false)),
+            create_table(&engine, &ctx, input("_ddb_secret", false)),
             Err(DynamoDbError::ValidationException(_))
         ));
         // Empty key schema.
@@ -1156,7 +1152,7 @@ mod tests {
         }))
         .unwrap();
         assert!(matches!(
-            create_table(&service, &ctx, bad),
+            create_table(&engine, &ctx, bad),
             Err(DynamoDbError::ValidationException(_))
         ));
     }
@@ -1164,17 +1160,17 @@ mod tests {
     #[test]
     fn tenants_are_isolated() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
         let acme = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
         let globex = crate::tenant::tenant_context(TenantId::new("globex").unwrap(), "test");
-        crate::tenant::ensure_tenant(&service, &acme).unwrap();
-        crate::tenant::ensure_tenant(&service, &globex).unwrap();
+        crate::tenant::ensure_tenant(&engine, &acme).unwrap();
+        crate::tenant::ensure_tenant(&engine, &globex).unwrap();
 
-        create_table(&service, &acme, input("orders", false)).expect("acme create");
+        create_table(&engine, &acme, input("orders", false)).expect("acme create");
         // globex must not see acme's table.
         assert!(matches!(
             describe_table(
-                &service,
+                &engine,
                 &globex,
                 DescribeTableInput {
                     table_name: "orders".to_owned()
@@ -1184,7 +1180,7 @@ mod tests {
         ));
         // ListTables is likewise tenant-scoped.
         let globex_list = list_tables(
-            &service,
+            &engine,
             &globex,
             ListTablesInput {
                 limit: None,
@@ -1204,42 +1200,41 @@ mod tests {
 
     #[test]
     fn list_tables_is_sorted_and_paginates() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         for name in ["orders", "users", "events"] {
-            create_table(&service, &ctx, input(name, false)).expect("create");
+            create_table(&engine, &ctx, input(name, false)).expect("create");
         }
 
         // Empty start, no limit → all three, sorted.
-        let all = list_tables(&service, &ctx, list_input(None, None)).expect("list");
+        let all = list_tables(&engine, &ctx, list_input(None, None)).expect("list");
         assert_eq!(all.table_names, vec!["events", "orders", "users"]);
         assert!(all.last_evaluated_table_name.is_none());
 
         // Limit 2 → first page + LastEvaluatedTableName.
-        let page1 = list_tables(&service, &ctx, list_input(Some(2), None)).expect("page1");
+        let page1 = list_tables(&engine, &ctx, list_input(Some(2), None)).expect("page1");
         assert_eq!(page1.table_names, vec!["events", "orders"]);
         assert_eq!(page1.last_evaluated_table_name.as_deref(), Some("orders"));
 
         // Continue from the cursor → remaining page, no further cursor.
-        let page2 =
-            list_tables(&service, &ctx, list_input(Some(2), Some("orders"))).expect("page2");
+        let page2 = list_tables(&engine, &ctx, list_input(Some(2), Some("orders"))).expect("page2");
         assert_eq!(page2.table_names, vec!["users"]);
         assert!(page2.last_evaluated_table_name.is_none());
     }
 
     #[test]
     fn list_tables_empty_when_none_created() {
-        let (service, ctx, _t) = fixture();
-        let listed = list_tables(&service, &ctx, list_input(None, None)).expect("list");
+        let (engine, ctx, _t) = fixture();
+        let listed = list_tables(&engine, &ctx, list_input(None, None)).expect("list");
         assert!(listed.table_names.is_empty());
     }
 
     #[test]
     fn update_table_sets_deletion_protection_and_persists() {
-        let (service, ctx, _t) = fixture();
-        create_table(&service, &ctx, input("orders", false)).expect("create");
+        let (engine, ctx, _t) = fixture();
+        create_table(&engine, &ctx, input("orders", false)).expect("create");
 
         let updated = update_table(
-            &service,
+            &engine,
             &ctx,
             UpdateTableInput {
                 table_name: "orders".to_owned(),
@@ -1256,7 +1251,7 @@ mod tests {
 
         // The change is persisted (visible on a fresh describe).
         let described = describe_table(
-            &service,
+            &engine,
             &ctx,
             DescribeTableInput {
                 table_name: "orders".to_owned(),
@@ -1268,8 +1263,8 @@ mod tests {
 
     #[test]
     fn update_table_gsi_create_update_delete() {
-        let (service, ctx, _t) = fixture();
-        create_table(&service, &ctx, input("orders", false)).expect("create");
+        let (engine, ctx, _t) = fixture();
+        create_table(&engine, &ctx, input("orders", false)).expect("create");
 
         // Create a GSI (its key attribute `gsk` is supplied via AttributeDefinitions).
         let create: UpdateTableInput = serde_json::from_value(serde_json::json!({
@@ -1284,7 +1279,7 @@ mod tests {
             }],
         }))
         .unwrap();
-        let after_create = update_table(&service, &ctx, create).expect("create gsi");
+        let after_create = update_table(&engine, &ctx, create).expect("create gsi");
         let gsis = after_create
             .table_description
             .global_secondary_indexes
@@ -1307,7 +1302,7 @@ mod tests {
         }))
         .unwrap();
         assert!(matches!(
-            update_table(&service, &ctx, dup),
+            update_table(&engine, &ctx, dup),
             Err(DynamoDbError::ValidationException(_))
         ));
 
@@ -1317,7 +1312,7 @@ mod tests {
             "GlobalSecondaryIndexUpdates": [{ "Delete": { "IndexName": "by_gsk" } }],
         }))
         .unwrap();
-        let after_delete = update_table(&service, &ctx, delete).expect("delete gsi");
+        let after_delete = update_table(&engine, &ctx, delete).expect("delete gsi");
         assert!(
             after_delete
                 .table_description
@@ -1333,7 +1328,7 @@ mod tests {
         }))
         .unwrap();
         assert!(matches!(
-            update_table(&service, &ctx, missing),
+            update_table(&engine, &ctx, missing),
             Err(DynamoDbError::ValidationException(_))
         ));
     }

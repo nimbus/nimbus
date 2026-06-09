@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::runtime::InvocationRequest;
+use crate::runtime_capabilities::RuntimePermissionProfile;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeInvocationContext {
@@ -11,6 +12,7 @@ pub struct RuntimeInvocationContext {
     pub bypasses_concurrency_limit: bool,
     pub tenant_label: Option<String>,
     pub server_request_id: Option<String>,
+    pub(crate) permission_profile: RuntimePermissionProfile,
 }
 
 impl RuntimeInvocationContext {
@@ -70,6 +72,7 @@ impl RuntimeInvocationContext {
             bypasses_concurrency_limit: false,
             tenant_label,
             server_request_id,
+            permission_profile: RuntimePermissionProfile::for_invocation_kind(&request.kind),
         }
     }
 

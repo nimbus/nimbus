@@ -139,7 +139,7 @@ mod tests {
     use std::sync::Arc;
 
     use clap::Parser;
-    use nimbus::Service;
+    use nimbus::Engine;
     use nimbus_server::{
         LocalServerPaths, LocalServerSecurityState, ServeOptions, ServerDiscoveryRecord,
         load_local_admin_token, load_or_create_local_admin_token, serve,
@@ -206,7 +206,7 @@ mod tests {
             current.clone(),
         ));
         let service =
-            Arc::new(Service::new(temp.path().join("data")).expect("service should initialize"));
+            Arc::new(Engine::new(temp.path().join("data")).expect("service should initialize"));
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("listener should bind");

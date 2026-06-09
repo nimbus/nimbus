@@ -41,7 +41,7 @@ state.
 
 | Component | Owns | Authority Source | Must Not Do |
 | --- | --- | --- | --- |
-| Tenant admission (`tenant`, future `nimbus-tenant`) | Tenant identity, policy inputs, grants, quotas, stable workload identity, immutable `TenantIsolationDecision` | Authenticated server request plus policy inputs | Launch processes, render host artifacts, write node status, or trust lower-layer tenant strings |
+| Tenant admission (`tenant`, future `nimbus-tenant`) | Tenant identity, policy inputs, grants, quotas, admitted `WorkloadIdentity`, workload subject/audit projection, immutable `TenantIsolationDecision` | Authenticated server request plus policy inputs | Launch processes, render host artifacts, write node status, or trust lower-layer tenant strings |
 | Desired workload state | Server-owned `TenantWorkloadSpec`, generation, assignment, deletion state, finalizer-like cleanup records, hard limits | `TenantIsolationDecision` plus server/control-plane placement | Treat observed status as authority or let tenant callers set deletion/finalizer fields directly |
 | Local enforcement (`local_enforcement`, future `nimbus-node`) | Binding admitted decisions to runtimes, sandboxes, HostBridge, credentials, egress, host lifecycle, and evidence | `TenantWorkloadSpec` plus admitted projections | Broaden policy, change placement, mint credentials from raw input, or mutate desired state through status |
 | Workload supervisor component | Process-local startup controls, proxy hooks, credential delivery hooks, child lifecycle, backend-local operation checks | Narrow policy projection delivered by local enforcement | Act as the policy decision point or grant authority not present in the active projection |
@@ -102,7 +102,7 @@ A future `LocalEnforcementBinding` should be a narrow, immutable envelope with:
 
 - `decision_id`
 - `tenant_id`
-- `workload_stable_id`
+- `workload_subject`
 - `workload_uid`
 - `generation`
 - `assigned_node_id` or signed placement claim
@@ -132,7 +132,7 @@ derived from it. The lower point must not rebuild authority from:
 `TenantWorkloadSpec` is server/control-plane owned. It captures what Nimbus has
 decided should exist:
 
-- admitted tenant and stable workload identity
+- admitted tenant, `WorkloadIdentity`, workload subject, and audit projection
 - workload UID and generation
 - assigned node or placement claim
 - decision ID and policy generation
@@ -281,7 +281,8 @@ environments. It does not inject raw global service tokens by default.
 Credential projections carry:
 
 - tenant ID
-- workload stable ID
+- workload subject
+- workload audit projection
 - workload UID
 - generation
 - decision ID

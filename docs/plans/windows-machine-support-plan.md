@@ -763,8 +763,8 @@ PowerShell / cmd.exe
       -> build the remote guest machine-API client (over named pipe)
       -> start the authoritative host Nimbus API/runtime/storage loop
       -> expose the developer-facing API on localhost
-      -> on ctx.services.*, call the guest machine API and wait for guest
-         service readiness
+      -> on explicit Nimbus SDK/native service requests, call the guest machine
+         API and wait for guest service readiness
 ```
 
 ## Cross-Platform Architecture Comparison
@@ -824,7 +824,7 @@ PowerShell / cmd.exe
 | Host runtime stack | `conmon → patched crun → libkrun` | `krunkit + gvproxy` on host, `buildah/conmon/crun` in guest | `win-sshproxy` on host, `buildah/conmon/crun` in WSL2 guest | Linux path stays unchanged |
 | Host app/runtime locality | local Nimbus server owns runtime + storage | host Nimbus server still owns runtime + storage on macOS | host `nimbus.exe` server owns runtime + storage on Windows | fast local edit-run-observe loop |
 | Remote control seam | n/a | host talks to guest machine API via forwarded Unix socket | host talks to guest machine API via named pipe (win-sshproxy) | do not grow a generic remote engine |
-| Service networking | krun TSI host:guest ports | host localhost → gvproxy → guest container ports | WSL2 native networking → Windows localhost | `ctx.services.<name>.port` semantics |
+| Service networking | krun TSI host:guest ports | host localhost → gvproxy → guest container ports | WSL2 native networking → Windows localhost | declared service binding semantics |
 | Readiness model | server waits for actual service reachability | same layered contract across host and guest | same layered readiness contract (3-layer + machine-API + service) | no "running means ready" regression |
 | Compose/service UX | landed `nimbus start --compose-file ...` and `nimbus compose ...` | same commands from mac host | same commands from Windows PowerShell/cmd.exe | one developer-facing workflow |
 
@@ -943,7 +943,7 @@ Windows host (PowerShell / cmd.exe / Windows Terminal)
   -> same compose.yaml as Linux and macOS
   -> host-local V8/runtime/storage/debug loop (on Windows host)
   -> remote guest service execution through forwarded machine API
-  -> same ctx.services.<name>.port behavior
+  -> same declared service binding behavior
   -> published ports reachable from Windows browser at localhost
 ```
 
@@ -1206,7 +1206,7 @@ Acceptance criteria:
   service readiness as separate steps
 - compose-backed guest operations use translated guest-valid WSL paths rather
   than raw Windows host paths
-- `ctx.services.<name>.port` behavior matches the Linux UX contract
+- declared service binding behavior matches the Linux UX contract
 - pure runtime/storage edits on Windows do not require moving the authoritative
   Nimbus server into the WSL2 guest
 

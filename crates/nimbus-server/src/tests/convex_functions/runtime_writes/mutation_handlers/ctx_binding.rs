@@ -56,7 +56,7 @@ globalThis.__nimbusInvoke = async function(request) {
   const definition = definitions.get(request.function_name);
   const value = await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_mutation", {
     mutation: resolveTemplate(definition.plan, request.args ?? {}),
-    session_id: `${request.kind}:${request.function_name}`,
+    host_call_session_id: `${request.kind}:${request.function_name}`,
   });
   return {
     status: "ok",
@@ -71,8 +71,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry.clone())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

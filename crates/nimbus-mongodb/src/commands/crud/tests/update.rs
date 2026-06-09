@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn update_replacement() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -13,7 +13,7 @@ fn update_replacement() {
             "u": { "name": "Alice Updated", "score": 100 },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("n").unwrap(), 1);
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
     assert_eq!(result.get_f64("ok").unwrap(), 1.0);
@@ -27,7 +27,7 @@ fn update_replacement() {
 
 #[test]
 fn update_set_operator() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -38,7 +38,7 @@ fn update_set_operator() {
             "u": { "$set": { "age": 31, "email": "alice@test.com" } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("n").unwrap(), 1);
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
@@ -50,7 +50,7 @@ fn update_set_operator() {
 
 #[test]
 fn update_unset_operator() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -61,7 +61,7 @@ fn update_unset_operator() {
             "u": { "$unset": { "age": "" } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_doc(&fixture, bson::doc! { "_id": "u1" });
@@ -70,7 +70,7 @@ fn update_unset_operator() {
 
 #[test]
 fn update_no_match_returns_zero() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -81,14 +81,14 @@ fn update_no_match_returns_zero() {
             "u": { "$set": { "x": 1 } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("n").unwrap(), 0);
     assert_eq!(result.get_i32("nModified").unwrap(), 0);
 }
 
 #[test]
 fn update_upsert_creates_document() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -100,7 +100,7 @@ fn update_upsert_creates_document() {
             "upsert": true,
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("n").unwrap(), 1);
     assert!(result.get_array("upserted").is_ok());
 
@@ -111,7 +111,7 @@ fn update_upsert_creates_document() {
 
 #[test]
 fn update_multi_updates_all_matching() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -123,14 +123,14 @@ fn update_multi_updates_all_matching() {
             "multi": true,
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("n").unwrap(), 2);
     assert_eq!(result.get_i32("nModified").unwrap(), 2);
 }
 
 #[test]
 fn update_multi_replacement_rejected() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -142,16 +142,16 @@ fn update_multi_replacement_rejected() {
             "multi": true,
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let errors = result.get_array("writeErrors").unwrap();
     assert_eq!(errors.len(), 1);
 }
 
 #[test]
 fn update_missing_collection_returns_error() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let body = bson::doc! { "updates": [] };
-    let err = update(&body, &mut test_conn(), &fixture.service()).unwrap_err();
+    let err = update(&body, &mut test_conn(), &fixture.engine()).unwrap_err();
     match err {
         MongoError::Command { code, .. } => assert_eq!(code, BAD_VALUE.code),
         other => panic!("expected Command, got {:?}", other),
@@ -160,9 +160,9 @@ fn update_missing_collection_returns_error() {
 
 #[test]
 fn update_missing_updates_returns_error() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let body = bson::doc! { "update": "users" };
-    let err = update(&body, &mut test_conn(), &fixture.service()).unwrap_err();
+    let err = update(&body, &mut test_conn(), &fixture.engine()).unwrap_err();
     match err {
         MongoError::Command { code, .. } => assert_eq!(code, BAD_VALUE.code),
         other => panic!("expected Command, got {:?}", other),
@@ -171,7 +171,7 @@ fn update_missing_updates_returns_error() {
 
 #[test]
 fn update_inc_operator() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -182,7 +182,7 @@ fn update_inc_operator() {
             "u": { "$inc": { "age": 5 } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_doc(&fixture, bson::doc! { "_id": "u1" });
@@ -191,7 +191,7 @@ fn update_inc_operator() {
 
 #[test]
 fn update_unsupported_operator_returns_error() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -202,14 +202,14 @@ fn update_unsupported_operator_returns_error() {
             "u": { "$unknownOp": { "x": 1 } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let errors = result.get_array("writeErrors").unwrap();
     assert_eq!(errors.len(), 1);
 }
 
 #[test]
 fn update_set_on_insert_with_upsert() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -221,7 +221,7 @@ fn update_set_on_insert_with_upsert() {
             "upsert": true,
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("n").unwrap(), 1);
     assert!(result.get_array("upserted").is_ok());
 
@@ -232,7 +232,7 @@ fn update_set_on_insert_with_upsert() {
 
 #[test]
 fn update_mul_operator() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -243,7 +243,7 @@ fn update_mul_operator() {
             "u": { "$mul": { "age": 2 } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_doc(&fixture, bson::doc! { "_id": "u1" });
@@ -259,13 +259,13 @@ fn update_mul_operator() {
 
 #[test]
 fn update_push_operator() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "items",
         "$db": "testdb",
         "documents": [{ "_id": "i1", "tags": ["a", "b"] }],
     };
-    insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! {
         "update": "items",
@@ -275,7 +275,7 @@ fn update_push_operator() {
             "u": { "$push": { "tags": "c" } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_in(&fixture, "items", bson::doc! { "_id": "i1" });
@@ -286,13 +286,13 @@ fn update_push_operator() {
 
 #[test]
 fn update_push_each_operator() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "items",
         "$db": "testdb",
         "documents": [{ "_id": "i2", "tags": ["a"] }],
     };
-    insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! {
         "update": "items",
@@ -302,7 +302,7 @@ fn update_push_each_operator() {
             "u": { "$push": { "tags": { "$each": ["b", "c"] } } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_in(&fixture, "items", bson::doc! { "_id": "i2" });
@@ -312,13 +312,13 @@ fn update_push_each_operator() {
 
 #[test]
 fn update_add_to_set_operator() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "items",
         "$db": "testdb",
         "documents": [{ "_id": "i3", "tags": ["a", "b"] }],
     };
-    insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! {
         "update": "items",
@@ -328,7 +328,7 @@ fn update_add_to_set_operator() {
             "u": { "$addToSet": { "tags": "c" } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_in(&fixture, "items", bson::doc! { "_id": "i3" });
@@ -338,13 +338,13 @@ fn update_add_to_set_operator() {
 
 #[test]
 fn update_add_to_set_duplicate_ignored() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "items",
         "$db": "testdb",
         "documents": [{ "_id": "i4", "tags": ["a", "b"] }],
     };
-    insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! {
         "update": "items",
@@ -354,7 +354,7 @@ fn update_add_to_set_duplicate_ignored() {
             "u": { "$addToSet": { "tags": "a" } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_in(&fixture, "items", bson::doc! { "_id": "i4" });
@@ -364,13 +364,13 @@ fn update_add_to_set_duplicate_ignored() {
 
 #[test]
 fn update_pull_operator() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "items",
         "$db": "testdb",
         "documents": [{ "_id": "i5", "tags": ["a", "b", "c"] }],
     };
-    insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! {
         "update": "items",
@@ -380,7 +380,7 @@ fn update_pull_operator() {
             "u": { "$pull": { "tags": "b" } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_in(&fixture, "items", bson::doc! { "_id": "i5" });
@@ -391,13 +391,13 @@ fn update_pull_operator() {
 
 #[test]
 fn update_pull_all_operator() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "items",
         "$db": "testdb",
         "documents": [{ "_id": "i6", "tags": ["a", "b", "c", "d"] }],
     };
-    insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! {
         "update": "items",
@@ -407,7 +407,7 @@ fn update_pull_all_operator() {
             "u": { "$pullAll": { "tags": ["b", "d"] } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_in(&fixture, "items", bson::doc! { "_id": "i6" });
@@ -417,13 +417,13 @@ fn update_pull_all_operator() {
 
 #[test]
 fn update_pop_last_operator() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "items",
         "$db": "testdb",
         "documents": [{ "_id": "i7", "vals": [1, 2, 3] }],
     };
-    insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! {
         "update": "items",
@@ -433,7 +433,7 @@ fn update_pop_last_operator() {
             "u": { "$pop": { "vals": 1 } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_in(&fixture, "items", bson::doc! { "_id": "i7" });
@@ -444,13 +444,13 @@ fn update_pop_last_operator() {
 
 #[test]
 fn update_pop_first_operator() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "items",
         "$db": "testdb",
         "documents": [{ "_id": "i8", "vals": [1, 2, 3] }],
     };
-    insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! {
         "update": "items",
@@ -460,7 +460,7 @@ fn update_pop_first_operator() {
             "u": { "$pop": { "vals": -1 } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_in(&fixture, "items", bson::doc! { "_id": "i8" });
@@ -471,13 +471,13 @@ fn update_pop_first_operator() {
 
 #[test]
 fn update_bit_and_operator() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "items",
         "$db": "testdb",
         "documents": [{ "_id": "b1", "flags": 0b1111_i32 }],
     };
-    insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! {
         "update": "items",
@@ -487,7 +487,7 @@ fn update_bit_and_operator() {
             "u": { "$bit": { "flags": { "and": 0b1010_i32 } } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_in(&fixture, "items", bson::doc! { "_id": "b1" });
@@ -500,13 +500,13 @@ fn update_bit_and_operator() {
 
 #[test]
 fn update_bit_or_operator() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "items",
         "$db": "testdb",
         "documents": [{ "_id": "b2", "flags": 0b1010_i32 }],
     };
-    insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! {
         "update": "items",
@@ -516,7 +516,7 @@ fn update_bit_or_operator() {
             "u": { "$bit": { "flags": { "or": 0b0101_i32 } } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_in(&fixture, "items", bson::doc! { "_id": "b2" });
@@ -529,7 +529,7 @@ fn update_bit_or_operator() {
 
 #[test]
 fn update_rename_operator() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -540,7 +540,7 @@ fn update_rename_operator() {
             "u": { "$rename": { "name": "fullName" } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_doc(&fixture, bson::doc! { "_id": "u1" });
@@ -550,7 +550,7 @@ fn update_rename_operator() {
 
 #[test]
 fn update_push_to_new_field() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -561,7 +561,7 @@ fn update_push_to_new_field() {
             "u": { "$push": { "tags": "rust" } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_doc(&fixture, bson::doc! { "_id": "u1" });
@@ -572,7 +572,7 @@ fn update_push_to_new_field() {
 
 #[test]
 fn update_mul_missing_field_is_zero() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -583,7 +583,7 @@ fn update_mul_missing_field_is_zero() {
             "u": { "$mul": { "score": 5 } },
         }],
     };
-    let result = update(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_i32("nModified").unwrap(), 1);
 
     let docs = find_doc(&fixture, bson::doc! { "_id": "u1" });

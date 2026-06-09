@@ -2,7 +2,7 @@ use super::*;
 
 #[cfg(test)]
 pub(super) fn execute_http_action(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     plan: &ConvexHttpActionPlan,
@@ -13,7 +13,7 @@ pub(super) fn execute_http_action(
 }
 
 pub(super) async fn execute_http_action_async(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     registry: &Arc<ConvexRegistry>,
     tenant_context: &nimbus_tenant::TenantIsolationContext,
     plan: &ConvexHttpActionPlan,
@@ -35,7 +35,7 @@ pub(super) async fn execute_http_action_async(
 
 #[cfg(test)]
 pub(super) fn prepare_http_action_response(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     plan: &ConvexHttpActionPlan,
@@ -49,7 +49,7 @@ pub(super) fn prepare_http_action_response(
 }
 
 pub(in crate::adapters::convex) fn prepare_http_action_response_cancellable(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     plan: &ConvexHttpActionPlan,
@@ -75,7 +75,7 @@ pub(in crate::adapters::convex) fn prepare_http_action_response_cancellable(
 }
 
 pub(in crate::adapters::convex) async fn prepare_http_action_response_async(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     plan: &ConvexHttpActionPlan,

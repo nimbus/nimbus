@@ -9,7 +9,7 @@ use super::read_tracking::{RuntimeIndexRangeRead, RuntimeReadSet};
 #[derive(Clone)]
 pub struct RuntimeHostState {
     server_request_id: Option<String>,
-    session_id: String,
+    host_call_session_id: String,
     max_nested_runtime_invocations: usize,
     remaining_nested_runtime_invocations: Arc<AtomicUsize>,
     read_set: Arc<Mutex<RuntimeReadSet>>,
@@ -17,16 +17,16 @@ pub struct RuntimeHostState {
 
 impl RuntimeHostState {
     pub fn new(
-        session_prefix: &str,
+        host_call_session_prefix: &str,
         server_request_id: Option<String>,
         max_nested_runtime_invocations: usize,
     ) -> Self {
-        static NEXT_RUNTIME_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+        static NEXT_HOST_CALL_SESSION_ID: AtomicU64 = AtomicU64::new(1);
         Self {
             server_request_id,
-            session_id: format!(
-                "{session_prefix}-{}",
-                NEXT_RUNTIME_SESSION_ID.fetch_add(1, Ordering::Relaxed)
+            host_call_session_id: format!(
+                "{host_call_session_prefix}-{}",
+                NEXT_HOST_CALL_SESSION_ID.fetch_add(1, Ordering::Relaxed)
             ),
             max_nested_runtime_invocations,
             remaining_nested_runtime_invocations: Arc::new(AtomicUsize::new(
@@ -40,8 +40,8 @@ impl RuntimeHostState {
         self.server_request_id.as_deref()
     }
 
-    pub fn session_id(&self) -> &str {
-        &self.session_id
+    pub fn host_call_session_id(&self) -> &str {
+        &self.host_call_session_id
     }
 
     pub fn snapshot_read_set(&self) -> RuntimeReadSet {
@@ -51,16 +51,16 @@ impl RuntimeHostState {
             .clone()
     }
 
-    pub fn validate_session(
+    pub fn validate_host_call_session(
         &self,
         tenant_id: &TenantId,
-        session_id: Option<&str>,
+        host_call_session_id: Option<&str>,
     ) -> std::result::Result<(), NimbusRuntimeError> {
-        if let Some(session_id) = session_id
-            && session_id.is_empty()
+        if let Some(host_call_session_id) = host_call_session_id
+            && host_call_session_id.is_empty()
         {
             return Err(NimbusRuntimeError::Contract(format!(
-                "runtime session token must not be empty for tenant {}",
+                "runtime host-call token must not be empty for tenant {}",
                 tenant_id
             )));
         }

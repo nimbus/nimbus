@@ -8,7 +8,7 @@ pub(crate) async fn schedule_after(
     headers: HeaderMap,
     Json(request): Json<ConvexScheduleAfterRequest>,
 ) -> Result<(StatusCode, Json<ScheduleResponse>), AppError> {
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let (registry, _auth, tenant_context) = registry_and_auth_for_path(
         &state,
         crate::local_server::LocalServerRouteFamily::ConvexHttp,
@@ -51,7 +51,7 @@ pub(crate) async fn schedule_at(
     headers: HeaderMap,
     Json(request): Json<ConvexScheduleAtRequest>,
 ) -> Result<(StatusCode, Json<ScheduleResponse>), AppError> {
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let (registry, _auth, tenant_context) = registry_and_auth_for_path(
         &state,
         crate::local_server::LocalServerRouteFamily::ConvexHttp,
@@ -96,7 +96,7 @@ pub(crate) async fn cancel_scheduled_job(
     headers: HeaderMap,
 ) -> Result<StatusCode, AppError> {
     let job_id = parse_job_id(&job_id)?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let (_registry, _auth, tenant_context) = registry_and_auth_for_path(
         &state,
         crate::local_server::LocalServerRouteFamily::ConvexHttp,

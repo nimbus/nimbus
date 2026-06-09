@@ -7,7 +7,36 @@ const BUILTIN_MODULES = new Set(
   }),
 );
 
-const MANAGED_PACKAGE_NAMES = new Set(["convex", "nimbus"]);
+const MANAGED_PACKAGE_NAMES = new Set(["convex", "@nimbus/nimbus"]);
+const TENANT_BUNDLE_OPERATOR_ONLY_SPECIFIERS = new Set([
+  "nimbus/rest",
+]);
+const TENANT_BUNDLE_OPERATOR_CREDENTIAL_PATTERNS = Object.freeze([
+  {
+    label: "LocalAdminTokenRecord",
+    regex: /\bLocalAdminTokenRecord\b/,
+  },
+  {
+    label: "NIMBUS_LOCAL_ADMIN_TOKEN",
+    regex: /\bNIMBUS_LOCAL_ADMIN_TOKEN\b/,
+  },
+  {
+    label: "NIMBUS_DEPLOY_TOKEN",
+    regex: /\bNIMBUS_DEPLOY_TOKEN\b/,
+  },
+  {
+    label: "NIMBUS_TOKEN",
+    regex: /\bNIMBUS_TOKEN\b/,
+  },
+  {
+    label: "NIMBUS_BEARER_TOKEN",
+    regex: /\bNIMBUS_BEARER_TOKEN\b/,
+  },
+  {
+    label: "NIMBUS_API_KEY",
+    regex: /\bNIMBUS_API_KEY\b/,
+  },
+]);
 
 function collectModuleSpecifiers(source) {
   const specifiers = [];
@@ -54,6 +83,55 @@ function isExternalPackageSpecifier(specifier) {
   return packageName !== null && !MANAGED_PACKAGE_NAMES.has(packageName);
 }
 
+function isTenantBundleOperatorOnlySpecifier(specifier) {
+  return TENANT_BUNDLE_OPERATOR_ONLY_SPECIFIERS.has(specifier)
+    || specifier === "@nimbus/nimbus/transports"
+    || specifier.startsWith("@nimbus/nimbus/transports/")
+    || specifier.startsWith("nimbus/transports/")
+    || specifier.startsWith("nimbus/rest/")
+    || specifier === "nimbus/transports";
+}
+
+function collectTenantBundleAdmissionViolations(source, { file = "tenant module" } = {}) {
+  const violations = [];
+  for (const { kind, specifier } of collectModuleSpecifiers(source)) {
+    if (isTenantBundleOperatorOnlySpecifier(specifier)) {
+      violations.push({
+        file,
+        kind,
+        specifier,
+        reason:
+          "tenant bundle admission rejects operator-only low-level Nimbus transport imports; use the high-level @nimbus/nimbus SDK with workload identity",
+      });
+    }
+  }
+  for (const { label, regex } of TENANT_BUNDLE_OPERATOR_CREDENTIAL_PATTERNS) {
+    if (regex.test(source)) {
+      violations.push({
+        file,
+        kind: "operator credential",
+        specifier: label,
+        reason:
+          "tenant bundle admission rejects packaged operator credential material; tenant code must use workload identity, not local-admin tokens or static control-plane credentials",
+      });
+    }
+  }
+  return violations;
+}
+
+function assertTenantBundleAdmission(source, options = {}) {
+  const violations = collectTenantBundleAdmissionViolations(source, options);
+  if (violations.length === 0) {
+    return;
+  }
+  const details = violations
+    .map((violation) =>
+      `${violation.file}: ${violation.kind} ${JSON.stringify(violation.specifier)} -- ${violation.reason}`
+    )
+    .join("; ");
+  throw new Error(`tenant bundle admission failed: ${details}`);
+}
+
 function packageNameFromSpecifier(specifier) {
   if (
     specifier.length === 0
@@ -77,8 +155,11 @@ function packageNameFromSpecifier(specifier) {
 
 export {
   canonicalNodeSpecifier,
+  assertTenantBundleAdmission,
+  collectTenantBundleAdmissionViolations,
   collectModuleSpecifiers,
   isExternalPackageSpecifier,
   isNodeBuiltinSpecifier,
+  isTenantBundleOperatorOnlySpecifier,
   packageNameFromSpecifier,
 };

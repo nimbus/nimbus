@@ -6,8 +6,8 @@ use tokio::time::timeout;
 
 #[tokio::test]
 async fn websocket_unsubscribe_stops_receiving_updates() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());
@@ -36,8 +36,8 @@ async fn websocket_unsubscribe_stops_receiving_updates() {
 
 #[tokio::test]
 async fn websocket_multiple_subscriptions_share_a_connection() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());
@@ -73,9 +73,9 @@ async fn websocket_multiple_subscriptions_share_a_connection() {
 
 #[tokio::test]
 async fn websocket_disconnect_drops_subscription_without_explicit_unsubscribe() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let server = ServerFixture::start(router_for_service(service.clone())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
+    let server = ServerFixture::start(router_for_engine(service.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());
@@ -107,9 +107,9 @@ async fn websocket_disconnect_drops_subscription_without_explicit_unsubscribe() 
 #[tokio::test]
 async fn websocket_disconnect_before_bootstrap_activation_cancels_pending_subscription_and_reconnects_cleanly()
  {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let server = ServerFixture::start(router_for_service(service.clone())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
+    let server = ServerFixture::start(router_for_engine(service.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());
@@ -189,9 +189,9 @@ async fn websocket_disconnect_before_bootstrap_activation_cancels_pending_subscr
 
 #[tokio::test]
 async fn websocket_unsubscribe_during_bootstrap_activation_keeps_subscription_gone() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let server = ServerFixture::start(router_for_service(service.clone())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
+    let server = ServerFixture::start(router_for_engine(service.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());
@@ -260,11 +260,11 @@ async fn websocket_reconnect_and_resubscribe_catches_up_after_apply_lag_and_keep
         Arc::new(ManualClock::new(nimbus_core::Timestamp(74_000))),
         faults.clone(),
     );
-    let fixture = ServiceFixture::new_with_harness(harness.clone(), |path, harness| {
-        Service::new_with_simulation(path, harness.clock(), harness.fault_injector())
+    let fixture = EngineFixture::new_with_harness(harness.clone(), |path, harness| {
+        Engine::new_with_simulation(path, harness.clock(), harness.fault_injector())
     });
-    let service = fixture.service();
-    let server = ServerFixture::start(router_for_service(service.clone())).await;
+    let service = fixture.engine();
+    let server = ServerFixture::start(router_for_engine(service.clone())).await;
     let api = HttpApiFixture::new(&server);
     let tenant_id = nimbus_core::TenantId::new("demo").expect("tenant id should be valid");
 

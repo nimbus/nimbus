@@ -65,7 +65,7 @@ async function resolveSourceRoot(appDir) {
     return {
       sourceDirName: "nimbus",
       sourceDirPath: nimbusDir,
-      packageNamespace: "nimbus",
+      packageNamespace: "@nimbus/nimbus",
       detectedBothRoots: true,
     };
   }
@@ -74,7 +74,7 @@ async function resolveSourceRoot(appDir) {
     return {
       sourceDirName: "nimbus",
       sourceDirPath: nimbusDir,
-      packageNamespace: "nimbus",
+      packageNamespace: "@nimbus/nimbus",
       detectedBothRoots: false,
     };
   }

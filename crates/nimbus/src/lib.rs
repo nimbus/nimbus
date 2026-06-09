@@ -14,11 +14,11 @@ pub use nimbus_core::{
 // Engine coordination and persistence configuration.
 pub use nimbus_engine::{
     AwsKmsConfig, ControlPlaneConfig, EncryptionConfigDescriptor, EncryptionStatus,
-    EncryptionValidationError, InitializedKeyProvider, KeyDirectoryConfig, KeyProviderDescriptor,
-    LocalEncryptionConfig, LocalKeyProviderConfig, LocalPersistenceFamily, MasterKeyFileConfig,
-    MonthlyActiveUsersSnapshot, PersistenceDialect, PersistenceTopology, PoolConfig,
-    ProviderCredentials, Service, ServicePersistenceConfig, SubscriptionUpdate,
-    TenantProviderConfig, TenantRoutingConfig, evaluate_paginated, evaluate_query, run_scheduler,
+    EncryptionValidationError, Engine, EnginePersistenceConfig, InitializedKeyProvider,
+    KeyDirectoryConfig, KeyProviderDescriptor, LocalEncryptionConfig, LocalKeyProviderConfig,
+    LocalPersistenceFamily, MasterKeyFileConfig, MonthlyActiveUsersSnapshot, PersistenceDialect,
+    PersistenceTopology, PoolConfig, ProviderCredentials, SubscriptionUpdate, TenantProviderConfig,
+    TenantRoutingConfig, evaluate_paginated, evaluate_query, run_scheduler,
 };
 // Runtime execution contract and limits.
 pub use nimbus_runtime::{
@@ -44,11 +44,12 @@ pub use nimbus_sandbox::{
 };
 // Server integration and transport construction helpers.
 pub use nimbus_server::{
-    ConvexRegistry, EmptySandboxCatalog, EmptySandboxServiceCatalog, LICENSE_FILE_ENV,
-    LicenseDocument, LicenseEntitlements, LicenseKind, LicenseLoadError, LicenseSnapshot,
-    LicenseSourceInfo, LicenseSourceKind, LicenseState, LicenseStatus, LicenseUsageSnapshot,
-    RouterOptions, SandboxCatalog, SandboxServiceCatalog, SandboxServiceLaunch,
-    SandboxServiceManager, ServeOptions, build_router, serve,
+    BuiltInServiceImplementation, ConvexRegistry, EmptyServiceDefinitionCatalog,
+    EmptyServiceInstanceCatalog, ExternalServiceImplementation, LICENSE_FILE_ENV, LicenseDocument,
+    LicenseEntitlements, LicenseKind, LicenseLoadError, LicenseSnapshot, LicenseSourceInfo,
+    LicenseSourceKind, LicenseState, LicenseStatus, LicenseUsageSnapshot, RouterOptions,
+    SandboxBackedServiceImplementation, ServeOptions, ServiceDefinitionCatalog,
+    ServiceImplementation, ServiceInstanceCatalog, ServiceManager, build_router, serve,
 };
 #[cfg(feature = "aws-kms")]
 pub use nimbus_storage::AwsKmsKeyProvider;

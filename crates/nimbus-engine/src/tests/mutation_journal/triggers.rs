@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use crate::{Service, TriggerInvocationExecution, TriggerInvocationExecutor, TriggerRegistration};
+use crate::{Engine, TriggerInvocationExecution, TriggerInvocationExecutor, TriggerRegistration};
 use nimbus_core::{
     DocumentId, DocumentLocator, DocumentPath, DocumentTriggerPattern, FirestoreCloudEventType,
     ResourcePathBinding, TenantId, Timestamp, TriggerDeliveryCursor, TriggerInvocationRecord,
@@ -12,7 +12,7 @@ use tempfile::{TempDir, tempdir};
 
 use super::support::{
     expect_blocking_wait_reaches_state, expect_future_within, mutation_journal_catch_up_timeout,
-    mutation_journal_poll_interval, mutation_journal_progress_timeout, new_faulted_service,
+    mutation_journal_poll_interval, mutation_journal_progress_timeout, new_faulted_engine,
 };
 use super::*;
 
@@ -153,36 +153,36 @@ impl TriggerInvocationExecutor for RecordingTriggerExecutor {
     }
 }
 
-fn new_trigger_service_with_manual_clock(
+fn new_trigger_engine_with_manual_clock(
     timestamp_ms: u64,
-) -> (TempDir, Arc<Service>, TenantId, Arc<ManualClock>) {
-    let data_dir = tempdir().expect("service tempdir should build");
+) -> (TempDir, Arc<Engine>, TenantId, Arc<ManualClock>) {
+    let data_dir = tempdir().expect("engine tempdir should build");
     let clock = Arc::new(ManualClock::new(Timestamp(timestamp_ms)));
-    let service = Arc::new(
-        Service::new_with_simulation(data_dir.path(), clock.clone(), Arc::new(NoopFaultInjector))
-            .expect("service should create"),
+    let engine = Arc::new(
+        Engine::new_with_simulation(data_dir.path(), clock.clone(), Arc::new(NoopFaultInjector))
+            .expect("engine should create"),
     );
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
-    (data_dir, service, tenant_id, clock)
+    (data_dir, engine, tenant_id, clock)
 }
 
 #[tokio::test]
 async fn trigger_candidates_publish_only_after_journal_apply() {
-    let (_data_dir, service, tenant_id, faults) = new_faulted_service(61_000);
+    let (_data_dir, engine, tenant_id, faults) = new_faulted_engine(61_000);
     let document_id = DocumentId::from_key("triggered").expect("document id should build");
-    service
+    engine
         .upsert_resource_path_binding_for_testing(&tenant_id, trigger_binding(&document_id))
         .expect("resource path binding should persist");
 
     let insert_handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         let document_id = document_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async_with_id(
                     tenant_id,
                     tasks_table(),
@@ -197,7 +197,7 @@ async fn trigger_candidates_publish_only_after_journal_apply() {
         .await
         .expect("journal worker should block after durable append");
     assert_eq!(
-        service
+        engine
             .pending_trigger_candidate_count_for_testing(&tenant_id)
             .expect("pending trigger candidate count should load"),
         0,
@@ -216,7 +216,7 @@ async fn trigger_candidates_publish_only_after_journal_apply() {
         mutation_journal_progress_timeout(),
         mutation_journal_poll_interval(),
         || async {
-            service
+            engine
                 .pending_trigger_candidate_count_for_testing(&tenant_id)
                 .expect("pending trigger candidate count should load")
         },
@@ -224,7 +224,7 @@ async fn trigger_candidates_publish_only_after_journal_apply() {
     )
     .await;
 
-    let candidates = service
+    let candidates = engine
         .drain_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger candidates should drain");
     assert_eq!(candidates.len(), 2);
@@ -238,25 +238,25 @@ async fn trigger_candidates_publish_only_after_journal_apply() {
 
 #[tokio::test]
 async fn trigger_candidate_worker_pause_does_not_block_mutation_completion() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let document_id = DocumentId::from_key("paused").expect("document id should build");
-    service
+    engine
         .upsert_resource_path_binding_for_testing(&tenant_id, trigger_binding(&document_id))
         .expect("resource path binding should persist");
 
-    let pause = service
+    let pause = engine
         .trigger_candidate_pause_handle_for_testing(&tenant_id)
         .expect("trigger candidate pause handle should load");
     pause.arm();
 
     let insert_handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         let document_id = document_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async_with_id(
                     tenant_id,
                     tasks_table(),
@@ -282,7 +282,7 @@ async fn trigger_candidate_worker_pause_does_not_block_mutation_completion() {
     .expect("mutation should succeed");
 
     assert_eq!(
-        service
+        engine
             .pending_trigger_candidate_count_for_testing(&tenant_id)
             .expect("pending trigger candidate count should load"),
         0,
@@ -296,7 +296,7 @@ async fn trigger_candidate_worker_pause_does_not_block_mutation_completion() {
         mutation_journal_progress_timeout(),
         mutation_journal_poll_interval(),
         || async {
-            service
+            engine
                 .pending_trigger_candidate_count_for_testing(&tenant_id)
                 .expect("pending trigger candidate count should load")
         },
@@ -307,23 +307,23 @@ async fn trigger_candidate_worker_pause_does_not_block_mutation_completion() {
 
 #[tokio::test]
 async fn trigger_candidate_bootstrap_replays_commits_after_persisted_cursor() {
-    let data_dir = tempdir().expect("service tempdir should build");
+    let data_dir = tempdir().expect("engine tempdir should build");
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
     let first_id = DocumentId::from_key("first").expect("first document id should build");
     let second_id = DocumentId::from_key("second").expect("second document id should build");
 
     {
-        let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
-        service
+        let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
+        engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
-        service
+        engine
             .upsert_resource_path_binding_for_testing(&tenant_id, trigger_binding(&first_id))
             .expect("first resource path binding should persist");
-        service
+        engine
             .upsert_resource_path_binding_for_testing(&tenant_id, trigger_binding(&second_id))
             .expect("second resource path binding should persist");
-        service
+        engine
             .insert_document_with_id(
                 &tenant_id,
                 tasks_table(),
@@ -336,7 +336,7 @@ async fn trigger_candidate_bootstrap_replays_commits_after_persisted_cursor() {
             mutation_journal_catch_up_timeout(),
             mutation_journal_poll_interval(),
             || async {
-                service
+                engine
                     .trigger_delivery_cursor_for_testing(&tenant_id)
                     .expect("trigger delivery cursor should load")
             },
@@ -344,11 +344,11 @@ async fn trigger_candidate_bootstrap_replays_commits_after_persisted_cursor() {
         )
         .await;
 
-        let pause = service
+        let pause = engine
             .trigger_candidate_pause_handle_for_testing(&tenant_id)
             .expect("trigger candidate pause handle should load");
         pause.arm();
-        service
+        engine
             .insert_document_with_id(
                 &tenant_id,
                 tasks_table(),
@@ -362,20 +362,20 @@ async fn trigger_candidate_bootstrap_replays_commits_after_persisted_cursor() {
             move |timeout| pause_for_wait.wait_until_entered(timeout),
         )
         .await;
-        service
+        engine
             .shutdown_trigger_candidates_for_testing(&tenant_id)
             .expect("paused trigger candidate worker should shut down without advancing cursor");
-        service
+        engine
             .set_trigger_delivery_cursor_for_testing(
                 &tenant_id,
                 TriggerDeliveryCursor::new(SequenceNumber(1)),
             )
             .expect("trigger delivery cursor should persist");
-        service.quiesce().await;
+        engine.quiesce().await;
     }
 
-    let service = Arc::new(Service::new(data_dir.path()).expect("service should recreate"));
-    service
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should recreate"));
+    engine
         .ensure_tenant_exists(&tenant_id)
         .expect("tenant should load and bootstrap trigger candidates");
 
@@ -384,7 +384,7 @@ async fn trigger_candidate_bootstrap_replays_commits_after_persisted_cursor() {
         mutation_journal_catch_up_timeout(),
         mutation_journal_poll_interval(),
         || async {
-            service
+            engine
                 .pending_trigger_candidate_count_for_testing(&tenant_id)
                 .expect("pending trigger candidate count should load")
         },
@@ -396,7 +396,7 @@ async fn trigger_candidate_bootstrap_replays_commits_after_persisted_cursor() {
         "trigger bootstrap should replay only the commit after the persisted cursor"
     );
 
-    let candidates = service
+    let candidates = engine
         .drain_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger candidates should drain");
     assert_eq!(candidates.len(), 2);
@@ -424,11 +424,11 @@ async fn trigger_candidate_bootstrap_replays_commits_after_persisted_cursor() {
 
 #[tokio::test]
 async fn trigger_invocations_materialize_exact_and_wildcard_matches() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let document_id = DocumentId::from_key("exact").expect("document id should build");
-    service
+    engine
         .replace_trigger_registrations_for_testing(
             &tenant_id,
             vec![
@@ -450,11 +450,11 @@ async fn trigger_invocations_materialize_exact_and_wildcard_matches() {
             ],
         )
         .expect("trigger registrations should persist in runtime");
-    service
+    engine
         .upsert_resource_path_binding_for_testing(&tenant_id, trigger_binding(&document_id))
         .expect("resource path binding should persist");
 
-    service
+    engine
         .insert_document_with_id(
             &tenant_id,
             tasks_table(),
@@ -468,7 +468,7 @@ async fn trigger_invocations_materialize_exact_and_wildcard_matches() {
         mutation_journal_progress_timeout(),
         mutation_journal_poll_interval(),
         || async {
-            service
+            engine
                 .list_trigger_invocations_for_testing(&tenant_id)
                 .expect("trigger invocations should load")
                 .len()
@@ -477,12 +477,12 @@ async fn trigger_invocations_materialize_exact_and_wildcard_matches() {
     )
     .await;
 
-    let invocations = service
+    let invocations = engine
         .list_trigger_invocations_for_testing(&tenant_id)
         .expect("trigger invocations should load");
     assert_eq!(invocations.len(), 3);
     assert_eq!(
-        service
+        engine
             .trigger_delivery_cursor_for_testing(&tenant_id)
             .expect("trigger delivery cursor should load"),
         TriggerDeliveryCursor::new(SequenceNumber(1))
@@ -537,18 +537,18 @@ async fn trigger_invocations_materialize_exact_and_wildcard_matches() {
 
 #[tokio::test]
 async fn trigger_invocations_advance_cursor_when_registry_is_ready_but_no_match_exists() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let document_id = DocumentId::from_key("nomatch").expect("document id should build");
-    service
+    engine
         .replace_trigger_registrations_for_testing(&tenant_id, Vec::new())
         .expect("empty trigger registry should still mark readiness");
-    service
+    engine
         .upsert_resource_path_binding_for_testing(&tenant_id, trigger_binding(&document_id))
         .expect("resource path binding should persist");
 
-    service
+    engine
         .insert_document_with_id(
             &tenant_id,
             tasks_table(),
@@ -562,7 +562,7 @@ async fn trigger_invocations_advance_cursor_when_registry_is_ready_but_no_match_
         mutation_journal_progress_timeout(),
         mutation_journal_poll_interval(),
         || async {
-            service
+            engine
                 .trigger_delivery_cursor_for_testing(&tenant_id)
                 .expect("trigger delivery cursor should load")
         },
@@ -571,7 +571,7 @@ async fn trigger_invocations_advance_cursor_when_registry_is_ready_but_no_match_
     .await;
 
     assert!(
-        service
+        engine
             .list_trigger_invocations_for_testing(&tenant_id)
             .expect("trigger invocations should load")
             .is_empty()
@@ -580,15 +580,15 @@ async fn trigger_invocations_advance_cursor_when_registry_is_ready_but_no_match_
 
 #[tokio::test]
 async fn trigger_execution_claims_pending_invocations_and_marks_completion() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let document_id = DocumentId::from_key("complete").expect("document id should build");
     let executor = Arc::new(RecordingTriggerExecutor::default());
-    service
+    engine
         .install_trigger_invocation_executor(executor.clone())
         .expect("trigger executor should install");
-    service
+    engine
         .replace_trigger_registrations_for_testing(
             &tenant_id,
             vec![trigger_registration(
@@ -598,11 +598,11 @@ async fn trigger_execution_claims_pending_invocations_and_marks_completion() {
             )],
         )
         .expect("trigger registrations should persist in runtime");
-    service
+    engine
         .upsert_resource_path_binding_for_testing(&tenant_id, trigger_binding(&document_id))
         .expect("resource path binding should persist");
 
-    service
+    engine
         .insert_document_with_id(
             &tenant_id,
             tasks_table(),
@@ -616,7 +616,7 @@ async fn trigger_execution_claims_pending_invocations_and_marks_completion() {
         mutation_journal_progress_timeout(),
         mutation_journal_poll_interval(),
         || async {
-            service
+            engine
                 .list_trigger_invocations_for_testing(&tenant_id)
                 .expect("trigger invocations should load")
         },
@@ -630,7 +630,7 @@ async fn trigger_execution_claims_pending_invocations_and_marks_completion() {
     )
     .await;
 
-    let records = service
+    let records = engine
         .list_trigger_invocations_for_testing(&tenant_id)
         .expect("trigger invocations should load");
     assert!(matches!(
@@ -645,17 +645,17 @@ async fn trigger_execution_claims_pending_invocations_and_marks_completion() {
 
 #[tokio::test]
 async fn trigger_execution_persists_terminal_failures() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let document_id = DocumentId::from_key("terminal").expect("document id should build");
     let executor = Arc::new(RecordingTriggerExecutor::with_terminal_failure_for(
         "firebase:terminalWritten",
     ));
-    service
+    engine
         .install_trigger_invocation_executor(executor.clone())
         .expect("trigger executor should install");
-    service
+    engine
         .replace_trigger_registrations_for_testing(
             &tenant_id,
             vec![trigger_registration(
@@ -665,11 +665,11 @@ async fn trigger_execution_persists_terminal_failures() {
             )],
         )
         .expect("trigger registrations should persist in runtime");
-    service
+    engine
         .upsert_resource_path_binding_for_testing(&tenant_id, trigger_binding(&document_id))
         .expect("resource path binding should persist");
 
-    service
+    engine
         .insert_document_with_id(
             &tenant_id,
             tasks_table(),
@@ -683,7 +683,7 @@ async fn trigger_execution_persists_terminal_failures() {
         mutation_journal_progress_timeout(),
         mutation_journal_poll_interval(),
         || async {
-            service
+            engine
                 .list_trigger_invocations_for_testing(&tenant_id)
                 .expect("trigger invocations should load")
         },
@@ -697,7 +697,7 @@ async fn trigger_execution_persists_terminal_failures() {
     )
     .await;
 
-    let records = service
+    let records = engine
         .list_trigger_invocations_for_testing(&tenant_id)
         .expect("trigger invocations should load");
     assert!(matches!(
@@ -712,15 +712,15 @@ async fn trigger_execution_persists_terminal_failures() {
 
 #[tokio::test]
 async fn trigger_execution_retries_retryable_failures_until_completion() {
-    let (_data_dir, service, tenant_id, clock) = new_trigger_service_with_manual_clock(70_000);
+    let (_data_dir, engine, tenant_id, clock) = new_trigger_engine_with_manual_clock(70_000);
     let document_id = DocumentId::from_key("retry-once").expect("document id should build");
     let executor = Arc::new(RecordingTriggerExecutor::with_retry_once_for(
         "firebase:retryWritten",
     ));
-    service
+    engine
         .install_trigger_invocation_executor(executor.clone())
         .expect("trigger executor should install");
-    service
+    engine
         .replace_trigger_registrations_for_testing(
             &tenant_id,
             vec![trigger_registration(
@@ -730,11 +730,11 @@ async fn trigger_execution_retries_retryable_failures_until_completion() {
             )],
         )
         .expect("trigger registrations should persist in runtime");
-    service
+    engine
         .upsert_resource_path_binding_for_testing(&tenant_id, trigger_binding(&document_id))
         .expect("resource path binding should persist");
 
-    service
+    engine
         .insert_document_with_id(
             &tenant_id,
             tasks_table(),
@@ -748,7 +748,7 @@ async fn trigger_execution_retries_retryable_failures_until_completion() {
         mutation_journal_progress_timeout(),
         mutation_journal_poll_interval(),
         || async {
-            service
+            engine
                 .list_trigger_invocations_for_testing(&tenant_id)
                 .expect("trigger invocations should load")
         },
@@ -769,7 +769,7 @@ async fn trigger_execution_retries_retryable_failures_until_completion() {
         mutation_journal_progress_timeout(),
         mutation_journal_poll_interval(),
         || async {
-            service
+            engine
                 .list_trigger_invocations_for_testing(&tenant_id)
                 .expect("trigger invocations should load")
         },
@@ -794,15 +794,15 @@ async fn trigger_execution_retries_retryable_failures_until_completion() {
 
 #[tokio::test]
 async fn trigger_execution_promotes_exhausted_retries_to_terminal_failure() {
-    let (_data_dir, service, tenant_id, clock) = new_trigger_service_with_manual_clock(75_000);
+    let (_data_dir, engine, tenant_id, clock) = new_trigger_engine_with_manual_clock(75_000);
     let document_id = DocumentId::from_key("retry-terminal").expect("document id should build");
     let executor = Arc::new(RecordingTriggerExecutor::with_always_retry_for(
         "firebase:retryTerminalWritten",
     ));
-    service
+    engine
         .install_trigger_invocation_executor(executor.clone())
         .expect("trigger executor should install");
-    service
+    engine
         .replace_trigger_registrations_for_testing(
             &tenant_id,
             vec![trigger_registration(
@@ -812,11 +812,11 @@ async fn trigger_execution_promotes_exhausted_retries_to_terminal_failure() {
             )],
         )
         .expect("trigger registrations should persist in runtime");
-    service
+    engine
         .upsert_resource_path_binding_for_testing(&tenant_id, trigger_binding(&document_id))
         .expect("resource path binding should persist");
 
-    service
+    engine
         .insert_document_with_id(
             &tenant_id,
             tasks_table(),
@@ -831,7 +831,7 @@ async fn trigger_execution_promotes_exhausted_retries_to_terminal_failure() {
             mutation_journal_progress_timeout(),
             mutation_journal_poll_interval(),
             || async {
-                service
+                engine
                     .list_trigger_invocations_for_testing(&tenant_id)
                     .expect("trigger invocations should load")
             },
@@ -855,7 +855,7 @@ async fn trigger_execution_promotes_exhausted_retries_to_terminal_failure() {
         mutation_journal_progress_timeout(),
         mutation_journal_poll_interval(),
         || async {
-            service
+            engine
                 .list_trigger_invocations_for_testing(&tenant_id)
                 .expect("trigger invocations should load")
         },
@@ -874,16 +874,16 @@ async fn trigger_execution_promotes_exhausted_retries_to_terminal_failure() {
 
 #[tokio::test]
 async fn installing_executor_bootstraps_pending_invocations_after_restart() {
-    let data_dir = tempdir().expect("service tempdir should build");
+    let data_dir = tempdir().expect("engine tempdir should build");
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
     let document_id = DocumentId::from_key("restart").expect("document id should build");
 
     {
-        let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
-        service
+        let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
+        engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
-        service
+        engine
             .replace_trigger_registrations_for_testing(
                 &tenant_id,
                 vec![trigger_registration(
@@ -893,10 +893,10 @@ async fn installing_executor_bootstraps_pending_invocations_after_restart() {
                 )],
             )
             .expect("trigger registrations should persist in runtime");
-        service
+        engine
             .upsert_resource_path_binding_for_testing(&tenant_id, trigger_binding(&document_id))
             .expect("resource path binding should persist");
-        service
+        engine
             .insert_document_with_id(
                 &tenant_id,
                 tasks_table(),
@@ -909,7 +909,7 @@ async fn installing_executor_bootstraps_pending_invocations_after_restart() {
             mutation_journal_progress_timeout(),
             mutation_journal_poll_interval(),
             || async {
-                service
+                engine
                     .list_trigger_invocations_for_testing(&tenant_id)
                     .expect("trigger invocations should load")
             },
@@ -918,14 +918,14 @@ async fn installing_executor_bootstraps_pending_invocations_after_restart() {
             },
         )
         .await;
-        service.quiesce().await;
+        engine.quiesce().await;
     }
 
-    let service = Arc::new(Service::new(data_dir.path()).expect("service should recreate"));
-    service
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should recreate"));
+    engine
         .ensure_tenant_exists(&tenant_id)
         .expect("tenant should load");
-    service
+    engine
         .replace_trigger_registrations_for_testing(
             &tenant_id,
             vec![trigger_registration(
@@ -936,7 +936,7 @@ async fn installing_executor_bootstraps_pending_invocations_after_restart() {
         )
         .expect("trigger registrations should persist in runtime");
     let executor = Arc::new(RecordingTriggerExecutor::default());
-    service
+    engine
         .install_trigger_invocation_executor(executor.clone())
         .expect("trigger executor should install");
 
@@ -945,7 +945,7 @@ async fn installing_executor_bootstraps_pending_invocations_after_restart() {
         mutation_journal_progress_timeout(),
         mutation_journal_poll_interval(),
         || async {
-            service
+            engine
                 .list_trigger_invocations_for_testing(&tenant_id)
                 .expect("trigger invocations should load")
         },
@@ -967,24 +967,24 @@ async fn installing_executor_bootstraps_pending_invocations_after_restart() {
 
 #[tokio::test]
 async fn installing_executor_bootstraps_due_retry_invocations_after_restart() {
-    let data_dir = tempdir().expect("service tempdir should build");
+    let data_dir = tempdir().expect("engine tempdir should build");
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
     let document_id = DocumentId::from_key("retry-restart").expect("document id should build");
     let initial_clock = Arc::new(ManualClock::new(Timestamp(80_000)));
 
     {
-        let service = Arc::new(
-            Service::new_with_simulation(
+        let engine = Arc::new(
+            Engine::new_with_simulation(
                 data_dir.path(),
                 initial_clock.clone(),
                 Arc::new(NoopFaultInjector),
             )
-            .expect("service should create"),
+            .expect("engine should create"),
         );
-        service
+        engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
-        service
+        engine
             .replace_trigger_registrations_for_testing(
                 &tenant_id,
                 vec![trigger_registration(
@@ -994,16 +994,16 @@ async fn installing_executor_bootstraps_due_retry_invocations_after_restart() {
                 )],
             )
             .expect("trigger registrations should persist in runtime");
-        service
+        engine
             .upsert_resource_path_binding_for_testing(&tenant_id, trigger_binding(&document_id))
             .expect("resource path binding should persist");
-        service
+        engine
             .install_trigger_invocation_executor(Arc::new(
                 RecordingTriggerExecutor::with_retry_once_for("firebase:retryRestartWritten"),
             ))
             .expect("trigger executor should install");
 
-        service
+        engine
             .insert_document_with_id(
                 &tenant_id,
                 tasks_table(),
@@ -1017,7 +1017,7 @@ async fn installing_executor_bootstraps_due_retry_invocations_after_restart() {
             mutation_journal_progress_timeout(),
             mutation_journal_poll_interval(),
             || async {
-                service
+                engine
                     .list_trigger_invocations_for_testing(&tenant_id)
                     .expect("trigger invocations should load")
             },
@@ -1030,18 +1030,18 @@ async fn installing_executor_bootstraps_due_retry_invocations_after_restart() {
             },
         )
         .await;
-        service.quiesce().await;
+        engine.quiesce().await;
     }
 
     let restart_clock = Arc::new(ManualClock::new(Timestamp(81_000)));
-    let service = Arc::new(
-        Service::new_with_simulation(data_dir.path(), restart_clock, Arc::new(NoopFaultInjector))
-            .expect("service should recreate"),
+    let engine = Arc::new(
+        Engine::new_with_simulation(data_dir.path(), restart_clock, Arc::new(NoopFaultInjector))
+            .expect("engine should recreate"),
     );
-    service
+    engine
         .ensure_tenant_exists(&tenant_id)
         .expect("tenant should load");
-    service
+    engine
         .replace_trigger_registrations_for_testing(
             &tenant_id,
             vec![trigger_registration(
@@ -1052,7 +1052,7 @@ async fn installing_executor_bootstraps_due_retry_invocations_after_restart() {
         )
         .expect("trigger registrations should persist in runtime");
     let executor = Arc::new(RecordingTriggerExecutor::default());
-    service
+    engine
         .install_trigger_invocation_executor(executor.clone())
         .expect("trigger executor should install");
 
@@ -1061,7 +1061,7 @@ async fn installing_executor_bootstraps_due_retry_invocations_after_restart() {
         mutation_journal_progress_timeout(),
         mutation_journal_poll_interval(),
         || async {
-            service
+            engine
                 .list_trigger_invocations_for_testing(&tenant_id)
                 .expect("trigger invocations should load")
         },

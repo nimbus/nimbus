@@ -2,8 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn rejects_invalid_tenant_name_and_returns_not_found_for_unknown_document_key() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     let invalid_tenant = api.create_tenant("../demo").await;
@@ -18,8 +18,8 @@ async fn rejects_invalid_tenant_name_and_returns_not_found_for_unknown_document_
 
 #[tokio::test]
 async fn duplicate_tenant_creation_returns_conflict() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     let first = api.create_tenant("demo").await;
@@ -31,8 +31,8 @@ async fn duplicate_tenant_creation_returns_conflict() {
 
 #[tokio::test]
 async fn list_tenants_returns_all_known_tenants() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -56,12 +56,12 @@ async fn list_tenants_returns_all_known_tenants() {
 
 #[tokio::test]
 async fn local_admin_tenant_api_rejects_and_hides_reserved_system_tenants() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     crate::system_tenant::ensure_system_tenant_async(&service)
         .await
         .expect("system tenant should initialize");
-    let server = ServerFixture::start(router_for_service(service)).await;
+    let server = ServerFixture::start(router_for_engine(service)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -91,8 +91,8 @@ async fn local_admin_tenant_api_rejects_and_hides_reserved_system_tenants() {
 
 #[tokio::test]
 async fn delete_tenant_returns_no_content_and_removes_it_from_listing() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -112,8 +112,8 @@ async fn delete_tenant_returns_no_content_and_removes_it_from_listing() {
 
 #[tokio::test]
 async fn operations_on_nonexistent_tenant_return_not_found() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
     let document_id = nimbus_core::DocumentId::new().to_string();
 

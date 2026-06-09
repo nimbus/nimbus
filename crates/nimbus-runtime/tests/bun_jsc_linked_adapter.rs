@@ -269,7 +269,7 @@ fn bun_shared_adapter_routes_generated_context_db_insert_through_host_bridge() {
         &bun_bundle_path,
         r#"
 globalThis.__nimbusInvoke = async function(request) {
-  const ctx = globalThis.__nimbusCreateContext({ request, sessionId: "host-session" });
+  const ctx = globalThis.__nimbusCreateContext({ request, hostCallSessionId: "host-session" });
   const id = await ctx.db.insert("messages", { body: request.args.body });
   return {
     status: "ok",
@@ -318,7 +318,7 @@ globalThis.__nimbusInvoke = async function(request) {
     assert_eq!(
         calls[0].payload,
         json!({
-            "session_id": "host-session",
+            "host_call_session_id": "host-session",
             "table": "messages",
             "fields": { "body": "hello from bun" },
         })

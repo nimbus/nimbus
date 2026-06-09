@@ -139,7 +139,7 @@ impl ComposeProjectPlan {
         let tenant_id = TenantId::new(CONFIG_VALIDATION_TENANT_ID)
             .expect("config validation tenant id should remain valid");
         for (service_name, service) in &self.services {
-            let _ = service.to_sandbox_service_launch(&tenant_id, service_name)?;
+            let _ = service.to_service_implementation(&tenant_id, service_name)?;
         }
         Ok(ComposeServiceCatalog { project: self })
     }
@@ -186,15 +186,15 @@ fn ensure_service_volumes_declared(
     Ok(())
 }
 
-impl SandboxServiceCatalog for ComposeServiceCatalog {
-    fn sandbox_service_for_tenant(
+impl ServiceDefinitionCatalog for ComposeServiceCatalog {
+    fn service_implementation_for_tenant(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Option<SandboxServiceLaunch> {
+    ) -> Option<ServiceImplementation> {
         self.project.services.get(service_name).map(|service| {
             service
-                .to_sandbox_service_launch(tenant_id, service_name)
+                .to_service_implementation(tenant_id, service_name)
                 .expect("validated compose services should keep lowering through the server catalog seam")
         })
     }
@@ -297,23 +297,25 @@ impl ComposeServicePlan {
         })
     }
 
-    fn to_sandbox_service_launch(
+    fn to_service_implementation(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Result<SandboxServiceLaunch, Error> {
+    ) -> Result<ServiceImplementation, Error> {
         let spec = self.to_sandbox_spec(tenant_id, service_name)?;
         let process_overrides = self.process.to_image_process_overrides()?;
         match &self.source {
-            ComposeLaunchPlan::Image { image_reference } => Ok(SandboxServiceLaunch::image(
-                SandboxImageLaunchSpec::new(spec, image_reference.clone())
-                    .with_process_overrides(process_overrides),
-            )),
+            ComposeLaunchPlan::Image { image_reference } => {
+                Ok(ServiceImplementation::sandbox_image(
+                    SandboxImageLaunchSpec::new(spec, image_reference.clone())
+                        .with_process_overrides(process_overrides),
+                ))
+            }
             ComposeLaunchPlan::Build {
                 image_name,
                 dockerfile_path,
                 context_path,
-            } => Ok(SandboxServiceLaunch::build(
+            } => Ok(ServiceImplementation::sandbox_build(
                 SandboxBuildLaunchSpec::new(
                     spec,
                     image_name.clone(),

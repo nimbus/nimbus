@@ -13,7 +13,7 @@ runtime bundle. Each target entry records:
 - the runtime handler entrypoint
 - the advertised signature type (`cloudevent` or `http`)
 - the binding kind (`firestore_document` or `https`)
-- the execution identity contract (`service` or `request`)
+- the execution identity contract (`service_account` or `request_principal`)
 
 This keeps the target contract explicit instead of inferring deploy bindings
 from source code after build time.
@@ -42,7 +42,7 @@ The first-slice `targets.json` shape is:
         "event_type": "google.cloud.firestore.document.v1.written",
         "database": "(default)",
         "document": "users/{userId}",
-        "execution": "service"
+        "execution": "service_account"
       }
     },
     {
@@ -54,7 +54,7 @@ The first-slice `targets.json` shape is:
         "binding_kind": "https",
         "exposure": "http",
         "path": "/hello",
-        "execution": "request"
+        "execution": "request_principal"
       }
     },
     {
@@ -66,7 +66,7 @@ The first-slice `targets.json` shape is:
         "binding_kind": "https",
         "exposure": "callable",
         "path": "/callHello",
-        "execution": "request"
+        "execution": "request_principal"
       }
     }
   ]
@@ -83,8 +83,8 @@ The deploy contract validates these rules before a generation can activate:
 - HTTP bindings must use `signature_type: "http"`
 - Firestore document patterns must parse as shared
   `DocumentTriggerPattern` values and therefore end on a document segment
-- Firestore document bindings must use `execution: "service"`
-- HTTP bindings must use `execution: "request"`
+- Firestore document bindings must use `execution: "service_account"`
+- HTTP bindings must use `execution: "request_principal"`
 - HTTP paths must begin with `/`
 - Firebase HTTPS bindings may use `exposure: "http"` or `exposure: "callable"`
 

@@ -41,7 +41,7 @@ vi.mock("@tanstack/react-router", () => ({
   }) => select({ location: { pathname: pathnameRef.current } }),
 }));
 
-vi.mock("nimbus/react", () => ({
+vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: () => undefined,
 }));
 

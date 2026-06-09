@@ -2,11 +2,11 @@ use super::*;
 
 #[tokio::test]
 async fn scheduled_mutation_over_http_drives_websocket_push() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let scheduler_handle = tokio::spawn(run_scheduler(service.clone(), shutdown_rx));
-    let server = ServerFixture::start(router_for_service(service)).await;
+    let server = ServerFixture::start(router_for_engine(service)).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());

@@ -17,7 +17,7 @@ pub(super) async fn handle_commit(
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
     nimbus_firebase::grpc::unary::handle_commit(
-        &state.service,
+        &state.engine,
         &auth.principal,
         request.into_inner(),
     )
@@ -31,7 +31,7 @@ pub(super) async fn handle_get_document(
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
     nimbus_firebase::grpc::unary::handle_get_document(
-        &state.service,
+        &state.engine,
         &auth.principal,
         request.into_inner(),
     )
@@ -45,7 +45,7 @@ pub(super) async fn handle_batch_get_documents(
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
     nimbus_firebase::grpc::unary::handle_batch_get_documents(
-        &state.service,
+        &state.engine,
         &auth.principal,
         request.into_inner(),
     )
@@ -59,7 +59,7 @@ pub(super) async fn handle_batch_write(
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
     nimbus_firebase::grpc::unary::handle_batch_write(
-        &state.service,
+        &state.engine,
         &auth.principal,
         request.into_inner(),
     )
@@ -73,7 +73,7 @@ pub(super) async fn handle_list_documents(
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
     nimbus_firebase::grpc::unary::handle_list_documents(
-        &state.service,
+        &state.engine,
         &auth.principal,
         request.into_inner(),
     )
@@ -87,7 +87,7 @@ pub(super) async fn handle_list_collection_ids(
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
     nimbus_firebase::grpc::unary::handle_list_collection_ids(
-        &state.service,
+        &state.engine,
         &auth.principal,
         request.into_inner(),
     )
@@ -101,7 +101,7 @@ pub(super) async fn handle_create_document(
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
     nimbus_firebase::grpc::unary::handle_create_document(
-        &state.service,
+        &state.engine,
         &auth.principal,
         request.into_inner(),
     )
@@ -115,7 +115,7 @@ pub(super) async fn handle_begin_transaction(
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
     nimbus_firebase::grpc::unary::handle_begin_transaction(
-        &state.service,
+        &state.engine,
         &auth.principal,
         request.into_inner(),
     )
@@ -129,7 +129,7 @@ pub(super) async fn handle_rollback(
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
     nimbus_firebase::grpc::unary::handle_rollback(
-        &state.service,
+        &state.engine,
         &auth.principal,
         request.into_inner(),
     )
@@ -143,7 +143,7 @@ pub(super) async fn handle_update_document(
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
     nimbus_firebase::grpc::unary::handle_update_document(
-        &state.service,
+        &state.engine,
         &auth.principal,
         request.into_inner(),
     )
@@ -157,7 +157,7 @@ pub(super) async fn handle_delete_document(
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
     nimbus_firebase::grpc::unary::handle_delete_document(
-        &state.service,
+        &state.engine,
         &auth.principal,
         request.into_inner(),
     )
@@ -171,7 +171,7 @@ pub(super) async fn handle_run_query(
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
     nimbus_firebase::grpc::unary::handle_run_query(
-        &state.service,
+        &state.engine,
         &auth.principal,
         request.into_inner(),
     )
@@ -185,7 +185,7 @@ pub(super) async fn handle_run_aggregation_query(
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
     nimbus_firebase::grpc::unary::handle_run_aggregation_query(
-        &state.service,
+        &state.engine,
         &auth.principal,
         request.into_inner(),
     )

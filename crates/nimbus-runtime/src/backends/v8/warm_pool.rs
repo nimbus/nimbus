@@ -1,8 +1,9 @@
 use crate::affinity::{RuntimeAffinityKey, runtime_affinity_key};
 use crate::context::RuntimeInvocationContext;
 use crate::error::Result;
-use crate::limits::RuntimePoolKind;
+use crate::limits::{RuntimeLimits, RuntimePoolKind};
 use crate::runtime::{NimbusRuntime, RuntimeBundle, RuntimeBundleIdentity};
+use crate::runtime_capabilities::RuntimePermissionProfile;
 
 use super::{embedder::JsRuntime, startup::V8RuntimeConstructionMode};
 
@@ -14,11 +15,54 @@ pub(crate) struct V8WorkerRuntimePool {
 
 pub(crate) struct WarmPoolEntry {
     pub(crate) runtime: JsRuntime,
-    pub(crate) bundle_identity: RuntimeBundleIdentity,
-    pub(crate) affinity_key: Option<RuntimeAffinityKey>,
+    pub(crate) partition_key: RuntimePoolPartitionKey,
     pub(crate) reuse_count: usize,
     pub(crate) last_used_sequence: u64,
     pub(crate) construction_mode: V8RuntimeConstructionMode,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RuntimePoolPartitionKey {
+    bundle_identity: RuntimeBundleIdentity,
+    affinity_key: Option<RuntimeAffinityKey>,
+    runtime_limits: RuntimeLimits,
+    construction_mode: V8RuntimeConstructionMode,
+    permission_profile: RuntimePermissionProfile,
+    exact_service_grants: Vec<String>,
+}
+
+impl RuntimePoolPartitionKey {
+    fn for_invocation(
+        runtime_owner: &NimbusRuntime,
+        bundle: &RuntimeBundle,
+        context: Option<&RuntimeInvocationContext>,
+        construction_mode: V8RuntimeConstructionMode,
+    ) -> Self {
+        let runtime_limits = runtime_owner.policy().limits().clone();
+        let permission_profile = context
+            .map(|context| context.permission_profile)
+            .unwrap_or(RuntimePermissionProfile::Action);
+        Self {
+            bundle_identity: bundle.identity().clone(),
+            affinity_key: runtime_affinity_key(runtime_limits.routing_affinity, context, bundle),
+            exact_service_grants: runtime_limits.grants.sorted_service_grants(),
+            runtime_limits,
+            construction_mode,
+            permission_profile,
+        }
+    }
+
+    fn matches_exact(&self, other: &Self) -> bool {
+        self == other
+    }
+
+    fn matches_bundle_and_runtime_shape(&self, other: &Self) -> bool {
+        self.bundle_identity == other.bundle_identity
+            && self.runtime_limits == other.runtime_limits
+            && self.construction_mode == other.construction_mode
+            && self.permission_profile == other.permission_profile
+            && self.exact_service_grants == other.exact_service_grants
+    }
 }
 
 pub(crate) struct ReusableV8Runtime {
@@ -81,23 +125,29 @@ impl V8WorkerRuntimePool {
         context: Option<&RuntimeInvocationContext>,
         use_locker: bool,
     ) -> Result<ReusableV8Runtime> {
+        let permission_profile = context
+            .map(|context| context.permission_profile)
+            .unwrap_or(RuntimePermissionProfile::Action);
         let use_startup_snapshot = !runtime_owner
             .policy()
             .limits()
             .compatibility_target
             .is_node();
+        let construction_mode = if use_startup_snapshot {
+            V8RuntimeConstructionMode::StartupSnapshot
+        } else {
+            V8RuntimeConstructionMode::Unsnapshotted
+        };
         match runtime_owner.policy().limits().runtime_pool_kind {
             RuntimePoolKind::StartupSnapshotCache => {}
             RuntimePoolKind::WarmPool => {
-                let affinity_key = runtime_affinity_key(
-                    runtime_owner.policy().limits().routing_affinity,
-                    context,
+                let partition_key = RuntimePoolPartitionKey::for_invocation(
+                    runtime_owner,
                     bundle,
+                    context,
+                    construction_mode,
                 );
-                let bundle_identity = bundle.identity().clone();
-                if let Some(entry) =
-                    self.take_warm_pool_entry(&bundle_identity, affinity_key.as_ref())
-                {
+                if let Some(entry) = self.take_warm_pool_entry(&partition_key) {
                     runtime_owner.policy().metrics().record_warm_pool_hit();
                     runtime_owner.policy().metrics().record_runtime_pool_hit();
                     self.warmed = true;
@@ -113,22 +163,25 @@ impl V8WorkerRuntimePool {
                 runtime_owner.policy().metrics().record_runtime_pool_miss();
                 let runtime = if use_startup_snapshot {
                     let snapshot = runtime_owner.bootstrap_snapshot()?;
-                    runtime_owner.create_runtime(bundle, Some(snapshot), use_locker)?
+                    runtime_owner.create_runtime(
+                        bundle,
+                        Some(snapshot),
+                        use_locker,
+                        partition_key.permission_profile,
+                    )?
                 } else {
                     // Proper Node22 snapshotting requires a Deno-style module
                     // evaluation bootstrap. Until that lands, keep the target
                     // honest by constructing live runtimes directly.
-                    runtime_owner.create_runtime(bundle, None, use_locker)?
+                    runtime_owner.create_runtime(
+                        bundle,
+                        None,
+                        use_locker,
+                        partition_key.permission_profile,
+                    )?
                 };
                 self.warmed = true;
-                return Ok(ReusableV8Runtime::fresh(
-                    runtime,
-                    if use_startup_snapshot {
-                        V8RuntimeConstructionMode::StartupSnapshot
-                    } else {
-                        V8RuntimeConstructionMode::Unsnapshotted
-                    },
-                ));
+                return Ok(ReusableV8Runtime::fresh(runtime, construction_mode));
             }
             RuntimePoolKind::BunJscTrustedRetained | RuntimePoolKind::BunJscFreshDiscard => {
                 unreachable!("Bun/JSC pool kinds are rejected before V8 runtime invocation")
@@ -139,7 +192,7 @@ impl V8WorkerRuntimePool {
             if use_startup_snapshot {
                 let snapshot = runtime_owner.bootstrap_snapshot()?;
                 runtime_owner
-                    .create_runtime(bundle, Some(snapshot), use_locker)
+                    .create_runtime(bundle, Some(snapshot), use_locker, permission_profile)
                     .map(|runtime| {
                         ReusableV8Runtime::fresh(
                             runtime,
@@ -148,7 +201,7 @@ impl V8WorkerRuntimePool {
                     })
             } else {
                 runtime_owner
-                    .create_runtime(bundle, None, use_locker)
+                    .create_runtime(bundle, None, use_locker, permission_profile)
                     .map(|runtime| {
                         ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::Unsnapshotted)
                     })
@@ -157,9 +210,14 @@ impl V8WorkerRuntimePool {
             runtime_owner.policy().metrics().record_runtime_pool_miss();
             let runtime = if use_startup_snapshot {
                 let snapshot = runtime_owner.bootstrap_snapshot()?;
-                runtime_owner.create_runtime(bundle, Some(snapshot), use_locker)?
+                runtime_owner.create_runtime(
+                    bundle,
+                    Some(snapshot),
+                    use_locker,
+                    permission_profile,
+                )?
             } else {
-                runtime_owner.create_runtime(bundle, None, use_locker)?
+                runtime_owner.create_runtime(bundle, None, use_locker, permission_profile)?
             };
             self.warmed = true;
             Ok(ReusableV8Runtime::fresh(
@@ -180,20 +238,20 @@ impl V8WorkerRuntimePool {
         context: Option<&RuntimeInvocationContext>,
         runtime: ReusableV8Runtime,
     ) {
-        let affinity_key = runtime_affinity_key(
-            runtime_owner.policy().limits().routing_affinity,
-            context,
+        let partition_key = RuntimePoolPartitionKey::for_invocation(
+            runtime_owner,
             bundle,
+            context,
+            runtime.construction_mode,
         );
-        self.return_runtime_with_affinity(runtime_owner, bundle, runtime, affinity_key);
+        self.return_runtime_with_partition(runtime_owner, runtime, partition_key);
     }
 
-    fn return_runtime_with_affinity(
+    fn return_runtime_with_partition(
         &mut self,
         runtime_owner: &NimbusRuntime,
-        bundle: &RuntimeBundle,
         mut runtime: ReusableV8Runtime,
-        affinity_key: Option<RuntimeAffinityKey>,
+        partition_key: RuntimePoolPartitionKey,
     ) {
         match runtime_owner.policy().limits().runtime_pool_kind {
             RuntimePoolKind::StartupSnapshotCache => {}
@@ -211,8 +269,7 @@ impl V8WorkerRuntimePool {
                 let last_used_sequence = self.next_warm_sequence();
                 self.warm_pool.push(WarmPoolEntry {
                     runtime: runtime.runtime,
-                    bundle_identity: bundle.identity().clone(),
-                    affinity_key,
+                    partition_key,
                     reuse_count: runtime.warm_reuse_count,
                     last_used_sequence,
                     construction_mode: runtime.construction_mode,
@@ -231,18 +288,14 @@ impl V8WorkerRuntimePool {
 
     fn take_warm_pool_entry(
         &mut self,
-        bundle_identity: &RuntimeBundleIdentity,
-        affinity_key: Option<&RuntimeAffinityKey>,
+        partition_key: &RuntimePoolPartitionKey,
     ) -> Option<WarmPoolEntry> {
-        // Prefer exact bundle identity + affinity match (most recently used).
+        // Prefer exact bundle identity + affinity + capability partition match (most recently used).
         let exact_index = self
             .warm_pool
             .iter()
             .enumerate()
-            .filter(|(_, entry)| {
-                &entry.bundle_identity == bundle_identity
-                    && entry.affinity_key.as_ref() == affinity_key
-            })
+            .filter(|(_, entry)| entry.partition_key.matches_exact(partition_key))
             .max_by_key(|(_, entry)| entry.last_used_sequence)
             .map(|(index, _)| index);
 
@@ -250,12 +303,16 @@ impl V8WorkerRuntimePool {
             return Some(self.warm_pool.swap_remove(index));
         }
 
-        // Fall back to bundle identity match with any affinity.
+        // Fall back to bundle identity + capability partition match with any affinity.
         let bundle_index = self
             .warm_pool
             .iter()
             .enumerate()
-            .filter(|(_, entry)| &entry.bundle_identity == bundle_identity)
+            .filter(|(_, entry)| {
+                entry
+                    .partition_key
+                    .matches_bundle_and_runtime_shape(partition_key)
+            })
             .max_by_key(|(_, entry)| entry.last_used_sequence)
             .map(|(index, _)| index);
 

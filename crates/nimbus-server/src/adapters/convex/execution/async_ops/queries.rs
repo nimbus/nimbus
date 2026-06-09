@@ -2,7 +2,7 @@ use super::*;
 use nimbus_auth::normalize_principal_context;
 
 pub(super) async fn query_documents_async_with_optional_cancellation(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     tenant_id: &TenantId,
     query: Query,
     auth: Option<&InvocationAuth>,
@@ -31,7 +31,7 @@ pub(super) async fn query_documents_async_with_optional_cancellation(
 }
 
 pub(super) async fn paginate_documents_async_with_optional_cancellation(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     tenant_id: &TenantId,
     query: PaginatedQuery,
     auth: Option<&InvocationAuth>,
@@ -60,7 +60,7 @@ pub(super) async fn paginate_documents_async_with_optional_cancellation(
 }
 
 pub(in crate::adapters::convex) async fn execute_query_result_async(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     tenant_id: &TenantId,
     query: ConvexExecutableQuery,
     auth: Option<&InvocationAuth>,

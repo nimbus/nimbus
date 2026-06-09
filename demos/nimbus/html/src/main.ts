@@ -2,7 +2,7 @@ import {
   NimbusRestClient,
   NimbusSubscriptionClient,
   type SubscribeQuery,
-} from "nimbus/rest";
+} from "@nimbus/nimbus/transports/rest";
 import "./app.css";
 
 const $ = <T extends HTMLElement>(id: string) =>

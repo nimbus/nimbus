@@ -8,11 +8,10 @@ use clap::{Args, ValueEnum};
 use rand::RngCore;
 
 use nimbus::{
-    AwsKmsConfig, Error, InitializedKeyProvider, KeyDirectoryConfig, KeyManifest,
-    LOGICAL_PAGE_SIZE, LocalArtifactRole, LocalKeyProvider, LocalKeyProviderConfig,
+    AwsKmsConfig, EnginePersistenceConfig, Error, InitializedKeyProvider, KeyDirectoryConfig,
+    KeyManifest, LOGICAL_PAGE_SIZE, LocalArtifactRole, LocalKeyProvider, LocalKeyProviderConfig,
     LocalKeySubject, LocalKeySubjectKind, ManifestCipher, MasterKeyFileConfig, PHYSICAL_PAGE_SIZE,
-    Result, ServicePersistenceConfig, TenantId, checkpoint_encrypted_database_at_path,
-    unwrap_database_manifest_key,
+    Result, TenantId, checkpoint_encrypted_database_at_path, unwrap_database_manifest_key,
 };
 
 use super::migrate::{ProviderFamily, database_subject};
@@ -79,7 +78,7 @@ pub(crate) struct RotateDekCommand {
 
 pub(crate) async fn run_rotate_kek_command(
     command: RotateKekCommand,
-    config: &ServicePersistenceConfig,
+    config: &EnginePersistenceConfig,
 ) -> Result<()> {
     if !config.local_encryption.is_enabled() {
         return Err(Error::InvalidInput(
@@ -134,7 +133,7 @@ enum RotateKeyProvider {
 
 pub(crate) async fn run_rotate_dek_command(
     command: RotateDekCommand,
-    config: &ServicePersistenceConfig,
+    config: &EnginePersistenceConfig,
 ) -> Result<()> {
     if !config.local_encryption.is_enabled() {
         return Err(Error::InvalidInput(
@@ -155,7 +154,7 @@ pub(crate) async fn run_rotate_dek_command(
     Ok(())
 }
 
-fn build_current_provider(config: &ServicePersistenceConfig) -> Result<Arc<dyn LocalKeyProvider>> {
+fn build_current_provider(config: &EnginePersistenceConfig) -> Result<Arc<dyn LocalKeyProvider>> {
     let key_provider_config = config
         .local_encryption
         .key_provider()
@@ -379,7 +378,7 @@ impl RotateKeyProvider {
 
 fn rotate_sqlite_dek(
     path: &Path,
-    config: &ServicePersistenceConfig,
+    config: &EnginePersistenceConfig,
     command: &RotateDekCommand,
 ) -> Result<()> {
     println!("Rotating SQLite DEK: {}", path.display());
@@ -433,7 +432,7 @@ fn rotate_sqlite_dek(
 
 fn rotate_redb_dek(
     path: &Path,
-    config: &ServicePersistenceConfig,
+    config: &EnginePersistenceConfig,
     command: &RotateDekCommand,
 ) -> Result<()> {
     println!("Rotating redb DEK: {}", path.display());
@@ -495,7 +494,7 @@ fn rotate_redb_dek(
 
 fn rotate_libsql_cache_dek(
     path: &Path,
-    config: &ServicePersistenceConfig,
+    config: &EnginePersistenceConfig,
     command: &RotateDekCommand,
 ) -> Result<()> {
     println!("Rotating libsql replica cache DEK: {}", path.display());

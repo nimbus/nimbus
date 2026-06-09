@@ -10,7 +10,7 @@ use nimbus_core::{
     FieldTransformOperation, NumericValue, PrincipalContext, SpecialDouble, StoredValue, Timestamp,
     TypedScalarValue, WritePrecondition, WriteSetMode,
 };
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 use prost_types::Timestamp as ProstTimestamp;
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -260,7 +260,7 @@ struct ActiveWriteStream {
 }
 
 struct ActiveWriteRequestStream {
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     registry: Arc<WriteStreamRegistry>,
     requests: Streaming<WriteRequest>,
     principal: PrincipalContext,
@@ -271,13 +271,13 @@ struct ActiveWriteRequestStream {
 
 impl ActiveWriteRequestStream {
     fn new(
-        service: Arc<Service>,
+        engine: Arc<Engine>,
         registry: Arc<WriteStreamRegistry>,
         requests: Streaming<WriteRequest>,
         principal: PrincipalContext,
     ) -> Self {
         Self {
-            service,
+            engine,
             registry,
             requests,
             principal,
@@ -429,7 +429,7 @@ impl ActiveWriteRequestStream {
         stream.acknowledge_only(token)?;
         let batch = lower_write_batch(&request.writes, &active_stream.database)?;
         let outcome = execute_write_batch(
-            &self.service,
+            &self.engine,
             &active_stream.isolation,
             &self.principal,
             batch,
@@ -440,24 +440,24 @@ impl ActiveWriteRequestStream {
 }
 
 pub fn write_response_stream(
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     registry: Arc<WriteStreamRegistry>,
     requests: Streaming<WriteRequest>,
     principal: PrincipalContext,
 ) -> tonic::codegen::BoxStream<WriteResponse> {
-    let session = ActiveWriteRequestStream::new(service, registry, requests, principal);
+    let session = ActiveWriteRequestStream::new(engine, registry, requests, principal);
     Box::pin(stream::unfold(session, |mut session| async move {
         session.next_response().await.map(|item| (item, session))
     }))
 }
 
 fn execute_write_batch(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     isolation: &TenantIsolationContext,
     principal: &PrincipalContext,
     batch: AtomicWriteBatch,
 ) -> Result<AtomicWriteBatchOutcome, Status> {
-    service
+    engine
         .begin_mutation_execution_unit(isolation.tenant_id().clone(), principal.clone())
         .and_then(|execution_unit| execution_unit.execute_atomic_write_batch(batch))
         .map_err(firebase_grpc_status)

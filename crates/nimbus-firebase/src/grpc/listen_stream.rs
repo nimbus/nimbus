@@ -12,7 +12,7 @@ use nimbus_core::{
     diff_subscription_snapshots,
 };
 use nimbus_engine::{
-    DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, Service, SubscriptionCleanupHandle, SubscriptionUpdate,
+    DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, Engine, SubscriptionCleanupHandle, SubscriptionUpdate,
 };
 use tokio::sync::mpsc;
 use tonic::Status;
@@ -381,7 +381,7 @@ impl ActiveListenTarget {
 }
 
 struct ActiveListenRequestStream {
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     retained_targets: Arc<RetainedListenRegistry>,
     requests: Pin<Box<dyn Stream<Item = Result<ListenRequest, Status>> + Send>>,
     principal: PrincipalContext,
@@ -411,7 +411,7 @@ enum TargetedListenUpdate {
 
 impl ActiveListenRequestStream {
     fn new(
-        service: Arc<Service>,
+        engine: Arc<Engine>,
         retained_targets: Arc<RetainedListenRegistry>,
         requests: Pin<Box<dyn Stream<Item = Result<ListenRequest, Status>> + Send>>,
         principal: PrincipalContext,
@@ -420,7 +420,7 @@ impl ActiveListenRequestStream {
             mpsc::channel(LISTEN_TARGET_UPDATE_QUEUE_CAPACITY);
         let (target_overflow_tx, target_overflow_rx) = mpsc::unbounded_channel();
         Self {
-            service,
+            engine,
             retained_targets,
             requests,
             principal,
@@ -518,7 +518,7 @@ impl ActiveListenRequestStream {
                 .map_err(firebase_grpc_status)?;
         let (sender, receiver) = mpsc::channel(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
         let registration = self
-            .service
+            .engine
             .clone()
             .subscribe_async_with_principal(
                 tenant_context.tenant_id().clone(),
@@ -674,7 +674,7 @@ struct DiffResponseContext<'a> {
 }
 
 pub fn listen_response_stream<S>(
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     retained_targets: Arc<RetainedListenRegistry>,
     requests: S,
     principal: PrincipalContext,
@@ -683,7 +683,7 @@ where
     S: Stream<Item = Result<ListenRequest, Status>> + Send + 'static,
 {
     let session =
-        ActiveListenRequestStream::new(service, retained_targets, Box::pin(requests), principal);
+        ActiveListenRequestStream::new(engine, retained_targets, Box::pin(requests), principal);
     Ok(Box::pin(stream::unfold(
         session,
         |mut session| async move { session.next_response().await.map(|item| (item, session)) },

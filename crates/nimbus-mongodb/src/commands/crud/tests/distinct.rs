@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn distinct_returns_unique_values() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -10,7 +10,7 @@ fn distinct_returns_unique_values() {
         "$db": "testdb",
         "key": "name",
     };
-    let result = distinct(&body, &fixture.service()).unwrap();
+    let result = distinct(&body, &fixture.engine()).unwrap();
     assert_eq!(result.get_f64("ok").unwrap(), 1.0);
     let values = result.get_array("values").unwrap();
     assert_eq!(values.len(), 3);
@@ -18,7 +18,7 @@ fn distinct_returns_unique_values() {
 
 #[test]
 fn distinct_with_duplicates() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "scores",
         "$db": "testdb",
@@ -30,21 +30,21 @@ fn distinct_with_duplicates() {
             { "_id": "s5", "grade": "B" },
         ],
     };
-    insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! {
         "distinct": "scores",
         "$db": "testdb",
         "key": "grade",
     };
-    let result = distinct(&body, &fixture.service()).unwrap();
+    let result = distinct(&body, &fixture.engine()).unwrap();
     let values = result.get_array("values").unwrap();
     assert_eq!(values.len(), 3);
 }
 
 #[test]
 fn distinct_with_filter() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -53,14 +53,14 @@ fn distinct_with_filter() {
         "key": "name",
         "query": { "age": { "$gte": 30 } },
     };
-    let result = distinct(&body, &fixture.service()).unwrap();
+    let result = distinct(&body, &fixture.engine()).unwrap();
     let values = result.get_array("values").unwrap();
     assert_eq!(values.len(), 2);
 }
 
 #[test]
 fn distinct_nested_field() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "people",
         "$db": "testdb",
@@ -70,21 +70,21 @@ fn distinct_nested_field() {
             { "_id": "p3", "address": { "city": "NYC" } },
         ],
     };
-    insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! {
         "distinct": "people",
         "$db": "testdb",
         "key": "address.city",
     };
-    let result = distinct(&body, &fixture.service()).unwrap();
+    let result = distinct(&body, &fixture.engine()).unwrap();
     let values = result.get_array("values").unwrap();
     assert_eq!(values.len(), 2);
 }
 
 #[test]
 fn distinct_missing_field_excluded() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -92,14 +92,14 @@ fn distinct_missing_field_excluded() {
         "$db": "testdb",
         "key": "email",
     };
-    let result = distinct(&body, &fixture.service()).unwrap();
+    let result = distinct(&body, &fixture.engine()).unwrap();
     let values = result.get_array("values").unwrap();
     assert_eq!(values.len(), 0);
 }
 
 #[test]
 fn distinct_null_values() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "nulls",
         "$db": "testdb",
@@ -110,21 +110,21 @@ fn distinct_null_values() {
             { "_id": "n4", "val": bson::Bson::Null },
         ],
     };
-    insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! {
         "distinct": "nulls",
         "$db": "testdb",
         "key": "val",
     };
-    let result = distinct(&body, &fixture.service()).unwrap();
+    let result = distinct(&body, &fixture.engine()).unwrap();
     let values = result.get_array("values").unwrap();
     assert_eq!(values.len(), 3);
 }
 
 #[test]
 fn distinct_array_field_unwinds() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "tagged",
         "$db": "testdb",
@@ -133,23 +133,23 @@ fn distinct_array_field_unwinds() {
             { "_id": "t2", "tags": ["b", "c"] },
         ],
     };
-    insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! {
         "distinct": "tagged",
         "$db": "testdb",
         "key": "tags",
     };
-    let result = distinct(&body, &fixture.service()).unwrap();
+    let result = distinct(&body, &fixture.engine()).unwrap();
     let values = result.get_array("values").unwrap();
     assert_eq!(values.len(), 3);
 }
 
 #[test]
 fn distinct_missing_key_returns_error() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let body = bson::doc! { "distinct": "users", "$db": "testdb" };
-    let err = distinct(&body, &fixture.service()).unwrap_err();
+    let err = distinct(&body, &fixture.engine()).unwrap_err();
     match err {
         MongoError::Command { code, .. } => assert_eq!(code, BAD_VALUE.code),
         other => panic!("expected Command, got {:?}", other),
@@ -158,9 +158,9 @@ fn distinct_missing_key_returns_error() {
 
 #[test]
 fn distinct_missing_collection_returns_error() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let body = bson::doc! { "key": "name", "$db": "testdb" };
-    let err = distinct(&body, &fixture.service()).unwrap_err();
+    let err = distinct(&body, &fixture.engine()).unwrap_err();
     match err {
         MongoError::Command { code, .. } => assert_eq!(code, BAD_VALUE.code),
         other => panic!("expected Command, got {:?}", other),

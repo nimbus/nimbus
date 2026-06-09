@@ -61,6 +61,15 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `docs/plans/archive/runtime-capability-adapter-boundary-plan.md`, and
   `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as prior
   wave references.
+- Runtime capability segregation, exact service grants, adapter context service
+  shortcut removal, private Nimbus-managed isolate host-transport gating,
+  Bun/JSC service-capability fail-closed parity, principal-class service route
+  policy, engine `Service` -> `Engine` naming, or JS SDK authority boundaries:
+  `docs/architecture/server/auth-runtime-trust.md`,
+  `docs/architecture/runtime/adapter-boundary.md`,
+  `docs/architecture/sandbox/service-sandbox-session-model.md`,
+  `docs/plans/nimbus-capability-segregation-plan.md`, gated on
+  `bash scripts/verify-nimbus-capability-segregation.sh` once CB0 creates it.
 - Cross-cutting multi-backend / multi-adapter hardening (storage trait
   segregation, adapter/backend registration seam decision,
   `RuntimeHooks` for backend-coupled workers, dual-target tests per
@@ -91,10 +100,17 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   for historical context. Promote a new active plan before another
   Convex-informed storage trust wave.
 - Sandbox, machine lifecycle, or CLI UX:
+  `docs/architecture/sandbox/service-sandbox-session-model.md`,
   `docs/architecture/sandbox/microvm-service-baseline.md`,
   `docs/architecture/sandbox/macos-machine-flow.md` when relevant,
   `docs/operating/cli.md`, and the active platform plan from
   `docs/plans/README.md`
+- SDK services/sandboxes/sessions resource model, built-in/external/sandbox-backed
+  service implementations, dynamic services, sandbox APIs, runtime-isolate
+  non-resource semantics, future `profile: "isolate"` sandbox semantics, or
+  session target semantics:
+  `docs/architecture/sandbox/service-sandbox-session-model.md` and
+  `docs/plans/nimbus-sdk-resource-model-plan.md`
 - Sandbox backend / snapshot / desktop / GPU (unified-lift roadmap on
   `nimbus-libkrun`): `docs/plans/nimbus-sandbox-plan.md` is the single
   active execution plan. Bands route as **B** (backend / capability

@@ -2,7 +2,7 @@ use super::*;
 use crate::ws::NegotiatedWebSocketProtocol;
 
 pub(super) async fn unsubscribe_active_subscriptions(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     tenant_id: &TenantId,
     active_subscriptions: ActiveSubscriptions,
     outbound_tx: &mpsc::Sender<ServerMessage>,
@@ -35,7 +35,7 @@ pub(super) async fn run_subscription_forwarder(
     subscription_rx: mpsc::Receiver<SubscriptionUpdate>,
     outbound_tx: mpsc::Sender<ServerMessage>,
     transforms: Arc<RwLock<ConvexSubscriptionTransforms>>,
-    service: Arc<nimbus_engine::Service>,
+    service: Arc<nimbus_engine::Engine>,
     registry: Arc<ConvexRegistry>,
     runtime_service_registry: Arc<dyn nimbus_services::RuntimeServiceRegistry>,
     tenant_context: nimbus_tenant::TenantIsolationContext,
@@ -61,7 +61,7 @@ pub(super) async fn run_subscription_forwarder(
                 let request_id_for_transform = request_id.clone();
                 match apply_subscription_transform(
                     RuntimeTransformContext {
-                        service: &service,
+                        engine: &service,
                         registry: &registry,
                         runtime_service_registry: &runtime_service_registry,
                         tenant_context: &tenant_context,

@@ -58,7 +58,7 @@ with and without coverage. MySQL and libsql equivalent tests pass fine.
 
 The test does 128 rounds of insert → update → delete (384 total mutations)
 against a Postgres testcontainer, each going through the full
-`Service::apply_mutation` → journal worker → Postgres storage path.
+`Engine::apply_mutation` → journal worker → Postgres storage path.
 
 ### Current workaround
 
@@ -87,7 +87,7 @@ The per-mutation write path creates a deeply nested blocking chain:
 
 2. Journal worker (tokio task) drains queue
    → tokio::task::spawn_blocking(process_queued_mutation_batch)
-     [crates/nimbus-engine/src/service/mutations/journal.rs:87]
+     [crates/nimbus-engine/src/engine/mutations/journal.rs:87]
 
 3. Inside spawn_blocking: process_queued_mutation_batch()
    → holds std::sync::Mutex (lock_mutation_sequence)
@@ -164,7 +164,7 @@ This bounds thread creation and avoids the scheduling pathology.
 ### Key constraints
 
 - The mutation path invariant: every mutation flows through
-  `Service::apply_mutation`. Do not create a separate code path.
+  `Engine::apply_mutation`. Do not create a separate code path.
 - Storage atomicity: document write, index effects, and commit log
   append must remain a single storage transaction.
 - The `lock_mutation_sequence` mutex must be held during batch
@@ -174,9 +174,9 @@ This bounds thread creation and avoids the scheduling pathology.
 
 ### Reference files
 
-1. `crates/nimbus-engine/src/service/mutations/journal.rs` — journal
+1. `crates/nimbus-engine/src/engine/mutations/journal.rs` — journal
    worker, spawn_blocking call (line 87), batch processing loop
-2. `crates/nimbus-engine/src/service/mutations/direct/store.rs` — 
+2. `crates/nimbus-engine/src/engine/mutations/direct/store.rs` — 
    synchronous store mutation wrappers, lock_mutation_sequence usage
 3. `crates/nimbus-storage/src/postgres.rs` — PostgresTenantStore,
    execute_write (line 507), std::thread::spawn escape (line 527),

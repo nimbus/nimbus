@@ -1,15 +1,15 @@
-use super::support::new_faulted_service;
+use super::support::new_faulted_engine;
 use super::*;
 
 #[tokio::test]
 async fn mutation_journal_returns_only_after_apply_visibility() {
-    let (_data_dir, service, tenant_id, faults) = new_faulted_service(30_000);
+    let (_data_dir, engine, tenant_id, faults) = new_faulted_engine(30_000);
 
     let mut handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -29,7 +29,7 @@ async fn mutation_journal_returns_only_after_apply_visibility() {
             .is_err(),
         "async mutation should remain pending while apply is blocked"
     );
-    let document_id = durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0))
+    let document_id = durable_journal_commits(engine.as_ref(), &tenant_id, SequenceNumber(0))
         .first()
         .and_then(|commit| commit.writes.first())
         .map(|write| write.doc_id.clone())
@@ -43,12 +43,12 @@ async fn mutation_journal_returns_only_after_apply_visibility() {
 
     let documents = timeout(
         Duration::from_secs(1),
-        service.query_documents_async(tenant_id.clone(), query_for("tasks")),
+        engine.query_documents_async(tenant_id.clone(), query_for("tasks")),
     )
     .await
     .expect("query should resolve after apply")
     .expect("query should succeed");
-    let latest_sequence = service
+    let latest_sequence = engine
         .latest_sequence_async(tenant_id.clone())
         .await
         .expect("latest sequence should read");
@@ -57,7 +57,7 @@ async fn mutation_journal_returns_only_after_apply_visibility() {
         "latest sequence should include at least the committed mutation"
     );
     assert_eq!(
-        durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0)).len(),
+        durable_journal_commits(engine.as_ref(), &tenant_id, SequenceNumber(0)).len(),
         1
     );
     assert_eq!(documents.len(), 1);
@@ -71,26 +71,26 @@ async fn mutation_journal_returns_only_after_apply_visibility() {
 
 #[tokio::test]
 async fn sync_query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
-    let data_dir = tempdir().expect("service tempdir should build");
+    let data_dir = tempdir().expect("engine tempdir should build");
     let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
-    let service = Arc::new(
-        Service::new_with_simulation(
+    let engine = Arc::new(
+        Engine::new_with_simulation(
             data_dir.path(),
             Arc::new(ManualClock::new(Timestamp(35_000))),
             faults.clone(),
         )
-        .expect("service should create"),
+        .expect("engine should create"),
     );
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
     let mut insert_handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -112,10 +112,10 @@ async fn sync_query_waits_for_applied_journal_visibility_and_records_wait_metric
 
     let (query_tx, mut query_rx) = mpsc::unbounded_channel();
     tokio::task::spawn_blocking({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         move || {
-            let _ = query_tx.send(service.query_documents(&tenant_id, &query_for("tasks")));
+            let _ = query_tx.send(engine.query_documents(&tenant_id, &query_for("tasks")));
         }
     });
 
@@ -145,7 +145,7 @@ async fn sync_query_waits_for_applied_journal_visibility_and_records_wait_metric
         "sync query should observe the applied task after the journal worker resumes"
     );
 
-    let stats = service
+    let stats = engine
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("journal stats should read after sync wait");
     assert_eq!(stats.read_wait_count, 1);
@@ -157,26 +157,26 @@ async fn sync_query_waits_for_applied_journal_visibility_and_records_wait_metric
 
 #[tokio::test]
 async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
-    let data_dir = tempdir().expect("service tempdir should build");
+    let data_dir = tempdir().expect("engine tempdir should build");
     let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
-    let service = Arc::new(
-        Service::new_with_simulation(
+    let engine = Arc::new(
+        Engine::new_with_simulation(
             data_dir.path(),
             Arc::new(ManualClock::new(Timestamp(40_000))),
             faults.clone(),
         )
-        .expect("service should create"),
+        .expect("engine should create"),
     );
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
     let mut insert_handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -196,7 +196,7 @@ async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
         "mutation should remain pending while apply is blocked"
     );
 
-    let stats = service
+    let stats = engine
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("journal stats should read");
     assert_eq!(stats.durable_head, SequenceNumber(1));
@@ -218,10 +218,10 @@ async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
 
     let (query_tx, mut query_rx) = mpsc::unbounded_channel();
     tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            let result = service
+            let result = engine
                 .query_documents_async(tenant_id, query_for("tasks"))
                 .await;
             let _ = query_tx.send(result);
@@ -255,7 +255,7 @@ async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
     );
 
     let stats = wait_for_mutation_journal_stats(
-        &service,
+        &engine,
         &tenant_id,
         "journal worker should go idle after the awaited query observes applied visibility",
         |stats| {
@@ -287,16 +287,16 @@ async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
 
 #[tokio::test]
 async fn get_document_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility() {
-    let (_data_dir, service, tenant_id, faults, document_id) =
-        create_service_with_durable_unapplied_task(44_000, "async-get-cancel").await;
+    let (_data_dir, engine, tenant_id, faults, document_id) =
+        create_engine_with_durable_unapplied_task(44_000, "async-get-cancel").await;
     let probe = BlockingCancellationProbe::new();
 
     let mut handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         let probe_for_wait = probe.clone();
         async move {
-            service
+            engine
                 .get_document_async_cancellable(
                     tenant_id,
                     tasks_table(),
@@ -326,7 +326,7 @@ async fn get_document_async_cancellable_returns_cancelled_while_waiting_for_appl
 
     faults.release();
     wait_for_mutation_journal_stats(
-        &service,
+        &engine,
         &tenant_id,
         "point read cancellation cleanup should drain applied visibility after releasing the durable fault",
         |stats| stats.applied_head == stats.durable_head && stats.apply_lag == 0,
@@ -337,16 +337,16 @@ async fn get_document_async_cancellable_returns_cancelled_while_waiting_for_appl
 #[tokio::test]
 async fn query_documents_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility()
 {
-    let (_data_dir, service, tenant_id, faults, _) =
-        create_service_with_durable_unapplied_task(44_500, "async-query-cancel").await;
+    let (_data_dir, engine, tenant_id, faults, _) =
+        create_engine_with_durable_unapplied_task(44_500, "async-query-cancel").await;
     let probe = BlockingCancellationProbe::new();
 
     let mut handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         let probe_for_wait = probe.clone();
         async move {
-            service
+            engine
                 .query_documents_async_cancellable(
                     tenant_id,
                     query_for("tasks"),
@@ -375,7 +375,7 @@ async fn query_documents_async_cancellable_returns_cancelled_while_waiting_for_a
 
     faults.release();
     wait_for_mutation_journal_stats(
-        &service,
+        &engine,
         &tenant_id,
         "query cancellation cleanup should drain applied visibility after releasing the durable fault",
         |stats| stats.applied_head == stats.durable_head && stats.apply_lag == 0,
@@ -386,16 +386,16 @@ async fn query_documents_async_cancellable_returns_cancelled_while_waiting_for_a
 #[tokio::test]
 async fn paginate_documents_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility()
  {
-    let (_data_dir, service, tenant_id, faults, _) =
-        create_service_with_durable_unapplied_task(44_750, "async-page-cancel").await;
+    let (_data_dir, engine, tenant_id, faults, _) =
+        create_engine_with_durable_unapplied_task(44_750, "async-page-cancel").await;
     let probe = BlockingCancellationProbe::new();
 
     let mut handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         let probe_for_wait = probe.clone();
         async move {
-            service
+            engine
                 .paginate_documents_async_cancellable(
                     tenant_id,
                     PaginatedQuery {
@@ -428,7 +428,7 @@ async fn paginate_documents_async_cancellable_returns_cancelled_while_waiting_fo
 
     faults.release();
     wait_for_mutation_journal_stats(
-        &service,
+        &engine,
         &tenant_id,
         "pagination cancellation cleanup should drain applied visibility after releasing the durable fault",
         |stats| stats.applied_head == stats.durable_head && stats.apply_lag == 0,
@@ -438,26 +438,26 @@ async fn paginate_documents_async_cancellable_returns_cancelled_while_waiting_fo
 
 #[tokio::test]
 async fn sync_get_document_waits_for_applied_journal_visibility() {
-    let data_dir = tempdir().expect("service tempdir should build");
+    let data_dir = tempdir().expect("engine tempdir should build");
     let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
-    let service = Arc::new(
-        Service::new_with_simulation(
+    let engine = Arc::new(
+        Engine::new_with_simulation(
             data_dir.path(),
             Arc::new(ManualClock::new(Timestamp(45_000))),
             faults.clone(),
         )
-        .expect("service should create"),
+        .expect("engine should create"),
     );
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
     let mut insert_handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -476,7 +476,7 @@ async fn sync_get_document_waits_for_applied_journal_visibility() {
             .is_err(),
         "mutation should remain pending while apply is blocked"
     );
-    let document_id = durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0))
+    let document_id = durable_journal_commits(engine.as_ref(), &tenant_id, SequenceNumber(0))
         .first()
         .and_then(|commit| commit.writes.first())
         .map(|write| write.doc_id.clone())
@@ -484,11 +484,11 @@ async fn sync_get_document_waits_for_applied_journal_visibility() {
 
     let (get_tx, mut get_rx) = mpsc::unbounded_channel();
     tokio::task::spawn_blocking({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         move || {
             let _ =
-                get_tx.send(service.get_document(&tenant_id, &tasks_table(), document_id.clone()));
+                get_tx.send(engine.get_document(&tenant_id, &tasks_table(), document_id.clone()));
         }
     });
 

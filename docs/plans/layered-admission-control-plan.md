@@ -118,10 +118,10 @@ work adds new gates.
 Promotion rule: a future gate must name the protected resource, show the
 current control is insufficient, choose wait/reject/shed/bypass behavior,
 define the metric that proves improvement, and explain why adjacent gates are
-not the first move. Admission, audit, and traces may carry decision IDs and
-stable workload identity for correlation, but exported metrics should prefer
-low-cardinality tenant/work-class/result labels and must not use full workload
-identity strings as labels.
+not the first move. Admission, audit, and traces may carry decision IDs,
+workload subjects, and audit projections for correlation, but exported metrics
+should prefer low-cardinality tenant/work-class/result labels and must not use
+full workload identity strings as labels.
 
 The first likely future candidates are microVM service activation capacity
 after the sandbox hardening blockers are addressed, and storage read/write
@@ -135,7 +135,7 @@ possible.
 
 ### Mutations
 
-- `crates/nimbus-engine/src/service/mutations/journal.rs`
+- `crates/nimbus-engine/src/engine/mutations/journal.rs`
 - `crates/nimbus-engine/src/tenant.rs`
 
 Mutations already enter a tenant-local outer admission gate before journal
@@ -145,7 +145,7 @@ expire once it has crossed the journal boundary.
 
 ### Queries
 
-- `crates/nimbus-engine/src/service/queries.rs`
+- `crates/nimbus-engine/src/engine/queries.rs`
 - `crates/nimbus-engine/src/tenant.rs`
 
 Queries currently have no dedicated slot gate analogous to runtime permits or
@@ -173,9 +173,9 @@ still allow a harmful spillover path.
 ### Storage
 
 - `crates/nimbus-storage/src/async_storage.rs`
-- `crates/nimbus-engine/src/service/background_executor.rs`
+- `crates/nimbus-engine/src/engine/background_executor.rs`
 
-Storage already runs on service-owned bounded executors with explicit semaphore
+Storage already runs on engine-owned bounded executors with explicit semaphore
 control. The open `EO8` question is not whether storage is bounded. It is
 whether the existing storage budgets are too coarse and should eventually split
 foreground and background paths or reads and writes.
@@ -183,7 +183,7 @@ foreground and background paths or reads and writes.
 ### Scheduled jobs
 
 - `crates/nimbus-engine/src/scheduler.rs`
-- `crates/nimbus-engine/src/service/scheduler.rs`
+- `crates/nimbus-engine/src/engine/scheduler.rs`
 
 Scheduled jobs now have bounded tenant fan-out, which prevents one paused or
 slow tenant from serializing all due work. They do not yet have an explicit

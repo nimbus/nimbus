@@ -2,7 +2,7 @@
 //!
 //! Transport-agnostic: `nimbus-server` mounts [`dispatch`] on a `POST /` route
 //! for the dedicated DynamoDB port, passing a [`DispatchContext`] that carries
-//! the shared `Service` and the access-key registry. The flow mirrors real
+//! the shared `Engine` and the access-key registry. The flow mirrors real
 //! DynamoDB / ExtendDB:
 //!
 //! 1. parse the `X-Amz-Target` operation,
@@ -24,7 +24,7 @@ use std::sync::Arc;
 use extenddb_core::error::DynamoDbError;
 use http::HeaderMap;
 use nimbus_core::TenantId;
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 use serde_json::Value;
 
@@ -39,12 +39,12 @@ use crate::wire::{self, WireResponse};
 /// Surface label recorded on every DynamoDB-originated tenant context.
 const DISPATCH_SURFACE: &str = "DynamoDB";
 
-/// Capabilities a dispatched request operates over: the shared engine `Service`
+/// Capabilities a dispatched request operates over: the shared `Engine`
 /// and the access-key → tenant registry. Borrowed (not owned) so the server can
 /// build one per request from long-lived state without cloning.
 pub struct DispatchContext<'a> {
     /// Shared engine handle every handler scopes its reads/writes through.
-    pub service: &'a Arc<Service>,
+    pub engine: &'a Arc<Engine>,
     /// AWS access-key id → tenant bindings used to authenticate the request.
     pub access_keys: &'a AccessKeyRegistry,
 }
@@ -130,7 +130,7 @@ pub fn dispatch(ctx: &DispatchContext<'_>, headers: &HeaderMap, body: &[u8]) -> 
     };
 
     // 5. Ensure the resolved tenant exists (idempotent).
-    if let Err(error) = ensure_tenant(ctx.service, &context) {
+    if let Err(error) = ensure_tenant(ctx.engine, &context) {
         return wire::render_error(&error);
     }
 
@@ -202,7 +202,7 @@ fn resolve_binding(
     if let Ok(binding) = ctx.access_keys.binding(access_key_id) {
         return Ok((binding.tenant.clone(), binding.secret.clone()));
     }
-    match key_management::lookup(ctx.service, access_key_id)? {
+    match key_management::lookup(ctx.engine, access_key_id)? {
         Some(stored) => {
             let tenant = TenantId::new(stored.tenant).map_err(map_core_error)?;
             // Defense in depth: a stored key whose tenant is reserved (e.g. a
@@ -228,76 +228,76 @@ fn route(
 ) -> WireResponse {
     match operation {
         "CreateTable" => run(request, |input| {
-            control_plane::create_table(ctx.service, context, input)
+            control_plane::create_table(ctx.engine, context, input)
         }),
         "DescribeTable" => run(request, |input| {
-            control_plane::describe_table(ctx.service, context, input)
+            control_plane::describe_table(ctx.engine, context, input)
         }),
         "DeleteTable" => run(request, |input| {
-            control_plane::delete_table(ctx.service, context, input)
+            control_plane::delete_table(ctx.engine, context, input)
         }),
         "ListTables" => run(request, |input| {
-            control_plane::list_tables(ctx.service, context, input)
+            control_plane::list_tables(ctx.engine, context, input)
         }),
         "UpdateTable" => run(request, |input| {
-            control_plane::update_table(ctx.service, context, input)
+            control_plane::update_table(ctx.engine, context, input)
         }),
         // Discovery ops take no meaningful input and touch no tenant data.
         "DescribeEndpoints" => render_output(&discovery::describe_endpoints(host)),
         "DescribeLimits" => render_output(&discovery::describe_limits()),
         // T1 — single-item data plane.
-        "PutItem" => run(request, |input| item::put_item(ctx.service, context, input)),
-        "GetItem" => run(request, |input| item::get_item(ctx.service, context, input)),
+        "PutItem" => run(request, |input| item::put_item(ctx.engine, context, input)),
+        "GetItem" => run(request, |input| item::get_item(ctx.engine, context, input)),
         "DeleteItem" => run(request, |input| {
-            item::delete_item(ctx.service, context, input)
+            item::delete_item(ctx.engine, context, input)
         }),
         "UpdateItem" => run(request, |input| {
-            item::update_item(ctx.service, context, input)
+            item::update_item(ctx.engine, context, input)
         }),
         // T2 — Query / Scan.
-        "Query" => run(request, |input| query::query(ctx.service, context, input)),
-        "Scan" => run(request, |input| query::scan(ctx.service, context, input)),
+        "Query" => run(request, |input| query::query(ctx.engine, context, input)),
+        "Scan" => run(request, |input| query::scan(ctx.engine, context, input)),
         // T3 — batch.
         "BatchGetItem" => run(request, |input| {
-            batch::batch_get_item(ctx.service, context, input)
+            batch::batch_get_item(ctx.engine, context, input)
         }),
         "BatchWriteItem" => run(request, |input| {
-            batch::batch_write_item(ctx.service, context, input)
+            batch::batch_write_item(ctx.engine, context, input)
         }),
         "TransactGetItems" => run(request, |input| {
-            transact::transact_get_items(ctx.service, context, input)
+            transact::transact_get_items(ctx.engine, context, input)
         }),
         "TransactWriteItems" => run(request, |input| {
-            transact::transact_write_items(ctx.service, context, input)
+            transact::transact_write_items(ctx.engine, context, input)
         }),
         // T5 — streams.
         "DescribeStream" => run(request, |input| {
-            stream::describe_stream(ctx.service, context, input)
+            stream::describe_stream(ctx.engine, context, input)
         }),
         "GetShardIterator" => run(request, |input| {
-            stream::get_shard_iterator(ctx.service, context, input)
+            stream::get_shard_iterator(ctx.engine, context, input)
         }),
         "GetRecords" => run(request, |input| {
-            stream::get_records(ctx.service, context, input)
+            stream::get_records(ctx.engine, context, input)
         }),
         "ListStreams" => run(request, |input| {
-            stream::list_streams(ctx.service, context, input)
+            stream::list_streams(ctx.engine, context, input)
         }),
         // T6 — TTL.
         "UpdateTimeToLive" => run(request, |input| {
-            ttl::update_time_to_live(ctx.service, context, input)
+            ttl::update_time_to_live(ctx.engine, context, input)
         }),
         "DescribeTimeToLive" => run(request, |input| {
-            ttl::describe_time_to_live(ctx.service, context, input)
+            ttl::describe_time_to_live(ctx.engine, context, input)
         }),
         "TagResource" => run(request, |input| {
-            tag::tag_resource(ctx.service, context, input)
+            tag::tag_resource(ctx.engine, context, input)
         }),
         "UntagResource" => run(request, |input| {
-            tag::untag_resource(ctx.service, context, input)
+            tag::untag_resource(ctx.engine, context, input)
         }),
         "ListTagsOfResource" => run(request, |input| {
-            tag::list_tags_of_resource(ctx.service, context, input)
+            tag::list_tags_of_resource(ctx.engine, context, input)
         }),
         // Defensive guard: every entry in `KNOWN_OPERATIONS` is routed above, so
         // a known op never reaches here. This arm only fires if a future op is
@@ -355,13 +355,13 @@ mod tests {
     /// drive routing with synthetic (`Signature=deadbeef`) headers, so the
     /// registry is explicit [`AuthMode::LookupOnly`] — strict-mode verification
     /// is covered by the `strict_*` tests and the parity suite.
-    fn fixture() -> (tempfile::TempDir, Arc<Service>, AccessKeyRegistry) {
+    fn fixture() -> (tempfile::TempDir, Arc<Engine>, AccessKeyRegistry) {
         let temp = tempfile::tempdir().expect("tempdir");
-        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
         let registry = AccessKeyRegistry::new()
             .bind(ACCESS_KEY, TenantId::new("acme").expect("tenant"))
             .with_mode(AuthMode::LookupOnly);
-        (temp, service, registry)
+        (temp, engine, registry)
     }
 
     /// A well-formed SigV4 `Authorization` header for `access_key`. The
@@ -412,9 +412,9 @@ mod tests {
 
     #[test]
     fn unknown_operation_rejected_before_auth() {
-        let (_temp, service, registry) = fixture();
+        let (_temp, engine, registry) = fixture();
         let ctx = DispatchContext {
-            service: &service,
+            engine: &engine,
             access_keys: &registry,
         };
         // No authorization header at all, yet the unknown op is still rejected
@@ -438,9 +438,9 @@ mod tests {
 
     #[test]
     fn malformed_body_is_serialization_exception_before_auth() {
-        let (_temp, service, registry) = fixture();
+        let (_temp, engine, registry) = fixture();
         let ctx = DispatchContext {
-            service: &service,
+            engine: &engine,
             access_keys: &registry,
         };
         // Body parsing precedes auth, so even a garbage authorization header
@@ -456,9 +456,9 @@ mod tests {
 
     #[test]
     fn missing_authorization_is_missing_token() {
-        let (_temp, service, registry) = fixture();
+        let (_temp, engine, registry) = fixture();
         let ctx = DispatchContext {
-            service: &service,
+            engine: &engine,
             access_keys: &registry,
         };
         let headers = headers_for("CreateTable", None);
@@ -471,9 +471,9 @@ mod tests {
 
     #[test]
     fn malformed_authorization_is_incomplete_signature() {
-        let (_temp, service, registry) = fixture();
+        let (_temp, engine, registry) = fixture();
         let ctx = DispatchContext {
-            service: &service,
+            engine: &engine,
             access_keys: &registry,
         };
         let headers = headers_for("CreateTable", Some("AWS4-HMAC-SHA256 nonsense"));
@@ -483,9 +483,9 @@ mod tests {
 
     #[test]
     fn unknown_access_key_is_unrecognized_client() {
-        let (_temp, service, registry) = fixture();
+        let (_temp, engine, registry) = fixture();
         let ctx = DispatchContext {
-            service: &service,
+            engine: &engine,
             access_keys: &registry,
         };
         let headers = headers_for("CreateTable", Some(&signed_authorization("AKIAUNBOUND")));
@@ -502,9 +502,9 @@ mod tests {
         // falls through to the "not yet implemented" guard. Each authenticated
         // op with an empty body may legitimately fail (Validation /
         // ResourceNotFound / Serialization), but must never hit the placeholder.
-        let (_temp, service, registry) = fixture();
+        let (_temp, engine, registry) = fixture();
         let ctx = DispatchContext {
-            service: &service,
+            engine: &engine,
             access_keys: &registry,
         };
         for operation in KNOWN_OPERATIONS {
@@ -520,9 +520,9 @@ mod tests {
 
     #[test]
     fn describe_limits_returns_stub_limits_through_dispatch() {
-        let (_temp, service, registry) = fixture();
+        let (_temp, engine, registry) = fixture();
         let ctx = DispatchContext {
-            service: &service,
+            engine: &engine,
             access_keys: &registry,
         };
         let headers = headers_for("DescribeLimits", Some(&signed_authorization(ACCESS_KEY)));
@@ -534,9 +534,9 @@ mod tests {
 
     #[test]
     fn describe_endpoints_echoes_host_through_dispatch() {
-        let (_temp, service, registry) = fixture();
+        let (_temp, engine, registry) = fixture();
         let ctx = DispatchContext {
-            service: &service,
+            engine: &engine,
             access_keys: &registry,
         };
         let mut headers = headers_for("DescribeEndpoints", Some(&signed_authorization(ACCESS_KEY)));
@@ -558,9 +558,9 @@ mod tests {
 
     #[test]
     fn create_table_succeeds_through_dispatch() {
-        let (_temp, service, registry) = fixture();
+        let (_temp, engine, registry) = fixture();
         let ctx = DispatchContext {
-            service: &service,
+            engine: &engine,
             access_keys: &registry,
         };
         let headers = headers_for("CreateTable", Some(&signed_authorization(ACCESS_KEY)));
@@ -578,9 +578,9 @@ mod tests {
 
     #[test]
     fn missing_target_rejected_before_body() {
-        let (_temp, service, registry) = fixture();
+        let (_temp, engine, registry) = fixture();
         let ctx = DispatchContext {
-            service: &service,
+            engine: &engine,
             access_keys: &registry,
         };
         let mut headers = HeaderMap::new();
@@ -604,13 +604,13 @@ mod tests {
         // one AWS access key is invisible to a request authenticated with a
         // different access key (a different tenant), and visible to its own.
         let temp = tempfile::tempdir().expect("tempdir");
-        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
         let registry = AccessKeyRegistry::new()
             .bind("AKIAACME", TenantId::new("acme").expect("tenant"))
             .bind("AKIAGLOBEX", TenantId::new("globex").expect("tenant"))
             .with_mode(AuthMode::LookupOnly);
         let ctx = DispatchContext {
-            service: &service,
+            engine: &engine,
             access_keys: &registry,
         };
 
@@ -650,13 +650,13 @@ mod tests {
     // ---- D7.2: strict-mode rejection paths ----
 
     /// A strict-mode `Service` + registry binding `ACCESS_KEY` with a secret.
-    fn strict_fixture() -> (tempfile::TempDir, Arc<Service>, AccessKeyRegistry) {
+    fn strict_fixture() -> (tempfile::TempDir, Arc<Engine>, AccessKeyRegistry) {
         let temp = tempfile::tempdir().expect("tempdir");
-        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
         let registry = AccessKeyRegistry::new()
             .bind_signed(ACCESS_KEY, TenantId::new("acme").expect("tenant"), "secret")
             .with_mode(AuthMode::Strict);
-        (temp, service, registry)
+        (temp, engine, registry)
     }
 
     #[test]
@@ -664,9 +664,9 @@ mod tests {
         // A key absent from the static in-memory registry but configured at
         // runtime in the persisted store still authenticates and routes
         // (D7.3 — no restart needed). It scopes to its configured tenant.
-        let (_temp, service, registry) = fixture();
+        let (_temp, engine, registry) = fixture();
         key_management::put_access_key(
-            &service,
+            &engine,
             "AKIAPERSIST",
             &TenantId::new("persisted").expect("tenant"),
             None,
@@ -674,7 +674,7 @@ mod tests {
         )
         .expect("configure persisted key");
         let ctx = DispatchContext {
-            service: &service,
+            engine: &engine,
             access_keys: &registry,
         };
         let (status, body) = dispatch(
@@ -702,9 +702,9 @@ mod tests {
     fn strict_mode_missing_amz_date_is_incomplete_signature() {
         // validate_timestamp runs first in strict mode: no X-Amz-Date header is
         // an IncompleteSignature, even though the access key is bound.
-        let (_temp, service, registry) = strict_fixture();
+        let (_temp, engine, registry) = strict_fixture();
         let ctx = DispatchContext {
-            service: &service,
+            engine: &engine,
             access_keys: &registry,
         };
         let headers = headers_for("CreateTable", Some(&signed_authorization(ACCESS_KEY)));
@@ -717,9 +717,9 @@ mod tests {
     fn strict_mode_expired_request_is_rejected() {
         // A well-formed but stale X-Amz-Date (far outside the ±15-minute window)
         // is rejected before signature comparison.
-        let (_temp, service, registry) = strict_fixture();
+        let (_temp, engine, registry) = strict_fixture();
         let ctx = DispatchContext {
-            service: &service,
+            engine: &engine,
             access_keys: &registry,
         };
         let mut headers = headers_for("CreateTable", Some(&signed_authorization(ACCESS_KEY)));

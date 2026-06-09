@@ -8,7 +8,7 @@ pub(crate) async fn insert_document(
 ) -> Result<(StatusCode, Json<DocumentResponse>), AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.documents.insert")?;
     let table = TableName::new(request.table)?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let request_cancellation = RequestCancellationGuard::new();
     let cancellation = request_cancellation.token();
     let cancellation_check = cancellation.clone();
@@ -51,7 +51,7 @@ pub(crate) async fn update_document(
     let document_id = parse_document_id(&document_id)?;
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.documents.update")?;
     let table = TableName::new(table)?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let request_cancellation = RequestCancellationGuard::new();
     let cancellation = request_cancellation.token();
     let cancellation_check = cancellation.clone();
@@ -90,7 +90,7 @@ pub(crate) async fn delete_document(
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.documents.delete")?;
     let table = TableName::new(table)?;
     let document_id = parse_document_id(&document_id)?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let request_cancellation = RequestCancellationGuard::new();
     let cancellation = request_cancellation.token();
     let cancellation_check = cancellation.clone();
@@ -124,7 +124,7 @@ pub(crate) async fn list_documents(
 ) -> Result<Json<DataResponse>, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.documents.list")?;
     let table = TableName::new(table)?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let request_cancellation = RequestCancellationGuard::new();
     let cancellation = request_cancellation.token();
     let cancellation_check = cancellation.clone();
@@ -158,7 +158,7 @@ pub(crate) async fn get_document(
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.documents.get")?;
     let table = TableName::new(table)?;
     let document_id = parse_document_id(&document_id)?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let request_cancellation = RequestCancellationGuard::new();
     let cancellation = request_cancellation.token();
     let cancellation_check = cancellation.clone();

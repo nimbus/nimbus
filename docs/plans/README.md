@@ -155,6 +155,53 @@ This directory prefers a small-number-of-plans model with clear ownership.
     topology: Linux production runs direct libkrun-on-KVM microVMs;
     macOS dev runs one outer machine-os VM with crun containers per
     workload (D11/D12, no nested microVMs on macOS).
+- `docs/plans/nimbus-capability-segregation-plan.md`
+  - proposed goal-ready control plane for segregating privileged Nimbus service
+    capability from adapter compatibility surfaces. Owns the engine `Service` ->
+    `Engine` rename, exact-grant service authority, adapter context shortcut
+    removal, V8 service-op/snapshot absence for ungranted isolates,
+    Bun/JSC fail-closed service-capability parity, per-tier runtime permission
+    segmentation, `@nimbus/nimbus` root SDK plus
+    `@nimbus/nimbus/transports/rest` low-level transport split, private
+    Nimbus-managed isolate host-transport gating, tenant bundle admission for
+    low-level/operator-only JS entries, and principal-class service route
+    policy. Uses `docs/architecture/server/auth-runtime-trust.md`,
+    `docs/architecture/runtime/adapter-boundary.md`, and
+    `docs/architecture/sandbox/service-sandbox-session-model.md`; CB0 creates
+    `bash scripts/verify-nimbus-capability-segregation.sh`.
+- `docs/plans/nimbus-sdk-resource-model-plan.md`
+  - proposed SDK/control-plane follow-on for the
+    `@nimbus/nimbus` services, sandboxes, sessions, and runtime-isolate resource
+    model. Canonical vocabulary lives at
+    `docs/architecture/sandbox/service-sandbox-session-model.md`: services are
+    named tenant dependencies addressed by tenant plus service name with
+    sandbox, built-in, or external service backends; the MVP SDK does not
+    expose raw service-binding resolution; sandboxes are isolated execution
+    resources addressed by id/handle, never by name; sessions are scoped
+    interaction leases targeting either `{ service: { name } }` or
+    `{ sandbox: { id } }`;
+    and runtime isolates are invocation execution domains, not SDK sandboxes. A
+    future explicit isolate-backed sandbox resource reserves
+    `profile: "isolate"`.
+    The plan owns SDK namespaces, service backend kinds, dynamic service
+    registration, sandbox APIs, session target semantics, adapter export guards,
+    and verifier coverage, while backend media/session mechanics remain owned by
+    the relevant bands of `docs/plans/nimbus-sandbox-plan.md`. The pre-SRM
+    naming/type cleanup is owned by
+    `docs/plans/service-backend-and-sandbox-spec-refactor-plan.md`.
+- `docs/plans/service-backend-and-sandbox-spec-refactor-plan.md`
+  - proposed pre-launch breaking refactor for the final service/sandbox type
+    vocabulary: `ServiceImplementation` becomes `ServiceBackend`,
+    `ServiceBackend::Sandbox` carries a complete `SandboxSpec`, sandbox
+    root materialization moves into `SandboxSpec.root`, and
+    `SandboxBackend` remains the single lifecycle executor interface with
+    `start(SandboxSpec)`, `inspect`, and `stop`. The plan removes separate
+    launch APIs, keeps Dockerfile/context build input nested as
+    `SandboxRootSpec::OciImage(SandboxOciImageSpec { source:
+    SandboxOciImageSource::Build(...), ... })` with fail-closed production
+    admission, keeps built-in/external payloads as declarative specs, preserves
+    adapter-shaped contexts, and guards against runtime invocation isolates
+    becoming SDK sandbox resources.
 - `docs/plans/research/nimbus-libkrun-fork-inventory.md`
   - load-bearing research doc that satisfies CUS0 + GAW0: the
     `nimbus-libkrun` fork has exactly one functional patch (TSI
@@ -383,7 +430,7 @@ historical execution detail.
     control-plane baseline into an enterprise-grade trust surface (closed
     2026-05-22). Added typed admission decision records, PDP/PEP separation,
     reusable conformance, read-only drift/audit scanning, Linux hard-quota
-    proof, stable workload identity, image provenance/signature policy,
+    proof, admitted workload identity, image provenance/signature policy,
     structured redacted audit events, and customer/operator readiness docs.
     Current posture starts from `docs/tenant-isolation.md`,
     `docs/operating/tenant-isolation.md`, and the architecture docs linked
@@ -789,13 +836,15 @@ historical execution detail.
     optional WebTransport evaluation without re-owning the established
     WebSocket protocol or Firebase transport work.
 - `docs/plans/agent-browser-service-plan.md`
-  - canonical deferred plan for adding a first-class `ctx.browser`
-    session resource to Nimbus: `BrowserProvider` trait, single-Chrome-
-    many-BrowserContexts shape, sandboxed-Chrome production provider
-    behind `nimbus-sandbox`, durable Playwright-compatible storage state
-    in `nimbus-storage`, warm pool, extraction cache, mutation-journal
-    integration, and per-tenant capability admission paired with
-    `wasi-agent-capabilities-plan.md`. North-star research at
+  - canonical deferred plan for adding a built-in `browser` service that
+    provides browser sessions: `BrowserProvider` trait, single-Chrome-
+    many-BrowserContexts shape, sandboxed-Chrome production provider behind
+    `nimbus-sandbox`, durable Playwright-compatible storage state/profile
+    policy in `nimbus-storage`, warm pool, extraction cache, mutation-journal
+    integration, and per-tenant capability admission. The SDK/session surface is
+    canonical; any future `nimbus.browser` facade is an SDK facade over that
+    service/session model, not an adapter or runtime `ctx` shortcut. North-star
+    research at
     `docs/plans/research/agent-browser-service-prior-art.md`.
 - `docs/plans/secret-management-plan.md`
   - canonical deferred plan for a tenant-scoped secret-management
@@ -811,12 +860,12 @@ historical execution detail.
     `docs/plans/research/secret-management-prior-art.md`. Supersedes
     the gap note `docs/plans/research/secret-management-shape.md`.
 - `docs/plans/service-identity-provider-auth-plan.md`
-  - canonical deferred plan for promoting stable workload identity into
-    short-lived provider-auth credentials: enforced `identity` grants,
+  - canonical deferred plan for promoting admitted `WorkloadIdentity` subjects
+    into short-lived provider-auth credentials: enforced `identity` grants,
     OIDC/JWT minting, SPIFFE/SVID shape, mTLS/service-account tokens,
     node/machine identity binding, Vault/Kubernetes/AWS/GCP/Azure
     provider-auth adapters, lifecycle/revocation, and audit. Consumes
-    `TenantWorkloadStableIdentity`; does not own secret values. Dependency
+    `WorkloadIdentity`; does not own secret values. Dependency
     review at
     `docs/plans/research/service-identity-provenance-dependency-audit.md`.
 - `docs/plans/archive/artifact-provenance-verification-plan.md`

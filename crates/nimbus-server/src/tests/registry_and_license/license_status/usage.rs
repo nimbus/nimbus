@@ -48,8 +48,8 @@ async fn license_status_route_tracks_global_monthly_active_users_across_tenants(
             ]
         })),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
     assert_eq!(
         api.create_tenant("alpha").await.status(),

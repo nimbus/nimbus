@@ -2,9 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn firebase_batch_write_reports_partial_success_and_rejects_duplicates() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
@@ -94,9 +94,9 @@ async fn firebase_batch_write_reports_partial_success_and_rejects_duplicates() {
 #[tokio::test]
 async fn firebase_run_query_executes_supported_subset_with_where_order_cursor_offset_limit_and_projection()
  {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let cities_table = crate::adapters::firebase::storage_table_for_collection_path(
@@ -226,9 +226,9 @@ async fn firebase_run_query_executes_supported_subset_with_where_order_cursor_of
 #[tokio::test]
 async fn firebase_run_query_reports_missing_index_for_compound_query_without_matching_schema_index()
 {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let cities_table = crate::adapters::firebase::storage_table_for_collection_path(
@@ -320,13 +320,10 @@ async fn firebase_run_query_reports_missing_index_for_compound_query_without_mat
 
 #[tokio::test]
 async fn firebase_run_query_returns_read_time_only_when_no_documents_match() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(router_for_firebase(
-        fixture.service(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
 
     let response = server
         .client()
@@ -360,9 +357,9 @@ async fn firebase_run_query_returns_read_time_only_when_no_documents_match() {
 
 #[tokio::test]
 async fn firebase_run_aggregation_query_counts_filtered_and_empty_results() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -460,9 +457,9 @@ async fn firebase_run_aggregation_query_counts_filtered_and_empty_results() {
 
 #[tokio::test]
 async fn firebase_run_aggregation_query_under_parent_document_scopes_nested_collection_path() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     seed_firebase_document(
         &service,
         &tenant_id,
@@ -515,13 +512,10 @@ async fn firebase_run_aggregation_query_under_parent_document_scopes_nested_coll
 
 #[tokio::test]
 async fn firebase_run_aggregation_query_rejects_deferred_selectors_and_sum() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(router_for_firebase(
-        fixture.service(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
 
     let transaction_response = server
         .client()
@@ -595,9 +589,9 @@ async fn firebase_run_aggregation_query_rejects_deferred_selectors_and_sum() {
 
 #[tokio::test]
 async fn firebase_run_query_supports_composite_unary_filters_and_name_tiebreaks() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     for (document_id, rank, state) in [
@@ -741,9 +735,9 @@ async fn firebase_run_query_supports_composite_unary_filters_and_name_tiebreaks(
 
 #[tokio::test]
 async fn firebase_run_query_under_parent_document_scopes_to_nested_collection_path() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
@@ -802,9 +796,9 @@ async fn firebase_run_query_under_parent_document_scopes_to_nested_collection_pa
 #[tokio::test]
 async fn firebase_run_query_collection_group_uses_path_metadata_for_scope_ordering_cursors_and_deletes()
  {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
     let server =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
@@ -1008,13 +1002,10 @@ async fn firebase_run_query_collection_group_uses_path_metadata_for_scope_orderi
 
 #[tokio::test]
 async fn firebase_run_query_rejects_invalid_filter_combinations() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(router_for_firebase(
-        fixture.service(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
 
     let response = server
         .client()

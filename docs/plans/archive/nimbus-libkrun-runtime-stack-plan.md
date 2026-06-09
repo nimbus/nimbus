@@ -310,7 +310,7 @@ Deliverables:
 - tag and publish `v1.27.1-nimbus.1` paired with `v1.17.4-nimbus.1`
 - keep `v1.27-nimbus.1` and `v1.27-nimbus.2` as historical tags; do not
   rewrite published releases
-- remove any remaining `neovex` naming from branch/tag/release references
+- remove any remaining retired predecessor naming from branch/tag/release references
   before publishing
 
 Acceptance criteria:

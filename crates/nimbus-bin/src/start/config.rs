@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use clap::ValueEnum;
 use nimbus::{
-    AwsKmsConfig, EmbeddedProviderKind, Error, KeyDirectoryConfig, LocalEncryptionConfig,
-    LocalKeyProviderConfig, MasterKeyFileConfig, ServicePersistenceConfig,
+    AwsKmsConfig, EmbeddedProviderKind, EnginePersistenceConfig, Error, KeyDirectoryConfig,
+    LocalEncryptionConfig, LocalKeyProviderConfig, MasterKeyFileConfig,
 };
 use serde::Deserialize;
 
@@ -470,13 +470,13 @@ impl ResolvedTenantProviderConfig {
         }
     }
 
-    fn into_persistence_config(self) -> nimbus::Result<ServicePersistenceConfig> {
+    fn into_persistence_config(self) -> nimbus::Result<EnginePersistenceConfig> {
         match self {
             Self::Embedded {
                 data_dir,
                 control_data_dir,
                 provider_kind,
-            } => Ok(ServicePersistenceConfig {
+            } => Ok(EnginePersistenceConfig {
                 tenant_provider: nimbus::TenantProviderConfig::embedded(data_dir, provider_kind),
                 control_plane: nimbus::ControlPlaneConfig::embedded_redb(control_data_dir),
                 local_encryption: LocalEncryptionConfig::Disabled,
@@ -491,7 +491,7 @@ impl ResolvedTenantProviderConfig {
                 libsql_tenant_namespace_prefix,
                 libsql_replica_cache_dir,
             } => {
-                let mut config = ServicePersistenceConfig::libsql_replica(
+                let mut config = EnginePersistenceConfig::libsql_replica(
                     control_data_dir,
                     libsql_url,
                     libsql_auth_token,
@@ -522,7 +522,7 @@ impl ResolvedTenantProviderConfig {
                 postgres_min_connections,
                 postgres_max_connections,
             } => {
-                let mut config = ServicePersistenceConfig::postgres(control_data_dir, postgres_url);
+                let mut config = EnginePersistenceConfig::postgres(control_data_dir, postgres_url);
                 if let nimbus::TenantRoutingConfig::SchemaPerTenant {
                     metadata_schema,
                     tenant_schema_prefix,
@@ -547,7 +547,7 @@ impl ResolvedTenantProviderConfig {
                 mysql_min_connections,
                 mysql_max_connections,
             } => {
-                let mut config = ServicePersistenceConfig::mysql(control_data_dir, mysql_url);
+                let mut config = EnginePersistenceConfig::mysql(control_data_dir, mysql_url);
                 if let nimbus::TenantRoutingConfig::DatabasePerTenant {
                     metadata_database,
                     tenant_database_prefix,
@@ -709,7 +709,7 @@ impl ResolvedPersistenceInputs {
         }
     }
 
-    fn into_persistence_config(self) -> nimbus::Result<ServicePersistenceConfig> {
+    fn into_persistence_config(self) -> nimbus::Result<EnginePersistenceConfig> {
         let encryption_config =
             ResolvedEncryptionInputs::from_inputs(&self).into_local_encryption_config()?;
         let base_config =
@@ -796,7 +796,7 @@ impl ResolvedPersistenceInputs {
 
 pub(crate) fn persistence_config_from_start_command(
     command: &StartCommand,
-) -> nimbus::Result<ServicePersistenceConfig> {
+) -> nimbus::Result<EnginePersistenceConfig> {
     let config_path = command
         .config
         .clone()
@@ -810,11 +810,11 @@ pub(crate) fn persistence_config_from_sources(
     command: &StartCommand,
     file: &PersistenceFileConfig,
     env: &PersistenceEnv,
-) -> nimbus::Result<ServicePersistenceConfig> {
+) -> nimbus::Result<EnginePersistenceConfig> {
     ResolvedPersistenceInputs::from_sources(command, file, env).into_persistence_config()
 }
 
-pub(super) fn control_data_dir_from_persistence_config(config: &ServicePersistenceConfig) -> &Path {
+pub(super) fn control_data_dir_from_persistence_config(config: &EnginePersistenceConfig) -> &Path {
     match &config.control_plane {
         nimbus::ControlPlaneConfig::EmbeddedRedb { data_dir } => data_dir.as_path(),
     }

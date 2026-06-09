@@ -154,10 +154,10 @@ pub(crate) struct StartCommand {
     #[arg(long, default_value_t = false)]
     pub(crate) debug_node_apis: bool,
 
-    /// Optional ordered Compose file list that declares sandbox-backed
-    /// services for `ctx.services.*` activation. Repeat `--compose-file` to
-    /// merge overlays. When omitted, Nimbus uses `COMPOSE_FILE` when set, then
-    /// discovers from the current directory and parent directories.
+    /// Optional ordered Compose file list that declares sandbox-backed services.
+    /// Repeat `--compose-file` to merge overlays. When omitted, Nimbus uses
+    /// `COMPOSE_FILE` when set, then discovers from the current directory and
+    /// parent directories.
     #[arg(long)]
     pub(crate) compose_file: Vec<PathBuf>,
 

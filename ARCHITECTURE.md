@@ -64,12 +64,16 @@ flowchart TD
         Engine["nimbus-engine · logic"]
         Runtime["nimbus-runtime · V8 execution"]
         Sandbox["nimbus-sandbox · isolation seam"]
+        Services["nimbus-services · named service lifecycle"]
         Storage["nimbus-storage · persistence"]
         Core["nimbus-core · types"]
 
         Server --> Engine
         Server --> Runtime
+        Server --> Services
         Server --> Sandbox
+        Services --> Sandbox
+        Services --> Core
         Runtime -.->|HostBridge| Engine
         Sandbox --> Core
         Engine --> Storage
@@ -93,6 +97,7 @@ flowchart TD
     class Server transport
     class Runtime runtime
     class Engine logic
+    class Services logic
     class Storage storage
     class Core types
     class Disk disk
@@ -120,10 +125,31 @@ connects the two independent subsystems below it:
   runtime knows nothing about it. This is dependency inversion: the runtime
   declares what it needs; the server provides it.
 
+- **nimbus-services** is the named service layer. Today it maps
+  tenant-scoped Compose service names such as `db` or `search` to
+  sandbox-backed service definitions, activation/readiness, and runtime
+  bindings. The canonical service model also reserves built-in and external
+  backend kinds for future SDK/control-plane work, but the landed backend is
+  still sandbox-backed.
+
 - **nimbus-sandbox** is the generic isolation and sandbox-orchestration seam.
-  It currently exposes backend-agnostic sandbox lifecycle contracts and the
-  first server-facing catalog seam, while concrete krun-backed, Firecracker,
-  and other backend implementations remain deferred.
+  It exposes backend-agnostic sandbox lifecycle contracts. Service launches may
+  be backed by sandboxes, but a service is the named app dependency while a
+  sandbox is the isolated execution resource. Sandboxes are addressed by id or
+  returned handle, not by name. Sandbox root materialization is declared in
+  `SandboxSpec`: `Rootfs` is a direct root filesystem, while `OciImage` carries
+  an OCI image source such as an existing reference or a policy-gated
+  Dockerfile/context build input. Backends still expose one lifecycle start
+  path over the full spec rather than separate image/build launch APIs.
+
+The canonical resource vocabulary is in
+[`docs/architecture/sandbox/service-sandbox-session-model.md`](docs/architecture/sandbox/service-sandbox-session-model.md):
+services are addressed by tenant plus service name; sandboxes are
+id/handle-addressed; future sessions are scoped leases or interaction channels
+targeting either a service name or a sandbox id; runtime isolates are invocation
+execution domains, not SDK sandbox resources. A future explicit isolate-backed
+sandbox would be a user-created resource with `profile: "isolate"`, not an
+ordinary function invocation isolate.
 
 The server has two request paths. **Native** requests (Nimbus HTTP/WS API) go
 directly to async engine methods; read and write paths now await an explicit
@@ -132,7 +158,7 @@ that boundary through `TenantWriteTransaction`, which defines an explicit
 pre-commit versus post-commit split: cancellation may abort before durable
 commit, but once the durable commit point is crossed the engine returns a
 committed result even if the transport disconnects before observing it. Tenant
-persistence now lowers through `ServicePersistenceConfig`: SQLite is the
+persistence now lowers through `EnginePersistenceConfig`: SQLite is the
 default embedded provider, redb is retained as another embedded provider, and
 Postgres, MySQL, plus replica-connected SQLite are opt-in external provider
 families. The cross-tenant usage or control path lowers through a separate
@@ -326,19 +352,19 @@ metering.
   `CommitEntry` projection used by legacy storage-facing helpers and tests.
 - `usage_store.rs` — `UsageStore` backed by a separate redb database (`nimbus-control.db`). Tracks monthly active users (MAU) by token identifier with per-month counters.
 
-**`nimbus-engine`** — Central coordinator. Every read, write, subscription, and scheduled job flows through the `Service` struct — whether the request originates from native HTTP, WebSocket, the background scheduler, or a runtime host operation.
+**`nimbus-engine`** — Central coordinator. Every read, write, subscription, and scheduled job flows through the `Engine` struct — whether the request originates from native HTTP, WebSocket, the background scheduler, or a runtime host operation.
 
-- `service/mod.rs` — `Service` struct: tenant registry plus the async storage
+- `engine/mod.rs` — `Engine` struct: tenant registry plus the async storage
   boundary, the embedded provider selector, the still-local redb usage/control
   storage handle, simulation seams, scheduler wakeups, and a process-wide
   background Tokio runtime handle used for long-lived engine workers.
-  `service/bootstrap.rs` now owns typed-persistence bootstrap, control-plane
-  provider construction, and provider-specific service startup so `Service`
+  `engine/bootstrap.rs` now owns typed-persistence bootstrap, control-plane
+  provider construction, and provider-specific engine startup so `Engine`
   stays focused on coordination and runtime access once boot completes.
-- `persistence_config.rs` — Typed service-persistence configuration plus local
+- `persistence_config.rs` — Typed engine-persistence configuration plus local
   encryption policy. It now also owns the private bootstrap-plan normalization
   that turns provider selection, routing, pool settings, and control-plane
-  paths into one canonical service-start input.
+  paths into one canonical engine-start input.
 - `persistence.rs` — Provider-facade composition root. `provider.rs` owns the
   tenant-provider registry, background-task selection, and opened-tenant
   mapping, `control.rs` owns the redb-backed control-plane usage facade,
@@ -347,43 +373,43 @@ metering.
   `tenant/schema.rs`, and `tenant/provider_state.rs`, where async schema load,
   journal progress/recovery, scheduled-work checks, refresh planning, and
   provider-specific apply semantics now live behind the tenant persistence
-  facade instead of in service-layer matches. `executor.rs` owns async read or
+  facade instead of in engine-layer matches. `executor.rs` owns async read or
   write execution, `snapshot.rs` owns the snapshot read facade, `query.rs`
   owns `QueryReadStore` delegation for stores and snapshots, and `write_ops.rs`
   owns the write-transaction capability trait shared by the scheduler and async
   journal paths.
-- `service/mutations.rs` — Composition root for the write path. Public
+- `engine/mutations.rs` — Composition root for the write path. Public
   `apply_mutation` behavior still flows through the same single durable contract
   while the implementation is split across
-  `service/mutations/direct/`, where `api.rs` owns the direct CRUD service
+  `engine/mutations/direct/`, where `api.rs` owns the direct CRUD engine
   surface plus async/principal/cancellable wrapper normalization, `execution.rs`
   owns execution-mode dispatch and mutation auth staging, `store.rs` owns the
   direct store-apply helpers, and `types.rs` owns the shared execution
   mode/result contract. The remaining write implementation is split across
-  `service/mutations/authorization.rs` (shared mutation
-  access-policy enforcement), `service/mutations/commit_processing.rs`
+  `engine/mutations/authorization.rs` (shared mutation
+  access-policy enforcement), `engine/mutations/commit_processing.rs`
   (post-commit cache invalidation plus subscription work enqueue after the
-  applied watermark advances), and `service/mutations/journal.rs` (queued async
+  applied watermark advances), and `engine/mutations/journal.rs` (queued async
   journal flow). A tenant-local background worker still owns reactive
   re-evaluation so committed writes no longer wait on full subscription fan-out.
   The durable-journal batch path still coalesces cache invalidation and
   subscription wakeups across multi-record apply batches before handing work to
   that background queue.
-- `service/mutations/journal.rs` — Queued async mutation path. Async mutations
+- `engine/mutations/journal.rs` — Queued async mutation path. Async mutations
   first enter a tenant-local outer admission gate with CoDel shedding. A
-  journal worker task spawned on the Service-owned background runtime drains
+  journal worker task spawned on the Engine-owned background runtime drains
   that gate into the commit path, preserves admitted work once it crosses into
   the journal path, and owns durable append, ordered apply, and resolution of
   queued async mutation futures.
-- `service/execution_units/` — Runtime multi-step mutation execution-unit
+- `engine/execution_units/` — Runtime multi-step mutation execution-unit
   ownership. `mod.rs` owns `MutationExecutionUnit` construction plus the stable
   public surface, `reads.rs` owns snapshot-backed read helpers and dependency
   capture, `staging.rs` owns staged document and scheduler mutation state
   transitions, `state.rs` owns staged-state lifecycle plus resolved write or
   schedule-op construction, and `commit.rs` owns finalization, schema-stability
   checks, and OCC conflict validation before the batch commit path.
-- `service/queries.rs` — Composition root for the read path. The public
-  `Service` read surface is now split across `service/queries/documents.rs`
+- `engine/queries.rs` — Composition root for the read path. The public
+  `Engine` read surface is now split across `engine/queries/documents.rs`
   (list/get document reads), `query_api.rs` (query and pagination entrypoints),
   `journal.rs` (durable-journal and latest-sequence reads), `verification.rs`
   (shadow-materializer and consistency verification helpers), and
@@ -398,22 +424,22 @@ metering.
   before selecting a semantic index-equality, range, or table-scan path, and
   async read paths still route the same prepared planner/evaluator logic
   through the storage-owned async executor.
-- `service/subscriptions.rs` — `subscribe`/`unsubscribe` plus subscription
+- `engine/subscriptions.rs` — `subscribe`/`unsubscribe` plus subscription
   lifecycle ownership. Initial evaluation and activation handoff now live under
-  `service/subscriptions/bootstrap.rs`, which owns materialized-surface reuse,
+  `engine/subscriptions/bootstrap.rs`, which owns materialized-surface reuse,
   principal snapshot capture, policy revision tracking, and covered-sequence
   bootstrap semantics for conservative auth invalidation and catch-up.
-- `service/schema.rs` — Schema CRUD. Setting a schema backfills indexes for existing documents.
-- `service/scheduler.rs` — Composition root for the scheduler service
-  surface. `service/scheduler/scheduled_jobs.rs` owns scheduled-job CRUD,
+- `engine/schema.rs` — Schema CRUD. Setting a schema backfills indexes for existing documents.
+- `engine/scheduler.rs` — Composition root for the scheduler engine
+  surface. `engine/scheduler/scheduled_jobs.rs` owns scheduled-job CRUD,
   result persistence, and async/cancellable scheduled-write helpers;
-  `service/scheduler/cron.rs` owns cron CRUD; `service/scheduler/access.rs`
+  `engine/scheduler/cron.rs` owns cron CRUD; `engine/scheduler/access.rs`
   owns the shared tenant-runtime/store access wrappers used by scheduler
-  operations; and `service/scheduler/coordination.rs` owns loaded-tenant
+  operations; and `engine/scheduler/coordination.rs` owns loaded-tenant
   scans, next-due work discovery, and startup recovery via
   `load_tenants_with_scheduled_work`.
-- `service/tenants.rs` — Tenant CRUD and lifecycle management. Create/delete now use async storage-engine control APIs; deletion evicts the tenant from the registry, rejects new work through a tenant-local lifecycle primitive, waits for in-flight operations to drain, then removes the on-disk store.
-- `service/usage.rs` — `record_monthly_active_user` and `current_monthly_active_users` — delegates to the global `UsageStore` through the same async storage boundary used elsewhere.
+- `engine/tenants.rs` — Tenant CRUD and lifecycle management. Create/delete now use async storage-engine control APIs; deletion evicts the tenant from the registry, rejects new work through a tenant-local lifecycle primitive, waits for in-flight operations to drain, then removes the on-disk store.
+- `engine/usage.rs` — `record_monthly_active_user` and `current_monthly_active_users` — delegates to the global `UsageStore` through the same async storage boundary used elsewhere.
 - `tenant.rs` — `TenantRuntime` is the tenant-local facade and composition root.
   The root now keeps only tenant structure, constructors, lifecycle, and
   cross-domain diagnostics while grouped facade files
@@ -496,9 +522,10 @@ storage types directly.
   `runtime/helpers.rs`, invocation/auth types to `runtime/invocation.rs`,
   bundle identity and integrity handling to `runtime/bundle.rs`, and the
   current V8-backed bootstrap layer to the `runtime/bootstrap/` module tree.
-  Service bindings now follow a split contract there: `ctx.services.<name>`
-  reads only the invocation snapshot, while `await ctx.services.get("name")`
-  resolves missing bindings through the async cancellable host path.
+  Adapter-created contexts do not expose Nimbus service shortcuts. Service
+  lifecycle and binding authority flows through the explicit `@nimbus/nimbus`
+  SDK or an explicitly installed Nimbus-managed isolate host transport, never
+  through adapter `ctx.services`.
 - `runtime/invocation.rs` — `InvocationKind`, `InvocationRequest`, `InvocationAuth`, `RuntimeUserIdentity`, and `VerifiedUserIdentity`: the public invocation and auth payload surface for runtime calls.
 - `runtime/bundle.rs` — `RuntimeBundle`: bundle path identity, canonicalization, and per-invocation SHA-256 integrity verification.
 - `backends/mod.rs` — worker-local `RuntimeBackendFactory` /
@@ -609,15 +636,17 @@ proof on Linux.
   readiness probing) while preserving the current plan-only mode used for
   cross-platform verification.
 - `backends/oci/` — backend-owned OCI image preparation and container launch
-  helpers. `buildah.rs` is now the public buildah composition root over
+  helpers. `builder.rs` owns the internal Dockerfile-subset materialization
+  path, `materializer.rs` owns OCI reference-to-rootfs preparation, and
+  `buildah.rs` is now the public buildah composition root over
   `buildah/cli.rs` (CLI wrapper plus mount-session lifecycle),
   `buildah/defaults.rs` (image launch defaults, env merging, and exposed-port
   parsing), `buildah/inspect.rs` (inspect/config payload decoding),
   `buildah/user.rs` (rootfs user resolution for session-backed and extracted
   rootfs flows), `buildah/render.rs` (shell and command-failure rendering),
-  and `buildah/tests.rs` (buildah regression coverage) while `builder.rs`,
-  `materializer.rs`, `network.rs`, `port_manager.rs`, and `conmon.rs`
-  preserve their existing backend-local ownership.
+  and `buildah/tests.rs` (buildah regression coverage). `network.rs`,
+  `port_manager.rs`, and `conmon.rs` preserve their existing backend-local
+  ownership.
 
 ### Async Ownership Boundaries
 
@@ -628,7 +657,7 @@ flowchart LR
         V8["RuntimeExecutor worker runtime"]
     end
 
-    subgraph ServiceOwned["Service-owned background execution"]
+    subgraph EngineOwned["Engine-owned background execution"]
         EngineExec["Engine BackgroundExecutor"]
         StorageExec["Storage BackgroundExecutor"]
         JW["Journal worker"]
@@ -647,30 +676,30 @@ flowchart LR
     StorageExec --> SB
 ```
 
-Request executors may enqueue work onto Service-owned background workers, but
+Request executors may enqueue work onto Engine-owned background workers, but
 they must not own the lifetime of those workers. Runtime executor threads are
 for request execution. Journal apply, queued async mutation completion, and
-similar durable background work are Service responsibilities.
+similar durable background work are Engine responsibilities.
 
 ### Execution Domains
 
 | Domain | Owner | Primitive | Live responsibility |
 | --- | --- | --- | --- |
 | Main server runtime | `nimbus-bin` | process Tokio runtime from `#[tokio::main]` | axum HTTP/WS request handling and the root scheduler task |
-| Scheduler loop | `nimbus-bin` + `Service` | long-lived Tokio task with `watch` shutdown + `Notify` wakeup | sleeps until the next due scheduled or cron work, then fans out a bounded set of per-tenant ticks via `Service` so one slow tenant cannot stall others |
-| Service background runtime | `Service` | owned `BackgroundExecutor` field with `TaskTracker`, `CancellationToken`, and explicit `quiesce()` | stable home for long-lived engine async workers with service-owned shutdown semantics |
-| Mutation journal worker | `Service` + `TenantRuntime` | service-owned async task | drains the outer mutation admission gate, applies CoDel shedding before journal ownership transfer, durably appends and applies queued mutations in order, and resolves mutation futures |
+| Scheduler loop | `nimbus-bin` + `Engine` | long-lived Tokio task with `watch` shutdown + `Notify` wakeup | sleeps until the next due scheduled or cron work, then fans out a bounded set of per-tenant ticks via `Engine` so one slow tenant cannot stall others |
+| Engine background runtime | `Engine` | owned `BackgroundExecutor` field with `TaskTracker`, `CancellationToken`, and explicit `quiesce()` | stable home for long-lived engine async workers with engine-owned shutdown semantics |
+| Mutation journal worker | `Engine` + `TenantRuntime` | engine-owned async task | drains the outer mutation admission gate, applies CoDel shedding before journal ownership transfer, durably appends and applies queued mutations in order, and resolves mutation futures |
 | Subscription delivery worker | `TenantRuntime` | tenant-owned dedicated OS thread with `Condvar` queue | bounded subscription reevaluation and delivery preparation, including small-batch queue draining and overlap-aware work merging before reevaluation |
 | Runtime executor | Convex adapter | oversubscribed OS worker pool; each worker owns one current-thread Tokio runtime and one worker loop; JS permits remain separately bounded | V8 invocation execution, permit suspend/resume during async host I/O, and per-tenant active/in-flight/queued runtime admission |
-| Storage async boundary | `Service` + backend-specific tenant or usage adapters | storage-owned `BackgroundExecutor` handle plus read/write semaphores | bounded tenant reads, writes, journal work, and usage operations on the service-owned storage executor; the tenant path is migration-selectable today while the usage path remains redb-backed |
+| Storage async boundary | `Engine` + backend-specific tenant or usage adapters | storage-owned `BackgroundExecutor` handle plus read/write semaphores | bounded tenant reads, writes, journal work, and usage operations on the engine-owned storage executor; the tenant path is migration-selectable today while the usage path remains redb-backed |
 | Session child tasks | WebSocket session / runtime subscription | `OwnedTaskSet` over Tokio `JoinSet` | sender, forwarder, bridge, and bootstrap tasks owned by the parent session |
 | Invocation watchdogs | `RuntimeExecutor` | shared `WatchdogTimer` thread plus per-invocation registrations | timeout and external-cancellation termination of a V8 isolate without per-invocation watchdog thread churn |
 
 The most important ownership split is between request execution and durable
-background work. Request-scoped paths may wait on Service-owned work, but they
+background work. Request-scoped paths may wait on Engine-owned work, but they
 must not be the lifetime owner of that work.
 
-Service owns its engine and storage executors as struct fields, not process-wide
+Engine owns its engine and storage executors as struct fields, not process-wide
 statics. Both executors support a two-phase shutdown model: `quiesce()`
 refuses new work and drains in-flight tasks, then runtime drop provides the
 stop phase. Storage blocking work runs on the storage-owned executor instead of
@@ -714,11 +743,11 @@ worker-local beneath that seam.
   storage/API, node-local lifecycle, credential, or `_nimbus` system evidence
   paths can consume it. The module name is broad; tenant isolation remains the
   security concept and the explicit type/event naming convention.
-- `service_registry.rs` / `service_manager.rs` — runtime service-binding seam.
-  Snapshot reads and activation are now split intentionally: the sync runtime
-  path only sees already-ready in-memory bindings, while async `ctx.services.get`
-  calls can start and wait for declared services through cancellable sandbox
-  activation plus readiness polling.
+- `service_registry.rs` / `service_manager.rs` — tenant-scoped service
+  lifecycle and binding seam. Declared service activation and readiness are
+  reached through the explicit SDK/control-plane path or a Nimbus-managed
+  isolate host transport that is installed only for an allowed tier, principal,
+  and exact service grant set.
 - `http/` — Nimbus-native HTTP handlers. Read, control, and durable write routes all await async engine methods directly. Write handlers thread request disconnect cancellation to the engine, but post-commit disconnects remain transport-only failures and do not roll back durable writes.
 - `local_server/` — Server-owned localhost security boundary. Owns platform
   path resolution, `server.json` discovery, local admin token lifecycle and
@@ -777,17 +806,17 @@ worker-local beneath that seam.
   bundle per concern.
 - `convex/host_bridge/read_tracking/` — Runtime read-set tracking used by runtime-backed Convex support subscriptions for narrower-than-table-level invalidation.
 - `protocol.rs` — Request/response DTOs. `ClientMessage` (Subscribe/Unsubscribe) and `ServerMessage` (SubscriptionResult/Error).
-- `sandbox.rs` — `SandboxCatalog` and `EmptySandboxCatalog`: server-owned
+- `sandbox.rs` — `ServiceInstanceCatalog` and `EmptyServiceInstanceCatalog`: server-owned
   service-discovery seam for mapping tenant-and-name lookups onto sandbox
   handles without coupling `nimbus-sandbox` directly into request handlers.
-- `state.rs` — `AppState` holds the shared `Service`, optional Convex support registry, `LicenseState`, and the injected `SandboxCatalog`. `AppError` maps `Error` variants to HTTP status codes.
+- `state.rs` — `AppState` holds the shared `Service`, optional Convex support registry, `LicenseState`, and the injected `ServiceInstanceCatalog`. `AppError` maps `Error` variants to HTTP status codes.
 
 **`nimbus`** — Public facade crate for embedders. Re-exports stable types from `nimbus-core`, `nimbus-engine`, `nimbus-runtime`, `nimbus-sandbox`, `nimbus-server`, and `nimbus-storage` so downstream consumers can usually depend on one crate. Low-level localhost-security records, discovery helpers, and router-construction overloads stay on `nimbus-server` so the facade does not become an implementation-detail bucket.
 
 **`nimbus-bin`** — CLI entry point. `main.rs` is the thin command root, while
 `serve/` owns the serve-command composition seam: JSON config and env loading,
 provider selection, precedence merging into typed
-`ServicePersistenceConfig`, runtime-limit defaults, and the server boot path
+`EnginePersistenceConfig`, runtime-limit defaults, and the server boot path
 that loads tenants with scheduled work, spawns the scheduler, optionally loads
 the Convex registry and sandbox-backed services, starts the server, and
 handles graceful shutdown. `serve/config.rs` now resolves file, env, and CLI
@@ -919,11 +948,11 @@ routing, pools, and lifecycle entrypoints for embedded or external backends.
 
 At the service boundary, model persistence inputs as:
 
-- `ServicePersistenceConfig` for the whole service
+- `EnginePersistenceConfig` for the whole service
 - `TenantProviderConfig` for tenant-scoped persistence
 - `ControlPlaneConfig` for cross-tenant control and usage state
 
-`ServicePersistenceConfig` should keep tenant persistence and cross-tenant
+`EnginePersistenceConfig` should keep tenant persistence and cross-tenant
 control-path configuration separate so a provider change for tenant data does
 not silently move global metering or future control-plane state with it.
 
@@ -961,14 +990,14 @@ Use separate validated axes such as:
 Then layer provider-owned `TenantRoutingConfig`, `PoolConfig`, and credential
 configuration on top of those axes.
 
-Current embedded constructors such as `Service::new(data_dir)` and
-`Service::new_with_embedded_provider(data_dir, EmbeddedProviderKind)` are
+Current embedded constructors such as `Engine::new(data_dir)` and
+`Engine::new_with_embedded_provider(data_dir, EmbeddedProviderKind)` are
 still useful convenience wrappers, but they should eventually lower into the
 typed config model above instead of becoming the universal construction API.
 
 Operator-facing startup config should follow the same rule. CLI flags,
 environment variables, and config files should lower into one typed
-`ServicePersistenceConfig` model. Resource identity and execution intent
+`EnginePersistenceConfig` model. Resource identity and execution intent
 should stay separate, so a canonical Postgres connection value such as
 `NIMBUS_POSTGRES_URL` can be reused across runtime, test, and benchmark
 surfaces while the invoking command or profile chooses the intent.
@@ -1051,7 +1080,7 @@ architecture discussion.
    visibility boundary.
 
 4. **Every mutation — whether from HTTP, WebSocket, the scheduler, or the
-   runtime — flows through `Service::apply_mutation`.** There is no separate
+   runtime — flows through `Engine::apply_mutation`.** There is no separate
    code path for scheduled or runtime-originated mutations. Schema validation
    and subscription fan-out are guaranteed.
 
@@ -1083,13 +1112,13 @@ architecture discussion.
 9. **Runtime bundles are integrity-checked.** The SHA-256 hash of the bundle
    is verified before every invocation. A tampered or stale bundle is rejected.
 
-10. **Runtime host operations go through the same Service path as direct
+10. **Runtime host operations go through the same Engine path as direct
    calls.** `ctx.db.insert(...)` inside a V8 handler ultimately calls the
-   same `Service::apply_mutation` as an HTTP `POST`. No bypass.
+   same `Engine::apply_mutation` as an HTTP `POST`. No bypass.
 
-11. **Long-lived async engine workers are service-owned.** Journal workers and
+11. **Long-lived async engine workers are engine-owned.** Journal workers and
    similar background write-path tasks must be spawned from a stable runtime
-   owned by `Service`, not from request-scoped executors or per-invocation
+   owned by `Engine`, not from request-scoped executors or per-invocation
    current-thread runtimes. Otherwise queued durable writes can outlive the
    runtime that was supposed to resolve their futures.
 
@@ -1102,16 +1131,16 @@ architecture discussion.
 ```mermaid
 sequenceDiagram
     participant C as Client
-    participant Svc as Service
-    participant JW as Journal Worker (service-owned)
+    participant Eng as Engine
+    participant JW as Journal Worker (engine-owned)
     participant St as TenantStore
     participant Sub as SubscriptionRegistry
     participant WS as Subscribed Client
 
-    C->>Svc: insert_document_async / ctx.runMutation
-    Svc->>Svc: Schema validation + access policy
-    Svc->>JW: enqueue queued mutation request
-    Note over Svc,JW: Worker lifetime is owned by Service,<br/>not by the caller runtime
+    C->>Eng: insert_document_async / ctx.runMutation
+    Eng->>Eng: Schema validation + access policy
+    Eng->>JW: enqueue queued mutation request
+    Note over Eng,JW: Worker lifetime is owned by Engine,<br/>not by the caller runtime
     JW->>St: Append durable mutation record
     Note over St: Durable ordered journal append
     St-->>JW: Acknowledged sequence
@@ -1119,15 +1148,15 @@ sequenceDiagram
     JW->>St: Materialize document + index changes
     Note over St: Ordered apply advances applied watermark
     JW->>Sub: affected subscriptions for applied batch
-    Sub-->>Svc: matching subscription ids
-    Svc->>Svc: enqueue one coalesced bounded subscription work item
-    JW-->>Svc: resolve queued mutation future
-    Svc-->>C: mutation returns
+    Sub-->>Eng: matching subscription ids
+    Eng->>Eng: enqueue one coalesced bounded subscription work item
+    JW-->>Eng: resolve queued mutation future
+    Eng-->>C: mutation returns
 
     loop Background delivery worker
-        Svc->>St: evaluate_with_index
-        Note over Svc,St: Reads observe applied state only,<br/>then use index scan or table scan
-        Svc-->>WS: SubscriptionUpdate Result
+        Eng->>St: evaluate_with_index
+        Note over Eng,St: Reads observe applied state only,<br/>then use index scan or table scan
+        Eng-->>WS: SubscriptionUpdate Result
     end
 ```
 
@@ -1140,14 +1169,14 @@ sequenceDiagram
     participant Exec as RuntimeExecutor
     participant V8 as V8 Isolate
     participant HB as HostBridge async path
-    participant Svc as Service
+    participant Eng as Engine
 
     C->>Srv: Convex mutation/query/action
     Srv->>Exec: invoke(bundle, request)
     Exec->>V8: Run ESM handler
     V8->>HB: async host op (ctx.db.insert, ctx.db.query, ...)
-    HB->>Svc: await Service / storage future
-    Svc-->>HB: Result
+    HB->>Eng: await Engine / storage future
+    Eng-->>HB: Result
     HB-->>V8: host op result
     V8-->>Exec: handler return value
     Exec-->>Srv: JSON result
@@ -1159,24 +1188,24 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant C as Client
-    participant Svc as Service
+    participant Eng as Engine
     participant St as TenantStore
     participant Sch as Scheduler
 
-    C->>Svc: schedule_mutation
-    Svc->>St: SCHEDULED_JOBS.insert
-    Svc-->>C: job_id
+    C->>Eng: schedule_mutation
+    Eng->>St: SCHEDULED_JOBS.insert
+    Eng-->>C: job_id
 
     Note over Sch: Sleep until next due work<br/>or a `Notify` wakeup
 
     Sch->>St: claim_due_jobs
     Note over St: Atomic move from<br/>SCHEDULED to RUNNING
-    Sch->>Svc: insert/update/delete_document
-    Note over Svc: Same write path as above
+    Sch->>Eng: insert/update/delete_document
+    Note over Eng: Same write path as above
     Sch->>St: complete + record result
 
-    C->>Svc: GET /schedule/history/job_id
-    Svc-->>C: outcome + error if failed
+    C->>Eng: GET /schedule/history/job_id
+    Eng-->>C: outcome + error if failed
 ```
 
 ---
@@ -1336,7 +1365,7 @@ host calls await those engine or storage futures directly instead of wrapping
 them in an extra blocking task. The scheduler loop sleeps until the next due
 work or a wakeup notification. The `RuntimeExecutor` runs V8 on dedicated OS
 threads with worker-local current-thread Tokio runtimes. Long-lived engine
-workers such as the mutation journal run on the Service-owned background
+workers such as the mutation journal run on the Engine-owned background
 runtime, while subscription delivery remains a tenant-owned dedicated thread.
 Timeout and external-cancellation termination for V8 now run through one shared
 executor-owned `WatchdogTimer` thread instead of spawning per-invocation
@@ -1344,7 +1373,7 @@ watchdog threads.
 That delivery worker drains a small ready batch and merges overlapping queued
 subscription work before reevaluation so write storms collapse redundant
 delivery passes earlier than the stale-sequence check alone.
-Storage blocking work is executed through the Service-owned storage
+Storage blocking work is executed through the Engine-owned storage
 `BackgroundExecutor`, still bounded by semaphores at the storage layer. Async
 mutations enter a per-tenant outer admission gate before the journal queue, so
 overload shedding happens at admission while admitted journal work retains its

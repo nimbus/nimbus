@@ -87,7 +87,7 @@ Generated public evidence currently reports:
 
 The contract correctly says "not full Node built-in compatibility." The concern
 is not overclaiming in the latest evidence page; it is that older prose such as
-`docs/architecture/runtime/deno-vs-neovex-node-compat.md` can sound more final
+`docs/architecture/runtime/deno-vs-nimbus-node-compat.md` can sound more final
 than the generated evidence, and the active supplementary failure inventory
 still records process-release-shape gaps.
 

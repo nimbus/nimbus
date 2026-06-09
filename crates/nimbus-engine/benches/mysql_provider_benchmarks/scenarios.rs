@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn create_tenant_service(
+pub(super) async fn create_tenant_engine(
     label: &str,
     tenant_label: &str,
     backend: MeasuredBackend,
@@ -10,21 +10,21 @@ pub(super) async fn create_tenant_service(
         MeasuredBackend::Sqlite => {
             let bench_dir = Arc::new(BenchDir::new(&format!("{label}-sqlite"))?);
             let data_dir = bench_dir.path().to_path_buf();
-            let service = Arc::new(
-                Service::new_with_persistence_config(ServicePersistenceConfig::embedded(
+            let engine = Arc::new(
+                Engine::new_with_persistence_config(EnginePersistenceConfig::embedded(
                     &data_dir,
                     EmbeddedProviderKind::Sqlite,
                 ))
                 .await?,
             );
             let tenant_id = benchmark_tenant_id(tenant_label)?;
-            service.create_tenant_async(tenant_id.clone()).await?;
+            engine.create_tenant_async(tenant_id.clone()).await?;
             Ok(TenantFixture {
                 resource: LiveResource::Sqlite {
                     bench_dir,
                     data_dir,
                 },
-                service,
+                engine,
                 tenant_id,
             })
         }
@@ -41,21 +41,21 @@ pub(super) async fn create_tenant_service(
                 Some(1),
                 Some(4),
             )?;
-            let service = Arc::new(
-                Service::new_with_persistence_config(mysql_service_config(
+            let engine = Arc::new(
+                Engine::new_with_persistence_config(mysql_engine_config(
                     control_dir.path(),
                     &provider_config,
                 ))
                 .await?,
             );
             let tenant_id = benchmark_tenant_id(tenant_label)?;
-            service.create_tenant_async(tenant_id.clone()).await?;
+            engine.create_tenant_async(tenant_id.clone()).await?;
             Ok(TenantFixture {
                 resource: LiveResource::MySql {
                     control_dir,
                     provider_config,
                 },
-                service,
+                engine,
                 tenant_id,
             })
         }
@@ -68,7 +68,7 @@ pub(super) async fn create_crud_fixture(
     backend: MeasuredBackend,
     environment: &BenchmarkEnvironment,
 ) -> BenchResult<TenantFixture> {
-    create_tenant_service(label, tenant_label, backend, environment).await
+    create_tenant_engine(label, tenant_label, backend, environment).await
 }
 
 pub(super) async fn create_point_read_fixture(
@@ -77,12 +77,12 @@ pub(super) async fn create_point_read_fixture(
     backend: MeasuredBackend,
     environment: &BenchmarkEnvironment,
 ) -> BenchResult<PointReadFixture> {
-    let tenant = create_tenant_service(label, tenant_label, backend, environment).await?;
+    let tenant = create_tenant_engine(label, tenant_label, backend, environment).await?;
     let mut ids = Vec::with_capacity(POINT_READ_DOCUMENTS);
     for rank in 0..POINT_READ_DOCUMENTS {
         ids.push(
             tenant
-                .service
+                .engine
                 .insert_document_async(
                     tenant.tenant_id.clone(),
                     tasks_table(),
@@ -107,14 +107,14 @@ pub(super) async fn create_indexed_query_fixture(
     backend: MeasuredBackend,
     environment: &BenchmarkEnvironment,
 ) -> BenchResult<QueryFixture> {
-    let tenant = create_tenant_service(label, tenant_label, backend, environment).await?;
+    let tenant = create_tenant_engine(label, tenant_label, backend, environment).await?;
     tenant
-        .service
+        .engine
         .set_table_schema_async(tenant.tenant_id.clone(), single_field_schema())
         .await?;
     for rank in 0..INDEXED_QUERY_DOCUMENTS {
         tenant
-            .service
+            .engine
             .insert_document_async(
                 tenant.tenant_id.clone(),
                 tasks_table(),
@@ -146,16 +146,16 @@ pub(super) async fn create_composite_query_fixture(
     backend: MeasuredBackend,
     environment: &BenchmarkEnvironment,
 ) -> BenchResult<QueryFixture> {
-    let tenant = create_tenant_service(label, tenant_label, backend, environment).await?;
+    let tenant = create_tenant_engine(label, tenant_label, backend, environment).await?;
     tenant
-        .service
+        .engine
         .set_table_schema_async(tenant.tenant_id.clone(), composite_schema())
         .await?;
     for rank in 0..INDEXED_QUERY_DOCUMENTS {
         let team = if rank % 2 == 0 { "alpha" } else { "beta" };
         let status = if rank % 3 == 0 { "open" } else { "done" };
         tenant
-            .service
+            .engine
             .insert_document_async(
                 tenant.tenant_id.clone(),
                 tasks_table(),
@@ -193,10 +193,10 @@ pub(super) async fn create_journal_fixture(
     backend: MeasuredBackend,
     environment: &BenchmarkEnvironment,
 ) -> BenchResult<QueryFixture> {
-    let tenant = create_tenant_service(label, tenant_label, backend, environment).await?;
+    let tenant = create_tenant_engine(label, tenant_label, backend, environment).await?;
     for rank in 0..JOURNAL_DOCUMENTS {
         tenant
-            .service
+            .engine
             .insert_document_async(
                 tenant.tenant_id.clone(),
                 tasks_table(),
@@ -219,9 +219,9 @@ pub(super) async fn create_subscription_fixture(
     backend: MeasuredBackend,
     environment: &BenchmarkEnvironment,
 ) -> BenchResult<SubscriptionFixture> {
-    let tenant = create_tenant_service(label, tenant_label, backend, environment).await?;
+    let tenant = create_tenant_engine(label, tenant_label, backend, environment).await?;
     let (registrations, receivers) =
-        register_subscription_receivers(&tenant.service, &tenant.tenant_id).await?;
+        register_subscription_receivers(&tenant.engine, &tenant.tenant_id).await?;
     Ok(SubscriptionFixture {
         tenant,
         registrations,
@@ -234,12 +234,12 @@ pub(super) async fn create_mixed_load_fixture(
     backend: MeasuredBackend,
     environment: &BenchmarkEnvironment,
 ) -> BenchResult<MixedLoadFixture> {
-    let resource_service = match backend {
+    let resource_engine = match backend {
         MeasuredBackend::Sqlite => {
             let bench_dir = Arc::new(BenchDir::new(&format!("{label}-sqlite"))?);
             let data_dir = bench_dir.path().to_path_buf();
-            let service = Arc::new(
-                Service::new_with_persistence_config(ServicePersistenceConfig::embedded(
+            let engine = Arc::new(
+                Engine::new_with_persistence_config(EnginePersistenceConfig::embedded(
                     &data_dir,
                     EmbeddedProviderKind::Sqlite,
                 ))
@@ -250,7 +250,7 @@ pub(super) async fn create_mixed_load_fixture(
                     bench_dir,
                     data_dir,
                 },
-                service,
+                engine,
             )
         }
         MeasuredBackend::MySqlLoopback | MeasuredBackend::MySqlInjectedRtt => {
@@ -266,8 +266,8 @@ pub(super) async fn create_mixed_load_fixture(
                 Some(1),
                 Some(4),
             )?;
-            let service = Arc::new(
-                Service::new_with_persistence_config(mysql_service_config(
+            let engine = Arc::new(
+                Engine::new_with_persistence_config(mysql_engine_config(
                     control_dir.path(),
                     &provider_config,
                 ))
@@ -278,22 +278,22 @@ pub(super) async fn create_mixed_load_fixture(
                     control_dir,
                     provider_config,
                 },
-                service,
+                engine,
             )
         }
     };
-    let (resource, service) = resource_service;
+    let (resource, engine) = resource_engine;
     let mut tenant_states = Vec::with_capacity(MIXED_LOAD_TENANTS);
     for tenant_index in 0..MIXED_LOAD_TENANTS {
         let tenant_id = TenantId::new(format!("tenant-{tenant_index}"))?;
-        service.create_tenant_async(tenant_id.clone()).await?;
-        service
+        engine.create_tenant_async(tenant_id.clone()).await?;
+        engine
             .set_table_schema_async(tenant_id.clone(), single_field_schema())
             .await?;
         let mut ids = Vec::with_capacity(MIXED_LOAD_OPS_PER_TENANT);
         for rank in 0..MIXED_LOAD_OPS_PER_TENANT {
             ids.push(
-                service
+                engine
                     .insert_document_async(
                         tenant_id.clone(),
                         tasks_table(),
@@ -316,7 +316,7 @@ pub(super) async fn create_mixed_load_fixture(
     }
     Ok(MixedLoadFixture {
         resource,
-        service,
+        engine,
         tenant_states,
     })
 }
@@ -330,8 +330,8 @@ pub(super) async fn create_tenant_lifecycle_fixture(
         MeasuredBackend::Sqlite => {
             let bench_dir = Arc::new(BenchDir::new(&format!("{label}-sqlite"))?);
             let data_dir = bench_dir.path().to_path_buf();
-            let creator_service = Arc::new(
-                Service::new_with_persistence_config(ServicePersistenceConfig::embedded(
+            let creator_engine = Arc::new(
+                Engine::new_with_persistence_config(EnginePersistenceConfig::embedded(
                     &data_dir,
                     EmbeddedProviderKind::Sqlite,
                 ))
@@ -342,12 +342,12 @@ pub(super) async fn create_tenant_lifecycle_fixture(
                     bench_dir: bench_dir.clone(),
                     data_dir: data_dir.clone(),
                 },
-                creator_service: creator_service.clone(),
+                creator_engine: creator_engine.clone(),
                 opener_resource: LiveResource::Sqlite {
                     bench_dir,
                     data_dir,
                 },
-                opener_service: creator_service,
+                opener_engine: creator_engine,
             })
         }
         MeasuredBackend::MySqlLoopback | MeasuredBackend::MySqlInjectedRtt => {
@@ -367,15 +367,15 @@ pub(super) async fn create_tenant_lifecycle_fixture(
                 Some(1),
                 Some(4),
             )?;
-            let creator_service = Arc::new(
-                Service::new_with_persistence_config(mysql_service_config(
+            let creator_engine = Arc::new(
+                Engine::new_with_persistence_config(mysql_engine_config(
                     creator_control.path(),
                     &provider_config,
                 ))
                 .await?,
             );
-            let opener_service = Arc::new(
-                Service::new_with_persistence_config(mysql_service_config(
+            let opener_engine = Arc::new(
+                Engine::new_with_persistence_config(mysql_engine_config(
                     opener_control.path(),
                     &provider_config,
                 ))
@@ -386,12 +386,12 @@ pub(super) async fn create_tenant_lifecycle_fixture(
                     control_dir: creator_control,
                     provider_config: provider_config.clone(),
                 },
-                creator_service,
+                creator_engine,
                 opener_resource: LiveResource::MySql {
                     control_dir: opener_control,
                     provider_config: provider_config.clone(),
                 },
-                opener_service,
+                opener_engine,
             })
         }
     }
@@ -402,8 +402,8 @@ pub(super) async fn freeze_point_read_seed(
     context: &str,
 ) -> BenchResult<PointReadSeed> {
     let PointReadFixture { tenant, ids } = fixture;
-    quiesce_service(&tenant.service, context).await?;
-    drop(tenant.service);
+    quiesce_engine(&tenant.engine, context).await?;
+    drop(tenant.engine);
     Ok(PointReadSeed {
         resource: tenant.resource.into_seed_resource(),
         tenant_id: tenant.tenant_id,
@@ -416,8 +416,8 @@ pub(super) async fn freeze_query_seed(
     context: &str,
 ) -> BenchResult<QuerySeed> {
     let QueryFixture { tenant, query } = fixture;
-    quiesce_service(&tenant.service, context).await?;
-    drop(tenant.service);
+    quiesce_engine(&tenant.engine, context).await?;
+    drop(tenant.engine);
     Ok(QuerySeed {
         resource: tenant.resource.into_seed_resource(),
         tenant_id: tenant.tenant_id,
@@ -430,8 +430,8 @@ pub(super) async fn freeze_journal_seed(
     context: &str,
 ) -> BenchResult<JournalSeed> {
     let QueryFixture { tenant, .. } = fixture;
-    quiesce_service(&tenant.service, context).await?;
-    drop(tenant.service);
+    quiesce_engine(&tenant.engine, context).await?;
+    drop(tenant.engine);
     Ok(JournalSeed {
         resource: tenant.resource.into_seed_resource(),
         tenant_id: tenant.tenant_id,
@@ -444,11 +444,11 @@ pub(super) async fn freeze_mixed_load_seed(
 ) -> BenchResult<MixedLoadSeed> {
     let MixedLoadFixture {
         resource,
-        service,
+        engine,
         tenant_states,
     } = fixture;
-    quiesce_service(&service, context).await?;
-    drop(service);
+    quiesce_engine(&engine, context).await?;
+    drop(engine);
     Ok(MixedLoadSeed {
         resource: resource.into_seed_resource(),
         tenant_states,
@@ -456,9 +456,9 @@ pub(super) async fn freeze_mixed_load_seed(
 }
 
 impl LiveResource {
-    pub(super) async fn cleanup(&self, service: Arc<Service>, context: &str) -> BenchResult<()> {
-        quiesce_service(&service, context).await?;
-        drop(service);
+    pub(super) async fn cleanup(&self, engine: Arc<Engine>, context: &str) -> BenchResult<()> {
+        quiesce_engine(&engine, context).await?;
+        drop(engine);
         match self {
             Self::Sqlite {
                 bench_dir,
@@ -500,12 +500,12 @@ impl LiveResource {
 }
 
 impl SeedResource {
-    pub(super) async fn reopen_service(
+    pub(super) async fn reopen_engine(
         &self,
         label: &str,
         backend: MeasuredBackend,
         environment: &BenchmarkEnvironment,
-    ) -> BenchResult<(Arc<Service>, ReopenedResource)> {
+    ) -> BenchResult<(Arc<Engine>, ReopenedResource)> {
         match self {
             Self::Sqlite { data_dir, .. } => {
                 let cloned = Arc::new(BenchDir::new(&format!(
@@ -513,14 +513,14 @@ impl SeedResource {
                     backend.label().replace([' ', '(', ')'], "-")
                 ))?);
                 copy_dir_all(data_dir, cloned.path())?;
-                let service = Arc::new(
-                    Service::new_with_persistence_config(ServicePersistenceConfig::embedded(
+                let engine = Arc::new(
+                    Engine::new_with_persistence_config(EnginePersistenceConfig::embedded(
                         cloned.path(),
                         EmbeddedProviderKind::Sqlite,
                     ))
                     .await?,
                 );
-                Ok((service, ReopenedResource::Sqlite { bench_dir: cloned }))
+                Ok((engine, ReopenedResource::Sqlite { bench_dir: cloned }))
             }
             Self::MySql { provider_config } => {
                 let control_dir = Arc::new(BenchDir::new(&format!(
@@ -532,15 +532,15 @@ impl SeedResource {
                     .connection_string(backend)
                     .expect("mysql backend should have connection string")
                     .to_string();
-                let service = Arc::new(
-                    Service::new_with_persistence_config(mysql_service_config(
+                let engine = Arc::new(
+                    Engine::new_with_persistence_config(mysql_engine_config(
                         control_dir.path(),
                         &reopened_config,
                     ))
                     .await?,
                 );
                 Ok((
-                    service,
+                    engine,
                     ReopenedResource::MySql {
                         control_dir,
                         provider_config: reopened_config,
@@ -573,9 +573,9 @@ impl SeedResource {
 }
 
 impl ReopenedResource {
-    pub(super) async fn cleanup(self, service: Arc<Service>, context: &str) -> BenchResult<()> {
-        quiesce_service(&service, context).await?;
-        drop(service);
+    pub(super) async fn cleanup(self, engine: Arc<Engine>, context: &str) -> BenchResult<()> {
+        quiesce_engine(&engine, context).await?;
+        drop(engine);
         match self {
             Self::Sqlite { bench_dir } => {
                 drop(bench_dir);
@@ -599,24 +599,24 @@ impl ReopenedResource {
 impl TenantLifecycleFixture {
     pub(super) async fn cleanup(self, context: &str) -> BenchResult<()> {
         self.creator_resource
-            .cleanup(self.creator_service.clone(), &format!("{context} creator"))
+            .cleanup(self.creator_engine.clone(), &format!("{context} creator"))
             .await?;
         self.opener_resource
-            .cleanup(self.opener_service.clone(), &format!("{context} opener"))
+            .cleanup(self.opener_engine.clone(), &format!("{context} opener"))
             .await?;
         Ok(())
     }
 }
 
 pub(super) async fn exercise_crud_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     document_count: usize,
 ) -> BenchResult<()> {
     let mut ids = Vec::with_capacity(document_count);
     for rank in 0..document_count {
         ids.push(
-            service
+            engine
                 .insert_document_async(
                     tenant_id.clone(),
                     tasks_table(),
@@ -630,7 +630,7 @@ pub(super) async fn exercise_crud_sample(
         );
     }
     for (rank, id) in ids.iter().cloned().enumerate() {
-        let _ = service
+        let _ = engine
             .update_document_async(
                 tenant_id.clone(),
                 tasks_table(),
@@ -640,7 +640,7 @@ pub(super) async fn exercise_crud_sample(
             .await?;
     }
     for id in ids {
-        service
+        engine
             .delete_document_async(tenant_id.clone(), tasks_table(), id)
             .await?;
     }
@@ -648,14 +648,14 @@ pub(super) async fn exercise_crud_sample(
 }
 
 pub(super) async fn exercise_point_read_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     ids: &[DocumentId],
     batch_size: usize,
 ) -> BenchResult<()> {
     for step in 0..batch_size {
         let id = ids[(step * 17) % ids.len()].clone();
-        let document = service
+        let document = engine
             .get_document_async(tenant_id.clone(), tasks_table(), id)
             .await?;
         black_box(document);
@@ -664,13 +664,13 @@ pub(super) async fn exercise_point_read_sample(
 }
 
 pub(super) async fn exercise_query_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     query: &Query,
     batch_size: usize,
 ) -> BenchResult<()> {
     for _ in 0..batch_size {
-        let documents = service
+        let documents = engine
             .query_documents_async(tenant_id.clone(), query.clone())
             .await?;
         black_box(documents);
@@ -679,10 +679,10 @@ pub(super) async fn exercise_query_sample(
 }
 
 pub(super) async fn exercise_journal_stream_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
 ) -> BenchResult<()> {
-    let page = service
+    let page = engine
         .stream_durable_journal_async(tenant_id.clone(), SequenceNumber(0), JOURNAL_STREAM_LIMIT)
         .await?;
     black_box(page);
@@ -690,10 +690,10 @@ pub(super) async fn exercise_journal_stream_sample(
 }
 
 pub(super) async fn exercise_journal_bootstrap_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
 ) -> BenchResult<()> {
-    let bootstrap = service
+    let bootstrap = engine
         .export_durable_journal_bootstrap_async(tenant_id.clone())
         .await?;
     black_box(bootstrap);
@@ -702,22 +702,22 @@ pub(super) async fn exercise_journal_bootstrap_sample(
 
 pub(super) async fn exercise_journal_workload_sample(
     workload: WorkloadKind,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
 ) -> BenchResult<()> {
     match workload {
         WorkloadKind::DurableJournalStreamLatency => {
-            exercise_journal_stream_sample(service, tenant_id).await
+            exercise_journal_stream_sample(engine, tenant_id).await
         }
         WorkloadKind::DurableJournalBootstrapLatency => {
-            exercise_journal_bootstrap_sample(service, tenant_id).await
+            exercise_journal_bootstrap_sample(engine, tenant_id).await
         }
         _ => Err(format!("invalid journal workload: {}", workload.label()).into()),
     }
 }
 
 pub(super) async fn exercise_subscription_bootstrap_catchup_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
 ) -> BenchResult<()> {
     let token = format!("bootstrap-{}", BENCH_COUNTER.fetch_add(1, Ordering::SeqCst));
@@ -728,7 +728,7 @@ pub(super) async fn exercise_subscription_bootstrap_catchup_sample(
         limit: None,
     };
     let (sender, mut receiver) = mpsc::channel(8);
-    let registration = service
+    let registration = engine
         .subscribe_async(tenant_id.clone(), query, token.clone(), sender)
         .await?;
     let bootstrap = receiver
@@ -736,7 +736,7 @@ pub(super) async fn exercise_subscription_bootstrap_catchup_sample(
         .await
         .ok_or("subscription bootstrap should arrive")?;
     black_box(bootstrap);
-    let _ = service
+    let _ = engine
         .insert_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -756,7 +756,7 @@ pub(super) async fn exercise_subscription_bootstrap_catchup_sample(
 }
 
 pub(super) async fn register_subscription_receivers(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
 ) -> BenchResult<(
     Vec<SubscriptionRegistration>,
@@ -767,7 +767,7 @@ pub(super) async fn register_subscription_receivers(
     let mut receivers = Vec::with_capacity(SUBSCRIPTION_FANOUT_COUNT);
     for index in 0..SUBSCRIPTION_FANOUT_COUNT {
         let (sender, mut receiver) = mpsc::channel(8);
-        let registration = service
+        let registration = engine
             .subscribe_async(
                 tenant_id.clone(),
                 query.clone(),
@@ -787,11 +787,11 @@ pub(super) async fn register_subscription_receivers(
 }
 
 pub(super) async fn exercise_subscription_fanout_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     receivers: &mut [mpsc::Receiver<SubscriptionUpdate>],
 ) -> BenchResult<()> {
-    let _ = service
+    let _ = engine
         .insert_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -820,7 +820,7 @@ pub(super) async fn exercise_subscription_fanout_sample(
 }
 
 pub(super) async fn exercise_mixed_load_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_states: &[TenantState],
     tenant_limit: usize,
     ops_per_tenant: usize,
@@ -832,7 +832,7 @@ pub(super) async fn exercise_mixed_load_sample(
         .collect::<Vec<_>>();
     let mut handles = Vec::with_capacity(selected.len());
     for (task_index, state) in selected.into_iter().enumerate() {
-        let service = service.clone();
+        let engine = engine.clone();
         handles.push(tokio::spawn(async move {
             let query = Query {
                 table: tasks_table(),
@@ -846,7 +846,7 @@ pub(super) async fn exercise_mixed_load_sample(
                     0 => {
                         let document = tokio::time::timeout(
                             Duration::from_secs(MIXED_LOAD_OPERATION_TIMEOUT_SECS),
-                            service.get_document_async(state.tenant_id.clone(), tasks_table(), id),
+                            engine.get_document_async(state.tenant_id.clone(), tasks_table(), id),
                         )
                         .await
                         .map_err(|_| {
@@ -860,7 +860,7 @@ pub(super) async fn exercise_mixed_load_sample(
                     1 => {
                         let documents = tokio::time::timeout(
                             Duration::from_secs(MIXED_LOAD_OPERATION_TIMEOUT_SECS),
-                            service.query_documents_async(state.tenant_id.clone(), query.clone()),
+                            engine.query_documents_async(state.tenant_id.clone(), query.clone()),
                         )
                         .await
                         .map_err(|_| {
@@ -874,7 +874,7 @@ pub(super) async fn exercise_mixed_load_sample(
                     2 => {
                         let _ = tokio::time::timeout(
                             Duration::from_secs(MIXED_LOAD_OPERATION_TIMEOUT_SECS),
-                            service.insert_document_async(
+                            engine.insert_document_async(
                                 state.tenant_id.clone(),
                                 tasks_table(),
                                 serde_json::Map::from_iter([
@@ -901,7 +901,7 @@ pub(super) async fn exercise_mixed_load_sample(
                     _ => {
                         let _ = tokio::time::timeout(
                             Duration::from_secs(MIXED_LOAD_OPERATION_TIMEOUT_SECS),
-                            service.update_document_async(
+                            engine.update_document_async(
                                 state.tenant_id.clone(),
                                 tasks_table(),
                                 id,
@@ -942,18 +942,18 @@ where
 }
 
 pub(super) async fn exercise_tenant_lifecycle_sample(
-    creator_service: &Arc<Service>,
-    opener_service: &Arc<Service>,
+    creator_engine: &Arc<Engine>,
+    opener_engine: &Arc<Engine>,
 ) -> BenchResult<()> {
     let suffix = BENCH_COUNTER.fetch_add(1, Ordering::SeqCst);
     let tenant_id = TenantId::new(format!("bench-tenant-lifecycle-{suffix}"))?;
-    creator_service
+    creator_engine
         .create_tenant_async(tenant_id.clone())
         .await?;
-    opener_service
+    opener_engine
         .ensure_tenant_exists_async(tenant_id.clone())
         .await?;
-    creator_service.delete_tenant_async(tenant_id).await?;
+    creator_engine.delete_tenant_async(tenant_id).await?;
     Ok(())
 }
 
@@ -967,8 +967,8 @@ pub(super) async fn observe_pool_pressure(
         Some(POOL_PRESSURE_MAX_CONNECTIONS),
     )?;
     let control_dir = Arc::new(BenchDir::new("pool-pressure")?);
-    let service = Arc::new(
-        Service::new_with_persistence_config(mysql_service_config(
+    let engine = Arc::new(
+        Engine::new_with_persistence_config(mysql_engine_config(
             control_dir.path(),
             &provider_config,
         ))
@@ -977,7 +977,7 @@ pub(super) async fn observe_pool_pressure(
     let observer_pool = Pool::new(Opts::from_url(provider_config.connection_string.as_str())?);
 
     let seeded_fixture = create_pool_pressure_fixture(
-        service.clone(),
+        engine.clone(),
         LiveResource::MySql {
             control_dir: control_dir.clone(),
             provider_config: provider_config.clone(),
@@ -995,7 +995,7 @@ pub(super) async fn observe_pool_pressure(
     for _ in 0..POOL_PRESSURE_SAMPLES {
         let started = Instant::now();
         exercise_pool_pressure_read_sample(
-            &seeded_fixture.tenant.service,
+            &seeded_fixture.tenant.engine,
             &seeded_fixture.tenant.tenant_id,
             &seeded_fixture.ids,
             POOL_PRESSURE_TASKS,
@@ -1013,7 +1013,7 @@ pub(super) async fn observe_pool_pressure(
         .tenant
         .resource
         .cleanup(
-            seeded_fixture.tenant.service.clone(),
+            seeded_fixture.tenant.engine.clone(),
             "pool-pressure observation teardown",
         )
         .await?;
@@ -1080,15 +1080,15 @@ pub(super) async fn sample_pool_backends(
 }
 
 pub(super) async fn create_pool_pressure_fixture(
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     resource: LiveResource,
 ) -> BenchResult<PointReadFixture> {
     let tenant_id = TenantId::new("pool-pressure-tenant")?;
-    service.create_tenant_async(tenant_id.clone()).await?;
+    engine.create_tenant_async(tenant_id.clone()).await?;
     let mut ids = Vec::with_capacity(POINT_READ_DOCUMENTS);
     for rank in 0..POINT_READ_DOCUMENTS {
         ids.push(
-            service
+            engine
                 .insert_document_async(
                     tenant_id.clone(),
                     tasks_table(),
@@ -1107,7 +1107,7 @@ pub(super) async fn create_pool_pressure_fixture(
     Ok(PointReadFixture {
         tenant: TenantFixture {
             resource,
-            service,
+            engine,
             tenant_id,
         },
         ids,
@@ -1115,20 +1115,20 @@ pub(super) async fn create_pool_pressure_fixture(
 }
 
 pub(super) async fn exercise_pool_pressure_read_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     ids: &[DocumentId],
     parallel_tasks: usize,
 ) -> BenchResult<()> {
     let mut handles = Vec::with_capacity(parallel_tasks);
     for task_index in 0..parallel_tasks {
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         let ids = ids.to_vec();
         handles.push(tokio::spawn(async move {
             for step in 0..POINT_READ_BATCH_SIZE {
                 let id = ids[(task_index * 17 + step) % ids.len()].clone();
-                let document = service
+                let document = engine
                     .get_document_async(tenant_id.clone(), tasks_table(), id)
                     .await?;
                 black_box(document);

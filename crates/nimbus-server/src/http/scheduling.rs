@@ -7,7 +7,7 @@ pub(crate) async fn schedule_mutation(
     Json(request): Json<ScheduleRequest>,
 ) -> Result<(StatusCode, Json<ScheduleResponse>), AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.schedule.create")?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let job_id = service
         .schedule_mutation_async(tenant.tenant_id().clone(), request)
         .await?;
@@ -27,7 +27,7 @@ pub(crate) async fn list_scheduled_jobs(
     Path(tenant_id): Path<String>,
 ) -> Result<Json<ScheduledJobsResponse>, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.schedule.list")?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     crate::system_tenant::sync_scheduler_state_for_tenant_async(&service, tenant.tenant_id())
         .await?;
     let jobs = service
@@ -43,7 +43,7 @@ pub(crate) async fn get_scheduled_job_result(
 ) -> Result<Json<ScheduledJobResultResponse>, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.schedule.result")?;
     let job_id = parse_document_id(&job_id)?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let result = service
         .get_scheduled_job_result_async(tenant.tenant_id().clone(), job_id)
         .await?;
@@ -63,7 +63,7 @@ pub(crate) async fn cancel_scheduled_job(
 ) -> Result<StatusCode, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.schedule.cancel")?;
     let job_id = parse_document_id(&job_id)?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     service
         .cancel_scheduled_job_async(tenant.tenant_id().clone(), job_id.clone())
         .await?;
@@ -79,7 +79,7 @@ pub(crate) async fn create_cron_job(
     Json(request): Json<CreateCronRequest>,
 ) -> Result<StatusCode, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.crons.create")?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     service
         .create_cron_job_async(tenant.tenant_id().clone(), request)
         .await?;
@@ -94,7 +94,7 @@ pub(crate) async fn list_cron_jobs(
     Path(tenant_id): Path<String>,
 ) -> Result<Json<CronJobsResponse>, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.crons.list")?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     crate::system_tenant::sync_scheduler_state_for_tenant_async(&service, tenant.tenant_id())
         .await?;
     let crons = service
@@ -109,7 +109,7 @@ pub(crate) async fn delete_cron_job(
     Path((tenant_id, name)): Path<(String, String)>,
 ) -> Result<StatusCode, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.crons.delete")?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     service
         .delete_cron_job_async(tenant.tenant_id().clone(), name.clone())
         .await?;

@@ -120,17 +120,20 @@ grounded in the verified facts, not source-backed findings.** Flagged inline.
 
 ## What this drives in the Nimbus plan
 
-**Core thesis validated (high, 3-0).** Withholding the `services` op/capability
-from the Convex/Firebase host bridge is a *sound* boundary at the embedder/op
-layer — the same mechanism Convex, Cloudflare, and Deno embedders use in
-production. → Confirms plan **layer 3** (ocap `ctx` + `SandboxCapabilityHost`).
+**Core thesis validated (high, 3-0).** Withholding the privileged service
+op/capability from ungranted runtime isolates is a *sound* boundary at the
+embedder/op layer — the same mechanism Convex, Cloudflare, and Deno embedders
+use in production. → Confirms plan **layer 3** (ocap `ctx` +
+`RuntimeServiceCapabilityHost`).
 
 **The op-layer caveats become explicit plan items:**
 - does not stop a V8 escape → microVM isolation (`nimbus-libkrun`, **layer 5**)
   stays the blast-radius backstop;
-- does not re-gate a *registered* op → privileged ops must not be registered for
-  adapter bridges (compile-time via `SandboxCapabilityHost`), and any *shared* op
-  must not internally dispatch to privileged paths (add a review/test guard);
+- does not re-gate a *registered* op → privileged service ops must not be
+  registered for ungranted isolates, service-capable bridges must expose only an
+  exact-granted `RuntimeServiceCapabilityHost`, refusal-only bridges must keep no
+  positive service capability path, and any *shared* op must not internally
+  dispatch to privileged paths (add a review/test guard);
 - one thread = one privilege level → a Convex tenant and the privileged path
   must never co-inhabit one isolate; `services` stays in the Rust host path /
   separate execution context (**layer 2/L2**).

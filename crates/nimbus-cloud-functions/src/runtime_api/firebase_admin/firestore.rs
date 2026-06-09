@@ -25,7 +25,7 @@ pub struct FirestoreAdminGetDocumentPayload {
     pub database_id: String,
     pub document_path: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -34,7 +34,7 @@ pub struct FirestoreAdminSetDocumentPayload {
     pub document_path: String,
     pub fields: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -43,7 +43,7 @@ pub struct FirestoreAdminUpdateDocumentPayload {
     pub document_path: String,
     pub patch: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -51,7 +51,7 @@ pub struct FirestoreAdminDeleteDocumentPayload {
     pub database_id: String,
     pub document_path: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 fn decode_extension_payload<T>(
@@ -208,7 +208,11 @@ fn invoke_firebase_admin_firestore_get_document_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     let (document_path, locator) =
         match firebase_admin_resolve_document_target(&payload.document_path) {
             Ok(target) => target,
@@ -228,7 +232,11 @@ async fn invoke_firebase_admin_firestore_get_document_async_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     let (document_path, locator) =
         match firebase_admin_resolve_document_target(&payload.document_path) {
             Ok(target) => target,
@@ -260,7 +268,11 @@ fn invoke_firebase_admin_firestore_set_document_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     firebase_admin_firestore_write_result(
         firebase_admin_set_batch(&payload.database_id, &payload.document_path, payload.fields)
             .and_then(|batch| execute_atomic_write_batch(host, batch)),
@@ -275,7 +287,11 @@ async fn invoke_firebase_admin_firestore_set_document_async_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     let batch = match firebase_admin_set_batch(
         &payload.database_id,
         &payload.document_path,
@@ -308,7 +324,11 @@ fn invoke_firebase_admin_firestore_update_document_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     firebase_admin_firestore_write_result(
         firebase_admin_update_batch(&payload.database_id, &payload.document_path, payload.patch)
             .and_then(|batch| execute_atomic_write_batch(host, batch)),
@@ -323,7 +343,11 @@ async fn invoke_firebase_admin_firestore_update_document_async_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     let batch = match firebase_admin_update_batch(
         &payload.database_id,
         &payload.document_path,
@@ -356,7 +380,11 @@ fn invoke_firebase_admin_firestore_delete_document_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     firebase_admin_firestore_write_result(
         firebase_admin_delete_batch(&payload.database_id, &payload.document_path)
             .and_then(|batch| execute_atomic_write_batch(host, batch)),
@@ -371,7 +399,11 @@ async fn invoke_firebase_admin_firestore_delete_document_async_cancellable<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    validate_runtime_capability_access(host, payload.session_id.as_deref(), cancellation)?;
+    validate_runtime_capability_access(
+        host,
+        payload.host_call_session_id.as_deref(),
+        cancellation,
+    )?;
     let batch = match firebase_admin_delete_batch(&payload.database_id, &payload.document_path) {
         Ok(batch) => batch,
         Err(error) => return encode_runtime_core_result(Err(error)),

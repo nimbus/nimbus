@@ -99,7 +99,11 @@ impl NimbusRuntime {
             None => {
                 let snapshot = self.bootstrap_snapshot()?;
                 ReusableV8Runtime::fresh(
-                    self.create_runtime_from_snapshot(&bundle, snapshot)?,
+                    self.create_runtime_from_snapshot(
+                        &bundle,
+                        snapshot,
+                        context.permission_profile,
+                    )?,
                     V8RuntimeConstructionMode::StartupSnapshot,
                 )
             }

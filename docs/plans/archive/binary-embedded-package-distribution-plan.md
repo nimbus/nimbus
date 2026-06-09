@@ -10,7 +10,7 @@
 - **Related plans / references:**
   - `docs/plans/distribution-plan.md` — parent binary/OCI/install distribution
     plan; this plan adds the JS-package channel that rides inside the binary
-  - `docs/plans/archive/neovex-init-plan.md` — completed `nimbus init`
+  - `docs/plans/archive/nimbus-init-plan.md` — completed `nimbus init`
     scaffolding baseline this plan retemplates (historical filename)
   - `docs/plans/node-default-runtime-support-hardening-plan.md` — owns the
     in-binary Node/V8 runtime that executes embedded codegen

@@ -4,8 +4,8 @@ pub(crate) use nimbus_core::{
     TableAccessPolicy, TableName, TableSchema, TenantId, Timestamp,
 };
 pub(crate) use nimbus_testing::{
-    BlockingFaultInjector, GeneratedTaskHistory, GeneratedTaskHistorySeedCase,
-    GeneratedTaskPageExpectation, GeneratedTaskRecord, ServiceFixture, VerificationHarnessMode,
+    BlockingFaultInjector, EngineFixture, GeneratedTaskHistory, GeneratedTaskHistorySeedCase,
+    GeneratedTaskPageExpectation, GeneratedTaskRecord, VerificationHarnessMode,
     ci_or_local_duration, replay_generated_task_history_async,
     selected_generated_task_history_seed_corpus, wait_for_value,
 };
@@ -20,7 +20,7 @@ pub(crate) use tempfile::{TempDir, tempdir};
 pub(crate) use tokio::sync::{Notify, mpsc};
 pub(crate) use tokio::time::{Duration, timeout};
 
-pub(crate) use crate::service::{
+pub(crate) use crate::engine::{
     SubscriptionBootstrapCancellation, paginate_documents_for_docs_with_principal,
     query_documents_for_docs_with_principal,
 };
@@ -34,8 +34,7 @@ pub(crate) use crate::verification::{
     compare_materialized_journal_snapshots,
 };
 pub(crate) use crate::{
-    EmbeddedReplica, Service, ServicePersistenceConfig, ShadowMaterializerConfig,
-    SubscriptionUpdate,
+    EmbeddedReplica, Engine, EnginePersistenceConfig, ShadowMaterializerConfig, SubscriptionUpdate,
 };
 pub(crate) use nimbus_storage::{
     DurableJournalBootstrap, EmbeddedProviderKind, FaultPoint, ManualClock, SqliteTenantStore,
@@ -73,11 +72,11 @@ pub(crate) fn query_for(table: &str) -> Query {
 }
 
 pub(crate) fn durable_journal_commits(
-    service: &Service,
+    engine: &Engine,
     tenant_id: &TenantId,
     after: SequenceNumber,
 ) -> Vec<nimbus_core::CommitEntry> {
-    service
+    engine
         .read_durable_journal(tenant_id, after)
         .expect("durable journal should read")
         .into_iter()
@@ -94,7 +93,7 @@ pub(crate) fn subscription_channel() -> (
 }
 
 pub(crate) async fn wait_for_mutation_journal_stats(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     description: &str,
     predicate: impl Fn(&crate::tenant::MutationJournalStats) -> bool,
@@ -104,7 +103,7 @@ pub(crate) async fn wait_for_mutation_journal_stats(
         Duration::from_secs(1),
         Duration::ZERO,
         || async {
-            service
+            engine
                 .mutation_journal_stats_for_testing(tenant_id)
                 .expect("mutation journal stats should load")
         },
@@ -114,7 +113,7 @@ pub(crate) async fn wait_for_mutation_journal_stats(
 }
 
 pub(crate) async fn wait_for_mutation_admission_stats(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     description: &str,
     predicate: impl Fn(&crate::tenant::MutationAdmissionStats) -> bool,
@@ -124,7 +123,7 @@ pub(crate) async fn wait_for_mutation_admission_stats(
         Duration::from_secs(1),
         Duration::ZERO,
         || async {
-            service
+            engine
                 .mutation_admission_stats_for_testing(tenant_id)
                 .expect("mutation admission stats should load")
         },
@@ -134,7 +133,7 @@ pub(crate) async fn wait_for_mutation_admission_stats(
 }
 
 pub(crate) async fn wait_for_active_subscription_count(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     description: &str,
     expected_count: usize,
@@ -144,7 +143,7 @@ pub(crate) async fn wait_for_active_subscription_count(
         Duration::from_secs(1),
         Duration::ZERO,
         || async {
-            service
+            engine
                 .active_subscription_count(tenant_id)
                 .expect("subscription count should load")
         },
@@ -222,43 +221,39 @@ pub(crate) async fn assert_generated_task_history_matches_model_across_surfaces(
         context("generated-history seed should produce at least two query pages")
     );
 
-    let data_dir = tempdir().expect("service tempdir should build");
-    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
     let table = TableName::new(history.table()).expect("generated task table should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
     replay_generated_task_history_async(
         history,
         {
-            let service = Arc::clone(&service);
+            let engine = Arc::clone(&engine);
             let tenant_id = tenant_id.clone();
             let table = table.clone();
             move |_slot, record| {
-                let service = Arc::clone(&service);
+                let engine = Arc::clone(&engine);
                 let tenant_id = tenant_id.clone();
                 let table = table.clone();
                 let fields = record.fields();
-                async move {
-                    service
-                        .insert_document_async(tenant_id, table, fields)
-                        .await
-                }
+                async move { engine.insert_document_async(tenant_id, table, fields).await }
             }
         },
         {
-            let service = Arc::clone(&service);
+            let engine = Arc::clone(&engine);
             let tenant_id = tenant_id.clone();
             let table = table.clone();
             move |_slot, document_id, record| {
-                let service = Arc::clone(&service);
+                let engine = Arc::clone(&engine);
                 let tenant_id = tenant_id.clone();
                 let table = table.clone();
                 let fields = record.fields();
                 async move {
-                    service
+                    engine
                         .update_document_async(tenant_id, table, document_id, fields)
                         .await
                         .map(|_| ())
@@ -266,15 +261,15 @@ pub(crate) async fn assert_generated_task_history_matches_model_across_surfaces(
             }
         },
         {
-            let service = Arc::clone(&service);
+            let engine = Arc::clone(&engine);
             let tenant_id = tenant_id.clone();
             let table = table.clone();
             move |_slot, document_id| {
-                let service = Arc::clone(&service);
+                let engine = Arc::clone(&engine);
                 let tenant_id = tenant_id.clone();
                 let table = table.clone();
                 async move {
-                    service
+                    engine
                         .delete_document_async(tenant_id, table, document_id)
                         .await
                 }
@@ -285,7 +280,7 @@ pub(crate) async fn assert_generated_task_history_matches_model_across_surfaces(
     .expect("generated history replay should succeed");
 
     let live_documents = normalize_generated_task_documents(
-        service
+        engine
             .list_documents(&tenant_id, &table)
             .expect("live list should succeed"),
     );
@@ -298,7 +293,7 @@ pub(crate) async fn assert_generated_task_history_matches_model_across_surfaces(
 
     let ordered_query = history.ordered_query();
     let live_query = normalize_generated_task_documents(
-        service
+        engine
             .query_documents_async(tenant_id.clone(), ordered_query.clone())
             .await
             .expect("live query should succeed"),
@@ -310,7 +305,7 @@ pub(crate) async fn assert_generated_task_history_matches_model_across_surfaces(
         context("live query should match the generated-history oracle")
     );
 
-    let live_first_page = service
+    let live_first_page = engine
         .paginate_documents_async(tenant_id.clone(), history.paginated_query(None))
         .await
         .expect("live first page should succeed");
@@ -319,7 +314,7 @@ pub(crate) async fn assert_generated_task_history_matches_model_across_surfaces(
         &model.first_page(),
         &context("live first page should match the generated-history oracle"),
     );
-    let live_second_page = service
+    let live_second_page = engine
         .paginate_documents_async(
             tenant_id.clone(),
             history.paginated_query(live_first_page.next_cursor.clone()),
@@ -332,7 +327,7 @@ pub(crate) async fn assert_generated_task_history_matches_model_across_surfaces(
         &context("live second page should match the generated-history oracle"),
     );
 
-    let shadow = service
+    let shadow = engine
         .build_shadow_materializer_async(
             tenant_id.clone(),
             ShadowMaterializerConfig {
@@ -382,7 +377,7 @@ pub(crate) async fn assert_generated_task_history_matches_model_across_surfaces(
         &context("shadow second page should match the generated-history oracle"),
     );
 
-    let replica = EmbeddedReplica::bootstrap_in_memory(&service, tenant_id.clone())
+    let replica = EmbeddedReplica::bootstrap_in_memory(&engine, tenant_id.clone())
         .await
         .expect("embedded replica should bootstrap");
     let replica_query = normalize_generated_task_documents(
@@ -579,37 +574,37 @@ impl BlockingCancellationProbe {
     }
 }
 
-pub(crate) async fn create_service_with_durable_unapplied_task(
+pub(crate) async fn create_engine_with_durable_unapplied_task(
     timestamp_ms: u64,
     title: &str,
 ) -> (
     TempDir,
-    Arc<Service>,
+    Arc<Engine>,
     TenantId,
     Arc<BlockingFaultInjector>,
     DocumentId,
 ) {
-    let data_dir = tempdir().expect("service tempdir should build");
+    let data_dir = tempdir().expect("engine tempdir should build");
     let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
-    let service = Arc::new(
-        Service::new_with_simulation(
+    let engine = Arc::new(
+        Engine::new_with_simulation(
             data_dir.path(),
             Arc::new(ManualClock::new(Timestamp(timestamp_ms))),
             faults.clone(),
         )
-        .expect("service should create"),
+        .expect("engine should create"),
     );
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
     let insert_handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         let title = title.to_string();
         async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -623,52 +618,52 @@ pub(crate) async fn create_service_with_durable_unapplied_task(
         .await
         .expect("journal worker should block after durable append");
     drop(insert_handle);
-    let document_id = durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0))
+    let document_id = durable_journal_commits(engine.as_ref(), &tenant_id, SequenceNumber(0))
         .first()
         .and_then(|commit| commit.writes.first())
         .map(|write| write.doc_id.clone())
         .expect("durable commit should include the inserted document id");
 
-    (data_dir, service, tenant_id, faults, document_id)
+    (data_dir, engine, tenant_id, faults, document_id)
 }
 
 #[tokio::test]
-async fn service_create_duplicate_tenant_returns_already_exists() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_create_duplicate_tenant_returns_already_exists() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    let error = service
+    let error = engine
         .create_tenant(tenant_id)
         .expect_err("duplicate tenant should fail");
     assert!(matches!(error, Error::AlreadyExists(_)));
 }
 
 #[tokio::test]
-async fn service_delete_nonexistent_tenant_returns_not_found() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+async fn engine_delete_nonexistent_tenant_returns_not_found() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
     let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
 
-    let error = service
+    let error = engine
         .delete_tenant(&tenant_id)
         .expect_err("missing tenant should fail");
     assert!(matches!(error, Error::TenantNotFound(_)));
 }
 
 #[tokio::test]
-async fn service_missing_document_operations_return_not_found() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_missing_document_operations_return_not_found() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let missing_id = nimbus_core::DocumentId::new();
 
-    let get_error = service
+    let get_error = engine
         .get_document(&tenant_id, &tasks_table(), missing_id.clone())
         .expect_err("missing get should fail");
     assert!(matches!(get_error, Error::DocumentNotFound(_)));
 
-    let update_error = service
+    let update_error = engine
         .update_document(
             &tenant_id,
             tasks_table(),
@@ -678,27 +673,27 @@ async fn service_missing_document_operations_return_not_found() {
         .expect_err("missing update should fail");
     assert!(matches!(update_error, Error::DocumentNotFound(_)));
 
-    let delete_error = service
+    let delete_error = engine
         .delete_document(&tenant_id, tasks_table(), missing_id.clone())
         .expect_err("missing delete should fail");
     assert!(matches!(delete_error, Error::DocumentNotFound(_)));
 }
 
 #[tokio::test]
-async fn service_tenant_data_is_isolated_across_tenants() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let alpha_tenant = fixture.create_tenant("alpha", Service::create_tenant);
-    let beta_tenant = fixture.create_tenant("beta", Service::create_tenant);
+async fn engine_tenant_data_is_isolated_across_tenants() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let alpha_tenant = fixture.create_tenant("alpha", Engine::create_tenant);
+    let beta_tenant = fixture.create_tenant("beta", Engine::create_tenant);
 
-    service
+    engine
         .insert_document(
             &alpha_tenant,
             tasks_table(),
             serde_json::Map::from_iter([("title".to_string(), json!("Alpha"))]),
         )
         .expect("insert should succeed");
-    service
+    engine
         .insert_document(
             &beta_tenant,
             tasks_table(),
@@ -706,10 +701,10 @@ async fn service_tenant_data_is_isolated_across_tenants() {
         )
         .expect("insert should succeed");
 
-    let alpha_docs = service
+    let alpha_docs = engine
         .list_documents(&alpha_tenant, &tasks_table())
         .expect("list should succeed");
-    let beta_docs = service
+    let beta_docs = engine
         .list_documents(&beta_tenant, &tasks_table())
         .expect("list should succeed");
 
@@ -720,14 +715,14 @@ async fn service_tenant_data_is_isolated_across_tenants() {
 }
 
 #[tokio::test]
-async fn service_insert_document_with_explicit_id_round_trips_firestore_style_key() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_insert_document_with_explicit_id_round_trips_firestore_style_key() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let explicit_id =
         DocumentId::from_key("cities.SF-42".to_string()).expect("explicit id should be valid");
 
-    let inserted_id = service
+    let inserted_id = engine
         .insert_document_with_id(
             &tenant_id,
             tasks_table(),
@@ -737,7 +732,7 @@ async fn service_insert_document_with_explicit_id_round_trips_firestore_style_ke
         .expect("explicit insert should succeed");
 
     assert_eq!(inserted_id, explicit_id);
-    let document = service
+    let document = engine
         .get_document(&tenant_id, &tasks_table(), explicit_id.clone())
         .expect("explicitly keyed document should exist");
     assert_eq!(document.id, explicit_id);
@@ -745,14 +740,14 @@ async fn service_insert_document_with_explicit_id_round_trips_firestore_style_ke
 }
 
 #[tokio::test]
-async fn service_lazy_loads_tenant_from_disk() {
+async fn engine_lazy_loads_tenant_from_disk() {
     let data_dir = tempdir().expect("tempdir should create");
-    let service = Service::new(data_dir.path()).expect("service should create");
+    let engine = Engine::new(data_dir.path()).expect("engine should create");
     let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
-    service
+    engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -760,9 +755,9 @@ async fn service_lazy_loads_tenant_from_disk() {
         )
         .expect("insert should succeed");
 
-    drop(service);
+    drop(engine);
 
-    let reloaded = Service::new(data_dir.path()).expect("service should reopen");
+    let reloaded = Engine::new(data_dir.path()).expect("engine should reopen");
     let documents = reloaded
         .list_documents(&tenant_id, &tasks_table())
         .expect("list should succeed");
@@ -772,22 +767,22 @@ async fn service_lazy_loads_tenant_from_disk() {
 }
 
 #[tokio::test]
-async fn service_unsubscribe_stops_notifications() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_unsubscribe_stops_notifications() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
     let (tx, mut rx) = subscription_channel();
-    let subscription = service
+    let subscription = engine
         .subscribe(&tenant_id, query_for("tasks"), "req-unsub".to_string(), tx)
         .expect("subscribe should succeed");
     let subscription_id = subscription.id();
     let _ = rx.recv().await.expect("initial update should arrive");
 
-    service
+    engine
         .unsubscribe(&tenant_id, subscription_id)
         .expect("unsubscribe should succeed");
-    service
+    engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -803,16 +798,16 @@ async fn service_unsubscribe_stops_notifications() {
 }
 
 #[tokio::test]
-async fn service_validates_insert_against_schema() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_validates_insert_against_schema() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    service
+    engine
         .set_table_schema(&tenant_id, users_schema())
         .expect("schema should save");
 
-    let missing_name = service
+    let missing_name = engine
         .insert_document(
             &tenant_id,
             TableName::new("users").expect("table name should be valid"),
@@ -821,7 +816,7 @@ async fn service_validates_insert_against_schema() {
         .expect_err("insert should fail");
     assert!(matches!(missing_name, Error::SchemaValidation(_)));
 
-    let wrong_type = service
+    let wrong_type = engine
         .insert_document(
             &tenant_id,
             TableName::new("users").expect("table name should be valid"),
@@ -830,7 +825,7 @@ async fn service_validates_insert_against_schema() {
         .expect_err("insert should fail");
     assert!(matches!(wrong_type, Error::SchemaValidation(_)));
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             TableName::new("users").expect("table name should be valid"),
@@ -843,15 +838,15 @@ async fn service_validates_insert_against_schema() {
 }
 
 #[tokio::test]
-async fn service_validates_update_against_full_document() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_validates_update_against_full_document() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    service
+    engine
         .set_table_schema(&tenant_id, users_schema())
         .expect("schema should save");
-    let document_id = service
+    let document_id = engine
         .insert_document(
             &tenant_id,
             TableName::new("users").expect("table name should be valid"),
@@ -862,7 +857,7 @@ async fn service_validates_update_against_full_document() {
         )
         .expect("insert should succeed");
 
-    let wrong_type = service
+    let wrong_type = engine
         .update_document(
             &tenant_id,
             TableName::new("users").expect("table name should be valid"),
@@ -872,7 +867,7 @@ async fn service_validates_update_against_full_document() {
         .expect_err("update should fail");
     assert!(matches!(wrong_type, Error::SchemaValidation(_)));
 
-    service
+    engine
         .update_document(
             &tenant_id,
             TableName::new("users").expect("table name should be valid"),
@@ -884,11 +879,11 @@ async fn service_validates_update_against_full_document() {
 
 #[tokio::test]
 async fn no_schema_allows_anything() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             TableName::new("events").expect("table name should be valid"),

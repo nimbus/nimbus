@@ -11,8 +11,8 @@ use nimbus_core::{
     Query, SequenceNumber, TableName, TableSchema, TenantId,
 };
 use nimbus_engine::{
-    EmbeddedProviderKind, LocalEncryptionConfig, LocalKeyProviderConfig, MasterKeyFileConfig,
-    Service, ServicePersistenceConfig, SubscriptionRegistration, SubscriptionUpdate,
+    EmbeddedProviderKind, Engine, EnginePersistenceConfig, LocalEncryptionConfig,
+    LocalKeyProviderConfig, MasterKeyFileConfig, SubscriptionRegistration, SubscriptionUpdate,
 };
 use nimbus_storage::{
     LocalKeySubject, ManifestCipher, MasterKeyFileProvider, resolve_database_encryption_key,

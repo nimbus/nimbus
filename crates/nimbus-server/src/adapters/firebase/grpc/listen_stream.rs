@@ -14,7 +14,7 @@ where
     S: Stream<Item = Result<ListenRequest, Status>> + Send + 'static,
 {
     nimbus_firebase::grpc::listen_stream::listen_response_stream(
-        service.app_state()?.service.clone(),
+        service.app_state()?.engine.clone(),
         service.listen_targets.clone(),
         requests,
         principal,

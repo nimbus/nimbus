@@ -98,7 +98,7 @@ pub(crate) async fn deploy_app(
             let summary = registry.deploy_summary();
             let source_ref = format!("deploy:generation:{generation}");
             let input = convex_system_deployment_record_input(&summary, &source_ref);
-            nimbus_system::record_deployment_state_async(&state.service, &input).await?;
+            nimbus_system::record_deployment_state_async(&state.engine, &input).await?;
         }
         generation
     };

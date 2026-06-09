@@ -3,8 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use nimbus::{
-    Error, SandboxBackend, SandboxBackendKind, SandboxServiceCatalog, SandboxServiceManager,
-    TenantId,
+    Error, SandboxBackend, SandboxBackendKind, ServiceDefinitionCatalog, ServiceManager, TenantId,
 };
 use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxStateView};
 
@@ -47,13 +46,13 @@ pub(super) enum ServiceExecutionSurface {
 }
 
 #[cfg(test)]
-pub(super) fn load_host_backed_sandbox_service_manager_for_platform(
+pub(super) fn load_host_backed_service_manager_for_platform(
     file: &Path,
     control_data_dir: &Path,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
-) -> Result<SandboxServiceManager, Error> {
-    load_host_backed_sandbox_service_manager_for_platform_selection(
+) -> Result<ServiceManager, Error> {
+    load_host_backed_service_manager_for_platform_selection(
         &ResolvedComposeSelection::explicit(file.to_path_buf()),
         control_data_dir,
         host_platform,
@@ -62,13 +61,13 @@ pub(super) fn load_host_backed_sandbox_service_manager_for_platform(
 }
 
 #[allow(dead_code)]
-pub(super) fn load_host_backed_sandbox_service_manager_for_platform_selection(
+pub(super) fn load_host_backed_service_manager_for_platform_selection(
     selection: &ResolvedComposeSelection,
     control_data_dir: &Path,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
-) -> Result<SandboxServiceManager, Error> {
-    load_host_backed_sandbox_service_manager_for_platform_selection_with_admission(
+) -> Result<ServiceManager, Error> {
+    load_host_backed_service_manager_for_platform_selection_with_admission(
         selection,
         control_data_dir,
         host_platform,
@@ -77,15 +76,15 @@ pub(super) fn load_host_backed_sandbox_service_manager_for_platform_selection(
     )
 }
 
-pub(super) fn load_host_backed_sandbox_service_manager_for_platform_selection_with_admission(
+pub(super) fn load_host_backed_service_manager_for_platform_selection_with_admission(
     selection: &ResolvedComposeSelection,
     control_data_dir: &Path,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
     admission_mode: file::ComposeAdmissionMode,
-) -> Result<SandboxServiceManager, Error> {
+) -> Result<ServiceManager, Error> {
     let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
-    let catalog = load_sandbox_service_catalog_for_execution_platform_with_admission(
+    let catalog = load_service_definition_catalog_for_execution_platform_with_admission(
         selection,
         host_platform,
         admission_mode,
@@ -98,7 +97,7 @@ pub(super) fn load_host_backed_sandbox_service_manager_for_platform_selection_wi
         None => None,
     };
     let backend = load_host_backed_project_backend(&context, host_platform, machine_api_client)?;
-    Ok(SandboxServiceManager::new(catalog, backend))
+    Ok(ServiceManager::new(catalog, backend))
 }
 
 pub(super) fn should_auto_start_default_machine_for_host_loader(
@@ -309,22 +308,22 @@ pub(super) fn required_project_backend(
     }
 }
 
-pub(super) fn load_sandbox_service_catalog_for_execution_platform(
+pub(super) fn load_service_definition_catalog_for_execution_platform(
     selection: &ResolvedComposeSelection,
     host_platform: ServiceHostPlatform,
-) -> Result<Arc<dyn SandboxServiceCatalog>, Error> {
-    load_sandbox_service_catalog_for_execution_platform_with_admission(
+) -> Result<Arc<dyn ServiceDefinitionCatalog>, Error> {
+    load_service_definition_catalog_for_execution_platform_with_admission(
         selection,
         host_platform,
         file::ComposeAdmissionMode::LocalDevelopment,
     )
 }
 
-pub(super) fn load_sandbox_service_catalog_for_execution_platform_with_admission(
+pub(super) fn load_service_definition_catalog_for_execution_platform_with_admission(
     selection: &ResolvedComposeSelection,
     host_platform: ServiceHostPlatform,
     admission_mode: file::ComposeAdmissionMode,
-) -> Result<Arc<dyn SandboxServiceCatalog>, Error> {
+) -> Result<Arc<dyn ServiceDefinitionCatalog>, Error> {
     let mut plan =
         file::ComposeProjectPlan::load_selection_with_admission(selection, admission_mode)?;
     apply_platform_backend_defaults(&mut plan, host_platform);

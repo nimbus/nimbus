@@ -39,11 +39,11 @@ full story:
 
 1. **`0e4bf2d6` "Complete CLI command surface wave" (2026-04-22).**
    Introduced `detect_app_dir` / `resolve_deploy_app_dir` in
-   `crates/neovex-bin/src/deploy.rs` as a private helper. Its job
+   the pre-rebrand CLI crate's deploy module as a private helper. Its job
    was to support `nimbus deploy <subdir>` — when the user runs
    `nimbus deploy` from any subdirectory of their project, find
    the project root by walking up looking for a `convex/` or
-   `neovex/` child. Same idiom as `git`'s walk-up to find `.git/`,
+   pre-rebrand native source child. Same idiom as `git`'s walk-up to find `.git/`,
    `npm`'s walk-up to find `package.json`, or `cargo`'s walk-up to
    find `Cargo.toml`. Defensible for a project-scoped command. The
    same commit copy-pasted the heuristic into `dev.rs:detect_app_dir`
@@ -61,11 +61,11 @@ full story:
    project-scoped command. Tying daemon startup to filesystem
    heuristics about user app source was the design mistake.
 
-3. **`09f56158` "rename: complete neovex→nimbus rebrand"
+3. **`09f56158` completed the Nimbus rebrand
    (2026-05-15).** Changed the substring the heuristic looks for
-   from `"neovex"` to `"nimbus"`. Before the rebrand, the walk-up
+   from the pre-rebrand native source root to `"nimbus"`. Before the rebrand, the walk-up
    was harmless from inside the source repo because
-   `~/src/github.com/nimbus/` has no `neovex/` child. After the
+   `~/src/github.com/nimbus/` did not have that pre-rebrand child. After the
    rebrand, `~/src/github.com/nimbus/` *does* have a `nimbus/`
    child — the source repo itself — so the walk-up reliably
    misclassifies the repo's parent directory as a Nimbus app. **The

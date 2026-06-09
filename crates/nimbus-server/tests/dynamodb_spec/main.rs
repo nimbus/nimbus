@@ -25,7 +25,7 @@ use aws_sdk_dynamodb::types::{
 };
 use nimbus_core::TenantId;
 use nimbus_dynamodb::{AccessKeyRegistry, AuthMode};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_server::adapters_dynamodb::listener::run_listener;
 use tokio::net::TcpListener;
 
@@ -40,8 +40,8 @@ struct Fixture {
     _temp: tempfile::TempDir,
     listener: tokio::task::JoinHandle<()>,
     /// Retained engine handle so tests can configure persisted state (e.g. the
-    /// D7.3 access-key store) on the same `Service` the listener serves.
-    service: Arc<Service>,
+    /// D7.3 access-key store) on the same `Engine` the listener serves.
+    engine: Arc<Engine>,
 }
 
 impl Drop for Fixture {
@@ -101,7 +101,7 @@ impl Fixture {
 /// rather than the signature-skipping lookup escape hatch.
 async fn fixture_with_keys(bindings: &[(&str, &str)]) -> Fixture {
     let temp = tempfile::tempdir().expect("tempdir");
-    let service = Arc::new(Service::new(temp.path()).expect("service"));
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
     let mut registry = AccessKeyRegistry::new().with_mode(AuthMode::Strict);
     for (key, tenant) in bindings {
         registry = registry.bind_signed(
@@ -112,12 +112,12 @@ async fn fixture_with_keys(bindings: &[(&str, &str)]) -> Fixture {
     }
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
-    let handle = tokio::spawn(run_listener(listener, Arc::clone(&service), registry));
+    let handle = tokio::spawn(run_listener(listener, Arc::clone(&engine), registry));
     Fixture {
         addr,
         _temp: temp,
         listener: handle,
-        service,
+        engine,
     }
 }
 
@@ -134,36 +134,36 @@ const CLIENT_SECRET: &str = "test-secret";
 /// signing with a different secret is rejected.
 async fn fixture_strict(secret: &str) -> Fixture {
     let temp = tempfile::tempdir().expect("tempdir");
-    let service = Arc::new(Service::new(temp.path()).expect("service"));
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
     let registry = AccessKeyRegistry::new()
         .bind_signed(ACCESS_KEY, TenantId::new(TENANT).expect("tenant"), secret)
         .with_mode(AuthMode::Strict);
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
-    let handle = tokio::spawn(run_listener(listener, Arc::clone(&service), registry));
+    let handle = tokio::spawn(run_listener(listener, Arc::clone(&engine), registry));
     Fixture {
         addr,
         _temp: temp,
         listener: handle,
-        service,
+        engine,
     }
 }
 
 /// Boot a strict-mode adapter with an **empty** static registry, so access keys
 /// must come from the persisted store (D7.3). Returns the fixture; configure
-/// keys via `fx.service` before signing requests.
+/// keys via `fx.engine` before signing requests.
 async fn fixture_strict_store_only() -> Fixture {
     let temp = tempfile::tempdir().expect("tempdir");
-    let service = Arc::new(Service::new(temp.path()).expect("service"));
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
     let registry = AccessKeyRegistry::new().with_mode(AuthMode::Strict);
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
-    let handle = tokio::spawn(run_listener(listener, Arc::clone(&service), registry));
+    let handle = tokio::spawn(run_listener(listener, Arc::clone(&engine), registry));
     Fixture {
         addr,
         _temp: temp,
         listener: handle,
-        service,
+        engine,
     }
 }
 
@@ -1791,7 +1791,7 @@ async fn persisted_signed_key_authenticates_and_rotates_in_strict_mode() {
     // invalidates signatures made with the old secret — no restart.
     let fx = fixture_strict_store_only().await;
     nimbus_dynamodb::put_access_key(
-        &fx.service,
+        &fx.engine,
         ACCESS_KEY,
         &TenantId::new(TENANT).expect("tenant"),
         Some(CLIENT_SECRET.to_owned()),
@@ -1807,7 +1807,7 @@ async fn persisted_signed_key_authenticates_and_rotates_in_strict_mode() {
     );
 
     // Rotate the stored secret; the client still signs with the old one → reject.
-    nimbus_dynamodb::rotate_secret(&fx.service, ACCESS_KEY, "rotated-secret").expect("rotate");
+    nimbus_dynamodb::rotate_secret(&fx.engine, ACCESS_KEY, "rotated-secret").expect("rotate");
     let err = fx
         .client(ACCESS_KEY)
         .list_tables()

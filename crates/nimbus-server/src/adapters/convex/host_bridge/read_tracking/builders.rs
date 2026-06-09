@@ -7,7 +7,11 @@ impl ConvexHostBridge {
             .lock()
             .expect("convex runtime query builder lock should not be poisoned");
         builders.next_builder_id += 1;
-        format!("{}-builder-{}", self.session_id(), builders.next_builder_id)
+        format!(
+            "{}-builder-{}",
+            self.host_call_session_id(),
+            builders.next_builder_id
+        )
     }
 
     pub(in crate::adapters::convex) fn insert_builder(

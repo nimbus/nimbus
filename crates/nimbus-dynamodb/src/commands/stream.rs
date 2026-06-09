@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use base64::Engine;
+use base64::Engine as Base64Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use extenddb_core::error::DynamoDbError;
 use extenddb_core::types::{
@@ -24,7 +24,7 @@ use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, DocumentId, DocumentLocator, PrincipalContext, StructuredQuery,
     TableName, WriteKey, WritePrecondition, WriteSetMode,
 };
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -86,11 +86,11 @@ fn seq_counter_id() -> Result<DocumentId, DynamoDbError> {
 
 /// Delete every document in `table`, tolerating a never-materialized table.
 fn delete_all(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table: &TableName,
 ) -> Result<(), DynamoDbError> {
-    let documents = match service.query_documents_structured(
+    let documents = match engine.query_documents_structured(
         context.tenant_id(),
         table,
         &StructuredQuery::default(),
@@ -102,7 +102,7 @@ fn delete_all(
         Err(error) => return Err(map_core_error(error)),
     };
     for document in documents {
-        service
+        engine
             .delete_document(context.tenant_id(), table.clone(), document.id)
             .map_err(map_core_error)?;
     }
@@ -114,12 +114,12 @@ fn delete_all(
 /// recreated under the same name then starts a fresh stream at sequence 0
 /// rather than inheriting a stale high-water mark.
 pub(crate) fn reclaim_for_table(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<(), DynamoDbError> {
-    delete_all(service, context, &stream_events_table(table_name)?)?;
-    delete_all(service, context, &stream_seq_table(table_name)?)?;
+    delete_all(engine, context, &stream_events_table(table_name)?)?;
+    delete_all(engine, context, &stream_seq_table(table_name)?)?;
     Ok(())
 }
 
@@ -129,11 +129,11 @@ pub(crate) fn reclaim_for_table(
 /// # Errors
 /// A mapped engine error if the counter cannot be read.
 pub(crate) fn next_sequence_value(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<i64, DynamoDbError> {
-    match service.get_document(
+    match engine.get_document(
         context.tenant_id(),
         &stream_seq_table(table_name)?,
         seq_counter_id()?,
@@ -153,7 +153,7 @@ pub(crate) fn next_sequence_value(
 /// atomically inside [`capture_event`]'s single-batch write.
 #[cfg(test)]
 fn set_sequence_value(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
     next: i64,
@@ -162,14 +162,14 @@ fn set_sequence_value(
     let id = seq_counter_id()?;
     let mut fields = Map::new();
     fields.insert("next".to_owned(), Value::from(next));
-    match service.get_document(context.tenant_id(), &table, id.clone()) {
+    match engine.get_document(context.tenant_id(), &table, id.clone()) {
         Ok(_) => {
-            service
+            engine
                 .update_document(context.tenant_id(), table, id, fields)
                 .map_err(map_core_error)?;
         }
         Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
-            service
+            engine
                 .insert_document_with_id(context.tenant_id(), table, id, fields)
                 .map_err(map_core_error)?;
         }
@@ -318,11 +318,11 @@ pub(crate) fn sequence_counter_write(
 
 /// Whether `table_name` has a stream enabled (the gate for capturing events).
 pub(crate) fn stream_enabled(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<bool, DynamoDbError> {
-    let description = control_plane::load_table_description(service, context, table_name)?;
+    let description = control_plane::load_table_description(engine, context, table_name)?;
     Ok(description
         .stream_specification
         .as_ref()
@@ -347,24 +347,24 @@ pub(crate) fn stream_enabled(
 /// `InternalServerError` if sequence allocation cannot converge within
 /// [`MAX_SEQUENCE_RETRIES`].
 pub(crate) fn capture_event(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
     change: ChangeEvent<'_>,
 ) -> Result<(), DynamoDbError> {
-    if !stream_enabled(service, context, table_name)? {
+    if !stream_enabled(engine, context, table_name)? {
         return Ok(());
     }
 
     for _ in 0..MAX_SEQUENCE_RETRIES {
-        let seq = next_sequence_value(service, context, table_name)?;
+        let seq = next_sequence_value(engine, context, table_name)?;
         let batch = AtomicWriteBatch::new(vec![
             stream_event_write(table_name, seq, &change)?,
             sequence_counter_write(table_name, seq + 1)?,
         ])
         .map_err(map_core_error)?;
 
-        match service
+        match engine
             .begin_mutation_execution_unit(context.tenant_id().clone(), PrincipalContext::system())
             .map_err(map_core_error)?
             .execute_atomic_write_batch(batch)
@@ -383,12 +383,12 @@ pub(crate) fn capture_event(
 
 /// Read all captured events for a table's stream, ascending by sequence.
 fn read_events(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<Vec<StoredEvent>, DynamoDbError> {
     let table = stream_events_table(table_name)?;
-    let documents = match service.query_documents_structured(
+    let documents = match engine.query_documents_structured(
         context.tenant_id(),
         &table,
         &StructuredQuery::default(),
@@ -424,12 +424,12 @@ const MAX_LIST_STREAMS: usize = 100;
 /// # Errors
 /// A mapped engine error if the catalog cannot be read.
 pub fn list_streams(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: ListStreamsInput,
 ) -> Result<ListStreamsOutput, DynamoDbError> {
     let mut summaries: Vec<StreamSummary> =
-        control_plane::list_table_descriptions(service, context)?
+        control_plane::list_table_descriptions(engine, context)?
             .into_iter()
             .filter(|description| {
                 description
@@ -482,7 +482,7 @@ pub fn list_streams(
 /// # Errors
 /// A mapped engine error if an expired event cannot be deleted.
 fn reclaim_expired_events(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
     events: &[StoredEvent],
@@ -492,7 +492,7 @@ fn reclaim_expired_events(
     let mut reclaimed = 0;
     for event in events.iter().filter(|event| event.created < cutoff) {
         let id = DocumentId::from_key(sequence_number(event.seq)).map_err(map_core_error)?;
-        service
+        engine
             .delete_document(context.tenant_id(), table.clone(), id)
             .map_err(map_core_error)?;
         reclaimed += 1;
@@ -507,19 +507,19 @@ fn reclaim_expired_events(
 /// `ValidationException` for a malformed iterator; `ResourceNotFoundException`
 /// if the stream no longer exists.
 pub fn get_records(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: GetRecordsInput,
 ) -> Result<GetRecordsOutput, DynamoDbError> {
     let iterator = decode_iterator(&input.shard_iterator)?;
-    let description = resolve_stream_table(service, context, &iterator.stream_arn)?;
+    let description = resolve_stream_table(engine, context, &iterator.stream_arn)?;
     let view_type = description
         .stream_specification
         .as_ref()
         .and_then(|spec| spec.stream_view_type)
         .unwrap_or(StreamViewType::NewAndOldImages);
 
-    let all_events = read_events(service, context, &description.table_name)?;
+    let all_events = read_events(engine, context, &description.table_name)?;
     let limit = input
         .limit
         .filter(|limit| *limit > 0)
@@ -550,7 +550,7 @@ pub fn get_records(
     // Reclaim expired event storage on poll (the sequence counter is a separate
     // store, so the high-water mark is unaffected).
     reclaim_expired_events(
-        service,
+        engine,
         context,
         &description.table_name,
         &all_events,
@@ -624,12 +624,12 @@ pub(crate) fn shard_id(table_id: &str) -> String {
 /// `ResourceNotFoundException` for a malformed ARN, an unknown table, or an ARN
 /// that does not match the table's enabled stream.
 pub(crate) fn resolve_stream_table(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     stream_arn: &str,
 ) -> Result<TableDescription, DynamoDbError> {
     let table_name = table_name_from_stream_arn(stream_arn)?;
-    let description = control_plane::load_table_description(service, context, table_name)?;
+    let description = control_plane::load_table_description(engine, context, table_name)?;
     if description.latest_stream_arn.as_deref() != Some(stream_arn) {
         return Err(stream_not_found(stream_arn));
     }
@@ -662,11 +662,11 @@ fn stream_not_found(stream_arn: &str) -> DynamoDbError {
 /// # Errors
 /// `ResourceNotFoundException` if the ARN does not match an enabled stream.
 pub fn describe_stream(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: DescribeStreamInput,
 ) -> Result<DescribeStreamOutput, DynamoDbError> {
-    let description = resolve_stream_table(service, context, &input.stream_arn)?;
+    let description = resolve_stream_table(engine, context, &input.stream_arn)?;
     let stream_view_type = description
         .stream_specification
         .as_ref()
@@ -707,11 +707,11 @@ pub fn describe_stream(
 /// `ResourceNotFoundException` for an unknown stream or shard;
 /// `ValidationException` if AT/AFTER is missing a valid `SequenceNumber`.
 pub fn get_shard_iterator(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: GetShardIteratorInput,
 ) -> Result<GetShardIteratorOutput, DynamoDbError> {
-    let description = resolve_stream_table(service, context, &input.stream_arn)?;
+    let description = resolve_stream_table(engine, context, &input.stream_arn)?;
     let expected_shard = shard_id(&description.table_id);
     if input.shard_id != expected_shard {
         return Err(DynamoDbError::ResourceNotFoundException(format!(
@@ -721,9 +721,7 @@ pub fn get_shard_iterator(
     }
     let next_sequence = match input.shard_iterator_type {
         ShardIteratorType::TrimHorizon => 0,
-        ShardIteratorType::Latest => {
-            next_sequence_value(service, context, &description.table_name)?
-        }
+        ShardIteratorType::Latest => next_sequence_value(engine, context, &description.table_name)?,
         ShardIteratorType::AtSequenceNumber => parse_sequence(input.sequence_number.as_deref())?,
         ShardIteratorType::AfterSequenceNumber => {
             parse_sequence(input.sequence_number.as_deref())? + 1
@@ -756,16 +754,16 @@ mod tests {
     use nimbus_core::TenantId;
     use serde_json::json;
 
-    fn fixture() -> (Arc<Service>, TenantIsolationContext, tempfile::TempDir) {
+    fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
-        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
         let context = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
-        crate::tenant::ensure_tenant(&service, &context).expect("tenant");
-        (service, context, temp)
+        crate::tenant::ensure_tenant(&engine, &context).expect("tenant");
+        (engine, context, temp)
     }
 
     /// Create a stream-enabled table and return its stream ARN.
-    fn create_streamed(service: &Arc<Service>, context: &TenantIsolationContext) -> String {
+    fn create_streamed(engine: &Arc<Engine>, context: &TenantIsolationContext) -> String {
         let input: CreateTableInput = serde_json::from_value(json!({
             "TableName": "events",
             "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
@@ -773,7 +771,7 @@ mod tests {
             "StreamSpecification": { "StreamEnabled": true, "StreamViewType": "NEW_IMAGE" }
         }))
         .unwrap();
-        control_plane::create_table(service, context, input)
+        control_plane::create_table(engine, context, input)
             .expect("create")
             .table_description
             .latest_stream_arn
@@ -782,10 +780,10 @@ mod tests {
 
     #[test]
     fn describe_stream_returns_single_open_shard() {
-        let (service, ctx, _t) = fixture();
-        let arn = create_streamed(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        let arn = create_streamed(&engine, &ctx);
         let out = describe_stream(
-            &service,
+            &engine,
             &ctx,
             DescribeStreamInput {
                 stream_arn: arn.clone(),
@@ -812,10 +810,10 @@ mod tests {
 
     #[test]
     fn describe_stream_unknown_arn_is_resource_not_found() {
-        let (service, ctx, _t) = fixture();
-        create_streamed(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_streamed(&engine, &ctx);
         let err = describe_stream(
-            &service,
+            &engine,
             &ctx,
             DescribeStreamInput {
                 stream_arn:
@@ -829,9 +827,9 @@ mod tests {
         assert!(matches!(err, DynamoDbError::ResourceNotFoundException(_)));
     }
 
-    fn shard_for(service: &Arc<Service>, context: &TenantIsolationContext, arn: &str) -> String {
+    fn shard_for(engine: &Arc<Engine>, context: &TenantIsolationContext, arn: &str) -> String {
         describe_stream(
-            service,
+            engine,
             context,
             DescribeStreamInput {
                 stream_arn: arn.to_owned(),
@@ -854,7 +852,7 @@ mod tests {
     }
 
     fn get_iter(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         arn: &str,
         shard: &str,
@@ -869,22 +867,22 @@ mod tests {
         if let Some(seq) = seq {
             input["SequenceNumber"] = json!(seq);
         }
-        get_shard_iterator(service, context, serde_json::from_value(input).unwrap())
+        get_shard_iterator(engine, context, serde_json::from_value(input).unwrap())
     }
 
     #[test]
     fn get_shard_iterator_each_type() {
-        let (service, ctx, _t) = fixture();
-        let arn = create_streamed(&service, &ctx);
-        let shard = shard_for(&service, &ctx, &arn);
+        let (engine, ctx, _t) = fixture();
+        let arn = create_streamed(&engine, &ctx);
+        let shard = shard_for(&engine, &ctx, &arn);
 
-        let trim = get_iter(&service, &ctx, &arn, &shard, "TRIM_HORIZON", None)
+        let trim = get_iter(&engine, &ctx, &arn, &shard, "TRIM_HORIZON", None)
             .expect("trim horizon")
             .shard_iterator
             .expect("iterator");
         assert_eq!(iterator_next_sequence(&trim), 0, "TRIM_HORIZON starts at 0");
 
-        let latest = get_iter(&service, &ctx, &arn, &shard, "LATEST", None)
+        let latest = get_iter(&engine, &ctx, &arn, &shard, "LATEST", None)
             .expect("latest")
             .shard_iterator
             .expect("iterator");
@@ -894,17 +892,10 @@ mod tests {
             "LATEST starts at the current end (0 with no records yet)"
         );
 
-        let at = get_iter(
-            &service,
-            &ctx,
-            &arn,
-            &shard,
-            "AT_SEQUENCE_NUMBER",
-            Some("5"),
-        )
-        .expect("at")
-        .shard_iterator
-        .expect("iterator");
+        let at = get_iter(&engine, &ctx, &arn, &shard, "AT_SEQUENCE_NUMBER", Some("5"))
+            .expect("at")
+            .shard_iterator
+            .expect("iterator");
         assert_eq!(
             iterator_next_sequence(&at),
             5,
@@ -912,7 +903,7 @@ mod tests {
         );
 
         let after = get_iter(
-            &service,
+            &engine,
             &ctx,
             &arn,
             &shard,
@@ -931,19 +922,19 @@ mod tests {
 
     #[test]
     fn get_shard_iterator_at_without_sequence_is_validation_error() {
-        let (service, ctx, _t) = fixture();
-        let arn = create_streamed(&service, &ctx);
-        let shard = shard_for(&service, &ctx, &arn);
-        let err = get_iter(&service, &ctx, &arn, &shard, "AT_SEQUENCE_NUMBER", None)
+        let (engine, ctx, _t) = fixture();
+        let arn = create_streamed(&engine, &ctx);
+        let shard = shard_for(&engine, &ctx, &arn);
+        let err = get_iter(&engine, &ctx, &arn, &shard, "AT_SEQUENCE_NUMBER", None)
             .expect_err("missing sequence");
         assert!(matches!(err, DynamoDbError::ValidationException(_)));
     }
 
     #[test]
     fn get_shard_iterator_unknown_shard_is_resource_not_found() {
-        let (service, ctx, _t) = fixture();
-        let arn = create_streamed(&service, &ctx);
-        let err = get_iter(&service, &ctx, &arn, "shardId-nope", "TRIM_HORIZON", None)
+        let (engine, ctx, _t) = fixture();
+        let arn = create_streamed(&engine, &ctx);
+        let err = get_iter(&engine, &ctx, &arn, "shardId-nope", "TRIM_HORIZON", None)
             .expect_err("unknown shard");
         assert!(matches!(err, DynamoDbError::ResourceNotFoundException(_)));
     }
@@ -952,7 +943,7 @@ mod tests {
 
     /// Create a stream-enabled table with the given view type; returns the ARN.
     fn streamed_table(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         view_type: &str,
     ) -> String {
@@ -963,16 +954,16 @@ mod tests {
             "StreamSpecification": { "StreamEnabled": true, "StreamViewType": view_type }
         }))
         .unwrap();
-        control_plane::create_table(service, context, input)
+        control_plane::create_table(engine, context, input)
             .expect("create")
             .table_description
             .latest_stream_arn
             .expect("arn")
     }
 
-    fn put(service: &Arc<Service>, context: &TenantIsolationContext, pk: &str, v: &str) {
+    fn put(engine: &Arc<Engine>, context: &TenantIsolationContext, pk: &str, v: &str) {
         crate::commands::item::put_item(
-            service,
+            engine,
             context,
             serde_json::from_value(json!({
                 "TableName": "events",
@@ -983,9 +974,9 @@ mod tests {
         .expect("put");
     }
 
-    fn delete(service: &Arc<Service>, context: &TenantIsolationContext, pk: &str) {
+    fn delete(engine: &Arc<Engine>, context: &TenantIsolationContext, pk: &str) {
         crate::commands::item::delete_item(
-            service,
+            engine,
             context,
             serde_json::from_value(json!({ "TableName": "events", "Key": { "pk": {"S": pk} } }))
                 .unwrap(),
@@ -995,13 +986,13 @@ mod tests {
 
     /// TRIM_HORIZON iterator + GetRecords from the start.
     fn all_records(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         arn: &str,
     ) -> GetRecordsOutput {
-        let shard = shard_for(service, context, arn);
+        let shard = shard_for(engine, context, arn);
         let iter = get_shard_iterator(
-            service,
+            engine,
             context,
             GetShardIteratorInput {
                 stream_arn: arn.to_owned(),
@@ -1014,7 +1005,7 @@ mod tests {
         .shard_iterator
         .expect("iterator");
         get_records(
-            service,
+            engine,
             context,
             GetRecordsInput {
                 shard_iterator: iter,
@@ -1026,12 +1017,12 @@ mod tests {
 
     #[test]
     fn get_records_new_and_old_images_for_insert_modify_remove() {
-        let (service, ctx, _t) = fixture();
-        let arn = streamed_table(&service, &ctx, "NEW_AND_OLD_IMAGES");
-        put(&service, &ctx, "a", "1"); // INSERT
-        put(&service, &ctx, "a", "2"); // MODIFY
-        delete(&service, &ctx, "a"); // REMOVE
-        let out = all_records(&service, &ctx, &arn);
+        let (engine, ctx, _t) = fixture();
+        let arn = streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
+        put(&engine, &ctx, "a", "1"); // INSERT
+        put(&engine, &ctx, "a", "2"); // MODIFY
+        delete(&engine, &ctx, "a"); // REMOVE
+        let out = all_records(&engine, &ctx, &arn);
         assert_eq!(out.records.len(), 3);
 
         let insert = &out.records[0];
@@ -1079,9 +1070,9 @@ mod tests {
     /// strictly increasing sequence numbers.
     #[test]
     fn batch_write_emits_stream_records() {
-        let (service, ctx, _t) = fixture();
-        let arn = streamed_table(&service, &ctx, "NEW_AND_OLD_IMAGES");
-        put(&service, &ctx, "old", "1"); // seed: will be MODIFY then nothing
+        let (engine, ctx, _t) = fixture();
+        let arn = streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
+        put(&engine, &ctx, "old", "1"); // seed: will be MODIFY then nothing
         let input = serde_json::from_value(json!({
             "RequestItems": { "events": [
                 { "PutRequest": { "Item": { "pk": {"S": "fresh"}, "v": {"N": "1"} } } },
@@ -1090,9 +1081,9 @@ mod tests {
             ] }
         }))
         .unwrap();
-        crate::commands::batch::batch_write_item(&service, &ctx, input).expect("batch write");
+        crate::commands::batch::batch_write_item(&engine, &ctx, input).expect("batch write");
 
-        let out = all_records(&service, &ctx, &arn);
+        let out = all_records(&engine, &ctx, &arn);
         // 1 (seed INSERT) + INSERT(fresh) + MODIFY(old) + REMOVE(fresh).
         let names: Vec<StreamEventName> = out.records.iter().map(|r| r.event_name).collect();
         assert_eq!(
@@ -1121,8 +1112,8 @@ mod tests {
     /// deliver INSERT + INSERT (the update upserts a fresh key) via GetRecords.
     #[test]
     fn transact_write_emits_stream_records() {
-        let (service, ctx, _t) = fixture();
-        let arn = streamed_table(&service, &ctx, "NEW_AND_OLD_IMAGES");
+        let (engine, ctx, _t) = fixture();
+        let arn = streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
         let input = serde_json::from_value(json!({
             "TransactItems": [
                 { "Put": { "TableName": "events", "Item": { "pk": {"S": "p1"}, "v": {"N": "1"} } } },
@@ -1135,9 +1126,9 @@ mod tests {
             ]
         }))
         .unwrap();
-        crate::commands::transact::transact_write_items(&service, &ctx, input).expect("transact");
+        crate::commands::transact::transact_write_items(&engine, &ctx, input).expect("transact");
 
-        let out = all_records(&service, &ctx, &arn);
+        let out = all_records(&engine, &ctx, &arn);
         let names: Vec<StreamEventName> = out.records.iter().map(|r| r.event_name).collect();
         assert_eq!(
             names,
@@ -1161,12 +1152,12 @@ mod tests {
     /// so no two records share a sequence number and none is skipped.
     #[test]
     fn capture_event_allocates_monotonic_sequences() {
-        let (service, ctx, _t) = fixture();
-        let arn = streamed_table(&service, &ctx, "NEW_IMAGE");
+        let (engine, ctx, _t) = fixture();
+        let arn = streamed_table(&engine, &ctx, "NEW_IMAGE");
         for i in 0..5 {
-            put(&service, &ctx, &format!("k{i}"), &i.to_string());
+            put(&engine, &ctx, &format!("k{i}"), &i.to_string());
         }
-        let out = all_records(&service, &ctx, &arn);
+        let out = all_records(&engine, &ctx, &arn);
         let seqs: Vec<i64> = out
             .records
             .iter()
@@ -1177,10 +1168,10 @@ mod tests {
 
     #[test]
     fn get_records_keys_only_view_omits_images() {
-        let (service, ctx, _t) = fixture();
-        let arn = streamed_table(&service, &ctx, "KEYS_ONLY");
-        put(&service, &ctx, "a", "1");
-        let out = all_records(&service, &ctx, &arn);
+        let (engine, ctx, _t) = fixture();
+        let arn = streamed_table(&engine, &ctx, "KEYS_ONLY");
+        put(&engine, &ctx, "a", "1");
+        let out = all_records(&engine, &ctx, &arn);
         let record = &out.records[0];
         assert!(record.dynamodb.new_image.is_none() && record.dynamodb.old_image.is_none());
         assert_eq!(
@@ -1191,11 +1182,11 @@ mod tests {
 
     #[test]
     fn get_records_new_image_only() {
-        let (service, ctx, _t) = fixture();
-        let arn = streamed_table(&service, &ctx, "NEW_IMAGE");
-        put(&service, &ctx, "a", "1");
-        put(&service, &ctx, "a", "2");
-        let out = all_records(&service, &ctx, &arn);
+        let (engine, ctx, _t) = fixture();
+        let arn = streamed_table(&engine, &ctx, "NEW_IMAGE");
+        put(&engine, &ctx, "a", "1");
+        put(&engine, &ctx, "a", "2");
+        let out = all_records(&engine, &ctx, &arn);
         let modify = &out.records[1];
         assert!(
             modify.dynamodb.old_image.is_none(),
@@ -1206,15 +1197,15 @@ mod tests {
 
     #[test]
     fn get_records_iterator_advances_and_pages() {
-        let (service, ctx, _t) = fixture();
-        let arn = streamed_table(&service, &ctx, "NEW_IMAGE");
+        let (engine, ctx, _t) = fixture();
+        let arn = streamed_table(&engine, &ctx, "NEW_IMAGE");
         for v in ["1", "2", "3"] {
-            put(&service, &ctx, "a", v);
+            put(&engine, &ctx, "a", v);
         }
-        let shard = shard_for(&service, &ctx, &arn);
+        let shard = shard_for(&engine, &ctx, &arn);
         // Page 1: limit 2.
         let iter1 = get_shard_iterator(
-            &service,
+            &engine,
             &ctx,
             GetShardIteratorInput {
                 stream_arn: arn.clone(),
@@ -1227,7 +1218,7 @@ mod tests {
         .shard_iterator
         .expect("iter");
         let page1 = get_records(
-            &service,
+            &engine,
             &ctx,
             GetRecordsInput {
                 shard_iterator: iter1,
@@ -1238,7 +1229,7 @@ mod tests {
         assert_eq!(page1.records.len(), 2);
         // Page 2: continue from NextShardIterator.
         let page2 = get_records(
-            &service,
+            &engine,
             &ctx,
             GetRecordsInput {
                 shard_iterator: page1.next_shard_iterator.expect("next"),
@@ -1251,7 +1242,7 @@ mod tests {
 
     #[test]
     fn capture_is_skipped_for_non_stream_tables() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         // Table without a stream — writes produce no events, and there is no
         // stream store to read.
         let input: CreateTableInput = serde_json::from_value(json!({
@@ -1260,16 +1251,16 @@ mod tests {
             "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
         }))
         .unwrap();
-        control_plane::create_table(&service, &ctx, input).expect("create");
+        control_plane::create_table(&engine, &ctx, input).expect("create");
         crate::commands::item::put_item(
-            &service,
+            &engine,
             &ctx,
             serde_json::from_value(json!({ "TableName": "plain", "Item": { "pk": {"S": "a"} } }))
                 .unwrap(),
         )
         .expect("put");
         assert_eq!(
-            next_sequence_value(&service, &ctx, "plain").unwrap(),
+            next_sequence_value(&engine, &ctx, "plain").unwrap(),
             0,
             "no events captured for a non-stream table"
         );
@@ -1277,9 +1268,9 @@ mod tests {
 
     #[test]
     fn describe_stream_for_missing_table_is_resource_not_found() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         let err = describe_stream(
-            &service,
+            &engine,
             &ctx,
             DescribeStreamInput {
                 stream_arn: "arn:aws:dynamodb:ddblocal:000000000000:table/ghost/stream/x"
@@ -1296,7 +1287,7 @@ mod tests {
 
     /// Create a stream-enabled table with the given name; returns its ARN.
     fn create_streamed_named(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         name: &str,
     ) -> String {
@@ -1307,7 +1298,7 @@ mod tests {
             "StreamSpecification": { "StreamEnabled": true, "StreamViewType": "NEW_IMAGE" }
         }))
         .unwrap();
-        control_plane::create_table(service, context, input)
+        control_plane::create_table(engine, context, input)
             .expect("create")
             .table_description
             .latest_stream_arn
@@ -1315,25 +1306,25 @@ mod tests {
     }
 
     /// Create a table without a stream (it must be excluded from ListStreams).
-    fn create_plain_named(service: &Arc<Service>, context: &TenantIsolationContext, name: &str) {
+    fn create_plain_named(engine: &Arc<Engine>, context: &TenantIsolationContext, name: &str) {
         let input: CreateTableInput = serde_json::from_value(json!({
             "TableName": name,
             "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
             "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
         }))
         .unwrap();
-        control_plane::create_table(service, context, input).expect("create");
+        control_plane::create_table(engine, context, input).expect("create");
     }
 
     fn list(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         table_name: Option<&str>,
         limit: Option<i64>,
         start: Option<&str>,
     ) -> ListStreamsOutput {
         list_streams(
-            service,
+            engine,
             context,
             ListStreamsInput {
                 table_name: table_name.map(str::to_owned),
@@ -1347,7 +1338,7 @@ mod tests {
     /// Persist a stream event directly with a chosen sequence/timestamp, so
     /// retention can be tested without waiting out the 24h window.
     fn inject_event(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         table_name: &str,
         seq: i64,
@@ -1374,7 +1365,7 @@ mod tests {
             panic!("event serializes to an object");
         };
         let id = DocumentId::from_key(sequence_number(seq)).unwrap();
-        service
+        engine
             .insert_document_with_id(
                 context.tenant_id(),
                 stream_events_table(table_name).unwrap(),
@@ -1386,12 +1377,12 @@ mod tests {
 
     #[test]
     fn list_streams_enumerates_only_stream_enabled_tables() {
-        let (service, ctx, _t) = fixture();
-        let alpha = create_streamed_named(&service, &ctx, "alpha");
-        let beta = create_streamed_named(&service, &ctx, "beta");
-        create_plain_named(&service, &ctx, "gamma");
+        let (engine, ctx, _t) = fixture();
+        let alpha = create_streamed_named(&engine, &ctx, "alpha");
+        let beta = create_streamed_named(&engine, &ctx, "beta");
+        create_plain_named(&engine, &ctx, "gamma");
 
-        let out = list(&service, &ctx, None, None, None);
+        let out = list(&engine, &ctx, None, None, None);
         assert_eq!(out.streams.len(), 2, "only the two streamed tables");
         let arns: Vec<&str> = out.streams.iter().map(|s| s.stream_arn.as_str()).collect();
         assert!(arns.contains(&alpha.as_str()) && arns.contains(&beta.as_str()));
@@ -1407,25 +1398,25 @@ mod tests {
 
     #[test]
     fn list_streams_filters_by_table_name() {
-        let (service, ctx, _t) = fixture();
-        create_streamed_named(&service, &ctx, "alpha");
-        create_streamed_named(&service, &ctx, "beta");
+        let (engine, ctx, _t) = fixture();
+        create_streamed_named(&engine, &ctx, "alpha");
+        create_streamed_named(&engine, &ctx, "beta");
 
-        let out = list(&service, &ctx, Some("alpha"), None, None);
+        let out = list(&engine, &ctx, Some("alpha"), None, None);
         assert_eq!(out.streams.len(), 1);
         assert_eq!(out.streams[0].table_name, "alpha");
 
-        let none = list(&service, &ctx, Some("nonexistent"), None, None);
+        let none = list(&engine, &ctx, Some("nonexistent"), None, None);
         assert!(none.streams.is_empty(), "no match for an unknown table");
     }
 
     #[test]
     fn list_streams_paginates_with_limit_and_exclusive_start() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         for name in ["alpha", "beta", "gamma"] {
-            create_streamed_named(&service, &ctx, name);
+            create_streamed_named(&engine, &ctx, name);
         }
-        let page1 = list(&service, &ctx, None, Some(2), None);
+        let page1 = list(&engine, &ctx, None, Some(2), None);
         assert_eq!(page1.streams.len(), 2);
         let cursor = page1
             .last_evaluated_stream_arn
@@ -1436,7 +1427,7 @@ mod tests {
             "cursor is the last returned ARN"
         );
 
-        let page2 = list(&service, &ctx, None, Some(2), Some(&cursor));
+        let page2 = list(&engine, &ctx, None, Some(2), Some(&cursor));
         assert_eq!(page2.streams.len(), 1, "the final page");
         assert!(
             page2.last_evaluated_stream_arn.is_none(),
@@ -1456,20 +1447,20 @@ mod tests {
 
     #[test]
     fn get_records_skips_expired_events_and_reclaims_their_storage() {
-        let (service, ctx, _t) = fixture();
-        let arn = create_streamed_named(&service, &ctx, "events");
+        let (engine, ctx, _t) = fixture();
+        let arn = create_streamed_named(&engine, &ctx, "events");
         let now = epoch_seconds();
         inject_event(
-            &service,
+            &engine,
             &ctx,
             "events",
             0,
             now - STREAM_RETENTION_SECS - 100,
         ); // expired
-        inject_event(&service, &ctx, "events", 1, now); // fresh
-        assert_eq!(read_events(&service, &ctx, "events").unwrap().len(), 2);
+        inject_event(&engine, &ctx, "events", 1, now); // fresh
+        assert_eq!(read_events(&engine, &ctx, "events").unwrap().len(), 2);
 
-        let out = all_records(&service, &ctx, &arn);
+        let out = all_records(&engine, &ctx, &arn);
         assert_eq!(out.records.len(), 1, "the expired event is not returned");
         assert_eq!(
             out.records[0].dynamodb.keys.get("pk"),
@@ -1483,7 +1474,7 @@ mod tests {
             "the iterator advances past the expired event so re-polling never stalls"
         );
         assert_eq!(
-            read_events(&service, &ctx, "events").unwrap().len(),
+            read_events(&engine, &ctx, "events").unwrap().len(),
             1,
             "the expired event's storage is reclaimed on poll"
         );
@@ -1491,32 +1482,32 @@ mod tests {
 
     #[test]
     fn reclaiming_expired_events_preserves_the_monotonic_sequence() {
-        let (service, ctx, _t) = fixture();
-        let arn = create_streamed_named(&service, &ctx, "events");
+        let (engine, ctx, _t) = fixture();
+        let arn = create_streamed_named(&engine, &ctx, "events");
         let now = epoch_seconds();
         // Two events that have both aged out of the retention window, with the
         // sequence counter advanced past them (as real capture would leave it).
         inject_event(
-            &service,
+            &engine,
             &ctx,
             "events",
             0,
             now - STREAM_RETENTION_SECS - 100,
         );
         inject_event(
-            &service,
+            &engine,
             &ctx,
             "events",
             1,
             now - STREAM_RETENTION_SECS - 100,
         );
-        set_sequence_value(&service, &ctx, "events", 2).expect("counter");
+        set_sequence_value(&engine, &ctx, "events", 2).expect("counter");
 
         // A poll returns nothing (all expired) and reclaims both event docs.
-        let out = all_records(&service, &ctx, &arn);
+        let out = all_records(&engine, &ctx, &arn);
         assert!(out.records.is_empty(), "all events expired");
         assert_eq!(
-            read_events(&service, &ctx, "events").unwrap().len(),
+            read_events(&engine, &ctx, "events").unwrap().len(),
             0,
             "expired storage reclaimed"
         );
@@ -1524,12 +1515,12 @@ mod tests {
         // The high-water mark is preserved: the next captured event keeps
         // climbing rather than colliding with a consumer's advanced iterator.
         assert_eq!(
-            next_sequence_value(&service, &ctx, "events").unwrap(),
+            next_sequence_value(&engine, &ctx, "events").unwrap(),
             2,
             "reclamation does not reset the counter"
         );
-        put(&service, &ctx, "z", "9");
-        let fresh = read_events(&service, &ctx, "events").unwrap();
+        put(&engine, &ctx, "z", "9");
+        let fresh = read_events(&engine, &ctx, "events").unwrap();
         assert_eq!(fresh.len(), 1);
         assert_eq!(
             fresh[0].seq, 2,

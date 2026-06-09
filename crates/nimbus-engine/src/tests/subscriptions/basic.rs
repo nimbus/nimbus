@@ -1,10 +1,10 @@
 use super::*;
 
 #[tokio::test]
-async fn service_insert_drives_subscription_updates() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_insert_drives_subscription_updates() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
     let (tx, mut rx) = subscription_channel();
     let query = Query {
@@ -14,7 +14,7 @@ async fn service_insert_drives_subscription_updates() {
         limit: None,
     };
 
-    let subscription = service
+    let subscription = engine
         .subscribe(&tenant_id, query, "req-1".to_string(), tx)
         .expect("subscribe should succeed");
     let subscription_id = subscription.id();
@@ -34,7 +34,7 @@ async fn service_insert_drives_subscription_updates() {
         other => panic!("unexpected initial subscription event: {other:?}"),
     }
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             TableName::new("tasks").expect("table name should be valid"),
@@ -61,12 +61,12 @@ async fn service_insert_drives_subscription_updates() {
 }
 
 #[tokio::test]
-async fn service_update_and_delete_drive_subscription_updates() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_update_and_delete_drive_subscription_updates() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    let document_id = service
+    let document_id = engine
         .insert_document(
             &tenant_id,
             TableName::new("tasks").expect("table name should be valid"),
@@ -82,7 +82,7 @@ async fn service_update_and_delete_drive_subscription_updates() {
         limit: None,
     };
 
-    let subscription = service
+    let subscription = engine
         .subscribe(&tenant_id, query, "req-2".to_string(), tx)
         .expect("subscribe should succeed");
     let subscription_id = subscription.id();
@@ -101,7 +101,7 @@ async fn service_update_and_delete_drive_subscription_updates() {
         other => panic!("unexpected initial subscription event: {other:?}"),
     }
 
-    service
+    engine
         .update_document(
             &tenant_id,
             TableName::new("tasks").expect("table name should be valid"),
@@ -126,7 +126,7 @@ async fn service_update_and_delete_drive_subscription_updates() {
         other => panic!("unexpected update subscription event: {other:?}"),
     }
 
-    service
+    engine
         .delete_document(
             &tenant_id,
             TableName::new("tasks").expect("table name should be valid"),
@@ -151,11 +151,11 @@ async fn service_update_and_delete_drive_subscription_updates() {
 
 #[tokio::test]
 async fn slow_subscription_channels_are_dropped_instead_of_growing_unbounded() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    let document_id = service
+    let document_id = engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -164,18 +164,18 @@ async fn slow_subscription_channels_are_dropped_instead_of_growing_unbounded() {
         .expect("insert should succeed");
 
     let (tx, mut rx) = mpsc::channel::<SubscriptionUpdate>(1);
-    let _subscription = service
+    let _subscription = engine
         .subscribe(&tenant_id, query_for("tasks"), "slow-sub".to_string(), tx)
         .expect("subscribe should succeed");
 
     assert_eq!(
-        service
+        engine
             .active_subscription_count(&tenant_id)
             .expect("subscription count should load"),
         1
     );
 
-    service
+    engine
         .update_document(
             &tenant_id,
             tasks_table(),
@@ -185,7 +185,7 @@ async fn slow_subscription_channels_are_dropped_instead_of_growing_unbounded() {
         .expect("update should succeed");
 
     wait_for_active_subscription_count(
-        &service,
+        &engine,
         &tenant_id,
         "slow subscription should still be dropped after async delivery attempts",
         0,
@@ -213,23 +213,23 @@ async fn slow_subscription_channels_are_dropped_instead_of_growing_unbounded() {
 
 #[tokio::test]
 async fn subscription_snapshots_expose_covered_sequence_and_commit_timestamp_metadata() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    let document_id = service
+    let document_id = engine
         .insert_document(
             &tenant_id,
             tasks_table(),
             serde_json::Map::from_iter([("title".to_string(), json!("Before"))]),
         )
         .expect("seed insert should succeed");
-    let bootstrap_sequence = service
+    let bootstrap_sequence = engine
         .latest_sequence(&tenant_id)
         .expect("latest sequence should load after seed insert");
 
     let (tx, mut rx) = subscription_channel();
-    let _subscription = service
+    let _subscription = engine
         .subscribe(
             &tenant_id,
             query_for("tasks"),
@@ -255,7 +255,7 @@ async fn subscription_snapshots_expose_covered_sequence_and_commit_timestamp_met
         other => panic!("unexpected initial subscription event: {other:?}"),
     }
 
-    service
+    engine
         .update_document(
             &tenant_id,
             tasks_table(),
@@ -264,7 +264,7 @@ async fn subscription_snapshots_expose_covered_sequence_and_commit_timestamp_met
         )
         .expect("update should succeed");
 
-    let durable_commit = durable_journal_commits(&service, &tenant_id, SequenceNumber(0))
+    let durable_commit = durable_journal_commits(&engine, &tenant_id, SequenceNumber(0))
         .into_iter()
         .last()
         .expect("durable journal should contain the update commit");

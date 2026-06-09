@@ -6,7 +6,7 @@ use super::scheduling::execute_schedule_command_async;
 use super::*;
 
 pub(in crate::adapters::convex) async fn execute_convex_action_async(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     action: ConvexExecutableAction,
@@ -62,7 +62,7 @@ pub(in crate::adapters::convex) async fn execute_convex_action_async(
 }
 
 async fn execute_function_call_async(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     command: ConvexFunctionCallCommand,

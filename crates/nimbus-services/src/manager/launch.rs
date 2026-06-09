@@ -2,33 +2,41 @@ use nimbus_core::Error;
 use nimbus_sandbox::SandboxHandle;
 use nimbus_tenant::TenantIsolationDecision;
 
-use crate::SandboxServiceLaunch;
+use crate::{SandboxBackedServiceImplementation, ServiceImplementation};
 use nimbus_node::LocalEnforcementBinding;
 
-use super::SandboxServiceManager;
+use super::ServiceManager;
 use super::types::{TenantServiceKey, sandbox_backend_error};
 
-impl SandboxServiceManager {
+impl ServiceManager {
     pub(super) async fn start_launch_async(
         &self,
         key: &TenantServiceKey,
         decision: &TenantIsolationDecision,
-        launch: SandboxServiceLaunch,
+        launch: ServiceImplementation,
     ) -> Result<SandboxHandle, Error> {
+        let implementation_kind = launch.implementation_kind();
+        let Some(sandbox_launch) = launch.into_sandbox_backed() else {
+            return Err(Error::InvalidInput(format!(
+                "service {} for tenant {} uses a {} implementation, but this service manager can only launch sandbox-backed implementations",
+                key.service_name, key.tenant_id, implementation_kind
+            )));
+        };
         let actual_backend = self.sandbox_backend.kind();
         let binding = LocalEnforcementBinding::from_decision(decision)?;
         let service_access = binding.service_access(&key.service_name)?;
-        service_access.ensure_sandbox_spec_matches(launch.spec(), actual_backend)?;
-        decision
-            .network()
-            .ensure_sandbox_egress_matches(launch.spec(), "sandbox service launch")?;
-        self.admit_launch_image(decision, &launch)?;
+        service_access.ensure_sandbox_spec_matches(sandbox_launch.spec(), actual_backend)?;
+        decision.network().ensure_sandbox_egress_matches(
+            sandbox_launch.spec(),
+            "sandbox-backed service launch",
+        )?;
+        self.admit_launch_image(decision, &sandbox_launch)?;
 
-        let handle = match launch {
-            SandboxServiceLaunch::Image(launch) => {
+        let handle = match sandbox_launch {
+            SandboxBackedServiceImplementation::Image(launch) => {
                 self.sandbox_backend.start_from_image(launch).await
             }
-            SandboxServiceLaunch::Build(launch) => {
+            SandboxBackedServiceImplementation::Build(launch) => {
                 self.sandbox_backend.start_from_build(launch).await
             }
         }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use tempfile::{TempDir, tempdir};
 
 use super::execution::execute_convex_action_cancellable;

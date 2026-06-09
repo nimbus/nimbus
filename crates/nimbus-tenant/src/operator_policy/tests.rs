@@ -46,7 +46,7 @@ const INVALID_EGRESS_POLICY: &str = r#"
 schema_version: 1
 tenant: tenant-a
 workloads:
-  - kind: sandbox_service
+  - kind: service
     name: "worker"
     sandbox:
       sandbox_id: "worker-1"
@@ -63,7 +63,7 @@ const EGRESS_DIFF_FROM: &str = r#"
 schema_version: 1
 tenant: tenant-a
 workloads:
-  - kind: sandbox_service
+  - kind: service
     name: "worker"
     sandbox:
       sandbox_id: "worker-1"
@@ -84,7 +84,7 @@ const EGRESS_DIFF_TO: &str = r#"
 schema_version: 1
 tenant: tenant-a
 workloads:
-  - kind: sandbox_service
+  - kind: service
     name: "worker"
     sandbox:
       sandbox_id: "worker-1"
@@ -421,7 +421,7 @@ fn valid_policy_fixture_compiles_to_tenant_isolation_decision() {
         decision
             .decision
             .to_audit_record()
-            .workload_stable_id
+            .workload_subject
             .contains("messages%3Asend"),
         "compiled decision should produce normal tenant-isolation audit evidence"
     );
@@ -647,7 +647,7 @@ fn denied_egress_draft_proposes_minimal_rule_without_mutating_policy() {
     let policy = parse_policy(EGRESS_DIFF_FROM);
     let event = OperatorDeniedEgressEvent {
         tenant_id: "tenant-a".to_string(),
-        workload_kind: "sandbox_service".to_string(),
+        workload_kind: "service".to_string(),
         workload_name: "worker".to_string(),
         protocol: PublishedEndpointProtocol::Https,
         host: "API.GitHub.com".to_string(),
@@ -665,7 +665,7 @@ fn denied_egress_draft_proposes_minimal_rule_without_mutating_policy() {
     assert_eq!(draft.status, OperatorPolicyDraftStatus::ReviewRequired);
     assert!(draft.requires_explicit_approval);
     assert!(!draft.auto_apply);
-    assert_eq!(draft.workload_key, "sandbox_service/worker");
+    assert_eq!(draft.workload_key, "service/worker");
     assert_eq!(draft.suggested_egress_rule.name, "api-github-com-https-443");
     assert_eq!(draft.suggested_egress_rule.host, "api.github.com");
     assert_eq!(draft.suggested_egress_rule.port, 443);
@@ -693,7 +693,7 @@ fn denied_egress_draft_requires_approval_before_apply() {
     let draft = policy
         .draft_from_denied_egress(OperatorDeniedEgressEvent {
             tenant_id: "tenant-a".to_string(),
-            workload_kind: "sandbox_service".to_string(),
+            workload_kind: "service".to_string(),
             workload_name: "worker".to_string(),
             protocol: PublishedEndpointProtocol::Https,
             host: "api.github.com".to_string(),
@@ -741,7 +741,7 @@ fn denied_egress_draft_rejects_mismatched_tenant_and_unknown_workload() {
     let policy = parse_policy(EGRESS_DIFF_FROM);
     let mismatched_tenant = OperatorDeniedEgressEvent {
         tenant_id: "tenant-b".to_string(),
-        workload_kind: "sandbox_service".to_string(),
+        workload_kind: "service".to_string(),
         workload_name: "worker".to_string(),
         protocol: PublishedEndpointProtocol::Https,
         host: "api.github.com".to_string(),
@@ -760,7 +760,7 @@ fn denied_egress_draft_rejects_mismatched_tenant_and_unknown_workload() {
 
     let unknown_workload = OperatorDeniedEgressEvent {
         tenant_id: "tenant-a".to_string(),
-        workload_kind: "sandbox_service".to_string(),
+        workload_kind: "service".to_string(),
         workload_name: "missing".to_string(),
         protocol: PublishedEndpointProtocol::Https,
         host: "api.github.com".to_string(),

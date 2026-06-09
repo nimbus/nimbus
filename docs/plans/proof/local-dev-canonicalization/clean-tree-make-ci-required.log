@@ -1637,9 +1637,9 @@ NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 bash scripts/single-flight.
         PASS [   0.016s] ( 939/1906) nimbus-sandbox backends::oci::port_manager::tests::allocate_missing_bindings_keeps_not_ready_ports_reserved
         PASS [   0.324s] ( 940/1906) nimbus-sandbox backends::krun::vm::tests::plan_only_backend_lowers_image_launch_through_generic_trait_surface
         PASS [   0.015s] ( 941/1906) nimbus-sandbox backends::oci::port_manager::tests::allocate_missing_bindings_uses_range_and_skips_existing_guest_ports
-        PASS [   0.012s] ( 942/1906) nimbus-sandbox::bin/neovex-guest-user-switch tests::read_env_u32_parses_numeric_values
+        PASS [   0.012s] ( 942/1906) nimbus-sandbox::bin/nimbus-guest-user-switch tests::read_env_u32_parses_numeric_values
         PASS [   0.014s] ( 943/1906) nimbus-sandbox spec::tests::sandbox_lifecycle_spec_serializes_stop_timeout_as_millis
-        PASS [   0.010s] ( 944/1906) nimbus-sandbox::bin/neovex-guest-user-switch tests::read_env_u32_rejects_non_numeric_values
+        PASS [   0.010s] ( 944/1906) nimbus-sandbox::bin/nimbus-guest-user-switch tests::read_env_u32_rejects_non_numeric_values
         PASS [   0.027s] ( 945/1906) nimbus-server adapters::cloud_functions::app_contract::tests::cloud_functions_admin_support_matrix_matches_first_slice_contract
         PASS [   0.027s] ( 946/1906) nimbus-server adapters::cloud_functions::app_contract::tests::cloud_functions_admin_support_rejects_unsupported_methods
         PASS [   0.027s] ( 947/1906) nimbus-server adapters::cloud_functions::app_contract::tests::cloud_functions_auto_discovers_firebase_root_from_nested_child

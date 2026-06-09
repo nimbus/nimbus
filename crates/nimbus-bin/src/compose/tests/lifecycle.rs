@@ -65,7 +65,7 @@ async fn start_service_launch_starts_image_launches_and_validates_identity() {
     let tenant = TenantId::new("svc-demo").expect("tenant should parse");
     let backend = StubBackend::default();
     let service_name = "db";
-    let launch = SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+    let launch = ServiceImplementation::sandbox_image(SandboxImageLaunchSpec::new(
         sample_spec(&tenant, service_name),
         "busybox:latest",
     ));

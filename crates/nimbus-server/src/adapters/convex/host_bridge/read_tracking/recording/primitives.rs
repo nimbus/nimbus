@@ -3,7 +3,7 @@ use super::*;
 impl ConvexHostBridge {
     pub(in crate::adapters::convex) fn record_table_read(&self, table: &TableName) {
         let table_id = self
-            .service()
+            .engine()
             .table_id(self.tenant_id(), table)
             .ok()
             .flatten();
@@ -13,7 +13,7 @@ impl ConvexHostBridge {
 
     pub(crate) fn record_document_read(&self, table: &TableName, document_id: &DocumentId) {
         let table_id = self
-            .service()
+            .engine()
             .table_id(self.tenant_id(), table)
             .ok()
             .flatten();
@@ -81,7 +81,7 @@ impl ConvexHostBridge {
         page: &nimbus_core::Page,
     ) {
         let table_id = self
-            .service()
+            .engine()
             .table_id(self.tenant_id(), &query.table)
             .ok()
             .flatten();
@@ -128,7 +128,7 @@ impl ConvexHostBridge {
         filters: &[Filter],
     ) {
         let table_id = self
-            .service()
+            .engine()
             .table_id(self.tenant_id(), table)
             .ok()
             .flatten();

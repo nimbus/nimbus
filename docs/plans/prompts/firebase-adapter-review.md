@@ -38,7 +38,7 @@ Suggestion) with specific line references.
   create awkward extraction/conversion boilerplate?
 
 - **MutationExecutionUnit usage:** The plan maps Firestore's `Commit` RPC to
-  `Service::begin_mutation_execution_unit()` → stage writes → `unit.commit()`.
+  `Engine::begin_mutation_execution_unit()` → stage writes → `unit.commit()`.
   Verify this correctly models Firestore's atomic batch semantics. Check:
   - Does the Convex adapter use `MutationExecutionUnit` the same way?
     (see `crates/nimbus-server/src/adapters/convex/host_bridge/bridge.rs`)
@@ -241,5 +241,5 @@ it need another revision pass?]
 - `crates/nimbus-server/src/router.rs` (RouterBuildConfig)
 - `crates/nimbus-server/src/state.rs` (AppState, ActiveConvexRegistry)
 - `crates/nimbus-server/src/adapters/convex/mod.rs` (Convex adapter structure)
-- `crates/nimbus-engine/src/service/execution_units/` (MutationExecutionUnit)
-- `crates/nimbus-engine/src/service/subscriptions.rs` (subscription API)
+- `crates/nimbus-engine/src/engine/execution_units/` (MutationExecutionUnit)
+- `crates/nimbus-engine/src/engine/subscriptions.rs` (subscription API)

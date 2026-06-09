@@ -1,14 +1,14 @@
-use super::support::new_faulted_service;
+use super::support::new_faulted_engine;
 use super::*;
 
 #[tokio::test]
 async fn paginate_documents_async_cancellable_returns_cancelled_while_blocking_work_unwinds() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
     for rank in 0..32 {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -19,12 +19,12 @@ async fn paginate_documents_async_cancellable_returns_cancelled_while_blocking_w
 
     let probe = BlockingCancellationProbe::new();
     let handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         let probe_for_wait = probe.clone();
         let probe_for_check = probe.clone();
         async move {
-            service
+            engine
                 .paginate_documents_async_cancellable(
                     tenant_id,
                     PaginatedQuery {
@@ -62,13 +62,13 @@ async fn paginate_documents_async_cancellable_returns_cancelled_while_blocking_w
 
 #[tokio::test]
 async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_durable_journal() {
-    let (_data_dir, service, tenant_id, faults) = new_faulted_service(10_000);
+    let (_data_dir, engine, tenant_id, faults) = new_faulted_engine(10_000);
 
     let mut blocker = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -87,7 +87,7 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
             .is_err(),
         "first mutation should remain pending while apply is blocked"
     );
-    let blocker_id = durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0))
+    let blocker_id = durable_journal_commits(engine.as_ref(), &tenant_id, SequenceNumber(0))
         .first()
         .and_then(|commit| commit.writes.first())
         .map(|write| write.doc_id.clone())
@@ -96,10 +96,10 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
     let cancel = Arc::new(Notify::new());
     let cancel_for_wait = cancel.clone();
     let mut handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async_with(
                     tenant_id,
                     tasks_table(),
@@ -137,14 +137,14 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
         .expect("mutation task should join successfully")
         .expect_err("queued cancellation before durable append should surface as cancelled");
     assert!(matches!(error, Error::Cancelled));
-    let documents = service
+    let documents = engine
         .query_documents(&tenant_id, &query_for("tasks"))
         .expect("query should succeed");
     assert_eq!(documents.len(), 1);
     assert_eq!(documents[0].id, blocker_id);
     assert_eq!(documents[0].fields.get("title"), Some(&json!("blocker")));
     assert_eq!(
-        durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0)).len(),
+        durable_journal_commits(engine.as_ref(), &tenant_id, SequenceNumber(0)).len(),
         1,
         "queued cancellation before durable append should not append a second commit"
     );
@@ -152,15 +152,15 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
 
 #[tokio::test]
 async fn mutation_async_cancellable_after_commit_returns_committed_result() {
-    let (_data_dir, service, tenant_id, faults) = new_faulted_service(20_000);
+    let (_data_dir, engine, tenant_id, faults) = new_faulted_engine(20_000);
 
     let cancel = Arc::new(Notify::new());
     let cancel_for_wait = cancel.clone();
     let mut handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async_with(
                     tenant_id,
                     tasks_table(),
@@ -196,7 +196,7 @@ async fn mutation_async_cancellable_after_commit_returns_committed_result() {
         .expect("post-commit cancellation should still return success");
     let documents = timeout(
         Duration::from_secs(1),
-        service.query_documents_async(tenant_id.clone(), query_for("tasks")),
+        engine.query_documents_async(tenant_id.clone(), query_for("tasks")),
     )
     .await
     .expect("query should resolve after apply")
@@ -208,19 +208,19 @@ async fn mutation_async_cancellable_after_commit_returns_committed_result() {
         Some(&json!("after-commit"))
     );
     assert_eq!(
-        durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0)).len(),
+        durable_journal_commits(engine.as_ref(), &tenant_id, SequenceNumber(0)).len(),
         1
     );
 }
 
 #[tokio::test]
 async fn mutation_async_non_cancelable_call_drops_unused_cancellation_future_after_completion() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let dropped = Arc::new(AtomicBool::new(false));
 
-    let document_id = service
+    let document_id = engine
         .insert_document_async_with(
             tenant_id.clone(),
             tasks_table(),
@@ -244,7 +244,7 @@ async fn mutation_async_non_cancelable_call_drops_unused_cancellation_future_aft
         "unused cancellation futures should be dropped once the mutation completes"
     );
     assert_eq!(
-        service
+        engine
             .get_document(&tenant_id, &tasks_table(), document_id.clone())
             .expect("inserted document should remain visible")
             .fields

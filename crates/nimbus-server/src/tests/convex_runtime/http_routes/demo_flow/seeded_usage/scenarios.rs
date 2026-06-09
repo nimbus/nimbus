@@ -254,17 +254,17 @@ pub(super) async fn assert_seeded_convex_demo_usage_scenario_matches_model(
             ))),
             faults.clone(),
         );
-        let fixture = ServiceFixture::new_with_harness(harness, |path, harness| {
-            Service::new_with_simulation(path, harness.clock(), harness.fault_injector())
+        let fixture = EngineFixture::new_with_harness(harness, |path, harness| {
+            Engine::new_with_simulation(path, harness.clock(), harness.fault_injector())
         });
         (fixture, Some(faults))
     } else {
-        (ServiceFixture::new(|path| Service::new(path)), None)
+        (EngineFixture::new(|path| Engine::new(path)), None)
     };
-    let service = fixture.service();
+    let service = fixture.engine();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let scheduler_handle = tokio::spawn(run_scheduler(service, shutdown_rx));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

@@ -50,9 +50,10 @@ flowchart LR
 ```
 
 The decision envelope includes tenant ID, authority class, deployment
-generation, stable workload identity, runtime policy, service grants, network
-endpoints, storage namespace, volume/image/secret policy, quota reservation,
-audit redactions, and a deterministic decision ID.
+generation, admitted workload identity, workload subject, workload audit
+projection, runtime policy, service grants, network endpoints, storage
+namespace, volume/image/secret policy, quota reservation, audit redactions, and
+a deterministic decision ID.
 
 The implementation lives in the server's `tenant` domain module:
 `crates/nimbus-server/src/tenant.rs` re-exports the concept-owned children under
@@ -69,7 +70,7 @@ security concept and admitted artifacts remain explicit as tenant isolation,
 | Runtime code asks for broad host capabilities in production. | `TenantIsolationMode::Production` rejects unsafe in-process grants or routes to a stronger tier before JavaScript runs. | `cargo test -p nimbus-server 'tenant::' -- --nocapture`. |
 | Service launch materializes another tenant's sandbox, port, or volume. | Sandbox launch consumes a decision-derived service access projection and validates tenant/service/backend before backend launch. | Tenant isolation unit tests and conformance service/volume collision scenarios. |
 | Tenant-controlled Compose input mounts host paths or exposes public ports. | Production Compose admission rejects host binds, undeclared/unsafe volumes, raw secrets, tag-only images, and non-loopback service exposure unless an explicit policy exists. | Conformance image admission scenarios and sandbox architecture docs. |
-| Tenant image content attacks the host during materialization. | Production image admission requires digest-pinned images as the floor; `SandboxServiceManager` runs image admission before service image materialization; concrete Cosign, SLSA, SBOM, offline/private-root, composite-verifier, and command-adapter seams provide stronger policy. | `make verify-artifact-provenance`, image admission tests, service-manager tests, and production Compose admission tests cover digest floor, unsigned, wrong identity, provenance source URI, SBOM, offline trust roots, and local-build rejection. |
+| Tenant image content attacks the host during materialization. | Production image admission requires digest-pinned images as the floor; `ServiceManager` runs image admission before service image materialization; concrete Cosign, SLSA, SBOM, offline/private-root, composite-verifier, and command-adapter seams provide stronger policy. | `make verify-artifact-provenance`, image admission tests, service-manager tests, and production Compose admission tests cover digest floor, unsigned, wrong identity, provenance source URI, SBOM, offline trust roots, and local-build rejection. |
 | Existing state drifts away from the isolation contract. | Read-only drift scanner reports malformed manifests, handles, ports, routes, volume roots, and missing decision/audit anchors. | `cargo test -p nimbus-server tenant_isolation_drift -- --nocapture`. |
 | Audit logs leak bearer claims or secret handles. | `TenantIsolationEvent` redacts sensitive attributes and correlation IDs by schema. | `cargo test -p nimbus-server audit_events -- --nocapture`. |
 
@@ -79,7 +80,7 @@ security concept and admitted artifacts remain explicit as tenant isolation,
 | --- | --- | --- | --- |
 | Tenant identity is fixed before lower seams run. | `TenantIsolationContext` to `TenantIsolationDecision`. | `tenant_isolation_decision_*` tests and conformance tenant-swap scenarios. | Future product tenant membership for native HTTP remains separate from current local-operator auth. |
 | In-process runtime cannot widen production host grants. | Runtime admission and `RuntimeExecutionAdmission`. | Runtime policy admission tests. | Unsafe policies need configured fallback executors before they can run outside the in-process tier. |
-| MicroVM service compute is tenant-scoped. | `SandboxServiceManager`, service registry, sandbox backend validation. | Conformance same-service-name and sandbox handle scenarios. | Host-side krun/libkrun process still carries accepted root VMM lifetime risk. |
+| MicroVM service compute is tenant-scoped. | `ServiceManager`, service registry, sandbox backend validation. | Conformance same-service-name and sandbox handle scenarios. | Host-side krun/libkrun process still carries accepted root VMM lifetime risk. |
 | Network exposure is private by default. | Service grants, loopback default, patched krun/libkrun TSI bind address. | Conformance localhost denial and Linux localhost-only proof from the sandbox hardening baseline. | Public exposure policy is intentionally not admitted yet. |
 | Sandbox egress has a typed deny-by-default policy contract. | `SandboxEgressPolicy`, compiled canonical policy checks, `SandboxEgressEnforcementPlan`, hidden `nimbus sandbox-supervisor` contract consumer, operator policy compiler, strict Compose `x-nimbus.egress`, service-manager launch checks, OCI bundle env materialization, and the container egress proxy reload seam. | `make verify-enterprise-policy-egress`, sandbox egress/proxy unit tests, sandbox-supervisor contract tests, operator reload/prove/draft tests, service-manager policy mismatch tests, Compose lowering tests, and minicloud container egress proof. | Container process-capable launches are proxy-enforced and live-reloadable. krun execute-mode remains fail-closed/recreate-required until a packet-level libkrun TSI PEP exists. |
 | Storage/API calls cannot cross tenants by caller-supplied tenant IDs. | Server/adapters/runtime HostBridge consume admitted tenant context. | Conformance runtime storage and bearer-swap scenarios. | External storage providers still require correct provider namespace configuration. |
@@ -140,7 +141,7 @@ Accepted for the current baseline:
   retention, and SIEM transport remain operator/product choices.
 - Secret provider authentication is not complete until
   `docs/plans/service-identity-provider-auth-plan.md` can mint short-lived,
-  tenant-scoped credentials from admitted `TenantWorkloadStableIdentity`
+  tenant-scoped credentials from admitted `WorkloadIdentity`
   projections, using stable provider subjects plus signed decision and
   invocation claims.
 - Native HTTP tenant membership is not a general customer auth model yet. The
@@ -163,7 +164,7 @@ Prioritize external security review in this order:
    `TenantImageVerificationProvider` plus concrete Cosign/SLSA/SBOM backends
    from `docs/plans/archive/artifact-provenance-verification-plan.md`.
 5. Service identity and provider auth:
-   `TenantWorkloadStableIdentity` projections, stable provider subjects, and
+   `WorkloadIdentity` projections, stable provider subjects, and
    short-lived credential minting from
    `docs/plans/service-identity-provider-auth-plan.md`.
 6. Storage provider namespace isolation:

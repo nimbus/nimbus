@@ -2,11 +2,11 @@ use super::*;
 
 #[test]
 fn find_all_documents() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! { "find": "users", "$db": "testdb" };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     assert_eq!(result.get_f64("ok").unwrap(), 1.0);
 
     let cursor = result.get_document("cursor").unwrap();
@@ -18,7 +18,7 @@ fn find_all_documents() {
 
 #[test]
 fn find_with_equality_filter() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -26,7 +26,7 @@ fn find_with_equality_filter() {
         "$db": "testdb",
         "filter": { "name": "Alice" },
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 1);
@@ -36,7 +36,7 @@ fn find_with_equality_filter() {
 
 #[test]
 fn find_with_comparison_operators() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -44,7 +44,7 @@ fn find_with_comparison_operators() {
         "$db": "testdb",
         "filter": { "age": { "$gt": 25 } },
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 2);
@@ -52,7 +52,7 @@ fn find_with_comparison_operators() {
 
 #[test]
 fn find_with_gte_filter() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -60,7 +60,7 @@ fn find_with_gte_filter() {
         "$db": "testdb",
         "filter": { "age": { "$gte": 30 } },
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 2);
@@ -68,7 +68,7 @@ fn find_with_gte_filter() {
 
 #[test]
 fn find_with_lt_filter() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -76,7 +76,7 @@ fn find_with_lt_filter() {
         "$db": "testdb",
         "filter": { "age": { "$lt": 30 } },
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 1);
@@ -86,7 +86,7 @@ fn find_with_lt_filter() {
 
 #[test]
 fn find_with_ne_filter() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -94,7 +94,7 @@ fn find_with_ne_filter() {
         "$db": "testdb",
         "filter": { "name": { "$ne": "Alice" } },
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 2);
@@ -102,7 +102,7 @@ fn find_with_ne_filter() {
 
 #[test]
 fn find_with_combined_range() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -110,7 +110,7 @@ fn find_with_combined_range() {
         "$db": "testdb",
         "filter": { "age": { "$gte": 25, "$lte": 30 } },
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 2);
@@ -118,7 +118,7 @@ fn find_with_combined_range() {
 
 #[test]
 fn find_with_limit() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -126,7 +126,7 @@ fn find_with_limit() {
         "$db": "testdb",
         "limit": 2,
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 2);
@@ -134,7 +134,7 @@ fn find_with_limit() {
 
 #[test]
 fn find_with_skip() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -142,7 +142,7 @@ fn find_with_skip() {
         "$db": "testdb",
         "skip": 2,
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 1);
@@ -150,7 +150,7 @@ fn find_with_skip() {
 
 #[test]
 fn find_with_sort_ascending() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -158,7 +158,7 @@ fn find_with_sort_ascending() {
         "$db": "testdb",
         "sort": { "age": 1 },
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 3);
@@ -170,7 +170,7 @@ fn find_with_sort_ascending() {
 
 #[test]
 fn find_with_sort_descending() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -178,7 +178,7 @@ fn find_with_sort_descending() {
         "$db": "testdb",
         "sort": { "age": -1 },
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 3);
@@ -190,7 +190,7 @@ fn find_with_sort_descending() {
 
 #[test]
 fn find_with_compound_sort() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let body = bson::doc! {
         "insert": "items",
         "$db": "testdb",
@@ -201,14 +201,14 @@ fn find_with_compound_sort() {
             { "_id": "i4", "category": "b", "priority": 1 },
         ],
     };
-    insert(&body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let find_body = bson::doc! {
         "find": "items",
         "$db": "testdb",
         "sort": { "category": 1, "priority": -1 },
     };
-    let result = find(&find_body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&find_body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 4);
@@ -221,7 +221,7 @@ fn find_with_compound_sort() {
 
 #[test]
 fn find_with_inclusion_projection() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -230,7 +230,7 @@ fn find_with_inclusion_projection() {
         "filter": { "name": "Alice" },
         "projection": { "name": 1 },
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 1);
@@ -242,7 +242,7 @@ fn find_with_inclusion_projection() {
 
 #[test]
 fn find_with_exclusion_projection() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -251,7 +251,7 @@ fn find_with_exclusion_projection() {
         "filter": { "name": "Alice" },
         "projection": { "age": 0 },
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     let doc = batch[0].as_document().unwrap();
@@ -262,7 +262,7 @@ fn find_with_exclusion_projection() {
 
 #[test]
 fn find_with_id_exclusion_in_inclusion_projection() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -271,7 +271,7 @@ fn find_with_id_exclusion_in_inclusion_projection() {
         "filter": { "name": "Alice" },
         "projection": { "name": 1, "_id": 0 },
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     let doc = batch[0].as_document().unwrap();
@@ -281,20 +281,20 @@ fn find_with_id_exclusion_in_inclusion_projection() {
 
 #[test]
 fn find_empty_collection_returns_empty_batch() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let ensure_body = bson::doc! {
         "insert": "empty_col",
         "$db": "testdb",
         "documents": [{ "_id": "tmp" }],
     };
-    insert(&ensure_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&ensure_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! {
         "find": "empty_col",
         "$db": "testdb",
         "filter": { "nonexistent": "value" },
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 0);
@@ -302,7 +302,7 @@ fn find_empty_collection_returns_empty_batch() {
 
 #[test]
 fn find_no_match_returns_empty_batch() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -310,7 +310,7 @@ fn find_no_match_returns_empty_batch() {
         "$db": "testdb",
         "filter": { "name": "Nonexistent" },
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 0);
@@ -318,9 +318,9 @@ fn find_no_match_returns_empty_batch() {
 
 #[test]
 fn find_missing_collection_name_returns_error() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let body = bson::doc! { "$db": "testdb" };
-    let err = find(&body, &mut test_conn(), &fixture.service()).unwrap_err();
+    let err = find(&body, &mut test_conn(), &fixture.engine()).unwrap_err();
     match err {
         MongoError::Command { code, .. } => assert_eq!(code, BAD_VALUE.code),
         other => panic!("expected Command, got {:?}", other),
@@ -329,7 +329,7 @@ fn find_missing_collection_name_returns_error() {
 
 #[test]
 fn find_with_batch_size() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -337,7 +337,7 @@ fn find_with_batch_size() {
         "$db": "testdb",
         "batchSize": 1,
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 1);
@@ -345,7 +345,7 @@ fn find_with_batch_size() {
 
 #[test]
 fn find_with_sort_limit_skip_combined() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -355,7 +355,7 @@ fn find_with_sort_limit_skip_combined() {
         "skip": 1,
         "limit": 1,
     };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 1);
@@ -365,7 +365,7 @@ fn find_with_sort_limit_skip_combined() {
 
 #[test]
 fn find_unsupported_operator_returns_error() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -373,7 +373,7 @@ fn find_unsupported_operator_returns_error() {
         "$db": "testdb",
         "filter": { "tags": { "$in": ["a", "b"] } },
     };
-    let err = find(&body, &mut test_conn(), &fixture.service()).unwrap_err();
+    let err = find(&body, &mut test_conn(), &fixture.engine()).unwrap_err();
     match err {
         MongoError::Command { code, message, .. } => {
             assert_eq!(code, BAD_VALUE.code);
@@ -385,15 +385,15 @@ fn find_unsupported_operator_returns_error() {
 
 #[test]
 fn find_default_db_uses_default_tenant() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "items",
         "documents": [{ "_id": "i1", "val": 42 }],
     };
-    insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
 
     let body = bson::doc! { "find": "items" };
-    let result = find(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 1);

@@ -3,12 +3,14 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use super::*;
-use crate::SandboxServiceManager;
+use crate::ServiceManager;
 use crate::local_server::{
     LocalServerPaths, LocalServerSecurityState, load_or_create_local_admin_token,
 };
 use crate::router::RouterBuildConfig;
-use nimbus_runtime::RuntimeLimits;
+use nimbus_runtime::{
+    HostCallCancellation, InvocationServiceBinding, InvocationServiceProtocol, RuntimeLimits,
+};
 use nimbus_sandbox::{
     PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
     SandboxFilesystemSpec, SandboxFuture, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
@@ -16,14 +18,14 @@ use nimbus_sandbox::{
 };
 use nimbus_services::RuntimeServiceRegistry;
 
-struct HarnessSandboxServiceCatalog;
+struct HarnessServiceDefinitionCatalog;
 
-impl crate::SandboxServiceCatalog for HarnessSandboxServiceCatalog {
-    fn sandbox_service_for_tenant(
+impl crate::ServiceDefinitionCatalog for HarnessServiceDefinitionCatalog {
+    fn service_implementation_for_tenant(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Option<crate::SandboxServiceLaunch> {
+    ) -> Option<crate::ServiceImplementation> {
         if service_name != "db" {
             return None;
         }
@@ -35,7 +37,7 @@ impl crate::SandboxServiceCatalog for HarnessSandboxServiceCatalog {
             SandboxProcessSpec::new(Vec::<String>::new()),
         )
         .with_mount(SandboxMountSpec::tenant_volume("data", "/var/lib/db"));
-        Some(crate::SandboxServiceLaunch::image(
+        Some(crate::ServiceImplementation::sandbox_image(
             SandboxImageLaunchSpec::new(
                 spec,
                 "registry.example.com/nimbus/postgres@sha256:0000000000000000000000000000000000000000000000000000000000000000",
@@ -345,7 +347,7 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
                 "kind": "query",
                 "visibility": "public",
                 "plan": null,
-                "runtime_handler": "async (ctx, { probeUrl }) => { const namesBefore = Object.keys(ctx.services).sort(); const binding = await ctx.services.get(\"db\"); let deniedLookup = null; try { await ctx.services.get(\"other\"); deniedLookup = \"allowed\"; } catch (error) { deniedLookup = String(error && error.message ? error.message : error); } let deniedFetch = null; try { await fetch(probeUrl); deniedFetch = \"allowed\"; } catch (error) { deniedFetch = String(error && error.message ? error.message : error); } return { namesBefore, namesAfter: Object.keys(ctx.services).sort(), binding, deniedLookup, deniedFetch }; }"
+                "runtime_handler": "async (ctx, { probeUrl }, request) => { let deniedFetch = null; try { await fetch(probeUrl); deniedFetch = \"allowed\"; } catch (error) { deniedFetch = String(error && error.message ? error.message : error); } return { ctxServicesType: typeof ctx.services, hasCtxServices: Object.prototype.hasOwnProperty.call(ctx, \"services\"), requestServicesType: typeof request.services, deniedFetch }; }"
             },
             {
                 "name": "messages:list",
@@ -379,16 +381,16 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
     .with_runtime_limits(runtime_limits_with_db_service_grant());
     let system_registry = convex_registry(json!([query_function("routes:list", "routes")]));
     let sandbox_backend = Arc::new(HarnessSandboxBackend::new(temp.path().join("sandbox")));
-    let sandbox_service_manager = Arc::new(
-        SandboxServiceManager::new(
-            Arc::new(HarnessSandboxServiceCatalog),
+    let service_manager = Arc::new(
+        ServiceManager::new(
+            Arc::new(HarnessServiceDefinitionCatalog),
             sandbox_backend.clone(),
         )
         .with_activation_poll_interval(Duration::from_millis(1))
         .with_activation_timeout(Duration::from_secs(1)),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     crate::system_tenant::prepare_system_tenant_async(&service, None)
         .await
         .expect("system tenant should prepare");
@@ -399,7 +401,7 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
             ))
             .with_convex(registry)
             .with_system_convex_registry(system_registry)
-            .with_sandbox_service_manager(sandbox_service_manager.clone())
+            .with_service_manager(service_manager.clone())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -474,6 +476,37 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
         "operator bearer reads tenant-b document path",
     );
 
+    let tenant_a_id = TenantId::new("tenant-a").expect("tenant id should parse");
+    let tenant_b_id = TenantId::new("tenant-b").expect("tenant id should parse");
+    let tenant_a_binding = service_manager
+        .ensure_service_binding_async(&tenant_a_id, "db", HostCallCancellation::default())
+        .await
+        .expect("tenant-a service binding should resolve")
+        .expect("tenant-a db service should exist");
+    let tenant_b_binding = service_manager
+        .ensure_service_binding_async(&tenant_b_id, "db", HostCallCancellation::default())
+        .await
+        .expect("tenant-b service binding should resolve")
+        .expect("tenant-b db service should exist");
+    assert_service_manager_binding(&tenant_a_binding, tenant_service_port("tenant-a"));
+    conformance.allowed(
+        "service_manager.tenant_a_db_binding_allowed",
+        "tenant-a resolves db service through Rust-owned service manager",
+    );
+    assert_service_manager_binding(&tenant_b_binding, tenant_service_port("tenant-b"));
+    conformance.allowed(
+        "service_manager.tenant_b_db_binding_allowed",
+        "tenant-b resolves db service through Rust-owned service manager",
+    );
+    assert_ne!(
+        tenant_a_binding.port, tenant_b_binding.port,
+        "same service name must resolve to each tenant's own sandbox binding"
+    );
+    conformance.allowed(
+        "service_manager.same_service_name_is_tenant_scoped",
+        "tenant-a/db and tenant-b/db resolve to distinct tenant-scoped ports",
+    );
+
     let tenant_a_services = convex_query_json(
         &server,
         "tenant-a",
@@ -490,39 +523,23 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
         json!({ "probeUrl": format!("http://127.0.0.1:{}/", tenant_service_port("tenant-b")) }),
     )
     .await;
-    assert_service_proof(&tenant_a_services, tenant_service_port("tenant-a"));
-    conformance.allowed(
-        "runtime.service.tenant_a_db_binding_allowed",
-        "tenant-a resolves db service through decision/service grant",
-    );
+    assert_adapter_service_absence_proof(&tenant_a_services);
     conformance.denied(
-        "runtime.service.tenant_a_ungranted_service_denied",
-        "tenant-a cannot resolve ungranted service `other`",
+        "runtime.service.tenant_a_adapter_shortcut_absent",
+        "tenant-a Convex adapter ctx exposes no Nimbus service shortcut",
     );
     conformance.denied(
         "runtime.network.tenant_a_generic_localhost_denied",
         "tenant-a service grant does not imply generic localhost fetch",
     );
-    assert_service_proof(&tenant_b_services, tenant_service_port("tenant-b"));
-    conformance.allowed(
-        "runtime.service.tenant_b_db_binding_allowed",
-        "tenant-b resolves db service through decision/service grant",
-    );
+    assert_adapter_service_absence_proof(&tenant_b_services);
     conformance.denied(
-        "runtime.service.tenant_b_ungranted_service_denied",
-        "tenant-b cannot resolve ungranted service `other`",
+        "runtime.service.tenant_b_adapter_shortcut_absent",
+        "tenant-b Convex adapter ctx exposes no Nimbus service shortcut",
     );
     conformance.denied(
         "runtime.network.tenant_b_generic_localhost_denied",
         "tenant-b service grant does not imply generic localhost fetch",
-    );
-    assert_ne!(
-        tenant_a_services["binding"]["port"], tenant_b_services["binding"]["port"],
-        "same service name must resolve to each tenant's own sandbox binding"
-    );
-    conformance.allowed(
-        "runtime.service.same_service_name_is_tenant_scoped",
-        "tenant-a/db and tenant-b/db resolve to distinct tenant-scoped ports",
     );
 
     let tenant_a_record = sandbox_backend.record_for("tenant-a", "db");
@@ -656,12 +673,12 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
         "deleting tenant-a should stop only tenant-a's active sandbox"
     );
     assert!(
-        sandbox_service_manager
+        service_manager
             .snapshot_for_tenant(&TenantId::new("tenant-a").expect("tenant id should parse"))
             .is_empty()
     );
     assert!(
-        sandbox_service_manager
+        service_manager
             .snapshot_for_tenant(&TenantId::new("tenant-b").expect("tenant id should parse"))
             .contains_key("db")
     );
@@ -707,7 +724,7 @@ const definitions = new Map([
   ["services:proof", {
     name: "services:proof",
     kind: "query",
-    runtime_handler: "async (ctx, { probeUrl }) => { const namesBefore = Object.keys(ctx.services).sort(); const binding = await ctx.services.get(\"db\"); let deniedLookup = null; try { await ctx.services.get(\"other\"); deniedLookup = \"allowed\"; } catch (error) { deniedLookup = String(error && error.message ? error.message : error); } let deniedFetch = null; try { await fetch(probeUrl); deniedFetch = \"allowed\"; } catch (error) { deniedFetch = String(error && error.message ? error.message : error); } return { namesBefore, namesAfter: Object.keys(ctx.services).sort(), binding, deniedLookup, deniedFetch }; }",
+    runtime_handler: "async (ctx, { probeUrl }, request) => { let deniedFetch = null; try { await fetch(probeUrl); deniedFetch = \"allowed\"; } catch (error) { deniedFetch = String(error && error.message ? error.message : error); } return { ctxServicesType: typeof ctx.services, hasCtxServices: Object.prototype.hasOwnProperty.call(ctx, \"services\"), requestServicesType: typeof request.services, deniedFetch }; }",
   }],
   ["messages:list", {
     name: "messages:list",
@@ -893,30 +910,28 @@ async fn convex_query_json(
     serde_json::from_str(&body).expect("convex query body should parse")
 }
 
-fn assert_service_proof(body: &serde_json::Value, expected_port: u16) {
-    assert_eq!(body["namesBefore"], json!([]));
-    assert_eq!(body["namesAfter"], json!(["db"]));
-    assert_eq!(body["binding"]["host"], json!("127.0.0.1"));
-    assert_eq!(body["binding"]["port"], json!(expected_port));
-    assert_eq!(body["binding"]["protocol"], json!("tcp"));
-    assert_eq!(
-        body["binding"]["endpoints"]["postgres"]["host"],
-        json!("127.0.0.1")
-    );
-    assert_eq!(
-        body["binding"]["endpoints"]["postgres"]["port"],
-        json!(expected_port)
-    );
+fn assert_service_manager_binding(binding: &InvocationServiceBinding, expected_port: u16) {
+    assert_eq!(binding.host, "127.0.0.1");
+    assert_eq!(binding.port, expected_port);
+    assert_eq!(binding.protocol, InvocationServiceProtocol::Tcp);
+    let postgres = binding
+        .endpoints
+        .get("postgres")
+        .expect("postgres endpoint should exist");
+    assert_eq!(postgres.host, "127.0.0.1");
+    assert_eq!(postgres.port, expected_port);
+    assert_eq!(postgres.protocol, InvocationServiceProtocol::Tcp);
+}
+
+fn assert_adapter_service_absence_proof(body: &serde_json::Value) {
+    assert_eq!(body["ctxServicesType"], json!("undefined"));
+    assert_eq!(body["hasCtxServices"], json!(false));
+    assert_eq!(body["requestServicesType"], json!("undefined"));
     assert!(
-        body["deniedLookup"]
+        body["deniedFetch"]
             .as_str()
-            .is_some_and(|message| message.contains("runtime service grant denied for `other`")),
-        "unexpected service grant denial proof: {body}"
-    );
-    assert_ne!(
-        body["deniedFetch"],
-        json!("allowed"),
-        "service grants must not imply generic localhost network reach: {body}"
+            .is_some_and(|message| message != "allowed" && !message.is_empty()),
+        "Convex adapter ctx.services must stay absent and generic localhost fetch denied: {body}"
     );
 }
 

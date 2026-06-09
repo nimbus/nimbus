@@ -35,8 +35,8 @@ Nimbus already has the right primary seams:
 
 - `TenantIsolationContext` carries server-owned tenant authority through
   native HTTP, adapters, WebSocket, runtime HostBridge, storage-facing engine
-  calls, and sandbox service launch.
-- `SandboxServiceManager` keys handles by `(tenant_id, service_name)` and
+  calls, and sandbox-backed service launch.
+- `ServiceManager` keys handles by `(tenant_id, service_name)` and
   rejects mismatched tenant/service/backend launch state.
 - `RuntimeExecutionAdmission` gates production in-process runtime policies and
   routes unsafe policies away from `in_process_untrusted`.
@@ -46,7 +46,8 @@ Nimbus already has the right primary seams:
   images, local builds without provenance policy, and non-loopback service
   exposure.
 - The TIC8 harness proves two-tenant isolation across storage, runtime
-  service lookup, `ctx.services`, `_nimbus`, cleanup, and service artifacts.
+  service-manager lookup, adapter service-shortcut absence, `_nimbus`, cleanup,
+  and service artifacts.
 
 The main follow-on risk is not a missing primitive. It is that the current
 authorization and admission state can become scattered again unless Nimbus
@@ -373,7 +374,7 @@ platform.
 | Firecracker seccomp | `https://raw.githubusercontent.com/firecracker-microvm/firecracker/main/docs/seccomp.md` | Production seccomp defaults are part of the launch security posture; custom filters are advanced and require integrity care. | Keep OCI/seccomp/capability posture as launch evidence and add it to enterprise readiness docs. | Do not treat debug/no-seccomp paths as production-equivalent. |
 | Kata Containers | `https://raw.githubusercontent.com/kata-containers/kata-containers/main/docs/design/architecture/README.md` | Kata preserves OCI/CRI/container UX while using a VM-backed data plane; it separates host, VM root, and container environments. | Nimbus should preserve Compose/OCI compatibility while documenting that one tenant per microVM guest is the strong-isolation tier. | Do not support multi-tenant guest packing until a future weaker-trust-tier plan proves it. |
 | gVisor security and resources | `https://gvisor.dev/docs/architecture_guide/security/` and `https://gvisor.dev/docs/architecture_guide/resources/` | gVisor states its threat model, attack surfaces, resource accounting, network stack location, and host fd mediation boundaries. | EIH9 should publish a Nimbus threat model and isolation matrix by runtime tier and enforcement layer. | Do not make impossible claims about V8/JSC isolate security, microVM side channels, or network isolation beyond tested layers. |
-| SPIFFE/SPIRE | `https://spiffe.io/docs/latest/spire-about/spire-concepts/` and `https://spiffe.io/docs/latest/deploying/registering/` | Registration entries bind a SPIFFE ID to selectors and a parent ID; node attestation and workload attestation are distinct phases. | EIH6 should define a stable workload identity that can map to `spiffe://<trust-domain>/tenant/<tenant>/deployment/<deployment>/workload/<workload>` later. | Do not expose raw tenant strings as secret-provider auth without a typed identity and authority record. |
+| SPIFFE/SPIRE | `https://spiffe.io/docs/latest/spire-about/spire-concepts/` and `https://spiffe.io/docs/latest/deploying/registering/` | Registration entries bind a SPIFFE ID to selectors and a parent ID; node attestation and workload attestation are distinct phases. | EIH6 should define an admitted `WorkloadIdentity.subject()` that can map to `spiffe://<trust-domain>/tenant/<tenant>/deployment/<deployment>/workload/<workload>` later. | Do not expose raw tenant strings as secret-provider auth without a typed identity and authority record. |
 | Vault leases and audit | `https://developer.hashicorp.com/vault/docs/concepts/lease` and `https://developer.hashicorp.com/vault/docs/audit` | Dynamic secrets have lease IDs, TTLs, renewal/revocation paths, prefix revocation, and audit devices hash sensitive strings by default. | Tenant isolation owns the capability contract: secrets are referenced by handles, leased to a workload identity, and redacted by schema. | Do not materialize raw secrets in compose descriptors, audit logs, or ambient runtime environment by default. |
 | Sigstore/Cosign and SLSA | `https://docs.sigstore.dev/cosign/verifying/verify/` and `https://slsa.dev/spec/v1.0/provenance` | Verification binds signatures to image digests and certificate identity; SLSA provenance uses in-toto statements with `subject`, `builder.id`, and `predicateType`. | EIH7 should add an image-verification provider seam that checks digest floor, signature, issuer/subject, builder identity, and provenance predicate. | Do not hardwire Cosign CLI as the only implementation; keep a provider seam for offline bundles, private roots, and enterprise registries. |
 | OpenTelemetry logs and semantics | `https://opentelemetry.io/docs/specs/otel/logs/data-model/` and `https://opentelemetry.io/docs/concepts/semantic-conventions/` | Logs have a stable data model, trace/span correlation, resource attributes, and semantic attribute names for cross-system interpretation. | EIH8 should define structured tenant-isolation events with decision ID, tenant ID, surface, workload, runtime tier, sandbox/invocation ID, result, reason, and correlation IDs. | Do not rely on ad hoc caller-formatted strings for audit or observability evidence. |

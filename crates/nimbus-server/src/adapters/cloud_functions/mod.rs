@@ -10,7 +10,7 @@ pub use nimbus_cloud_functions::{
     CLOUD_FUNCTIONS_RUNTIME_BUNDLE_FILE, CLOUD_FUNCTIONS_RUNTIME_BUNDLE_SHA256_FILE,
     CLOUD_FUNCTIONS_TARGETS_MANIFEST_FILE, CloudFunctionsAdminImport, CloudFunctionsAppLayout,
     CloudFunctionsArtifactManifest, CloudFunctionsAuthoringSurface, CloudFunctionsDefaultSurface,
-    CloudFunctionsDocumentTriggerDefaults, CloudFunctionsExecutionBinding,
+    CloudFunctionsDocumentTriggerDefaults, CloudFunctionsExecutionPrincipal,
     CloudFunctionsFirebaseCodebase, CloudFunctionsFirebaseProjectLayout,
     CloudFunctionsFrameworkPackageLayout, CloudFunctionsGlobalDefaults,
     CloudFunctionsGlobalOptionField, CloudFunctionsHostBridge, CloudFunctionsHttpExposure,

@@ -903,6 +903,9 @@ jobs:
       - name: Build
         run: npm run build --workspaces --if-present
 
+      - name: Capability boundary lint
+        run: npm run lint:capability-boundary
+
       - name: Test
         run: npm run test --workspaces --if-present
 

@@ -56,7 +56,8 @@ Internal docs mirroring the crate tree. See
   [generated Node LTS compatibility baseline](architecture/runtime/node-lts-compat/node-lts-compat-summary.md),
   and [runtime surface matrix](architecture/runtime/node-compat-surface-matrix.md)
 - [storage/](architecture/storage/) -- encryption design, persistence engine, provider topologies
-- [sandbox/](architecture/sandbox/) -- microVM baseline, macOS machine flow, krun validation
+- [sandbox/](architecture/sandbox/) -- service/sandbox/session/runtime-isolate
+  resource model, microVM baseline, macOS machine flow, krun validation
 - [testing/](architecture/testing/) -- verification harness, reliability posture, CI investigation
 - [Architecture quality ledger](architecture/repo-architecture-quality-ledger.tsv) --
   owned-source size thresholds, generated/vendor/test-corpus exclusions, and

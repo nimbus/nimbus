@@ -1,11 +1,11 @@
 use super::*;
 
 fn assert_publication_covers_document_tail(
-    service: &Service,
+    engine: &Engine,
     tenant_id: &TenantId,
     covered_sequence: SequenceNumber,
 ) {
-    let applied_head = service
+    let applied_head = engine
         .mutation_journal_stats_for_testing(tenant_id)
         .expect("journal stats should load")
         .applied_head;
@@ -15,7 +15,7 @@ fn assert_publication_covers_document_tail(
         covered_sequence.0,
         applied_head.0
     );
-    let missed_document_sequences = durable_journal_commits(service, tenant_id, covered_sequence)
+    let missed_document_sequences = durable_journal_commits(engine, tenant_id, covered_sequence)
         .into_iter()
         .map(|commit| commit.sequence)
         .collect::<Vec<_>>();
@@ -27,9 +27,9 @@ fn assert_publication_covers_document_tail(
 
 #[test]
 fn materialized_surface_handles_concurrent_reads_and_writes() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let table = messages_table("messages_materialized_concurrent");
     let query = Query {
         table: table.clone(),
@@ -41,7 +41,7 @@ fn materialized_surface_handles_concurrent_reads_and_writes() {
         limit: None,
     };
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             table.clone(),
@@ -51,20 +51,20 @@ fn materialized_surface_handles_concurrent_reads_and_writes() {
             ]),
         )
         .expect("seed insert should succeed");
-    let warmed = service
+    let warmed = engine
         .query_documents(&tenant_id, &query)
         .expect("warming query should succeed");
     assert_eq!(document_bodies(&warmed), vec!["seed"]);
 
     let barrier = Arc::new(Barrier::new(2));
-    let reader_service = service.clone();
+    let reader_engine = engine.clone();
     let reader_tenant = tenant_id.clone();
     let reader_query = query.clone();
     let reader_barrier = barrier.clone();
     let reader = std::thread::spawn(move || {
         reader_barrier.wait();
         for _ in 0..64 {
-            let documents = reader_service
+            let documents = reader_engine
                 .query_documents(&reader_tenant, &reader_query)
                 .expect("concurrent materialized query should succeed");
             let bodies = document_bodies(&documents);
@@ -76,14 +76,14 @@ fn materialized_surface_handles_concurrent_reads_and_writes() {
         }
     });
 
-    let writer_service = service.clone();
+    let writer_engine = engine.clone();
     let writer_tenant = tenant_id.clone();
     let writer_table = table.clone();
     let writer_barrier = barrier;
     let writer = std::thread::spawn(move || {
         writer_barrier.wait();
         for index in 0..32 {
-            writer_service
+            writer_engine
                 .insert_document(
                     &writer_tenant,
                     writer_table.clone(),
@@ -99,7 +99,7 @@ fn materialized_surface_handles_concurrent_reads_and_writes() {
     reader.join().expect("reader thread should finish");
     writer.join().expect("writer thread should finish");
 
-    let documents = service
+    let documents = engine
         .query_documents(&tenant_id, &query)
         .expect("final query should succeed");
     let bodies = document_bodies(&documents);
@@ -107,11 +107,11 @@ fn materialized_surface_handles_concurrent_reads_and_writes() {
     sorted.sort_unstable();
     assert_eq!(bodies, sorted);
     assert_eq!(bodies.len(), 33);
-    let journal_stats = service
+    let journal_stats = engine
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("journal stats should load");
 
-    let stats = service
+    let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(stats.loaded_table_count, 1);
@@ -124,7 +124,7 @@ fn materialized_surface_handles_concurrent_reads_and_writes() {
         documents.len()
     );
     assert!(stats.evaluation_count >= 66);
-    let latest_document_sequence = service
+    let latest_document_sequence = engine
         .read_durable_journal(&tenant_id, SequenceNumber(0))
         .expect("durable journal should read")
         .into_iter()
@@ -147,12 +147,12 @@ fn materialized_surface_handles_concurrent_reads_and_writes() {
 
 #[tokio::test]
 async fn paused_first_load_catches_up_before_publication() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let table = messages_table("messages_materialized_bypass");
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             table.clone(),
@@ -173,16 +173,16 @@ async fn paused_first_load_catches_up_before_publication() {
         limit: None,
     };
 
-    let publish_pause = service
+    let publish_pause = engine
         .materialized_read_publish_pause_handle_for_testing(&tenant_id)
         .expect("publish pause handle should load");
     publish_pause.arm();
 
     let first_query = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         let query = query.clone();
-        async move { service.query_documents_async(tenant_id, query).await }
+        async move { engine.query_documents_async(tenant_id, query).await }
     });
 
     assert!(
@@ -195,13 +195,13 @@ async fn paused_first_load_catches_up_before_publication() {
         "first warmer should pause before publication"
     );
 
-    let stats = service
+    let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(stats.in_flight_load_count, 1);
     assert_eq!(stats.bypass_count, 0);
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             table.clone(),
@@ -220,14 +220,14 @@ async fn paused_first_load_catches_up_before_publication() {
         .expect("first query should succeed");
     assert_eq!(document_bodies(&first_query), vec!["Ada", "Beta"]);
 
-    let publication = service
+    let publication = engine
         .materialized_table_publication_stats_for_testing(&tenant_id, &table)
         .expect("publication should load")
         .expect("first query should publish its snapshot");
-    assert_publication_covers_document_tail(&service, &tenant_id, publication.covered_sequence);
+    assert_publication_covers_document_tail(&engine, &tenant_id, publication.covered_sequence);
     assert_eq!(publication.document_count, 2);
 
-    let stats = service
+    let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(stats.bypass_count, 0);
@@ -241,12 +241,12 @@ async fn paused_first_load_catches_up_before_publication() {
 
 #[tokio::test]
 async fn concurrent_first_load_only_publishes_caught_up_newest_materialized_table() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let table = messages_table("messages_materialized_concurrent_publish");
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             table.clone(),
@@ -267,16 +267,16 @@ async fn concurrent_first_load_only_publishes_caught_up_newest_materialized_tabl
         limit: None,
     };
 
-    let publish_pause = service
+    let publish_pause = engine
         .materialized_read_publish_pause_handle_for_testing(&tenant_id)
         .expect("publish pause handle should load");
     publish_pause.arm();
 
     let first_query = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         let query = query.clone();
-        async move { service.query_documents_async(tenant_id, query).await }
+        async move { engine.query_documents_async(tenant_id, query).await }
     });
 
     assert!(
@@ -289,14 +289,14 @@ async fn concurrent_first_load_only_publishes_caught_up_newest_materialized_tabl
         "first loader should pause before publication"
     );
     assert!(
-        service
+        engine
             .materialized_table_publication_stats_for_testing(&tenant_id, &table)
             .expect("materialized publication should load")
             .is_none(),
         "no partially caught-up table should be visible before publication"
     );
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             table.clone(),
@@ -308,10 +308,10 @@ async fn concurrent_first_load_only_publishes_caught_up_newest_materialized_tabl
         .expect("concurrent insert should succeed");
 
     let second_query = tokio::task::spawn_blocking({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         let query = query.clone();
-        move || service.query_documents(&tenant_id, &query)
+        move || engine.query_documents(&tenant_id, &query)
     });
 
     let stats = wait_for_value(
@@ -319,7 +319,7 @@ async fn concurrent_first_load_only_publishes_caught_up_newest_materialized_tabl
         Duration::from_secs(1),
         Duration::ZERO,
         || async {
-            service
+            engine
                 .materialized_read_surface_stats_for_testing(&tenant_id)
                 .expect("materialized surface stats should load")
         },
@@ -330,7 +330,7 @@ async fn concurrent_first_load_only_publishes_caught_up_newest_materialized_tabl
     assert_eq!(stats.table_load_count, 0);
     assert_eq!(stats.bypass_count, 0);
     assert!(
-        service
+        engine
             .materialized_table_publication_stats_for_testing(&tenant_id, &table)
             .expect("materialized publication should load")
             .is_none(),
@@ -350,18 +350,18 @@ async fn concurrent_first_load_only_publishes_caught_up_newest_materialized_tabl
         .expect("second query should succeed");
     assert_eq!(document_bodies(&second_query), vec!["Ada", "Beta"]);
 
-    let publication_after_release = service
+    let publication_after_release = engine
         .materialized_table_publication_stats_for_testing(&tenant_id, &table)
         .expect("materialized publication should load")
         .expect("warmed table should remain published");
     assert_publication_covers_document_tail(
-        &service,
+        &engine,
         &tenant_id,
         publication_after_release.covered_sequence,
     );
     assert_eq!(publication_after_release.document_count, 2);
 
-    let stats = service
+    let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(stats.loaded_table_count, 1);

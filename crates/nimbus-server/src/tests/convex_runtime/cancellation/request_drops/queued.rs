@@ -35,8 +35,8 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         }
     ]))
     .with_runtime_limits(limits);
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     let server = ServerFixture::start(router_for_convex(service.clone(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
 
@@ -164,10 +164,10 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
     .with_runtime_limits(limits);
     let harness =
         DeterministicHarness::scenario("runtime-request-drop-recovery", 75, Timestamp(75_000));
-    let fixture = ServiceFixture::new_with_harness(harness.clone(), |path, harness| {
-        Service::new_with_simulation(path, harness.clock(), harness.fault_injector())
+    let fixture = EngineFixture::new_with_harness(harness.clone(), |path, harness| {
+        Engine::new_with_simulation(path, harness.clock(), harness.fault_injector())
     });
-    let service = fixture.service();
+    let service = fixture.engine();
     let server = ServerFixture::start(router_for_convex(service.clone(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
 
