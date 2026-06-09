@@ -628,9 +628,12 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         # a V8 native C++ binding that the prebuilt rusty_v8 release does not
         # export, so the surface is unreachable without forking rusty_v8's native
         # layer and cutting a new release (out of bounds for this wave):
-        #   test-vm-measure-memory{,-multi-context}.js -> vm.measureMemory(),
+        #   test-vm-measure-memory{,-multi-context,-lazy}.js -> vm.measureMemory(),
         #     needs v8::Isolate::MeasureMemory + MeasureMemoryDelegate; rusty_v8
-        #     exposes no measure_memory binding at all.
+        #     exposes no measure_memory binding at all. The -lazy variant
+        #     (NDS3 wave-24, 2026-06-09) is the identical surface with a
+        #     lazy/eager mode option and the same unreachable native gate; its
+        #     recorded gap detail is literally `Not implemented: measureMemory`.
         #   test-v8-query-objects.js -> v8.queryObjects() (experimental), needs
         #     v8::HeapProfiler::QueryObjects + predicate; rusty_v8 binds only
         #     TakeHeapSnapshot, not the predicate query.
@@ -641,8 +644,32 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         # default Application support.
         'test/parallel/test-vm-measure-memory.js',
         'test/parallel/test-vm-measure-memory-multi-context.js',
+        'test/parallel/test-vm-measure-memory-lazy.js',
         'test/parallel/test-v8-query-objects.js',
         'test/parallel/test-v8-cpu-profile.js',
+    }),
+    ('upstream_or_platform_boundary', 'experimental_shadow_realm_flag_gated', 'unsupported'): frozenset({
+        # NDS3 wave-24 disposition (2026-06-09): source-confirmed against the
+        # fixture headers AND the pinned fork's V8 flag set. Every ShadowRealm
+        # fixture carries `// Flags: --experimental-shadow-realm`; ShadowRealm is
+        # an experimental, off-by-default Node feature (the global only exists
+        # when that opt-in flag is passed) and the recorded gap detail is
+        # literally `ReferenceError: ShadowRealm is not defined`. The pinned
+        # deno_core fork enables a fixed harmony flag set (libs/core/runtime/
+        # setup.rs base_flags: --harmony-temporal/--js-float16array/etc.) that
+        # deliberately omits --harmony-shadow-realm, mirroring upstream Deno,
+        # which also does not expose ShadowRealm by default. The multi-tenant
+        # isolate cannot honor a per-invocation experimental opt-in flag, so the
+        # global is intentionally absent and the assertion is unreproducible.
+        # Same structural lever already banked for the other experimental/CLI
+        # flag-gated fixtures (--experimental-quic, --no-experimental-require-
+        # module, --pending-deprecation): a feature Node itself ships off by
+        # default is not part of the required default Application surface.
+        'test/parallel/test-shadow-realm-globals.js',
+        'test/parallel/test-shadow-realm-module.js',
+        'test/parallel/test-shadow-realm-allowed-builtin-modules.js',
+        'test/parallel/test-shadow-realm-gc-module.js',
+        'test/parallel/test-shadow-realm-prepare-stack-trace.js',
     }),
 }
 
@@ -665,6 +692,7 @@ WAVE2_REASON_TEXT = {
     'pending_deprecation_flag_gated_warning_emission': 'fixture is gated by --pending-deprecation and asserts emission of a pending (DEPxxxx) deprecation warning that Node does not emit by default; the multi-tenant isolate does not expose the opt-in flag, so the warning is intentionally never emitted and the assertion cannot run as default Application API behavior',
     'prebuilt_v8_native_binding_unreachable_surface': "fixture asserts a public v8/vm API (vm.measureMemory, v8.queryObjects, v8.startCpuProfile) whose only implementation path is a V8 native C++ binding the prebuilt rusty_v8 release does not export, so it is unreachable without forking rusty_v8's native layer and cutting a new release; isolate-capable in principle but a visible optional gap rather than required default support",
     'upstream_or_platform_boundary': "fixture is gated by V8 native-syntax intrinsics, host-platform skips, host-specific filesystem/watch backends, or Node's exact native build/dependency composition, so it cannot run as public Application API behavior inside the Nimbus V8 isolate",
+    'experimental_shadow_realm_flag_gated': "fixture is gated by --experimental-shadow-realm and asserts the ShadowRealm global, an experimental off-by-default Node feature the pinned deno_core fork (and upstream Deno) does not enable via the harmony flag set; the multi-tenant isolate cannot honor a per-invocation experimental opt-in flag, so the global is intentionally absent and the assertion is not part of the required default Application surface",
 }
 
 
