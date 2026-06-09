@@ -149,6 +149,7 @@ pub fn firestore_grpc_code(error: &Error) -> Code {
         | Error::SchemaNotFound(_)
         | Error::NotFound(_) => Code::NotFound,
         Error::Conflict(_) => Code::Aborted,
+        Error::PreconditionFailed(_) => Code::FailedPrecondition,
         Error::ResourceExhausted(_) => Code::ResourceExhausted,
         Error::PermissionDenied(_) => Code::PermissionDenied,
         Error::InvalidInput(_) | Error::SchemaValidation(_) | Error::HistoricalRead { .. } => {
@@ -196,6 +197,7 @@ fn firebase_rest_error(error: &Error) -> FirestoreRestError {
         | Error::SchemaNotFound(_)
         | Error::NotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND"),
         Error::Conflict(_) => (StatusCode::CONFLICT, "ABORTED"),
+        Error::PreconditionFailed(_) => (StatusCode::PRECONDITION_FAILED, "FAILED_PRECONDITION"),
         Error::ResourceExhausted(_) => (StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED"),
         Error::PermissionDenied(_) => (StatusCode::FORBIDDEN, "PERMISSION_DENIED"),
         Error::InvalidInput(_) | Error::SchemaValidation(_) | Error::HistoricalRead { .. } => {
@@ -273,6 +275,11 @@ mod tests {
                 Error::Conflict("conflict".to_string()),
                 StatusCode::CONFLICT,
                 "ABORTED",
+            ),
+            (
+                Error::PreconditionFailed("stale generation".to_string()),
+                StatusCode::PRECONDITION_FAILED,
+                "FAILED_PRECONDITION",
             ),
             (
                 Error::ResourceExhausted("quota".to_string()),

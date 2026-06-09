@@ -161,6 +161,11 @@ pub(super) fn callable_response_for_app_error(headers: &HeaderMap, error: AppErr
                 error.to_string(),
             ),
             Error::Conflict(_) => (StatusCode::CONFLICT, "ABORTED", error.to_string()),
+            Error::PreconditionFailed(_) => (
+                StatusCode::PRECONDITION_FAILED,
+                "FAILED_PRECONDITION",
+                error.to_string(),
+            ),
             Error::ResourceExhausted(_) => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "RESOURCE_EXHAUSTED",

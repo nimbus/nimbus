@@ -28,6 +28,10 @@ async function main() {
   await bundleModule("values.ts", "neutral");
   await bundleModule("transports/rest.ts", "neutral");
   await assertExplicitOptionsBypassLocalCredentialFile(indexBundle);
+  await assertLifecycleWaitValidation(indexBundle);
+  await assertServiceDefinitionRoutes(indexBundle);
+  await assertSandboxRoutes(indexBundle);
+  await assertSessionRoutes(indexBundle);
   await typecheckNimbusAuthExtension();
 }
 
@@ -90,6 +94,249 @@ async function assertExplicitOptionsBypassLocalCredentialFile(indexBundle) {
   }
 }
 
+async function assertLifecycleWaitValidation(indexBundle) {
+  const { Nimbus } = await import(`${pathToFileURL(indexBundle).href}?validation=${Date.now()}`);
+  let fetchCalls = 0;
+  const client = new Nimbus({
+    endpoint: "http://localhost:8080",
+    tenantId: "tenant",
+    token: "explicit-token",
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response(JSON.stringify({
+        name: "db",
+        lifecycleState: "ready",
+        readiness: "ready",
+        health: "healthy",
+      }), {
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  await assert.rejects(
+    () => client.services.stop({ name: "db", waitUntil: "ready" }),
+    /services\.stop\(\{ waitUntil \}\) only supports stopped/,
+  );
+  assert.equal(fetchCalls, 0);
+
+  await assert.rejects(
+    () => client.services.start({ name: "db", waitUntil: "stopped" }),
+    /services\.start\(\{ waitUntil \}\) only supports ready, or healthy/,
+  );
+  assert.equal(fetchCalls, 0);
+
+  await client.services.start({ name: "db", waitUntil: "healthy" });
+  assert.equal(fetchCalls, 2, "start with healthy wait should POST then poll GET");
+}
+
+async function assertServiceDefinitionRoutes(indexBundle) {
+  const { Nimbus } = await import(`${pathToFileURL(indexBundle).href}?definitions=${Date.now()}`);
+  const observed = [];
+  const client = new Nimbus({
+    endpoint: "http://localhost:8080",
+    tenantId: "tenant",
+    token: "explicit-token",
+    fetch: async (input, init = {}) => {
+      observed.push({
+        url: String(input),
+        method: init.method ?? "GET",
+        body: typeof init.body === "string" ? JSON.parse(init.body) : null,
+      });
+      return new Response(JSON.stringify({
+        metadata: {
+          tenantId: "tenant",
+          name: "browser",
+          generation: 1,
+          resourceVersion: "svcdef-v1",
+          createdAt: "1970-01-01T00:00:00Z",
+          updatedAt: "1970-01-01T00:00:00Z",
+          labels: {},
+          source: "dynamic",
+        },
+        spec: {
+          backend: { kind: "builtIn", provider: "browser" },
+        },
+        status: {
+          backend: "builtIn",
+          lifecycleState: "declared",
+          readiness: "unknown",
+          health: "unknown",
+          conditions: [],
+        },
+        items: [],
+      }), {
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  await client.services.create({
+    name: "browser",
+    backend: { kind: "builtIn", provider: "browser" },
+  });
+  await client.services.update({
+    name: "browser",
+    ifMatchGeneration: 1,
+    backend: { kind: "builtIn", provider: "browser" },
+  });
+  await client.services.list({ limit: 10, pageToken: "browser" });
+  await client.services.delete({ name: "browser", ifMatchGeneration: 2, force: true });
+
+  assert.deepEqual(observed.map((request) => [request.method, request.url]), [
+    ["POST", "http://localhost:8080/api/tenants/tenant/services"],
+    ["PUT", "http://localhost:8080/api/tenants/tenant/services/browser"],
+    ["GET", "http://localhost:8080/api/tenants/tenant/services?limit=10&pageToken=browser"],
+    [
+      "DELETE",
+      "http://localhost:8080/api/tenants/tenant/services/browser?ifMatchGeneration=2&force=true",
+    ],
+  ]);
+  assert.deepEqual(observed[0].body, {
+    metadata: { name: "browser", labels: {} },
+    spec: { backend: { kind: "builtIn", provider: "browser" } },
+  });
+  assert.equal(observed[1].body.metadata.generation, 1);
+}
+
+async function assertSandboxRoutes(indexBundle) {
+  const { Nimbus } = await import(`${pathToFileURL(indexBundle).href}?sandboxes=${Date.now()}`);
+  const observed = [];
+  const client = new Nimbus({
+    endpoint: "http://localhost:8080",
+    tenantId: "tenant",
+    token: "explicit-token",
+    fetch: async (input, init = {}) => {
+      observed.push({
+        url: String(input),
+        method: init.method ?? "GET",
+        body: typeof init.body === "string" ? JSON.parse(init.body) : null,
+      });
+      return new Response(JSON.stringify({
+        metadata: {
+          tenantId: "tenant",
+          id: "sandbox-1",
+          generation: 1,
+          resourceVersion: "sandbox-v1",
+          createdAt: "1970-01-01T00:00:00Z",
+          updatedAt: "1970-01-01T00:00:00Z",
+          labels: {},
+        },
+        spec: {
+          profile: "worker",
+          sandbox: {},
+        },
+        status: {
+          lifecycleState: "ready",
+          readiness: "ready",
+          health: "healthy",
+          backend: "krun",
+          endpoints: [],
+          conditions: [],
+        },
+        items: [],
+      }), {
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+  const spec = {
+    tenantId: "tenant",
+    owner: { kind: "standalone" },
+    backend: "krun",
+    root: { kind: "oci_image", source: { kind: "reference", reference: "registry.example.com/worker:latest" } },
+    process: { argv: ["worker"] },
+  };
+
+  await client.sandboxes.create({ profile: "worker", spec });
+  await client.sandboxes.list({ limit: 5, labelKey: "app", labelValue: "test" });
+  await client.sandboxes.get({ id: "sandbox-1" });
+  await client.sandboxes.stop({ id: "sandbox-1" });
+
+  assert.deepEqual(observed.map((request) => [request.method, request.url]), [
+    ["POST", "http://localhost:8080/api/tenants/tenant/sandboxes"],
+    ["GET", "http://localhost:8080/api/tenants/tenant/sandboxes?limit=5&labelKey=app&labelValue=test"],
+    ["GET", "http://localhost:8080/api/tenants/tenant/sandboxes/sandbox-1"],
+    ["POST", "http://localhost:8080/api/tenants/tenant/sandboxes/sandbox-1/stop"],
+  ]);
+  assert.deepEqual(observed[0].body, {
+    profile: "worker",
+    spec,
+    labels: {},
+  });
+}
+
+async function assertSessionRoutes(indexBundle) {
+  const { Nimbus } = await import(`${pathToFileURL(indexBundle).href}?sessions=${Date.now()}`);
+  const observed = [];
+  const client = new Nimbus({
+    endpoint: "http://localhost:8080",
+    tenantId: "tenant",
+    token: "explicit-token",
+    fetch: async (input, init = {}) => {
+      observed.push({
+        url: String(input),
+        method: init.method ?? "GET",
+        body: typeof init.body === "string" ? JSON.parse(init.body) : null,
+      });
+      return new Response(JSON.stringify({
+        metadata: {
+          tenantId: "tenant",
+          id: "session-1",
+          generation: 1,
+          resourceVersion: "session-v1",
+          createdAt: "1970-01-01T00:00:00Z",
+          updatedAt: "1970-01-01T00:00:00Z",
+        },
+        spec: {
+          target: { service: { name: "browser" } },
+          targetSnapshot: {
+            service: {
+              name: "browser",
+              generation: 1,
+              backend: "builtIn",
+              provider: "browser",
+            },
+          },
+          channels: ["cdp"],
+          expiresAt: "1970-01-01T00:15:00Z",
+        },
+        status: {
+          lifecycleState: "open",
+          expiresAt: "1970-01-01T00:15:00Z",
+          conditions: [],
+        },
+        items: [],
+      }), {
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  await client.sessions.open({
+    target: { service: { name: "browser" } },
+    channels: ["cdp", "page"],
+    requestedTtlMs: 60_000,
+  });
+  await client.sessions.list({ limit: 5, state: "open" });
+  await client.sessions.get({ id: "session-1" });
+  await client.sessions.close({ id: "session-1", reason: "test_complete" });
+
+  assert.deepEqual(observed.map((request) => [request.method, request.url]), [
+    ["POST", "http://localhost:8080/api/sessions"],
+    ["GET", "http://localhost:8080/api/sessions?tenantId=tenant&limit=5&state=open"],
+    ["GET", "http://localhost:8080/api/sessions/session-1"],
+    ["POST", "http://localhost:8080/api/sessions/session-1/close"],
+  ]);
+  assert.deepEqual(observed[0].body, {
+    tenantId: "tenant",
+    target: { service: { name: "browser" } },
+    channels: ["cdp", "page"],
+    requestedTtlMs: 60_000,
+  });
+  assert.deepEqual(observed[3].body, { reason: "test_complete" });
+}
+
 async function typecheckNimbusAuthExtension() {
   const fixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus-ts-"));
   const normalize = (target) => path.relative(fixtureDir, target).replaceAll("\\", "/");
@@ -133,7 +380,7 @@ async function typecheckNimbusAuthExtension() {
   await fs.writeFile(
     path.join(fixtureDir, "fixture.ts"),
     `
-import { Nimbus } from "@nimbus/nimbus";
+	import { Nimbus, type NimbusSandboxSpec, type NimbusSandboxSpecResponse } from "@nimbus/nimbus";
 import { NimbusHttpClient, NimbusReactClient } from "@nimbus/nimbus/browser";
 import {
   NimbusProvider,
@@ -162,20 +409,113 @@ const _sdk = new Nimbus({
 });
 const _serviceStart = _sdk.services.start({ name: "db" });
 const _serviceStartReady = _sdk.services.start({ name: "db", waitUntil: "ready" });
+const _serviceStartHealthy = _sdk.services.start({ name: "db", waitUntil: "healthy" });
+// @ts-expect-error service start waits for activation conditions, not stopped.
+_sdk.services.start({ name: "db", waitUntil: "stopped" });
 const _serviceStop = _sdk.services.stop({ name: "db" });
+const _serviceStopStopped = _sdk.services.stop({ name: "db", waitUntil: "stopped" });
+// @ts-expect-error service stop waits for stopped, not readiness.
+_sdk.services.stop({ name: "db", waitUntil: "ready" });
 const _serviceRestart = _sdk.services.restart({ name: "db" });
+const _serviceRestartHealthy = _sdk.services.restart({ name: "db", waitUntil: "healthy" });
+// @ts-expect-error service restart waits for activation conditions, not stopped.
+_sdk.services.restart({ name: "db", waitUntil: "stopped" });
 const _serviceGet = _sdk.services.get({ name: "db" });
 const _serviceWait = _sdk.services.wait({ name: "db", until: "healthy" });
+const _serviceCreateBuiltIn = _sdk.services.create({
+  name: "browser",
+  backend: { kind: "builtIn", provider: "browser" },
+});
+const _serviceCreateExternal = _sdk.services.create({
+  name: "api",
+  backend: {
+    kind: "external",
+    endpoint: { url: "https://api.example.com" },
+    auth: { kind: "none" },
+    health: { kind: "http", path: "/health" },
+  },
+});
+const sandboxSpec = {
+  tenantId: "tenant",
+  owner: { kind: "service", serviceName: "worker" },
+  backend: "krun",
+  root: { kind: "oci_image", source: { kind: "reference", reference: "registry.example.com/worker:latest" } },
+  process: { argv: ["worker"] },
+} satisfies NimbusSandboxSpec;
+const standaloneSandboxSpec = {
+  tenantId: "tenant",
+  owner: { kind: "standalone", displayName: "task" },
+  backend: "krun",
+  root: { kind: "oci_image", source: { kind: "reference", reference: "registry.example.com/task:latest" } },
+  process: { argv: ["task"] },
+} satisfies NimbusSandboxSpec;
+const _redactedSandboxResponse = {
+  tenantId: "tenant",
+  owner: { kind: "standalone", displayName: "task" },
+  backend: "krun",
+  root: { kind: "redacted", redacted: true, reason: "operatorOnlyLaunchInput" },
+  process: {
+    argv: { redacted: true, valueCount: 1 },
+    environment: { redacted: true, valueCount: 2 },
+    cwd: "/",
+    terminal: false,
+  },
+} satisfies NimbusSandboxSpecResponse;
+// @ts-expect-error sandbox response process summaries do not expose env values.
+_redactedSandboxResponse.process.env;
+const _serviceCreateSandbox = _sdk.services.create({
+  name: "worker",
+  backend: { kind: "sandbox", sandbox: sandboxSpec },
+});
+const _serviceUpdate = _sdk.services.update({
+  name: "browser",
+  ifMatchGeneration: 1,
+  backend: { kind: "builtIn", provider: "browser" },
+});
+const _serviceDelete = _sdk.services.delete({ name: "browser", ifMatchGeneration: 2, force: true });
+const _serviceList = _sdk.services.list({ limit: 25 });
+const _sandboxCreate = _sdk.sandboxes.create({
+  profile: "worker",
+  spec: standaloneSandboxSpec,
+  labels: { app: "worker" },
+});
+const _sandboxList = _sdk.sandboxes.list({ labelKey: "app", labelValue: "worker" });
+const _sandboxGet = _sdk.sandboxes.get({ id: "sandbox-1" });
+const _sandboxStop = _sdk.sandboxes.stop({ id: "sandbox-1" });
+// @ts-expect-error sandbox resources are id-addressed, not name-addressed.
+_sdk.sandboxes.get({ name: "worker" });
+const _serviceSession = _sdk.sessions.open({
+  target: { service: { name: "browser" } },
+  channels: ["cdp", "page"],
+  requestedTtlMs: 60000,
+});
+const _sandboxSession = _sdk.sessions.open({
+  target: { sandbox: { id: "sandbox-1" } },
+  channels: ["stdio", "files"],
+});
+const _sessionList = _sdk.sessions.list({ state: "open" });
+const _sessionGet = _sdk.sessions.get({ id: "session-1" });
+const _sessionClose = _sdk.sessions.close({ id: "session-1", reason: "test_complete" });
+// @ts-expect-error sessions open against sandbox ids, not sandbox names.
+_sdk.sessions.open({ target: { sandbox: { name: "worker" } }, channels: ["stdio"] });
+// @ts-expect-error unsupported channels are not part of the public session channel set.
+_sdk.sessions.open({ target: { service: { name: "browser" } }, channels: ["ssh"] });
+// @ts-expect-error sessions use open, not create.
+_sdk.sessions.create({ target: { service: { name: "browser" } }, channels: ["cdp"] });
+// @ts-expect-error client-managed renewal is not part of the session lifecycle.
+_sdk.sessions.renew({ id: "session-1" });
+// @ts-expect-error client-managed extension is not part of the session lifecycle.
+_sdk.sessions.extend({ id: "session-1" });
+// @ts-expect-error service create uses closed built-in provider ids.
+_sdk.services.create({ name: "unknown", backend: { kind: "builtIn", provider: "anything" } });
+// @ts-expect-error service update requires a generation precondition.
+_sdk.services.update({ name: "browser", backend: { kind: "builtIn", provider: "browser" } });
 // @ts-expect-error raw control-plane transport is not exposed on the root SDK.
 _sdk.request("/api/tenants/tenant/services/db");
 // @ts-expect-error raw control-plane client resolution is not exposed on the root SDK.
 _sdk.resolveRestClient();
 // @ts-expect-error ensureRunning is intentionally not a public SDK lifecycle verb.
 _sdk.services.ensureRunning({ name: "db" });
-// @ts-expect-error sandbox routes are not exposed until server-backed resource APIs land.
-_sdk.sandboxes.create({ profile: "worker" });
-// @ts-expect-error session routes are not exposed until server-backed session APIs land.
-_sdk.sessions.open({ target: { service: { name: "browser" } }, channels: ["cdp"] });
 const _nimbusBrowserClient = NimbusHttpClient;
 const _nativeHttpClient = new NimbusHttpClient("http://localhost:8080/nimbus/demo", {
   skipDeploymentUrlCheck: true,

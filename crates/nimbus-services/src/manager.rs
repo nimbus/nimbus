@@ -6,9 +6,12 @@ use tokio::sync::Notify;
 
 mod activation;
 mod catalog;
+mod definitions;
 mod handles;
 mod launch;
 mod registry;
+mod sandboxes;
+mod sessions;
 mod system_state;
 mod types;
 mod verification;
@@ -36,6 +39,8 @@ pub struct ServiceManager {
     state: Mutex<ServiceManagerState>,
     service_evidence_writer: Mutex<Arc<dyn ServiceEvidenceWriter>>,
     activation_notify: Notify,
+    #[cfg(test)]
+    activation_wait_observer: Mutex<Option<Arc<Notify>>>,
 }
 
 impl ServiceManager {
@@ -52,6 +57,8 @@ impl ServiceManager {
             state: Mutex::new(ServiceManagerState::default()),
             service_evidence_writer: Mutex::new(Arc::new(NoopServiceEvidenceWriter)),
             activation_notify: Notify::new(),
+            #[cfg(test)]
+            activation_wait_observer: Mutex::new(None),
         }
     }
 
@@ -87,6 +94,29 @@ impl ServiceManager {
             .lock()
             .expect("service evidence writer lock should not be poisoned") = writer;
     }
+
+    #[cfg(test)]
+    fn set_activation_wait_observer(&self, observer: Arc<Notify>) {
+        *self
+            .activation_wait_observer
+            .lock()
+            .expect("activation wait observer lock should not be poisoned") = Some(observer);
+    }
+
+    #[cfg(test)]
+    fn notify_activation_wait_observer(&self) {
+        if let Some(observer) = self
+            .activation_wait_observer
+            .lock()
+            .expect("activation wait observer lock should not be poisoned")
+            .as_ref()
+        {
+            observer.notify_waiters();
+        }
+    }
+
+    #[cfg(not(test))]
+    fn notify_activation_wait_observer(&self) {}
 }
 
 #[cfg(test)]
@@ -101,17 +131,23 @@ mod tests {
     use nimbus_sandbox::{
         PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
         SandboxEgressPolicy, SandboxEgressRule, SandboxError, SandboxFuture, SandboxHandle,
-        SandboxId, SandboxOciBuildSpec, SandboxOciImageSource, SandboxOwnerSpec,
+        SandboxId, SandboxMountSpec, SandboxOciBuildSpec, SandboxOciImageSource, SandboxOwnerSpec,
         SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus,
     };
 
-    use crate::{RuntimeServiceRegistry, ServiceBackend, ServiceDefinitionCatalog};
+    use crate::{
+        ExternalAuthPolicy, HealthCheckPolicy, RuntimeServiceRegistry, ServiceBackend,
+        ServiceDefinitionCatalog, SessionTarget,
+    };
     use nimbus_tenant::{
         TenantImageVerificationEvidence, TenantImageVerificationProvider, TenantIsolationContext,
-        TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, WorkloadAttributes,
+        TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantVolumePolicyDecision,
+        WorkloadAttributes,
     };
 
     use super::*;
+
+    mod definitions;
 
     struct StubServiceDefinitionCatalog {
         launches: BTreeMap<String, ServiceBackend>,
@@ -332,6 +368,16 @@ mod tests {
                 context_path,
             ))),
             SandboxProcessSpec::new(Vec::<String>::new()),
+        )
+    }
+
+    fn standalone_resource_spec(tenant_id: &TenantId, display_name: &str) -> SandboxSpec {
+        SandboxSpec::new(
+            tenant_id.clone(),
+            SandboxOwnerSpec::standalone_named(display_name),
+            SandboxBackendKind::Krun,
+            SandboxRootSpec::oci_image_reference("registry.example.com/task:latest"),
+            SandboxProcessSpec::new(vec!["task".to_owned()]),
         )
     }
 
@@ -1081,7 +1127,153 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn teardown_tenant_stops_tracked_sandboxes_and_clears_snapshot() {
+    async fn create_sandbox_resource_stops_backend_after_post_start_validation_errors() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let other_tenant_id = TenantId::new("other").expect("tenant id should be valid");
+        let backend = Arc::new(
+            StubSandboxBackend::new(1).with_handle_tenant_override(other_tenant_id.clone()),
+        );
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
+                launches: BTreeMap::new(),
+            }),
+            backend.clone(),
+        );
+        let result = manager
+            .create_sandbox_resource_async(
+                &tenant_id,
+                "worker",
+                standalone_resource_spec(&tenant_id, "task"),
+                BTreeMap::new(),
+            )
+            .await;
+
+        assert!(
+            matches!(&result, Err(Error::InvalidInput(message)) if message.contains(other_tenant_id.as_str())),
+            "mismatched post-start handle should return validation error, got {result:?}"
+        );
+        assert_eq!(backend.image_starts.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            backend.stop_calls.load(Ordering::SeqCst),
+            1,
+            "post-start validation failure must stop the returned untracked sandbox"
+        );
+        assert!(
+            manager
+                .list_sandbox_resources_for_tenant(&tenant_id)
+                .is_empty(),
+            "failed post-start validation must not record a sandbox resource"
+        );
+        assert!(
+            backend
+                .handles
+                .lock()
+                .expect("backend lock should not be poisoned")
+                .is_empty(),
+            "cleanup should remove the mismatched started handle from the backend"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_sandbox_resource_preserves_existing_backend_after_duplicate_started_id() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
+                launches: BTreeMap::new(),
+            }),
+            backend.clone(),
+        );
+
+        manager
+            .create_sandbox_resource_async(
+                &tenant_id,
+                "worker",
+                standalone_resource_spec(&tenant_id, "task"),
+                BTreeMap::new(),
+            )
+            .await
+            .expect("first standalone sandbox should start");
+        let duplicate = manager
+            .create_sandbox_resource_async(
+                &tenant_id,
+                "worker",
+                standalone_resource_spec(&tenant_id, "task"),
+                BTreeMap::new(),
+            )
+            .await;
+
+        assert!(
+            matches!(&duplicate, Err(Error::Conflict(message)) if message.contains("duplicate sandbox id")),
+            "duplicate post-start id should return conflict, got {duplicate:?}"
+        );
+        assert_eq!(backend.image_starts.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            backend.stop_calls.load(Ordering::SeqCst),
+            0,
+            "duplicate-id failure must not stop a tracked sandbox through the create path"
+        );
+        assert_eq!(
+            manager.list_sandbox_resources_for_tenant(&tenant_id).len(),
+            1,
+            "duplicate-id failure must not insert a second sandbox resource"
+        );
+        assert!(
+            backend
+                .handles
+                .lock()
+                .expect("backend lock should not be poisoned")
+                .contains_key("sandbox-tenant-task"),
+            "duplicate-id failure must leave the tracked backend handle intact"
+        );
+    }
+
+    #[tokio::test]
+    async fn open_session_rejects_not_ready_sandbox_targets() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(usize::MAX));
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
+                launches: BTreeMap::new(),
+            }),
+            backend,
+        );
+        let sandbox = manager
+            .create_sandbox_resource_async(
+                &tenant_id,
+                "worker",
+                standalone_resource_spec(&tenant_id, "task"),
+                BTreeMap::new(),
+            )
+            .await
+            .expect("standalone sandbox should start in a non-ready state");
+
+        let error = manager
+            .open_session_async(
+                &tenant_id,
+                SessionTarget::Sandbox {
+                    id: sandbox.id.clone(),
+                },
+                vec!["stdio".to_owned()],
+                Some(60_000),
+            )
+            .await
+            .expect_err("sessions must not attach to a not-ready sandbox");
+
+        assert!(
+            error
+                .to_string()
+                .contains("session open requires a ready sandbox target"),
+            "session open should explain ready-state requirement: {error}"
+        );
+        assert!(
+            manager.list_sessions_for_tenant(&tenant_id).is_empty(),
+            "rejected not-ready sandbox session must not create a session resource"
+        );
+    }
+
+    #[tokio::test]
+    async fn teardown_tenant_stops_tracked_sandboxes_and_clears_tenant_resources() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(1));
         let manager = ServiceManager::new(
@@ -1101,13 +1293,55 @@ mod tests {
             .await
             .expect("service activation should succeed")
             .expect("db binding should exist");
+        manager
+            .create_service_definition(
+                &tenant_id,
+                "browser",
+                ServiceBackend::built_in("browser"),
+                BTreeMap::new(),
+            )
+            .expect("dynamic built-in definition should be recorded");
+        let standalone = manager
+            .create_sandbox_resource_async(
+                &tenant_id,
+                "worker",
+                standalone_resource_spec(&tenant_id, "task"),
+                BTreeMap::new(),
+            )
+            .await
+            .expect("standalone sandbox should start");
+        manager
+            .open_session_async(
+                &tenant_id,
+                SessionTarget::Sandbox {
+                    id: standalone.id.clone(),
+                },
+                vec!["stdio".to_owned()],
+                Some(60_000),
+            )
+            .await
+            .expect("standalone sandbox session should open");
         assert!(manager.snapshot_for_tenant(&tenant_id).contains_key("db"));
+        assert!(
+            manager
+                .service_definition_for_tenant(&tenant_id, "browser")
+                .is_some()
+        );
+        assert_eq!(
+            manager.list_sandbox_resources_for_tenant(&tenant_id).len(),
+            1
+        );
+        assert_eq!(manager.list_sessions_for_tenant(&tenant_id).len(), 1);
 
         manager
             .teardown_tenant(&tenant_id)
-            .expect("tenant teardown should stop tracked sandboxes");
+            .expect("tenant teardown should stop tracked resources");
 
-        assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            backend.stop_calls.load(Ordering::SeqCst),
+            2,
+            "tenant teardown should stop service-backed and standalone sandboxes"
+        );
         assert_eq!(
             backend.artifact_cleanup_calls.load(Ordering::SeqCst),
             1,
@@ -1116,6 +1350,22 @@ mod tests {
         assert!(
             manager.snapshot_for_tenant(&tenant_id).is_empty(),
             "tenant teardown should clear manager snapshots"
+        );
+        assert!(
+            manager
+                .service_definition_for_tenant(&tenant_id, "browser")
+                .is_none(),
+            "tenant teardown should purge dynamic service definitions"
+        );
+        assert!(
+            manager
+                .list_sandbox_resources_for_tenant(&tenant_id)
+                .is_empty(),
+            "tenant teardown should purge standalone sandbox resources"
+        );
+        assert!(
+            manager.list_sessions_for_tenant(&tenant_id).is_empty(),
+            "tenant teardown should purge tenant sessions"
         );
     }
 }

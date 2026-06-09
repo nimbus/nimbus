@@ -94,11 +94,13 @@ pub fn commit_transaction(
     engine
         .commit_transaction_session(&tenant_id, &token, &PrincipalContext::system(), None)
         .map_err(|e| match e {
-            nimbus_core::Error::Conflict(_) => MongoError::Command {
-                code: WRITE_CONFLICT.code,
-                code_name: WRITE_CONFLICT.code_name.into(),
-                message: e.to_string(),
-            },
+            nimbus_core::Error::Conflict(_) | nimbus_core::Error::PreconditionFailed(_) => {
+                MongoError::Command {
+                    code: WRITE_CONFLICT.code,
+                    code_name: WRITE_CONFLICT.code_name.into(),
+                    message: e.to_string(),
+                }
+            }
             _ => MongoError::from(e),
         })?;
 

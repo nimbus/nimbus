@@ -694,7 +694,13 @@ volumes:
             .service_backend_for_tenant(&tenant_id, "db")
             .expect("db backend should exist"),
     );
+    let volume_policy = catalog.service_volume_policy_for_tenant(&tenant_id, "db");
     assert_eq!(image_reference_from_spec(&spec), "postgres:16");
+    assert_eq!(
+        volume_policy.named_volumes(),
+        &["pgdata".to_owned(), "logs".to_owned()],
+        "compose catalog should expose admitted service volumes independently from the launch spec"
+    );
 
     assert_eq!(spec.mounts.len(), 2);
     assert_eq!(spec.mounts[0].tenant_volume_name(), Some("pgdata"));

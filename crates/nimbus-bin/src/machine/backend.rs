@@ -110,6 +110,7 @@ fn machine_client_error_to_sandbox_error(error: Error) -> SandboxError {
         }
         Error::AlreadyExists(_)
         | Error::Conflict(_)
+        | Error::PreconditionFailed(_)
         | Error::Cancelled
         | Error::TenantNotFound(_)
         | Error::DocumentNotFound(_)

@@ -3,8 +3,9 @@ use super::raw::*;
 use super::warnings::*;
 use super::*;
 use crate::compose::discovery::ResolvedComposeSelection;
+use nimbus_server::TenantVolumePolicyDecision;
 use oci_client::Reference;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl ComposeProjectPlan {
     #[cfg(test)]
@@ -198,6 +199,36 @@ impl ServiceDefinitionCatalog for ComposeServiceCatalog {
             )
         })
     }
+
+    fn service_backends_for_tenant(
+        &self,
+        tenant_id: &TenantId,
+    ) -> BTreeMap<String, ServiceBackend> {
+        self.project
+            .services
+            .iter()
+            .map(|(service_name, service)| {
+                (
+                    service_name.clone(),
+                    service.to_service_backend(tenant_id, service_name).expect(
+                        "validated compose services should keep lowering through the server catalog seam",
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    fn service_volume_policy_for_tenant(
+        &self,
+        _tenant_id: &TenantId,
+        service_name: &str,
+    ) -> TenantVolumePolicyDecision {
+        self.project
+            .services
+            .get(service_name)
+            .map(ComposeServicePlan::to_volume_policy)
+            .unwrap_or_default()
+    }
 }
 
 fn read_raw_compose_document(path: &Path) -> Result<RawComposeDocument, Error> {
@@ -349,6 +380,14 @@ impl ComposeServicePlan {
             spec = spec.with_log_limit_bytes(log_limit_bytes);
         }
         Ok(spec)
+    }
+
+    fn to_volume_policy(&self) -> TenantVolumePolicyDecision {
+        TenantVolumePolicyDecision::new(
+            self.volumes
+                .iter()
+                .filter_map(|mount| mount.source.as_deref()),
+        )
     }
 }
 

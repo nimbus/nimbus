@@ -134,8 +134,16 @@ impl OperatorPolicyWorkload {
                 self.name.clone(),
                 self.runtime.tier,
             )),
-            WorkloadKind::Service => {
-                let mut attributes = WorkloadAttributes::service(self.name.clone());
+            WorkloadKind::Service | WorkloadKind::Sandbox => {
+                let mut attributes = match self.kind {
+                    WorkloadKind::Service => WorkloadAttributes::service(self.name.clone()),
+                    WorkloadKind::Sandbox => WorkloadAttributes::sandbox(self.name.clone()),
+                    WorkloadKind::RuntimeFunction
+                    | WorkloadKind::HttpRequest
+                    | WorkloadKind::SystemTask => {
+                        unreachable!("covered by outer match")
+                    }
+                };
                 if let Some(sandbox_id) = &self.sandbox.sandbox_id {
                     attributes = attributes.with_sandbox_id(sandbox_id.clone());
                 }

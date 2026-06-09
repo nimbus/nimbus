@@ -200,6 +200,23 @@ impl TenantIsolationDecision {
         )))
     }
 
+    pub fn ensure_sandbox_spec_matches(
+        &self,
+        spec: &SandboxSpec,
+        actual_backend: SandboxBackendKind,
+        context: &str,
+    ) -> Result<()> {
+        if spec.backend != actual_backend {
+            return Err(Error::InvalidInput(format!(
+                "tenant isolation decision {} for {context} requested sandbox backend {:?}, but the configured manager backend is {:?}",
+                self.id.as_str(),
+                spec.backend,
+                actual_backend
+            )));
+        }
+        self.ensure_tenant_matches(&spec.tenant_id, context)
+    }
+
     pub fn ensure_tenant_matches(&self, actual: &TenantId, context: &str) -> Result<()> {
         if actual == &self.tenant_id {
             return Ok(());

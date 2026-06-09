@@ -8,6 +8,8 @@ how the system is built.
 
 - [Getting started](getting-started.md) -- install, pick your adapter, start building
 - [Current capabilities](current-capabilities.md) -- what works today
+- [SDK resource model examples](examples/nimbus-sdk-resource-model.md) -- services,
+  sandboxes, and sessions through `@nimbus/nimbus`
 - [Design system](../DESIGN.md) -- UI product language, information architecture, and component rules
 
 ## Adapters

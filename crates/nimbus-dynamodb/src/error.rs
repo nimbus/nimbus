@@ -41,6 +41,12 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
         // Optimistic-concurrency / write conflict.
         CoreError::Conflict(_) => DynamoDbError::TransactionConflictException(message),
 
+        // Failed generation / existence preconditions map to DynamoDB's
+        // conditional-write failure class.
+        CoreError::PreconditionFailed(_) => {
+            DynamoDbError::ConditionalCheckFailedException(message, None)
+        }
+
         // Quota/throttle.
         CoreError::ResourceExhausted(_) => {
             DynamoDbError::ProvisionedThroughputExceededException(message)
@@ -98,6 +104,12 @@ mod tests {
         assert_eq!(
             code(&map_core_error(CoreError::Conflict("race".into()))),
             "TransactionConflictException"
+        );
+        assert_eq!(
+            code(&map_core_error(CoreError::PreconditionFailed(
+                "stale generation".into()
+            ))),
+            "ConditionalCheckFailedException"
         );
         assert_eq!(
             code(&map_core_error(CoreError::ResourceExhausted("rate".into()))),

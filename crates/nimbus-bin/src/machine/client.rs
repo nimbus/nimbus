@@ -499,6 +499,7 @@ fn machine_api_status_error(status_code: Option<u16>, message: String) -> Error 
         Some(401 | 403) => Error::PermissionDenied(message),
         Some(404) => Error::NotFound(message),
         Some(409) => Error::Conflict(message),
+        Some(412) => Error::PreconditionFailed(message),
         Some(429) => Error::ResourceExhausted(message),
         _ => Error::Internal(message),
     }

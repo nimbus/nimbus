@@ -16,7 +16,7 @@ environment needs:
 
 | Import | Use it for |
 | --- | --- |
-| `@nimbus/nimbus` | The high-level `Nimbus` SDK client for Nimbus-specific resource APIs; the current landed slice owns service lifecycle/status |
+| `@nimbus/nimbus` | The high-level `Nimbus` SDK client for Nimbus-specific service, sandbox, and session resource APIs |
 | `@nimbus/nimbus/react` | React hooks and providers (`NimbusProvider`, `useQuery`, `useMutation`, `useAction`, `usePaginatedQuery`) |
 | `@nimbus/nimbus/browser` | The framework-agnostic `NimbusClient` (reactive WebSocket queries + HTTP mutations/actions) |
 | `@nimbus/nimbus/server` | Types and builders for authoring backend functions (`query`, `mutation`, `action`, schema/validator types) |
@@ -125,8 +125,36 @@ await nimbus.services.stop({ name: "db" });
 ```
 
 Service lifecycle is explicit: `start`, `stop`, and `restart` perform lifecycle
-actions, while `get` returns status/info. Sandbox and session resource APIs are
-not exposed from this SDK until the matching server routes land.
+actions, while `get` returns status/info.
+
+### Nimbus Sandboxes And Sessions
+
+```ts
+import { Nimbus, type NimbusSandboxSpec } from "@nimbus/nimbus";
+
+const nimbus = new Nimbus({ tenantId: "demo" });
+
+const spec = {
+  tenantId: "demo",
+  owner: { kind: "standalone", displayName: "worker" },
+  backend: "krun",
+  root: {
+    kind: "oci_image",
+    source: { kind: "reference", reference: "registry.example.com/worker:latest" },
+  },
+  process: { argv: ["worker"] },
+} satisfies NimbusSandboxSpec;
+
+const sandbox = await nimbus.sandboxes.create({ profile: "worker", spec });
+
+await nimbus.sessions.open({
+  target: { sandbox: { id: sandbox.metadata.id } },
+  channels: ["stdio", "files"],
+});
+```
+
+Sessions use `open`, `get`, `list`, and `close`; there is no
+`sessions.create`, `renew`, or `extend` API.
 
 ## Scripts
 
