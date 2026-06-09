@@ -880,6 +880,16 @@ const PROCESS_TIMERS_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
 
 const PROCESS_TIMING_RUNTIME_RESIDUAL_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-perf-gc-crash.js",
+    "test/parallel/test-promise-unhandled-error-with-reading-file.js",
+    "test/parallel/test-promise-unhandled-error.js",
+    "test/parallel/test-promise-unhandled-silent-no-hook.js",
+    "test/parallel/test-promise-unhandled-warn-no-hook.js",
+    "test/parallel/test-promise-unhandled-warn.js",
+    "test/parallel/test-promises-unhandled-proxy-rejections.js",
+    "test/parallel/test-promises-unhandled-rejections.js",
+    "test/parallel/test-promises-unhandled-symbol-rejections.js",
+    "test/parallel/test-promises-warning-on-unhandled-rejection.js",
+    "test/parallel/test-timers-process-tampering.js",
     "test/parallel/test-trace-events-all.js",
     "test/parallel/test-trace-events-async-hooks.js",
     "test/parallel/test-trace-events-file-pattern.js",

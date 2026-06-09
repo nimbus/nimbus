@@ -2626,13 +2626,25 @@ function seedGlobalEventTargetSurface() {
   }
 }
 
+function nimbusRejectionDomain(value) {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) {
+    return undefined;
+  }
+  try {
+    return value.domain;
+  } catch {
+    return undefined;
+  }
+}
+
 function processUnhandledPromiseRejection(promise, reason) {
   const rejectionEvent = new WebPromiseRejectionEvent("unhandledrejection", {
     cancelable: true,
     promise,
     reason,
   });
-  const hasNodeDomain = promise?.domain || reason?.domain;
+  const hasNodeDomain = nimbusRejectionDomain(promise) ||
+    nimbusRejectionDomain(reason);
 
   if (
     hasNodeDomain &&
