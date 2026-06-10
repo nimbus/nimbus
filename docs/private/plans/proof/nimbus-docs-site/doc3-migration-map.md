@@ -64,6 +64,28 @@ closeout.
 
 ## DOC5 — Operators (from `staging/operating/`, `staging/tenant-isolation.md`)
 
+**Status: done (2026-06-10).** Published 15 pages: 12 under
+`docs/operators/` (deploy-linux, container-image, desktop-install,
+updates, storage-backends, encryption, backup-restore, tenant-isolation,
+node-lifecycle, observability, hardening, troubleshooting), plus
+`docs/concepts/tenant-isolation.md`, `docs/reference/configuration.md`
+(seed: storage + encryption surface only; DOC6 expands), and
+`docs/reference/deploy-admin-api.md`. All claims source-verified; many
+stale staged claims corrected against source (metadata schema default is
+`nimbus_provider` not `nimbus_metadata`; tenant files live directly in
+the data dir, not `tenants/`; brew upgrade needs `--cask`; update-check
+TTL is 24h not ~6h; deploy artifact schema is nested per-family).
+Deviations: `latency-budgets.md` judged an internal benchmark contract
+and kept private (operator-visible latency WARN fields salvaged into
+observability.md); apt/dnf upgrade rows dropped (no deb/rpm assets
+published — apt repo target 404s). Product gaps surfaced to the
+developer at DOC5 closeout: `nimbus deploy` CLI sends only the deploy
+bearer so it cannot pass the AdminHeaderOnly gate on a default
+`nimbus start` server; no first-class backup command (dormant
+`backup_api` license entitlement); 30-day token-freshness gate re-trips
+public-bind servers on restart; CORS allowlist hardcoded to localhost
+origins.
+
 | Staged file | Action | Target |
 | --- | --- | --- |
 | `operating/cli.md` | keep R | `reference/cli.md` (DOC6 owns) |
