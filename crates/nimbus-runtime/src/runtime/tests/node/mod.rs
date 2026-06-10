@@ -1972,6 +1972,16 @@ fn runtime_limits_for_node_compat_fixture(
         // harness.
         limits.execution_timeout = Duration::from_secs(120);
     }
+    if test_relative_path == "test/parallel/test-vm-access-process-env.js" {
+        // The fixture asserts a vm context can read `process.env.PATH`, which
+        // is present in any real Node process environment. Grant PATH read to
+        // this compat fixture lane only (production application presets still
+        // omit it) so the assertion exercises real vm/env wiring rather than
+        // failing on an empty allowlist.
+        if !limits.grants.env_read.iter().any(|name| name == "PATH") {
+            limits.grants.env_read.push("PATH".to_string());
+        }
+    }
     limits
 }
 
@@ -3518,3 +3528,4 @@ include!("cases/watchpoints_extended.rs");
 include!("cases/nds3_wave25_staging.rs");
 include!("cases/nds3_cycle10.rs");
 include!("cases/nds3_cycle12.rs");
+include!("cases/nds3_cycle12c.rs");

@@ -2011,8 +2011,20 @@ function escapePOSIXShell(cmdParts, ...args) {
   return [cmd, { env }];
 }
 
+// Ported verbatim from upstream test/common/index.js. Blocks the current
+// thread for `ms` milliseconds using Atomics.wait on a throwaway
+// SharedArrayBuffer — the same primitive the fork already runs in
+// ext/node/polyfills/internal/util.mjs `sleep`, so it works on the Nimbus
+// main isolate thread.
+function sleepSync(ms) {
+  const sab = new SharedArrayBuffer(4);
+  const i32 = new Int32Array(sab);
+  Atomics.wait(i32, 0, 0, ms);
+}
+
 module.exports = {
   escapePOSIXShell,
+  sleepSync,
   hasCrypto,
   hasOpenSSL,
   hasSQLite,

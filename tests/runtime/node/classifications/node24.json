@@ -476,7 +476,6 @@
       "test_paths": [
         "test/es-module/test-vm-main-context-default-loader-eval.js",
         "test/es-module/test-vm-main-context-default-loader.js",
-        "test/parallel/test-vm-access-process-env.js",
         "test/parallel/test-vm-api-handles-getter-errors.js",
         "test/parallel/test-vm-cached-data.js",
         "test/parallel/test-vm-dynamic-import-callback-missing-flag.js",
@@ -2920,7 +2919,6 @@
       "test_paths": [
         "test/parallel/test-perf-hooks-eventlooputilization.js",
         "test/parallel/test-perf-hooks-histogram-fast-calls.js",
-        "test/parallel/test-perf-hooks-timerify-histogram-sync.mjs",
         "test/parallel/test-perf-hooks-worker-timeorigin.js"
       ]
     },
