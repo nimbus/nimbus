@@ -6,12 +6,17 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
-    "preview": "astro preview"
+    "preview": "astro preview",
+    "deploy": "wrangler deploy",
+    "preview:deploy": "wrangler versions upload"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.40.0",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "astro": "^6.4.6",
     "starlight-llms-txt": "^0.10.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.99.0"
   }
 }

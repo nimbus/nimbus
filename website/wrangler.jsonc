@@ -1,0 +1,17 @@
+{
+  // nimbusdocs.com — static Starlight site on Cloudflare Workers Static Assets.
+  // No "main": pure asset serving, no Worker script (plan DOC9/DOC10).
+  "name": "nimbus-docs",
+  "compatibility_date": "2026-06-10",
+  // PR previews use version preview URLs on workers.dev; custom domains
+  // otherwise disable them by default.
+  "preview_urls": true,
+  "routes": [
+    { "pattern": "nimbusdocs.com", "custom_domain": true },
+    { "pattern": "www.nimbusdocs.com", "custom_domain": true }
+  ],
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page"
+  }
+}
