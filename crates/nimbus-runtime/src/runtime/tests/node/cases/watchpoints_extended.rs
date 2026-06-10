@@ -2731,6 +2731,11 @@ const WEBCRYPTO_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-webcrypto-digest.js",
     "test/parallel/test-webcrypto-getRandomValues.js",
     "test/parallel/test-webcrypto-random.js",
+    // Cycle-9 free promotion: ECDSA and HMAC sign/verify pass dynamically on
+    // both lanes against the cycle-8 fork crypto baseline (verified by the
+    // webcrypto green-guard batch; HMAC was previously Node24-only).
+    "test/parallel/test-webcrypto-sign-verify-ecdsa.js",
+    "test/parallel/test-webcrypto-sign-verify-hmac.js",
 ];
 
 // Wave 19 broad diagnostics proved this path only on the Node22 lane. Keep it
@@ -2751,7 +2756,6 @@ const WEBCRYPTO_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
     "test/parallel/test-webcrypto-get-public-key.mjs",
     "test/parallel/test-webcrypto-internal-slots.mjs",
     "test/parallel/test-webcrypto-sign-verify-eddsa.js",
-    "test/parallel/test-webcrypto-sign-verify-hmac.js",
 ];
 
 #[test]
@@ -2845,6 +2849,57 @@ fn node24_default_lane_webcrypto_required_gap_watchpoint() {
         &fixture_paths,
         &[],
         WEBCRYPTO_REQUIRED_GAP_NODE24_EXTRA_DIRS,
+    );
+}
+
+// Cycle-9 free promotion outside the WebCrypto cluster. This fixture passed a
+// dynamic green-guard run against the cycle-8 fork baseline with exactly the
+// staging declared here (vendored `test/common` plus the `test/fixtures/syntax`
+// module it imports), so it transfers from the v8_isolate_required gap set to
+// manifested-green without any further fork change. The broader cycle-9 census
+// candidates (vm dynamic-import error-code, WHATWG byte-stream validation, vm
+// module referrer-realm, util.styleText) were rejected by the same green-guard
+// as false greens — they self-skip or assert-mismatch dynamically — so they
+// stay in the gap set pending real fork fixes.
+
+// `test-esm-error-cache` re-imports a deliberately broken module and asserts the
+// cached SyntaxError identity is preserved across the second dynamic import. It
+// needs the shared `test/common` plus the `fixtures/syntax/bad_syntax.mjs`
+// module it imports by relative specifier.
+const ESM_ERROR_CACHE_EXTRA_DIRS: &[&str] = &["test/common", "test/fixtures/syntax"];
+
+const ESM_ERROR_CACHE_PROMOTED_COMMON_PATHS: &[&str] =
+    &["test/es-module/test-esm-error-cache.js"];
+
+#[test]
+fn node22_supported_lane_executes_esm_error_cache_promoted_batch_fixture() {
+    let fixture_paths = ESM_ERROR_CACHE_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node22-supported-lane-executes-esm-error-cache-promoted-batch",
+        NodeCompatLane::Node22,
+        &fixture_paths,
+        &[],
+        ESM_ERROR_CACHE_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node24_default_lane_executes_esm_error_cache_promoted_batch_fixture() {
+    let fixture_paths = ESM_ERROR_CACHE_PROMOTED_COMMON_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node24-default-lane-executes-esm-error-cache-promoted-batch",
+        NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        ESM_ERROR_CACHE_EXTRA_DIRS,
     );
 }
 
