@@ -87,7 +87,8 @@ if [[ -f "${CONTENT_CONFIG}" ]]; then
   done
   extra_content="$(find website/src/content/docs -type f ! -name 'index.mdx' ! -name 'index.md' 2>/dev/null | head -5)"
   if [[ ${#missing_groups[@]} -eq 0 && -z "${extra_content}" ]] \
-    && grep -q '\.\./docs' "${CONTENT_CONFIG}"; then
+    && grep -q '\.\./docs' "${CONTENT_CONFIG}" \
+    && grep -q 'glob(' "${CONTENT_CONFIG}"; then
     pass "${C}"
   else
     fail "${C}" "loader missing groups [${missing_groups[*]:-}] or extra authored content: ${extra_content:-none}"
