@@ -3515,3 +3515,4 @@ include!("cases/loader_context_catalog.rs");
 include!("cases/watchpoints_core.rs");
 include!("cases/watchpoints_loader_and_tools.rs");
 include!("cases/watchpoints_extended.rs");
+include!("cases/nds3_wave25_staging.rs");

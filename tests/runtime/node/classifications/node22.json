@@ -1461,7 +1461,6 @@
         "test/es-module/test-esm-exports-deprecations.mjs",
         "test/es-module/test-esm-extension-lookup-deprecation.mjs",
         "test/es-module/test-esm-extensionless-esm-and-wasm.mjs",
-        "test/es-module/test-esm-import-attributes-errors.js",
         "test/es-module/test-esm-import-attributes-validation.js",
         "test/es-module/test-esm-import-flag.mjs",
         "test/es-module/test-esm-import-meta-main-eval.mjs",
