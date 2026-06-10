@@ -873,5 +873,32 @@ function createNimbusFsModule(fsPromisesModule) {
   fsModule.opendirSync = function opendirSync(path, options) {
     return wrapDirHandle(fsBuiltin.opendirSync(path, options));
   };
+  // Node 24 runtime-deprecates the fs.F_OK/R_OK/W_OK/X_OK aliases (DEP0176):
+  // they remain readable (each returns the matching fs.constants value) but are
+  // accessor-only, so assigning to one throws a TypeError in strict mode, and
+  // the first read across any of the four emits a single DEP0176
+  // DeprecationWarning. deno_node drops the deprecated aliases entirely, so
+  // Nimbus restores the Node-compatible shape here. Node's internal
+  // `codesWarned` SafeSet emits each deprecation code once globally, so a single
+  // module-scoped flag mirrors the warn-once-per-code behavior regardless of
+  // which alias is read first.
+  let dep0176Warned = false;
+  for (const constantKey of ["F_OK", "R_OK", "W_OK", "X_OK"]) {
+    Object.defineProperty(fsModule, constantKey, {
+      configurable: true,
+      enumerable: false,
+      get() {
+        if (!dep0176Warned) {
+          dep0176Warned = true;
+          processModule?.emitWarning?.(
+            `fs.${constantKey} is deprecated, use fs.constants.${constantKey} instead`,
+            "DeprecationWarning",
+            "DEP0176",
+          );
+        }
+        return fsModule.constants[constantKey];
+      },
+    });
+  }
   return fsModule;
 }

@@ -4768,8 +4768,15 @@ fn node20_fs_stat_watchpoint() {
     );
 }
 
+// Greened by NDS3 cycle 11: module_fs_modules.js now restores Node 24's
+// DEP0176 runtime-deprecation shape for the fs.F_OK/R_OK/W_OK/X_OK aliases.
+// deno_node drops the deprecated aliases; Nimbus redefines them as configurable,
+// non-enumerable, accessor-only getters (assigning throws TypeError in strict
+// mode) where the first read across the four emits a single DEP0176
+// DeprecationWarning naming the first-read key, returning the matching
+// fs.constants value. Now a passing dynamic green-guard, no longer an ignored
+// watchpoint.
 #[test]
-#[ignore = "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-constants.js expects a newer constant-surface TypeError gate that Nimbus has not adopted into the default lane yet"]
 fn node24_fs_constants_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-constants.js",
