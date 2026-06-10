@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@astrojs/starlight": "^0.40.0",
+    "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "astro": "^6.4.6",
     "starlight-llms-txt": "^0.10.0"
   }
