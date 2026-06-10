@@ -53,14 +53,18 @@ for the full breakdown.
 
 ## Single-Tenant Apps
 
-Most apps use a single database name. The `uri()` helper defaults to
-`"default"`, so the simplest setup routes everything to one tenant:
+Most apps use a single database name. Pass the configured SCRAM credentials and
+the `"default"` database to route everything to one tenant:
 
 ```typescript
 import { MongoClient } from "mongodb";
-import { uri } from "@nimbus/mongodb";
+import { mongoUri } from "@nimbus/mongodb";
 
-const client = new MongoClient(uri()); // database: "default"
+const client = new MongoClient(mongoUri({
+  database: "default",
+  username: "app-user",
+  password: "app-secret",
+}));
 await client.connect();
 const db = client.db("default");       // tenant: "default"
 ```
@@ -72,10 +76,14 @@ on first access:
 
 ```typescript
 import { MongoClient } from "mongodb";
-import { uri } from "@nimbus/mongodb";
+import { mongoUri } from "@nimbus/mongodb";
 
 async function clientForTenant(tenantId: string) {
-  const client = new MongoClient(uri({ database: tenantId }));
+  const client = new MongoClient(mongoUri({
+    database: tenantId,
+    username: "app-user",
+    password: "app-secret",
+  }));
   await client.connect();
   return client;
 }

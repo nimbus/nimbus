@@ -142,9 +142,8 @@ impl WebSocketFixture {
 
     pub async fn next_message_with_timeout(&mut self, duration: Duration) -> Option<Message> {
         match timeout(duration, self.socket.next()).await {
-            Ok(Some(Ok(message))) => Some(message),
-            Ok(Some(Err(error))) => panic!("websocket message should be valid: {error}"),
-            Ok(None) | Err(_) => None,
+            Ok(next) => Some(message_from_websocket_next(next)),
+            Err(_) => None,
         }
     }
 
@@ -176,6 +175,14 @@ impl WebSocketFixture {
             Message::Binary(bytes) => Some(bytes.to_vec()),
             other => panic!("unexpected websocket message: {other:?}"),
         }
+    }
+}
+
+fn message_from_websocket_next(next: Option<Result<Message, WebSocketError>>) -> Message {
+    match next {
+        Some(Ok(message)) => message,
+        Some(Err(error)) => panic!("websocket message should be valid: {error}"),
+        None => panic!("websocket closed before message"),
     }
 }
 
@@ -243,4 +250,32 @@ async fn complete_nimbus_v2_handshake(
             .into(),
         ))
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_from_websocket_next_reports_closed_stream_separately_from_timeout() {
+        let panic = std::panic::catch_unwind(|| message_from_websocket_next(None))
+            .expect_err("closed stream should panic with a closed-stream message");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("panic payload should be string-like");
+
+        assert!(
+            message.contains("websocket closed before message"),
+            "closed-stream panic should not look like a timeout: {message}"
+        );
+    }
+
+    #[test]
+    fn message_from_websocket_next_returns_available_message() {
+        let message = message_from_websocket_next(Some(Ok(Message::Text("ready".into()))));
+
+        assert_eq!(message, Message::Text("ready".into()));
+    }
 }

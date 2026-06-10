@@ -6,6 +6,7 @@ use tokio::sync::Notify;
 
 mod activation;
 mod catalog;
+mod clock;
 mod definitions;
 mod handles;
 mod launch;
@@ -121,7 +122,7 @@ impl ServiceManager {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
@@ -137,7 +138,7 @@ mod tests {
 
     use crate::{
         ExternalAuthPolicy, HealthCheckPolicy, RuntimeServiceRegistry, ServiceBackend,
-        ServiceDefinitionCatalog, SessionTarget,
+        ServiceDefinitionCatalog, SessionLifecycleState, SessionTarget,
     };
     use nimbus_tenant::{
         TenantImageVerificationEvidence, TenantImageVerificationProvider, TenantIsolationContext,
@@ -147,7 +148,7 @@ mod tests {
 
     use super::*;
 
-    mod definitions;
+    mod definition_lifecycle;
 
     struct StubServiceDefinitionCatalog {
         launches: BTreeMap<String, ServiceBackend>,
@@ -170,6 +171,7 @@ mod tests {
         artifact_cleanup_calls: AtomicUsize,
         inspect_calls: AtomicUsize,
         egress_reloads: Mutex<Vec<(String, SandboxEgressPolicy)>>,
+        fail_stop_ids: Mutex<BTreeSet<String>>,
         ready_after_inspects: usize,
         handle_tenant_override: Option<TenantId>,
         handles: Mutex<BTreeMap<String, SandboxHandle>>,
@@ -184,6 +186,7 @@ mod tests {
                 artifact_cleanup_calls: AtomicUsize::new(0),
                 inspect_calls: AtomicUsize::new(0),
                 egress_reloads: Mutex::new(Vec::new()),
+                fail_stop_ids: Mutex::new(BTreeSet::new()),
                 ready_after_inspects,
                 handle_tenant_override: None,
                 handles: Mutex::new(BTreeMap::new()),
@@ -193,6 +196,13 @@ mod tests {
         fn with_handle_tenant_override(mut self, tenant_id: TenantId) -> Self {
             self.handle_tenant_override = Some(tenant_id);
             self
+        }
+
+        fn fail_stop_for(&self, id: &str) {
+            self.fail_stop_ids
+                .lock()
+                .expect("failed stop id set should not be poisoned")
+                .insert(id.to_owned());
         }
 
         fn sandbox_handle(
@@ -310,6 +320,15 @@ mod tests {
 
         fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
             self.stop_calls.fetch_add(1, Ordering::SeqCst);
+            if self
+                .fail_stop_ids
+                .lock()
+                .expect("failed stop id set should not be poisoned")
+                .contains(id.as_str())
+            {
+                let message = format!("stub backend refused to stop sandbox {id}");
+                return Box::pin(async move { Err(SandboxError::OperationFailed { message }) });
+            }
             self.handles
                 .lock()
                 .expect("backend lock should not be poisoned")
@@ -767,7 +786,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_service_binding_refreshes_cached_handle_before_projecting_endpoint() {
+    async fn resolve_service_binding_uses_cached_snapshot_without_backend_inspect() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(1));
         let manager = ServiceManager::new(
@@ -806,20 +825,18 @@ mod tests {
 
         let binding = manager
             .resolve_service_binding(&tenant_id, "db")
-            .expect("service binding refresh should not fail");
+            .expect("service binding snapshot should not fail")
+            .expect("cached service binding should still project");
 
-        assert!(
-            binding.is_none(),
-            "runtime binding resolution must not hand out endpoints for vanished sandboxes"
-        );
+        assert_eq!(binding.port, 15432);
         assert_eq!(
             backend.inspect_calls.load(Ordering::SeqCst),
-            inspect_calls_before + 1,
-            "resolve_service_binding should verify cached handles with the sandbox backend"
+            inspect_calls_before,
+            "sync resolve_service_binding must not inspect the backend"
         );
         assert!(
-            manager.snapshot_for_tenant(&tenant_id).is_empty(),
-            "stale handle should be removed from future snapshots"
+            manager.snapshot_for_tenant(&tenant_id).contains_key("db"),
+            "snapshot-only lookups should not mutate cached handles"
         );
     }
 
@@ -1273,6 +1290,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_lookup_and_close_are_tenant_scoped() {
+        let tenant_id = TenantId::new("tenant-a").expect("tenant id should be valid");
+        let other_tenant_id = TenantId::new("tenant-b").expect("tenant id should be valid");
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
+                launches: BTreeMap::new(),
+            }),
+            Arc::new(StubSandboxBackend::new(1)),
+        );
+        manager
+            .create_service_definition(
+                &tenant_id,
+                "browser",
+                ServiceBackend::built_in("browser"),
+                BTreeMap::new(),
+            )
+            .expect("dynamic browser service definition should create");
+        let session = manager
+            .open_session_async(
+                &tenant_id,
+                SessionTarget::Service {
+                    name: "browser".to_owned(),
+                },
+                vec!["cdp".to_owned()],
+                Some(60_000),
+            )
+            .await
+            .expect("tenant-a service session should open");
+
+        assert!(
+            manager.get_session(&other_tenant_id, &session.id).is_none(),
+            "wrong-tenant lookup must not expose another tenant's session"
+        );
+        assert!(
+            manager
+                .close_session(&other_tenant_id, &session.id, "wrong_tenant")
+                .is_none(),
+            "wrong-tenant close must not mutate another tenant's session"
+        );
+        let tenant_session = manager
+            .get_session(&tenant_id, &session.id)
+            .expect("owning tenant should still see the open session");
+        assert_eq!(tenant_session.lifecycle_state, SessionLifecycleState::Open);
+        assert_eq!(tenant_session.close_reason, None);
+
+        let closed = manager
+            .close_session(&tenant_id, &session.id, "tenant_close")
+            .expect("owning tenant should close its session");
+        assert_eq!(closed.lifecycle_state, SessionLifecycleState::Closed);
+        assert_eq!(closed.close_reason.as_deref(), Some("tenant_close"));
+    }
+
+    #[tokio::test]
     async fn teardown_tenant_stops_tracked_sandboxes_and_clears_tenant_resources() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(1));
@@ -1334,7 +1404,8 @@ mod tests {
         assert_eq!(manager.list_sessions_for_tenant(&tenant_id).len(), 1);
 
         manager
-            .teardown_tenant(&tenant_id)
+            .teardown_tenant_async(&tenant_id)
+            .await
             .expect("tenant teardown should stop tracked resources");
 
         assert_eq!(
@@ -1366,6 +1437,85 @@ mod tests {
         assert!(
             manager.list_sessions_for_tenant(&tenant_id).is_empty(),
             "tenant teardown should purge tenant sessions"
+        );
+    }
+
+    #[tokio::test]
+    async fn teardown_tenant_attempts_all_stops_and_clears_successes_before_returning_errors() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
+                launches: BTreeMap::from([(
+                    "db".to_owned(),
+                    image_service_backend("db", "postgres:16"),
+                )]),
+            }),
+            backend.clone(),
+        )
+        .with_activation_poll_interval(Duration::from_millis(1))
+        .with_activation_timeout(Duration::from_secs(1));
+
+        manager
+            .ensure_service_binding_async(&tenant_id, "db", HostCallCancellation::default())
+            .await
+            .expect("service activation should succeed")
+            .expect("db binding should exist");
+        let standalone = manager
+            .create_sandbox_resource_async(
+                &tenant_id,
+                "worker",
+                standalone_resource_spec(&tenant_id, "task"),
+                BTreeMap::new(),
+            )
+            .await
+            .expect("standalone sandbox should start");
+        manager
+            .open_session_async(
+                &tenant_id,
+                SessionTarget::Sandbox {
+                    id: standalone.id.clone(),
+                },
+                vec!["stdio".to_owned()],
+                Some(60_000),
+            )
+            .await
+            .expect("standalone sandbox session should open");
+        backend.fail_stop_for(standalone.id.as_str());
+
+        let error = manager
+            .teardown_tenant_async(&tenant_id)
+            .await
+            .expect_err("failed standalone stop should be reported after best-effort teardown");
+
+        assert!(
+            error.to_string().contains(standalone.id.as_str())
+                && error.to_string().contains("best-effort cleanup"),
+            "aggregate teardown error should name the failed sandbox: {error}"
+        );
+        assert_eq!(
+            backend.stop_calls.load(Ordering::SeqCst),
+            2,
+            "tenant teardown should attempt service-backed and standalone stops"
+        );
+        assert_eq!(
+            backend.artifact_cleanup_calls.load(Ordering::SeqCst),
+            1,
+            "tenant teardown should still attempt tenant artifact cleanup"
+        );
+        assert!(
+            manager.snapshot_for_tenant(&tenant_id).is_empty(),
+            "successfully stopped service handle should be cleared before returning the aggregate error"
+        );
+        assert_eq!(
+            manager.list_sandbox_resources_for_tenant(&tenant_id).len(),
+            1,
+            "failed standalone sandbox resource should remain for retry"
+        );
+        assert_eq!(
+            manager.list_sessions_for_tenant(&tenant_id).len(),
+            1,
+            "session targeting the failed standalone sandbox should remain for retry"
         );
     }
 }

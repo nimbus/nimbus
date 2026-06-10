@@ -353,18 +353,6 @@ fn hostname_for(spec: &SandboxSpec) -> String {
     }
 }
 
-pub(super) fn slugify(name: &str) -> String {
-    let mut slug = String::with_capacity(name.len());
-    for character in name.chars() {
-        if character.is_ascii_alphanumeric() {
-            slug.push(character.to_ascii_lowercase());
-        } else if !slug.ends_with('-') {
-            slug.push('-');
-        }
-    }
-    slug.trim_matches('-').to_owned()
-}
-
 pub(super) fn desired_krun_vm_config(spec: &SandboxSpec) -> Result<Option<KrunVmConfig>> {
     let cpu_count = spec.resources.cpu_count;
     let memory_limit_bytes = spec.resources.memory_limit_bytes;
@@ -464,44 +452,6 @@ fn required_rootfs(spec: &SandboxSpec) -> Result<&SandboxRootfsSpec> {
     })
 }
 
-fn resolve_root_spec(root: &SandboxRootSpec, defaults: &SandboxRootfsSpec) -> SandboxRootSpec {
-    match root {
-        SandboxRootSpec::Rootfs(rootfs) if !rootfs.is_unspecified() => {
-            SandboxRootSpec::Rootfs(rootfs.clone())
-        }
-        SandboxRootSpec::Rootfs(rootfs) => {
-            let mut resolved = defaults.clone();
-            resolved.readonly = resolved.readonly || rootfs.readonly;
-            SandboxRootSpec::Rootfs(resolved)
-        }
-        SandboxRootSpec::OciImage(_) => SandboxRootSpec::Rootfs(defaults.clone()),
-    }
-}
-
-fn resolve_process_spec(
-    spec: &crate::spec::SandboxProcessSpec,
-    defaults: &crate::spec::SandboxProcessSpec,
-) -> crate::spec::SandboxProcessSpec {
-    let mut resolved = defaults.clone();
-
-    if !spec.args.is_empty() {
-        resolved.args = spec.args.clone();
-    }
-
-    resolved.env = if spec.env.is_empty() || spec.uses_default_env() {
-        defaults.env.clone()
-    } else {
-        merge_env_overrides(&defaults.env, &spec.env)
-    };
-
-    if !spec.uses_default_cwd() {
-        resolved.cwd = spec.cwd.clone();
-    }
-
-    resolved.terminal = spec.terminal || defaults.terminal;
-    resolved
-}
-
 fn apply_guest_user_switch(
     spec: &mut SandboxSpec,
     image_metadata: &KrunImageMetadata,
@@ -599,31 +549,6 @@ fn tenant_volume_mount_options(read_only: bool) -> Vec<String> {
         "nosuid".to_owned(),
         "nodev".to_owned(),
     ]
-}
-
-fn merge_env_overrides(base: &[String], overrides: &[String]) -> Vec<String> {
-    let mut merged = base.to_vec();
-    for override_entry in overrides {
-        let Some(override_key) = env_key(override_entry) else {
-            merged.push(override_entry.clone());
-            continue;
-        };
-
-        if let Some(index) = merged
-            .iter()
-            .position(|entry| env_key(entry).is_some_and(|key| key == override_key))
-        {
-            merged[index] = override_entry.clone();
-        } else {
-            merged.push(override_entry.clone());
-        }
-    }
-    merged
-}
-
-fn env_key(entry: &str) -> Option<&str> {
-    let (key, _) = entry.split_once('=')?;
-    (!key.is_empty()).then_some(key)
 }
 
 pub(super) fn parse_guest_user(user: Option<&str>) -> Result<Option<GuestUserIds>> {

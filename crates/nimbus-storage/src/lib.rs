@@ -15,6 +15,7 @@ pub mod materializer;
 pub mod mysql;
 pub mod postgres;
 pub mod query_read;
+mod range_bound;
 pub mod retention;
 mod runtime_bridge;
 pub mod scheduler;
@@ -52,7 +53,9 @@ pub use encryption::{
     GeneratedDatabaseKey, KeyDirectoryProvider, KeyManifest, KeyManifestHeader, LocalArtifactRole,
     LocalDatabaseRole, LocalKeyProvider, LocalKeyProviderError, LocalKeySubject,
     LocalKeySubjectKind, ManifestCipher, ManifestError, ManifestReadError, ManifestWriteError,
-    MasterKeyFileProvider, WrappedDatabaseKey, generate_database_manifest,
+    MasterKeyFileProvider, WrappedDatabaseKey, commit_staged_redb_dek_rotation,
+    generate_database_manifest, recover_interrupted_redb_dek_rotation,
+    redb_dek_rotation_database_stage_path, redb_dek_rotation_manifest_stage_path,
     resolve_database_encryption_key, unwrap_database_manifest_key,
 };
 pub use format::{
@@ -80,6 +83,7 @@ pub use postgres::{
     PostgresTenantStorage, PostgresTenantStore, PostgresWriteTransaction,
 };
 pub use query_read::QueryReadStore;
+pub use range_bound::IndexRangeBound;
 pub use retention::{
     HardDeleteDecision, RetentionFloor, RetentionGcConfig, RetentionGcResource, RetentionGcSummary,
     RetentionGcWatermark, RetentionGcWatermarks, RetentionParticipant, RetentionPin,

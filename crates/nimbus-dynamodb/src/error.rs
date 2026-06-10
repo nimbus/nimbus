@@ -31,6 +31,7 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
 
         // Bad request shape / schema / value → ValidationException.
         CoreError::InvalidInput(_)
+        | CoreError::MissingIndex { .. }
         | CoreError::SchemaValidation(_)
         | CoreError::Serialization(_)
         | CoreError::HistoricalRead { .. } => DynamoDbError::ValidationException(message),
@@ -84,6 +85,12 @@ mod tests {
         );
         assert_eq!(
             code(&map_core_error(CoreError::InvalidInput("bad".into()))),
+            "ValidationException"
+        );
+        assert_eq!(
+            code(&map_core_error(CoreError::MissingIndex {
+                fields: vec!["state".to_string(), "rank".to_string()]
+            })),
             "ValidationException"
         );
         assert_eq!(

@@ -115,9 +115,9 @@ impl LibsqlReplicaTenantStore {
         Ok(())
     }
 
-    pub fn claim_due_jobs(&self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
+    pub fn claim_due_jobs(&self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
         Ok(self
-            .execute_write(move |transaction| transaction.claim_due_jobs(now))?
+            .execute_write(move |transaction| transaction.claim_due_jobs(now, max_jobs))?
             .value)
     }
 
@@ -356,7 +356,7 @@ impl LibsqlReplicaTenantStore {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
     ) -> Result<Option<CommitEntry>> {
-        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None)
+        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None, None)
     }
 
     pub fn apply_execution_unit_batch_with_origin(
@@ -364,6 +364,7 @@ impl LibsqlReplicaTenantStore {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
         trigger_write_origin: Option<&TriggerWriteOrigin>,
+        commit_timestamp: Option<Timestamp>,
     ) -> Result<Option<CommitEntry>> {
         if writes.is_empty() && schedule_ops.is_empty() {
             return Err(Error::Internal(
@@ -375,6 +376,7 @@ impl LibsqlReplicaTenantStore {
         let trigger_write_origin = trigger_write_origin.cloned();
         let committed = self.execute_write(move |transaction| {
             transaction.set_trigger_write_origin(trigger_write_origin.clone());
+            transaction.set_commit_timestamp(commit_timestamp);
             for write in &writes {
                 transaction.apply_resolved_write(write)?;
             }
@@ -461,6 +463,7 @@ impl LibsqlReplicaWriteTransaction {
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
             trigger_write_origin: None,
+            commit_timestamp: None,
             check_cancel: Box::new(check_cancel),
             refresh_cache_after_commit: false,
         })
@@ -715,8 +718,12 @@ impl LibsqlReplicaWriteTransaction {
         self.store.block_on(async {
             self.session()?
                 .execute(
-                    "INSERT INTO scheduled_jobs (id, data_json) VALUES (?1, ?2)",
-                    libsql::params![job.id.to_string(), data_json],
+                    "INSERT INTO scheduled_jobs (id, run_at, data_json) VALUES (?1, ?2, ?3)",
+                    libsql::params![
+                        job.id.to_string(),
+                        scheduled_run_at_key(job.run_at),
+                        data_json
+                    ],
                 )
                 .await
                 .map_err(map_libsql_error)?;
@@ -724,15 +731,34 @@ impl LibsqlReplicaWriteTransaction {
         })
     }
 
-    pub fn claim_due_jobs(&mut self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
+    pub fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
         self.check_cancel()?;
-        let due = self
-            .store
-            .block_on(self.store.load_remote_scheduled_jobs("scheduled_jobs"))?;
-        let due = due
-            .into_iter()
-            .filter(|job| job.run_at.0 <= now.0)
-            .collect::<Vec<_>>();
+        let due = if max_jobs == 0 {
+            Vec::new()
+        } else {
+            let run_at_upper = scheduled_run_at_key(now);
+            let max_jobs = i64::try_from(max_jobs).unwrap_or(i64::MAX);
+            self.store.block_on(async {
+                let mut rows = self
+                    .session()?
+                    .query(
+                        "SELECT data_json FROM scheduled_jobs
+                         WHERE run_at <= ?1
+                         ORDER BY run_at, id
+                         LIMIT ?2",
+                        libsql::params![run_at_upper, max_jobs],
+                    )
+                    .await
+                    .map_err(map_libsql_error)?;
+                let mut due = Vec::new();
+                while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
+                    due.push(deserialize_json::<ScheduledJob>(
+                        row.get::<String>(0).map_err(map_libsql_error)?.as_str(),
+                    )?);
+                }
+                Ok(due)
+            })?
+        };
         for job in &due {
             self.check_cancel()?;
             let data_json = serialize_json(job)?;
@@ -845,8 +871,12 @@ impl LibsqlReplicaWriteTransaction {
             self.store.block_on(async {
                 self.session()?
                     .execute(
-                        "INSERT INTO scheduled_jobs (id, data_json) VALUES (?1, ?2)",
-                        libsql::params![job.id.to_string(), data_json],
+                        "INSERT INTO scheduled_jobs (id, run_at, data_json) VALUES (?1, ?2, ?3)",
+                        libsql::params![
+                            job.id.to_string(),
+                            scheduled_run_at_key(job.run_at),
+                            data_json
+                        ],
                     )
                     .await
                     .map_err(map_libsql_error)?;
@@ -1071,6 +1101,10 @@ impl LibsqlReplicaWriteTransaction {
         self.trigger_write_origin = trigger_write_origin;
     }
 
+    fn set_commit_timestamp(&mut self, commit_timestamp: Option<Timestamp>) {
+        self.commit_timestamp = commit_timestamp;
+    }
+
     fn record_commit_write(&mut self, mut write: WriteOp) {
         if write.trigger_write_origin.is_none() {
             write.trigger_write_origin = self.trigger_write_origin.clone();
@@ -1099,7 +1133,9 @@ impl LibsqlReplicaWriteTransaction {
             self.store
                 .block_on(load_next_sequence_from_session(self.session()?))?,
         );
-        let timestamp = self.store.provider.clock.now();
+        let timestamp = self
+            .commit_timestamp
+            .unwrap_or_else(|| self.store.provider.clock.now());
         let record = TenantEventRecord::from_events(sequence, timestamp, events)?;
         let entry = CommitEntry {
             sequence,

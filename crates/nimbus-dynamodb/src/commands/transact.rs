@@ -181,14 +181,14 @@ pub fn transact_write_items(
     // All conditions held: commit every write — plus the stream events they
     // produce — atomically in one batch.
     let mut writes: Vec<AtomicWrite> = Vec::with_capacity(plans.len());
-    let mut changes: Vec<StreamChange> = Vec::new();
+    let mut changes: Vec<stream::StreamChange> = Vec::new();
     for plan in plans {
         writes.push(plan.write);
         if let Some(change) = plan.change {
             changes.push(change);
         }
     }
-    append_stream_writes(engine, context, &mut writes, &changes)?;
+    stream::append_stream_writes(engine, context, &mut writes, &changes)?;
     let batch = AtomicWriteBatch::new(writes).map_err(map_core_error)?;
     engine
         .commit_transaction_session(context.tenant_id(), &token, &principal, Some(batch))
@@ -218,56 +218,6 @@ fn existed_event(existed: bool) -> StreamEventName {
     }
 }
 
-/// A stream change produced by one transacted write, captured during planning so
-/// its event can be folded into the same atomic commit batch.
-struct StreamChange {
-    table_name: String,
-    event_name: StreamEventName,
-    keys: Item,
-    old_image: Option<Item>,
-    new_image: Option<Item>,
-}
-
-/// Append stream-event writes for every stream-enabled table touched by this
-/// transaction, so the events commit atomically with the data (F3) and the
-/// per-table sequence advances atomically in the same batch (F8). Sequence
-/// numbers are assigned from each table's high-water counter; a concurrent
-/// writer that claimed a number first makes the event's `Create` write collide,
-/// failing the whole transaction (surfaced as `TransactionConflictException`).
-fn append_stream_writes(
-    engine: &Arc<Engine>,
-    context: &TenantIsolationContext,
-    writes: &mut Vec<AtomicWrite>,
-    changes: &[StreamChange],
-) -> Result<(), DynamoDbError> {
-    // Distinct tables, in first-seen order, so sequence assignment is stable.
-    let mut tables: Vec<&str> = Vec::new();
-    for change in changes {
-        if !tables.contains(&change.table_name.as_str()) {
-            tables.push(&change.table_name);
-        }
-    }
-    for table_name in tables {
-        if !stream::stream_enabled(engine, context, table_name)? {
-            continue;
-        }
-        let mut seq = stream::next_sequence_value(engine, context, table_name)?;
-        for change in changes.iter().filter(|c| c.table_name == table_name) {
-            let event = stream::ChangeEvent {
-                event_name: change.event_name,
-                keys: &change.keys,
-                old_image: change.old_image.as_ref(),
-                new_image: change.new_image.as_ref(),
-                user_identity: None,
-            };
-            writes.push(stream::stream_event_write(table_name, seq, &event)?);
-            seq += 1;
-        }
-        writes.push(stream::sequence_counter_write(table_name, seq)?);
-    }
-    Ok(())
-}
-
 /// One planned write plus its cancellation reason (code `"None"` unless its
 /// condition failed) and the stream change it produces (`None` for
 /// ConditionCheck and for deletes of an absent item).
@@ -275,7 +225,7 @@ struct PlannedWrite {
     write: AtomicWrite,
     reason: CancellationReason,
     failed: bool,
-    change: Option<StreamChange>,
+    change: Option<stream::StreamChange>,
 }
 
 fn plan_writes(
@@ -366,13 +316,14 @@ fn plan_one(
                 &current,
                 limits,
             )?;
-            let change = Some(StreamChange {
-                table_name: put.table_name.clone(),
-                event_name: existed_event(doc.is_some()),
-                keys: extract_key(&put.item, &key_schema),
-                old_image: doc.is_some().then(|| current.clone()),
-                new_image: Some(put.item.clone()),
-            });
+            let change = Some(stream::StreamChange::new(
+                put.table_name.clone(),
+                existed_event(doc.is_some()),
+                extract_key(&put.item, &key_schema),
+                doc.is_some().then(|| current.clone()),
+                Some(put.item.clone()),
+                None,
+            ));
             Ok(PlannedWrite {
                 write: AtomicWrite::Set {
                     key,
@@ -409,12 +360,15 @@ fn plan_one(
                 limits,
             )?;
             // DynamoDB emits a REMOVE record only when an item was deleted.
-            let change = doc.as_ref().map(|_| StreamChange {
-                table_name: delete.table_name.clone(),
-                event_name: StreamEventName::Remove,
-                keys: extract_key(&delete.key, &key_schema),
-                old_image: Some(current.clone()),
-                new_image: None,
+            let change = doc.as_ref().map(|_| {
+                stream::StreamChange::new(
+                    delete.table_name.clone(),
+                    StreamEventName::Remove,
+                    extract_key(&delete.key, &key_schema),
+                    Some(current.clone()),
+                    None,
+                    None,
+                )
             });
             Ok(PlannedWrite {
                 write: AtomicWrite::Delete {
@@ -471,12 +425,15 @@ fn plan_one(
                 apply_update(&actions, &mut new_item, &maps)?;
                 (item_to_fields(&new_item)?, Some(new_item))
             };
-            let change = new_item.map(|new_item| StreamChange {
-                table_name: update.table_name.clone(),
-                event_name: existed_event(doc.is_some()),
-                keys: extract_key(&new_item, &key_schema),
-                old_image: doc.is_some().then(|| current.clone()),
-                new_image: Some(new_item),
+            let change = new_item.map(|new_item| {
+                stream::StreamChange::new(
+                    update.table_name.clone(),
+                    existed_event(doc.is_some()),
+                    extract_key(&new_item, &key_schema),
+                    doc.is_some().then(|| current.clone()),
+                    Some(new_item),
+                    None,
+                )
             });
             Ok(PlannedWrite {
                 write: AtomicWrite::Set {

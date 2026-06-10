@@ -8,7 +8,7 @@ const AUTH_PAGE_TEMPLATE: &str = include_str!("../embedded/ui-auth/auth.html");
 const AUTH_PAGE_SCRIPT: &str = include_str!("../embedded/ui-auth/auth.js");
 
 #[derive(Debug)]
-pub struct EmbeddedAsset {
+pub struct UiAsset {
     pub data: Cow<'static, [u8]>,
 }
 
@@ -16,15 +16,15 @@ pub struct EmbeddedAsset {
 #[folder = "$CARGO_MANIFEST_DIR/../../packages/nimbus-ui/dist/"]
 struct UiAssets;
 
-pub fn asset(path: &str) -> Option<EmbeddedAsset> {
-    UiAssets::get(path).map(|asset| EmbeddedAsset { data: asset.data })
+pub fn asset(path: &str) -> Option<UiAsset> {
+    UiAssets::get(path).map(|asset| UiAsset { data: asset.data })
 }
 
 pub fn iter() -> impl Iterator<Item = Cow<'static, str>> {
     UiAssets::iter()
 }
 
-pub fn index_html() -> Option<EmbeddedAsset> {
+pub fn index_html() -> Option<UiAsset> {
     asset(SPA_INDEX)
 }
 

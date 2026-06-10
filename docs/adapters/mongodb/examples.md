@@ -4,9 +4,13 @@
 
 ```typescript
 import { MongoClient } from "mongodb";
-import { uri } from "@nimbus/mongodb";
+import { mongoUri } from "@nimbus/mongodb";
 
-const client = new MongoClient(uri({ database: "myapp" }));
+const client = new MongoClient(mongoUri({
+  database: "myapp",
+  username: "app-user",
+  password: "app-secret",
+}));
 await client.connect();
 
 const db = client.db("myapp");
@@ -44,7 +48,7 @@ await client.close();
 import { MongoClient } from "mongodb";
 
 const client = new MongoClient(
-  "mongodb://127.0.0.1:27017/myapp?directConnection=true"
+  "mongodb://app-user:app-secret@127.0.0.1:27017/myapp?directConnection=true"
 );
 await client.connect();
 
@@ -59,11 +63,11 @@ const docs = await messages.find({ author: "Alice" }).toArray();
 
 ```typescript
 import { MongoClient } from "mongodb";
-import { uri } from "@nimbus/mongodb";
+import { mongoUri } from "@nimbus/mongodb";
 
-const client = new MongoClient(uri({
+const client = new MongoClient(mongoUri({
   database: "myapp",
-  username: "admin",
+  username: "app-user",
   password: "secret",
 }));
 await client.connect();
@@ -73,7 +77,7 @@ Or with the stock driver:
 
 ```typescript
 const client = new MongoClient(
-  "mongodb://admin:secret@127.0.0.1:27017/myapp?directConnection=true"
+  "mongodb://app-user:secret@127.0.0.1:27017/myapp?directConnection=true"
 );
 ```
 
@@ -83,7 +87,7 @@ const client = new MongoClient(
 from pymongo import MongoClient
 
 client = MongoClient(
-    "mongodb://127.0.0.1:27017/myapp?directConnection=true"
+    "mongodb://app-user:app-secret@127.0.0.1:27017/myapp?directConnection=true"
 )
 db = client["myapp"]
 messages = db["messages"]
@@ -106,7 +110,7 @@ import (
 )
 
 func main() {
-    uri := "mongodb://127.0.0.1:27017/myapp?directConnection=true"
+    uri := "mongodb://app-user:app-secret@127.0.0.1:27017/myapp?directConnection=true"
     client, err := mongo.Connect(options.Client().ApplyURI(uri))
     if err != nil {
         panic(err)

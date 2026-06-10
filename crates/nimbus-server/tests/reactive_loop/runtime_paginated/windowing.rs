@@ -15,7 +15,7 @@ async fn convex_runtime_paginated_subscription_ignores_out_of_window_ordered_wri
             r#"
 globalThis.__nimbusInvoke = async function(request) {
   const ctx = globalThis.__nimbusCreateContext({
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   const builder = ctx.db
     .query("messages")

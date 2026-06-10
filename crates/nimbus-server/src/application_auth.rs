@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use axum::http::{HeaderMap, header};
 use nimbus_auth::{
-    ApplicationAuthError, ResolvedApplicationAuth, emulator_principal_from_bearer,
-    normalize_principal_context, parse_bearer_value,
+    ApplicationAuthError, ResolvedApplicationAuth,
+    firebase_emulator_mock_user_principal_from_bearer, normalize_principal_context,
+    parse_bearer_value,
 };
 use nimbus_runtime::InvocationAuth;
 use tonic::{Status, metadata::MetadataMap};
@@ -36,7 +37,7 @@ pub(crate) async fn resolve_application_auth_from_bearer_in_deployment(
     };
 
     if firebase_emulator_mock_auth_enabled(deployment)
-        && let Some(principal) = emulator_principal_from_bearer(bearer)
+        && let Some(principal) = firebase_emulator_mock_user_principal_from_bearer(bearer)
     {
         return Ok(ResolvedApplicationAuth {
             auth: None,

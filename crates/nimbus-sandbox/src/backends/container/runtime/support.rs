@@ -14,8 +14,8 @@ use crate::backends::oci::materializer::MaterializedImageRootfs;
 use crate::backends::oci::network::OciMachinePortForwarderConfig;
 pub(super) use crate::instance::{SandboxId, SandboxStatus};
 pub(super) use crate::spec::{
-    SandboxMountSpec, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec,
-    SandboxRootfsSpec, SandboxSpec,
+    SandboxMountSpec, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
+    SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
 };
 pub(super) use crate::spec::{SandboxResourceLimits, SandboxResourceQuotaPolicy};
 

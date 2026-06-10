@@ -42,6 +42,21 @@ journal events commit atomically; current reads stay on the latest-row fast
 path; historical or retention-sensitive internal operations fail closed with
 typed storage errors instead of silently reading latest state.
 
+## Raw Query And Mutation Authorization
+
+Nimbus exposes Convex-compatible raw query, paginated-query, and mutation
+request shapes for client protocol compatibility. Those raw requests do not use
+the generated function registry as an authorization boundary: they are lowered
+directly into the same principal-bearing engine query and mutation entrypoints
+used by named functions.
+
+The authorization boundary for raw requests is therefore the engine access
+policy attached to the targeted tables. If a table has no access policy, the raw
+surface can read or mutate it according to the deployment's normal
+authenticated/anonymous caller policy. Operators that need function-level
+authorization should enforce it with table access policies instead of assuming
+that the generated function registry gates raw requests.
+
 ## Codegen Security Boundary
 
 Codegen-time schema, server-definition, and resolver planning are handled by a

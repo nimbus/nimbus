@@ -40,52 +40,6 @@ fn compare_structured_order_values(
     }
 }
 
-fn validate_structured_order_domains<'a>(
-    documents: impl Iterator<Item = &'a Document>,
-    order_by: &[PreparedOrder],
-) -> Result<()> {
-    if order_by.is_empty() {
-        return Ok(());
-    }
-
-    let mut observed_kinds = vec![None; order_by.len()];
-    for document in documents {
-        for (index, order) in order_by.iter().enumerate() {
-            let Some(field) = order.field.user_field() else {
-                observed_kinds[index] = Some(StructuredOrderValueKind::String);
-                continue;
-            };
-            let Some(value) = document.get_field(field) else {
-                continue;
-            };
-            let kind = match value {
-                Value::String(_) => StructuredOrderValueKind::String,
-                Value::Number(number) if number.as_f64().is_some() => {
-                    StructuredOrderValueKind::Number
-                }
-                _ => {
-                    return Err(Error::InvalidInput(
-                        "ordering only supports string and number fields in phase 1".to_string(),
-                    ));
-                }
-            };
-
-            if let Some(previous) = observed_kinds[index] {
-                if previous != kind {
-                    return Err(Error::InvalidInput(
-                        "ordering cannot mix string and number values in the same field"
-                            .to_string(),
-                    ));
-                }
-            } else {
-                observed_kinds[index] = Some(kind);
-            }
-        }
-    }
-
-    Ok(())
-}
-
 fn sort_documents_for_structured_query(
     documents: &mut [StructuredDocumentRow],
     order_by: &[PreparedOrder],
@@ -95,17 +49,12 @@ fn sort_documents_for_structured_query(
         return Ok(());
     }
 
-    validate_structured_order_domains(documents.iter().map(|row| &row.document), order_by)?;
-    documents.sort_by(|left, right| {
-        for order in order_by {
-            let ordering = match &order.field {
-                PreparedField::UserField(field) => compare_structured_order_values(
-                    left.document.get_field(field),
-                    right.document.get_field(field),
-                ),
-                PreparedField::DocumentName => Ok(left.document_name.cmp(&right.document_name)),
-            }
-            .expect("ordering inputs should be validated before sorting");
+    let mut keyed = collect_structured_ordered_rows(documents.iter().cloned(), order_by)?;
+    keyed.sort_by(|left, right| {
+        for ((left_key, right_key), order) in
+            left.keys.iter().zip(right.keys.iter()).zip(order_by.iter())
+        {
+            let ordering = left_key.cmp(right_key);
             let ordering = match order.direction {
                 OrderDirection::Asc => ordering,
                 OrderDirection::Desc => ordering.reverse(),
@@ -117,7 +66,151 @@ fn sort_documents_for_structured_query(
 
         Ordering::Equal
     });
+    for (slot, keyed_row) in documents.iter_mut().zip(keyed) {
+        *slot = keyed_row.row;
+    }
     Ok(())
+}
+
+struct StructuredOrderedRow {
+    keys: Vec<StructuredOrderSortKey>,
+    row: StructuredDocumentRow,
+}
+
+fn collect_structured_ordered_rows(
+    rows: impl Iterator<Item = StructuredDocumentRow>,
+    order_by: &[PreparedOrder],
+) -> Result<Vec<StructuredOrderedRow>> {
+    let mut keyed = Vec::new();
+    let mut observed_kinds = vec![None; order_by.len()];
+    for row in rows {
+        let mut keys = Vec::with_capacity(order_by.len());
+        for (index, order) in order_by.iter().enumerate() {
+            let key = structured_order_sort_key(&row, order)?;
+            if let Some(kind) = key.kind() {
+                if let Some(previous) = observed_kinds[index] {
+                    if previous != kind {
+                        return Err(Error::InvalidInput(
+                            "ordering cannot mix string and number values in the same field"
+                                .to_string(),
+                        ));
+                    }
+                } else {
+                    observed_kinds[index] = Some(kind);
+                }
+            }
+            keys.push(key);
+        }
+        keyed.push(StructuredOrderedRow { keys, row });
+    }
+    Ok(keyed)
+}
+
+fn structured_order_sort_key(
+    row: &StructuredDocumentRow,
+    order: &PreparedOrder,
+) -> Result<StructuredOrderSortKey> {
+    match &order.field {
+        PreparedField::DocumentName => Ok(StructuredOrderSortKey::Scalar(
+            StructuredOrderScalarSortKey::String(row.document_name.clone()),
+        )),
+        PreparedField::UserField(field) => match row.document.get_field(field) {
+            Some(Value::String(value)) => Ok(StructuredOrderSortKey::Scalar(
+                StructuredOrderScalarSortKey::String(value.clone()),
+            )),
+            Some(Value::Number(number)) => {
+                let value = number.as_f64().ok_or_else(|| {
+                    Error::InvalidInput(
+                        "ordering only supports string and number fields in phase 1".to_string(),
+                    )
+                })?;
+                Ok(StructuredOrderSortKey::Scalar(
+                    StructuredOrderScalarSortKey::Number(StructuredNumericSortKey(value)),
+                ))
+            }
+            Some(_) => Err(Error::InvalidInput(
+                "ordering only supports string and number fields in phase 1".to_string(),
+            )),
+            None => Ok(StructuredOrderSortKey::Missing),
+        },
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StructuredOrderSortKey {
+    Scalar(StructuredOrderScalarSortKey),
+    Missing,
+}
+
+impl StructuredOrderSortKey {
+    fn kind(&self) -> Option<StructuredOrderValueKind> {
+        match self {
+            Self::Scalar(StructuredOrderScalarSortKey::String(_)) => {
+                Some(StructuredOrderValueKind::String)
+            }
+            Self::Scalar(StructuredOrderScalarSortKey::Number(_)) => {
+                Some(StructuredOrderValueKind::Number)
+            }
+            Self::Missing => None,
+        }
+    }
+}
+
+impl PartialOrd for StructuredOrderSortKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for StructuredOrderSortKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Self::Scalar(left), Self::Scalar(right)) => left.cmp(right),
+            (Self::Scalar(_), Self::Missing) => Ordering::Less,
+            (Self::Missing, Self::Scalar(_)) => Ordering::Greater,
+            (Self::Missing, Self::Missing) => Ordering::Equal,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StructuredOrderScalarSortKey {
+    Number(StructuredNumericSortKey),
+    String(String),
+}
+
+impl PartialOrd for StructuredOrderScalarSortKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for StructuredOrderScalarSortKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Self::Number(left), Self::Number(right)) => left.cmp(right),
+            (Self::String(left), Self::String(right)) => left.cmp(right),
+            (Self::Number(_), Self::String(_)) => Ordering::Less,
+            (Self::String(_), Self::Number(_)) => Ordering::Greater,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct StructuredNumericSortKey(f64);
+
+impl Eq for StructuredNumericSortKey {}
+
+impl PartialOrd for StructuredNumericSortKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for StructuredNumericSortKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.partial_cmp(&other.0).unwrap_or(Ordering::Equal)
+    }
 }
 
 fn compare_document_to_structured_cursor(

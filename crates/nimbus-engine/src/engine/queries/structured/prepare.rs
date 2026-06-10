@@ -575,8 +575,7 @@ pub(crate) fn ensure_structured_query_index(
         return Ok(());
     }
 
-    Err(Error::InvalidInput(format!(
-        "structured query requires an index covering fields: {}",
-        required_fields.join(", ")
-    )))
+    Err(Error::MissingIndex {
+        fields: required_fields,
+    })
 }

@@ -104,6 +104,10 @@ pub(super) fn inherited_systemd_listener() -> Result<tokio::net::UnixListener, E
 }
 
 pub(super) fn tokio_listener_from_inherited_fd(fd: i32) -> Result<tokio::net::UnixListener, Error> {
+    // SAFETY: callers transfer sole ownership of `fd` to this function. The
+    // systemd path validates LISTEN_PID and exactly one LISTEN_FD for this
+    // process before consuming fd 3; tests pass a duplicated listener fd. After
+    // `from_raw_fd`, the listener owns and closes the descriptor on drop.
     let listener = unsafe { StdUnixListener::from_raw_fd(fd) };
     listener.set_nonblocking(true).map_err(|error| {
         Error::Internal(format!(

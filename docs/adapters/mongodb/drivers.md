@@ -28,8 +28,9 @@ official drivers maintained by MongoDB, Inc.
 |---|---|
 | [@nimbus/mongodb](../../../packages/mongodb/) | `nimbus packages provision mongodb` |
 
-Builds a `mongodb://` URI with `directConnection=true` and sensible defaults.
-See the [Client Package](README.md#client-package) section for details.
+Builds a `mongodb://` URI with `directConnection=true` and URL-encoded
+credentials. See the [Client Package](README.md#client-package) section for
+details.
 
 ## Tools
 

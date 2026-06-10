@@ -153,6 +153,17 @@ impl RuntimeHostPublicError {
                     "Refresh the resource version or generation, then retry.",
                 )),
             ),
+            Error::MissingIndex { fields } => Self::new(
+                "op.missing_index",
+                error.to_string(),
+                RuntimeHostErrorSeverity::Error,
+                false,
+                json!({ "fields": fields }),
+                Some(RuntimeHostErrorRemediation::new(
+                    "create_index",
+                    "Create an index covering the required fields, then retry.",
+                )),
+            ),
             Error::InvalidInput(_) => Self::new(
                 "op.invalid_input",
                 error.to_string(),
@@ -372,5 +383,24 @@ mod tests {
             "snapshot_unavailable"
         );
         assert_eq!(encoded["error"]["retryable"], false);
+    }
+
+    #[test]
+    fn runtime_host_error_envelope_preserves_missing_index_fields() {
+        let error = Error::MissingIndex {
+            fields: vec!["state".to_string(), "rank".to_string()],
+        };
+
+        let encoded = serde_json::to_value(RuntimeHostResponseEnvelope::from_core_error(&error))
+            .expect("error envelope should serialize");
+
+        assert_eq!(encoded["status"], "error");
+        assert_eq!(encoded["error"]["code"], "op.missing_index");
+        assert_eq!(
+            encoded["error"]["detail"]["fields"],
+            serde_json::json!(["state", "rank"])
+        );
+        assert_eq!(encoded["error"]["retryable"], false);
+        assert_eq!(encoded["error"]["remediation"]["action"], "create_index");
     }
 }

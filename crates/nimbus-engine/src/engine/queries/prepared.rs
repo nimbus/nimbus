@@ -7,8 +7,8 @@ use nimbus_core::{
 use nimbus_storage::QueryReadStore;
 
 use crate::evaluator::{
-    evaluate_paginated_cancellable_with_predicate,
-    evaluate_paginated_with_docs_cancellable_and_predicate,
+    evaluate_paginated_cancellable_with_predicate_using_cursor_query,
+    evaluate_paginated_with_docs_cancellable_and_predicate_using_cursor_query,
     evaluate_query_cancellable_with_predicate, evaluate_query_with_docs_cancellable_and_predicate,
 };
 use crate::tenant::{QueryPlanMetricKind, TenantRuntime};
@@ -30,6 +30,7 @@ pub(super) struct PreparedQueryExecution {
 pub(super) struct PreparedPaginatedExecution {
     pub(super) authorization: ReadAuthorization,
     pub(super) planned_paginated: PaginatedQuery,
+    pub(super) cursor_query: Query,
     pub(super) plan: QueryPlan,
 }
 
@@ -69,6 +70,7 @@ pub(super) fn prepare_paginated_execution(
     Ok(Some(PreparedPaginatedExecution {
         authorization,
         planned_paginated,
+        cursor_query: query.query.clone(),
         plan,
     }))
 }
@@ -115,16 +117,18 @@ pub(super) fn paginate_documents_for_docs_prepared(
             page_size: prepared.planned_paginated.page_size,
             after: prepared.planned_paginated.after.clone(),
         };
-        evaluate_paginated_with_docs_cancellable_and_predicate(
+        evaluate_paginated_with_docs_cancellable_and_predicate_using_cursor_query(
             index_docs,
             &residual_paginated,
+            &prepared.cursor_query,
             &mut check_cancel,
             &mut include_document,
         )
     } else {
-        evaluate_paginated_with_docs_cancellable_and_predicate(
+        evaluate_paginated_with_docs_cancellable_and_predicate_using_cursor_query(
             documents,
             &prepared.planned_paginated,
+            &prepared.cursor_query,
             &mut check_cancel,
             &mut include_document,
         )
@@ -314,16 +318,18 @@ where
             page_size: prepared.planned_paginated.page_size,
             after: prepared.planned_paginated.after.clone(),
         };
-        evaluate_paginated_with_docs_cancellable_and_predicate(
+        evaluate_paginated_with_docs_cancellable_and_predicate_using_cursor_query(
             index_docs,
             &residual_paginated,
+            &prepared.cursor_query,
             check_cancel,
             &mut include_document,
         )
     } else {
-        evaluate_paginated_cancellable_with_predicate(
+        evaluate_paginated_cancellable_with_predicate_using_cursor_query(
             store,
             &prepared.planned_paginated,
+            &prepared.cursor_query,
             check_cancel,
             &mut include_document,
         )

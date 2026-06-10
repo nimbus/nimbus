@@ -6,12 +6,15 @@ use std::sync::Arc;
 
 use clap::{Args, ValueEnum};
 use rand::RngCore;
+use zeroize::{Zeroize, Zeroizing};
 
 use nimbus::{
     AwsKmsConfig, EnginePersistenceConfig, Error, InitializedKeyProvider, KeyDirectoryConfig,
     KeyManifest, LOGICAL_PAGE_SIZE, LocalArtifactRole, LocalKeyProvider, LocalKeyProviderConfig,
     LocalKeySubject, LocalKeySubjectKind, ManifestCipher, MasterKeyFileConfig, PHYSICAL_PAGE_SIZE,
-    Result, TenantId, checkpoint_encrypted_database_at_path, unwrap_database_manifest_key,
+    Result, TenantId, checkpoint_encrypted_database_at_path, commit_staged_redb_dek_rotation,
+    recover_interrupted_redb_dek_rotation, redb_dek_rotation_database_stage_path,
+    redb_dek_rotation_manifest_stage_path, unwrap_database_manifest_key,
 };
 
 use super::migrate::{ProviderFamily, database_subject};
@@ -410,8 +413,7 @@ fn rotate_sqlite_dek(
         backup_sqlite_artifacts(path)?
     };
 
-    let mut new_dek = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut new_dek);
+    let new_dek = generate_rotation_dek();
 
     println!("  Executing PRAGMA rekey...");
     if let Err(error) = nimbus::rekey_encrypted_database_at_path(path, &current_dek, &new_dek) {
@@ -436,6 +438,7 @@ fn rotate_redb_dek(
     command: &RotateDekCommand,
 ) -> Result<()> {
     println!("Rotating redb DEK: {}", path.display());
+    recover_interrupted_redb_dek_rotation(path)?;
 
     if !path.exists() {
         return Err(Error::InvalidInput(format!(
@@ -456,37 +459,34 @@ fn rotate_redb_dek(
         path,
     )?;
 
-    let backup_path = if command.skip_backup {
+    let _backup_path = if command.skip_backup {
         None
     } else {
         Some(backup_single_file(path)?)
     };
 
-    let mut new_dek = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut new_dek);
+    let new_dek = generate_rotation_dek();
 
     println!("  Re-encrypting pages...");
-    let temp_path = append_suffix(path, ".rotating");
+    let temp_path = redb_dek_rotation_database_stage_path(path);
     if let Err(error) = reencrypt_redb_pages(path, &temp_path, &current_dek, &new_dek) {
         let _ = std::fs::remove_file(&temp_path);
         return Err(error);
     }
 
-    std::fs::rename(&temp_path, path)
-        .map_err(|e| Error::Internal(format!("failed to replace database: {e}")))?;
-
-    if let Err(error) =
-        write_rotated_manifest(&manifest, provider.as_ref(), &subject, &new_dek, path)
-    {
-        if let Some(backup_path) = &backup_path {
-            std::fs::copy(backup_path, path).map_err(|copy_error| {
-                Error::Internal(format!(
-                    "failed to restore redb backup after manifest write failure: {copy_error}"
-                ))
-            })?;
-        }
+    let manifest_stage_path = redb_dek_rotation_manifest_stage_path(path);
+    if let Err(error) = write_rotated_manifest_to_path(
+        &manifest,
+        provider.as_ref(),
+        &subject,
+        &new_dek,
+        &manifest_stage_path,
+    ) {
+        let _ = std::fs::remove_file(&temp_path);
         return Err(error);
     }
+
+    commit_staged_redb_dek_rotation(path)?;
 
     println!("  redb DEK rotation complete.");
     Ok(())
@@ -512,8 +512,7 @@ fn rotate_libsql_cache_dek(
         let _ = backup_sqlite_artifacts(path)?;
     }
 
-    let mut new_dek = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut new_dek);
+    let new_dek = generate_rotation_dek();
 
     write_rotated_manifest(&manifest, provider.as_ref(), &subject, &new_dek, path)?;
     retire_sqlite_database_artifacts(path)?;
@@ -530,6 +529,33 @@ fn write_rotated_manifest(
     new_dek: &[u8; 32],
     protected_path: &Path,
 ) -> Result<()> {
+    let new_manifest = build_rotated_manifest(manifest, provider, subject, new_dek)?;
+    new_manifest
+        .write_for(protected_path)
+        .map_err(|e| Error::Internal(format!("failed to write rotated manifest: {e}")))?;
+    Ok(())
+}
+
+fn write_rotated_manifest_to_path(
+    manifest: &KeyManifest,
+    provider: &dyn LocalKeyProvider,
+    subject: &LocalKeySubject,
+    new_dek: &[u8; 32],
+    manifest_path: &Path,
+) -> Result<()> {
+    let new_manifest = build_rotated_manifest(manifest, provider, subject, new_dek)?;
+    new_manifest
+        .write(manifest_path)
+        .map_err(|e| Error::Internal(format!("failed to write staged rotated manifest: {e}")))?;
+    Ok(())
+}
+
+fn build_rotated_manifest(
+    manifest: &KeyManifest,
+    provider: &dyn LocalKeyProvider,
+    subject: &LocalKeySubject,
+    new_dek: &[u8; 32],
+) -> Result<KeyManifest> {
     let mut new_header = manifest.header.clone();
     new_header.rotated_at = std::time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
@@ -545,10 +571,13 @@ fn write_rotated_manifest(
         header: new_header,
         wrapped_key: new_wrapped,
     };
-    new_manifest
-        .write_for(protected_path)
-        .map_err(|e| Error::Internal(format!("failed to write rotated manifest: {e}")))?;
-    Ok(())
+    Ok(new_manifest)
+}
+
+fn generate_rotation_dek() -> Zeroizing<[u8; 32]> {
+    let mut dek = Zeroizing::new([0u8; 32]);
+    rand::rngs::OsRng.fill_bytes(&mut *dek);
+    dek
 }
 
 fn backup_single_file(path: &Path) -> Result<PathBuf> {
@@ -696,19 +725,21 @@ fn reencrypt_redb_pages(
         aad.extend_from_slice(&page_idx.to_be_bytes());
         aad.extend_from_slice(&(LOGICAL_PAGE_SIZE as u32).to_be_bytes());
 
-        let plaintext = old_cipher
-            .decrypt(
-                nonce,
-                Payload {
-                    msg: ciphertext,
-                    aad: &aad,
-                },
-            )
-            .map_err(|_| {
-                Error::Internal(format!(
-                    "decryption failed at page {page_idx} (wrong key or corrupted data)"
-                ))
-            })?;
+        let plaintext = Zeroizing::new(
+            old_cipher
+                .decrypt(
+                    nonce,
+                    Payload {
+                        msg: ciphertext,
+                        aad: &aad,
+                    },
+                )
+                .map_err(|_| {
+                    Error::Internal(format!(
+                        "decryption failed at page {page_idx} (wrong key or corrupted data)"
+                    ))
+                })?,
+        );
 
         let mut new_nonce_bytes = [0u8; 12];
         rand::rngs::OsRng.fill_bytes(&mut new_nonce_bytes);
@@ -731,6 +762,7 @@ fn reencrypt_redb_pages(
             .write_all(&new_ciphertext)
             .map_err(|e| Error::Internal(format!("write ciphertext failed: {e}")))?;
     }
+    page_buf.zeroize();
 
     target_file
         .sync_all()
@@ -817,6 +849,12 @@ fn parse_artifact_subject(remainder: &str, role: LocalArtifactRole) -> Result<Lo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nimbus::{
+        Document, LocalEncryptionConfig, LocalKeyProviderConfig, MasterKeyFileProvider, TableName,
+        TenantStore, generate_database_manifest, resolve_database_encryption_key,
+    };
+    use serde_json::json;
+    use tempfile::tempdir;
 
     fn base_rotate_kek_command() -> RotateKekCommand {
         RotateKekCommand {
@@ -893,5 +931,90 @@ mod tests {
 
         assert!(error.to_string().contains("--new-aws-region"));
         assert!(error.to_string().contains("master-key-file"));
+    }
+
+    #[test]
+    fn generate_rotation_dek_returns_zeroizing_filled_key() {
+        let dek: Zeroizing<[u8; 32]> = generate_rotation_dek();
+
+        assert!(
+            dek.iter().any(|byte| *byte != 0),
+            "rotation DEK generator should fill the key from OS entropy"
+        );
+    }
+
+    #[test]
+    fn rotate_redb_dek_publishes_reencrypted_database_with_matching_manifest() {
+        let dir = tempdir().expect("tempdir should create");
+        let path = dir.path().join("tenant.redb");
+        let key_path = dir.path().join("master.key");
+        std::fs::write(&key_path, [0x42u8; 32]).expect("master key should write");
+        let provider =
+            MasterKeyFileProvider::new(key_path.clone()).expect("provider should create");
+        let tenant_id = TenantId::new("demo".to_string()).expect("tenant id should build");
+        let subject = LocalKeySubject::redb_tenant(tenant_id, "tenant.redb");
+        let (manifest, generated) =
+            generate_database_manifest(&provider, &subject, ManifestCipher::RedbAes256GcmSiv)
+                .expect("initial manifest should generate");
+        manifest
+            .write_for(&path)
+            .expect("initial manifest should write");
+        let old_dek = *generated.plaintext();
+        let document = Document::new(
+            TableName::new("tasks").expect("table name should build"),
+            serde_json::Map::from_iter([("title".to_string(), json!("before-rotation"))]),
+        );
+        {
+            let store = TenantStore::open_encrypted(&path, &old_dek)
+                .expect("encrypted redb store should open");
+            store.insert(&document).expect("document should insert");
+        }
+        let config = EnginePersistenceConfig::embedded_default(dir.path()).with_local_encryption(
+            LocalEncryptionConfig::Enabled(LocalKeyProviderConfig::MasterKeyFile(
+                MasterKeyFileConfig {
+                    path: key_path.clone(),
+                },
+            )),
+        );
+        let command = RotateDekCommand {
+            path: path.clone(),
+            provider: ProviderFamily::Redb,
+            tenant_id: Some("demo".to_string()),
+            skip_backup: true,
+        };
+
+        rotate_redb_dek(&path, &config, &command).expect("redb DEK rotation should complete");
+
+        assert!(
+            !redb_dek_rotation_database_stage_path(&path).exists(),
+            "database stage should be consumed"
+        );
+        assert!(
+            !redb_dek_rotation_manifest_stage_path(&path).exists(),
+            "manifest stage should be consumed"
+        );
+        assert!(
+            !append_suffix(&path, ".dek-rotation").exists(),
+            "rotation marker should be removed after a complete commit"
+        );
+        let rotated_dek = resolve_database_encryption_key(
+            &path,
+            &provider,
+            &subject,
+            ManifestCipher::RedbAes256GcmSiv,
+        )
+        .expect("rotated manifest should unwrap");
+        assert_ne!(
+            rotated_dek.as_bytes(),
+            &old_dek,
+            "DEK rotation must replace the DEK"
+        );
+        let reopened = TenantStore::open_encrypted(&path, &rotated_dek)
+            .expect("rotated redb store should reopen");
+        let fetched = reopened
+            .get(&document.table, &document.id)
+            .expect("document lookup should succeed")
+            .expect("document should survive rotation");
+        assert_eq!(fetched.fields.get("title"), Some(&json!("before-rotation")));
     }
 }

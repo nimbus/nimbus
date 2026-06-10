@@ -3,6 +3,7 @@ use super::table_lifecycle::{
     mark_table_deleting_in_session, stage_hidden_table_identity_in_session,
 };
 use super::*;
+use crate::keys::prefix_end;
 use crate::mysql::document_versions::{
     record_document_versions_for_events_in_session, record_document_versions_for_writes_in_session,
 };
@@ -285,17 +286,7 @@ pub(super) fn mysql_server_error_code(error: &mysql_async::Error) -> Option<u16>
     }
 }
 
-pub(super) fn map_join_error(error: tokio::task::JoinError) -> Error {
-    if error.is_cancelled() {
-        Error::Cancelled
-    } else {
-        Error::Internal(error.to_string())
-    }
-}
-
-pub(super) fn map_permit_error(error: tokio::sync::AcquireError) -> Error {
-    Error::Internal(error.to_string())
-}
+pub(super) const MYSQL_EXECUTOR_CONTEXT: &str = "mysql executor";
 
 pub(super) async fn load_schema_from_session<C>(
     session: &mut C,
@@ -507,6 +498,136 @@ where
         .collect()
 }
 
+pub(super) async fn load_documents_by_id_prefix_from_session<C>(
+    session: &mut C,
+    database_name: &str,
+    table: &TableName,
+    id_prefix: &str,
+) -> Result<Vec<Document>>
+where
+    C: Queryable,
+{
+    let Some(table_id) = load_table_id_from_session(session, database_name, table).await? else {
+        return Ok(Vec::new());
+    };
+    let start = id_prefix.to_owned();
+    let table_name = table.as_str().to_owned();
+    let rows: Vec<Row> = if let Some(end) =
+        prefix_end(id_prefix.as_bytes()).and_then(|bytes| String::from_utf8(bytes).ok())
+    {
+        let query = format!(
+            "SELECT ? AS table_name, id, creation_time, update_time, data_json, typed_fields_json \
+             FROM {} \
+             WHERE table_id = ? AND id >= ? AND id < ? \
+             ORDER BY id",
+            qualified_table(database_name, "documents")
+        );
+        session
+            .exec(
+                query,
+                (table_name, table_id.as_str().to_owned(), start, end),
+            )
+            .await
+            .map_err(map_mysql_error)?
+    } else {
+        let query = format!(
+            "SELECT ? AS table_name, id, creation_time, update_time, data_json, typed_fields_json \
+             FROM {} \
+             WHERE table_id = ? AND id >= ? \
+             ORDER BY id",
+            qualified_table(database_name, "documents")
+        );
+        session
+            .exec(query, (table_name, table_id.as_str().to_owned(), start))
+            .await
+            .map_err(map_mysql_error)?
+    };
+    rows.into_iter()
+        .map(|row| {
+            let (table_name, id, creation_time, update_time, data_json, typed_fields_json): (
+                String,
+                String,
+                u64,
+                u64,
+                String,
+                String,
+            ) = mysql_async::from_row(row);
+            let table = TableName::new(table_name)?;
+            let id = DocumentId::from_str(&id)
+                .map_err(|error| Error::Serialization(error.to_string()))?;
+            row_to_document(
+                &table,
+                &id,
+                creation_time,
+                update_time,
+                data_json,
+                typed_fields_json,
+            )
+        })
+        .collect()
+}
+
+pub(super) async fn load_documents_starting_at_id_from_session<C>(
+    session: &mut C,
+    database_name: &str,
+    table: &TableName,
+    start_id: &str,
+    limit: usize,
+) -> Result<Vec<Document>>
+where
+    C: Queryable,
+{
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let Some(table_id) = load_table_id_from_session(session, database_name, table).await? else {
+        return Ok(Vec::new());
+    };
+    let query = format!(
+        "SELECT ? AS table_name, id, creation_time, update_time, data_json, typed_fields_json \
+         FROM {} \
+         WHERE table_id = ? AND id >= ? \
+         ORDER BY id \
+         LIMIT ?",
+        qualified_table(database_name, "documents")
+    );
+    let rows: Vec<Row> = session
+        .exec(
+            query,
+            (
+                table.as_str().to_owned(),
+                table_id.as_str().to_owned(),
+                start_id.to_owned(),
+                u64::try_from(limit).unwrap_or(u64::MAX),
+            ),
+        )
+        .await
+        .map_err(map_mysql_error)?;
+    rows.into_iter()
+        .map(|row| {
+            let (table_name, id, creation_time, update_time, data_json, typed_fields_json): (
+                String,
+                String,
+                u64,
+                u64,
+                String,
+                String,
+            ) = mysql_async::from_row(row);
+            let table = TableName::new(table_name)?;
+            let id = DocumentId::from_str(&id)
+                .map_err(|error| Error::Serialization(error.to_string()))?;
+            row_to_document(
+                &table,
+                &id,
+                creation_time,
+                update_time,
+                data_json,
+                typed_fields_json,
+            )
+        })
+        .collect()
+}
+
 pub(super) async fn load_document_from_session<C>(
     session: &mut C,
     database_name: &str,
@@ -605,7 +726,6 @@ where
         .transpose()
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn load_index_candidate_documents_from_session<C>(
     session: &mut C,
     database_name: &str,
@@ -613,14 +733,12 @@ pub(super) async fn load_index_candidate_documents_from_session<C>(
     table_schema: &TableSchema,
     index_name: &str,
     exact_prefix: &[Value],
-    start: Option<&Value>,
-    end: Option<&Value>,
-    start_inclusive: bool,
-    end_inclusive: bool,
+    bounds: crate::range_bound::OwnedIndexRangeBounds,
 ) -> Result<Vec<Document>>
 where
     C: Queryable,
 {
+    let crate::range_bound::OwnedIndexRangeBounds { start, end } = bounds;
     let index_fields = index_fields_for_table_schema(table_schema, index_name)?;
     let range_field = index_fields.get(exact_prefix.len());
 
@@ -646,10 +764,14 @@ where
                     &mut clauses,
                     &mut params,
                     quote_identifier(&mysql_generated_column_name(table, range_field)),
-                    start.map(mysql_index_text_value).transpose()?,
-                    end.map(mysql_index_text_value).transpose()?,
-                    start_inclusive,
-                    end_inclusive,
+                    crate::range_bound::map_owned_index_range_bound(
+                        start.clone(),
+                        mysql_index_text_value,
+                    )?,
+                    crate::range_bound::map_owned_index_range_bound(
+                        end.clone(),
+                        mysql_index_text_value,
+                    )?,
                 );
             }
             FieldType::Number => {
@@ -657,13 +779,19 @@ where
                     &mut clauses,
                     &mut params,
                     mysql_numeric_column_expr(table, range_field),
-                    start.map(mysql_numeric_value).transpose()?,
-                    end.map(mysql_numeric_value).transpose()?,
-                    start_inclusive,
-                    end_inclusive,
+                    crate::range_bound::map_owned_index_range_bound(
+                        start.clone(),
+                        mysql_numeric_value,
+                    )?,
+                    crate::range_bound::map_owned_index_range_bound(
+                        end.clone(),
+                        mysql_numeric_value,
+                    )?,
                 );
             }
-            _ if start.is_some() || end.is_some() => {
+            _ if !matches!(start, std::ops::Bound::Unbounded)
+                || !matches!(end, std::ops::Bound::Unbounded) =>
+            {
                 return Err(Error::InvalidInput(
                     "range scans only support string and number indexed fields".to_string(),
                 ));

@@ -15,6 +15,8 @@ use crate::ServiceInstanceCatalog;
 
 pub type RuntimeServiceBindingFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Option<InvocationServiceBinding>, Error>> + Send + 'a>>;
+pub type RuntimeServiceTeardownFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
 
 pub trait RuntimeServiceRegistry: Send + Sync + 'static {
     fn snapshot_for_tenant(&self, tenant_id: &TenantId) -> InvocationServices;
@@ -64,8 +66,11 @@ pub trait RuntimeServiceRegistry: Send + Sync + 'static {
         })
     }
 
-    fn teardown_tenant(&self, _tenant_id: &TenantId) -> Result<(), Error> {
-        Ok(())
+    fn teardown_tenant_async<'a>(
+        &'a self,
+        _tenant_id: &'a TenantId,
+    ) -> RuntimeServiceTeardownFuture<'a> {
+        Box::pin(async move { Ok(()) })
     }
 }
 

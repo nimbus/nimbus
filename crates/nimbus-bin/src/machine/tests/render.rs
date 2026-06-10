@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn machine_status_renders_uninitialized_view_when_machine_is_absent() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -30,7 +30,7 @@ fn machine_status_renders_uninitialized_view_when_machine_is_absent() {
 #[test]
 fn machine_action_view_renders_concise_start_summary() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -46,7 +46,7 @@ fn machine_action_view_renders_concise_start_summary() {
 #[test]
 fn machine_action_view_rejects_status_results() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -66,7 +66,7 @@ fn machine_action_view_rejects_status_results() {
 #[test]
 fn machine_os_apply_view_renders_action_summary_and_hint() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -96,7 +96,7 @@ fn machine_os_apply_view_renders_action_summary_and_hint() {
 #[test]
 fn machine_os_upgrade_view_renders_dry_run_action_summary_and_hint() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -130,7 +130,7 @@ fn machine_os_upgrade_view_renders_dry_run_action_summary_and_hint() {
 #[test]
 fn machine_status_table_output_is_default_human_summary() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -190,7 +190,7 @@ fn machine_status_table_output_is_default_human_summary() {
 #[test]
 fn machine_status_table_output_can_omit_headings() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -245,7 +245,7 @@ fn machine_status_table_output_can_omit_headings() {
 #[test]
 fn machine_status_json_output_serializes_full_status_view() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -296,7 +296,7 @@ fn machine_status_json_output_serializes_full_status_view() {
 #[test]
 fn machine_status_yaml_output_serializes_full_status_view() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -562,7 +562,7 @@ fn machine_info_renders_json_when_requested() {
 #[test]
 fn machine_list_prioritizes_active_and_default_machines() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -640,7 +640,7 @@ fn machine_list_prioritizes_active_and_default_machines() {
 #[test]
 fn machine_status_quiet_output_prints_name_only() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -664,7 +664,7 @@ fn machine_status_quiet_output_prints_name_only() {
 #[test]
 fn machine_inspect_json_output_serializes_full_config_and_state() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -716,7 +716,7 @@ fn machine_inspect_json_output_serializes_full_config_and_state() {
 #[test]
 fn machine_inspect_yaml_output_serializes_full_config_and_state() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),

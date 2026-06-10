@@ -13,8 +13,12 @@ impl TenantPersistence {
         match_tenant_persistence!(self, |store| store.insert_scheduled_job(job))
     }
 
-    pub(crate) fn claim_due_jobs(&self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
-        match_tenant_persistence!(self, |store| store.claim_due_jobs(now))
+    pub(crate) fn claim_due_jobs(
+        &self,
+        now: Timestamp,
+        max_jobs: usize,
+    ) -> Result<Vec<ScheduledJob>> {
+        match_tenant_persistence!(self, |store| store.claim_due_jobs(now, max_jobs))
     }
 
     pub(crate) fn complete_scheduled_job(&self, job_id: &DocumentId) -> Result<()> {

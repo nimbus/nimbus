@@ -40,6 +40,7 @@ pub(crate) struct ConvexHostBridgeInvocation {
     principal: nimbus_core::PrincipalContext,
     server_request_id: Option<String>,
     invocation_kind: InvocationKind,
+    function_name: String,
     trigger_write_origin: Option<nimbus_core::TriggerWriteOrigin>,
 }
 
@@ -50,6 +51,7 @@ impl ConvexHostBridgeInvocation {
         principal: nimbus_core::PrincipalContext,
         server_request_id: Option<String>,
         invocation_kind: InvocationKind,
+        function_name: impl Into<String>,
     ) -> Self {
         Self {
             auth,
@@ -57,6 +59,7 @@ impl ConvexHostBridgeInvocation {
             principal,
             server_request_id,
             invocation_kind,
+            function_name: function_name.into(),
             trigger_write_origin: None,
         }
     }
@@ -99,13 +102,13 @@ impl ConvexHostBridge {
             principal: invocation.principal,
             server_request_id: invocation.server_request_id,
             invocation_kind: invocation.invocation_kind,
+            function_name: &invocation.function_name,
             trigger_write_origin: invocation.trigger_write_origin,
             max_nested_runtime_invocations: scope
                 .registry
                 .runtime_policy()
                 .limits()
                 .max_nested_runtime_invocations,
-            host_call_session_prefix: "convex-runtime-host-call",
         })?;
         Ok(Self {
             engine: scope.engine,

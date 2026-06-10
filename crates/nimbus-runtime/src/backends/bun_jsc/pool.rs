@@ -1,3 +1,6 @@
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use serde::Serialize;
 
 use crate::error::{NimbusRuntimeError, Result};
@@ -7,6 +10,9 @@ use crate::limits::{
 };
 
 use super::lifecycle::{BunJscLifecycleAck, BunJscLifecycleState, BunJscLifecycleTrace};
+
+#[cfg(test)]
+static SCAFFOLD_CONTRACT_VERIFICATION_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -157,6 +163,9 @@ impl BunJscPool {
     }
 
     pub(crate) fn verify_scaffold_contract() -> Result<()> {
+        #[cfg(test)]
+        SCAFFOLD_CONTRACT_VERIFICATION_COUNT.fetch_add(1, Ordering::SeqCst);
+
         let mut pool = Self::new();
         if !matches!(pool.lifecycle_state(), BunJscLifecycleState::Created) {
             return Err(NimbusRuntimeError::Contract(
@@ -194,6 +203,11 @@ impl BunJscPool {
             ));
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scaffold_contract_verification_count() -> usize {
+        SCAFFOLD_CONTRACT_VERIFICATION_COUNT.load(Ordering::SeqCst)
     }
 
     #[cfg(any(test, not(feature = "bun-jsc-linked-adapter")))]

@@ -18,6 +18,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::commit_log::{deserialize_durable_record, serialize_durable_record};
+use crate::encryption::DataEncryptionKey;
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{
     APPLIED_SEQUENCE_KEY, DurableJournalBootstrap, DurableJournalPage, JournalProgress,
@@ -52,9 +53,10 @@ use self::backend::{
 use self::journal::{
     append_commit_entry, next_sequence_in_conn, validate_durable_journal_stream_limit,
 };
+pub(crate) use self::scheduler::scheduled_run_at_key;
 use self::scheduler::{
     apply_schedule_ops_in_transaction, begin_scheduled_execution_in_conn,
-    load_scheduled_jobs_from_conn,
+    load_due_scheduled_jobs_from_conn, load_scheduled_jobs_from_conn,
 };
 pub(crate) use self::schema::rebuild_sqlite_indexes_from_loaded_schema;
 use self::schema::{
@@ -145,6 +147,7 @@ CREATE INDEX IF NOT EXISTS idx_resource_path_bindings_collection_group_path
 
 CREATE TABLE IF NOT EXISTS scheduled_jobs (
     id TEXT NOT NULL PRIMARY KEY,
+    run_at TEXT NOT NULL,
     data_json TEXT NOT NULL
 );
 
@@ -248,7 +251,7 @@ impl SqliteTenantStore {
 /// plaintext temp file spills.
 pub struct SqliteTenantStore {
     path: PathBuf,
-    dek: Option<[u8; 32]>,
+    dek: Option<DataEncryptionKey>,
     clock: Arc<dyn Clock>,
     fault_injector: Arc<dyn FaultInjector>,
     max_read_connections: usize,
@@ -270,6 +273,7 @@ pub struct SqliteWriteTransaction {
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
+    commit_timestamp: Option<Timestamp>,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
     schema_cache: Arc<RwLock<Schema>>,
     schema_cache_dirty: bool,

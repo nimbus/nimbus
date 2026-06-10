@@ -17,6 +17,8 @@ const tscPath = fileURLToPath(
 const buildOnly = process.argv.includes("--build-only");
 const typecheckOnly = process.argv.includes("--typecheck-only");
 const smokePort = optionalFlagValue("--smoke-port");
+const smokeUsername = optionalFlagValue("--smoke-username");
+const smokePassword = optionalFlagValue("--smoke-password");
 
 function optionalFlagValue(flag) {
   const index = process.argv.indexOf(flag);
@@ -44,8 +46,16 @@ async function main() {
   await typecheckSurface();
 
   if (smokePort) {
-    await smokeTestCrud(parseInt(smokePort, 10));
-    await smokeTestAggregation(parseInt(smokePort, 10));
+    assert.ok(
+      smokeUsername && smokePassword,
+      "--smoke-port requires --smoke-username and --smoke-password",
+    );
+    await smokeTestCrud(parseInt(smokePort, 10), smokeUsername, smokePassword);
+    await smokeTestAggregation(
+      parseInt(smokePort, 10),
+      smokeUsername,
+      smokePassword,
+    );
   }
 }
 
@@ -78,15 +88,15 @@ async function buildPackageSurface() {
 }
 
 async function testUriBuilder() {
-  const { uri } = await import("./uri.ts");
+  const { mongoUri } = await import("./uri.ts");
 
-  const defaultUri = uri();
+  const defaultUri = mongoUri();
   assert.equal(
     defaultUri,
     "mongodb://127.0.0.1:27017/default?directConnection=true",
   );
 
-  const customUri = uri({
+  const customUri = mongoUri({
     host: "localhost",
     port: 27018,
     database: "mydb",
@@ -96,7 +106,7 @@ async function testUriBuilder() {
     "mongodb://localhost:27018/mydb?directConnection=true",
   );
 
-  const authUri = uri({
+  const authUri = mongoUri({
     username: "admin",
     password: "s3cret",
     database: "testdb",
@@ -106,14 +116,14 @@ async function testUriBuilder() {
     "mongodb://admin:s3cret@127.0.0.1:27017/testdb?directConnection=true",
   );
 
-  const specialCharsUri = uri({
+  const specialCharsUri = mongoUri({
     username: "user@domain",
     password: "p@ss:word",
   });
   assert.ok(specialCharsUri.includes("user%40domain"));
   assert.ok(specialCharsUri.includes("p%40ss%3Aword"));
 
-  console.log("  ✓ uri builder tests passed");
+  console.log("  ✓ mongoUri builder tests passed");
 }
 
 async function typecheckSurface() {
@@ -130,10 +140,12 @@ async function typecheckSurface() {
   console.log("  ✓ typecheck passed");
 }
 
-async function smokeTestCrud(port) {
-  const { uri } = await import("./uri.ts");
+async function smokeTestCrud(port, username, password) {
+  const { mongoUri } = await import("./uri.ts");
   const { MongoClient } = await import("mongodb");
-  const client = new MongoClient(uri({ port, database: "smoketest" }));
+  const client = new MongoClient(
+    mongoUri({ port, database: "smoketest", username, password }),
+  );
   await client.connect();
 
   try {
@@ -189,10 +201,12 @@ async function smokeTestCrud(port) {
   }
 }
 
-async function smokeTestAggregation(port) {
-  const { uri } = await import("./uri.ts");
+async function smokeTestAggregation(port, username, password) {
+  const { mongoUri } = await import("./uri.ts");
   const { MongoClient } = await import("mongodb");
-  const client = new MongoClient(uri({ port, database: "smoketest" }));
+  const client = new MongoClient(
+    mongoUri({ port, database: "smoketest", username, password }),
+  );
   await client.connect();
 
   try {

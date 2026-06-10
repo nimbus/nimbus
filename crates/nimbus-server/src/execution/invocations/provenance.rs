@@ -2,32 +2,52 @@ use nimbus_artifacts::ArtifactAdmission;
 use nimbus_provenance::RuntimeBundleProvenanceConfig;
 use nimbus_runtime::{NimbusRuntimeError, RuntimeBundle};
 
-use super::RuntimeBundleInvocationOptions;
+use super::{RuntimeBundleInvocationOptions, RuntimeBundleProvenanceGate};
 use crate::artifact_verifier_effects::admit_runtime_bundle_artifact;
 
 impl<'a> RuntimeBundleInvocationOptions<'a> {
     pub(crate) fn with_runtime_bundle_provenance_gate(
         mut self,
+        gate: &'a RuntimeBundleProvenanceConfig,
+    ) -> Self {
+        self.provenance_gate = RuntimeBundleProvenanceGate::Configured(gate);
+        self
+    }
+
+    pub(crate) fn without_runtime_bundle_provenance_gate(mut self) -> Self {
+        self.provenance_gate = RuntimeBundleProvenanceGate::Disabled;
+        self
+    }
+
+    pub(crate) fn with_optional_runtime_bundle_provenance_gate(
+        self,
         gate: Option<&'a RuntimeBundleProvenanceConfig>,
     ) -> Self {
-        self.provenance_gate = gate;
-        self
+        match gate {
+            Some(gate) => self.with_runtime_bundle_provenance_gate(gate),
+            None => self.without_runtime_bundle_provenance_gate(),
+        }
     }
 
     pub(crate) fn admit_runtime_bundle_artifact(
         &self,
         bundle: &RuntimeBundle,
     ) -> std::result::Result<Option<ArtifactAdmission>, NimbusRuntimeError> {
-        let Some(gate) = self.provenance_gate else {
-            return Ok(None);
-        };
-        admit_runtime_bundle_artifact(bundle, gate.policy(), gate.verifier(), gate.context())
+        match self.provenance_gate {
+            RuntimeBundleProvenanceGate::Disabled => Ok(None),
+            RuntimeBundleProvenanceGate::Configured(gate) => admit_runtime_bundle_artifact(
+                bundle,
+                gate.policy(),
+                gate.verifier(),
+                gate.context(),
+            )
             .map(Some)
             .map_err(|error| {
                 NimbusRuntimeError::Contract(format!(
                     "runtime bundle provenance admission failed before invocation: {error}"
                 ))
-            })
+            }),
+        }
     }
 }
 
@@ -113,7 +133,24 @@ mod tests {
             Some("runtime-request-1"),
             None,
         )
-        .with_runtime_bundle_provenance_gate(Some(gate))
+        .with_runtime_bundle_provenance_gate(gate)
+    }
+
+    #[test]
+    fn runtime_bundle_provenance_gate_disabled_state_skips_admission_explicitly() {
+        let (_temp, path, sha256) = write_bundle();
+        let bundle = RuntimeBundle::with_expected_sha256(&path, &sha256)
+            .expect("bundle identity should accept sha256");
+        let tenant_id = TenantId::new("tenant-a").expect("tenant id should parse");
+        let options =
+            RuntimeBundleInvocationOptions::enforcing_policy_limit(&tenant_id, None, None)
+                .without_runtime_bundle_provenance_gate();
+
+        let admission = options
+            .admit_runtime_bundle_artifact(&bundle)
+            .expect("explicitly disabled provenance gate should skip admission");
+
+        assert!(admission.is_none());
     }
 
     #[test]
@@ -204,8 +241,10 @@ mod tests {
 
         assert!(matches!(error, NimbusRuntimeError::Contract(_)));
         assert!(
-            error.to_string().contains("requires provenance predicate"),
-            "wrong attestation evidence should be explicit: {error}"
+            error
+                .to_string()
+                .contains("requires provenance from builder"),
+            "wrong-builder attestation evidence should be explicit: {error}"
         );
     }
 }

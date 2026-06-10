@@ -10,12 +10,13 @@ mod tenant;
 
 use std::sync::Arc;
 
+use nimbus_core::PrincipalContext;
 use nimbus_engine::Engine;
 
 use super::AuthConfig;
 use super::auth;
 use super::connection::ConnectionState;
-use super::error::{MongoError, ok_doc};
+use super::error::{MongoError, UNAUTHORIZED, ok_doc};
 
 pub async fn dispatch(
     command_name: &str,
@@ -24,7 +25,17 @@ pub async fn dispatch(
     engine: &Arc<Engine>,
     auth: &AuthConfig,
 ) -> Result<bson::Document, MongoError> {
-    session::handle_start_transaction(body, conn, engine)?;
+    let principal = if requires_authentication(command_name) {
+        Some(authenticated_principal(conn)?)
+    } else {
+        None
+    };
+    if body.get_bool("startTransaction").unwrap_or(false) && principal.is_none() {
+        return Err(unauthorized(command_name));
+    }
+    if let Some(principal) = principal.as_ref() {
+        session::handle_start_transaction(body, conn, engine, principal)?;
+    }
 
     match command_name {
         "hello" => handshake::hello(body, conn),
@@ -40,29 +51,91 @@ pub async fn dispatch(
         "getLog" => admin::get_log(body),
         "saslStart" => auth::sasl_start(body, conn, auth),
         "saslContinue" => auth::sasl_continue(body, conn, auth),
-        "insert" => crud::insert(body, conn, engine),
-        "find" => crud::find(body, conn, engine),
-        "update" => crud::update(body, conn, engine),
-        "delete" => crud::delete(body, conn, engine),
-        "findAndModify" | "findandmodify" => crud::find_and_modify(body, conn, engine),
-        "count" => crud::count(body, engine),
-        "distinct" => crud::distinct(body, engine),
-        "aggregate" => aggregation::aggregate(body, conn, engine),
-        "create" => collection::create(body, engine),
-        "drop" => collection::drop_collection(body, engine),
-        "listCollections" => collection::list_collections(body, engine),
-        "listDatabases" => collection::list_databases(body, engine),
-        "createIndexes" | "createindexes" => index::create_indexes(body, engine),
-        "dropIndexes" | "dropindexes" => index::drop_indexes(body, engine),
-        "listIndexes" | "listindexes" => index::list_indexes(body, engine),
+        "insert" => crud::insert(body, conn, engine, required_principal(principal.as_ref())?),
+        "find" => crud::find(body, conn, engine, required_principal(principal.as_ref())?),
+        "update" => crud::update(body, conn, engine, required_principal(principal.as_ref())?),
+        "delete" => crud::delete(body, conn, engine, required_principal(principal.as_ref())?),
+        "findAndModify" | "findandmodify" => {
+            crud::find_and_modify(body, conn, engine, required_principal(principal.as_ref())?)
+        }
+        "count" => crud::count(body, engine, required_principal(principal.as_ref())?),
+        "distinct" => crud::distinct(body, engine, required_principal(principal.as_ref())?),
+        "aggregate" => {
+            aggregation::aggregate(body, conn, engine, required_principal(principal.as_ref())?)
+        }
+        "create" => collection::create(body, engine, required_principal(principal.as_ref())?),
+        "drop" => {
+            collection::drop_collection(body, engine, required_principal(principal.as_ref())?)
+        }
+        "listCollections" => {
+            collection::list_collections(body, engine, required_principal(principal.as_ref())?)
+        }
+        "listDatabases" => {
+            collection::list_databases(body, engine, required_principal(principal.as_ref())?)
+        }
+        "createIndexes" | "createindexes" => {
+            index::create_indexes(body, engine, required_principal(principal.as_ref())?)
+        }
+        "dropIndexes" | "dropindexes" => {
+            index::drop_indexes(body, engine, required_principal(principal.as_ref())?)
+        }
+        "listIndexes" | "listindexes" => {
+            index::list_indexes(body, engine, required_principal(principal.as_ref())?)
+        }
         "getMore" => cursor::get_more(body, conn),
         "killCursors" => cursor::kill_cursors(body, conn),
         "startSession" => session::start_session(body, conn),
-        "endSessions" => session::end_sessions(body, conn, engine),
+        "endSessions" => {
+            session::end_sessions(body, conn, engine, required_principal(principal.as_ref())?)
+        }
         "refreshSessions" => session::refresh_sessions(body, conn),
-        "commitTransaction" => session::commit_transaction(body, conn, engine),
-        "abortTransaction" => session::abort_transaction(body, conn, engine),
+        "commitTransaction" => {
+            session::commit_transaction(body, conn, engine, required_principal(principal.as_ref())?)
+        }
+        "abortTransaction" => {
+            session::abort_transaction(body, conn, engine, required_principal(principal.as_ref())?)
+        }
         _ => Err(MongoError::command_not_found(command_name)),
+    }
+}
+
+fn requires_authentication(command_name: &str) -> bool {
+    !matches!(
+        command_name,
+        "hello"
+            | "isMaster"
+            | "ismaster"
+            | "buildInfo"
+            | "buildinfo"
+            | "ping"
+            | "whatsmyuri"
+            | "getParameter"
+            | "serverStatus"
+            | "connectionStatus"
+            | "getCmdLineOpts"
+            | "getFreeMonitoringStatus"
+            | "getLog"
+            | "saslStart"
+            | "saslContinue"
+    )
+}
+
+fn authenticated_principal(conn: &ConnectionState) -> Result<PrincipalContext, MongoError> {
+    conn.authenticated_principal()
+        .ok_or_else(|| unauthorized("command"))
+}
+
+fn required_principal(
+    principal: Option<&PrincipalContext>,
+) -> Result<&PrincipalContext, MongoError> {
+    principal.ok_or_else(|| unauthorized("command"))
+}
+
+fn unauthorized(command_name: &str) -> MongoError {
+    MongoError::Command {
+        code: UNAUTHORIZED.code,
+        code_name: UNAUTHORIZED.code_name.into(),
+        message: format!("command '{command_name}' requires authentication"),
     }
 }
 
@@ -80,7 +153,14 @@ mod tests {
     }
 
     fn test_auth() -> AuthConfig {
-        AuthConfig::default()
+        AuthConfig::new("admin".into(), "admin".into())
+    }
+
+    fn authenticated_conn() -> ConnectionState {
+        let mut conn = test_conn();
+        conn.authenticated = true;
+        conn.auth_user = Some("admin".to_string());
+        conn
     }
 
     #[test]
@@ -111,9 +191,15 @@ mod tests {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let auth = test_auth();
         let doc = bson::doc! { "foobar": 1 };
-        let err = dispatch("foobar", &doc, &mut test_conn(), &fixture.engine(), &auth)
-            .await
-            .unwrap_err();
+        let err = dispatch(
+            "foobar",
+            &doc,
+            &mut authenticated_conn(),
+            &fixture.engine(),
+            &auth,
+        )
+        .await
+        .unwrap_err();
         match err {
             MongoError::Command {
                 code, code_name, ..
@@ -186,5 +272,30 @@ mod tests {
             .unwrap();
         assert!(!result.get_bool("done").unwrap());
         assert!(conn.scram_state.is_some());
+    }
+
+    #[tokio::test]
+    async fn dispatch_rejects_data_command_before_authentication() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let auth = test_auth();
+        let body = bson::doc! {
+            "find": "users",
+            "$db": "testdb",
+            "filter": {},
+        };
+
+        let err = dispatch("find", &body, &mut test_conn(), &fixture.engine(), &auth)
+            .await
+            .unwrap_err();
+
+        match err {
+            MongoError::Command {
+                code, code_name, ..
+            } => {
+                assert_eq!(code, UNAUTHORIZED.code);
+                assert_eq!(code_name, UNAUTHORIZED.code_name);
+            }
+            other => panic!("expected unauthorized command error, got: {other:?}"),
+        }
     }
 }

@@ -1,10 +1,11 @@
 use std::cmp::Ordering;
+use std::ops::Bound;
 
 use nimbus_core::{Document, Error, FieldType, Filter, FilterOp, Result, TableName, TableSchema};
 use serde_json::Value;
 use tokio_postgres::types::ToSql;
 
-use crate::store::MAX_DURABLE_JOURNAL_STREAM_LIMIT;
+use crate::{IndexRangeBound, store::MAX_DURABLE_JOURNAL_STREAM_LIMIT};
 
 use super::backend::postgres_json_extract_expr;
 
@@ -88,16 +89,13 @@ pub(super) fn document_matches_exact_prefix(
         .all(|(field, value)| document.get_field(field) == Some(value))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn filter_index_documents_with_cancel(
     documents: Vec<Document>,
     table: &TableName,
     index_fields: &[String],
     exact_prefix: &[Value],
-    start: Option<&Value>,
-    end: Option<&Value>,
-    start_inclusive: bool,
-    end_inclusive: bool,
+    start: IndexRangeBound<'_>,
+    end: IndexRangeBound<'_>,
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<Vec<Document>> {
     let range_field = index_fields.get(exact_prefix.len());
@@ -111,14 +109,7 @@ pub(super) fn filter_index_documents_with_cancel(
             continue;
         }
         if let Some(range_field) = range_field
-            && !document_matches_range_bounds(
-                &document,
-                range_field,
-                start,
-                end,
-                start_inclusive,
-                end_inclusive,
-            )?
+            && !document_matches_range_bounds(&document, range_field, start, end)?
         {
             continue;
         }
@@ -190,59 +181,75 @@ pub(super) fn append_postgres_range_clause<T>(
     clauses: &mut Vec<String>,
     params: &mut Vec<Box<dyn ToSql + Sync + Send>>,
     expr: String,
-    start: Option<T>,
-    end: Option<T>,
-    start_inclusive: bool,
-    end_inclusive: bool,
+    start: Bound<T>,
+    end: Bound<T>,
 ) where
     T: ToSql + Sync + Send + 'static,
 {
-    if let Some(start) = start {
-        let operator = if start_inclusive { ">=" } else { ">" };
-        clauses.push(format!("{expr} {operator} ${}", params.len() + 1));
-        params.push(Box::new(start));
+    match start {
+        Bound::Included(start) => {
+            clauses.push(format!("{expr} >= ${}", params.len() + 1));
+            params.push(Box::new(start));
+        }
+        Bound::Excluded(start) => {
+            clauses.push(format!("{expr} > ${}", params.len() + 1));
+            params.push(Box::new(start));
+        }
+        Bound::Unbounded => {}
     }
-    if let Some(end) = end {
-        let operator = if end_inclusive { "<=" } else { "<" };
-        clauses.push(format!("{expr} {operator} ${}", params.len() + 1));
-        params.push(Box::new(end));
+    match end {
+        Bound::Included(end) => {
+            clauses.push(format!("{expr} <= ${}", params.len() + 1));
+            params.push(Box::new(end));
+        }
+        Bound::Excluded(end) => {
+            clauses.push(format!("{expr} < ${}", params.len() + 1));
+            params.push(Box::new(end));
+        }
+        Bound::Unbounded => {}
     }
 }
 
 pub(super) fn document_matches_range_bounds(
     document: &Document,
     field: &str,
-    start: Option<&Value>,
-    end: Option<&Value>,
-    start_inclusive: bool,
-    end_inclusive: bool,
+    start: IndexRangeBound<'_>,
+    end: IndexRangeBound<'_>,
 ) -> Result<bool> {
     let Some(value) = document.get_field(field) else {
         return Ok(false);
     };
 
-    if let Some(start) = start {
-        let ordering = compare_values(value, start)?;
-        let passes = if start_inclusive {
-            matches!(ordering, Ordering::Greater | Ordering::Equal)
-        } else {
-            ordering == Ordering::Greater
-        };
-        if !passes {
-            return Ok(false);
+    match start {
+        Bound::Included(start) => {
+            let ordering = compare_values(value, start)?;
+            if matches!(ordering, Ordering::Less) {
+                return Ok(false);
+            }
         }
+        Bound::Excluded(start) => {
+            let ordering = compare_values(value, start)?;
+            if !matches!(ordering, Ordering::Greater) {
+                return Ok(false);
+            }
+        }
+        Bound::Unbounded => {}
     }
 
-    if let Some(end) = end {
-        let ordering = compare_values(value, end)?;
-        let passes = if end_inclusive {
-            matches!(ordering, Ordering::Less | Ordering::Equal)
-        } else {
-            ordering == Ordering::Less
-        };
-        if !passes {
-            return Ok(false);
+    match end {
+        Bound::Included(end) => {
+            let ordering = compare_values(value, end)?;
+            if matches!(ordering, Ordering::Greater) {
+                return Ok(false);
+            }
         }
+        Bound::Excluded(end) => {
+            let ordering = compare_values(value, end)?;
+            if !matches!(ordering, Ordering::Less) {
+                return Ok(false);
+            }
+        }
+        Bound::Unbounded => {}
     }
 
     Ok(true)

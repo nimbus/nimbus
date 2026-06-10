@@ -140,7 +140,7 @@ fn master_key_file_provider_manifest_integration() {
 
     assert_eq!(loaded.header.cipher, ManifestCipher::SqlCipher);
     assert_eq!(loaded.header.subject_descriptor, subject.descriptor());
-    assert_eq!(unwrapped, expected_plaintext);
+    assert_eq!(unwrapped.as_bytes(), &expected_plaintext);
 }
 
 /// Tests that KeyDirectoryProvider can generate keys and create valid manifests.
@@ -197,7 +197,7 @@ fn key_directory_provider_manifest_integration() {
 
     assert_eq!(loaded.header.cipher, ManifestCipher::SqlCipher);
     assert_eq!(loaded.header.subject_descriptor, subject.descriptor());
-    assert_eq!(unwrapped, expected_plaintext);
+    assert_eq!(unwrapped.as_bytes(), &expected_plaintext);
 }
 
 /// Tests that providers generate unique DEKs for each call.
@@ -321,7 +321,7 @@ fn artifact_subject_encryption() {
         .unwrap_database_key(&subject, generated.wrapped(), &header)
         .expect("unwrap should succeed");
 
-    assert_eq!(generated.plaintext(), &unwrapped);
+    assert_eq!(generated.plaintext(), unwrapped.as_bytes());
 }
 
 /// Tests that manifest tampering is detected.

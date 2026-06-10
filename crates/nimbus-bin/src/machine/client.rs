@@ -413,14 +413,28 @@ fn read_unix_http_request(
     loop {
         match stream.read(&mut chunk) {
             Ok(0) => break,
-            Ok(read) => response.extend_from_slice(&chunk[..read]),
+            Ok(read) => {
+                response.extend_from_slice(&chunk[..read]);
+                if let Some(expected_len) =
+                    expected_http_response_len(&response, socket_path, path)?
+                    && response.len() >= expected_len
+                    && !http_response_declares_connection_close(&response)
+                {
+                    break;
+                }
+            }
             Err(error)
                 if matches!(
                     error.kind(),
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                 ) =>
             {
-                break;
+                return Err(Error::Internal(format!(
+                    "timed out reading machine API response from {}{} after {} bytes: {error}",
+                    socket_path.display(),
+                    path,
+                    response.len()
+                )));
             }
             Err(error) => {
                 return Err(Error::Internal(format!(
@@ -440,6 +454,18 @@ fn read_unix_http_request(
         )));
     }
 
+    if let Some(expected_len) = expected_http_response_len(&response, socket_path, path)?
+        && response.len() < expected_len
+    {
+        return Err(Error::Internal(format!(
+            "machine API response from {}{} closed after {} bytes before the declared {} byte response completed",
+            socket_path.display(),
+            path,
+            response.len(),
+            expected_len
+        )));
+    }
+
     Ok(response)
 }
 
@@ -450,17 +476,13 @@ fn parse_http_json_body<'a>(
 ) -> Result<&'a [u8], Error> {
     let response_text = String::from_utf8_lossy(response);
     let status_line = response_text.lines().next().unwrap_or("<empty-response>");
-    let body_offset = response
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .map(|index| index + 4)
-        .ok_or_else(|| {
-            Error::Internal(format!(
-                "machine API response from {}{} did not contain an HTTP body",
-                socket_path.display(),
-                path
-            ))
-        })?;
+    let body_offset = http_response_body_offset(response).ok_or_else(|| {
+        Error::Internal(format!(
+            "machine API response from {}{} did not contain an HTTP body",
+            socket_path.display(),
+            path
+        ))
+    })?;
     let body = &response[body_offset..];
     let status_code = parse_http_status_code(status_line);
     if status_code != Some(200) {
@@ -485,6 +507,78 @@ fn parse_http_json_body<'a>(
         ));
     }
     Ok(body)
+}
+
+fn http_response_body_offset(response: &[u8]) -> Option<usize> {
+    response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| index + 4)
+}
+
+fn expected_http_response_len(
+    response: &[u8],
+    socket_path: &Path,
+    path: &str,
+) -> Result<Option<usize>, Error> {
+    let Some(body_offset) = http_response_body_offset(response) else {
+        return Ok(None);
+    };
+    let headers = String::from_utf8_lossy(&response[..body_offset]);
+    let mut content_length = None;
+    for line in headers.lines().skip(1) {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if !name.eq_ignore_ascii_case("content-length") {
+            continue;
+        }
+        let parsed = value.trim().parse::<usize>().map_err(|error| {
+            Error::Internal(format!(
+                "machine API response from {}{} had invalid Content-Length `{}`: {error}",
+                socket_path.display(),
+                path,
+                value.trim()
+            ))
+        })?;
+        if let Some(previous) = content_length
+            && previous != parsed
+        {
+            return Err(Error::Internal(format!(
+                "machine API response from {}{} had conflicting Content-Length values {previous} and {parsed}",
+                socket_path.display(),
+                path
+            )));
+        }
+        content_length = Some(parsed);
+    }
+    content_length
+        .map(|len| {
+            body_offset.checked_add(len).ok_or_else(|| {
+                Error::Internal(format!(
+                    "machine API response from {}{} declared an oversized Content-Length",
+                    socket_path.display(),
+                    path
+                ))
+            })
+        })
+        .transpose()
+}
+
+fn http_response_declares_connection_close(response: &[u8]) -> bool {
+    let Some(body_offset) = http_response_body_offset(response) else {
+        return false;
+    };
+    let headers = String::from_utf8_lossy(&response[..body_offset]);
+    headers.lines().skip(1).any(|line| {
+        let Some((name, value)) = line.split_once(':') else {
+            return false;
+        };
+        name.eq_ignore_ascii_case("connection")
+            && value
+                .split(',')
+                .any(|directive| directive.trim().eq_ignore_ascii_case("close"))
+    })
 }
 
 fn parse_http_status_code(status_line: &str) -> Option<u16> {
@@ -966,6 +1060,115 @@ mod tests {
                 .contains("failed to connect to machine API socket"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn client_accepts_complete_content_length_response_without_socket_eof() {
+        let temp_dir = short_socket_tempdir();
+        let socket_path = temp_dir.path().join("nimbus.sock");
+        let listener = StdUnixListener::bind(&socket_path).expect("listener should bind");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("server should accept request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            let body = serde_json::json!({
+                "status": "ok",
+                "role": "guest-machine-api",
+                "protocol_version": PROTOCOL_VERSION,
+                "listen_mode": "direct-socket",
+                "control_data_dir": "/tmp/nimbus-control",
+            })
+            .to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("server should write complete response");
+            std::thread::sleep(Duration::from_millis(200));
+        });
+        let client = MachineApiClient {
+            socket_path,
+            io_timeout: Duration::from_millis(50),
+        };
+
+        let health = client
+            .health()
+            .expect("complete Content-Length response should not require EOF");
+
+        assert_eq!(health.status, "ok");
+        assert_eq!(health.protocol_version, PROTOCOL_VERSION);
+        server.join().expect("server should join");
+    }
+
+    #[test]
+    fn client_reports_timeout_before_declared_response_body_completes() {
+        let temp_dir = short_socket_tempdir();
+        let socket_path = temp_dir.path().join("nimbus.sock");
+        let listener = StdUnixListener::bind(&socket_path).expect("listener should bind");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("server should accept request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 64\r\n\r\n{\"status\":\"ok\"",
+                )
+                .expect("server should write partial response");
+            std::thread::sleep(Duration::from_millis(200));
+        });
+        let client = MachineApiClient {
+            socket_path,
+            io_timeout: Duration::from_millis(50),
+        };
+
+        let error = client
+            .health()
+            .expect_err("partial response should time out before successful parse");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("timed out reading machine API response"),
+            "{message}"
+        );
+        assert!(
+            !message.contains("failed to decode machine API response"),
+            "{message}"
+        );
+        server.join().expect("server should join");
+    }
+
+    #[test]
+    fn client_rejects_eof_before_declared_response_body_completes() {
+        let temp_dir = short_socket_tempdir();
+        let socket_path = temp_dir.path().join("nimbus.sock");
+        let listener = StdUnixListener::bind(&socket_path).expect("listener should bind");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("server should accept request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 64\r\n\r\n{\"status\":\"ok\"",
+                )
+                .expect("server should write truncated response");
+        });
+        let client = MachineApiClient {
+            socket_path,
+            io_timeout: Duration::from_secs(2),
+        };
+
+        let error = client
+            .health()
+            .expect_err("truncated response should not parse as a clean EOF");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("closed after") && message.contains("declared"),
+            "{message}"
+        );
+        server.join().expect("server should join");
     }
 
     #[test]

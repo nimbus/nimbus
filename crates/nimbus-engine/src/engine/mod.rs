@@ -11,6 +11,7 @@ mod queries;
 mod scheduler;
 mod schema;
 mod subscriptions;
+mod tenant_load_gate;
 mod tenants;
 mod transactions;
 mod usage;
@@ -28,7 +29,7 @@ use nimbus_storage::{
     Clock, EmbeddedProviderKind, FaultInjector, NoopFaultInjector, SqliteTenantStore, SystemClock,
     TenantStore,
 };
-use tokio::sync::{Mutex as AsyncMutex, Notify};
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use crate::persistence::{ControlPlaneProvider, PersistenceProvider, TenantPersistence};
@@ -36,6 +37,7 @@ use crate::persistence_config::EnginePersistenceConfig;
 use crate::tenant::TenantRuntime;
 use crate::triggers::{TriggerRegistration, execution::SharedTriggerInvocationExecutor};
 use background_executor::BackgroundExecutor;
+use tenant_load_gate::{TenantLoadGate, TenantLoadGateGuard};
 use transactions::TransactionSessionRegistry;
 
 pub use committed_mutations::{CommittedMutationEvent, CommittedMutationObserver};
@@ -59,7 +61,7 @@ pub struct Engine {
     data_dir: PathBuf,
     tenants: RwLock<HashMap<TenantId, Arc<TenantRuntime>>>,
     transaction_sessions: RwLock<TransactionSessionRegistry>,
-    tenant_load_gate: AsyncMutex<()>,
+    tenant_load_gate: TenantLoadGate,
     embedded_provider_kind: Option<EmbeddedProviderKind>,
     persistence_provider: PersistenceProvider,
     control_plane_provider: ControlPlaneProvider,
@@ -75,6 +77,8 @@ pub struct Engine {
     engine_executor: BackgroundExecutor,
     storage_executor: BackgroundExecutor,
     encryption_status: Option<encryption::EncryptionStatus>,
+    #[cfg(test)]
+    execution_unit_commit_pause: Arc<execution_units::ExecutionUnitCommitPauseState>,
 }
 
 pub(super) struct EngineBootstrapParts {
@@ -175,7 +179,7 @@ impl Engine {
             data_dir: parts.data_dir,
             tenants: RwLock::new(HashMap::new()),
             transaction_sessions: RwLock::new(TransactionSessionRegistry::default()),
-            tenant_load_gate: AsyncMutex::new(()),
+            tenant_load_gate: TenantLoadGate::new(),
             embedded_provider_kind: parts.embedded_provider_kind,
             persistence_provider: parts.persistence_provider,
             control_plane_provider: parts.control_plane_provider,
@@ -191,6 +195,10 @@ impl Engine {
             engine_executor: parts.engine_executor,
             storage_executor: parts.storage_executor,
             encryption_status: parts.encryption_status,
+            #[cfg(test)]
+            execution_unit_commit_pause: Arc::new(
+                execution_units::ExecutionUnitCommitPauseState::default(),
+            ),
         }
     }
 
@@ -261,13 +269,8 @@ impl Engine {
         }
     }
 
-    pub(crate) fn lock_tenant_load_gate_blocking(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        loop {
-            if let Ok(guard) = self.tenant_load_gate.try_lock() {
-                return guard;
-            }
-            std::thread::yield_now();
-        }
+    pub(in crate::engine) fn lock_tenant_load_gate_blocking(&self) -> TenantLoadGateGuard<'_> {
+        self.tenant_load_gate.blocking_lock()
     }
 
     pub(crate) fn build_loaded_tenant_runtime(

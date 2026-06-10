@@ -25,8 +25,7 @@ pub struct CloudFunctionsHostBridge {
 impl CloudFunctionsHostBridge {
     pub fn build(scope: RuntimeHostScope, invocation: RuntimeHostInvocation) -> Result<Self> {
         let runtime_policy = scope.runtime_policy().clone();
-        let context =
-            RuntimeHostContext::build(scope, invocation, "cloud-functions-runtime-session")?;
+        let context = RuntimeHostContext::build(scope, invocation)?;
         Ok(Self {
             context,
             runtime_policy,

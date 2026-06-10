@@ -161,31 +161,35 @@ impl TenantIsolationContext {
         }
     }
 
-    pub fn validate_principal_claim_if_present(&self, context: &str) -> Result<()> {
-        let TenantIsolationAuthority::Application { principal } = &self.authority else {
-            return Ok(());
-        };
-        let Some(claim) = principal_tenant_claim(principal) else {
-            return Ok(());
-        };
-        if claim.value == self.tenant_id.as_str() {
-            return Ok(());
-        }
-        Err(Error::PermissionDenied(format!(
-            "application principal claim `{}` authorizes tenant `{}`, but {context} targeted tenant `{}`",
-            claim.name, claim.value, self.tenant_id
-        )))
+    /// Admit an application principal whose tenant claim is either absent or
+    /// matches this context. Use only when an upstream route has already bound
+    /// the request principal to the tenant by another trusted mechanism.
+    pub fn admit_if_principal_claim_absent_or_matching(&self, context: &str) -> Result<()> {
+        self.validate_application_principal_claim(context, MissingPrincipalClaimPolicy::Admit)
     }
 
+    /// Require application principals to carry a tenant claim matching this
+    /// context. Use this for control-plane routes addressed by tenant id.
     pub fn require_matching_principal_claim(&self, context: &str) -> Result<()> {
+        self.validate_application_principal_claim(context, MissingPrincipalClaimPolicy::Deny)
+    }
+
+    fn validate_application_principal_claim(
+        &self,
+        context: &str,
+        missing_claim_policy: MissingPrincipalClaimPolicy,
+    ) -> Result<()> {
         let TenantIsolationAuthority::Application { principal } = &self.authority else {
             return Ok(());
         };
         let Some(claim) = principal_tenant_claim(principal) else {
-            return Err(Error::PermissionDenied(format!(
-                "application principal has no tenant claim, but {context} targeted tenant `{}`",
-                self.tenant_id
-            )));
+            return match missing_claim_policy {
+                MissingPrincipalClaimPolicy::Admit => Ok(()),
+                MissingPrincipalClaimPolicy::Deny => Err(Error::PermissionDenied(format!(
+                    "application principal has no tenant claim, but {context} targeted tenant `{}`",
+                    self.tenant_id
+                ))),
+            };
         };
         if claim.value == self.tenant_id.as_str() {
             return Ok(());
@@ -195,6 +199,12 @@ impl TenantIsolationContext {
             claim.name, claim.value, self.tenant_id
         )))
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MissingPrincipalClaimPolicy {
+    Admit,
+    Deny,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

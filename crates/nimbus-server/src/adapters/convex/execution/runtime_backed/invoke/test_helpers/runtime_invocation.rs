@@ -89,6 +89,7 @@ fn invoke_named_convex_function_with_trace_cancellable(
             normalize_principal_context(request.auth.as_ref()),
             None,
             invocation_kind.clone(),
+            request.function_name.clone(),
         ),
     )?);
     let (response, read_set) = invoke_runtime_bundle_blocking_with_host_state(

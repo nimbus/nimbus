@@ -3,6 +3,7 @@ use super::table_lifecycle::{
     mark_table_deleting_in_session, stage_hidden_table_identity_in_session,
 };
 use super::*;
+use crate::keys::prefix_end;
 use crate::postgres::document_versions::{
     record_document_versions_for_events_in_session, record_document_versions_for_writes_in_session,
 };
@@ -129,6 +130,90 @@ where
             .map_err(map_postgres_error)?,
     };
 
+    rows.into_iter().map(row_to_document).collect()
+}
+
+pub(super) async fn load_documents_by_id_prefix_from_session<C>(
+    session: &C,
+    schema_name: &str,
+    table: &TableName,
+    id_prefix: &str,
+) -> Result<Vec<Document>>
+where
+    C: GenericClient + Sync,
+{
+    let Some(table_id) = load_table_id_from_session(session, schema_name, table).await? else {
+        return Ok(Vec::new());
+    };
+    let start = id_prefix.to_owned();
+    let rows = if let Some(end) =
+        prefix_end(id_prefix.as_bytes()).and_then(|bytes| String::from_utf8(bytes).ok())
+    {
+        let query = format!(
+            "SELECT $1::text AS table_name, id, creation_time, update_time, data_json, typed_fields_json \
+             FROM {} \
+             WHERE table_id = $2 AND id >= $3 AND id < $4 \
+             ORDER BY id",
+            qualified_table(schema_name, "documents")
+        );
+        session
+            .query(
+                query.as_str(),
+                &[&table.as_str(), &table_id.as_str(), &start, &end],
+            )
+            .await
+            .map_err(map_postgres_error)?
+    } else {
+        let query = format!(
+            "SELECT $1::text AS table_name, id, creation_time, update_time, data_json, typed_fields_json \
+             FROM {} \
+             WHERE table_id = $2 AND id >= $3 \
+             ORDER BY id",
+            qualified_table(schema_name, "documents")
+        );
+        session
+            .query(
+                query.as_str(),
+                &[&table.as_str(), &table_id.as_str(), &start],
+            )
+            .await
+            .map_err(map_postgres_error)?
+    };
+    rows.into_iter().map(row_to_document).collect()
+}
+
+pub(super) async fn load_documents_starting_at_id_from_session<C>(
+    session: &C,
+    schema_name: &str,
+    table: &TableName,
+    start_id: &str,
+    limit: usize,
+) -> Result<Vec<Document>>
+where
+    C: GenericClient + Sync,
+{
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let Some(table_id) = load_table_id_from_session(session, schema_name, table).await? else {
+        return Ok(Vec::new());
+    };
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    let query = format!(
+        "SELECT $1::text AS table_name, id, creation_time, update_time, data_json, typed_fields_json \
+         FROM {} \
+         WHERE table_id = $2 AND id >= $3 \
+         ORDER BY id \
+         LIMIT $4",
+        qualified_table(schema_name, "documents")
+    );
+    let rows = session
+        .query(
+            query.as_str(),
+            &[&table.as_str(), &table_id.as_str(), &start_id, &limit],
+        )
+        .await
+        .map_err(map_postgres_error)?;
     rows.into_iter().map(row_to_document).collect()
 }
 
@@ -494,7 +579,6 @@ where
     )))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn load_index_candidate_documents_from_session<C>(
     session: &C,
     schema_name: &str,
@@ -502,14 +586,12 @@ pub(super) async fn load_index_candidate_documents_from_session<C>(
     table_schema: &TableSchema,
     index_name: &str,
     exact_prefix: &[Value],
-    start: Option<&Value>,
-    end: Option<&Value>,
-    start_inclusive: bool,
-    end_inclusive: bool,
+    bounds: crate::range_bound::OwnedIndexRangeBounds,
 ) -> Result<Vec<Document>>
 where
     C: GenericClient + Sync,
 {
+    let crate::range_bound::OwnedIndexRangeBounds { start, end } = bounds;
     let index_fields = index_fields_for_table_schema(table_schema, index_name)?;
     let range_field = index_fields.get(exact_prefix.len());
 
@@ -536,10 +618,14 @@ where
                     &mut clauses,
                     &mut params,
                     postgres_json_extract_expr(range_field),
-                    start.map(postgres_index_text_value).transpose()?,
-                    end.map(postgres_index_text_value).transpose()?,
-                    start_inclusive,
-                    end_inclusive,
+                    crate::range_bound::map_owned_index_range_bound(
+                        start.clone(),
+                        postgres_index_text_value,
+                    )?,
+                    crate::range_bound::map_owned_index_range_bound(
+                        end.clone(),
+                        postgres_index_text_value,
+                    )?,
                 );
             }
             FieldType::Number => {
@@ -547,13 +633,19 @@ where
                     &mut clauses,
                     &mut params,
                     postgres_numeric_extract_expr(range_field),
-                    start.map(postgres_numeric_value).transpose()?,
-                    end.map(postgres_numeric_value).transpose()?,
-                    start_inclusive,
-                    end_inclusive,
+                    crate::range_bound::map_owned_index_range_bound(
+                        start.clone(),
+                        postgres_numeric_value,
+                    )?,
+                    crate::range_bound::map_owned_index_range_bound(
+                        end.clone(),
+                        postgres_numeric_value,
+                    )?,
                 );
             }
-            _ if start.is_some() || end.is_some() => {
+            _ if !matches!(start, std::ops::Bound::Unbounded)
+                || !matches!(end, std::ops::Bound::Unbounded) =>
+            {
                 return Err(Error::InvalidInput(
                     "range scans only support string and number indexed fields".to_string(),
                 ));
@@ -1421,13 +1513,7 @@ pub(super) fn map_build_error(error: BuildError) -> Error {
     )
 }
 
-pub(super) fn map_join_error(error: tokio::task::JoinError) -> Error {
-    Error::Internal(format!("postgres executor join error: {error}"))
-}
-
-pub(super) fn map_permit_error(error: tokio::sync::AcquireError) -> Error {
-    Error::Internal(format!("postgres executor permit error: {error}"))
-}
+pub(super) const POSTGRES_EXECUTOR_CONTEXT: &str = "postgres executor";
 
 pub(super) fn map_postgres_error(error: tokio_postgres::Error) -> Error {
     if let Some(db_error) = error.as_db_error() {

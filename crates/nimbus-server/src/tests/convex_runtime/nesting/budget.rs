@@ -43,12 +43,15 @@ globalThis.__nimbusInvoke = async function(request) {
     `return (${definition.runtime_handler})(ctx, args, request);`,
   );
 
-  try {
-    const value = await handler(
-      globalThis.__nimbusCreateContext(),
-      request.args ?? {},
-      request,
-    );
+	  try {
+	    const value = await handler(
+	      globalThis.__nimbusCreateContext({
+	        hostCallSessionId: `${request.kind}:${request.function_name}`,
+	        request,
+	      }),
+	      request.args ?? {},
+	      request,
+	    );
     return { status: "ok", value };
   } catch (error) {
     if (error && typeof error === "object" && "nimbusHostError" in error) {

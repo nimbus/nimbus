@@ -27,7 +27,7 @@ pub(super) fn sample_config(image: &Path) -> MachineConfigRecord {
             source: PathBuf::from("/Users"),
             target: PathBuf::from("/Users"),
         }],
-        roots: MachineRootLayout::new(
+        roots: MachineRootLayout::test_sibling_roots(
             base_root.join("config-root"),
             base_root.join("state-root"),
             base_root.join("runtime-root"),

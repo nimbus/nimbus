@@ -36,6 +36,7 @@ pub struct LocalServerSecurityState {
 struct LocalServerSecurityInner {
     token: LocalAdminTokenRecord,
     sessions: BTreeMap<String, StoredSession>,
+    revoked_sessions: BTreeMap<String, StoredSession>,
     launch_tickets: BTreeMap<String, StoredLaunchTicket>,
 }
 
@@ -44,6 +45,7 @@ struct StoredSession {
     generation: u64,
     issued_at: OffsetDateTime,
     expires_at: OffsetDateTime,
+    cookie_value: Option<String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -85,6 +87,7 @@ pub struct LocalAdminTokenRotation {
 pub enum SessionBootstrapFailure {
     InvalidToken,
     InvalidLaunchTicket,
+    SessionIssueFailed(String),
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
@@ -104,6 +107,7 @@ impl LocalServerSecurityState {
             inner: RwLock::new(LocalServerSecurityInner {
                 token,
                 sessions: BTreeMap::new(),
+                revoked_sessions: BTreeMap::new(),
                 launch_tickets: BTreeMap::new(),
             }),
         }
@@ -140,7 +144,8 @@ impl LocalServerSecurityState {
         if !self.authorize_bearer(bearer) {
             return Err(SessionBootstrapFailure::InvalidToken);
         }
-        Ok(self.create_session(DEFAULT_SESSION_TTL))
+        self.create_session(DEFAULT_SESSION_TTL)
+            .map_err(|error| SessionBootstrapFailure::SessionIssueFailed(error.to_string()))
     }
 
     pub fn mint_launch_ticket(&self) -> io::Result<String> {
@@ -176,7 +181,8 @@ impl LocalServerSecurityState {
                 return Err(SessionBootstrapFailure::InvalidLaunchTicket);
             }
         }
-        Ok(self.create_session(DEFAULT_SESSION_TTL))
+        self.create_session(DEFAULT_SESSION_TTL)
+            .map_err(|error| SessionBootstrapFailure::SessionIssueFailed(error.to_string()))
     }
 
     pub fn authorize_session_cookie(&self, cookie_value: Option<&str>) -> SessionValidationResult {
@@ -195,6 +201,17 @@ impl LocalServerSecurityState {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         prune_expired_state(&mut guard, now);
 
+        if !verify_session_signature(&guard.token, payload_segment, signature_segment) {
+            if guard
+                .revoked_sessions
+                .get(&payload.session_id)
+                .and_then(|session| session.cookie_value.as_deref())
+                == Some(cookie_value)
+            {
+                return SessionValidationResult::Revoked;
+            }
+            return SessionValidationResult::Invalid;
+        }
         if payload.generation != guard.token.generation {
             return SessionValidationResult::Revoked;
         }
@@ -206,9 +223,6 @@ impl LocalServerSecurityState {
         }
         if stored.expires_at <= now {
             return SessionValidationResult::Expired;
-        }
-        if !verify_session_signature(&guard.token, payload_segment, signature_segment) {
-            return SessionValidationResult::Invalid;
         }
         SessionValidationResult::Authorized(AuthorizedSession {
             session_id: payload.session_id,
@@ -233,7 +247,9 @@ impl LocalServerSecurityState {
                     generate_local_admin_token(previous.token.generation.saturating_add(1))?;
                 rotated.rotated_at = Some(now_rfc3339()?);
                 guard.token = rotated.clone();
-                guard.sessions.clear();
+                let mut invalidated = BTreeMap::new();
+                std::mem::swap(&mut invalidated, &mut guard.sessions);
+                guard.revoked_sessions.extend(invalidated);
                 guard.launch_tickets.clear();
                 (previous, rotated, invalidated_sessions)
             };
@@ -254,7 +270,15 @@ impl LocalServerSecurityState {
         })
     }
 
-    fn create_session(&self, ttl: Duration) -> IssuedSessionCookie {
+    fn create_session(&self, ttl: Duration) -> io::Result<IssuedSessionCookie> {
+        self.create_session_with_token_generator(ttl, generate_prefixed_token)
+    }
+
+    fn create_session_with_token_generator(
+        &self,
+        ttl: Duration,
+        generate_session_id: impl FnOnce(&str) -> io::Result<String>,
+    ) -> io::Result<IssuedSessionCookie> {
         let now = OffsetDateTime::now_utc();
         let expires_at = now + ttl;
         let mut guard = self
@@ -262,22 +286,20 @@ impl LocalServerSecurityState {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         prune_expired_state(&mut guard, now);
-        let session_id =
-            generate_prefixed_token(LOCAL_SESSION_ID_PREFIX).expect("session id should generate");
-        let issued_at_string = now
-            .format(&Rfc3339)
-            .expect("session issue time should format");
-        let expires_at_string = expires_at
-            .format(&Rfc3339)
-            .expect("session expiry time should format");
+        let session_id = generate_session_id(LOCAL_SESSION_ID_PREFIX)?;
+        let issued_at_string = now.format(&Rfc3339).map_err(|error| {
+            io::Error::other(format!("failed to format session issue time: {error}"))
+        })?;
+        let expires_at_string = expires_at.format(&Rfc3339).map_err(|error| {
+            io::Error::other(format!("failed to format session expiry time: {error}"))
+        })?;
         let payload = SessionCookiePayload {
             session_id: session_id.clone(),
             generation: guard.token.generation,
             issued_at: issued_at_string,
             expires_at: expires_at_string,
         };
-        let value = sign_session_cookie(&guard.token, &payload)
-            .expect("session cookie payload should serialize");
+        let value = sign_session_cookie(&guard.token, &payload)?;
         let generation = guard.token.generation;
         guard.sessions.insert(
             session_id.clone(),
@@ -285,15 +307,16 @@ impl LocalServerSecurityState {
                 generation,
                 issued_at: now,
                 expires_at,
+                cookie_value: Some(value.clone()),
             },
         );
-        IssuedSessionCookie {
+        Ok(IssuedSessionCookie {
             session_id,
             generation,
             issued_at: now,
             expires_at,
             value,
-        }
+        })
     }
 
     #[cfg(test)]
@@ -310,6 +333,7 @@ impl LocalServerSecurityState {
                 generation,
                 issued_at: now,
                 expires_at: now + DEFAULT_SESSION_TTL,
+                cookie_value: None,
             },
         );
     }
@@ -326,6 +350,9 @@ impl LocalServerSecurityState {
 
 fn prune_expired_state(inner: &mut LocalServerSecurityInner, now: OffsetDateTime) {
     inner.sessions.retain(|_, session| session.expires_at > now);
+    inner
+        .revoked_sessions
+        .retain(|_, session| session.expires_at > now);
     inner
         .launch_tickets
         .retain(|_, ticket| ticket.expires_at > now);
@@ -457,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn session_cookie_round_trips_and_revokes_on_rotation() {
+    fn session_cookie_round_trips_and_rejects_after_rotation() {
         let temp = tempfile::tempdir().expect("tempdir should build");
         let paths = sample_paths(temp.path());
         let token = load_or_create_local_admin_token(&paths).expect("token should exist");
@@ -478,6 +505,81 @@ mod tests {
             state.authorize_session_cookie(Some(&session.value)),
             SessionValidationResult::Revoked
         );
+    }
+
+    #[test]
+    fn revoked_session_classification_requires_the_exact_issued_cookie() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let paths = sample_paths(temp.path());
+        let token = load_or_create_local_admin_token(&paths).expect("token should exist");
+        let state = LocalServerSecurityState::new(paths.clone(), token.clone());
+
+        let session = state
+            .create_session_for_local_admin_token(&token.token)
+            .expect("token should create a session");
+        let tampered = tamper_session_cookie_payload(&session.value, |payload| {
+            payload.expires_at = "2999-01-01T00:00:00Z".to_string();
+        });
+
+        state
+            .rotate_and_persist_token()
+            .expect("rotation should succeed");
+
+        assert_eq!(
+            state.authorize_session_cookie(Some(&session.value)),
+            SessionValidationResult::Revoked
+        );
+        assert_eq!(
+            state.authorize_session_cookie(Some(&tampered)),
+            SessionValidationResult::Invalid,
+            "revoked classification must not trust unsigned payload fields"
+        );
+    }
+
+    #[test]
+    fn session_issue_failure_returns_error_without_registering_session() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let paths = sample_paths(temp.path());
+        let token = load_or_create_local_admin_token(&paths).expect("token should exist");
+        let state = LocalServerSecurityState::new(paths, token);
+
+        let error = state
+            .create_session_with_token_generator(DEFAULT_SESSION_TTL, |_| {
+                Err(io::Error::other("rng unavailable for test"))
+            })
+            .expect_err("session issuance should return the token-generation error");
+
+        assert!(error.to_string().contains("rng unavailable for test"));
+        assert_eq!(
+            state.active_session_count(),
+            0,
+            "failed issuance must not register a partial session"
+        );
+    }
+
+    #[test]
+    fn session_cookie_signature_is_checked_before_payload_state() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let paths = sample_paths(temp.path());
+        let token = load_or_create_local_admin_token(&paths).expect("token should exist");
+        let state = LocalServerSecurityState::new(paths, token.clone());
+
+        let session = state
+            .create_session_for_local_admin_token(&token.token)
+            .expect("token should create a session");
+        let tampered = tamper_session_cookie_payload(&session.value, |payload| {
+            payload.generation = payload.generation.saturating_add(1);
+        });
+
+        assert_eq!(
+            state.authorize_session_cookie(Some(&tampered)),
+            SessionValidationResult::Invalid,
+            "unsigned payload fields must not drive generation or session-state decisions"
+        );
+        assert!(matches!(
+            state.authorize_session_cookie(Some(&session.value)),
+            SessionValidationResult::Authorized(_)
+        ));
     }
 
     #[test]
@@ -503,5 +605,30 @@ mod tests {
                 .expect_err("launch ticket should be single use"),
             SessionBootstrapFailure::InvalidLaunchTicket
         );
+    }
+
+    fn tamper_session_cookie_payload(
+        cookie_value: &str,
+        mutate: impl FnOnce(&mut SessionCookiePayload),
+    ) -> String {
+        let mut parts = cookie_value.split('.');
+        let version = parts.next().expect("session cookie should include version");
+        let payload_segment = parts.next().expect("session cookie should include payload");
+        let signature_segment = parts
+            .next()
+            .expect("session cookie should include signature");
+        assert!(
+            parts.next().is_none(),
+            "session cookie should not include extra segments"
+        );
+        let payload_bytes = URL_SAFE_NO_PAD
+            .decode(payload_segment)
+            .expect("payload segment should decode");
+        let mut payload: SessionCookiePayload =
+            serde_json::from_slice(&payload_bytes).expect("payload should parse");
+        mutate(&mut payload);
+        let payload_segment = URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&payload).expect("tampered payload should serialize"));
+        format!("{version}.{payload_segment}.{signature_segment}")
     }
 }

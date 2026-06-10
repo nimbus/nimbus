@@ -111,18 +111,10 @@ fn cancelled_status_code() -> StatusCode {
 }
 
 fn missing_index_fields(error: &Error) -> Option<Vec<String>> {
-    let Error::InvalidInput(message) = error else {
-        return None;
-    };
-    let fields = message.strip_prefix("structured query requires an index covering fields: ")?;
-    Some(
-        fields
-            .split(',')
-            .map(str::trim)
-            .filter(|field| !field.is_empty())
-            .map(ToString::to_string)
-            .collect(),
-    )
+    match error {
+        Error::MissingIndex { fields } => Some(fields.clone()),
+        _ => None,
+    }
 }
 
 fn missing_index_details(fields: &[String], description: &str) -> Vec<Value> {
@@ -149,7 +141,7 @@ pub fn firestore_grpc_code(error: &Error) -> Code {
         | Error::SchemaNotFound(_)
         | Error::NotFound(_) => Code::NotFound,
         Error::Conflict(_) => Code::Aborted,
-        Error::PreconditionFailed(_) => Code::FailedPrecondition,
+        Error::PreconditionFailed(_) | Error::MissingIndex { .. } => Code::FailedPrecondition,
         Error::ResourceExhausted(_) => Code::ResourceExhausted,
         Error::PermissionDenied(_) => Code::PermissionDenied,
         Error::InvalidInput(_) | Error::SchemaValidation(_) | Error::HistoricalRead { .. } => {
@@ -197,7 +189,9 @@ fn firebase_rest_error(error: &Error) -> FirestoreRestError {
         | Error::SchemaNotFound(_)
         | Error::NotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND"),
         Error::Conflict(_) => (StatusCode::CONFLICT, "ABORTED"),
-        Error::PreconditionFailed(_) => (StatusCode::PRECONDITION_FAILED, "FAILED_PRECONDITION"),
+        Error::PreconditionFailed(_) | Error::MissingIndex { .. } => {
+            (StatusCode::PRECONDITION_FAILED, "FAILED_PRECONDITION")
+        }
         Error::ResourceExhausted(_) => (StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED"),
         Error::PermissionDenied(_) => (StatusCode::FORBIDDEN, "PERMISSION_DENIED"),
         Error::InvalidInput(_) | Error::SchemaValidation(_) | Error::HistoricalRead { .. } => {
@@ -341,9 +335,9 @@ mod tests {
 
     #[test]
     fn firebase_rest_error_uses_failed_precondition_for_missing_index() {
-        let error = Error::InvalidInput(
-            "structured query requires an index covering fields: state, rank".to_string(),
-        );
+        let error = Error::MissingIndex {
+            fields: vec!["state".to_string(), "rank".to_string()],
+        };
 
         let (http_code, body) = firebase_error_response_json(error);
 
@@ -357,5 +351,22 @@ mod tests {
             body["error"]["details"][0]["violations"][0]["type"],
             json!("FIRESTORE_QUERY_INDEX")
         );
+        assert_eq!(
+            body["error"]["details"][0]["violations"][0]["subject"],
+            json!("fields/state,rank")
+        );
+    }
+
+    #[test]
+    fn firebase_rest_error_does_not_parse_missing_index_from_invalid_input_text() {
+        let error = Error::InvalidInput(
+            "structured query requires an index covering fields: state, rank".to_string(),
+        );
+
+        let (http_code, body) = firebase_error_response_json(error);
+
+        assert_eq!(http_code, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["status"], json!("INVALID_ARGUMENT"));
+        assert_eq!(body["error"].get("details"), None);
     }
 }

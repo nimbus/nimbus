@@ -13,9 +13,12 @@ async fn convex_runtime_multi_table_subscription_tracks_matching_writes_across_t
         ]),
         Some(
             r#"
-globalThis.__nimbusInvoke = async function(_request) {
-  const ctx = globalThis.__nimbusCreateContext();
-  const openTasks = await ctx.db
+	globalThis.__nimbusInvoke = async function(request) {
+	  const ctx = globalThis.__nimbusCreateContext({
+	    hostCallSessionId: `${request.kind}:${request.function_name}`,
+	    request,
+	  });
+	  const openTasks = await ctx.db
     .query("tasks")
     .filter((q) => q.eq(q.field("status"), "open"))
     .collect();

@@ -1,5 +1,5 @@
 use nimbus_core::{Document, DocumentId, Result, TableName};
-use nimbus_storage::QueryReadStore;
+use nimbus_storage::{IndexRangeBound, QueryReadStore};
 
 use super::{TenantPersistence, TenantPersistenceSnapshot};
 
@@ -25,6 +25,29 @@ impl QueryReadStore for TenantPersistence {
                 check_cancel,
                 include_document,
             )
+        })
+    }
+
+    fn scan_table_id_prefix_cancellable(
+        &self,
+        table: &TableName,
+        id_prefix: &str,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        match_tenant_persistence!(self, |store| {
+            store.scan_table_id_prefix_cancellable(table, id_prefix, check_cancel)
+        })
+    }
+
+    fn scan_table_id_starting_at_cancellable(
+        &self,
+        table: &TableName,
+        start_id: &str,
+        limit: usize,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        match_tenant_persistence!(self, |store| {
+            store.scan_table_id_starting_at_cancellable(table, start_id, limit, check_cancel)
         })
     }
 
@@ -56,22 +79,12 @@ impl QueryReadStore for TenantPersistence {
         &self,
         table: &TableName,
         index_name: &str,
-        start: Option<&serde_json::Value>,
-        end: Option<&serde_json::Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         match_tenant_persistence!(self, |store| {
-            store.index_scan_range_cancellable(
-                table,
-                index_name,
-                start,
-                end,
-                start_inclusive,
-                end_inclusive,
-                check_cancel,
-            )
+            store.index_scan_range_cancellable(table, index_name, start, end, check_cancel)
         })
     }
 
@@ -80,10 +93,8 @@ impl QueryReadStore for TenantPersistence {
         table: &TableName,
         index_name: &str,
         exact_prefix: &[serde_json::Value],
-        start: Option<&serde_json::Value>,
-        end: Option<&serde_json::Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         match_tenant_persistence!(self, |store| {
@@ -93,8 +104,6 @@ impl QueryReadStore for TenantPersistence {
                 exact_prefix,
                 start,
                 end,
-                start_inclusive,
-                end_inclusive,
                 check_cancel,
             )
         })
@@ -126,6 +135,29 @@ impl QueryReadStore for TenantPersistenceSnapshot {
         })
     }
 
+    fn scan_table_id_prefix_cancellable(
+        &self,
+        table: &TableName,
+        id_prefix: &str,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        match_tenant_persistence_snapshot!(self, |snapshot| {
+            snapshot.scan_table_id_prefix_cancellable(table, id_prefix, check_cancel)
+        })
+    }
+
+    fn scan_table_id_starting_at_cancellable(
+        &self,
+        table: &TableName,
+        start_id: &str,
+        limit: usize,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        match_tenant_persistence_snapshot!(self, |snapshot| {
+            snapshot.scan_table_id_starting_at_cancellable(table, start_id, limit, check_cancel)
+        })
+    }
+
     fn index_scan_eq_cancellable(
         &self,
         table: &TableName,
@@ -154,22 +186,12 @@ impl QueryReadStore for TenantPersistenceSnapshot {
         &self,
         table: &TableName,
         index_name: &str,
-        start: Option<&serde_json::Value>,
-        end: Option<&serde_json::Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         match_tenant_persistence_snapshot!(self, |snapshot| {
-            snapshot.index_scan_range_cancellable(
-                table,
-                index_name,
-                start,
-                end,
-                start_inclusive,
-                end_inclusive,
-                check_cancel,
-            )
+            snapshot.index_scan_range_cancellable(table, index_name, start, end, check_cancel)
         })
     }
 
@@ -178,10 +200,8 @@ impl QueryReadStore for TenantPersistenceSnapshot {
         table: &TableName,
         index_name: &str,
         exact_prefix: &[serde_json::Value],
-        start: Option<&serde_json::Value>,
-        end: Option<&serde_json::Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         match_tenant_persistence_snapshot!(self, |snapshot| {
@@ -191,8 +211,6 @@ impl QueryReadStore for TenantPersistenceSnapshot {
                 exact_prefix,
                 start,
                 end,
-                start_inclusive,
-                end_inclusive,
                 check_cancel,
             )
         })

@@ -28,7 +28,7 @@ impl CloudFunctionsRuntimeInvoker for ServerCloudFunctionsRuntimeInvoker {
                 invocation.server_request_id.as_deref(),
                 None,
             )
-            .with_runtime_bundle_provenance_gate(invocation.provenance_gate.as_ref()),
+            .with_optional_runtime_bundle_provenance_gate(invocation.provenance_gate.as_ref()),
         )
         .map_err(runtime_error_to_core)
     }
@@ -130,7 +130,7 @@ mod tests {
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `trigger:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   if (request.function_name !== "exports.syncUser") {
     throw new Error(`unknown handler ${request.function_name}`);
@@ -892,7 +892,7 @@ export {};
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `trigger:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   await ctx.db.insert("audit", { ran: true });
   return { ok: true };
@@ -931,7 +931,7 @@ export {};
         match outcome {
             TriggerInvocationExecution::TerminalFailure { error } => {
                 assert!(error.contains("runtime bundle provenance admission failed"));
-                assert!(error.contains("requires provenance predicate"));
+                assert!(error.contains("requires provenance from builder"));
             }
             other => panic!("expected terminal provenance failure, got {other:?}"),
         }
@@ -1080,7 +1080,7 @@ export const syncUser = onDocumentWritten("users/{userId}", async (event) => {
       function_name: "exports.syncUser",
       args: event,
     },
-    sessionId: `trigger:${event.id}`,
+    hostCallSessionId: "mutation:exports.syncUser",
   });
 
   await ctx.db.insert("audit", {
@@ -1215,7 +1215,7 @@ export const syncUser = onDocumentUpdated("users/{userId}", async (event) => {
       function_name: "exports.syncUser",
       args: event,
     },
-    sessionId: `trigger:${event.id}`,
+    hostCallSessionId: "mutation:exports.syncUser",
   });
 
   await ctx.db.insert("audit", {
@@ -1260,7 +1260,7 @@ export const syncUser = onDocumentWritten("users/{userId}", async (event) => {
       function_name: "exports.syncUser",
       args: event,
     },
-    sessionId: `trigger:${event.id}`,
+    hostCallSessionId: "mutation:exports.syncUser",
   });
 
   await ctx.db.insert("audit", {
@@ -1305,7 +1305,7 @@ export const cascade = onDocumentWritten("chain/{docId}", async (event) => {
       function_name: "exports.cascade",
       args: event,
     },
-    sessionId: `trigger:${event.id}`,
+    hostCallSessionId: "mutation:exports.cascade",
   });
   const firestore = getFirestore();
   const step = event.data.after.data().step;

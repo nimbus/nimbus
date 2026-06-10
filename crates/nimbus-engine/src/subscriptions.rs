@@ -12,3 +12,5 @@ pub use registry::{SubscriptionCleanupHandle, SubscriptionRegistration, Subscrip
 pub(crate) use delivery::{SubscriptionDispatchStats, dispatch_subscription_work};
 pub(crate) use dependencies::{SubscriptionBatchCandidate, subscription_dependencies};
 pub(crate) use queue::{QueuedSubscriptionWork, merge_queued_subscription_work};
+#[cfg(test)]
+pub(crate) use registry::SubscriptionDeliveryPublishPauseHandle;

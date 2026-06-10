@@ -1073,7 +1073,7 @@ mod tests {
         assert!(
             routes
                 .iter()
-                .any(|route| route.id.as_str() == "route:get:health"
+                .any(|route| route.id == health_route_document_id()
                     && route.fields.get("path") == Some(&json!("/tampered-health"))),
             "drift scan must not repair route metadata"
         );
@@ -1217,7 +1217,7 @@ mod tests {
             .update_document_async(
                 crate::system_tenant::system_tenant_id().expect("system id should parse"),
                 TableName::new("routes").expect("table should parse"),
-                DocumentId::from_key("route:get:health").expect("document id should parse"),
+                health_route_document_id(),
                 serde_json::from_value(json!({
                     "method": "GET",
                     "path": "/tampered-health",
@@ -1229,5 +1229,13 @@ mod tests {
             )
             .await
             .expect("route document should update");
+    }
+
+    fn health_route_document_id() -> DocumentId {
+        let route = crate::system_tenant::route_inventory()
+            .into_iter()
+            .find(|route| route.method == "GET" && route.path == "/health")
+            .expect("health route should be present in system route inventory");
+        DocumentId::from_key(route.document_id()).expect("route document id should parse")
     }
 }

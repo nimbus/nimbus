@@ -1,4 +1,7 @@
 use super::*;
+use crate::IndexRangeBound;
+use crate::keys::prefix_end;
+use crate::range_bound::index_range_bound_presence;
 
 impl SqliteTenantStore {
     pub fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
@@ -94,15 +97,12 @@ impl SqliteTenantStore {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn index_scan_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
-        start: Option<&serde_json::Value>,
-        end: Option<&serde_json::Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         self.read_snapshot()?.index_scan_range_cancellable(
@@ -110,22 +110,17 @@ impl SqliteTenantStore {
             index_name,
             start,
             end,
-            start_inclusive,
-            end_inclusive,
             check_cancel,
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn index_scan_composite_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
         exact_prefix: &[serde_json::Value],
-        start: Option<&serde_json::Value>,
-        end: Option<&serde_json::Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         self.read_snapshot()?
@@ -135,8 +130,6 @@ impl SqliteTenantStore {
                 exact_prefix,
                 start,
                 end,
-                start_inclusive,
-                end_inclusive,
                 check_cancel,
             )
     }
@@ -151,6 +144,31 @@ impl SqliteTenantStore {
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         self.scan_table_matching_with_filters_cancellable(table, &[], check_cancel, |_| Ok(true))
+    }
+
+    pub fn scan_table_id_prefix_cancellable(
+        &self,
+        table: &TableName,
+        id_prefix: &str,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        self.read_snapshot()?
+            .scan_table_id_prefix_cancellable(table, id_prefix, check_cancel)
+    }
+
+    pub fn scan_table_id_starting_at_cancellable(
+        &self,
+        table: &TableName,
+        start_id: &str,
+        limit: usize,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        self.read_snapshot()?.scan_table_id_starting_at_cancellable(
+            table,
+            start_id,
+            limit,
+            check_cancel,
+        )
     }
 }
 
@@ -505,6 +523,75 @@ impl SqliteReadSnapshot {
         Ok(documents)
     }
 
+    pub fn scan_table_id_prefix_cancellable(
+        &self,
+        table: &TableName,
+        id_prefix: &str,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        let Some(table_id) = resolve_table_id_in_conn(&self.conn, table)? else {
+            return Ok(Vec::new());
+        };
+        let Some(end) =
+            prefix_end(id_prefix.as_bytes()).and_then(|bytes| String::from_utf8(bytes).ok())
+        else {
+            return self.query_documents(
+                "SELECT id, creation_time, update_time, data_json, typed_fields_json
+                 FROM documents
+                 WHERE table_id = ?1 AND id >= ?2
+                 ORDER BY id",
+                vec![
+                    SqlValue::Text(table_id.to_string()),
+                    SqlValue::Text(id_prefix.to_owned()),
+                ],
+                table,
+                check_cancel,
+            );
+        };
+        self.query_documents(
+            "SELECT id, creation_time, update_time, data_json, typed_fields_json
+             FROM documents
+             WHERE table_id = ?1 AND id >= ?2 AND id < ?3
+             ORDER BY id",
+            vec![
+                SqlValue::Text(table_id.to_string()),
+                SqlValue::Text(id_prefix.to_owned()),
+                SqlValue::Text(end),
+            ],
+            table,
+            check_cancel,
+        )
+    }
+
+    pub fn scan_table_id_starting_at_cancellable(
+        &self,
+        table: &TableName,
+        start_id: &str,
+        limit: usize,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let Some(table_id) = resolve_table_id_in_conn(&self.conn, table)? else {
+            return Ok(Vec::new());
+        };
+        self.query_documents(
+            "SELECT id, creation_time, update_time, data_json, typed_fields_json
+             FROM documents
+             WHERE table_id = ?1 AND id >= ?2
+             ORDER BY id
+             LIMIT ?3",
+            vec![
+                SqlValue::Text(table_id.to_string()),
+                SqlValue::Text(start_id.to_owned()),
+                SqlValue::Integer(i64::try_from(limit).unwrap_or(i64::MAX)),
+            ],
+            table,
+            check_cancel,
+        )
+    }
+
     pub fn index_scan_eq_cancellable(
         &self,
         table: &TableName,
@@ -550,15 +637,12 @@ impl SqliteReadSnapshot {
         self.query_documents(&sql, params, table, check_cancel)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn index_scan_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
-        start: Option<&serde_json::Value>,
-        end: Option<&serde_json::Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         self.index_scan_composite_range_cancellable(
@@ -567,22 +651,17 @@ impl SqliteReadSnapshot {
             &[],
             start,
             end,
-            start_inclusive,
-            end_inclusive,
             check_cancel,
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn index_scan_composite_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
         exact_prefix: &[serde_json::Value],
-        start: Option<&serde_json::Value>,
-        end: Option<&serde_json::Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         let fields = index_fields_for_cached_schema(&self.schema_cache, table, index_name)?;
@@ -604,19 +683,17 @@ impl SqliteReadSnapshot {
                 .map(sql_value_from_json)
                 .collect::<Result<Vec<_>>>()?,
         );
-        if let Some(start) = start {
+        if let std::ops::Bound::Included(start) | std::ops::Bound::Excluded(start) = start {
             params.push(sql_value_from_json(start)?);
         }
-        if let Some(end) = end {
+        if let std::ops::Bound::Included(end) | std::ops::Bound::Excluded(end) = end {
             params.push(sql_value_from_json(end)?);
         }
         let sql = sqlite_index_scan_composite_range_query_sql(
             &fields,
             exact_prefix.len(),
-            start.is_some(),
-            end.is_some(),
-            start_inclusive,
-            end_inclusive,
+            index_range_bound_presence(start),
+            index_range_bound_presence(end),
         )?;
         self.query_documents(&sql, params, table, check_cancel)
     }

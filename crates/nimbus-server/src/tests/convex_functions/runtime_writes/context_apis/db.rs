@@ -24,9 +24,12 @@ async fn convex_named_query_can_use_bootstrapped_ctx_db_api() {
         json!([]),
         Some(
             r#"
-globalThis.__nimbusInvoke = async function(request) {
-  const ctx = globalThis.__nimbusCreateContext();
-  const value = await ctx.db
+	globalThis.__nimbusInvoke = async function(request) {
+	  const ctx = globalThis.__nimbusCreateContext({
+	    hostCallSessionId: `${request.kind}:${request.function_name}`,
+	    request,
+	  });
+	  const value = await ctx.db
     .query("messages")
     .filter((q) => q.eq(q.field("author"), request.args.author))
     .collect();

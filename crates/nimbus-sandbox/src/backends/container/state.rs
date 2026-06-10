@@ -196,7 +196,7 @@ impl ContainerPersistedSandboxRecord {
             service_name,
             status: self.manifest.status,
             published_endpoints: self.manifest.handle.published_endpoints,
-            restart_count: 0,
+            restart_count: self.manifest.restart_count,
             last_exit_code: self.manifest.last_exit_code,
             shutdown_requested: self.manifest.shutdown_requested,
         }
@@ -210,7 +210,7 @@ impl ContainerPersistedSandboxRecord {
             service_name,
             status: self.manifest.status,
             published_endpoints: self.manifest.handle.published_endpoints.clone(),
-            restart_count: 0,
+            restart_count: self.manifest.restart_count,
             last_exit_code: self.manifest.last_exit_code,
             shutdown_requested: self.manifest.shutdown_requested,
         };
@@ -236,6 +236,8 @@ struct ContainerPersistedManifest {
     spec: SandboxSpec,
     conmon_layout: ContainerPersistedConmonLayout,
     last_exit_code: Option<i32>,
+    #[serde(default)]
+    restart_count: u32,
     shutdown_requested: bool,
     status: SandboxStatus,
 }
@@ -300,13 +302,14 @@ mod tests {
     #[test]
     fn state_view_lists_manifest_backed_summaries_and_skips_missing_manifest_dirs() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
-        write_manifest(
+        write_manifest_with_restart_count(
             temp_dir.path(),
             "db-01aaa",
             "svc-demo",
             "db",
             SandboxStatus::Ready,
             Some(137),
+            2,
         );
         write_manifest(
             temp_dir.path(),
@@ -343,7 +346,7 @@ mod tests {
         assert_eq!(summaries[0].status, SandboxStatus::Stopped);
         assert_eq!(summaries[1].status, SandboxStatus::Ready);
         assert_eq!(summaries[1].last_exit_code, Some(137));
-        assert_eq!(summaries[1].restart_count, 0);
+        assert_eq!(summaries[1].restart_count, 2);
     }
 
     #[test]
@@ -513,18 +516,39 @@ mod tests {
         status: SandboxStatus,
         last_exit_code: Option<i32>,
     ) {
-        write_manifest_with_owner(
+        write_manifest_with_restart_count(
             state_root,
             sandbox_id,
             tenant_id,
             service_name,
-            json!({
+            status,
+            last_exit_code,
+            0,
+        );
+    }
+
+    fn write_manifest_with_restart_count(
+        state_root: &Path,
+        sandbox_id: &str,
+        tenant_id: &str,
+        service_name: &str,
+        status: SandboxStatus,
+        last_exit_code: Option<i32>,
+        restart_count: u32,
+    ) {
+        write_manifest_with_owner(ManifestFixture {
+            state_root,
+            sandbox_id,
+            tenant_id,
+            handle_name: service_name,
+            owner: json!({
                 "kind": "service",
                 "name": service_name
             }),
             status,
             last_exit_code,
-        );
+            restart_count,
+        });
     }
 
     fn write_standalone_manifest(
@@ -534,33 +558,37 @@ mod tests {
         display_name: &str,
         status: SandboxStatus,
     ) {
-        write_manifest_with_owner(
+        write_manifest_with_owner(ManifestFixture {
             state_root,
             sandbox_id,
             tenant_id,
-            display_name,
-            json!({
+            handle_name: display_name,
+            owner: json!({
                 "kind": "standalone",
                 "display_name": display_name
             }),
             status,
-            None,
-        );
+            last_exit_code: None,
+            restart_count: 0,
+        });
     }
 
-    fn write_manifest_with_owner(
-        state_root: &Path,
-        sandbox_id: &str,
-        tenant_id: &str,
-        handle_name: &str,
+    struct ManifestFixture<'a> {
+        state_root: &'a Path,
+        sandbox_id: &'a str,
+        tenant_id: &'a str,
+        handle_name: &'a str,
         owner: serde_json::Value,
         status: SandboxStatus,
         last_exit_code: Option<i32>,
-    ) {
-        let tenant_id = TenantId::new(tenant_id).expect("tenant id should parse");
-        let sandbox_id = SandboxId::new(sandbox_id);
+        restart_count: u32,
+    }
+
+    fn write_manifest_with_owner(fixture: ManifestFixture<'_>) {
+        let tenant_id = TenantId::new(fixture.tenant_id).expect("tenant id should parse");
+        let sandbox_id = SandboxId::new(fixture.sandbox_id);
         let manifest_path =
-            crate::artifact_paths::manifest_path(state_root, &tenant_id, &sandbox_id);
+            crate::artifact_paths::manifest_path(fixture.state_root, &tenant_id, &sandbox_id);
         let container_dir = manifest_path
             .parent()
             .expect("manifest path should have a parent directory");
@@ -569,9 +597,9 @@ mod tests {
         let handle = SandboxHandle::new(
             tenant_id.clone(),
             sandbox_id,
-            handle_name,
+            fixture.handle_name,
             crate::backend::SandboxBackendKind::Container,
-            status,
+            fixture.status,
             vec![PublishedEndpoint::new(
                 "http",
                 PublishedEndpointProtocol::Tcp,
@@ -582,7 +610,7 @@ mod tests {
             "handle": handle,
             "spec": {
                 "tenant_id": tenant_id,
-                "owner": owner,
+                "owner": fixture.owner,
                 "backend": "container",
                 "root": {
                     "kind": "rootfs",
@@ -606,9 +634,10 @@ mod tests {
                 "ctr_log": container_dir.join("ctr.log"),
                 "oci_log": container_dir.join("oci.log")
             },
-            "last_exit_code": last_exit_code,
-            "shutdown_requested": matches!(status, SandboxStatus::Stopped),
-            "status": status
+            "last_exit_code": fixture.last_exit_code,
+            "restart_count": fixture.restart_count,
+            "shutdown_requested": matches!(fixture.status, SandboxStatus::Stopped),
+            "status": fixture.status
         });
 
         fs::write(

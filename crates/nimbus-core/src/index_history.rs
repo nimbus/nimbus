@@ -13,18 +13,22 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HistoricalIndexNumberKey(u64);
 
+pub fn order_preserving_number_bits(value: f64) -> u64 {
+    let mut bits = value.to_bits();
+    if value.is_sign_negative() {
+        bits = !bits;
+    } else {
+        bits ^= 0x8000_0000_0000_0000;
+    }
+    bits
+}
+
 impl HistoricalIndexNumberKey {
     pub fn from_json_number(number: &serde_json::Number) -> Result<Self> {
         let value = number.as_f64().ok_or_else(|| {
             Error::InvalidInput("unsupported numeric historical index value".to_string())
         })?;
-        let mut bits = value.to_bits();
-        if value.is_sign_positive() || value == 0.0 {
-            bits ^= 0x8000_0000_0000_0000;
-        } else {
-            bits = !bits;
-        }
-        Ok(Self(bits))
+        Ok(Self(order_preserving_number_bits(value)))
     }
 }
 
@@ -607,6 +611,39 @@ mod tests {
             }],
         )
         .expect("write event should build")
+    }
+
+    #[test]
+    fn order_preserving_number_bits_matches_numeric_sort_order() {
+        let mut values = [
+            f64::INFINITY,
+            1.0,
+            -0.0,
+            0.0,
+            -1.5,
+            100.0,
+            f64::NEG_INFINITY,
+        ];
+        values.sort_by(|left, right| {
+            order_preserving_number_bits(*left).cmp(&order_preserving_number_bits(*right))
+        });
+
+        assert_eq!(
+            values,
+            [
+                f64::NEG_INFINITY,
+                -1.5,
+                -0.0,
+                0.0,
+                1.0,
+                100.0,
+                f64::INFINITY
+            ]
+        );
+        assert!(
+            order_preserving_number_bits(-0.0) < order_preserving_number_bits(0.0),
+            "signed zero ordering is part of the persisted index key encoding"
+        );
     }
 
     #[test]

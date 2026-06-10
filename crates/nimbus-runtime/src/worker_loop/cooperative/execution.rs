@@ -66,31 +66,6 @@ impl CooperativeWorkerLoop {
         (job, result, ready_jobs)
     }
 
-    pub(super) async fn finish_failed_start(
-        policy: Arc<RuntimePolicy>,
-        worker_id: usize,
-        job: RuntimeWorkerJob,
-        permit: SharedInvocationPermit,
-        cancellation_for_metrics: Option<HostCallCancellation>,
-        execution_started_at: Instant,
-        result: crate::error::Result<serde_json::Value>,
-    ) -> (
-        RuntimeWorkerJob,
-        crate::error::Result<serde_json::Value>,
-        Vec<RuntimeWorkerJob>,
-    ) {
-        Self::finish_invocation(
-            policy,
-            worker_id,
-            job,
-            permit,
-            execution_started_at,
-            cancellation_for_metrics,
-            result,
-        )
-        .await
-    }
-
     pub(super) fn admit_job(&mut self, queue: &Arc<dyn RuntimeWorkerQueue>, job: RuntimeWorkerJob) {
         let cancellation_for_metrics = job.cancellation.clone();
         let permit = SharedInvocationPermit::new(
@@ -172,13 +147,13 @@ impl CooperativeWorkerLoop {
             }
             Err((error, execution_started_at)) => {
                 let (job, result, ready_jobs) =
-                    self.worker_runtime.block_on(Self::finish_failed_start(
+                    self.worker_runtime.block_on(Self::finish_invocation(
                         self.policy.clone(),
                         self.worker_id,
                         job,
                         permit,
-                        cancellation_for_metrics,
                         execution_started_at,
+                        cancellation_for_metrics,
                         Err(error),
                     ));
                 queue.complete_job(job, result, ready_jobs);

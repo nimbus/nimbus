@@ -10,8 +10,6 @@ use tokio::sync::oneshot;
 use crate::error::{NimbusRuntimeError, Result};
 use crate::host::HostCallCancellation;
 
-const EXTERNAL_CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(10);
-
 type CancelCallback = Box<dyn FnOnce() + Send + 'static>;
 
 enum WatchdogCommand {
@@ -25,6 +23,9 @@ enum WatchdogCommand {
         cancellation: HostCallCancellation,
         cancel: CancelCallback,
     },
+    CancellationFired {
+        id: u64,
+    },
     Cancel {
         id: u64,
         ack: Option<oneshot::Sender<()>>,
@@ -33,7 +34,6 @@ enum WatchdogCommand {
 }
 
 struct CancellationRegistration {
-    cancellation: HostCallCancellation,
     cancel: CancelCallback,
 }
 
@@ -56,10 +56,11 @@ pub(crate) struct WatchdogRegistration {
 impl WatchdogTimer {
     pub(crate) fn new() -> Self {
         let (sender, receiver) = mpsc::channel();
+        let command_sender = sender.clone();
         let thread = std::thread::Builder::new()
             .name("nimbus-runtime-watchdog".to_string())
             .spawn(move || {
-                Self::run(receiver);
+                Self::run(receiver, command_sender);
             })
             .expect("runtime watchdog thread should start");
 
@@ -189,19 +190,18 @@ impl WatchdogTimer {
         }
     }
 
-    fn run(receiver: mpsc::Receiver<WatchdogCommand>) {
+    fn run(
+        receiver: mpsc::Receiver<WatchdogCommand>,
+        command_sender: mpsc::Sender<WatchdogCommand>,
+    ) {
         let mut deadlines = BinaryHeap::<Reverse<(Instant, u64)>>::new();
         let mut timeout_handlers = HashMap::<u64, CancelCallback>::new();
         let mut cancellation_handlers = HashMap::<u64, CancellationRegistration>::new();
 
         loop {
             Self::fire_expired_timeouts(&mut deadlines, &mut timeout_handlers);
-            Self::fire_cancelled_registrations(&mut cancellation_handlers);
 
-            let wait = Self::next_wait(
-                deadlines.peek().map(|Reverse((deadline, _))| *deadline),
-                !cancellation_handlers.is_empty(),
-            );
+            let wait = Self::next_wait(deadlines.peek().map(|Reverse((deadline, _))| *deadline));
 
             let command = match wait {
                 Some(wait) => match receiver.recv_timeout(wait) {
@@ -229,13 +229,16 @@ impl WatchdogTimer {
                     cancellation,
                     cancel,
                 }) => {
-                    cancellation_handlers.insert(
-                        id,
-                        CancellationRegistration {
-                            cancellation,
-                            cancel,
-                        },
-                    );
+                    cancellation_handlers.insert(id, CancellationRegistration { cancel });
+                    let command_sender = command_sender.clone();
+                    cancellation.notify_on_cancel(move || {
+                        let _ = command_sender.send(WatchdogCommand::CancellationFired { id });
+                    });
+                }
+                Some(WatchdogCommand::CancellationFired { id }) => {
+                    if let Some(registration) = cancellation_handlers.remove(&id) {
+                        (registration.cancel)();
+                    }
                 }
                 Some(WatchdogCommand::Cancel { id, ack }) => {
                     timeout_handlers.remove(&id);
@@ -250,17 +253,8 @@ impl WatchdogTimer {
         }
     }
 
-    fn next_wait(next_deadline: Option<Instant>, poll_cancellations: bool) -> Option<Duration> {
-        let timeout_wait =
-            next_deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
-        match (timeout_wait, poll_cancellations) {
-            (Some(timeout_wait), true) => {
-                Some(timeout_wait.min(EXTERNAL_CANCELLATION_POLL_INTERVAL))
-            }
-            (Some(timeout_wait), false) => Some(timeout_wait),
-            (None, true) => Some(EXTERNAL_CANCELLATION_POLL_INTERVAL),
-            (None, false) => None,
-        }
+    fn next_wait(next_deadline: Option<Instant>) -> Option<Duration> {
+        next_deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()))
     }
 
     fn fire_expired_timeouts(
@@ -275,22 +269,6 @@ impl WatchdogTimer {
             deadlines.pop();
             if let Some(cancel) = timeout_handlers.remove(&id) {
                 cancel();
-            }
-        }
-    }
-
-    fn fire_cancelled_registrations(
-        cancellation_handlers: &mut HashMap<u64, CancellationRegistration>,
-    ) {
-        let mut fired_ids = Vec::new();
-        for (&id, registration) in cancellation_handlers.iter() {
-            if registration.cancellation.is_cancelled() {
-                fired_ids.push(id);
-            }
-        }
-        for id in fired_ids {
-            if let Some(registration) = cancellation_handlers.remove(&id) {
-                (registration.cancel)();
             }
         }
     }
@@ -351,6 +329,14 @@ mod tests {
         timer.shutdown();
     }
 
+    #[test]
+    fn next_wait_uses_deadlines_only() {
+        assert_eq!(WatchdogTimer::next_wait(None), None);
+        let deadline = Instant::now() + Duration::from_millis(50);
+        let wait = WatchdogTimer::next_wait(Some(deadline)).expect("deadline should produce wait");
+        assert!(wait <= Duration::from_millis(50));
+    }
+
     #[tokio::test]
     async fn external_cancellation_registration_fires() {
         let timer = WatchdogTimer::new();
@@ -370,6 +356,27 @@ mod tests {
 
         rx.recv_timeout(Duration::from_millis(250))
             .expect("cancellation callback should fire");
+        timer.shutdown();
+    }
+
+    #[tokio::test]
+    async fn disarm_prevents_external_cancellation_callback() {
+        let timer = WatchdogTimer::new();
+        let cancellation = HostCallCancellation::default();
+        let (tx, rx) = mpsc::channel();
+        let registration = timer
+            .register_cancellation(cancellation.clone(), move || {
+                let _ = tx.send(());
+            })
+            .expect("cancellation registration should succeed");
+
+        registration.disarm().await;
+        cancellation.cancel();
+
+        match rx.recv_timeout(Duration::from_millis(150)) {
+            Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {}
+            other => panic!("cancellation callback should stay disarmed, got {other:?}"),
+        }
         timer.shutdown();
     }
 }

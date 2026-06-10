@@ -4,8 +4,7 @@ use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
@@ -14,11 +13,18 @@ use super::bundle::{
     ContainerBundleLayout, ContainerBundleMount, ContainerBundleOptions, write_bundle_config,
 };
 use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
+use crate::backends::conmon::lifecycle::{
+    RuntimeStatusProbe, configured_stop_signal, configured_stop_timeout,
+    detect_runtime_status as detect_conmon_runtime_status, ensure_linux_host, now_millis,
+    read_exit_code, read_pid, remove_if_exists, restart_backoff_delay,
+    restart_policy_allows_restart, run_status_best_effort, run_status_checked, signal_process,
+    spawn_background, wait_for_path, wait_for_runtime_state,
+};
+use crate::backends::conmon::spec_resolve::{resolve_process_spec, resolve_root_spec, slugify};
 use crate::backends::oci::buildah::{
     BuildahCli, ImageHealthcheck, MountedRootfsSession, OciExposedPort, OciImageLaunchDefaults,
 };
 use crate::backends::oci::builder::OciDockerfileBuilder;
-use crate::backends::oci::command::CommandSpec;
 use crate::backends::oci::conmon::{
     OciConmonConfig, OciConmonLaunchPlan, OciConmonLayout, build_launch_plan,
 };
@@ -38,10 +44,9 @@ use crate::egress_proxy::{SandboxEgressProxy, SandboxEgressProxyConfig};
 use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
-use crate::process::pid_is_alive;
 use crate::spec::{
-    SandboxOciImageSource, SandboxResourceQuotaPolicy, SandboxRootSpec, SandboxRootfsSpec,
-    SandboxSpec, resolve_process_without_image_defaults,
+    SandboxOciImageSource, SandboxResourceQuotaPolicy, SandboxRootSpec, SandboxSpec,
+    resolve_process_without_image_defaults,
 };
 
 const DEFAULT_RUNTIME_PATH: &str = "crun";
@@ -226,6 +231,8 @@ impl ContainerSandboxBackend {
         match self.config.launch_mode {
             ContainerLaunchMode::PlanOnly => {
                 manifest.last_exit_code = None;
+                manifest.restart_count = 0;
+                manifest.next_restart_at_millis = None;
                 manifest.shutdown_requested = false;
                 self.write_manifest(&manifest)?;
                 Ok(manifest.handle)
@@ -240,11 +247,15 @@ impl ContainerSandboxBackend {
         let Some(mut manifest) = self.read_manifest(id)? else {
             return Ok(None);
         };
+        let restarted = self.config.launch_mode == ContainerLaunchMode::Execute
+            && self.maybe_restart_after_exit(&mut manifest)?;
         let status = match self.config.launch_mode {
             ContainerLaunchMode::PlanOnly => manifest.status,
+            ContainerLaunchMode::Execute if restarted => manifest.status,
             ContainerLaunchMode::Execute => self.detect_runtime_status(&manifest)?,
         };
         if self.config.launch_mode == ContainerLaunchMode::Execute
+            && !restarted
             && manifest.conmon_layout.exit_status_file.exists()
         {
             manifest.last_exit_code =
@@ -267,6 +278,7 @@ impl ContainerSandboxBackend {
             ContainerLaunchMode::PlanOnly => {
                 manifest.shutdown_requested = true;
                 manifest.last_exit_code = Some(0);
+                manifest.next_restart_at_millis = None;
                 synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
                 self.cleanup_manifest_launch_artifacts(&manifest)?;
                 manifest.launch_artifact = None;
@@ -422,6 +434,8 @@ impl ContainerSandboxBackend {
                 egress_proxy,
                 conmon_launch,
                 last_exit_code: None,
+                restart_count: 0,
+                next_restart_at_millis: None,
                 launch_mode: self.config.launch_mode,
                 shutdown_requested: false,
                 status: SandboxStatus::Starting,
@@ -430,39 +444,92 @@ impl ContainerSandboxBackend {
     }
 
     fn execute_start(&self, manifest: &ContainerSandboxManifest) -> Result<SandboxHandle> {
-        ensure_linux_host()?;
         let mut manifest = manifest.clone();
-        self.configure_network(&manifest)?;
-        if let Err(error) = self.ensure_egress_proxy_running(&manifest) {
+        if let Err(error) = self.launch_manifest(&mut manifest, true) {
             let _ = self.release_execution_artifacts(&mut manifest);
             return Err(error);
         }
-        if let Err(error) = spawn_background(&manifest.conmon_launch.create_command) {
-            let _ = self.release_execution_artifacts(&mut manifest);
-            return Err(error);
+        Ok(manifest.handle)
+    }
+
+    fn maybe_restart_after_exit(&self, manifest: &mut ContainerSandboxManifest) -> Result<bool> {
+        match mark_restart_decision_after_exit(manifest, now_millis()?)? {
+            ContainerRestartDecision::NotRestarting => Ok(false),
+            ContainerRestartDecision::WaitingForBackoff => Ok(true),
+            ContainerRestartDecision::RestartNow => {
+                self.reset_runtime_for_restart(manifest)?;
+                self.launch_manifest(manifest, false)?;
+                Ok(true)
+            }
         }
-        let runtime_state = match wait_for_runtime_state(
+    }
+
+    fn launch_manifest(
+        &self,
+        manifest: &mut ContainerSandboxManifest,
+        clear_last_exit_code: bool,
+    ) -> Result<()> {
+        ensure_linux_host("container")?;
+        self.configure_network(manifest)?;
+        self.ensure_egress_proxy_running(manifest)?;
+        spawn_background(&manifest.conmon_launch.create_command)?;
+        let runtime_state = wait_for_runtime_state(
             &manifest.conmon_launch.state_command,
             self.config.start_timeout,
-        ) {
-            Ok(state) => state,
-            Err(error) => {
-                let _ = self.release_execution_artifacts(&mut manifest);
-                return Err(error);
-            }
-        };
-        if runtime_state != "running"
-            && let Err(error) = run_status_checked(&manifest.conmon_launch.start_command)
-        {
-            let _ = self.release_execution_artifacts(&mut manifest);
-            return Err(error);
+        )?;
+        if runtime_state != "running" {
+            run_status_checked(&manifest.conmon_launch.start_command)?;
         }
 
         manifest.shutdown_requested = false;
-        manifest.last_exit_code = None;
-        synchronize_handle_status(&mut manifest, SandboxStatus::Starting);
-        self.write_manifest(&manifest)?;
-        Ok(manifest.handle)
+        manifest.next_restart_at_millis = None;
+        if clear_last_exit_code {
+            manifest.last_exit_code = None;
+        }
+        synchronize_handle_status(manifest, SandboxStatus::Starting);
+        self.write_manifest(manifest)
+    }
+
+    fn reset_runtime_for_restart(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
+        let mut errors = Vec::new();
+        if let Err(error) = self.stop_egress_proxy(&manifest.handle.id) {
+            errors.push(error.to_string());
+        }
+        if let Err(error) = run_status_checked(&manifest.conmon_launch.delete_command) {
+            errors.push(error.to_string());
+        }
+        if let Err(error) = teardown_container_network(
+            &manifest.network_layout,
+            &self.network_config(),
+            &manifest.handle.id,
+            manifest.spec.display_name(),
+            &hostname_for(&manifest.spec),
+            &manifest.spec.port_bindings,
+            self.config.machine_port_forwarder.as_ref(),
+        ) {
+            errors.push(error.to_string());
+        }
+        if let Err(error) = remove_persistent_network_namespace(&manifest.network_layout.netns_path)
+        {
+            errors.push(error.to_string());
+        }
+        if let Some(forwarder) = self.config.machine_port_forwarder.as_ref() {
+            let _ = unexpose_machine_ports(forwarder, &manifest.spec.port_bindings);
+        }
+        remove_if_exists(&manifest.conmon_layout.exit_status_file)?;
+        remove_if_exists(&manifest.conmon_layout.pidfile)?;
+        remove_if_exists(&manifest.conmon_layout.conmon_pidfile)?;
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(SandboxError::OperationFailed {
+                message: format!(
+                    "failed to reset container sandbox {} for restart: {}",
+                    manifest.handle.id,
+                    errors.join("; ")
+                ),
+            })
+        }
     }
 
     fn execute_stop(&self, manifest: &mut ContainerSandboxManifest) -> Result<()> {
@@ -477,9 +544,9 @@ impl ContainerSandboxBackend {
 
         manifest.shutdown_requested = true;
         let pid = read_pid(&manifest.conmon_layout.pidfile)?;
-        let stop_signal = configured_stop_signal(&manifest.image_metadata);
+        let stop_signal = configured_stop_signal(manifest.image_metadata.stop_signal.as_deref());
         signal_process(&stop_signal, pid)?;
-        let stop_timeout = configured_stop_timeout(&manifest.spec, &self.config);
+        let stop_timeout = configured_stop_timeout(&manifest.spec, self.config.stop_timeout);
         if !wait_for_path(&manifest.conmon_layout.exit_status_file, stop_timeout) {
             signal_process("KILL", pid)?;
             if !wait_for_path(&manifest.conmon_layout.exit_status_file, stop_timeout) {
@@ -499,35 +566,19 @@ impl ContainerSandboxBackend {
     }
 
     fn detect_runtime_status(&self, manifest: &ContainerSandboxManifest) -> Result<SandboxStatus> {
-        if manifest.conmon_layout.exit_status_file.exists() {
-            let exit_code = read_exit_code(&manifest.conmon_layout.exit_status_file)?;
-            if manifest.shutdown_requested || exit_code == 0 {
-                return Ok(SandboxStatus::Stopped);
-            }
-            return Ok(SandboxStatus::Failed);
-        }
-
-        let runtime_state = runtime_state(&manifest.conmon_launch.state_command)?;
-        match runtime_state.as_deref() {
-            Some("running") => {
+        detect_conmon_runtime_status(
+            RuntimeStatusProbe {
+                exit_status_file: &manifest.conmon_layout.exit_status_file,
+                state_command: &manifest.conmon_launch.state_command,
+                pidfile: &manifest.conmon_layout.pidfile,
+                shutdown_requested: manifest.shutdown_requested,
+                current_status: manifest.status,
+            },
+            || {
                 self.ensure_egress_proxy_running(manifest)?;
                 Ok(running_status(manifest))
-            }
-            Some("created") | Some("creating") => Ok(SandboxStatus::Starting),
-            Some("stopped") => Ok(SandboxStatus::Stopped),
-            Some("paused") => Ok(SandboxStatus::Stopping),
-            Some(_) => Ok(SandboxStatus::Failed),
-            None if manifest.conmon_layout.pidfile.exists() => {
-                if pid_is_alive(read_pid(&manifest.conmon_layout.pidfile)?) {
-                    Ok(SandboxStatus::Starting)
-                } else if manifest.shutdown_requested {
-                    Ok(SandboxStatus::Stopped)
-                } else {
-                    Ok(SandboxStatus::Failed)
-                }
-            }
-            None => Ok(manifest.status),
-        }
+            },
+        )
     }
 
     fn prepare_image_launch(
@@ -893,6 +944,10 @@ struct ContainerSandboxManifest {
     egress_proxy: Option<ContainerEgressProxyManifest>,
     conmon_launch: OciConmonLaunchPlan,
     last_exit_code: Option<i32>,
+    #[serde(default)]
+    restart_count: u32,
+    #[serde(default)]
+    next_restart_at_millis: Option<u64>,
     launch_mode: ContainerLaunchMode,
     shutdown_requested: bool,
     status: SandboxStatus,
@@ -921,11 +976,6 @@ impl ContainerEgressProxyManifest {
             })?;
         Ok(SocketAddr::new(host, self.port))
     }
-}
-
-#[derive(Debug, Deserialize)]
-struct RuntimeStatePayload {
-    status: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -969,18 +1019,6 @@ enum ReadinessProbeTarget {
     Http(SocketAddr),
 }
 
-fn ensure_linux_host() -> Result<()> {
-    if cfg!(target_os = "linux") {
-        return Ok(());
-    }
-
-    Err(SandboxError::BackendUnavailable {
-        message:
-            "container execution requires a Linux host; use plan-only mode for cross-platform tests"
-                .to_owned(),
-    })
-}
-
 fn next_sandbox_id(name: &str) -> SandboxId {
     SandboxId::new(format!(
         "{}-{}",
@@ -996,18 +1034,6 @@ fn hostname_for(spec: &SandboxSpec) -> String {
     } else {
         slug
     }
-}
-
-fn slugify(name: &str) -> String {
-    let mut slug = String::with_capacity(name.len());
-    for character in name.chars() {
-        if character.is_ascii_alphanumeric() {
-            slug.push(character.to_ascii_lowercase());
-        } else if !slug.ends_with('-') {
-            slug.push('-');
-        }
-    }
-    slug.trim_matches('-').to_owned()
 }
 
 fn resolve_launch_spec(
@@ -1043,77 +1069,43 @@ fn resolve_launch_spec(
     })
 }
 
-fn resolve_root_spec(root: &SandboxRootSpec, defaults: &SandboxRootfsSpec) -> SandboxRootSpec {
-    match root {
-        SandboxRootSpec::Rootfs(rootfs) if !rootfs.is_unspecified() => {
-            SandboxRootSpec::Rootfs(rootfs.clone())
-        }
-        SandboxRootSpec::Rootfs(rootfs) => {
-            let mut resolved = defaults.clone();
-            resolved.readonly = resolved.readonly || rootfs.readonly;
-            SandboxRootSpec::Rootfs(resolved)
-        }
-        SandboxRootSpec::OciImage(_) => SandboxRootSpec::Rootfs(defaults.clone()),
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContainerRestartDecision {
+    NotRestarting,
+    WaitingForBackoff,
+    RestartNow,
 }
 
-fn resolve_process_spec(
-    spec: &crate::spec::SandboxProcessSpec,
-    defaults: &crate::spec::SandboxProcessSpec,
-) -> crate::spec::SandboxProcessSpec {
-    let mut resolved = defaults.clone();
-    if !spec.args.is_empty() {
-        resolved.args = spec.args.clone();
+fn mark_restart_decision_after_exit(
+    manifest: &mut ContainerSandboxManifest,
+    now_millis: u64,
+) -> Result<ContainerRestartDecision> {
+    if manifest.shutdown_requested || !manifest.conmon_layout.exit_status_file.exists() {
+        return Ok(ContainerRestartDecision::NotRestarting);
     }
-    if spec.env.is_empty() || spec.uses_default_env() {
-        resolved.env = defaults.env.clone();
-    } else {
-        resolved.env = merge_env_overrides(&defaults.env, &spec.env);
+
+    let exit_code = read_exit_code(&manifest.conmon_layout.exit_status_file)?;
+    if !restart_policy_allows_restart(
+        manifest.spec.lifecycle.restart_policy,
+        exit_code,
+        manifest.restart_count,
+    ) {
+        return Ok(ContainerRestartDecision::NotRestarting);
     }
-    if !spec.uses_default_cwd() {
-        resolved.cwd = spec.cwd.clone();
+
+    manifest.last_exit_code = Some(exit_code);
+    let next_restart_at_millis = manifest.next_restart_at_millis.get_or_insert_with(|| {
+        now_millis.saturating_add(restart_backoff_delay(manifest.restart_count).as_millis() as u64)
+    });
+    if now_millis < *next_restart_at_millis {
+        synchronize_handle_status(manifest, SandboxStatus::Starting);
+        return Ok(ContainerRestartDecision::WaitingForBackoff);
     }
-    resolved.terminal = spec.terminal || defaults.terminal;
-    resolved
-}
 
-fn merge_env_overrides(base: &[String], overrides: &[String]) -> Vec<String> {
-    let mut merged = base.to_vec();
-    for override_entry in overrides {
-        let Some(override_key) = env_key(override_entry) else {
-            merged.push(override_entry.clone());
-            continue;
-        };
-
-        if let Some(index) = merged
-            .iter()
-            .position(|entry| env_key(entry).is_some_and(|key| key == override_key))
-        {
-            merged[index] = override_entry.clone();
-        } else {
-            merged.push(override_entry.clone());
-        }
-    }
-    merged
-}
-
-fn env_key(entry: &str) -> Option<&str> {
-    let (key, _) = entry.split_once('=')?;
-    (!key.is_empty()).then_some(key)
-}
-
-fn configured_stop_signal(image_metadata: &ContainerImageMetadata) -> String {
-    image_metadata
-        .stop_signal
-        .as_deref()
-        .map(str::trim)
-        .filter(|signal| !signal.is_empty())
-        .unwrap_or("TERM")
-        .to_owned()
-}
-
-fn configured_stop_timeout(spec: &SandboxSpec, config: &ContainerSandboxBackendConfig) -> Duration {
-    spec.lifecycle.stop_timeout.unwrap_or(config.stop_timeout)
+    manifest.restart_count += 1;
+    manifest.next_restart_at_millis = None;
+    synchronize_handle_status(manifest, SandboxStatus::Starting);
+    Ok(ContainerRestartDecision::RestartNow)
 }
 
 fn running_status(manifest: &ContainerSandboxManifest) -> SandboxStatus {
@@ -1224,164 +1216,6 @@ fn published_endpoints(spec: &SandboxSpec) -> Vec<PublishedEndpoint> {
             .with_guest_port(port_binding.guest_port)
         })
         .collect()
-}
-
-fn spawn_background(command: &CommandSpec) -> Result<()> {
-    command
-        .as_command()
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to spawn sandbox lifecycle command {}: {error}",
-                command.program.display()
-            ),
-        })?;
-    Ok(())
-}
-
-fn run_status_checked(command: &CommandSpec) -> Result<()> {
-    let output = command
-        .as_command()
-        .output()
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to run sandbox command {}: {error}",
-                command.program.display()
-            ),
-        })?;
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(SandboxError::OperationFailed {
-        message: format!(
-            "sandbox command {} failed: {}",
-            command.program.display(),
-            render_command_failure(&output.stderr)
-        ),
-    })
-}
-
-fn run_status_best_effort(command: &CommandSpec) -> Result<()> {
-    let _ = command
-        .as_command()
-        .output()
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to run sandbox cleanup command {}: {error}",
-                command.program.display()
-            ),
-        })?;
-    Ok(())
-}
-
-fn runtime_state(command: &CommandSpec) -> Result<Option<String>> {
-    let output = command
-        .as_command()
-        .output()
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to run runtime state command {}: {error}",
-                command.program.display()
-            ),
-        })?;
-    if !output.status.success() {
-        return Ok(None);
-    }
-    let payload: RuntimeStatePayload =
-        serde_json::from_slice(&output.stdout).map_err(|error| SandboxError::OperationFailed {
-            message: format!("failed to parse runtime state JSON: {error}"),
-        })?;
-    Ok(Some(payload.status))
-}
-
-fn wait_for_runtime_state(command: &CommandSpec, timeout: Duration) -> Result<String> {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if let Some(status) = runtime_state(command)?
-            && (status == "created" || status == "running")
-        {
-            return Ok(status);
-        }
-        thread::sleep(Duration::from_millis(200));
-    }
-    Err(SandboxError::OperationFailed {
-        message: format!(
-            "sandbox runtime did not reach created state before timeout via {}",
-            command.program.display()
-        ),
-    })
-}
-
-fn signal_process(signal: &str, pid: u32) -> Result<()> {
-    let status = std::process::Command::new("kill")
-        .arg(format!("-{signal}"))
-        .arg(pid.to_string())
-        .status()
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!("failed to signal sandbox process {pid} with {signal}: {error}"),
-        })?;
-    if status.success() {
-        return Ok(());
-    }
-    Err(SandboxError::OperationFailed {
-        message: format!("kill -{signal} {pid} returned non-zero status {status}"),
-    })
-}
-
-fn read_pid(path: &Path) -> Result<u32> {
-    let pid = std::fs::read_to_string(path).map_err(|error| SandboxError::OperationFailed {
-        message: format!("failed to read sandbox pidfile {}: {error}", path.display()),
-    })?;
-    pid.trim()
-        .parse::<u32>()
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to parse sandbox pid from {}: {error}",
-                path.display()
-            ),
-        })
-}
-
-fn wait_for_path(path: &Path, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if path.exists() {
-            return true;
-        }
-        thread::sleep(Duration::from_millis(200));
-    }
-    path.exists()
-}
-
-fn read_exit_code(path: &Path) -> Result<i32> {
-    let exit_status =
-        std::fs::read_to_string(path).map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to read sandbox exit status {}: {error}",
-                path.display()
-            ),
-        })?;
-    exit_status
-        .trim()
-        .parse::<i32>()
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to parse sandbox exit status {}: {error}",
-                path.display()
-            ),
-        })
-}
-
-fn render_command_failure(stderr: &[u8]) -> String {
-    let rendered = String::from_utf8_lossy(stderr).trim().to_owned();
-    if rendered.is_empty() {
-        "stderr was empty".to_owned()
-    } else {
-        rendered
-    }
 }
 
 #[cfg(test)]

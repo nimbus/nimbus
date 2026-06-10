@@ -92,6 +92,7 @@ fn machine_client_error_to_sandbox_error(error: Error) -> SandboxError {
     let rendered = error.to_string();
     match error {
         Error::InvalidInput(_)
+        | Error::MissingIndex { .. }
         | Error::SchemaValidation(_)
         | Error::SchemaNotFound(_)
         | Error::HistoricalRead { .. }
@@ -130,7 +131,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use nimbus::{
-        PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
+        Error, PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
         SandboxError, SandboxHandle, SandboxId, SandboxOwnerSpec, SandboxPortBinding,
         SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus, TenantId,
     };
@@ -138,7 +139,9 @@ mod tests {
     use serde_json::json;
     use tempfile::{Builder, TempDir};
 
-    use super::{ForwardedMachineApiSandboxBackend, MachineApiClient};
+    use super::{
+        ForwardedMachineApiSandboxBackend, MachineApiClient, machine_client_error_to_sandbox_error,
+    };
     use crate::machine::{
         MachineApiListenMode, MachineApiState, bind_direct_listener,
         default_guest_helper_binary_dirs, serve_machine_api,
@@ -228,6 +231,18 @@ mod tests {
             .expect_err("missing socket should fail");
         assert!(
             matches!(error, SandboxError::BackendUnavailable { .. }),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn machine_client_missing_index_error_maps_to_invalid_spec() {
+        let error = machine_client_error_to_sandbox_error(Error::MissingIndex {
+            fields: vec!["state".to_string(), "rank".to_string()],
+        });
+
+        assert!(
+            matches!(error, SandboxError::InvalidSpec { .. }),
             "{error:?}"
         );
     }

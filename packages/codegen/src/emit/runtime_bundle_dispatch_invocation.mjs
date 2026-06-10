@@ -16,6 +16,7 @@ function runtimeBundleDispatchInvocation() {
     args,
     page_size: options.pageSize,
     cursor: options.cursor ?? null,
+    hostCallSessionId: options.hostCallSessionId,
   };
 
   switch (expectedKind) {
@@ -62,6 +63,7 @@ async function invokeNamedDefinitionLocally(request) {
   return invokeNamedDefinition(request.function_name, request.kind, request.args ?? {}, {
     pageSize: request.page_size,
     cursor: request.cursor ?? null,
+    hostCallSessionId: request.hostCallSessionId,
   });
 }`;
 }

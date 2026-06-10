@@ -712,11 +712,11 @@ fn lower_batch_get_request(
         let parsed_document = resource_names::parse_document_name(&document_name)
             .map_err(resource_name_error_to_core)
             .map_err(firebase_grpc_status)?;
-        ensure_database_match(
-            &database,
-            &parsed_document.database,
-            "requested document belongs to a different database",
-        )?;
+        resource_names::ensure_database_match(&database, &parsed_document.database)
+            .map_err(|_| {
+                Status::invalid_argument("requested document belongs to a different database")
+            })
+            .map_err(Box::new)?;
         let canonical_name = firestore_document_name(&database, &parsed_document.document_path);
         if seen_documents.insert(canonical_name.clone()) {
             documents.push(ParsedBatchGetDocument {
@@ -1315,14 +1315,78 @@ fn proto_document(
     })
 }
 
-fn ensure_database_match(
-    expected: &FirestoreDatabaseName,
-    actual: &FirestoreDatabaseName,
-    context: &str,
-) -> FirestoreGrpcLoweringResult<()> {
-    if expected == actual {
-        Ok(())
-    } else {
-        Err(Status::invalid_argument(context.to_string()).into())
+#[cfg(test)]
+mod tests {
+    use nimbus_core::{StructuredAggregationResult, Timestamp};
+    use serde_json::{Map, Value, json};
+
+    use super::*;
+
+    fn grpc_value_as_proto_json(value: &proto::Value) -> Value {
+        match value.value_type.as_ref().expect("gRPC value should be set") {
+            proto::value::ValueType::NullValue(_) => json!({ "nullValue": null }),
+            proto::value::ValueType::BooleanValue(value) => json!({ "booleanValue": value }),
+            proto::value::ValueType::IntegerValue(value) => {
+                json!({ "integerValue": value.to_string() })
+            }
+            proto::value::ValueType::DoubleValue(value) => json!({ "doubleValue": value }),
+            proto::value::ValueType::StringValue(value) => json!({ "stringValue": value }),
+            proto::value::ValueType::ArrayValue(array) => json!({
+                "arrayValue": {
+                    "values": array
+                        .values
+                        .iter()
+                        .map(grpc_value_as_proto_json)
+                        .collect::<Vec<_>>()
+                }
+            }),
+            proto::value::ValueType::MapValue(map) => {
+                let fields = map
+                    .fields
+                    .iter()
+                    .map(|(field, value)| (field.clone(), grpc_value_as_proto_json(value)))
+                    .collect::<Map<_, _>>();
+                json!({ "mapValue": { "fields": fields } })
+            }
+            other => panic!("unexpected aggregate test value type: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn aggregation_result_grpc_and_rest_encoders_preserve_representative_values() {
+        let aggregate_fields = Map::from_iter([
+            ("count".to_string(), json!(42)),
+            ("ratio".to_string(), json!(1.5)),
+            ("label".to_string(), json!("ready")),
+            (
+                "shape".to_string(),
+                json!({
+                    "active": true,
+                    "values": [1, "two", null]
+                }),
+            ),
+        ]);
+        let result = StructuredAggregationResult { aggregate_fields };
+
+        let grpc_result = proto_aggregation_result(&result).expect("gRPC result should encode");
+        let rest_entries = crate::run_aggregation_query_response_entries(&result, Timestamp(0))
+            .expect("REST result should encode");
+        let rest_fields = rest_entries[0]
+            .pointer("/result/aggregateFields")
+            .expect("REST aggregate fields should be present")
+            .as_object()
+            .expect("REST aggregate fields should be an object");
+
+        assert_eq!(grpc_result.aggregate_fields.len(), rest_fields.len());
+        for (alias, grpc_value) in grpc_result.aggregate_fields {
+            assert_eq!(
+                grpc_value_as_proto_json(&grpc_value),
+                rest_fields
+                    .get(&alias)
+                    .unwrap_or_else(|| panic!("REST aggregate field `{alias}` should exist"))
+                    .clone(),
+                "aggregate field `{alias}` should have equivalent gRPC and REST proto encodings"
+            );
+        }
     }
 }

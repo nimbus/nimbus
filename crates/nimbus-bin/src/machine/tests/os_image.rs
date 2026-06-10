@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn machine_os_apply_updates_config_and_invalidates_materialized_artifacts() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -73,7 +73,7 @@ fn machine_os_apply_updates_config_and_invalidates_materialized_artifacts() {
 #[test]
 fn default_nimbus_image_initializes_bootc_native_machine_config() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -115,7 +115,7 @@ fn default_nimbus_image_initializes_bootc_native_machine_config() {
 #[test]
 fn default_nimbus_image_rejects_legacy_ignition_override() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -149,7 +149,7 @@ fn default_nimbus_image_rejects_legacy_ignition_override() {
 #[test]
 fn bootc_machine_os_apply_requires_guest_api_without_replacing_host_disk() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -207,7 +207,7 @@ fn bootc_machine_os_apply_requires_guest_api_without_replacing_host_disk() {
 #[test]
 fn bootc_machine_os_upgrade_requires_guest_api_without_replacing_host_disk() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -292,7 +292,7 @@ fn machine_os_upgrade_plan_uses_supported_stream_target() {
             disk_gib: DEFAULT_MACHINE_DISK_GIB,
         },
         volumes: Vec::new(),
-        roots: MachineRootLayout::new(
+        roots: MachineRootLayout::test_sibling_roots(
             PathBuf::from("/tmp/config"),
             PathBuf::from("/tmp/state"),
             PathBuf::from("/tmp/runtime"),
@@ -340,7 +340,7 @@ fn default_macos_stream_uses_nimbus_bootc_contract() {
             disk_gib: DEFAULT_MACHINE_DISK_GIB,
         },
         volumes: Vec::new(),
-        roots: MachineRootLayout::new(
+        roots: MachineRootLayout::test_sibling_roots(
             PathBuf::from("/tmp/config"),
             PathBuf::from("/tmp/state"),
             PathBuf::from("/tmp/runtime"),
@@ -375,7 +375,7 @@ fn explicit_podman_override_does_not_get_rewritten_to_default_digest() {
             disk_gib: DEFAULT_MACHINE_DISK_GIB,
         },
         volumes: Vec::new(),
-        roots: MachineRootLayout::new(
+        roots: MachineRootLayout::test_sibling_roots(
             PathBuf::from("/tmp/config"),
             PathBuf::from("/tmp/state"),
             PathBuf::from("/tmp/runtime"),
@@ -422,7 +422,7 @@ fn machine_os_upgrade_handles_digest_pinned_supported_streams() {
             disk_gib: DEFAULT_MACHINE_DISK_GIB,
         },
         volumes: Vec::new(),
-        roots: MachineRootLayout::new(
+        roots: MachineRootLayout::test_sibling_roots(
             PathBuf::from("/tmp/config"),
             PathBuf::from("/tmp/state"),
             PathBuf::from("/tmp/runtime"),
@@ -455,10 +455,14 @@ fn machine_image_source_parse_supports_published_local_and_url_sources() {
         }
     );
     assert_eq!(
-        MachineImageSource::parse("https://example.com/nimbus-machine.raw.zst")
+        MachineImageSource::parse(
+            "https://example.com/nimbus-machine.raw.zst#sha256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
             .expect("url should parse"),
         MachineImageSource::HttpUrl {
             url: "https://example.com/nimbus-machine.raw.zst".to_owned(),
+            sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_owned(),
         }
     );
     assert_eq!(
@@ -466,5 +470,17 @@ fn machine_image_source_parse_supports_published_local_and_url_sources() {
         MachineImageSource::LocalDisk {
             path: PathBuf::from("/tmp/nimbus-machine.raw"),
         }
+    );
+}
+
+#[test]
+fn machine_image_source_parse_rejects_http_sources_without_sha256() {
+    let error = MachineImageSource::parse("https://example.com/nimbus-machine.raw.zst")
+        .expect_err("http source without digest should fail");
+
+    assert!(
+        error
+            .to_string()
+            .contains("must include an integrity suffix")
     );
 }

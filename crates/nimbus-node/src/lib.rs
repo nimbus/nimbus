@@ -16,10 +16,7 @@ mod host_lifecycle;
 mod reconciler;
 mod systemd_transient;
 
-pub use direct_process::{
-    DirectProcessBackend, DirectProcessEvidence, DirectProcessStatusSnapshot,
-    HostPlatformDependencies,
-};
+pub use direct_process::{DirectProcessBackend, DirectProcessEvidence};
 pub use host_lifecycle::{
     HostBackendObservedState, HostExecutable, HostLifecycleBackend,
     HostLifecycleBackendCapabilities, HostLifecycleBackendKind, HostLifecycleFuture,

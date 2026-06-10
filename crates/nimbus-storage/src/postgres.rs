@@ -27,7 +27,10 @@ use tokio_postgres::types::ToSql;
 use tokio_postgres::{AsyncMessage, Config as PostgresConfig, IsolationLevel, NoTls};
 
 use crate::RetentionFloor;
-use crate::async_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
+use crate::async_storage::{
+    TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, map_executor_join_error,
+    map_executor_permit_error,
+};
 use crate::commit_log::{
     deserialize_durable_record, serialize_durable_record, serialize_tenant_event_record,
 };
@@ -141,6 +144,7 @@ pub struct PostgresWriteTransaction {
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
+    commit_timestamp: Option<Timestamp>,
     notification: PendingPostgresNotification,
     schema_cache_changed: bool,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,

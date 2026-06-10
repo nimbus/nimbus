@@ -190,6 +190,38 @@ fn update_inc_operator() {
 }
 
 #[test]
+fn update_inc_rejects_nan_operand_without_mutating_document() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    seed_users(&fixture);
+
+    let body = bson::doc! {
+        "update": "users",
+        "$db": "testdb",
+        "updates": [{
+            "q": { "_id": "u1" },
+            "u": { "$inc": { "age": bson::Bson::Double(f64::NAN) } },
+        }],
+    };
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
+    assert_eq!(result.get_i32("n").unwrap(), 0);
+    assert_eq!(result.get_i32("nModified").unwrap(), 0);
+
+    let errors = result.get_array("writeErrors").unwrap();
+    assert_eq!(errors.len(), 1);
+    let error = errors[0].as_document().unwrap();
+    assert_eq!(error.get_i32("code").unwrap(), BAD_VALUE.code);
+    assert!(
+        error
+            .get_str("errmsg")
+            .unwrap()
+            .contains("finite numeric value")
+    );
+
+    let docs = find_doc(&fixture, bson::doc! { "_id": "u1" });
+    assert_eq!(docs[0].get_i32("age").unwrap(), 30);
+}
+
+#[test]
 fn update_unsupported_operator_returns_error() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
@@ -258,6 +290,38 @@ fn update_mul_operator() {
 }
 
 #[test]
+fn update_mul_rejects_infinite_operand_without_mutating_document() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    seed_users(&fixture);
+
+    let body = bson::doc! {
+        "update": "users",
+        "$db": "testdb",
+        "updates": [{
+            "q": { "_id": "u1" },
+            "u": { "$mul": { "age": bson::Bson::Double(f64::INFINITY) } },
+        }],
+    };
+    let result = update(&body, &mut test_conn(), &fixture.engine()).unwrap();
+    assert_eq!(result.get_i32("n").unwrap(), 0);
+    assert_eq!(result.get_i32("nModified").unwrap(), 0);
+
+    let errors = result.get_array("writeErrors").unwrap();
+    assert_eq!(errors.len(), 1);
+    let error = errors[0].as_document().unwrap();
+    assert_eq!(error.get_i32("code").unwrap(), BAD_VALUE.code);
+    assert!(
+        error
+            .get_str("errmsg")
+            .unwrap()
+            .contains("finite numeric value")
+    );
+
+    let docs = find_doc(&fixture, bson::doc! { "_id": "u1" });
+    assert_eq!(docs[0].get_i32("age").unwrap(), 30);
+}
+
+#[test]
 fn update_push_operator() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
@@ -308,6 +372,95 @@ fn update_push_each_operator() {
     let docs = find_in(&fixture, "items", bson::doc! { "_id": "i2" });
     let tags = docs[0].get_array("tags").unwrap();
     assert_eq!(tags.len(), 3);
+}
+
+#[test]
+fn update_read_modify_write_operators_compose_from_stale_snapshots() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let insert_body = bson::doc! {
+        "insert": "items",
+        "$db": "testdb",
+        "documents": [{
+            "_id": "stale-transforms",
+            "tags": ["a"],
+            "vals": [1, 2, 3],
+            "count": 2,
+            "flags": 0b1100_i32,
+        }],
+    };
+    insert(&insert_body, &mut test_conn(), &fixture.engine()).unwrap();
+
+    let table = nimbus_core::TableName::new("items").unwrap();
+    let document_id = nimbus_core::DocumentId::from_key("stale-transforms").unwrap();
+    let write_key = nimbus_core::WriteKey::from(nimbus_core::DocumentLocator::new(
+        table.clone(),
+        document_id.clone(),
+    ));
+    let current_doc = nimbus_core::Document::with_id(
+        document_id,
+        table,
+        serde_json::Map::from_iter([
+            ("tags".to_string(), serde_json::json!(["a"])),
+            ("vals".to_string(), serde_json::json!([1, 2, 3])),
+            ("count".to_string(), serde_json::json!(2)),
+            ("flags".to_string(), serde_json::json!(0b1100_i64)),
+        ]),
+    );
+
+    let stale_update_docs = [
+        bson::doc! { "$push": { "tags": "b" } },
+        bson::doc! { "$push": { "tags": "c" } },
+        bson::doc! { "$pop": { "vals": 1 } },
+        bson::doc! { "$pop": { "vals": 1 } },
+        bson::doc! { "$mul": { "count": 2 } },
+        bson::doc! { "$mul": { "count": 3 } },
+        bson::doc! { "$bit": { "flags": { "and": 0b1010_i32 } } },
+        bson::doc! { "$bit": { "flags": { "or": 0b0001_i32 } } },
+    ];
+
+    for update_doc in stale_update_docs {
+        let write = super::super::update::build_operator_write(
+            write_key.clone(),
+            &update_doc,
+            Some(&current_doc),
+        )
+        .expect("operator write should build");
+        let execution_unit = fixture
+            .engine()
+            .begin_mutation_execution_unit(
+                nimbus_core::TenantId::new("testdb").unwrap(),
+                test_principal(),
+            )
+            .expect("execution unit should start");
+        execution_unit
+            .execute_atomic_write_batch(
+                nimbus_core::AtomicWriteBatch::new(vec![write]).expect("batch should build"),
+            )
+            .expect("stale-snapshot transform write should apply");
+    }
+
+    let docs = find_in(&fixture, "items", bson::doc! { "_id": "stale-transforms" });
+    let tags = docs[0].get_array("tags").unwrap();
+    assert_eq!(
+        tags,
+        &[
+            bson::Bson::String("a".into()),
+            bson::Bson::String("b".into()),
+            bson::Bson::String("c".into())
+        ]
+    );
+    let vals = docs[0].get_array("vals").unwrap();
+    assert_eq!(vals, &[bson::Bson::Int32(1)]);
+    let count = docs[0]
+        .get_i64("count")
+        .or_else(|_| docs[0].get_i32("count").map(i64::from))
+        .unwrap();
+    assert_eq!(count, 12);
+    let flags = docs[0]
+        .get_i64("flags")
+        .or_else(|_| docs[0].get_i32("flags").map(i64::from))
+        .unwrap();
+    assert_eq!(flags, 0b1001);
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use nimbus_core::{Error, Result, TenantId};
+use nimbus_core::{Result, TenantId};
 use nimbus_storage::{ShadowMaterializer, ShadowMaterializerConfig, TenantStore};
 
 use super::snapshot::rebuild_authoritative_snapshot;
@@ -22,26 +22,9 @@ impl Engine {
         let bootstrap = self
             .export_durable_journal_bootstrap_async(tenant_id.clone())
             .await?;
-        let mut after = bootstrap.resume_after;
-        let mut tail = Vec::new();
-        while after.0 < bootstrap.bootstrap_cut.0 {
-            let page = self
-                .stream_durable_journal_async(tenant_id.clone(), after, 256)
-                .await?;
-            let page_records = page
-                .records
-                .into_iter()
-                .take_while(|record| record.sequence.0 <= bootstrap.bootstrap_cut.0)
-                .collect::<Vec<_>>();
-            let Some(last_record) = page_records.last() else {
-                return Err(Error::Internal(format!(
-                    "journal stream made no progress while building shadow materializer for tenant {} up to sequence {} from {}",
-                    tenant_id, bootstrap.bootstrap_cut.0, after.0
-                )));
-            };
-            after = last_record.sequence;
-            tail.extend(page_records);
-        }
+        let tail = self
+            .read_durable_journal_suffix_to_sequence_async(&tenant_id, &bootstrap)
+            .await?;
         ShadowMaterializer::from_checkpoint_and_journal(bootstrap.snapshot, tail, config)
     }
 

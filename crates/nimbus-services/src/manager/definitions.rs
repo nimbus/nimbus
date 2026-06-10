@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use nimbus_core::{Error, TenantId};
 use nimbus_sandbox::SandboxStatus;
@@ -12,7 +12,7 @@ use crate::{
 };
 
 use super::ServiceManager;
-use super::sessions::next_session_version;
+use super::clock::{next_version, now_millis};
 use super::types::{ServiceManagerState, TenantServiceKey, sandbox_backend_error};
 
 const SUPPORTED_BUILT_IN_PROVIDERS: &[&str] = &[
@@ -108,7 +108,7 @@ impl ServiceManager {
                 "service `{service_name}` for tenant `{tenant_id}` already exists"
             )));
         }
-        let version = next_definition_version(&mut state.next_definition_version);
+        let version = next_version(&mut state.next_definition_version, "svcdef");
         let now = now_millis();
         let definition = ServiceDefinition::dynamic(
             tenant_id.clone(),
@@ -168,7 +168,7 @@ impl ServiceManager {
         let mut updated = current;
         updated.backend = backend;
         updated.generation = updated.generation.saturating_add(1);
-        updated.resource_version = next_definition_version(&mut state.next_definition_version);
+        updated.resource_version = next_version(&mut state.next_definition_version, "svcdef");
         updated.updated_at_millis = now_millis();
         updated.labels = labels;
         state.definitions.insert(key, updated.clone());
@@ -215,6 +215,35 @@ impl ServiceManager {
         }
 
         self.claim_service_definition_delete(&key, force).await?;
+
+        let post_claim_precondition = {
+            let state = self
+                .state
+                .lock()
+                .expect("manager lock should not be poisoned");
+            if let Some(current) = state.definitions.get(&key) {
+                if current.source != ServiceDefinitionSource::Dynamic {
+                    Err(Error::Conflict(format!(
+                        "service `{service_name}` for tenant `{tenant_id}` is static and cannot be deleted through dynamic service definition routes"
+                    )))
+                } else if current.generation != expected_generation {
+                    Err(Error::PreconditionFailed(format!(
+                        "service `{service_name}` for tenant `{tenant_id}` has generation {}, but delete expected generation {expected_generation}",
+                        current.generation
+                    )))
+                } else {
+                    Ok(())
+                }
+            } else {
+                Err(Error::NotFound(format!(
+                    "service `{service_name}` for tenant `{tenant_id}` was not found"
+                )))
+            }
+        };
+        if let Err(error) = post_claim_precondition {
+            self.release_activation(&key);
+            return Err(error);
+        }
 
         if !force {
             let live_session_count = {
@@ -434,7 +463,7 @@ fn close_open_service_sessions(
         if !should_close {
             continue;
         }
-        let next_resource_version = next_session_version(&mut state.next_session_version);
+        let next_resource_version = next_version(&mut state.next_session_version, "session");
         if let Some(session) = state.sessions.get_mut(session_id) {
             session.lifecycle_state = SessionLifecycleState::Closed;
             session.generation = session.generation.saturating_add(1);
@@ -540,16 +569,4 @@ fn validate_service_backend(
         }
     }
     Ok(())
-}
-
-fn next_definition_version(next: &mut u64) -> String {
-    *next = next.saturating_add(1).max(1);
-    format!("svcdef-v{}", *next)
-}
-
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().try_into().unwrap_or(u64::MAX))
-        .unwrap_or(0)
 }

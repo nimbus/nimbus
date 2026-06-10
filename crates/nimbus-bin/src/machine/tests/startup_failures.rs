@@ -4,7 +4,7 @@ use super::*;
 fn machine_start_reports_oci_materialization_failure_for_unreachable_registry_image() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -49,7 +49,7 @@ fn machine_start_reports_oci_materialization_failure_for_unreachable_registry_im
 fn machine_start_auto_initializes_before_start_failure() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -111,7 +111,7 @@ fn machine_start_auto_initializes_before_start_failure() {
 fn machine_start_auto_initializes_named_machine_before_start_failure() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -144,7 +144,7 @@ fn machine_start_auto_initializes_named_machine_before_start_failure() {
 fn machine_init_now_attempts_start_after_initialization() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -184,7 +184,7 @@ fn machine_init_now_attempts_start_after_initialization() {
 #[test]
 fn machine_start_rejects_create_if_missing_overrides_when_machine_exists() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),

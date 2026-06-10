@@ -72,7 +72,7 @@ impl TenantIsolationDecision {
         context: &TenantIsolationContext,
         input: TenantIsolationPolicyInput,
     ) -> Result<Self> {
-        context.validate_principal_claim_if_present("tenant isolation decision")?;
+        context.admit_if_principal_claim_absent_or_matching("tenant isolation decision")?;
         let authority = TenantIsolationAuthorityDecision::from_context(context)?;
         let fingerprint = TenantIsolationDecisionFingerprint {
             tenant_id: context.tenant_id.as_str(),

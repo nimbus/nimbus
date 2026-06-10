@@ -4,6 +4,7 @@ use nimbus_core::{
     CreateCronRequest, FieldSchema, FieldType, Mutation, Query, ScheduleRequest,
     ScheduledJobOutcome, ScheduledJobResult, TableName, TableSchema, TenantId, Timestamp,
 };
+use nimbus_storage::{FaultOccurrence, FaultPoint, ManualClock, ScriptedFaultInjector};
 use nimbus_testing::{
     DeterministicHarness, EngineFixture, RestartBoundary, RestartPoint, ScenarioMetadata,
     ScriptedRestartSchedule, wait_for_value,
@@ -13,7 +14,7 @@ use tempfile::tempdir;
 use tokio::sync::{mpsc, watch};
 use tokio::time::{Duration, timeout};
 
-use super::super::Engine;
+use super::{super::Engine, scheduled_jobs::SCHEDULED_JOB_CLAIM_BATCH_LIMIT};
 use crate::SubscriptionUpdate;
 
 fn tasks_table() -> TableName {
@@ -136,6 +137,137 @@ async fn scheduler_async_write_path_round_trips_pending_running_and_history_stat
         .await
         .expect("history should load");
     assert_eq!(loaded.outcome, ScheduledJobOutcome::Completed);
+}
+
+#[tokio::test]
+async fn scheduler_continues_claimed_batch_after_result_bookkeeping_failure() {
+    let data_dir = tempdir().expect("tempdir should create");
+    let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
+    let clock = Arc::new(ManualClock::new(Timestamp(1_000)));
+    let engine = Arc::new(
+        Engine::new_with_simulation(
+            data_dir.path(),
+            clock,
+            Arc::new(ScriptedFaultInjector::new([FaultOccurrence {
+                point: FaultPoint::ScheduledJobRecordResultBeforeWrite,
+                visit: 1,
+            }])),
+        )
+        .expect("engine should create"),
+    );
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    let first_job_id = engine
+        .schedule_mutation_async(
+            tenant_id.clone(),
+            ScheduleRequest {
+                run_after_ms: 0,
+                mutation: insert_task_mutation("first claimed job"),
+            },
+        )
+        .await
+        .expect("first job should schedule");
+    let second_job_id = engine
+        .schedule_mutation_async(
+            tenant_id.clone(),
+            ScheduleRequest {
+                run_after_ms: 0,
+                mutation: insert_task_mutation("second claimed job"),
+            },
+        )
+        .await
+        .expect("second job should schedule");
+
+    crate::scheduler::tick_at_async(&engine, Timestamp(1_000))
+        .await
+        .expect("scheduler tick should isolate per-job bookkeeping failure");
+
+    let documents = engine
+        .list_documents(&tenant_id, &tasks_table())
+        .expect("documents should list");
+    let titles = documents
+        .iter()
+        .filter_map(|document| {
+            document
+                .fields
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        titles,
+        std::collections::BTreeSet::from(["first claimed job", "second claimed job"])
+    );
+
+    let first_result = engine
+        .get_scheduled_job_result_async(tenant_id.clone(), first_job_id)
+        .await;
+    let second_result = engine
+        .get_scheduled_job_result_async(tenant_id.clone(), second_job_id)
+        .await;
+    let results = [first_result, second_result];
+    let completed_results = results
+        .iter()
+        .filter(|result| {
+            matches!(
+                result,
+                Ok(record) if record.outcome == ScheduledJobOutcome::Completed
+            )
+        })
+        .count();
+    let missing_results = results
+        .iter()
+        .filter(|result| matches!(result, Err(nimbus_core::Error::ScheduledJobNotFound(_))))
+        .count();
+    assert_eq!(
+        completed_results, 1,
+        "one job should persist result bookkeeping after the injected first failure"
+    );
+    assert_eq!(
+        missing_results, 1,
+        "the injected bookkeeping failure should affect only the failing job"
+    );
+}
+
+#[test]
+fn scheduler_claims_bounded_due_job_batch() {
+    let data_dir = tempdir().expect("tempdir should create");
+    let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
+    let engine = Engine::new(data_dir.path()).expect("engine should create");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    for index in 0..(SCHEDULED_JOB_CLAIM_BATCH_LIMIT + 2) {
+        engine
+            .schedule_mutation(
+                &tenant_id,
+                ScheduleRequest {
+                    run_after_ms: 0,
+                    mutation: insert_task_mutation(format!("batch job {index}").as_str()),
+                },
+            )
+            .expect("schedule should succeed");
+    }
+
+    let claimed = engine
+        .claim_due_jobs(&tenant_id, Timestamp(u64::MAX))
+        .expect("claim should succeed");
+    assert_eq!(claimed.len(), SCHEDULED_JOB_CLAIM_BATCH_LIMIT);
+    assert_eq!(
+        engine
+            .list_scheduled_jobs(&tenant_id)
+            .expect("pending jobs should list")
+            .len(),
+        2
+    );
+
+    let remaining = engine
+        .claim_due_jobs(&tenant_id, Timestamp(u64::MAX))
+        .expect("second claim should succeed");
+    assert_eq!(remaining.len(), 2);
 }
 
 #[tokio::test]

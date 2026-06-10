@@ -40,6 +40,7 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
             nimbus_core::PrincipalContext::anonymous(),
             None,
             InvocationKind::Query,
+            "convex_fixture_test",
         ),
     );
     (tempdir, engine, tenant_id, bridge)

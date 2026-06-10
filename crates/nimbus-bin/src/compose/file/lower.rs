@@ -139,10 +139,17 @@ impl ComposeProjectPlan {
     pub(crate) fn into_service_catalog(self) -> Result<ComposeServiceCatalog, Error> {
         let tenant_id = TenantId::new(CONFIG_VALIDATION_TENANT_ID)
             .expect("config validation tenant id should remain valid");
+        let mut service_backends = BTreeMap::new();
         for (service_name, service) in &self.services {
-            let _ = service.to_service_backend(&tenant_id, service_name)?;
+            service_backends.insert(
+                service_name.clone(),
+                service.to_service_backend(&tenant_id, service_name)?,
+            );
         }
-        Ok(ComposeServiceCatalog { project: self })
+        Ok(ComposeServiceCatalog {
+            project: self,
+            service_backends,
+        })
     }
 }
 fn admit_top_level_volumes(
@@ -193,26 +200,21 @@ impl ServiceDefinitionCatalog for ComposeServiceCatalog {
         tenant_id: &TenantId,
         service_name: &str,
     ) -> Option<ServiceBackend> {
-        self.project.services.get(service_name).map(|service| {
-            service.to_service_backend(tenant_id, service_name).expect(
-                "validated compose services should keep lowering through the server catalog seam",
-            )
-        })
+        self.service_backends
+            .get(service_name)
+            .map(|backend| service_backend_template_for_tenant(backend, tenant_id))
     }
 
     fn service_backends_for_tenant(
         &self,
         tenant_id: &TenantId,
     ) -> BTreeMap<String, ServiceBackend> {
-        self.project
-            .services
+        self.service_backends
             .iter()
-            .map(|(service_name, service)| {
+            .map(|(service_name, backend)| {
                 (
                     service_name.clone(),
-                    service.to_service_backend(tenant_id, service_name).expect(
-                        "validated compose services should keep lowering through the server catalog seam",
-                    ),
+                    service_backend_template_for_tenant(backend, tenant_id),
                 )
             })
             .collect()
@@ -229,6 +231,17 @@ impl ServiceDefinitionCatalog for ComposeServiceCatalog {
             .map(ComposeServicePlan::to_volume_policy)
             .unwrap_or_default()
     }
+}
+
+fn service_backend_template_for_tenant(
+    template: &ServiceBackend,
+    tenant_id: &TenantId,
+) -> ServiceBackend {
+    let mut backend = template.clone();
+    if let ServiceBackend::Sandbox(spec) = &mut backend {
+        spec.tenant_id = tenant_id.clone();
+    }
+    backend
 }
 
 fn read_raw_compose_document(path: &Path) -> Result<RawComposeDocument, Error> {

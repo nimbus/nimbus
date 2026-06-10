@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{cmp::Ordering, sync::Arc};
 
 use nimbus_core::{
     Document, DocumentId, Filter, FilterOp, OrderBy, OrderDirection, PrincipalContext, Query,
@@ -35,7 +35,9 @@ pub(super) fn bson_to_filter_value(value: &bson::Bson) -> serde_json::Value {
     }
 }
 
-pub(super) fn translate_filter(filter_doc: &bson::Document) -> Result<Vec<Filter>, MongoError> {
+pub(in crate::commands) fn translate_filter(
+    filter_doc: &bson::Document,
+) -> Result<Vec<Filter>, MongoError> {
     translate_filter_impl(filter_doc, false)
 }
 
@@ -128,7 +130,10 @@ pub(super) fn matches_simple_filters(doc: &Document, filters: &[Filter]) -> bool
         let matched = match filter.op {
             FilterOp::Eq => field_val == &filter.value,
             FilterOp::Neq => field_val != &filter.value,
-            _ => true,
+            FilterOp::Gt => compare_json_values(Some(field_val), Some(&filter.value)).is_gt(),
+            FilterOp::Gte => !compare_json_values(Some(field_val), Some(&filter.value)).is_lt(),
+            FilterOp::Lt => compare_json_values(Some(field_val), Some(&filter.value)).is_lt(),
+            FilterOp::Lte => !compare_json_values(Some(field_val), Some(&filter.value)).is_gt(),
         };
         if !matched {
             return false;
@@ -137,16 +142,29 @@ pub(super) fn matches_simple_filters(doc: &Document, filters: &[Filter]) -> bool
     true
 }
 
+pub(super) struct QueryDocumentsRequest<'a> {
+    pub tenant_id: &'a TenantId,
+    pub table: &'a TableName,
+    pub filter_doc: &'a bson::Document,
+    pub orders: Vec<OrderBy>,
+    pub limit: Option<usize>,
+    pub transaction_token: Option<&'a TransactionSessionToken>,
+    pub principal: &'a PrincipalContext,
+}
+
 pub(super) fn query_documents(
     engine: &Arc<Engine>,
-    tenant_id: &TenantId,
-    table: &TableName,
-    filter_doc: &bson::Document,
-    orders: Vec<OrderBy>,
-    limit: Option<usize>,
-    transaction_token: Option<&TransactionSessionToken>,
+    request: QueryDocumentsRequest<'_>,
 ) -> Result<Vec<Document>, MongoError> {
-    let principal = PrincipalContext::system();
+    let QueryDocumentsRequest {
+        tenant_id,
+        table,
+        filter_doc,
+        orders,
+        limit,
+        transaction_token,
+        principal,
+    } = request;
 
     if let Some(id_val) = filter_doc.get("_id")
         && !matches!(id_val, bson::Bson::Document(d) if has_operator_keys(d))
@@ -157,12 +175,12 @@ pub(super) fn query_documents(
                 Some(transaction_token) => engine.get_document_in_transaction(
                     tenant_id,
                     transaction_token,
-                    &principal,
+                    principal,
                     table,
                     doc_id,
                 ),
                 None => engine
-                    .get_document_with_principal(tenant_id, table, doc_id, &principal)
+                    .get_document_with_principal(tenant_id, table, doc_id, principal)
                     .map(Some),
             };
             match result {
@@ -192,9 +210,9 @@ pub(super) fn query_documents(
     };
     let mut docs = match transaction_token {
         Some(transaction_token) => {
-            engine.query_documents_in_transaction(tenant_id, transaction_token, &principal, &query)
+            engine.query_documents_in_transaction(tenant_id, transaction_token, principal, &query)
         }
-        None => engine.query_documents_with_principal(tenant_id, &query, &principal),
+        None => engine.query_documents_with_principal(tenant_id, &query, principal),
     }
     .map_err(MongoError::from)?;
 
@@ -218,44 +236,113 @@ fn apply_compound_sort(docs: &mut [Document], orders: &[OrderBy]) {
                 OrderDirection::Asc => cmp,
                 OrderDirection::Desc => cmp.reverse(),
             };
-            if cmp != std::cmp::Ordering::Equal {
+            if cmp != Ordering::Equal {
                 return cmp;
             }
         }
-        std::cmp::Ordering::Equal
+        Ordering::Equal
     });
 }
 
-fn compare_json_values(
-    a: Option<&serde_json::Value>,
-    b: Option<&serde_json::Value>,
-) -> std::cmp::Ordering {
-    fn rank(v: Option<&serde_json::Value>) -> u8 {
-        match v {
-            None | Some(serde_json::Value::Null) => 0,
-            Some(serde_json::Value::Number(_)) => 1,
-            Some(serde_json::Value::String(_)) => 2,
-            Some(serde_json::Value::Bool(_)) => 3,
-            _ => 4,
-        }
-    }
-
-    let ra = rank(a);
-    let rb = rank(b);
+fn compare_json_values(a: Option<&serde_json::Value>, b: Option<&serde_json::Value>) -> Ordering {
+    let ra = json_value_rank(a);
+    let rb = json_value_rank(b);
     if ra != rb {
         return ra.cmp(&rb);
     }
 
     match (a, b) {
+        (None, None)
+        | (None, Some(serde_json::Value::Null))
+        | (Some(serde_json::Value::Null), None)
+        | (Some(serde_json::Value::Null), Some(serde_json::Value::Null)) => Ordering::Equal,
         (Some(serde_json::Value::Number(na)), Some(serde_json::Value::Number(nb))) => {
-            let fa = na.as_f64().unwrap_or(0.0);
-            let fb = nb.as_f64().unwrap_or(0.0);
-            fa.partial_cmp(&fb).unwrap_or(std::cmp::Ordering::Equal)
+            compare_json_numbers(na, nb)
         }
         (Some(serde_json::Value::String(sa)), Some(serde_json::Value::String(sb))) => sa.cmp(sb),
+        (Some(serde_json::Value::Object(oa)), Some(serde_json::Value::Object(ob))) => {
+            compare_json_objects(oa, ob)
+        }
+        (Some(serde_json::Value::Array(aa)), Some(serde_json::Value::Array(ab))) => {
+            compare_json_arrays(aa, ab)
+        }
         (Some(serde_json::Value::Bool(ba)), Some(serde_json::Value::Bool(bb))) => ba.cmp(bb),
-        _ => std::cmp::Ordering::Equal,
+        _ => Ordering::Equal,
     }
+}
+
+fn json_value_rank(v: Option<&serde_json::Value>) -> u8 {
+    match v {
+        None | Some(serde_json::Value::Null) => 0,
+        Some(serde_json::Value::Number(_)) => 1,
+        Some(serde_json::Value::String(_)) => 2,
+        Some(serde_json::Value::Object(_)) => 3,
+        Some(serde_json::Value::Array(_)) => 4,
+        Some(serde_json::Value::Bool(_)) => 5,
+    }
+}
+
+fn compare_json_numbers(a: &serde_json::Number, b: &serde_json::Number) -> Ordering {
+    match (a.as_i64(), b.as_i64()) {
+        (Some(ai), Some(bi)) => return ai.cmp(&bi),
+        (Some(ai), None) if ai < 0 => return Ordering::Less,
+        (None, Some(bi)) if bi < 0 => return Ordering::Greater,
+        _ => {}
+    }
+
+    match (a.as_u64(), b.as_u64()) {
+        (Some(au), Some(bu)) => return au.cmp(&bu),
+        (Some(au), None) => {
+            if let Some(bi) = b.as_i64() {
+                return au.cmp(&(bi as u64));
+            }
+        }
+        (None, Some(bu)) => {
+            if let Some(ai) = a.as_i64() {
+                return (ai as u64).cmp(&bu);
+            }
+        }
+        _ => {}
+    }
+
+    match (a.as_f64(), b.as_f64()) {
+        (Some(af), Some(bf)) => af
+            .partial_cmp(&bf)
+            .unwrap_or_else(|| a.to_string().cmp(&b.to_string())),
+        _ => a.to_string().cmp(&b.to_string()),
+    }
+}
+
+fn compare_json_arrays(a: &[serde_json::Value], b: &[serde_json::Value]) -> Ordering {
+    for (av, bv) in a.iter().zip(b.iter()) {
+        let cmp = compare_json_values(Some(av), Some(bv));
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+    }
+    a.len().cmp(&b.len())
+}
+
+fn compare_json_objects(
+    a: &serde_json::Map<String, serde_json::Value>,
+    b: &serde_json::Map<String, serde_json::Value>,
+) -> Ordering {
+    let mut a_entries = a.iter().collect::<Vec<_>>();
+    let mut b_entries = b.iter().collect::<Vec<_>>();
+    a_entries.sort_by(|(ak, _), (bk, _)| ak.cmp(bk));
+    b_entries.sort_by(|(ak, _), (bk, _)| ak.cmp(bk));
+
+    for ((ak, av), (bk, bv)) in a_entries.iter().zip(b_entries.iter()) {
+        let key_cmp = ak.cmp(bk);
+        if key_cmp != Ordering::Equal {
+            return key_cmp;
+        }
+        let value_cmp = compare_json_values(Some(av), Some(bv));
+        if value_cmp != Ordering::Equal {
+            return value_cmp;
+        }
+    }
+    a_entries.len().cmp(&b_entries.len())
 }
 
 pub(super) fn bson_id_to_string(value: &bson::Bson) -> String {
@@ -278,5 +365,57 @@ pub(super) fn resolve_field_path(doc: &bson::Document, path: &str) -> Option<bso
             bson::Bson::Document(inner) => resolve_field_path(inner, rest),
             _ => None,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn compare_json_values_orders_json_type_subset() {
+        let number = json!(1);
+        let string = json!("a");
+        let object = json!({ "a": 1 });
+        let array = json!([1]);
+        let boolean = json!(false);
+
+        assert_eq!(
+            compare_json_values(None, Some(&serde_json::Value::Null)),
+            Ordering::Equal
+        );
+        assert!(compare_json_values(Some(&serde_json::Value::Null), Some(&number)).is_lt());
+        assert!(compare_json_values(Some(&number), Some(&string)).is_lt());
+        assert!(compare_json_values(Some(&string), Some(&object)).is_lt());
+        assert!(compare_json_values(Some(&object), Some(&array)).is_lt());
+        assert!(compare_json_values(Some(&array), Some(&boolean)).is_lt());
+    }
+
+    #[test]
+    fn compare_json_values_orders_arrays_lexicographically() {
+        let one = json!([1]);
+        let one_two = json!([1, 2]);
+        let two = json!([2]);
+        let another_two = json!([2]);
+
+        assert!(compare_json_values(Some(&one), Some(&one_two)).is_lt());
+        assert!(compare_json_values(Some(&one_two), Some(&two)).is_lt());
+        assert_eq!(
+            compare_json_values(Some(&two), Some(&another_two)),
+            Ordering::Equal
+        );
+    }
+
+    #[test]
+    fn compare_json_values_orders_objects_by_key_then_value() {
+        let a_one = json!({ "a": 1 });
+        let a_one_b_zero = json!({ "a": 1, "b": 0 });
+        let a_two = json!({ "a": 2 });
+        let b_zero = json!({ "b": 0 });
+
+        assert!(compare_json_values(Some(&a_one), Some(&a_one_b_zero)).is_lt());
+        assert!(compare_json_values(Some(&a_one), Some(&a_two)).is_lt());
+        assert!(compare_json_values(Some(&a_one), Some(&b_zero)).is_lt());
     }
 }

@@ -256,6 +256,10 @@ fn finalize_paginated_runtime_response(
     mut page: nimbus_core::Page,
 ) -> Result<Value, Error> {
     synthesize_runtime_paginate_cursor(query, page_size, &mut page)?;
+    // Paginated read dependencies are recorded after execution because the
+    // returned page defines the window bounds. Subscription bootstrap only
+    // installs successful invocations, so failed paginated queries intentionally
+    // do not establish read-tracking state.
     bridge.record_paginated_window_read(query, page_size, after, &page);
     let value =
         serde_json::to_value(page).map_err(|error| Error::Serialization(error.to_string()))?;

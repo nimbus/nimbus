@@ -278,6 +278,17 @@ impl PublicError {
                     "Refresh the resource, then retry with the latest generation or resource version.",
                 )),
             ),
+            Error::MissingIndex { fields } => Self::new(
+                "op.missing_index",
+                error.to_string(),
+                ErrorSeverity::Error,
+                false,
+                json!({ "fields": fields }),
+                Some(ErrorRemediation::new(
+                    "create_index",
+                    "Create an index covering the required fields, then retry.",
+                )),
+            ),
             Error::InvalidInput(_) => Self::new(
                 "op.invalid_input",
                 error.to_string(),
@@ -524,7 +535,9 @@ impl StructuredHttpError {
                     | Error::SchemaNotFound(_)
                     | Error::NotFound(_) => StatusCode::NOT_FOUND,
                     Error::Conflict(_) => StatusCode::CONFLICT,
-                    Error::PreconditionFailed(_) => StatusCode::PRECONDITION_FAILED,
+                    Error::PreconditionFailed(_) | Error::MissingIndex { .. } => {
+                        StatusCode::PRECONDITION_FAILED
+                    }
                     Error::ResourceExhausted(_) => StatusCode::TOO_MANY_REQUESTS,
                     Error::PermissionDenied(_) => StatusCode::FORBIDDEN,
                     Error::InvalidInput(_) => StatusCode::BAD_REQUEST,
@@ -615,6 +628,22 @@ mod tests {
             response
                 .message()
                 .contains("serving snapshot is not available")
+        );
+    }
+
+    #[test]
+    fn missing_index_maps_to_precondition_failed_with_fields() {
+        let response = StructuredHttpError::from_app_error(crate::state::AppError::from(
+            Error::MissingIndex {
+                fields: vec!["state".to_string(), "rank".to_string()],
+            },
+        ));
+
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+        assert_eq!(response.envelope.error.code, "op.missing_index");
+        assert_eq!(
+            response.envelope.error.detail["fields"],
+            serde_json::json!(["state", "rank"])
         );
     }
 }

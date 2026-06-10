@@ -269,6 +269,46 @@ impl Engine {
         }
     }
 
+    /// Reads documents whose `DocumentId` begins with `id_prefix`.
+    pub fn scan_documents_by_id_prefix_cancellable(
+        &self,
+        tenant_id: &TenantId,
+        table: &TableName,
+        id_prefix: &str,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        let LoadedQueryRuntime { runtime, .. } = load_query_runtime(self, tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let documents =
+            runtime
+                .store()
+                .scan_table_id_prefix_cancellable(table, id_prefix, check_cancel)?;
+        runtime.cache_documents(&documents);
+        Ok(documents)
+    }
+
+    /// Reads at most `limit` documents from `table` whose `DocumentId` is at or
+    /// after `start_id`, in document-id order.
+    pub fn scan_documents_by_id_starting_at_cancellable(
+        &self,
+        tenant_id: &TenantId,
+        table: &TableName,
+        start_id: &str,
+        limit: usize,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        let LoadedQueryRuntime { runtime, .. } = load_query_runtime(self, tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let documents = runtime.store().scan_table_id_starting_at_cancellable(
+            table,
+            start_id,
+            limit,
+            check_cancel,
+        )?;
+        runtime.cache_documents(&documents);
+        Ok(documents)
+    }
+
     /// Evaluates a paginated query for a tenant.
     pub fn paginate_documents(&self, tenant_id: &TenantId, query: &PaginatedQuery) -> Result<Page> {
         self.paginate_documents_with_principal_cancellable(

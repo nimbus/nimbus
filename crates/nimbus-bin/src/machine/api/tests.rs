@@ -677,7 +677,7 @@ fn unix_http_post_json(socket_path: &Path, path: &str, body: &str) -> String {
     write!(
         stream,
         "POST {path} HTTP/1.0\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-        body.as_bytes().len()
+        body.len()
     )
     .expect("request should write");
     read_unix_http_response(stream).expect("response should be valid utf-8")

@@ -69,6 +69,14 @@ fn runtime_cancellable_db_get_short_circuits_before_dispatch() {
     );
 
     assert!(matches!(result, Err(NimbusRuntimeError::Cancelled)));
+    let dependencies = bridge.snapshot_read_set().dependency_set();
+    assert!(dependencies.tables.is_empty());
+    assert!(dependencies.missing_tables.is_empty());
+    assert!(dependencies.missing_predicates.is_empty());
+    assert!(dependencies.documents.is_empty());
+    assert!(dependencies.index_ranges.is_empty());
+    assert!(dependencies.predicates.is_empty());
+    assert!(dependencies.paginated_windows.is_empty());
 }
 
 #[test]

@@ -42,7 +42,8 @@ pub(crate) async fn delete_tenant(
     let service = state.engine.clone();
     state
         .runtime_service_registry()
-        .teardown_tenant(tenant.tenant_id())?;
+        .teardown_tenant_async(tenant.tenant_id())
+        .await?;
     service
         .delete_tenant_async(tenant.tenant_id().clone())
         .await?;

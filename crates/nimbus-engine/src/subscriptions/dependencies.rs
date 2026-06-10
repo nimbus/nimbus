@@ -64,7 +64,7 @@ pub(crate) struct BatchAffectedSubscriptions {
 
 impl SubscriptionRegistry {
     /// Returns the ids of subscriptions affected by the provided commit.
-    pub fn affected_subscription_ids(
+    pub(crate) fn affected_subscription_ids(
         &self,
         commit: &CommitEntry,
         candidate_documents: &[Document],

@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use super::super::connection::ConnectionState;
 use super::super::error::{BAD_VALUE, MongoError, NAMESPACE_NOT_FOUND};
 
+pub(crate) const MAX_CURSORS_PER_CONNECTION: usize = 128;
+
 static NEXT_CURSOR_ID: AtomicI64 = AtomicI64::new(1);
 
 pub fn next_cursor_id() -> i64 {
@@ -28,7 +30,7 @@ impl CursorStore {
         ns: String,
         documents: Vec<bson::Document>,
         batch_size: usize,
-    ) -> (i64, Vec<bson::Bson>) {
+    ) -> Result<(i64, Vec<bson::Bson>), MongoError> {
         let first_batch: Vec<bson::Bson> = documents
             .iter()
             .take(batch_size)
@@ -38,7 +40,17 @@ impl CursorStore {
 
         let consumed = first_batch.len();
         if consumed >= documents.len() {
-            return (0, first_batch);
+            return Ok((0, first_batch));
+        }
+
+        if self.cursors.len() >= MAX_CURSORS_PER_CONNECTION {
+            return Err(MongoError::Command {
+                code: BAD_VALUE.code,
+                code_name: BAD_VALUE.code_name.into(),
+                message: format!(
+                    "too many open cursors on this MongoDB connection; limit is {MAX_CURSORS_PER_CONNECTION}"
+                ),
+            });
         }
 
         let cursor_id = next_cursor_id();
@@ -52,7 +64,7 @@ impl CursorStore {
             },
         );
 
-        (cursor_id, first_batch)
+        Ok((cursor_id, first_batch))
     }
 
     fn get_more(&mut self, cursor_id: i64, batch_size: Option<usize>) -> Option<GetMoreResult> {
@@ -188,7 +200,9 @@ mod tests {
     #[test]
     fn cursor_store_returns_zero_id_when_all_fit() {
         let mut store = CursorStore::default();
-        let (id, batch) = store.create("db.col".into(), make_bson_docs(3), 10);
+        let (id, batch) = store
+            .create("db.col".into(), make_bson_docs(3), 10)
+            .expect("cursor should fit in first batch");
         assert_eq!(id, 0);
         assert_eq!(batch.len(), 3);
     }
@@ -196,15 +210,42 @@ mod tests {
     #[test]
     fn cursor_store_creates_cursor_for_overflow() {
         let mut store = CursorStore::default();
-        let (id, batch) = store.create("db.col".into(), make_bson_docs(5), 2);
+        let (id, batch) = store
+            .create("db.col".into(), make_bson_docs(5), 2)
+            .expect("overflow cursor should create");
         assert_ne!(id, 0);
         assert_eq!(batch.len(), 2);
     }
 
     #[test]
+    fn cursor_store_rejects_new_overflow_cursor_at_connection_cap() {
+        let mut store = CursorStore::default();
+        for index in 0..MAX_CURSORS_PER_CONNECTION {
+            let (id, _) = store
+                .create(format!("db.col{index}"), make_bson_docs(2), 1)
+                .expect("cursor under cap should create");
+            assert_ne!(id, 0);
+        }
+
+        let error = store
+            .create("db.over_cap".into(), make_bson_docs(2), 1)
+            .expect_err("cursor over cap should fail");
+
+        match error {
+            MongoError::Command { code, message, .. } => {
+                assert_eq!(code, BAD_VALUE.code);
+                assert!(message.contains("too many open cursors"));
+            }
+            other => panic!("expected Command, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn get_more_returns_next_batch() {
         let mut store = CursorStore::default();
-        let (id, _) = store.create("db.col".into(), make_bson_docs(5), 2);
+        let (id, _) = store
+            .create("db.col".into(), make_bson_docs(5), 2)
+            .expect("cursor should create");
 
         let result = store.get_more(id, None).unwrap();
         assert_eq!(result.next_batch.len(), 2);
@@ -218,7 +259,9 @@ mod tests {
     #[test]
     fn get_more_with_custom_batch_size() {
         let mut store = CursorStore::default();
-        let (id, _) = store.create("db.col".into(), make_bson_docs(10), 3);
+        let (id, _) = store
+            .create("db.col".into(), make_bson_docs(10), 3)
+            .expect("cursor should create");
 
         let result = store.get_more(id, Some(5)).unwrap();
         assert_eq!(result.next_batch.len(), 5);
@@ -227,7 +270,9 @@ mod tests {
     #[test]
     fn get_more_exhausted_cursor_returns_none() {
         let mut store = CursorStore::default();
-        let (id, _) = store.create("db.col".into(), make_bson_docs(2), 1);
+        let (id, _) = store
+            .create("db.col".into(), make_bson_docs(2), 1)
+            .expect("cursor should create");
 
         let result = store.get_more(id, None).unwrap();
         assert_eq!(result.cursor_id, 0);
@@ -237,7 +282,9 @@ mod tests {
     #[test]
     fn kill_removes_cursor() {
         let mut store = CursorStore::default();
-        let (id, _) = store.create("db.col".into(), make_bson_docs(5), 2);
+        let (id, _) = store
+            .create("db.col".into(), make_bson_docs(5), 2)
+            .expect("cursor should create");
         assert!(store.kill(id));
         assert!(store.get_more(id, None).is_none());
     }
@@ -251,8 +298,12 @@ mod tests {
     #[test]
     fn kill_all_clears_everything() {
         let mut store = CursorStore::default();
-        let (id1, _) = store.create("db.a".into(), make_bson_docs(5), 2);
-        let (id2, _) = store.create("db.b".into(), make_bson_docs(5), 2);
+        let (id1, _) = store
+            .create("db.a".into(), make_bson_docs(5), 2)
+            .expect("first cursor should create");
+        let (id2, _) = store
+            .create("db.b".into(), make_bson_docs(5), 2)
+            .expect("second cursor should create");
         store.kill_all();
         assert!(store.get_more(id1, None).is_none());
         assert!(store.get_more(id2, None).is_none());
@@ -285,7 +336,8 @@ mod tests {
         let mut conn = ConnectionState::new(([127, 0, 0, 1], 12345).into());
         let (cursor_id, _) = conn
             .cursor_store
-            .create("db.col".into(), make_bson_docs(5), 2);
+            .create("db.col".into(), make_bson_docs(5), 2)
+            .expect("cursor should create");
 
         let body = bson::doc! {
             "killCursors": "col",
@@ -302,7 +354,8 @@ mod tests {
         let mut conn = ConnectionState::new(([127, 0, 0, 1], 12345).into());
         let (cursor_id, _) = conn
             .cursor_store
-            .create("db.col".into(), make_bson_docs(5), 2);
+            .create("db.col".into(), make_bson_docs(5), 2)
+            .expect("cursor should create");
 
         let body = bson::doc! { "getMore": cursor_id, "batchSize": 2 };
         let result = get_more(&body, &mut conn).unwrap();

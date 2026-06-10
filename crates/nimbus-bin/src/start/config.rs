@@ -98,7 +98,7 @@ pub(crate) struct RuntimeConfigFile {
 
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct PersistenceFileConfig {
+pub(crate) struct PersistenceInputs {
     pub(crate) data_dir: Option<PathBuf>,
     pub(crate) control_data_dir: Option<PathBuf>,
     pub(crate) tenant_provider: Option<CliTenantProvider>,
@@ -128,38 +128,10 @@ pub(crate) struct PersistenceFileConfig {
     pub(crate) encryption_aws_endpoint_url: Option<String>,
 }
 
-#[derive(Debug, Default, Clone)]
-pub(crate) struct PersistenceEnv {
-    pub(crate) data_dir: Option<PathBuf>,
-    pub(crate) control_data_dir: Option<PathBuf>,
-    pub(crate) tenant_provider: Option<CliTenantProvider>,
-    pub(crate) libsql_url: Option<String>,
-    pub(crate) libsql_auth_token: Option<String>,
-    pub(crate) libsql_admin_url: Option<String>,
-    pub(crate) libsql_admin_auth_header: Option<String>,
-    pub(crate) libsql_metadata_namespace: Option<String>,
-    pub(crate) libsql_tenant_namespace_prefix: Option<String>,
-    pub(crate) libsql_replica_cache_dir: Option<PathBuf>,
-    pub(crate) postgres_url: Option<String>,
-    pub(crate) postgres_metadata_schema: Option<String>,
-    pub(crate) postgres_tenant_schema_prefix: Option<String>,
-    pub(crate) postgres_min_connections: Option<usize>,
-    pub(crate) postgres_max_connections: Option<usize>,
-    pub(crate) mysql_url: Option<String>,
-    pub(crate) mysql_metadata_database: Option<String>,
-    pub(crate) mysql_tenant_database_prefix: Option<String>,
-    pub(crate) mysql_min_connections: Option<usize>,
-    pub(crate) mysql_max_connections: Option<usize>,
-    // Encryption config
-    pub(crate) encryption_key_provider: Option<CliKeyProvider>,
-    pub(crate) encryption_master_key_file: Option<PathBuf>,
-    pub(crate) encryption_key_dir: Option<PathBuf>,
-    pub(crate) encryption_aws_kms_key_id: Option<String>,
-    pub(crate) encryption_aws_region: Option<String>,
-    pub(crate) encryption_aws_endpoint_url: Option<String>,
-}
+pub(crate) type PersistenceFileConfig = PersistenceInputs;
+pub(crate) type PersistenceEnv = PersistenceInputs;
 
-impl PersistenceEnv {
+impl PersistenceInputs {
     pub(crate) fn load() -> nimbus::Result<Self> {
         Ok(Self {
             data_dir: std::env::var_os(DATA_DIR_ENV).map(PathBuf::from),
@@ -192,6 +164,124 @@ impl PersistenceEnv {
             encryption_aws_region: std::env::var(ENCRYPTION_AWS_REGION_ENV).ok(),
             encryption_aws_endpoint_url: std::env::var(ENCRYPTION_AWS_ENDPOINT_URL_ENV).ok(),
         })
+    }
+
+    fn from_command(command: &StartCommand) -> Self {
+        Self {
+            data_dir: command.data_dir.clone(),
+            control_data_dir: command.control_data_dir.clone(),
+            tenant_provider: command.tenant_provider,
+            libsql_url: command.libsql_url.clone(),
+            libsql_auth_token: command.libsql_auth_token.clone(),
+            libsql_admin_url: command.libsql_admin_url.clone(),
+            libsql_admin_auth_header: command.libsql_admin_auth_header.clone(),
+            libsql_metadata_namespace: command.libsql_metadata_namespace.clone(),
+            libsql_tenant_namespace_prefix: command.libsql_tenant_namespace_prefix.clone(),
+            libsql_replica_cache_dir: command.libsql_replica_cache_dir.clone(),
+            postgres_url: command.postgres_url.clone(),
+            postgres_metadata_schema: command.postgres_metadata_schema.clone(),
+            postgres_tenant_schema_prefix: command.postgres_tenant_schema_prefix.clone(),
+            postgres_min_connections: command.postgres_min_connections,
+            postgres_max_connections: command.postgres_max_connections,
+            mysql_url: command.mysql_url.clone(),
+            mysql_metadata_database: command.mysql_metadata_database.clone(),
+            mysql_tenant_database_prefix: command.mysql_tenant_database_prefix.clone(),
+            mysql_min_connections: command.mysql_min_connections,
+            mysql_max_connections: command.mysql_max_connections,
+            encryption_key_provider: command.encryption_key_provider,
+            encryption_master_key_file: command.encryption_master_key_file.clone(),
+            encryption_key_dir: command.encryption_key_dir.clone(),
+            encryption_aws_kms_key_id: command.encryption_aws_kms_key_id.clone(),
+            encryption_aws_region: command.encryption_aws_region.clone(),
+            encryption_aws_endpoint_url: command.encryption_aws_endpoint_url.clone(),
+        }
+    }
+
+    fn with_fallback(mut self, fallback: &Self) -> Self {
+        fill_missing(&mut self.data_dir, &fallback.data_dir);
+        fill_missing(&mut self.control_data_dir, &fallback.control_data_dir);
+        fill_missing(&mut self.tenant_provider, &fallback.tenant_provider);
+        fill_missing(&mut self.libsql_url, &fallback.libsql_url);
+        fill_missing(&mut self.libsql_auth_token, &fallback.libsql_auth_token);
+        fill_missing(&mut self.libsql_admin_url, &fallback.libsql_admin_url);
+        fill_missing(
+            &mut self.libsql_admin_auth_header,
+            &fallback.libsql_admin_auth_header,
+        );
+        fill_missing(
+            &mut self.libsql_metadata_namespace,
+            &fallback.libsql_metadata_namespace,
+        );
+        fill_missing(
+            &mut self.libsql_tenant_namespace_prefix,
+            &fallback.libsql_tenant_namespace_prefix,
+        );
+        fill_missing(
+            &mut self.libsql_replica_cache_dir,
+            &fallback.libsql_replica_cache_dir,
+        );
+        fill_missing(&mut self.postgres_url, &fallback.postgres_url);
+        fill_missing(
+            &mut self.postgres_metadata_schema,
+            &fallback.postgres_metadata_schema,
+        );
+        fill_missing(
+            &mut self.postgres_tenant_schema_prefix,
+            &fallback.postgres_tenant_schema_prefix,
+        );
+        fill_missing(
+            &mut self.postgres_min_connections,
+            &fallback.postgres_min_connections,
+        );
+        fill_missing(
+            &mut self.postgres_max_connections,
+            &fallback.postgres_max_connections,
+        );
+        fill_missing(&mut self.mysql_url, &fallback.mysql_url);
+        fill_missing(
+            &mut self.mysql_metadata_database,
+            &fallback.mysql_metadata_database,
+        );
+        fill_missing(
+            &mut self.mysql_tenant_database_prefix,
+            &fallback.mysql_tenant_database_prefix,
+        );
+        fill_missing(
+            &mut self.mysql_min_connections,
+            &fallback.mysql_min_connections,
+        );
+        fill_missing(
+            &mut self.mysql_max_connections,
+            &fallback.mysql_max_connections,
+        );
+        fill_missing(
+            &mut self.encryption_key_provider,
+            &fallback.encryption_key_provider,
+        );
+        fill_missing(
+            &mut self.encryption_master_key_file,
+            &fallback.encryption_master_key_file,
+        );
+        fill_missing(&mut self.encryption_key_dir, &fallback.encryption_key_dir);
+        fill_missing(
+            &mut self.encryption_aws_kms_key_id,
+            &fallback.encryption_aws_kms_key_id,
+        );
+        fill_missing(
+            &mut self.encryption_aws_region,
+            &fallback.encryption_aws_region,
+        );
+        fill_missing(
+            &mut self.encryption_aws_endpoint_url,
+            &fallback.encryption_aws_endpoint_url,
+        );
+        self
+    }
+}
+
+fn fill_missing<T: Clone>(target: &mut Option<T>, fallback: &Option<T>) {
+    if target.is_none() {
+        *target = fallback.clone();
     }
 }
 
@@ -574,138 +664,41 @@ impl ResolvedPersistenceInputs {
         file: &PersistenceFileConfig,
         env: &PersistenceEnv,
     ) -> Self {
-        let data_dir = command
+        let inputs = PersistenceInputs::from_command(command)
+            .with_fallback(env)
+            .with_fallback(file);
+        let data_dir = inputs
             .data_dir
-            .clone()
-            .or_else(|| env.data_dir.clone())
-            .or_else(|| file.data_dir.clone())
             .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR));
-        let control_data_dir = command
-            .control_data_dir
-            .clone()
-            .or_else(|| env.control_data_dir.clone())
-            .or_else(|| file.control_data_dir.clone())
-            .unwrap_or_else(|| data_dir.clone());
+        let control_data_dir = inputs.control_data_dir.unwrap_or_else(|| data_dir.clone());
 
         Self {
             data_dir,
             control_data_dir,
-            tenant_provider: command
-                .tenant_provider
-                .or(env.tenant_provider)
-                .or(file.tenant_provider)
-                .unwrap_or(CliTenantProvider::Sqlite),
-            libsql_url: command
-                .libsql_url
-                .clone()
-                .or_else(|| env.libsql_url.clone())
-                .or_else(|| file.libsql_url.clone()),
-            libsql_auth_token: command
-                .libsql_auth_token
-                .clone()
-                .or_else(|| env.libsql_auth_token.clone())
-                .or_else(|| file.libsql_auth_token.clone()),
-            libsql_admin_url: command
-                .libsql_admin_url
-                .clone()
-                .or_else(|| env.libsql_admin_url.clone())
-                .or_else(|| file.libsql_admin_url.clone()),
-            libsql_admin_auth_header: command
-                .libsql_admin_auth_header
-                .clone()
-                .or_else(|| env.libsql_admin_auth_header.clone())
-                .or_else(|| file.libsql_admin_auth_header.clone()),
-            libsql_metadata_namespace: command
-                .libsql_metadata_namespace
-                .clone()
-                .or_else(|| env.libsql_metadata_namespace.clone())
-                .or_else(|| file.libsql_metadata_namespace.clone()),
-            libsql_tenant_namespace_prefix: command
-                .libsql_tenant_namespace_prefix
-                .clone()
-                .or_else(|| env.libsql_tenant_namespace_prefix.clone())
-                .or_else(|| file.libsql_tenant_namespace_prefix.clone()),
-            libsql_replica_cache_dir: command
-                .libsql_replica_cache_dir
-                .clone()
-                .or_else(|| env.libsql_replica_cache_dir.clone())
-                .or_else(|| file.libsql_replica_cache_dir.clone()),
-            postgres_url: command
-                .postgres_url
-                .clone()
-                .or_else(|| env.postgres_url.clone())
-                .or_else(|| file.postgres_url.clone()),
-            postgres_metadata_schema: command
-                .postgres_metadata_schema
-                .clone()
-                .or_else(|| env.postgres_metadata_schema.clone())
-                .or_else(|| file.postgres_metadata_schema.clone()),
-            postgres_tenant_schema_prefix: command
-                .postgres_tenant_schema_prefix
-                .clone()
-                .or_else(|| env.postgres_tenant_schema_prefix.clone())
-                .or_else(|| file.postgres_tenant_schema_prefix.clone()),
-            postgres_min_connections: command
-                .postgres_min_connections
-                .or(env.postgres_min_connections)
-                .or(file.postgres_min_connections),
-            postgres_max_connections: command
-                .postgres_max_connections
-                .or(env.postgres_max_connections)
-                .or(file.postgres_max_connections),
-            mysql_url: command
-                .mysql_url
-                .clone()
-                .or_else(|| env.mysql_url.clone())
-                .or_else(|| file.mysql_url.clone()),
-            mysql_metadata_database: command
-                .mysql_metadata_database
-                .clone()
-                .or_else(|| env.mysql_metadata_database.clone())
-                .or_else(|| file.mysql_metadata_database.clone()),
-            mysql_tenant_database_prefix: command
-                .mysql_tenant_database_prefix
-                .clone()
-                .or_else(|| env.mysql_tenant_database_prefix.clone())
-                .or_else(|| file.mysql_tenant_database_prefix.clone()),
-            mysql_min_connections: command
-                .mysql_min_connections
-                .or(env.mysql_min_connections)
-                .or(file.mysql_min_connections),
-            mysql_max_connections: command
-                .mysql_max_connections
-                .or(env.mysql_max_connections)
-                .or(file.mysql_max_connections),
-            // Encryption config
-            encryption_key_provider: command
-                .encryption_key_provider
-                .or(env.encryption_key_provider)
-                .or(file.encryption_key_provider),
-            encryption_master_key_file: command
-                .encryption_master_key_file
-                .clone()
-                .or_else(|| env.encryption_master_key_file.clone())
-                .or_else(|| file.encryption_master_key_file.clone()),
-            encryption_key_dir: command
-                .encryption_key_dir
-                .clone()
-                .or_else(|| env.encryption_key_dir.clone())
-                .or_else(|| file.encryption_key_dir.clone()),
-            encryption_aws_kms_key_id: command
-                .encryption_aws_kms_key_id
-                .clone()
-                .or_else(|| env.encryption_aws_kms_key_id.clone())
-                .or_else(|| file.encryption_aws_kms_key_id.clone()),
-            encryption_aws_region: command
-                .encryption_aws_region
-                .clone()
-                .or_else(|| env.encryption_aws_region.clone())
-                .or_else(|| file.encryption_aws_region.clone()),
-            encryption_aws_endpoint_url: command
-                .encryption_aws_endpoint_url
-                .clone()
-                .or_else(|| env.encryption_aws_endpoint_url.clone())
-                .or_else(|| file.encryption_aws_endpoint_url.clone()),
+            tenant_provider: inputs.tenant_provider.unwrap_or(CliTenantProvider::Sqlite),
+            libsql_url: inputs.libsql_url,
+            libsql_auth_token: inputs.libsql_auth_token,
+            libsql_admin_url: inputs.libsql_admin_url,
+            libsql_admin_auth_header: inputs.libsql_admin_auth_header,
+            libsql_metadata_namespace: inputs.libsql_metadata_namespace,
+            libsql_tenant_namespace_prefix: inputs.libsql_tenant_namespace_prefix,
+            libsql_replica_cache_dir: inputs.libsql_replica_cache_dir,
+            postgres_url: inputs.postgres_url,
+            postgres_metadata_schema: inputs.postgres_metadata_schema,
+            postgres_tenant_schema_prefix: inputs.postgres_tenant_schema_prefix,
+            postgres_min_connections: inputs.postgres_min_connections,
+            postgres_max_connections: inputs.postgres_max_connections,
+            mysql_url: inputs.mysql_url,
+            mysql_metadata_database: inputs.mysql_metadata_database,
+            mysql_tenant_database_prefix: inputs.mysql_tenant_database_prefix,
+            mysql_min_connections: inputs.mysql_min_connections,
+            mysql_max_connections: inputs.mysql_max_connections,
+            encryption_key_provider: inputs.encryption_key_provider,
+            encryption_master_key_file: inputs.encryption_master_key_file,
+            encryption_key_dir: inputs.encryption_key_dir,
+            encryption_aws_kms_key_id: inputs.encryption_aws_kms_key_id,
+            encryption_aws_region: inputs.encryption_aws_region,
+            encryption_aws_endpoint_url: inputs.encryption_aws_endpoint_url,
         }
     }
 

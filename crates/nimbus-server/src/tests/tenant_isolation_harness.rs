@@ -784,7 +784,7 @@ globalThis.__nimbusInvoke = async function(request) {
       value: await handler(
         globalThis.__nimbusCreateContext({
           request,
-          sessionId: `${request.kind}:${request.function_name}`,
+          hostCallSessionId: `${request.kind}:${request.function_name}`,
         }),
         request.args ?? {},
         request,

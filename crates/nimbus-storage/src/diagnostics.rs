@@ -273,7 +273,7 @@ fn capabilities(
     eventual_reads: bool,
     encryption_posture: &str,
 ) -> StorageCapabilities {
-    let feature_support = backend_feature_support(backend);
+    let feature_support = shared_journal_backend_feature_support();
     let capability_profile = capability_profile_for_features(&feature_support);
     StorageCapabilities {
         backend: backend.to_string(),
@@ -361,7 +361,7 @@ fn diagnostic(input: StorageHealthDiagnosticInput) -> StorageHealthDiagnostic {
     }
 }
 
-fn backend_feature_support(_backend: &str) -> Vec<StorageFeatureSupport> {
+fn shared_journal_backend_feature_support() -> Vec<StorageFeatureSupport> {
     let mut supports = vec![
         StorageFeatureSupport::supported(
             StorageFeature::LatestReads,
@@ -615,6 +615,40 @@ fn historical_query_admission_diagnostic(
     }
 }
 
+macro_rules! impl_storage_health_diagnostic {
+    ($store:ty) => {
+        impl $store {
+            pub fn storage_health_diagnostic(&self) -> Result<StorageHealthDiagnostic> {
+                self.storage_health_diagnostic_with_retention_config(RetentionGcConfig::default())
+            }
+
+            pub fn storage_health_diagnostic_with_retention_config(
+                &self,
+                retention_config: RetentionGcConfig,
+            ) -> Result<StorageHealthDiagnostic> {
+                let progress = self.journal_progress()?;
+                let schema = self.load_schema()?;
+                let table_identity_versions = self.table_identity_diagnostics()?.len() as u64;
+                let document_versions = self.document_version_storage_diagnostic()?;
+                let index_versions = self.index_version_storage_diagnostic()?;
+                let retention_gc = self
+                    .retention_floor
+                    .gc_watermarks(progress.applied_head, retention_config);
+                Ok(diagnostic(StorageHealthDiagnosticInput {
+                    capabilities: self.storage_capabilities(),
+                    progress,
+                    retention_floor: self.retention_floor.lowest_pinned_sequence(),
+                    document_versions,
+                    index_versions,
+                    version_counts: mvcc_version_counts(&schema, table_identity_versions),
+                    retention_pins: self.retention_floor.snapshot(),
+                    retention_gc,
+                }))
+            }
+        }
+    };
+}
+
 impl TenantStore {
     pub fn storage_capabilities(&self) -> StorageCapabilities {
         capabilities(
@@ -623,34 +657,6 @@ impl TenantStore {
             false,
             "configured_per_store",
         )
-    }
-
-    pub fn storage_health_diagnostic(&self) -> Result<StorageHealthDiagnostic> {
-        self.storage_health_diagnostic_with_retention_config(RetentionGcConfig::default())
-    }
-
-    pub fn storage_health_diagnostic_with_retention_config(
-        &self,
-        retention_config: RetentionGcConfig,
-    ) -> Result<StorageHealthDiagnostic> {
-        let progress = self.journal_progress()?;
-        let schema = self.load_schema()?;
-        let table_identity_versions = self.table_identity_diagnostics()?.len() as u64;
-        let document_versions = self.document_version_storage_diagnostic()?;
-        let index_versions = self.index_version_storage_diagnostic()?;
-        let retention_gc = self
-            .retention_floor
-            .gc_watermarks(progress.applied_head, retention_config);
-        Ok(diagnostic(StorageHealthDiagnosticInput {
-            capabilities: self.storage_capabilities(),
-            progress,
-            retention_floor: self.retention_floor.lowest_pinned_sequence(),
-            document_versions,
-            index_versions,
-            version_counts: mvcc_version_counts(&schema, table_identity_versions),
-            retention_pins: self.retention_floor.snapshot(),
-            retention_gc,
-        }))
     }
 }
 
@@ -667,34 +673,6 @@ impl SqliteTenantStore {
             },
         )
     }
-
-    pub fn storage_health_diagnostic(&self) -> Result<StorageHealthDiagnostic> {
-        self.storage_health_diagnostic_with_retention_config(RetentionGcConfig::default())
-    }
-
-    pub fn storage_health_diagnostic_with_retention_config(
-        &self,
-        retention_config: RetentionGcConfig,
-    ) -> Result<StorageHealthDiagnostic> {
-        let progress = self.journal_progress()?;
-        let schema = self.load_schema()?;
-        let table_identity_versions = self.table_identity_diagnostics()?.len() as u64;
-        let document_versions = self.document_version_storage_diagnostic()?;
-        let index_versions = self.index_version_storage_diagnostic()?;
-        let retention_gc = self
-            .retention_floor
-            .gc_watermarks(progress.applied_head, retention_config);
-        Ok(diagnostic(StorageHealthDiagnosticInput {
-            capabilities: self.storage_capabilities(),
-            progress,
-            retention_floor: self.retention_floor.lowest_pinned_sequence(),
-            document_versions,
-            index_versions,
-            version_counts: mvcc_version_counts(&schema, table_identity_versions),
-            retention_pins: self.retention_floor.snapshot(),
-            retention_gc,
-        }))
-    }
 }
 
 impl PostgresTenantStore {
@@ -705,34 +683,6 @@ impl PostgresTenantStore {
             false,
             "server_managed",
         )
-    }
-
-    pub fn storage_health_diagnostic(&self) -> Result<StorageHealthDiagnostic> {
-        self.storage_health_diagnostic_with_retention_config(RetentionGcConfig::default())
-    }
-
-    pub fn storage_health_diagnostic_with_retention_config(
-        &self,
-        retention_config: RetentionGcConfig,
-    ) -> Result<StorageHealthDiagnostic> {
-        let progress = self.journal_progress()?;
-        let schema = self.load_schema()?;
-        let table_identity_versions = self.table_identity_diagnostics()?.len() as u64;
-        let document_versions = self.document_version_storage_diagnostic()?;
-        let index_versions = self.index_version_storage_diagnostic()?;
-        let retention_gc = self
-            .retention_floor
-            .gc_watermarks(progress.applied_head, retention_config);
-        Ok(diagnostic(StorageHealthDiagnosticInput {
-            capabilities: self.storage_capabilities(),
-            progress,
-            retention_floor: self.retention_floor.lowest_pinned_sequence(),
-            document_versions,
-            index_versions,
-            version_counts: mvcc_version_counts(&schema, table_identity_versions),
-            retention_pins: self.retention_floor.snapshot(),
-            retention_gc,
-        }))
     }
 }
 
@@ -745,34 +695,6 @@ impl MySqlTenantStore {
             "server_managed",
         )
     }
-
-    pub fn storage_health_diagnostic(&self) -> Result<StorageHealthDiagnostic> {
-        self.storage_health_diagnostic_with_retention_config(RetentionGcConfig::default())
-    }
-
-    pub fn storage_health_diagnostic_with_retention_config(
-        &self,
-        retention_config: RetentionGcConfig,
-    ) -> Result<StorageHealthDiagnostic> {
-        let progress = self.journal_progress()?;
-        let schema = self.load_schema()?;
-        let table_identity_versions = self.table_identity_diagnostics()?.len() as u64;
-        let document_versions = self.document_version_storage_diagnostic()?;
-        let index_versions = self.index_version_storage_diagnostic()?;
-        let retention_gc = self
-            .retention_floor
-            .gc_watermarks(progress.applied_head, retention_config);
-        Ok(diagnostic(StorageHealthDiagnosticInput {
-            capabilities: self.storage_capabilities(),
-            progress,
-            retention_floor: self.retention_floor.lowest_pinned_sequence(),
-            document_versions,
-            index_versions,
-            version_counts: mvcc_version_counts(&schema, table_identity_versions),
-            retention_pins: self.retention_floor.snapshot(),
-            retention_gc,
-        }))
-    }
 }
 
 impl LibsqlReplicaTenantStore {
@@ -784,35 +706,13 @@ impl LibsqlReplicaTenantStore {
             "replica_cache_optional",
         )
     }
-
-    pub fn storage_health_diagnostic(&self) -> Result<StorageHealthDiagnostic> {
-        self.storage_health_diagnostic_with_retention_config(RetentionGcConfig::default())
-    }
-
-    pub fn storage_health_diagnostic_with_retention_config(
-        &self,
-        retention_config: RetentionGcConfig,
-    ) -> Result<StorageHealthDiagnostic> {
-        let progress = self.journal_progress()?;
-        let schema = self.load_schema()?;
-        let table_identity_versions = self.table_identity_diagnostics()?.len() as u64;
-        let document_versions = self.document_version_storage_diagnostic()?;
-        let index_versions = self.index_version_storage_diagnostic()?;
-        let retention_gc = self
-            .retention_floor
-            .gc_watermarks(progress.applied_head, retention_config);
-        Ok(diagnostic(StorageHealthDiagnosticInput {
-            capabilities: self.storage_capabilities(),
-            progress,
-            retention_floor: self.retention_floor.lowest_pinned_sequence(),
-            document_versions,
-            index_versions,
-            version_counts: mvcc_version_counts(&schema, table_identity_versions),
-            retention_pins: self.retention_floor.snapshot(),
-            retention_gc,
-        }))
-    }
 }
+
+impl_storage_health_diagnostic!(TenantStore);
+impl_storage_health_diagnostic!(SqliteTenantStore);
+impl_storage_health_diagnostic!(PostgresTenantStore);
+impl_storage_health_diagnostic!(MySqlTenantStore);
+impl_storage_health_diagnostic!(LibsqlReplicaTenantStore);
 
 #[cfg(test)]
 mod tests {
@@ -823,6 +723,31 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn shared_journal_backend_feature_support_is_enterprise_complete() {
+        let support = shared_journal_backend_feature_support();
+
+        for feature in [
+            StorageFeature::LatestReads,
+            StorageFeature::RetentionGc,
+            StorageFeature::OperatorDiagnostics,
+            StorageFeature::HistoricalDocumentReads,
+            StorageFeature::HistoricalIndexReads,
+            StorageFeature::PointInTimeRestore,
+            StorageFeature::Changefeed,
+        ] {
+            assert!(
+                support.iter().any(|entry| entry.feature == feature
+                    && entry.state == StorageFeatureSupportState::Supported),
+                "{feature:?} should be supported by shared-journal backends"
+            );
+        }
+        assert_eq!(
+            capability_profile_for_features(&support),
+            StorageCapabilityProfile::EnterpriseComplete
+        );
+    }
 
     #[test]
     fn storage_health_diagnostic_reports_backend_layout_and_heads() {

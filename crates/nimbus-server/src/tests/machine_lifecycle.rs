@@ -140,7 +140,7 @@ impl MachineLifecycleManager for StubMachineLifecycleManager {
 async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
     let temp = tempdir().expect("tempdir should build");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let roots = nimbus_machine::MachineRootLayout::new(
+    let roots = nimbus_machine::MachineRootLayout::test_sibling_roots(
         temp.path().join("machine-config"),
         temp.path().join("machine-state"),
         temp.path().join("run"),
@@ -247,7 +247,7 @@ async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
 async fn machine_config_routes_create_update_delete_and_project_system_state() {
     let temp = tempdir().expect("tempdir should build");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let roots = nimbus_machine::MachineRootLayout::new(
+    let roots = nimbus_machine::MachineRootLayout::test_sibling_roots(
         temp.path().join("machine-config"),
         temp.path().join("machine-state"),
         temp.path().join("run"),
@@ -472,7 +472,7 @@ async fn assert_system_machine_document(
         .get_document_async(
             crate::system_tenant::system_tenant_id().expect("system id should parse"),
             TableName::new("machines").expect("table should parse"),
-            DocumentId::from_key(format!("machine:{name}")).expect("id should parse"),
+            DocumentId::from_key(system_machine_document_id(name)).expect("id should parse"),
         )
         .await
         .expect("machine document should exist");
@@ -486,9 +486,9 @@ async fn assert_system_machine_document(
 async fn assert_system_machine_deleted(engine: &Arc<Engine>, name: &str) {
     let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
     for (table, document_id) in [
-        ("machines", format!("machine:{name}")),
-        ("listeners", format!("listener:machine-api:{name}")),
-        ("ports", format!("port:machine:{name}:ssh")),
+        ("machines", system_machine_document_id(name)),
+        ("listeners", system_machine_listener_document_id(name)),
+        ("ports", system_machine_port_document_id(name, "ssh")),
     ] {
         let missing = engine
             .get_document_async(
@@ -503,6 +503,38 @@ async fn assert_system_machine_deleted(engine: &Arc<Engine>, name: &str) {
             "expected missing projection document, got {missing:?}"
         );
     }
+}
+
+fn system_machine_document_id(name: &str) -> String {
+    format!("machine:{}", system_key_segment(name))
+}
+
+fn system_machine_listener_document_id(name: &str) -> String {
+    format!("listener:machine-api:{}", system_key_segment(name))
+}
+
+fn system_machine_port_document_id(name: &str, port: &str) -> String {
+    format!(
+        "port:machine:{}:{}",
+        system_key_segment(name),
+        system_key_segment(port)
+    )
+}
+
+fn system_key_segment(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('~');
+            encoded.push(HEX[(byte >> 4) as usize] as char);
+            encoded.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+    }
+    encoded
 }
 
 async fn assert_system_events(engine: &Arc<Engine>, expected: &[(&str, &str, &str)]) {

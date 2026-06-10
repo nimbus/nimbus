@@ -2,7 +2,7 @@
 
 ```bash
 nimbus start --port 8080
-mongosh mongodb://127.0.0.1:27017/default?directConnection=true
+mongosh mongodb://app-user:app-secret@127.0.0.1:27017/default?directConnection=true
 ```
 
 ```javascript
@@ -64,7 +64,7 @@ visible through the HTTP API and vice versa.
 
 ```bash
 nimbus start --port 8080
-mongosh mongodb://127.0.0.1:27017/default?directConnection=true
+mongosh mongodb://app-user:app-secret@127.0.0.1:27017/default?directConnection=true
 ```
 
 ```javascript
@@ -83,9 +83,12 @@ nimbus packages provision mongodb   # the @nimbus/mongodb helper (from the binar
 
 ```typescript
 import { MongoClient } from "mongodb";
-import { uri } from "@nimbus/mongodb";
+import { mongoUri } from "@nimbus/mongodb";
 
-const client = new MongoClient(uri());
+const client = new MongoClient(mongoUri({
+  username: "app-user",
+  password: "app-secret",
+}));
 await client.connect();
 
 const db = client.db("default");
@@ -108,16 +111,17 @@ pip install pymongo
 ```python
 from pymongo import MongoClient
 
-client = MongoClient("mongodb://127.0.0.1:27017/default?directConnection=true")
+client = MongoClient("mongodb://app-user:app-secret@127.0.0.1:27017/default?directConnection=true")
 db = client["default"]
 
 db.messages.insert_one({"author": "Bob", "text": "Hello from Python"})
 print(list(db.messages.find()))
 ```
 
-> **Note:** The MongoDB wire protocol listener is currently configured at the
-> server library level. A `--mongodb-port` CLI flag is planned. Check the
-> [CLI reference](../../operating/cli.md) for the current state.
+> **Note:** The MongoDB wire protocol listener and its SCRAM credentials are
+> currently configured at the server library level. A `--mongodb-port` CLI flag
+> is planned. Check the [CLI reference](../../operating/cli.md) for the current
+> state.
 
 ## Client Package
 
@@ -134,17 +138,21 @@ npm install mongodb
 
 ```typescript
 import { MongoClient } from "mongodb";
-import { uri } from "@nimbus/mongodb";
+import { mongoUri } from "@nimbus/mongodb";
 
-const client = new MongoClient(uri({ database: "myapp" }));
+const client = new MongoClient(mongoUri({
+  database: "myapp",
+  username: "app-user",
+  password: "app-secret",
+}));
 await client.connect();
 const db = client.db("myapp");
 ```
 
 The helper exists because Nimbus is not a MongoDB replica set. Without
 `directConnection=true`, drivers attempt topology discovery and fail with a
-confusing timeout. `uri()` always includes it, along with sensible defaults
-(`127.0.0.1:27017`, database `"default"`).
+confusing timeout. `mongoUri()` always includes it, along with sensible defaults
+for the host, port, and database (`127.0.0.1:27017`, database `"default"`).
 
 You do not need the helper. The stock `mongodb` driver works directly as long
 as you include `?directConnection=true` in your connection string. See

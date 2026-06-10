@@ -61,6 +61,7 @@ pub(crate) struct ComposeProjectPlan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ComposeServiceCatalog {
     project: ComposeProjectPlan,
+    service_backends: BTreeMap<String, ServiceBackend>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

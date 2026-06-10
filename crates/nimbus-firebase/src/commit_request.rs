@@ -1,5 +1,3 @@
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, FieldTransform, FieldTransformOperation, Timestamp, WriteKey,
     WritePrecondition, WriteSetMode,
@@ -12,6 +10,7 @@ use time::format_description::well_known::Rfc3339;
 
 use super::resource_names::{self, FirestoreDatabaseName, FirestoreResourceNameError};
 use super::serializer::{self, FirestoreProtoJsonError};
+use super::transaction_token;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedCommitRequest {
@@ -44,8 +43,9 @@ pub fn parse_commit_request_with_resolver(
     let transaction = request
         .transaction
         .as_deref()
-        .map(parse_transaction)
-        .transpose()?;
+        .map(transaction_token::decode)
+        .transpose()
+        .map_err(|error| invalid_request(error.to_string()))?;
 
     let writes = request
         .writes
@@ -154,7 +154,8 @@ fn lower_commit_write(
 
     if let Some(update) = write.update {
         let parsed_document = resource_names::parse_document_name(&update.name)?;
-        ensure_database_match(database, &parsed_document.database, "update document")?;
+        resource_names::ensure_database_match(database, &parsed_document.database)
+            .map_err(|error| write_database_mismatch("update document", error))?;
         reject_document_metadata(&update)?;
 
         let key = resolve_write_key(&parsed_document.document_path)?;
@@ -193,7 +194,8 @@ fn lower_commit_write(
 
     if let Some(delete_name) = write.delete {
         let parsed_document = resource_names::parse_document_name(&delete_name)?;
-        ensure_database_match(database, &parsed_document.database, "delete document")?;
+        resource_names::ensure_database_match(database, &parsed_document.database)
+            .map_err(|error| write_database_mismatch("delete document", error))?;
         let key = resolve_write_key(&parsed_document.document_path)?;
         let precondition = lower_precondition(write.current_document)?;
         let missing_ok = precondition.is_empty();
@@ -206,7 +208,8 @@ fn lower_commit_write(
 
     if let Some(verify_name) = write.verify {
         let parsed_document = resource_names::parse_document_name(&verify_name)?;
-        ensure_database_match(database, &parsed_document.database, "verify document")?;
+        resource_names::ensure_database_match(database, &parsed_document.database)
+            .map_err(|error| write_database_mismatch("verify document", error))?;
         let key = resolve_write_key(&parsed_document.document_path)?;
         let precondition = lower_precondition(write.current_document)?;
         return Ok(AtomicWrite::Verify { key, precondition });
@@ -216,7 +219,8 @@ fn lower_commit_write(
         .transform
         .ok_or_else(|| invalid_request("missing write operation"))?;
     let parsed_document = resource_names::parse_document_name(&transform.document)?;
-    ensure_database_match(database, &parsed_document.database, "transform document")?;
+    resource_names::ensure_database_match(database, &parsed_document.database)
+        .map_err(|error| write_database_mismatch("transform document", error))?;
     let key = resolve_write_key(&parsed_document.document_path)?;
     let precondition = lower_precondition(write.current_document)?;
     let transforms = lower_field_transforms(transform.field_transforms)?;
@@ -344,12 +348,6 @@ fn lower_array_transform_values(
         .map_err(Into::into)
 }
 
-fn parse_transaction(value: &str) -> Result<Vec<u8>, FirestoreCommitRequestError> {
-    BASE64_STANDARD
-        .decode(value)
-        .map_err(|error| invalid_request(format!("invalid base64 transaction bytes: {error}")))
-}
-
 fn parse_timestamp(value: &str) -> Result<Timestamp, FirestoreCommitRequestError> {
     let parsed = OffsetDateTime::parse(value, &Rfc3339).map_err(|error| {
         invalid_request(format!("invalid RFC3339 timestamp `{value}`: {error}"))
@@ -374,23 +372,18 @@ fn reject_document_metadata(
     Ok(())
 }
 
-fn ensure_database_match(
-    expected: &FirestoreDatabaseName,
-    actual: &FirestoreDatabaseName,
-    kind: &'static str,
-) -> Result<(), FirestoreCommitRequestError> {
-    if expected.project_id == actual.project_id {
-        Ok(())
-    } else {
-        Err(invalid_request(format!(
-            "{kind} must be a child of database `projects/{}/databases/(default)`",
-            expected.project_id
-        )))
-    }
-}
-
 fn invalid_request(message: impl Into<String>) -> FirestoreCommitRequestError {
     FirestoreCommitRequestError::InvalidRequest(message.into())
+}
+
+fn write_database_mismatch(
+    kind: &'static str,
+    error: resource_names::FirestoreDatabaseMatchError,
+) -> FirestoreCommitRequestError {
+    invalid_request(format!(
+        "{kind} must be a child of database `{}`",
+        error.expected()
+    ))
 }
 
 fn unsupported(message: impl Into<String>) -> FirestoreCommitRequestError {
@@ -560,7 +553,11 @@ mod tests {
                 }
             ]
         });
-        assert!(parse_commit_request_with_resolver(&wrong_database, resolve_preview_key).is_err());
+        let error = parse_commit_request_with_resolver(&wrong_database, resolve_preview_key)
+            .expect_err("database mismatch should fail");
+        let error = error.to_string();
+        assert!(error.contains("delete document"));
+        assert!(error.contains("projects/demo/databases/(default)"));
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use super::*;
+use std::ops::Bound;
 
 impl SqliteTenantStore {
     pub fn load_schema(&self) -> Result<Schema> {
@@ -171,14 +172,11 @@ where
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn sqlite_index_scan_composite_range_query_sql<S>(
     fields: &[S],
     exact_prefix_len: usize,
-    has_start: bool,
-    has_end: bool,
-    start_inclusive: bool,
-    end_inclusive: bool,
+    start: Bound<()>,
+    end: Bound<()>,
 ) -> Result<String>
 where
     S: AsRef<str>,
@@ -194,20 +192,28 @@ where
     let range_field = fields[exact_prefix_len].as_ref();
     let mut clauses = exact_prefix_clauses(&fields[..exact_prefix_len]);
     let mut next_param = exact_prefix_len + 2;
-    if has_start {
+    if let Bound::Included(()) | Bound::Excluded(()) = start {
         clauses.push(format!(
             "{} {} ?{}",
             json_extract_expr(range_field),
-            if start_inclusive { ">=" } else { ">" },
+            if matches!(start, Bound::Included(())) {
+                ">="
+            } else {
+                ">"
+            },
             next_param
         ));
         next_param += 1;
     }
-    if has_end {
+    if let Bound::Included(()) | Bound::Excluded(()) = end {
         clauses.push(format!(
             "{} {} ?{}",
             json_extract_expr(range_field),
-            if end_inclusive { "<=" } else { "<" },
+            if matches!(end, Bound::Included(())) {
+                "<="
+            } else {
+                "<"
+            },
             next_param
         ));
     }

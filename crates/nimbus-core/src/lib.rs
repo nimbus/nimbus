@@ -36,6 +36,7 @@ pub use error::{Error, HistoricalReadErrorKind, Result, StorageErrorKind};
 pub use index_history::{
     HistoricalIndexCursor, HistoricalIndexHistory, HistoricalIndexNumberKey, HistoricalIndexPage,
     HistoricalIndexQuery, HistoricalIndexScalar, HistoricalIndexTuple, HistoricalIndexVersion,
+    order_preserving_number_bits,
 };
 pub use mutation::{
     CommitEntry, DurableMutationRecord, IndexLifecycleEvent, Mutation, SchemaChangeEvent,
@@ -81,8 +82,9 @@ pub use types::{
 pub use versioned_registry::{HistoricalReadShape, VersionedRegistry};
 pub use visibility::{PinnedServingSnapshot, ReadVisibility, RequiredSequence};
 pub use write_batch::{
-    AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, AtomicWriteResult, FieldTransform,
-    FieldTransformOperation, WriteKey, WritePrecondition, WriteSetMode,
+    ArrayPopSide, AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, AtomicWriteResult,
+    BitwiseOperation, FieldTransform, FieldTransformOperation, WriteKey, WritePrecondition,
+    WriteSetMode,
 };
 
 #[cfg(test)]

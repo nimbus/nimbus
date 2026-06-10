@@ -6,7 +6,7 @@ use nimbus_core::{
 };
 
 use crate::evaluator::{
-    decode_cursor, evaluate_paginated_with_docs_cancellable_and_predicate,
+    decode_cursor, evaluate_paginated_with_docs_cancellable_and_predicate_using_cursor_query,
     evaluate_query_with_docs_cancellable_and_predicate,
 };
 
@@ -166,7 +166,7 @@ impl MutationExecutionUnit {
                 has_more: false,
                 next_cursor: None,
             };
-            self.record_paginated_window_dependency(query, &empty)?;
+            self.record_paginated_window_dependency(query, &query.query, &empty)?;
             return Ok(empty);
         }
 
@@ -179,13 +179,14 @@ impl MutationExecutionUnit {
         let documents = self.materialize_table_view(&query.query.table, check_cancel)?;
         let mut include_document =
             |document: &Document| authorization.allows_document(&self.principal, document);
-        let page = evaluate_paginated_with_docs_cancellable_and_predicate(
+        let page = evaluate_paginated_with_docs_cancellable_and_predicate_using_cursor_query(
             documents,
             &merged_paginated,
+            &query.query,
             check_cancel,
             &mut include_document,
         )?;
-        self.record_paginated_window_dependency(&merged_paginated, &page)?;
+        self.record_paginated_window_dependency(&merged_paginated, &query.query, &page)?;
         Ok(page)
     }
 
@@ -311,12 +312,13 @@ impl MutationExecutionUnit {
     fn record_paginated_window_dependency(
         &self,
         paginated: &PaginatedQuery,
+        cursor_query: &Query,
         page: &nimbus_core::Page,
     ) -> Result<()> {
         let (start_sort_values, start_doc_id) = paginated
             .after
             .as_ref()
-            .map(|cursor| decode_cursor(cursor, &paginated.query))
+            .map(|cursor| decode_cursor(cursor, cursor_query))
             .transpose()?
             .map_or((Vec::new(), None), |(sort_values, document_id)| {
                 (sort_values, Some(document_id))

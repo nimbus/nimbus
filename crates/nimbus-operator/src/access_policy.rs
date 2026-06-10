@@ -1,4 +1,5 @@
 use http::{HeaderMap, HeaderName, Method, header};
+use ring::hmac;
 
 use super::access::{LOCAL_SESSION_COOKIE_NAME, LocalServerSecurityState, SessionValidationResult};
 use super::policy::{
@@ -103,12 +104,18 @@ pub fn authorize_deploy_admin_bearer(
         headers,
         "deploy admin API requires Authorization: Bearer <token>",
     )?;
-    if token != expected {
+    if !deploy_admin_tokens_match(expected, token) {
         return Err(LocalServerPolicyError::unauthorized(
             "invalid deploy admin token",
         ));
     }
     Ok(())
+}
+
+fn deploy_admin_tokens_match(expected: &str, token: &str) -> bool {
+    let key = hmac::Key::new(hmac::HMAC_SHA256, expected.as_bytes());
+    let expected_tag = hmac::sign(&key, expected.as_bytes());
+    hmac::verify(&key, token.as_bytes(), expected_tag.as_ref()).is_ok()
 }
 
 pub fn authorize_standard_server_access(
@@ -420,16 +427,26 @@ mod tests {
 
     #[test]
     fn deploy_admin_bearer_is_separate_from_local_admin_header_gate() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::AUTHORIZATION,
-            HeaderValue::from_static("Bearer deploy-token"),
-        );
+        let deploy_bearer_headers = |value: &'static str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::AUTHORIZATION, HeaderValue::from_static(value));
+            headers
+        };
+        let headers = deploy_bearer_headers("Bearer deploy-token");
 
         authorize_deploy_admin_bearer(Some("deploy-token"), &headers)
             .expect("matching deploy bearer should authorize deploy admin");
         let error = authorize_deploy_admin_bearer(Some("other-token"), &headers)
             .expect_err("wrong deploy bearer should be rejected");
+        assert_eq!(error.to_string(), "invalid deploy admin token");
+
+        let error = authorize_deploy_admin_bearer(Some("deploy-token-with-suffix"), &headers)
+            .expect_err("prefix-only deploy bearer should be rejected");
+        assert_eq!(error.to_string(), "invalid deploy admin token");
+
+        let longer_headers = deploy_bearer_headers("Bearer deploy-token-with-suffix");
+        let error = authorize_deploy_admin_bearer(Some("deploy-token"), &longer_headers)
+            .expect_err("longer deploy bearer should be rejected");
         assert_eq!(error.to_string(), "invalid deploy admin token");
     }
 

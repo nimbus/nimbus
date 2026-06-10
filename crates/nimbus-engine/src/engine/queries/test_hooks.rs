@@ -37,6 +37,16 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn document_cache_invalidation_pause_handle_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<crate::tenant::DocumentCacheInvalidationPauseHandle> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.document_cache_invalidation_pause_handle_for_testing()
+        })
+    }
+
+    #[cfg(test)]
     pub(crate) fn mutation_journal_stats_for_testing(
         &self,
         tenant_id: &TenantId,
@@ -223,6 +233,16 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn subscription_delivery_publish_pause_handle_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<crate::tenant::SubscriptionDeliveryPublishPauseHandle> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.subscription_delivery_publish_pause_handle_for_testing()
+        })
+    }
+
+    #[cfg(test)]
     pub(crate) fn trigger_candidate_pause_handle_for_testing(
         &self,
         tenant_id: &TenantId,
@@ -354,6 +374,17 @@ impl Engine {
     ) -> Result<Vec<TriggerInvocationRecord>> {
         self.with_runtime_for_testing(tenant_id, |runtime| {
             runtime.store.list_trigger_invocations()
+        })?
+    }
+
+    #[cfg(test)]
+    pub(crate) fn save_trigger_invocation_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        record: &TriggerInvocationRecord,
+    ) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.store.save_trigger_invocation(record)
         })?
     }
 }

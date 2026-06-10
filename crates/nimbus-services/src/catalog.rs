@@ -20,7 +20,7 @@ pub trait ServiceInstanceCatalog: Send + Sync + 'static {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServiceBackend {
-    Sandbox(SandboxSpec),
+    Sandbox(Box<SandboxSpec>),
     BuiltIn(BuiltInServiceSpec),
     External(ExternalServiceSpec),
 }
@@ -128,7 +128,7 @@ pub struct SessionResource {
 
 impl ServiceBackend {
     pub fn sandbox(spec: SandboxSpec) -> Self {
-        Self::Sandbox(spec)
+        Self::Sandbox(Box::new(spec))
     }
 
     pub fn built_in(provider: impl Into<String>) -> Self {
@@ -152,7 +152,7 @@ impl ServiceBackend {
 
     pub fn into_sandbox_spec(self) -> Option<SandboxSpec> {
         match self {
-            Self::Sandbox(spec) => Some(spec),
+            Self::Sandbox(spec) => Some(*spec),
             Self::BuiltIn(_) | Self::External(_) => None,
         }
     }

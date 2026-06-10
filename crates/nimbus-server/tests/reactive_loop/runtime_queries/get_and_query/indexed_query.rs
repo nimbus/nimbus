@@ -17,9 +17,12 @@ async fn convex_runtime_query_subscription_tracks_result_documents_and_index_ran
         ]),
         Some(
             r#"
-globalThis.__nimbusInvoke = async function(_request) {
-  const ctx = globalThis.__nimbusCreateContext();
-  const value = await ctx.db
+	globalThis.__nimbusInvoke = async function(request) {
+	  const ctx = globalThis.__nimbusCreateContext({
+	    hostCallSessionId: `${request.kind}:${request.function_name}`,
+	    request,
+	  });
+	  const value = await ctx.db
     .query("tasks")
     .withIndex("by_status", (q) => q.eq(q.field("status"), "open"))
     .collect();

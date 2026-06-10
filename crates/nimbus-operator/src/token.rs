@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use fs2::FileExt;
-use ring::hmac;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
@@ -37,9 +36,7 @@ pub struct LocalAdminTokenRecord {
 
 impl LocalAdminTokenRecord {
     pub fn authorize(&self, candidate: &str) -> bool {
-        let key = hmac::Key::new(hmac::HMAC_SHA256, self.token.as_bytes());
-        let expected = hmac::sign(&key, self.token.as_bytes());
-        hmac::verify(&key, candidate.as_bytes(), expected.as_ref()).is_ok()
+        constant_time_eq(self.token.as_bytes(), candidate.as_bytes())
     }
 
     /// True when the record carries a parseable `rotated_at` timestamp that
@@ -55,6 +52,17 @@ impl LocalAdminTokenRecord {
         };
         now - rotated < max_age
     }
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (&left, &right) in left.iter().zip(right) {
+        diff |= left ^ right;
+    }
+    diff == 0
 }
 
 pub fn load_or_create_local_admin_token(
@@ -461,9 +469,13 @@ mod tests {
     #[test]
     fn token_authorization_accepts_only_exact_token_matches() {
         let record = generate_local_admin_token(1).expect("token should generate");
+        let mut longer = record.token.clone();
+        longer.push('x');
 
         assert!(record.authorize(&record.token));
         assert!(!record.authorize("nimbus_at_not-the-real-token"));
+        assert!(!record.authorize(&record.token[..record.token.len() - 1]));
+        assert!(!record.authorize(&longer));
     }
 
     #[cfg(unix)]
@@ -485,11 +497,14 @@ mod tests {
     }
 
     #[test]
-    fn source_uses_ring_constant_time_compare_for_token_checks() {
+    fn source_uses_direct_constant_time_compare_for_token_checks() {
         let source = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/token.rs"))
             .expect("token source should be readable");
 
-        assert!(source.contains("hmac::verify("));
+        assert!(source.contains("fn constant_time_eq("));
+        assert!(source.contains("diff |= left ^ right;"));
+        let hmac_import = ["use ring", "::hmac;"].concat();
+        assert!(!source.contains(&hmac_import));
     }
 
     #[test]

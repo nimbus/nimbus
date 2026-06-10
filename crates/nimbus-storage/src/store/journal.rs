@@ -62,10 +62,11 @@ impl TenantStore {
         &self,
         write_txn: &redb::WriteTransaction,
         writes: Vec<WriteOp>,
+        commit_timestamp: Option<Timestamp>,
     ) -> Result<CommitEntry> {
         append_commit(
             write_txn,
-            self.now(),
+            commit_timestamp.unwrap_or_else(|| self.now()),
             writes.clone(),
             if writes.is_empty() {
                 Vec::new()
@@ -658,16 +659,13 @@ pub(crate) fn begin_scheduled_execution(
 }
 
 fn next_sequence(write_txn: &redb::WriteTransaction) -> Result<u64> {
-    let mut metadata = write_txn.open_table(METADATA).map_err(map_redb_error)?;
-    let current = match metadata.get(NEXT_SEQUENCE_KEY).map_err(map_redb_error)? {
-        Some(value) => decode_u64(value.value())?,
-        None => 1,
-    };
-    let next = current + 1;
-    metadata
-        .insert(NEXT_SEQUENCE_KEY, encode_u64(next).as_slice())
-        .map_err(map_redb_error)?;
-    Ok(current)
+    let metadata = write_txn.open_table(METADATA).map_err(map_redb_error)?;
+    Ok(
+        match metadata.get(NEXT_SEQUENCE_KEY).map_err(map_redb_error)? {
+            Some(value) => decode_u64(value.value())?,
+            None => 1,
+        },
+    )
 }
 
 pub(super) fn encode_u64(value: u64) -> [u8; 8] {

@@ -19,6 +19,7 @@ use super::support::{
     tenant_store_path, warm_sqlite_index_id_only,
 };
 use super::*;
+use std::ops::Bound;
 
 pub(super) async fn benchmark_crud_throughput() -> BenchResult<WorkloadOutcome> {
     let steady_fixtures = build_backend_pair_async(|backend| async move {
@@ -384,10 +385,8 @@ pub(super) async fn benchmark_composite_indexed_query_latency() -> BenchResult<W
     let sqlite_statement = sqlite_index_scan_composite_range_query_sql(
         &["team", "status", "rank"],
         2,
-        true,
-        true,
-        true,
-        false,
+        Bound::Included(()),
+        Bound::Excluded(()),
     )
     .expect("composite indexed query SQL should build");
     let sqlite_plan = SqliteQueryPlan {

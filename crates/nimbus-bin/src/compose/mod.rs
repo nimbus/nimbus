@@ -1,9 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use nimbus::{
-    EnginePersistenceConfig, Error, SandboxBackend, ServiceDefinitionCatalog, ServiceManager,
-};
+use nimbus::{EnginePersistenceConfig, Error, ServiceManager};
 #[cfg(test)]
 use nimbus::{SandboxHandle, TenantId};
 #[cfg(test)]
@@ -78,46 +75,6 @@ pub(crate) async fn run_compose_command(
     }
 }
 
-#[allow(dead_code)]
-pub(crate) fn load_service_definition_catalog(
-    file: &std::path::Path,
-) -> Result<Arc<dyn ServiceDefinitionCatalog>, Error> {
-    load_service_definition_catalog_for_selection(&ResolvedComposeSelection::explicit(
-        file.to_path_buf(),
-    ))
-}
-
-#[allow(dead_code)]
-pub(crate) fn load_service_definition_catalog_for_selection(
-    selection: &ResolvedComposeSelection,
-) -> Result<Arc<dyn ServiceDefinitionCatalog>, Error> {
-    Ok(Arc::new(
-        file::ComposeProjectPlan::load_selection(selection)?.into_service_catalog()?,
-    ))
-}
-
-#[allow(dead_code)]
-pub(crate) fn load_service_manager(
-    file: &std::path::Path,
-    sandbox_backend: Arc<dyn SandboxBackend>,
-) -> Result<ServiceManager, Error> {
-    load_service_manager_for_selection(
-        &ResolvedComposeSelection::explicit(file.to_path_buf()),
-        sandbox_backend,
-    )
-}
-
-#[allow(dead_code)]
-pub(crate) fn load_service_manager_for_selection(
-    selection: &ResolvedComposeSelection,
-    sandbox_backend: Arc<dyn SandboxBackend>,
-) -> Result<ServiceManager, Error> {
-    Ok(ServiceManager::new(
-        load_service_definition_catalog_for_selection(selection)?,
-        sandbox_backend,
-    ))
-}
-
 #[cfg(test)]
 pub(crate) fn load_compose_project_context(
     file: &std::path::Path,
@@ -134,33 +91,6 @@ pub(crate) fn load_compose_project_context_for_selection(
     control_data_dir: &std::path::Path,
 ) -> Result<ComposeProjectContext, Error> {
     ComposeProjectContext::load_selection(selection, control_data_dir)
-}
-
-#[allow(dead_code)]
-pub(crate) fn load_host_backed_service_manager_for_selection(
-    selection: &ResolvedComposeSelection,
-    control_data_dir: &std::path::Path,
-) -> Result<ServiceManager, Error> {
-    load_host_backed_service_manager_for_selection_with_admission(
-        selection,
-        control_data_dir,
-        file::ComposeAdmissionMode::LocalDevelopment,
-    )
-}
-
-#[allow(dead_code)]
-pub(crate) fn load_host_backed_service_manager_for_selection_with_admission(
-    selection: &ResolvedComposeSelection,
-    control_data_dir: &std::path::Path,
-    admission_mode: file::ComposeAdmissionMode,
-) -> Result<ServiceManager, Error> {
-    load_host_backed_service_manager_for_platform_selection_with_admission(
-        selection,
-        control_data_dir,
-        ServiceHostPlatform::current(),
-        None,
-        admission_mode,
-    )
 }
 
 pub(crate) fn load_host_backed_service_manager_for_selection_with_isolation_mode(

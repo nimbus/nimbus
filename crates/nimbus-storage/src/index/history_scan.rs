@@ -4,7 +4,9 @@ use nimbus_core::{
 };
 use serde_json::Value;
 
+use crate::IndexRangeBound;
 use crate::keys::prefix_end;
+use crate::range_bound::{index_range_bound_is_inclusive, index_range_bound_value};
 use crate::store::HistoricalIndexDocumentPage;
 
 use super::{encode_index_tuple, encode_index_value};
@@ -13,6 +15,7 @@ use super::{encode_index_tuple, encode_index_value};
 pub(crate) struct HistoricalIndexScanPlan {
     pub index: IndexDefinition,
     pub query: HistoricalIndexQuery,
+    pub empty: bool,
     pub match_prefix: Vec<u8>,
     pub start_key: Option<Vec<u8>>,
     pub end_key: Option<Vec<u8>>,
@@ -22,6 +25,12 @@ pub(crate) struct HistoricalIndexScanPlan {
 pub(crate) struct HistoricalIndexDocumentEntry {
     pub tuple: HistoricalIndexTuple,
     pub document: Document,
+}
+
+pub(crate) struct HistoricalIndexPageRequest<'a, 'c> {
+    pub after: Option<&'a HistoricalIndexCursor>,
+    pub limit: usize,
+    pub check_cancel: &'c mut dyn FnMut() -> Result<()>,
 }
 
 impl HistoricalIndexScanPlan {
@@ -38,6 +47,7 @@ impl HistoricalIndexScanPlan {
         Ok(Self {
             index,
             query,
+            empty: false,
             match_prefix: encoded.clone(),
             start_key: Some(encoded.clone()),
             end_key: prefix_end(&encoded),
@@ -58,6 +68,7 @@ impl HistoricalIndexScanPlan {
         Ok(Self {
             index,
             query: HistoricalIndexQuery::Prefix(prefix),
+            empty: false,
             match_prefix: encoded_prefix.clone(),
             start_key: Some(encoded_prefix.clone()),
             end_key: prefix_end(&encoded_prefix),
@@ -67,20 +78,30 @@ impl HistoricalIndexScanPlan {
     pub fn range(
         read_shape: &HistoricalReadShape,
         index_name: &str,
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
     ) -> Result<Self> {
         let index = queryable_historical_index(read_shape, index_name)?;
-        let start_encoded = start.map(encode_index_value).transpose()?;
-        let end_encoded = end.map(encode_index_value).transpose()?;
+        let start_encoded = index_range_bound_value(start)
+            .map(encode_index_value)
+            .transpose()?;
+        let end_encoded = index_range_bound_value(end)
+            .map(encode_index_value)
+            .transpose()?;
+        let range_start_key = historical_range_start_key(start_encoded.as_deref(), start);
+        let empty = matches!(range_start_key, HistoricalRangeStartKey::Empty);
+        let start_key = match range_start_key {
+            HistoricalRangeStartKey::Empty => None,
+            HistoricalRangeStartKey::Unbounded => None,
+            HistoricalRangeStartKey::Seek(key) => Some(key),
+        };
         Ok(Self {
             index,
-            query: historical_range_query(start, end, start_inclusive, end_inclusive)?,
+            query: historical_range_query(start, end)?,
+            empty,
             match_prefix: Vec::new(),
-            start_key: historical_range_start_key(start_encoded.as_deref(), start_inclusive),
-            end_key: historical_range_end_key(end_encoded.as_deref(), end_inclusive),
+            start_key,
+            end_key: historical_range_end_key(end_encoded.as_deref(), end),
         })
     }
 
@@ -88,26 +109,19 @@ impl HistoricalIndexScanPlan {
         read_shape: &HistoricalReadShape,
         index_name: &str,
         exact_prefix: &[Value],
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
     ) -> Result<Self> {
         let index = queryable_historical_index(read_shape, index_name)?;
         let encoded_prefix = encode_index_tuple(exact_prefix)?;
-        let start_key = historical_composite_start_key(&encoded_prefix, start, start_inclusive)?;
+        let start_key = historical_composite_start_key(&encoded_prefix, start)?;
         Ok(Self {
             index,
-            query: historical_composite_range_query(
-                exact_prefix,
-                start,
-                end,
-                start_inclusive,
-                end_inclusive,
-            )?,
+            query: historical_composite_range_query(exact_prefix, start, end)?,
+            empty: false,
             match_prefix: encoded_prefix.clone(),
             start_key: Some(start_key),
-            end_key: historical_composite_end_key(&encoded_prefix, end, end_inclusive)?,
+            end_key: historical_composite_end_key(&encoded_prefix, end)?,
         })
     }
 
@@ -192,18 +206,32 @@ fn queryable_historical_index(
         })
 }
 
-fn historical_range_start_key(start: Option<&[u8]>, start_inclusive: bool) -> Option<Vec<u8>> {
-    let start = start?;
-    if start_inclusive {
-        Some(start.to_vec())
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HistoricalRangeStartKey {
+    Empty,
+    Unbounded,
+    Seek(Vec<u8>),
+}
+
+fn historical_range_start_key(
+    start: Option<&[u8]>,
+    start_bound: IndexRangeBound<'_>,
+) -> HistoricalRangeStartKey {
+    let Some(start) = start else {
+        return HistoricalRangeStartKey::Unbounded;
+    };
+    if index_range_bound_is_inclusive(start_bound) {
+        HistoricalRangeStartKey::Seek(start.to_vec())
     } else {
-        prefix_end(start).or_else(|| Some(Vec::new()))
+        prefix_end(start)
+            .map(HistoricalRangeStartKey::Seek)
+            .unwrap_or(HistoricalRangeStartKey::Empty)
     }
 }
 
-fn historical_range_end_key(end: Option<&[u8]>, end_inclusive: bool) -> Option<Vec<u8>> {
+fn historical_range_end_key(end: Option<&[u8]>, end_bound: IndexRangeBound<'_>) -> Option<Vec<u8>> {
     let end = end?;
-    if end_inclusive {
+    if index_range_bound_is_inclusive(end_bound) {
         prefix_end(end)
     } else {
         Some(end.to_vec())
@@ -212,15 +240,14 @@ fn historical_range_end_key(end: Option<&[u8]>, end_inclusive: bool) -> Option<V
 
 fn historical_composite_start_key(
     exact_prefix: &[u8],
-    start: Option<&Value>,
-    start_inclusive: bool,
+    start: IndexRangeBound<'_>,
 ) -> Result<Vec<u8>> {
-    let Some(start) = start else {
+    let Some(start_value) = index_range_bound_value(start) else {
         return Ok(exact_prefix.to_vec());
     };
     let mut key = exact_prefix.to_vec();
-    key.extend_from_slice(&encode_index_value(start)?);
-    if start_inclusive {
+    key.extend_from_slice(&encode_index_value(start_value)?);
+    if index_range_bound_is_inclusive(start) {
         Ok(key)
     } else {
         Ok(prefix_end(&key).unwrap_or_default())
@@ -229,15 +256,14 @@ fn historical_composite_start_key(
 
 fn historical_composite_end_key(
     exact_prefix: &[u8],
-    end: Option<&Value>,
-    end_inclusive: bool,
+    end: IndexRangeBound<'_>,
 ) -> Result<Option<Vec<u8>>> {
-    let Some(end) = end else {
+    let Some(end_value) = index_range_bound_value(end) else {
         return Ok(prefix_end(exact_prefix));
     };
     let mut key = exact_prefix.to_vec();
-    key.extend_from_slice(&encode_index_value(end)?);
-    if end_inclusive {
+    key.extend_from_slice(&encode_index_value(end_value)?);
+    if index_range_bound_is_inclusive(end) {
         Ok(prefix_end(&key))
     } else {
         Ok(Some(key))
@@ -245,31 +271,27 @@ fn historical_composite_end_key(
 }
 
 fn historical_range_query(
-    start: Option<&Value>,
-    end: Option<&Value>,
-    start_inclusive: bool,
-    end_inclusive: bool,
+    start: IndexRangeBound<'_>,
+    end: IndexRangeBound<'_>,
 ) -> Result<HistoricalIndexQuery> {
     Ok(HistoricalIndexQuery::Range {
-        start: start
+        start: index_range_bound_value(start)
             .map(|value| HistoricalIndexTuple::from_values(std::slice::from_ref(value)))
             .transpose()?,
-        start_inclusive,
-        end: end
+        start_inclusive: index_range_bound_is_inclusive(start),
+        end: index_range_bound_value(end)
             .map(|value| HistoricalIndexTuple::from_values(std::slice::from_ref(value)))
             .transpose()?,
-        end_inclusive,
+        end_inclusive: index_range_bound_is_inclusive(end),
     })
 }
 
 fn historical_composite_range_query(
     exact_prefix: &[Value],
-    start: Option<&Value>,
-    end: Option<&Value>,
-    start_inclusive: bool,
-    end_inclusive: bool,
+    start: IndexRangeBound<'_>,
+    end: IndexRangeBound<'_>,
 ) -> Result<HistoricalIndexQuery> {
-    if start.is_none() && end.is_none() {
+    if index_range_bound_value(start).is_none() && index_range_bound_value(end).is_none() {
         return Ok(HistoricalIndexQuery::Prefix(
             exact_prefix
                 .iter()
@@ -278,10 +300,10 @@ fn historical_composite_range_query(
         ));
     }
     Ok(HistoricalIndexQuery::Range {
-        start: composite_bound_tuple(exact_prefix, start)?,
-        start_inclusive,
-        end: composite_bound_tuple(exact_prefix, end)?,
-        end_inclusive,
+        start: composite_bound_tuple(exact_prefix, index_range_bound_value(start))?,
+        start_inclusive: index_range_bound_is_inclusive(start),
+        end: composite_bound_tuple(exact_prefix, index_range_bound_value(end))?,
+        end_inclusive: index_range_bound_is_inclusive(end),
     })
 }
 
@@ -297,4 +319,31 @@ fn composite_bound_tuple(
         values.push(bound.clone());
     }
     HistoricalIndexTuple::from_values(&values).map(Some)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ops::Bound;
+
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn historical_exclusive_start_at_max_key_is_empty() {
+        let marker = json!("marker");
+
+        assert_eq!(
+            historical_range_start_key(Some(&[0xff]), Bound::Excluded(&marker)),
+            HistoricalRangeStartKey::Empty
+        );
+        assert_eq!(
+            historical_range_start_key(Some(&[0xff]), Bound::Included(&marker)),
+            HistoricalRangeStartKey::Seek(vec![0xff])
+        );
+        assert_eq!(
+            historical_range_start_key(None, Bound::Excluded(&marker)),
+            HistoricalRangeStartKey::Unbounded
+        );
+    }
 }

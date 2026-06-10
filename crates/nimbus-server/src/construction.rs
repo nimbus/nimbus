@@ -177,6 +177,7 @@ pub async fn serve(
     if let Some(mongodb_config) = mongodb_config {
         let mongodb_listener = tokio::net::TcpListener::bind(mongodb_config.bind_addr).await?;
         let mongodb_addr = mongodb_listener.local_addr()?;
+        adapters::mongodb::listener::guard_listener_is_loopback_only(mongodb_addr)?;
         crate::system_tenant::record_listener_state_async(
             &engine,
             "mongodb",
@@ -191,7 +192,7 @@ pub async fn serve(
         let mongodb_engine = Arc::clone(&engine);
         let mongodb_auth = mongodb_config.auth;
         adapter_handles.push(tokio::spawn(async move {
-            adapters::mongodb::listener::run_listener_with_auth(
+            adapters::mongodb::listener::run_listener(
                 mongodb_listener,
                 mongodb_engine,
                 mongodb_auth,

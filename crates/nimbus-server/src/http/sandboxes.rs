@@ -5,37 +5,19 @@ use axum::Json;
 use axum::extract::{Path, Query as QueryParams, State};
 use axum::http::{HeaderMap, StatusCode};
 use nimbus_core::{PrincipalContext, TenantId};
-use nimbus_operator::{
-    ExtractedServerAccessStatus, LocalServerCredentialMode, extract_server_access,
-};
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_services::SandboxResource;
 use nimbus_tenant::TenantIsolationContext;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 
+use super::authz::{
+    OperatorRouteAccess, PrincipalClass, extract_operator_route_access, format_millis_rfc3339,
+    permission_actions_allow, permission_claim_values, principal_class_from_principal,
+};
 use super::sandbox_spec::{SandboxSpecInput, SandboxSpecResponse};
 use super::{AppError, AppState, parse_user_tenant_id};
 use crate::local_server::{LocalServerAuditEvent, LocalServerRouteFamily, origin_from_headers};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SandboxPrincipalClass {
-    Operator,
-    Tenant,
-    SpawnedWorkload,
-}
-
-impl SandboxPrincipalClass {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Operator => "operator",
-            Self::Tenant => "tenant",
-            Self::SpawnedWorkload => "spawned_workload",
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SandboxAction {
@@ -58,7 +40,7 @@ impl SandboxAction {
 
 #[derive(Debug)]
 struct SandboxAuthorization {
-    principal_class: SandboxPrincipalClass,
+    principal_class: PrincipalClass,
     tenant_id: TenantId,
     tenant_context: TenantIsolationContext,
     auth_method: Option<&'static str>,
@@ -67,7 +49,7 @@ struct SandboxAuthorization {
 
 impl SandboxAuthorization {
     fn is_operator(&self) -> bool {
-        self.principal_class == SandboxPrincipalClass::Operator
+        self.principal_class == PrincipalClass::Operator
     }
 
     fn allows(&self, action: SandboxAction, sandbox_id: Option<&str>) -> bool {
@@ -262,7 +244,7 @@ pub(crate) async fn list_sandboxes(
                 query
                     .label_value
                     .as_deref()
-                    .map_or(true, |expected| value == expected)
+                    .is_none_or(|expected| value == expected)
             })
         });
     }
@@ -404,7 +386,7 @@ async fn authorize_sandbox_route(
                 state,
                 headers,
                 &route_tenant,
-                SandboxPrincipalClass::Tenant,
+                PrincipalClass::Tenant,
                 Some("application_bearer"),
                 false,
                 format!("tenant/spawned sandbox authorization failed: {error}"),
@@ -416,7 +398,7 @@ async fn authorize_sandbox_route(
             state,
             headers,
             &route_tenant,
-            SandboxPrincipalClass::Tenant,
+            PrincipalClass::Tenant,
             None,
             false,
             "sandbox route requires operator credentials or authenticated tenant/spawned workload identity",
@@ -426,7 +408,7 @@ async fn authorize_sandbox_route(
         ));
     }
 
-    let principal_class = sandbox_principal_class_from_principal(&resolved.principal)?;
+    let principal_class = principal_class_from_principal(&resolved.principal, "sandbox")?;
     let tenant_context = crate::tenant::TenantIsolationContext::application(
         route_tenant.clone(),
         resolved.principal.clone(),
@@ -462,66 +444,26 @@ fn authorize_operator_sandbox_route(
     surface: &'static str,
 ) -> Result<Option<SandboxAuthorization>, AppError> {
     let route_tenant = parse_user_tenant_id(tenant_id.to_owned())?;
-    if state.local_server_security.is_none() {
-        return Ok(None);
-    }
-    let extracted = extract_server_access(
-        headers,
-        LocalServerCredentialMode::AuthorizationOrAdminHeader,
-        state.local_server_security.as_deref(),
-    )
-    .map_err(AppError::from)?;
-    match extracted.status {
-        ExtractedServerAccessStatus::Authorized => Ok(Some(SandboxAuthorization {
-            principal_class: SandboxPrincipalClass::Operator,
+    match extract_operator_route_access(headers, state.local_server_security.as_deref())? {
+        Ok(OperatorRouteAccess::Authorized { auth_method }) => Ok(Some(SandboxAuthorization {
+            principal_class: PrincipalClass::Operator,
             tenant_context: TenantIsolationContext::operator(route_tenant.clone(), surface),
             tenant_id: route_tenant,
-            auth_method: extracted.auth_method,
+            auth_method,
             principal: None,
         })),
-        ExtractedServerAccessStatus::Missing => Ok(None),
-        ExtractedServerAccessStatus::Invalid
-            if extracted.auth_method == Some("local_admin_bearer") =>
-        {
-            Ok(None)
-        }
-        ExtractedServerAccessStatus::Revoked => {
+        Ok(OperatorRouteAccess::Missing) => Ok(None),
+        Err(rejection) => {
             record_sandbox_authorization_audit(
                 state,
                 headers,
                 &route_tenant,
-                SandboxPrincipalClass::Operator,
-                extracted.auth_method,
+                PrincipalClass::Operator,
+                rejection.auth_method(),
                 false,
-                "operator sandbox route rejected: auth.token_revoked",
+                format!("operator sandbox route rejected: {}", rejection.reason()),
             );
-            Err(AppError::unauthorized("auth.token_revoked"))
-        }
-        ExtractedServerAccessStatus::Expired => {
-            record_sandbox_authorization_audit(
-                state,
-                headers,
-                &route_tenant,
-                SandboxPrincipalClass::Operator,
-                extracted.auth_method,
-                false,
-                "operator sandbox route rejected: auth.session_expired",
-            );
-            Err(AppError::unauthorized("auth.session_expired"))
-        }
-        ExtractedServerAccessStatus::Invalid => {
-            record_sandbox_authorization_audit(
-                state,
-                headers,
-                &route_tenant,
-                SandboxPrincipalClass::Operator,
-                extracted.auth_method,
-                false,
-                "operator sandbox route rejected: invalid local admin credential",
-            );
-            Err(AppError::unauthorized(
-                LocalServerCredentialMode::AuthorizationOrAdminHeader.unauthorized_message(),
-            ))
+            Err(rejection.app_error())
         }
     }
 }
@@ -531,61 +473,33 @@ fn principal_has_sandbox_permission(
     action: SandboxAction,
     sandbox_id: Option<&str>,
 ) -> bool {
-    sandbox_permission_values(principal).any(|permission| {
-        sandbox_permission_actions_allow(permission, action)
-            && sandbox_permission_scope_allows(permission, sandbox_id)
-    })
+    sandbox_permission_values(principal)
+        .into_iter()
+        .any(|permission| {
+            permission_actions_allow(permission, action.as_str())
+                && sandbox_permission_scope_allows(permission, sandbox_id)
+        })
 }
 
 fn principal_has_sandbox_list_permission(principal: &PrincipalContext) -> bool {
-    sandbox_permission_values(principal).any(|permission| {
-        sandbox_permission_actions_allow(permission, SandboxAction::List)
-            && sandbox_permission_scope_is_listable(permission)
-    })
-}
-
-fn sandbox_permission_values(principal: &PrincipalContext) -> impl Iterator<Item = &Value> {
-    [&principal.verified_claims, &principal.claims]
+    sandbox_permission_values(principal)
         .into_iter()
-        .flat_map(|claims| {
-            [
-                "nimbus_sandbox_permissions",
-                "nimbusSandboxPermissions",
-                "sandbox_permissions",
-                "sandboxPermissions",
-            ]
-            .into_iter()
-            .filter_map(|claim_name| claims.get(claim_name))
-        })
-        .flat_map(|value| match value {
-            Value::Array(values) => values.iter().collect::<Vec<_>>(),
-            value => vec![value],
+        .any(|permission| {
+            permission_actions_allow(permission, SandboxAction::List.as_str())
+                && sandbox_permission_scope_is_listable(permission)
         })
 }
 
-fn sandbox_permission_scope_is_listable(permission: &Value) -> bool {
-    let Some(scope) = permission.get("scope") else {
-        return false;
-    };
-    match scope.get("kind").and_then(Value::as_str) {
-        Some("tenant") => true,
-        Some("exactId") => scope.get("id").and_then(Value::as_str).is_some(),
-        Some("idPrefix") => scope.get("prefix").and_then(Value::as_str).is_some(),
-        _ => false,
-    }
-}
-
-fn sandbox_permission_actions_allow(permission: &Value, action: SandboxAction) -> bool {
-    let Some(actions) = permission.get("actions") else {
-        return false;
-    };
-    match actions {
-        Value::String(value) => value == action.as_str(),
-        Value::Array(values) => values
-            .iter()
-            .any(|value| value.as_str() == Some(action.as_str())),
-        _ => false,
-    }
+fn sandbox_permission_values(principal: &PrincipalContext) -> Vec<&Value> {
+    permission_claim_values(
+        principal,
+        &[
+            "nimbus_sandbox_permissions",
+            "nimbusSandboxPermissions",
+            "sandbox_permissions",
+            "sandboxPermissions",
+        ],
+    )
 }
 
 fn sandbox_permission_scope_allows(permission: &Value, sandbox_id: Option<&str>) -> bool {
@@ -607,46 +521,16 @@ fn sandbox_permission_scope_allows(permission: &Value, sandbox_id: Option<&str>)
     }
 }
 
-fn sandbox_principal_class_from_principal(
-    principal: &PrincipalContext,
-) -> Result<SandboxPrincipalClass, AppError> {
-    let Some(value) = principal_claim_string(
-        principal,
-        &[
-            "nimbus_principal_class",
-            "nimbusPrincipalClass",
-            "principal_class",
-            "principalClass",
-        ],
-    ) else {
-        return Ok(SandboxPrincipalClass::Tenant);
+fn sandbox_permission_scope_is_listable(permission: &Value) -> bool {
+    let Some(scope) = permission.get("scope") else {
+        return false;
     };
-    match value {
-        "tenant" => Ok(SandboxPrincipalClass::Tenant),
-        "spawned" | "spawned_workload" | "spawnedWorkload" | "workload" | "workload_identity" => {
-            Ok(SandboxPrincipalClass::SpawnedWorkload)
-        }
-        "operator" => Err(AppError::forbidden(
-            "application credentials cannot resolve to operator principal class",
-        )),
-        other => Err(AppError::forbidden(format!(
-            "unknown sandbox route principal class `{other}`"
-        ))),
+    match scope.get("kind").and_then(Value::as_str) {
+        Some("tenant") => true,
+        Some("exactId") => scope.get("id").and_then(Value::as_str).is_some(),
+        Some("idPrefix") => scope.get("prefix").and_then(Value::as_str).is_some(),
+        _ => false,
     }
-}
-
-fn principal_claim_string<'a>(
-    principal: &'a PrincipalContext,
-    claim_names: &[&str],
-) -> Option<&'a str> {
-    for claims in [&principal.verified_claims, &principal.claims] {
-        for claim_name in claim_names {
-            if let Some(value) = claims.get(*claim_name).and_then(Value::as_str) {
-                return Some(value);
-            }
-        }
-    }
-    None
 }
 
 fn service_manager(state: &AppState) -> Result<Arc<nimbus_services::ServiceManager>, AppError> {
@@ -706,7 +590,7 @@ fn record_sandbox_authorization_audit(
     state: &AppState,
     headers: &HeaderMap,
     tenant_id: &TenantId,
-    principal_class: SandboxPrincipalClass,
+    principal_class: PrincipalClass,
     auth_method: Option<&'static str>,
     success: bool,
     reason: impl Into<String>,
@@ -724,14 +608,4 @@ fn record_sandbox_authorization_audit(
             reason.into()
         ),
     });
-}
-
-fn format_millis_rfc3339(millis: u64) -> String {
-    let nanos = (millis as i128).saturating_mul(1_000_000);
-    match OffsetDateTime::from_unix_timestamp_nanos(nanos) {
-        Ok(timestamp) => timestamp
-            .format(&Rfc3339)
-            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned()),
-        Err(_) => "1970-01-01T00:00:00Z".to_owned(),
-    }
 }

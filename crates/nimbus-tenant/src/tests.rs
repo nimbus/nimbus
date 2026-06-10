@@ -625,7 +625,7 @@ fn application_context_rejects_mismatched_principal_tenant_claim() {
     );
 
     let error = context
-        .validate_principal_claim_if_present("convex route tenant")
+        .admit_if_principal_claim_absent_or_matching("convex route tenant")
         .expect_err("mismatched application tenant claim must be rejected");
     assert!(
         error.to_string().contains("permission denied"),
@@ -655,7 +655,7 @@ fn application_context_allows_matching_verified_principal_tenant_claim() {
     );
 
     context
-        .validate_principal_claim_if_present("convex route tenant")
+        .admit_if_principal_claim_absent_or_matching("convex route tenant")
         .expect("verified tenant claim should take precedence and authorize access");
 }
 
@@ -672,7 +672,7 @@ fn application_context_can_require_tenant_claim_for_control_plane_routes() {
     );
 
     context
-        .validate_principal_claim_if_present("convex route tenant")
+        .admit_if_principal_claim_absent_or_matching("convex route tenant")
         .expect("generic adapter routes may accept principals without tenant claims");
     let error = context
         .require_matching_principal_claim("service lifecycle route")

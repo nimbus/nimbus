@@ -1,5 +1,5 @@
 use nimbus_core::{
-    CommitEntry, DependencySet, Error, Result, SequenceNumber, TableName,
+    CommitEntry, DependencySet, Error, Result, SequenceNumber, TableName, Timestamp,
     commit_intersects_dependency_set,
 };
 use nimbus_storage::ResolvedScheduleOp;
@@ -19,6 +19,17 @@ impl Drop for FinalizationGuard<'_> {
 
 impl MutationExecutionUnit {
     pub fn commit(&self) -> Result<Option<CommitEntry>> {
+        self.commit_with_timestamp(None)
+    }
+
+    pub(super) fn commit_at(&self, commit_timestamp: Timestamp) -> Result<Option<CommitEntry>> {
+        self.commit_with_timestamp(Some(commit_timestamp))
+    }
+
+    fn commit_with_timestamp(
+        &self,
+        commit_timestamp: Option<Timestamp>,
+    ) -> Result<Option<CommitEntry>> {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
         let finalization_guard = FinalizationGuard { unit: self };
         let (writes, schedule_ops, conflict_dependencies, trigger_write_origin) = {
@@ -40,16 +51,24 @@ impl MutationExecutionUnit {
         }
 
         let result = (|| -> Result<Option<CommitEntry>> {
-            self.ensure_schema_unchanged(&conflict_dependencies)?;
-            self.ensure_no_conflicts(&conflict_dependencies)?;
-
             let commit = {
                 let _sequence_guard = self.runtime.lock_mutation_sequence();
-                self.runtime.store.apply_execution_unit_batch_with_origin(
+                self.ensure_schema_unchanged(&conflict_dependencies)?;
+                self.ensure_no_conflicts(&conflict_dependencies)?;
+                #[cfg(test)]
+                self.engine.execution_unit_commit_pause.wait_if_armed();
+                let commit = self.runtime.store.apply_execution_unit_batch_with_origin(
                     &writes,
                     &schedule_ops,
                     trigger_write_origin.as_ref(),
-                )?
+                    commit_timestamp,
+                )?;
+                if let Some(commit) = &commit {
+                    self.runtime.mark_durable_head(commit.sequence);
+                    self.runtime.invalidate_document_cache_for_commit(commit);
+                    self.runtime.mark_applied_head(commit.sequence);
+                }
+                commit
             };
             Ok(commit)
         })();
@@ -57,9 +76,6 @@ impl MutationExecutionUnit {
         let commit = result?;
 
         if let Some(commit) = &commit {
-            self.runtime.mark_durable_head(commit.sequence);
-            self.runtime.invalidate_document_cache_for_commit(commit);
-            self.runtime.mark_applied_head(commit.sequence);
             self.engine.process_commit(self.runtime.clone(), commit);
         }
         if schedule_ops

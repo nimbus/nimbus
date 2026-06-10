@@ -547,6 +547,9 @@ fn move_temp_file_into_place(source: &Path, destination: &Path) -> std::io::Resu
 
     let source = encode(source);
     let destination = encode(destination);
+    // Safety: source and destination are NUL-terminated UTF-16 buffers
+    // that outlive the synchronous MoveFileExW call, and the return value
+    // is checked before reporting success.
     let moved = unsafe {
         MoveFileExW(
             source.as_ptr(),

@@ -19,30 +19,20 @@ impl ServiceInstanceCatalog for ServiceManager {
         &self,
         tenant_id: &TenantId,
     ) -> BTreeMap<String, SandboxHandle> {
-        let keys = {
-            self.state
-                .lock()
-                .expect("manager lock should not be poisoned")
-                .handles
-                .keys()
-                .filter(|key| &key.tenant_id == tenant_id)
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-
-        keys.into_iter()
-            .filter_map(|key| {
-                self.refresh_handle(&key)
-                    .ok()
-                    .flatten()
-                    .filter(|handle| {
-                        !matches!(
-                            handle.status,
-                            SandboxStatus::Stopped | SandboxStatus::Failed
-                        )
-                    })
-                    .map(|handle| (key.service_name.clone(), handle))
+        self.state
+            .lock()
+            .expect("manager lock should not be poisoned")
+            .handles
+            .iter()
+            .filter(|(key, handle)| {
+                &key.tenant_id == tenant_id
+                    && handle.tenant_id == *tenant_id
+                    && !matches!(
+                        handle.status,
+                        SandboxStatus::Stopped | SandboxStatus::Failed
+                    )
             })
+            .map(|(key, handle)| (key.service_name.clone(), handle.clone()))
             .collect()
     }
 }

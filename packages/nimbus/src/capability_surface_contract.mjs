@@ -490,7 +490,7 @@ const entryContracts = {
   },
   "@nimbus/mongodb": {
     path: "packages/mongodb/src/index.ts",
-    exports: ["UriOptions", "uri"],
+    exports: ["MongoUriOptions", "mongoUri"],
   },
   "@nimbus/dynamodb": {
     path: "packages/dynamodb/src/index.ts",

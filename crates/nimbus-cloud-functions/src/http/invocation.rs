@@ -76,7 +76,7 @@ pub fn execute_http_target(
         deployment_generation,
         "cloud functions http runtime deployment",
     )?;
-    isolation.validate_principal_claim_if_present("cloud functions http tenant")?;
+    isolation.admit_if_principal_claim_absent_or_matching("cloud functions http tenant")?;
     let bundle = registry.runtime_bundle();
     isolation.ensure_runtime_bundle_matches(&bundle, "cloud functions http runtime bundle")?;
     let services = runtime_context
@@ -114,6 +114,7 @@ pub fn execute_http_target(
             normalize_principal_context(auth.as_ref()),
             Some(server_request_id.clone()),
             InvocationKind::Mutation,
+            request.function_name.clone(),
         ),
     )?);
 

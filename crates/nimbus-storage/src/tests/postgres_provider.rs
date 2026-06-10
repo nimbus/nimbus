@@ -1,5 +1,6 @@
 use std::env;
 use std::future::Future;
+use std::ops::Bound;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -731,10 +732,8 @@ async fn postgres_historical_index_scan_eq_and_range_use_versioned_visibility() 
             .historical_index_scan_range_cancellable(
                 &at_update,
                 "by_rank",
-                Some(&serde_json::json!(2)),
-                Some(&serde_json::json!(2)),
-                true,
-                true,
+                Bound::Included(&serde_json::json!(2)),
+                Bound::Included(&serde_json::json!(2)),
                 &mut || Ok(()),
             )
             .expect("historical rank range scan should succeed");
@@ -842,10 +841,8 @@ async fn postgres_historical_index_prefix_composite_range_and_pagination_are_sta
                 &read_shape,
                 "by_status_rank",
                 &[serde_json::json!("open")],
-                Some(&serde_json::json!(2)),
-                Some(&serde_json::json!(2)),
-                true,
-                true,
+                Bound::Included(&serde_json::json!(2)),
+                Bound::Included(&serde_json::json!(2)),
                 &mut || Ok(()),
             )
             .expect("historical composite range scan should succeed");
@@ -1116,7 +1113,7 @@ async fn postgres_execution_unit_batch_and_scheduler_state_round_trip() {
 
         let claimed = opened
             .store
-            .claim_due_jobs(Timestamp(5_000))
+            .claim_due_jobs(Timestamp(5_000), usize::MAX)
             .expect("claim should succeed");
         assert_eq!(claimed, vec![scheduled_job.clone()]);
 
@@ -1134,7 +1131,7 @@ async fn postgres_execution_unit_batch_and_scheduler_state_round_trip() {
 
         let claimed = opened
             .store
-            .claim_due_jobs(Timestamp(6_000))
+            .claim_due_jobs(Timestamp(6_000), usize::MAX)
             .expect("second claim should succeed");
         let result = ScheduledJobResult {
             id: scheduled_job.id.clone(),
@@ -1737,10 +1734,8 @@ async fn postgres_index_reads_round_trip_after_schema_write() {
                 &table_schema.table,
                 "by_team_status_rank",
                 &[serde_json::json!("alpha"), serde_json::json!("open")],
-                Some(&serde_json::json!(2)),
-                Some(&serde_json::json!(4)),
-                true,
-                false,
+                Bound::Included(&serde_json::json!(2)),
+                Bound::Excluded(&serde_json::json!(4)),
                 &mut check_cancel,
             )
             .expect("composite range index scan should succeed");

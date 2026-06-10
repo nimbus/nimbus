@@ -2,7 +2,6 @@ use super::*;
 use std::sync::Arc;
 use std::time::Duration;
 
-use nimbus_sandbox::backends::krun::{KrunLaunchMode, KrunSandboxBackend};
 use nimbus_server::{RouterOptions, build_router};
 use nimbus_testing::{EngineFixture, HttpApiFixture, ServerFixture, wait_for_condition};
 use tempfile::tempdir;
@@ -41,22 +40,12 @@ async fn convex_runtime_query_starts_real_krun_service_from_compose_file_and_tea
         context.control_plane.project_root.display()
     );
     println!("M5_PROJECT_KEY={}", context.control_plane.project_key);
-    let mut config = context.control_plane.krun_backend_config();
-    config.launch_mode = KrunLaunchMode::Execute;
-    if let Some(runtime_path) = env::var_os("NIMBUS_KRUN_SMOKE_RUNTIME") {
-        config.runtime_path = runtime_path.into();
-    }
-    if let Some(conmon_path) = env::var_os("NIMBUS_KRUN_SMOKE_CONMON") {
-        config.conmon_path = conmon_path.into();
-    }
-    if let Some(buildah_path) = env::var_os("NIMBUS_KRUN_SMOKE_BUILDAH") {
-        config.buildah_path = buildah_path.into();
-    }
-
+    let selection = crate::compose::discovery::ResolvedComposeSelection::explicit(compose_path);
     let service_manager = Arc::new(
-        crate::compose::load_service_manager(
-            &compose_path,
-            Arc::new(KrunSandboxBackend::new(config)),
+        crate::compose::load_host_backed_service_manager_for_selection_with_isolation_mode(
+            &selection,
+            &control_data_dir,
+            nimbus_server::TenantIsolationMode::LocalDevelopment,
         )
         .expect("compose-backed service manager should load")
         .with_activation_poll_interval(Duration::from_millis(50))

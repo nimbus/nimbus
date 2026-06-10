@@ -8,7 +8,7 @@ pub(super) struct RemoteNamespaceSnapshot {
     pub(super) document_versions: Vec<RemoteDocumentVersionRow>,
     pub(super) index_versions: Vec<RemoteIndexVersionRow>,
     pub(super) resource_path_bindings: Vec<RemoteResourcePathBindingRow>,
-    pub(super) scheduled_jobs: Vec<RemoteJsonRow>,
+    pub(super) scheduled_jobs: Vec<RemoteScheduledJobRow>,
     pub(super) running_scheduled_jobs: Vec<RemoteJsonRow>,
     pub(super) scheduled_job_results: Vec<RemoteJsonRow>,
     pub(super) scheduled_job_executions: Vec<String>,
@@ -80,6 +80,13 @@ pub(super) struct RemoteJsonRow {
 }
 
 #[derive(Debug, Clone)]
+pub(super) struct RemoteScheduledJobRow {
+    id: String,
+    run_at: String,
+    data_json: String,
+}
+
+#[derive(Debug, Clone)]
 pub(super) struct RemoteNamedJsonRow {
     name: String,
     data_json: String,
@@ -115,7 +122,7 @@ pub(super) async fn fetch_remote_namespace_snapshot(
             document_versions: query_remote_document_version_rows(&conn).await?,
             index_versions: query_remote_index_version_rows(&conn).await?,
             resource_path_bindings: query_remote_resource_path_binding_rows(&conn).await?,
-            scheduled_jobs: query_remote_json_rows(&conn, "scheduled_jobs", "id").await?,
+            scheduled_jobs: query_remote_scheduled_job_rows(&conn).await?,
             running_scheduled_jobs: query_remote_json_rows(&conn, "running_scheduled_jobs", "id")
                 .await?,
             scheduled_job_results: query_remote_json_rows(&conn, "scheduled_job_results", "job_id")
@@ -306,6 +313,25 @@ async fn query_remote_json_rows(
         result.push(RemoteJsonRow {
             key: row.get::<String>(0).map_err(map_libsql_error)?,
             data_json: row.get::<String>(1).map_err(map_libsql_error)?,
+        });
+    }
+    Ok(result)
+}
+
+async fn query_remote_scheduled_job_rows(conn: &Connection) -> Result<Vec<RemoteScheduledJobRow>> {
+    let mut rows = conn
+        .query(
+            "SELECT id, run_at, data_json FROM scheduled_jobs ORDER BY run_at, id",
+            (),
+        )
+        .await
+        .map_err(map_libsql_error)?;
+    let mut result = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
+        result.push(RemoteScheduledJobRow {
+            id: row.get::<String>(0).map_err(map_libsql_error)?,
+            run_at: row.get::<String>(1).map_err(map_libsql_error)?,
+            data_json: row.get::<String>(2).map_err(map_libsql_error)?,
         });
     }
     Ok(result)
@@ -568,7 +594,7 @@ fn insert_snapshot_rows(
                 .map_err(map_local_sqlite_error)?;
         }
     }
-    insert_json_rows(conn, "scheduled_jobs", "id", &snapshot.scheduled_jobs)?;
+    insert_scheduled_job_rows(conn, &snapshot.scheduled_jobs)?;
     insert_json_rows(
         conn,
         "running_scheduled_jobs",
@@ -635,6 +661,25 @@ fn insert_json_rows(
     for row in rows {
         statement
             .execute(params![row.key.as_str(), row.data_json.as_str()])
+            .map_err(map_local_sqlite_error)?;
+    }
+    Ok(())
+}
+
+fn insert_scheduled_job_rows(
+    conn: &LocalSqliteConnection,
+    rows: &[RemoteScheduledJobRow],
+) -> Result<()> {
+    let mut statement = conn
+        .prepare("INSERT INTO scheduled_jobs (id, run_at, data_json) VALUES (?1, ?2, ?3)")
+        .map_err(map_local_sqlite_error)?;
+    for row in rows {
+        statement
+            .execute(params![
+                row.id.as_str(),
+                row.run_at.as_str(),
+                row.data_json.as_str()
+            ])
             .map_err(map_local_sqlite_error)?;
     }
     Ok(())

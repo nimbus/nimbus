@@ -123,11 +123,11 @@ impl StartupSignalMonitor {
         let mut registrations = Vec::new();
         for signal in [libc::SIGINT, libc::SIGTERM] {
             let interrupted = Arc::clone(&interrupted);
+            // SAFETY: `signal-hook-registry` requires the callback to be
+            // signal-safe. This handler only performs an atomic store, and the
+            // returned registration id is retained so Drop can unregister it
+            // when startup monitoring ends.
             let registration = unsafe {
-                // The callback performs only an atomic store, which is
-                // signal-safe and lets the synchronous startup loops observe
-                // interruption without doing non-signal-safe work in the
-                // handler itself.
                 register_signal(signal, move || {
                     interrupted.store(true, Ordering::SeqCst);
                 })

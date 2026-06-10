@@ -12,8 +12,8 @@ pub(crate) use self::filtering::matches_filters;
 pub use self::pagination::evaluate_paginated_cancellable;
 pub use self::pagination::{evaluate_paginated, evaluate_paginated_with_docs};
 pub(crate) use self::pagination::{
-    evaluate_paginated_cancellable_with_predicate,
-    evaluate_paginated_with_docs_cancellable_and_predicate,
+    evaluate_paginated_cancellable_with_predicate_using_cursor_query,
+    evaluate_paginated_with_docs_cancellable_and_predicate_using_cursor_query,
 };
 #[cfg(test)]
 pub use self::query::evaluate_query_cancellable;

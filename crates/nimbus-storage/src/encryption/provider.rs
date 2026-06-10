@@ -3,7 +3,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use super::key::{GeneratedDatabaseKey, WrappedDatabaseKey};
+use super::key::{DataEncryptionKey, GeneratedDatabaseKey, WrappedDatabaseKey};
 use super::manifest::KeyManifestHeader;
 use super::subject::LocalKeySubject;
 
@@ -217,7 +217,7 @@ pub trait LocalKeyProvider: Send + Sync + 'static {
         subject: &LocalKeySubject,
         wrapped: &WrappedDatabaseKey,
         header: &KeyManifestHeader,
-    ) -> KeyProviderResult<[u8; 32]>;
+    ) -> KeyProviderResult<DataEncryptionKey>;
 
     /// Re-wraps a DEK under this provider's key.
     ///

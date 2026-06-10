@@ -2,6 +2,8 @@ mod exact;
 mod range;
 mod scoring;
 
+use std::ops::Bound;
+
 use nimbus_core::{Document, Filter, Query, Result, TableSchema};
 use nimbus_storage::QueryReadStore;
 use serde_json::Value;
@@ -189,14 +191,14 @@ where
                 .iter()
                 .map(|match_| match_.value.clone())
                 .collect();
+            let lower = planned_range_bound(plan.lower.as_ref());
+            let upper = planned_range_bound(plan.upper.as_ref());
             Ok(Some(if exact_values.is_empty() {
                 store.index_scan_range_cancellable(
                     &query.table,
                     &plan.index_name,
-                    plan.lower.as_ref().map(|bound| &bound.value),
-                    plan.upper.as_ref().map(|bound| &bound.value),
-                    plan.lower.as_ref().is_none_or(|bound| bound.inclusive),
-                    plan.upper.as_ref().is_none_or(|bound| bound.inclusive),
+                    lower,
+                    upper,
                     check_cancel,
                 )?
             } else {
@@ -204,14 +206,20 @@ where
                     &query.table,
                     &plan.index_name,
                     &exact_values,
-                    plan.lower.as_ref().map(|bound| &bound.value),
-                    plan.upper.as_ref().map(|bound| &bound.value),
-                    plan.lower.as_ref().is_none_or(|bound| bound.inclusive),
-                    plan.upper.as_ref().is_none_or(|bound| bound.inclusive),
+                    lower,
+                    upper,
                     check_cancel,
                 )?
             }))
         }
+    }
+}
+
+fn planned_range_bound(bound: Option<&PlannedRangeBound>) -> Bound<&Value> {
+    match bound {
+        Some(bound) if bound.inclusive => Bound::Included(&bound.value),
+        Some(bound) => Bound::Excluded(&bound.value),
+        None => Bound::Unbounded,
     }
 }
 
@@ -418,6 +426,105 @@ mod tests {
                 assert_eq!(
                     &plan.residual_filters,
                     &vec![filter("status", FilterOp::Eq, json!("active"))]
+                );
+            }
+            other => panic!("unexpected plan: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plan_query_range_index_selects_tightest_lower_bound_and_drops_looser_residuals() {
+        let query = Query {
+            table: tasks_table(),
+            filters: vec![
+                filter("rank", FilterOp::Gt, json!(2)),
+                filter("rank", FilterOp::Gte, json!(5)),
+                filter("status", FilterOp::Eq, json!("active")),
+            ],
+            order: None,
+            limit: None,
+        };
+        let plan = plan_query(
+            &query,
+            Some(&schema_with_indexes(&[("by_rank", &["rank"])])),
+        )
+        .expect("planning should succeed");
+
+        match &plan {
+            QueryPlan::RangeIndex(plan) => {
+                let lower = plan.lower.as_ref().expect("lower bound should be planned");
+                assert_eq!(plan.index_name, "by_rank");
+                assert_eq!(plan.range_field, "rank");
+                assert_eq!(lower.value, json!(5));
+                assert!(lower.inclusive);
+                assert!(plan.upper.is_none());
+                assert_eq!(
+                    &plan.residual_filters,
+                    &vec![filter("status", FilterOp::Eq, json!("active"))]
+                );
+            }
+            other => panic!("unexpected plan: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plan_query_range_index_prefers_exclusive_equal_value_bounds() {
+        let query = Query {
+            table: tasks_table(),
+            filters: vec![
+                filter("rank", FilterOp::Gte, json!(5)),
+                filter("rank", FilterOp::Gt, json!(5)),
+                filter("rank", FilterOp::Lte, json!(10)),
+                filter("rank", FilterOp::Lt, json!(10)),
+            ],
+            order: None,
+            limit: None,
+        };
+        let plan = plan_query(
+            &query,
+            Some(&schema_with_indexes(&[("by_rank", &["rank"])])),
+        )
+        .expect("planning should succeed");
+
+        match &plan {
+            QueryPlan::RangeIndex(plan) => {
+                let lower = plan.lower.as_ref().expect("lower bound should be planned");
+                let upper = plan.upper.as_ref().expect("upper bound should be planned");
+                assert_eq!(lower.value, json!(5));
+                assert!(!lower.inclusive);
+                assert_eq!(upper.value, json!(10));
+                assert!(!upper.inclusive);
+                assert!(plan.residual_filters.is_empty());
+            }
+            other => panic!("unexpected plan: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plan_query_range_index_preserves_neq_filter_on_range_field_as_residual() {
+        let query = Query {
+            table: tasks_table(),
+            filters: vec![
+                filter("rank", FilterOp::Gte, json!(2)),
+                filter("rank", FilterOp::Neq, json!(4)),
+            ],
+            order: None,
+            limit: None,
+        };
+        let plan = plan_query(
+            &query,
+            Some(&schema_with_indexes(&[("by_rank", &["rank"])])),
+        )
+        .expect("planning should succeed");
+
+        match &plan {
+            QueryPlan::RangeIndex(plan) => {
+                let lower = plan.lower.as_ref().expect("lower bound should be planned");
+                assert_eq!(lower.value, json!(2));
+                assert!(lower.inclusive);
+                assert_eq!(
+                    &plan.residual_filters,
+                    &vec![filter("rank", FilterOp::Neq, json!(4))]
                 );
             }
             other => panic!("unexpected plan: {other:?}"),

@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use nimbus_core::{Error, TenantId};
 use nimbus_sandbox::{SandboxHandle, SandboxOwnerSpec, SandboxSpec, SandboxStatus};
@@ -11,6 +10,7 @@ use nimbus_tenant::{
 use crate::SandboxResource;
 
 use super::ServiceManager;
+use super::clock::{next_version, now_millis};
 
 impl ServiceManager {
     pub async fn create_sandbox_resource_async(
@@ -114,8 +114,9 @@ impl ServiceManager {
                         .take()
                         .expect("sandbox handle should be available before insertion"),
                     generation: 1,
-                    resource_version: next_sandbox_resource_version(
+                    resource_version: next_version(
                         &mut state.next_sandbox_resource_version,
+                        "sandbox",
                     ),
                     created_at_millis: now,
                     updated_at_millis: now,
@@ -299,16 +300,4 @@ fn sandbox_resource_decision(
         )
         .with_image(TenantImagePolicyDecision::default().allow_local_build()),
     )
-}
-
-fn next_sandbox_resource_version(next: &mut u64) -> String {
-    *next = next.saturating_add(1).max(1);
-    format!("sandbox-v{}", *next)
-}
-
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().try_into().unwrap_or(u64::MAX))
-        .unwrap_or(0)
 }

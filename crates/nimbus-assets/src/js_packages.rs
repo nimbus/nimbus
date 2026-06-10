@@ -62,7 +62,7 @@ pub struct EmbeddedFile {
 }
 
 #[derive(Debug)]
-pub struct EmbeddedAsset {
+pub struct PackageAsset {
     pub data: Vec<u8>,
 }
 
@@ -97,8 +97,8 @@ pub fn package_names() -> Vec<String> {
         .collect()
 }
 
-pub fn file(path: &str) -> Option<EmbeddedAsset> {
-    EmbeddedPackages::get(path).map(|embedded| EmbeddedAsset {
+pub fn file(path: &str) -> Option<PackageAsset> {
+    EmbeddedPackages::get(path).map(|embedded| PackageAsset {
         data: embedded.data.into_owned(),
     })
 }

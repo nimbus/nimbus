@@ -14,13 +14,13 @@ use extenddb_core::types::{
     TimeToLiveDescription, TimeToLiveSpecificationOutput, TimeToLiveStatus, UpdateTimeToLiveInput,
     UpdateTimeToLiveOutput, extract_key,
 };
-use nimbus_core::{DocumentId, StructuredQuery, TableName};
+use nimbus_core::{DocumentId, StructuredQuery, TableName, WritePrecondition};
 use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 use serde_json::{Map, Value};
 
 use crate::attribute_value::fields_to_item;
-use crate::commands::{control_plane, stream};
+use crate::commands::{control_plane, item, stream};
 use crate::error::map_core_error;
 
 /// Reserved table holding one TTL-config doc per table (doc id = table name).
@@ -152,20 +152,15 @@ fn upsert_ttl_state(
 ) -> Result<(), DynamoDbError> {
     let table = ttl_table()?;
     let id = ttl_id(table_name)?;
-    match engine.get_document(context.tenant_id(), &table, id.clone()) {
-        Ok(_) => {
-            engine
-                .update_document(context.tenant_id(), table, id, fields)
-                .map_err(map_core_error)?;
-        }
-        Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
-            engine
-                .insert_document_with_id(context.tenant_id(), table, id, fields)
-                .map_err(map_core_error)?;
-        }
-        Err(error) => return Err(map_core_error(error)),
-    }
-    Ok(())
+    item::atomic_overwrite(
+        engine,
+        context,
+        table,
+        id,
+        fields,
+        WritePrecondition::default(),
+    )
+    .map_err(map_core_error)
 }
 
 /// The TTL attribute name a sweep should honor for `table_name`, or `None` when

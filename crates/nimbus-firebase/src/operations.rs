@@ -95,7 +95,7 @@ pub fn tenant_context_for_database(
         principal.clone(),
         surface,
     );
-    context.validate_principal_claim_if_present("Firestore database tenant")?;
+    context.admit_if_principal_claim_absent_or_matching("Firestore database tenant")?;
     Ok(context)
 }
 

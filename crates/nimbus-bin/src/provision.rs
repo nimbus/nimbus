@@ -146,13 +146,23 @@ fn closure(selection: &Selection) -> Vec<String> {
     match selection {
         Selection::All => manifest.packages.iter().map(|p| p.dir.clone()).collect(),
         Selection::Adapter(start) => {
+            let start_dir = manifest
+                .packages
+                .iter()
+                .find(|p| {
+                    p.dir == *start
+                        || p.name == *start
+                        || p.source_dir.as_deref() == Some(start.as_str())
+                })
+                .map(|p| p.dir.clone())
+                .unwrap_or_else(|| start.clone());
             let name_to_dir: BTreeMap<String, String> = manifest
                 .packages
                 .iter()
                 .map(|p| (p.name.clone(), p.dir.clone()))
                 .collect();
             let mut seen: BTreeSet<String> = BTreeSet::new();
-            let mut queue: VecDeque<String> = VecDeque::from([start.clone()]);
+            let mut queue: VecDeque<String> = VecDeque::from([start_dir]);
             while let Some(dir) = queue.pop_front() {
                 if !seen.insert(dir.clone()) {
                     continue;
@@ -400,7 +410,7 @@ mod tests {
         provision_packages(app.path(), &Selection::Adapter("firebase".into())).unwrap();
         let root = app.path().join(PACKAGES_REL);
         for dir in [
-            "firebase",
+            "@nimbus/firebase",
             "@bufbuild/protobuf",
             "@connectrpc/connect",
             "@connectrpc/connect-web",
@@ -411,11 +421,11 @@ mod tests {
             );
         }
         assert!(
-            !root.join("mongodb").exists(),
+            !root.join("@nimbus/mongodb").exists(),
             "unrelated adapter must not be provisioned"
         );
         assert!(
-            !root.join("dynamodb").exists(),
+            !root.join("@nimbus/dynamodb").exists(),
             "unrelated adapter must not be provisioned"
         );
     }
@@ -428,7 +438,7 @@ mod tests {
         let victim = app
             .path()
             .join(PACKAGES_REL)
-            .join("mongodb")
+            .join("@nimbus/mongodb")
             .join("package.json");
         fs::remove_file(&victim).unwrap();
         // With the file missing, all_present is false → provision rewrites.
@@ -441,7 +451,11 @@ mod tests {
     fn corrupt_non_manifest_file_is_rewritten_even_when_stamp_matches() {
         let app = tempfile::tempdir().unwrap();
         provision_packages(app.path(), &Selection::All).unwrap();
-        let victim = app.path().join(PACKAGES_REL).join("mongodb").join("uri.js");
+        let victim = app
+            .path()
+            .join(PACKAGES_REL)
+            .join("@nimbus/mongodb")
+            .join("uri.js");
         let mut bytes = fs::read(&victim).unwrap();
         bytes.push(b'X');
         fs::write(&victim, bytes).unwrap();
@@ -453,7 +467,7 @@ mod tests {
             "checksum drift with a matching stamp must trigger a rewrite"
         );
         let restored = fs::read(&victim).unwrap();
-        let expected = js_packages::file_bytes("mongodb", "uri.js").unwrap();
+        let expected = js_packages::file_bytes("@nimbus/mongodb", "uri.js").unwrap();
         assert_eq!(restored, expected, "rewrite must restore original bytes");
     }
 
@@ -524,11 +538,19 @@ mod tests {
         );
         assert!(app.path().join(PACKAGES_REL).join("convex").is_dir());
         assert!(
-            app.path().join(PACKAGES_REL).join("nimbus").is_dir(),
+            app.path()
+                .join(PACKAGES_REL)
+                .join("@nimbus/nimbus")
+                .is_dir(),
             "closure is provisioned"
         );
         // The convex closure does not pull unrelated adapters.
-        assert!(!app.path().join(PACKAGES_REL).join("firebase").exists());
+        assert!(
+            !app.path()
+                .join(PACKAGES_REL)
+                .join("@nimbus/firebase")
+                .exists()
+        );
         // A second ensure with the matching stamp is a no-op.
         assert!(!ensure(app.path(), &Selection::Adapter("convex".into())).unwrap());
     }
@@ -551,7 +573,12 @@ mod tests {
             "matching global stamp is not enough; missing requested closure must provision"
         );
         assert!(app.path().join(PACKAGES_REL).join("convex").is_dir());
-        assert!(app.path().join(PACKAGES_REL).join("nimbus").is_dir());
+        assert!(
+            app.path()
+                .join(PACKAGES_REL)
+                .join("@nimbus/nimbus")
+                .is_dir()
+        );
     }
 
     #[test]
@@ -563,14 +590,18 @@ mod tests {
             verify_provisioned(app.path()).expect("provisioned bytes match embedded checksums");
         assert!(verified > 0, "must verify at least one provisioned file");
         // Negative: tampering with a provisioned file on disk is detected and named.
-        let victim = app.path().join(PACKAGES_REL).join("mongodb").join("uri.js");
+        let victim = app
+            .path()
+            .join(PACKAGES_REL)
+            .join("@nimbus/mongodb")
+            .join("uri.js");
         let mut bytes = fs::read(&victim).unwrap();
         bytes.push(b'X');
         fs::write(&victim, &bytes).unwrap();
         let err = verify_provisioned(app.path())
             .expect_err("tampered provisioned bytes must be rejected");
         assert!(
-            err.contains("mongodb/uri.js"),
+            err.contains("@nimbus/mongodb/uri.js"),
             "error must name the tampered file: {err}"
         );
     }

@@ -2,8 +2,9 @@
 use super::inspect::parse_inspect_output;
 #[cfg(test)]
 use super::render::localhost_image_reference;
-use super::render::{display_command, render_command_failure, shell_escape};
+use super::render::{display_command, shell_escape};
 use super::*;
+use crate::backends::oci::command::render_command_failure;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildahCli {

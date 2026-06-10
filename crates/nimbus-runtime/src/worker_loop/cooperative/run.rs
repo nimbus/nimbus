@@ -1,11 +1,61 @@
 use std::sync::Arc;
 
+use crate::error::NimbusRuntimeError;
 use crate::executor::{RuntimeWorkerQueue, RuntimeWorkerShutdown};
 use crate::runtime::CooperativeRuntimeSlotPoll;
 
 use super::{CooperativeInvocation, CooperativeRunnableSlot, CooperativeWorkerLoop, WorkerLoop};
 
 impl CooperativeWorkerLoop {
+    fn finish_slot_with_result(
+        &mut self,
+        queue: &Arc<dyn RuntimeWorkerQueue>,
+        slot_id: usize,
+        invocation: CooperativeInvocation,
+        result: crate::error::Result<serde_json::Value>,
+        finish_scheduler_slot: bool,
+    ) {
+        let CooperativeInvocation {
+            job,
+            permit,
+            slot,
+            execution_started_at,
+            cancellation_for_metrics,
+        } = invocation;
+        let (result, reusable_runtime) = self
+            .worker_runtime
+            .block_on(slot.finish_with_result_and_runtime(result));
+        if let Some(runtime) = reusable_runtime {
+            self.retain_or_defer_runtime_drop(&job.host, &job.bundle, &job.context, runtime);
+        }
+        let (job, result, ready_jobs) = self.worker_runtime.block_on(Self::finish_invocation(
+            self.policy.clone(),
+            self.worker_id,
+            job,
+            permit,
+            execution_started_at,
+            cancellation_for_metrics,
+            result,
+        ));
+        if finish_scheduler_slot {
+            self.scheduler.finish(slot_id);
+        }
+        self.drain_deferred_v8_runtime_drops_if_idle();
+        queue.complete_job(job, result, ready_jobs);
+    }
+
+    fn drain_cancelled_slots(&mut self, queue: &Arc<dyn RuntimeWorkerQueue>) {
+        for slot in self.scheduler.drain_retained_slots() {
+            self.finish_slot_with_result(
+                queue,
+                slot.slot_id,
+                slot.payload,
+                Err(NimbusRuntimeError::Cancelled),
+                false,
+            );
+        }
+    }
+
     pub(super) fn next_slot(
         &mut self,
         queue: &Arc<dyn RuntimeWorkerQueue>,
@@ -111,41 +161,14 @@ impl WorkerLoop for CooperativeWorkerLoop {
                     queue.complete_job(job, result, ready_jobs);
                 }
                 Err(error) => {
-                    let CooperativeInvocation {
-                        job,
-                        permit,
-                        slot,
-                        execution_started_at,
-                        cancellation_for_metrics,
-                    } = invocation;
-                    let (result, reusable_runtime) = self
-                        .worker_runtime
-                        .block_on(slot.finish_with_result_and_runtime(Err(error)));
-                    if let Some(runtime) = reusable_runtime {
-                        self.retain_or_defer_runtime_drop(
-                            &job.host,
-                            &job.bundle,
-                            &job.context,
-                            runtime,
-                        );
-                    }
-                    let (job, result, ready_jobs) =
-                        self.worker_runtime.block_on(Self::finish_invocation(
-                            self.policy.clone(),
-                            self.worker_id,
-                            job,
-                            permit,
-                            execution_started_at,
-                            cancellation_for_metrics,
-                            result,
-                        ));
-                    self.scheduler.finish(slot_id);
-                    self.drain_deferred_v8_runtime_drops_if_idle();
-                    queue.complete_job(job, result, ready_jobs);
+                    self.finish_slot_with_result(&queue, slot_id, invocation, Err(error), true);
                 }
             }
         }
 
+        if shutdown.is_cancelled() {
+            self.drain_cancelled_slots(&queue);
+        }
         self.deferred_v8_runtime_drops.clear();
     }
 }

@@ -1,11 +1,13 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use nimbus_core::{
-    AtomicWrite, AtomicWriteBatch, DocumentId, DocumentLocator, Error, FieldTransform,
-    FieldTransformOperation, IndexDefinition, NumericValue, OrderBy, OrderDirection,
-    PrincipalContext, Query, QueryDirection, SpecialDouble, StoredValue, StructuredOrder,
-    StructuredQuery, TenantId, Timestamp, TriggerInvocationKey, TriggerWriteOrigin,
-    TypedScalarValue, WriteKey, WritePrecondition, WriteSetMode,
+    ArrayPopSide, AtomicWrite, AtomicWriteBatch, BitwiseOperation, DocumentId, DocumentLocator,
+    Error, FieldTransform, FieldTransformOperation, IndexDefinition, NumericValue, OrderBy,
+    OrderDirection, PaginatedQuery, PrincipalContext, Query, QueryDirection, SpecialDouble,
+    StoredValue, StructuredOrder, StructuredQuery, TableId, TenantId, Timestamp,
+    TriggerInvocationKey, TriggerWriteOrigin, TypedScalarValue, WriteKey, WritePrecondition,
+    WriteSetMode,
 };
 use nimbus_testing::{BlockingFaultInjector, EngineFixture};
 use serde_json::json;
@@ -15,8 +17,27 @@ use tokio::time::{Duration, timeout};
 use crate::Engine;
 use crate::test_support::{
     messages_schema, messages_table, owner_read_write_policy, principal_with_subject,
+    read_only_owner_policy,
 };
-use nimbus_storage::{FaultPoint, ManualClock};
+use nimbus_storage::{Clock, FaultPoint, ManualClock, NoopFaultInjector};
+
+struct AdvancingClock {
+    next_ms: AtomicU64,
+}
+
+impl AdvancingClock {
+    fn new(start_ms: u64) -> Self {
+        Self {
+            next_ms: AtomicU64::new(start_ms),
+        }
+    }
+}
+
+impl Clock for AdvancingClock {
+    fn now(&self) -> Timestamp {
+        Timestamp(self.next_ms.fetch_add(1, Ordering::SeqCst))
+    }
+}
 
 #[test]
 fn mutation_execution_unit_aborts_on_overlapping_document_conflict() {
@@ -71,6 +92,197 @@ fn mutation_execution_unit_aborts_on_overlapping_document_conflict() {
             .expect("document should remain committed")
             .get_field("body"),
         Some(&json!("Outside update"))
+    );
+}
+
+#[tokio::test]
+async fn mutation_execution_unit_conflict_scan_and_append_are_sequence_atomic() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_occ_phantom_gap");
+    let query = Query {
+        table: table.clone(),
+        filters: Vec::new(),
+        order: None,
+        limit: None,
+    };
+
+    let first_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("first execution unit should start");
+    let second_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("second execution unit should start");
+
+    let first_visible = first_unit
+        .query_documents_cancellable(&query, &mut || Ok(()))
+        .expect("first table query should succeed");
+    let second_visible = second_unit
+        .query_documents_cancellable(&query, &mut || Ok(()))
+        .expect("second table query should succeed");
+    assert!(first_visible.is_empty());
+    assert!(second_visible.is_empty());
+
+    first_unit
+        .insert_document(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("First")),
+            ]),
+        )
+        .expect("first staged insert should succeed");
+    second_unit
+        .insert_document(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-456")),
+                ("body".to_string(), json!("Second")),
+            ]),
+        )
+        .expect("second staged insert should succeed");
+
+    let pause = engine.execution_unit_commit_pause_handle_for_testing();
+    pause.arm();
+
+    let first_commit = tokio::task::spawn_blocking({
+        let first_unit = first_unit.clone();
+        move || first_unit.commit()
+    });
+
+    let pause_wait = pause.clone();
+    let first_reached_pause =
+        tokio::task::spawn_blocking(move || pause_wait.wait_until_entered(Duration::from_secs(1)))
+            .await
+            .expect("pause wait should join");
+    assert!(
+        first_reached_pause,
+        "first commit should pause after conflict scan while holding the sequence gate"
+    );
+
+    let second_commit = tokio::task::spawn_blocking({
+        let second_unit = second_unit.clone();
+        move || second_unit.commit()
+    });
+    let mut second_commit = second_commit;
+    assert!(
+        timeout(Duration::from_millis(100), &mut second_commit)
+            .await
+            .is_err(),
+        "second commit should wait behind the first scan+append critical section"
+    );
+
+    pause.release();
+
+    let first_commit = timeout(Duration::from_secs(1), first_commit)
+        .await
+        .expect("first commit should complete after pause release")
+        .expect("first commit task should join")
+        .expect("first commit should succeed")
+        .expect("first commit should produce a commit entry");
+    assert_eq!(first_commit.writes.len(), 1);
+
+    let second_error = timeout(Duration::from_secs(1), second_commit)
+        .await
+        .expect("second commit should complete after first append is visible")
+        .expect("second commit task should join")
+        .expect_err("second commit should conflict with first phantom insert");
+    assert!(matches!(second_error, Error::Conflict(_)));
+
+    let documents = engine
+        .query_documents(&tenant_id, &query)
+        .expect("final query should succeed");
+    assert_eq!(documents.len(), 1);
+    assert_eq!(documents[0].get_field("body"), Some(&json!("First")));
+}
+
+#[test]
+fn mutation_execution_unit_write_dependencies_use_snapshot_table_identity() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_snapshot_write_deps");
+    let document_id = engine
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Before")),
+            ]),
+        )
+        .expect("seed document should insert");
+    let runtime = engine
+        .get_existing_tenant(&tenant_id)
+        .expect("tenant runtime should exist");
+    let snapshot_table_id = runtime
+        .store()
+        .table_id(&table)
+        .expect("table id lookup should succeed")
+        .expect("seed insert should create a table identity");
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start with the original table snapshot");
+
+    let replacement_table_id = TableId::new();
+    let replaced_table_id = match runtime.store() {
+        crate::persistence::TenantPersistence::Redb(store) => {
+            store
+                .stage_hidden_table_identity(&table, &replacement_table_id)
+                .expect("replacement table identity should stage");
+            store
+                .activate_hidden_table_identity(&table, &replacement_table_id)
+                .expect("replacement table identity should activate")
+        }
+        crate::persistence::TenantPersistence::Sqlite(store) => {
+            store
+                .stage_hidden_table_identity(&table, &replacement_table_id)
+                .expect("replacement table identity should stage");
+            store
+                .activate_hidden_table_identity(&table, &replacement_table_id)
+                .expect("replacement table identity should activate")
+        }
+        crate::persistence::TenantPersistence::LibsqlReplica(_)
+        | crate::persistence::TenantPersistence::Postgres(_)
+        | crate::persistence::TenantPersistence::MySql(_) => {
+            panic!("engine fixture should use an embedded persistence provider")
+        }
+    };
+    assert_eq!(replaced_table_id, Some(snapshot_table_id.clone()));
+    assert_eq!(
+        runtime
+            .store()
+            .table_id(&table)
+            .expect("live table id lookup should succeed"),
+        Some(replacement_table_id.clone()),
+        "live table identity should differ from the execution-unit snapshot"
+    );
+
+    execution_unit
+        .update_document(
+            table.clone(),
+            document_id.clone(),
+            serde_json::Map::from_iter([("body".to_string(), json!("After"))]),
+        )
+        .expect("snapshot-era document update should stage");
+
+    let write_dependencies = execution_unit.write_dependencies();
+    assert!(
+        write_dependencies.documents.iter().any(|dependency| {
+            dependency.table == table
+                && dependency.table_id == snapshot_table_id
+                && dependency.document_id == document_id
+        }),
+        "write dependency should use the execution-unit snapshot table identity"
+    );
+    assert!(
+        !write_dependencies.documents.iter().any(|dependency| {
+            dependency.table == table
+                && dependency.table_id == replacement_table_id
+                && dependency.document_id == document_id
+        }),
+        "write dependency must not use a later live table identity"
     );
 }
 
@@ -404,11 +616,14 @@ async fn mutation_execution_unit_conflicts_with_durable_unapplied_write() {
         let execution_unit = execution_unit.clone();
         move || execution_unit.commit()
     });
+    let mut commit_handle = commit_handle;
 
-    let commit_result = timeout(Duration::from_secs(1), commit_handle)
-        .await
-        .expect("commit should resolve promptly while the journal worker is still blocked")
-        .expect("commit task should join successfully");
+    assert!(
+        timeout(Duration::from_millis(100), &mut commit_handle)
+            .await
+            .is_err(),
+        "execution-unit commit should wait behind the queued journal writer's sequence gate"
+    );
     faults.release();
     timeout(Duration::from_secs(1), outside_update)
         .await
@@ -416,6 +631,10 @@ async fn mutation_execution_unit_conflicts_with_durable_unapplied_write() {
         .expect("outside update task should join successfully")
         .expect("outside update should succeed");
 
+    let commit_result = timeout(Duration::from_secs(1), commit_handle)
+        .await
+        .expect("commit should resolve after the journal writer releases the sequence gate")
+        .expect("commit task should join successfully");
     let error = commit_result.expect_err(
         "commit should conflict with the durable journal write that was not part of the applied snapshot",
     );
@@ -581,6 +800,99 @@ fn mutation_execution_unit_conflicts_when_auth_filtered_visibility_changes() {
         .commit()
         .expect_err("commit should detect the auth-filtered visibility change");
     assert!(matches!(error, Error::Conflict(_)));
+}
+
+#[test]
+fn mutation_execution_unit_paginated_cursor_excludes_principal_auth_filters() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_cursor_auth");
+
+    engine
+        .set_table_schema(
+            &tenant_id,
+            messages_schema(
+                "messages_cursor_auth",
+                Vec::new(),
+                Some(read_only_owner_policy()),
+            ),
+        )
+        .expect("schema should save");
+    for (owner, body) in [
+        ("alice", "a1"),
+        ("alice", "a2"),
+        ("bob", "b3"),
+        ("bob", "b4"),
+        ("carol", "c5"),
+    ] {
+        engine
+            .insert_document(
+                &tenant_id,
+                table.clone(),
+                serde_json::Map::from_iter([
+                    ("owner".to_string(), json!(owner)),
+                    ("body".to_string(), json!(body)),
+                ]),
+            )
+            .expect("fixture insert should succeed");
+    }
+
+    let query = Query {
+        table: table.clone(),
+        filters: Vec::new(),
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+    let alice_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), principal_with_subject("alice"))
+        .expect("alice execution unit should start");
+    let first_page = alice_unit
+        .paginate_documents_cancellable(
+            &PaginatedQuery {
+                query: query.clone(),
+                page_size: 1,
+                after: None,
+            },
+            &mut || Ok(()),
+        )
+        .expect("alice page should succeed");
+    assert_eq!(first_page.data.len(), 1);
+    assert_eq!(first_page.data[0]["owner"], json!("alice"));
+    assert_eq!(first_page.data[0]["body"], json!("a1"));
+    let cursor = first_page
+        .next_cursor
+        .clone()
+        .expect("alice page should produce a cursor");
+
+    let bob_unit = engine
+        .begin_mutation_execution_unit(tenant_id, principal_with_subject("bob"))
+        .expect("bob execution unit should start");
+    let second_page = bob_unit
+        .paginate_documents_cancellable(
+            &PaginatedQuery {
+                query,
+                page_size: 2,
+                after: Some(cursor),
+            },
+            &mut || Ok(()),
+        )
+        .expect("cursor should not embed alice's authorization filter");
+    assert_eq!(second_page.data.len(), 2);
+    assert!(
+        second_page
+            .data
+            .iter()
+            .all(|document| document["owner"] == json!("bob")),
+        "the replaying principal's authorization filter must still constrain execution-unit results"
+    );
+    assert_eq!(second_page.data[0]["body"], json!("b3"));
+    assert_eq!(second_page.data[1]["body"], json!("b4"));
+    assert!(!second_page.has_more);
+    assert!(second_page.next_cursor.is_none());
 }
 
 #[test]
@@ -998,6 +1310,138 @@ fn atomic_write_batch_rolls_back_on_precondition_failure() {
 }
 
 #[test]
+fn atomic_write_batch_enforces_update_time_preconditions() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let clock = Arc::new(ManualClock::new(Timestamp(10_000)));
+    let engine = Arc::new(
+        Engine::new_with_simulation(data_dir.path(), clock.clone(), Arc::new(NoopFaultInjector))
+            .expect("engine should create"),
+    );
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    let table = messages_table("messages_atomic_update_time_preconditions");
+
+    let document_id = engine
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Initial")),
+            ]),
+        )
+        .expect("seed document should insert");
+    let inserted = engine
+        .get_document(&tenant_id, &table, document_id.clone())
+        .expect("seed document should be readable");
+
+    clock.advance_ms(1);
+    let patch_execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    let patch_outcome = patch_execution_unit
+        .execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![AtomicWrite::Patch {
+                key: locator_key(table.clone(), document_id.clone()),
+                field_patch: serde_json::Map::from_iter([("body".to_string(), json!("Patched"))]),
+                mask: vec!["body".to_string()],
+                precondition: WritePrecondition::update_time(inserted.update_time),
+                transforms: Vec::new(),
+            }])
+            .expect("batch should build"),
+        )
+        .expect("matching update_time precondition should allow patch");
+    assert_eq!(
+        patch_outcome.write_results[0].update_time,
+        Some(patch_outcome.commit_time)
+    );
+    let patched = engine
+        .get_document(&tenant_id, &table, document_id.clone())
+        .expect("patched document should be readable");
+    assert_eq!(patched.get_field("body"), Some(&json!("Patched")));
+    assert_ne!(
+        patched.update_time, inserted.update_time,
+        "manual clock advance should make the old precondition stale"
+    );
+
+    let staged_id =
+        DocumentId::from_key("staged-before-stale-update-time").expect("staged id should parse");
+    let stale_execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    let stale_error = stale_execution_unit
+        .execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![
+                AtomicWrite::Set {
+                    key: locator_key(table.clone(), staged_id.clone()),
+                    document: serde_json::Map::from_iter([
+                        ("owner".to_string(), json!("user-123")),
+                        ("body".to_string(), json!("Transient")),
+                    ]),
+                    mode: WriteSetMode::Overwrite,
+                    precondition: WritePrecondition::default(),
+                    transforms: Vec::new(),
+                },
+                AtomicWrite::Verify {
+                    key: locator_key(table.clone(), document_id.clone()),
+                    precondition: WritePrecondition::update_time(inserted.update_time),
+                },
+            ])
+            .expect("batch should build"),
+        )
+        .expect_err("stale update_time precondition should abort the batch");
+    assert!(matches!(stale_error, Error::PreconditionFailed(_)));
+    assert!(matches!(
+        engine.get_document(&tenant_id, &table, staged_id.clone()),
+        Err(Error::DocumentNotFound(_)),
+    ));
+    assert_eq!(
+        engine
+            .get_document(&tenant_id, &table, document_id.clone())
+            .expect("stale precondition should leave document unchanged")
+            .get_field("body"),
+        Some(&json!("Patched"))
+    );
+
+    let missing_id =
+        DocumentId::from_key("missing-update-time-target").expect("missing id should parse");
+    let missing_execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    let missing_error = missing_execution_unit
+        .execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![AtomicWrite::Verify {
+                key: locator_key(table.clone(), missing_id),
+                precondition: WritePrecondition::update_time(patched.update_time),
+            }])
+            .expect("batch should build"),
+        )
+        .expect_err("update_time precondition requires an existing document");
+    assert!(matches!(missing_error, Error::DocumentNotFound(_)));
+
+    clock.advance_ms(1);
+    let delete_execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    delete_execution_unit
+        .execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![AtomicWrite::Delete {
+                key: locator_key(table.clone(), document_id.clone()),
+                precondition: WritePrecondition::update_time(patched.update_time),
+                missing_ok: false,
+            }])
+            .expect("batch should build"),
+        )
+        .expect("matching update_time precondition should allow delete");
+    assert!(matches!(
+        engine.get_document(&tenant_id, &table, document_id),
+        Err(Error::DocumentNotFound(_)),
+    ));
+}
+
+#[test]
 fn atomic_write_batch_transform_write_creates_missing_document_and_returns_ordered_results() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
@@ -1068,6 +1512,91 @@ fn atomic_write_batch_transform_write_creates_missing_document_and_returns_order
     assert_eq!(document.get_field("ceiling"), Some(&json!(3.5)));
     assert_eq!(document.get_field("floor"), Some(&json!(7)));
     assert_eq!(document.get_field("tags"), Some(&json!(["a"])));
+}
+
+#[test]
+fn atomic_write_batch_applies_array_multiply_and_bitwise_transforms() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_atomic_mongodb_transforms");
+    let document_id = engine
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("tags".to_string(), json!(["a"])),
+                ("vals".to_string(), json!([1, 2, 3])),
+                ("count".to_string(), json!(2)),
+                ("flags".to_string(), json!(0b1100_i64)),
+            ]),
+        )
+        .expect("document should insert");
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+
+    let outcome = execution_unit
+        .execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![AtomicWrite::Transform {
+                key: locator_key(table.clone(), document_id.clone()),
+                transforms: vec![
+                    FieldTransform {
+                        field: "tags".to_string(),
+                        transform: FieldTransformOperation::AppendElements {
+                            values: vec![json!("b"), json!("c")],
+                        },
+                    },
+                    FieldTransform {
+                        field: "vals".to_string(),
+                        transform: FieldTransformOperation::PopArray {
+                            side: ArrayPopSide::Last,
+                        },
+                    },
+                    FieldTransform {
+                        field: "count".to_string(),
+                        transform: FieldTransformOperation::Multiply {
+                            operand: NumericValue::Integer { value: 3 },
+                        },
+                    },
+                    FieldTransform {
+                        field: "flags".to_string(),
+                        transform: FieldTransformOperation::Bitwise {
+                            operation: BitwiseOperation::And,
+                            operand: 0b1010,
+                        },
+                    },
+                    FieldTransform {
+                        field: "flags".to_string(),
+                        transform: FieldTransformOperation::Bitwise {
+                            operation: BitwiseOperation::Or,
+                            operand: 0b0001,
+                        },
+                    },
+                ],
+                precondition: WritePrecondition::default(),
+            }])
+            .expect("batch should build"),
+        )
+        .expect("transform-only write should succeed");
+
+    assert_eq!(
+        outcome.write_results[0].transform_results,
+        vec![
+            StoredValue::from(serde_json::Value::Null),
+            StoredValue::from(serde_json::Value::Null),
+            StoredValue::from(json!(6)),
+            StoredValue::from(json!(0b1000)),
+            StoredValue::from(json!(0b1001)),
+        ]
+    );
+    let document = engine
+        .get_document(&tenant_id, &table, document_id.clone())
+        .expect("transformed document should exist");
+    assert_eq!(document.get_field("tags"), Some(&json!(["a", "b", "c"])));
+    assert_eq!(document.get_field("vals"), Some(&json!([1, 2])));
+    assert_eq!(document.get_field("count"), Some(&json!(6)));
+    assert_eq!(document.get_field("flags"), Some(&json!(0b1001)));
 }
 
 #[test]
@@ -1240,11 +1769,99 @@ fn atomic_write_batch_preserves_existing_numeric_type_for_equivalent_extrema() {
 }
 
 #[test]
-fn atomic_write_batch_applies_server_timestamp_as_typed_scalar_metadata() {
+fn atomic_write_batch_rejects_non_finite_double_operands_before_storage() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
-    let table = messages_table("messages_atomic_transforms");
+    let table = messages_table("messages_atomic_non_finite_numeric");
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+
+    let increment_id = DocumentId::from_key("nan-increment").expect("id should parse");
+    let increment_error = execution_unit
+        .execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![AtomicWrite::Transform {
+                key: locator_key(table.clone(), increment_id.clone()),
+                transforms: vec![FieldTransform {
+                    field: "count".to_string(),
+                    transform: FieldTransformOperation::Increment {
+                        operand: NumericValue::Double { value: f64::NAN },
+                    },
+                }],
+                precondition: WritePrecondition::default(),
+            }])
+            .expect("batch should build"),
+        )
+        .expect_err("non-finite increment operand should be rejected");
+    assert!(
+        matches!(
+            increment_error,
+            Error::InvalidInput(ref message)
+                if message == "increment transform operand must be a Firestore int64 or finite double"
+        ),
+        "unexpected increment error: {increment_error}"
+    );
+
+    let maximum_id = DocumentId::from_key("infinity-maximum").expect("id should parse");
+    let maximum_error = execution_unit
+        .execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![AtomicWrite::Transform {
+                key: locator_key(table.clone(), maximum_id.clone()),
+                transforms: vec![FieldTransform {
+                    field: "ceiling".to_string(),
+                    transform: FieldTransformOperation::Maximum {
+                        operand: NumericValue::Double {
+                            value: f64::INFINITY,
+                        },
+                    },
+                }],
+                precondition: WritePrecondition::default(),
+            }])
+            .expect("batch should build"),
+        )
+        .expect_err("non-finite maximum operand should be rejected");
+    assert!(
+        matches!(
+            maximum_error,
+            Error::InvalidInput(ref message)
+                if message == "maximum transform operand must be a Firestore int64, finite double, or special double sentinel"
+        ),
+        "unexpected maximum error: {maximum_error}"
+    );
+
+    assert!(
+        matches!(
+            engine.get_document(&tenant_id, &table, increment_id),
+            Err(Error::DocumentNotFound(_))
+        ),
+        "rejected increment transform must not create a document"
+    );
+    assert!(
+        matches!(
+            engine.get_document(&tenant_id, &table, maximum_id),
+            Err(Error::DocumentNotFound(_))
+        ),
+        "rejected maximum transform must not create a document"
+    );
+}
+
+#[test]
+fn atomic_write_batch_applies_server_timestamp_as_typed_scalar_metadata() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(
+        Engine::new_with_simulation(
+            data_dir.path(),
+            Arc::new(AdvancingClock::new(10_000)),
+            Arc::new(NoopFaultInjector),
+        )
+        .expect("engine should create"),
+    );
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    let table = messages_table("messages_atomic_server_timestamp");
     let document_id = DocumentId::from_key("server-timestamp").expect("id should parse");
     let execution_unit = engine
         .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
@@ -1272,9 +1889,28 @@ fn atomic_write_batch_applies_server_timestamp_as_typed_scalar_metadata() {
     else {
         panic!("server timestamp should return a typed scalar transform result");
     };
+    assert_eq!(
+        outcome.write_results[0].update_time,
+        Some(outcome.commit_time),
+        "write result update_time should be the batch commit time"
+    );
+    assert_eq!(
+        Some(*value),
+        outcome.write_results[0].update_time,
+        "server timestamp transform result should share the batch commit time"
+    );
+    assert_eq!(
+        outcome.commit.as_ref().map(|commit| commit.timestamp),
+        Some(outcome.commit_time),
+        "durable commit entry should use the same batch timestamp"
+    );
     let document = engine
         .get_document(&tenant_id, &table, document_id)
         .expect("transformed document should exist");
+    assert_eq!(
+        document.update_time, outcome.commit_time,
+        "stored document update_time should share the batch commit time"
+    );
     assert_eq!(
         document.typed_field("updatedAt"),
         Some(&TypedScalarValue::Timestamp { value: *value })

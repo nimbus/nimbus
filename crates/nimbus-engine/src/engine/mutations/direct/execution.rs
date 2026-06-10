@@ -55,7 +55,7 @@ impl Engine {
         mutation: Mutation,
         principal: &PrincipalContext,
     ) -> Result<Option<DocumentId>> {
-        Ok(super::types::expect_immediate_result(
+        super::types::expect_immediate_result(
             self.apply_mutation_with_mode(
                 tenant_id,
                 MutationExecutionMode::Immediate,
@@ -63,7 +63,7 @@ impl Engine {
                 principal,
             )?,
             "immediate mutation execution should not return a scheduled result",
-        ))
+        )
     }
 
     pub(super) async fn apply_mutation_with_mode_async_cancellable<Fut, Check>(

@@ -30,9 +30,9 @@ pub struct RuntimeHostBootstrapRequest<'a> {
     pub principal: PrincipalContext,
     pub server_request_id: Option<String>,
     pub invocation_kind: InvocationKind,
+    pub function_name: &'a str,
     pub trigger_write_origin: Option<TriggerWriteOrigin>,
     pub max_nested_runtime_invocations: usize,
-    pub host_call_session_prefix: &'a str,
 }
 
 pub fn build_runtime_host_bootstrap(
@@ -44,9 +44,9 @@ pub fn build_runtime_host_bootstrap(
         principal,
         server_request_id,
         invocation_kind,
+        function_name,
         trigger_write_origin,
         max_nested_runtime_invocations,
-        host_call_session_prefix,
     } = request;
     let execution_unit = matches!(invocation_kind, InvocationKind::Mutation)
         .then(|| engine.begin_mutation_execution_unit(tenant_id.clone(), principal.clone()))
@@ -60,7 +60,7 @@ pub fn build_runtime_host_bootstrap(
         principal,
         execution_unit,
         state: Arc::new(RuntimeHostState::new(
-            host_call_session_prefix,
+            format!("{}:{function_name}", invocation_kind.as_str()),
             server_request_id,
             max_nested_runtime_invocations,
         )),
@@ -106,6 +106,7 @@ pub struct RuntimeHostInvocation {
     principal: nimbus_core::PrincipalContext,
     server_request_id: Option<String>,
     invocation_kind: InvocationKind,
+    function_name: String,
     trigger_write_origin: Option<TriggerWriteOrigin>,
 }
 
@@ -114,11 +115,13 @@ impl RuntimeHostInvocation {
         principal: nimbus_core::PrincipalContext,
         server_request_id: Option<String>,
         invocation_kind: InvocationKind,
+        function_name: impl Into<String>,
     ) -> Self {
         Self {
             principal,
             server_request_id,
             invocation_kind,
+            function_name: function_name.into(),
             trigger_write_origin: None,
         }
     }
@@ -140,11 +143,7 @@ pub struct RuntimeHostContext {
 }
 
 impl RuntimeHostContext {
-    pub fn build(
-        scope: RuntimeHostScope,
-        invocation: RuntimeHostInvocation,
-        host_call_session_prefix: &str,
-    ) -> Result<Self> {
+    pub fn build(scope: RuntimeHostScope, invocation: RuntimeHostInvocation) -> Result<Self> {
         let binding = LocalEnforcementBinding::from_decision(&scope.decision)?;
         let bootstrap = build_runtime_host_bootstrap(RuntimeHostBootstrapRequest {
             engine: &scope.engine,
@@ -152,12 +151,12 @@ impl RuntimeHostContext {
             principal: invocation.principal,
             server_request_id: invocation.server_request_id,
             invocation_kind: invocation.invocation_kind,
+            function_name: &invocation.function_name,
             trigger_write_origin: invocation.trigger_write_origin,
             max_nested_runtime_invocations: scope
                 .runtime_policy
                 .limits()
                 .max_nested_runtime_invocations,
-            host_call_session_prefix,
         })?;
         Ok(Self {
             engine: scope.engine,
@@ -196,6 +195,11 @@ impl RuntimeHostContext {
         self.state
             .validate_host_call_session(&self.tenant_id, host_call_session_id)
     }
+
+    #[cfg(test)]
+    pub(crate) fn snapshot_read_set_for_test(&self) -> read_tracking::RuntimeReadSet {
+        self.state.snapshot_read_set()
+    }
 }
 
 impl capabilities::RuntimeCapabilityHost for RuntimeHostContext {
@@ -223,11 +227,9 @@ impl capabilities::RuntimeCapabilityHost for RuntimeHostContext {
     }
 
     fn record_document_read(&self, locator: &nimbus_core::DocumentLocator) {
-        let table_id = self
-            .engine
-            .table_id(&self.tenant_id, &locator.table)
-            .ok()
-            .flatten();
+        let table_id = self.state.document_read_table_id(&locator.table, |table| {
+            self.engine.table_id(&self.tenant_id, table).ok().flatten()
+        });
         self.state
             .record_document_read(&locator.table, table_id.as_ref(), &locator.id);
     }

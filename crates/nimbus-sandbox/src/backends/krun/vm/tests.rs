@@ -28,6 +28,7 @@ use crate::backend::{SandboxBackend, SandboxBackendKind};
 use crate::backends::oci::buildah::{
     ImageHealthcheck, OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
 };
+use crate::backends::oci::command::CommandSpec;
 use crate::endpoint::PublishedEndpointProtocol;
 use crate::instance::{SandboxId, SandboxStatus};
 use crate::spec::{
@@ -838,17 +839,24 @@ fn plan_only_backend_rejects_same_tenant_active_sandbox_quota_exhaustion() {
 #[test]
 fn configured_stop_signal_prefers_image_metadata_and_falls_back_to_term() {
     assert_eq!(
-        configured_stop_signal(&sample_image_metadata().with_stop_signal("SIGQUIT")),
+        configured_stop_signal(
+            sample_image_metadata()
+                .with_stop_signal("SIGQUIT")
+                .stop_signal
+                .as_deref()
+        ),
         "SIGQUIT"
     );
     assert_eq!(
-        configured_stop_signal(&sample_image_metadata().with_stop_signal("  ")),
+        configured_stop_signal(
+            sample_image_metadata()
+                .with_stop_signal("  ")
+                .stop_signal
+                .as_deref()
+        ),
         "TERM"
     );
-    assert_eq!(
-        configured_stop_signal(&KrunImageMetadata::default()),
-        "TERM"
-    );
+    assert_eq!(configured_stop_signal(None), "TERM");
 }
 
 #[test]
@@ -860,12 +868,12 @@ fn configured_stop_timeout_prefers_sandbox_lifecycle_and_falls_back_to_backend_d
     assert_eq!(
         configured_stop_timeout(
             &sample_spec().with_stop_timeout(Duration::from_secs(30)),
-            &backend_default,
+            backend_default.stop_timeout,
         ),
         Duration::from_secs(30)
     );
     assert_eq!(
-        configured_stop_timeout(&sample_spec(), &backend_default),
+        configured_stop_timeout(&sample_spec(), backend_default.stop_timeout),
         Duration::from_secs(5)
     );
 }
@@ -1341,10 +1349,10 @@ fn sample_manifest(spec: SandboxSpec, launch_mode: KrunLaunchMode) -> KrunSandbo
             &crate::instance::SandboxId::new("sandbox-01"),
         ),
         conmon_launch: super::OciConmonLaunchPlan {
-            create_command: super::CommandSpec::new("/bin/true"),
-            state_command: super::CommandSpec::new("/bin/true"),
-            start_command: super::CommandSpec::new("/bin/true"),
-            delete_command: super::CommandSpec::new("/bin/true"),
+            create_command: CommandSpec::new("/bin/true"),
+            state_command: CommandSpec::new("/bin/true"),
+            start_command: CommandSpec::new("/bin/true"),
+            delete_command: CommandSpec::new("/bin/true"),
         },
         last_exit_code: None,
         restart_count: 0,

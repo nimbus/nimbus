@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use nimbus_core::{DocumentId, Error, PrincipalContext, TableName, TenantId};
+use nimbus_core::{DocumentId, Error, Mutation, PrincipalContext, TableName, TenantId};
 use nimbus_engine::Engine;
 use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
 use serde_json::{Value, json};
@@ -19,6 +19,31 @@ use nimbus_tenant::{
 
 use super::*;
 
+fn table_name(table: SystemTable) -> TableName {
+    table.table_name().expect("system table name should parse")
+}
+
+fn assert_system_index_fields(
+    schemas: &[nimbus_core::TableSchema],
+    table: SystemTable,
+    index_name: &str,
+    fields: &[&str],
+) {
+    let table_name = table_name(table);
+    let schema = schemas
+        .iter()
+        .find(|schema| schema.table == table_name)
+        .expect("system table schema should exist");
+    let index = schema
+        .indexes
+        .iter()
+        .find(|index| index.name == index_name)
+        .expect("system table index should exist");
+    let actual_fields = index.fields.iter().map(String::as_str).collect::<Vec<_>>();
+
+    assert_eq!(actual_fields, fields);
+}
+
 #[test]
 fn system_table_schemas_are_valid_and_cover_control_plane_contract() {
     let schemas = system_table_schemas().expect("system table schemas should build");
@@ -27,26 +52,43 @@ fn system_table_schemas_are_valid_and_cover_control_plane_contract() {
         .map(|schema| schema.table.as_str())
         .collect::<std::collections::BTreeSet<_>>();
 
-    assert_eq!(
-        tables,
-        std::collections::BTreeSet::from([
-            "adapter_capabilities",
-            "bundles",
-            "cron_jobs",
-            "events",
-            "functions",
-            "listeners",
-            "machines",
-            "ports",
-            "routes",
-            "runs",
-            "scheduled_jobs",
-            "services",
-            "subscriptions",
-            "system_status",
-            "tables",
-            "workload_status",
-        ])
+    let expected_tables = std::collections::BTreeSet::from([
+        "adapter_capabilities",
+        "bundles",
+        "cron_jobs",
+        "events",
+        "functions",
+        "listeners",
+        "machines",
+        "ports",
+        "routes",
+        "runs",
+        "scheduled_jobs",
+        "services",
+        "subscriptions",
+        "system_status",
+        "tables",
+        "workload_status",
+    ]);
+    let typed_tables = SystemTable::ALL
+        .into_iter()
+        .map(SystemTable::name)
+        .collect::<std::collections::BTreeSet<_>>();
+
+    assert_eq!(typed_tables, expected_tables);
+    assert_eq!(schemas.len(), SystemTable::ALL.len());
+    assert_eq!(tables, expected_tables);
+    assert_system_index_fields(
+        &schemas,
+        SystemTable::ScheduledJobs,
+        "by_tenantId_and_status",
+        &["tenantId", "status"],
+    );
+    assert_system_index_fields(
+        &schemas,
+        SystemTable::CronJobs,
+        "by_tenantId_and_status",
+        &["tenantId", "status"],
     );
     for schema in schemas {
         schema
@@ -87,17 +129,17 @@ async fn ensure_system_tenant_creates_reserved_tenant_and_schemas_idempotently()
     assert!(
         schema
             .tables
-            .contains_key(&TableName::new("machines").unwrap())
+            .contains_key(&table_name(SystemTable::Machines))
     );
     assert!(
         schema
             .tables
-            .contains_key(&TableName::new("adapter_capabilities").unwrap())
+            .contains_key(&table_name(SystemTable::AdapterCapabilities))
     );
     assert!(
         schema
             .tables
-            .contains_key(&TableName::new("system_status").unwrap())
+            .contains_key(&table_name(SystemTable::SystemStatus))
     );
 }
 
@@ -116,10 +158,7 @@ async fn prepare_system_tenant_seeds_network_and_adapter_posture_documents() {
 
     let tenant_id = system_tenant_id().expect("system id should parse");
     let routes = engine
-        .list_documents_async(
-            tenant_id.clone(),
-            TableName::new("routes").expect("table should parse"),
-        )
+        .list_documents_async(tenant_id.clone(), table_name(SystemTable::Routes))
         .await
         .expect("routes should list");
     assert_eq!(routes.len(), route_inventory().len());
@@ -131,7 +170,7 @@ async fn prepare_system_tenant_seeds_network_and_adapter_posture_documents() {
     let capabilities = engine
         .list_documents_async(
             tenant_id.clone(),
-            TableName::new("adapter_capabilities").expect("table should parse"),
+            table_name(SystemTable::AdapterCapabilities),
         )
         .await
         .expect("capabilities should list");
@@ -142,10 +181,7 @@ async fn prepare_system_tenant_seeds_network_and_adapter_posture_documents() {
     }));
 
     let listeners = engine
-        .list_documents_async(
-            tenant_id.clone(),
-            TableName::new("listeners").expect("table should parse"),
-        )
+        .list_documents_async(tenant_id.clone(), table_name(SystemTable::Listeners))
         .await
         .expect("listeners should list");
     assert_eq!(listeners.len(), 1);
@@ -158,7 +194,7 @@ async fn prepare_system_tenant_seeds_network_and_adapter_posture_documents() {
     let status = engine
         .get_document_async(
             tenant_id,
-            TableName::new("system_status").expect("table should parse"),
+            table_name(SystemTable::SystemStatus),
             DocumentId::from_key("system:server").expect("id should parse"),
         )
         .await
@@ -208,10 +244,7 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
 
     let tenant_id = system_tenant_id().expect("system id should parse");
     let bundles = engine
-        .list_documents_async(
-            tenant_id.clone(),
-            TableName::new("bundles").expect("table should parse"),
-        )
+        .list_documents_async(tenant_id.clone(), table_name(SystemTable::Bundles))
         .await
         .expect("bundles should list");
     assert_eq!(bundles.len(), 1);
@@ -225,10 +258,7 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
     );
 
     let functions = engine
-        .list_documents_async(
-            tenant_id.clone(),
-            TableName::new("functions").expect("table should parse"),
-        )
+        .list_documents_async(tenant_id.clone(), table_name(SystemTable::Functions))
         .await
         .expect("functions should list");
     assert_eq!(functions.len(), 2);
@@ -258,10 +288,7 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
         .expect("fallback deployment hash should project");
 
     let bundles = engine
-        .list_documents_async(
-            tenant_id.clone(),
-            TableName::new("bundles").expect("table should parse"),
-        )
+        .list_documents_async(tenant_id.clone(), table_name(SystemTable::Bundles))
         .await
         .expect("bundles should list after replacement");
     assert_eq!(bundles.len(), 1);
@@ -277,10 +304,7 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
     );
 
     let functions = engine
-        .list_documents_async(
-            tenant_id,
-            TableName::new("functions").expect("table should parse"),
-        )
+        .list_documents_async(tenant_id, table_name(SystemTable::Functions))
         .await
         .expect("functions should list after replacement");
     assert_eq!(functions.len(), 1);
@@ -292,12 +316,77 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
 }
 
 #[tokio::test]
+async fn sync_scheduler_state_deletes_only_matching_tenant_pending_projection() {
+    let temp = tempfile::tempdir().expect("tempdir should create");
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+    let tenant_id = TenantId::new("demo").expect("tenant should parse");
+    let other_tenant_id = TenantId::new("other").expect("tenant should parse");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .create_tenant_async(other_tenant_id.clone())
+        .await
+        .expect("other tenant should create");
+
+    let stale_demo = nimbus_core::ScheduledJob {
+        id: DocumentId::from_key("demo-stale-job").expect("job id should parse"),
+        run_at: nimbus_core::Timestamp(10_000),
+        mutation: Mutation::Insert {
+            table: TableName::new("tasks").expect("table should parse"),
+            id: None,
+            fields: serde_json::Map::from_iter([("title".to_string(), json!("demo"))]),
+        },
+        created_at: nimbus_core::Timestamp(1_000),
+    };
+    let stale_other = nimbus_core::ScheduledJob {
+        id: DocumentId::from_key("other-stale-job").expect("job id should parse"),
+        run_at: nimbus_core::Timestamp(20_000),
+        mutation: Mutation::Insert {
+            table: TableName::new("tasks").expect("table should parse"),
+            id: None,
+            fields: serde_json::Map::from_iter([("title".to_string(), json!("other"))]),
+        },
+        created_at: nimbus_core::Timestamp(2_000),
+    };
+    crate::records::record_scheduled_job_state_async(&engine, &tenant_id, &stale_demo)
+        .await
+        .expect("stale demo scheduled projection should seed");
+    crate::records::record_scheduled_job_state_async(&engine, &other_tenant_id, &stale_other)
+        .await
+        .expect("stale other scheduled projection should seed");
+
+    sync_scheduler_state_for_tenant_async(&engine, &tenant_id)
+        .await
+        .expect("scheduler sync should delete stale demo projection");
+
+    let scheduled_jobs = engine
+        .list_documents_async(
+            system_tenant_id().expect("system tenant should parse"),
+            table_name(SystemTable::ScheduledJobs),
+        )
+        .await
+        .expect("scheduled jobs should list");
+    assert!(!scheduled_jobs.iter().any(|document| {
+        document.fields.get("tenantId") == Some(&json!("demo"))
+            && document.fields.get("status") == Some(&json!("pending"))
+    }));
+    assert!(scheduled_jobs.iter().any(|document| {
+        document.fields.get("tenantId") == Some(&json!("other"))
+            && document.fields.get("status") == Some(&json!("pending"))
+    }));
+}
+
+#[tokio::test]
 async fn record_machine_state_projects_machine_listener_and_port_documents() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
     let roots = nimbus_machine::MachineRootLayout::new(
         temp.path().join("config"),
         temp.path().join("state"),
+        temp.path().join("data"),
+        temp.path().join("cache"),
         temp.path().join("run"),
     );
     let config = nimbus_machine::MachineConfigRecord {
@@ -332,7 +421,7 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
     let machine = engine
         .get_document_async(
             tenant_id.clone(),
-            TableName::new("machines").expect("table should parse"),
+            table_name(SystemTable::Machines),
             DocumentId::from_key(machine_document_id("default")).expect("id should parse"),
         )
         .await
@@ -366,7 +455,7 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
     let listener = engine
         .get_document_async(
             tenant_id.clone(),
-            TableName::new("listeners").expect("table should parse"),
+            table_name(SystemTable::Listeners),
             DocumentId::from_key(machine_listener_document_id("default")).expect("id should parse"),
         )
         .await
@@ -378,7 +467,7 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
     let ssh_port = engine
         .get_document_async(
             tenant_id,
-            TableName::new("ports").expect("table should parse"),
+            table_name(SystemTable::Ports),
             DocumentId::from_key(machine_port_document_id("default", "ssh"))
                 .expect("id should parse"),
         )
@@ -388,6 +477,102 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
     assert_eq!(ssh_port.fields.get("hostPort"), Some(&json!(2222)));
     assert_eq!(ssh_port.fields.get("guestPort"), Some(&json!(22)));
     assert_eq!(ssh_port.fields.get("state"), Some(&json!("running")));
+}
+
+#[tokio::test]
+async fn record_service_handle_removes_only_stale_ports_for_that_service() {
+    let temp = tempfile::tempdir().expect("tempdir should create");
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+    let tenant_id = TenantId::new("demo").expect("tenant should parse");
+
+    let first_search = nimbus_sandbox::SandboxHandle::new(
+        tenant_id.clone(),
+        nimbus_sandbox::SandboxId::new("sandbox-search"),
+        "search",
+        nimbus_sandbox::SandboxBackendKind::Container,
+        nimbus_sandbox::SandboxStatus::Ready,
+        vec![
+            nimbus_sandbox::PublishedEndpoint::new(
+                "http",
+                nimbus_sandbox::PublishedEndpointProtocol::Http,
+                "127.0.0.1:18080".parse().expect("endpoint should parse"),
+            )
+            .with_guest_port(8080),
+            nimbus_sandbox::PublishedEndpoint::new(
+                "metrics",
+                nimbus_sandbox::PublishedEndpointProtocol::Tcp,
+                "127.0.0.1:19090".parse().expect("endpoint should parse"),
+            )
+            .with_guest_port(9090),
+        ],
+    );
+    record_service_handle_async(&engine, &tenant_id, &first_search)
+        .await
+        .expect("initial service handle should project");
+
+    let billing = nimbus_sandbox::SandboxHandle::new(
+        tenant_id.clone(),
+        nimbus_sandbox::SandboxId::new("sandbox-billing"),
+        "billing",
+        nimbus_sandbox::SandboxBackendKind::Container,
+        nimbus_sandbox::SandboxStatus::Ready,
+        vec![
+            nimbus_sandbox::PublishedEndpoint::new(
+                "api",
+                nimbus_sandbox::PublishedEndpointProtocol::Http,
+                "127.0.0.1:18081".parse().expect("endpoint should parse"),
+            )
+            .with_guest_port(8081),
+        ],
+    );
+    record_service_handle_async(&engine, &tenant_id, &billing)
+        .await
+        .expect("other service handle should project");
+
+    let updated_search = nimbus_sandbox::SandboxHandle::new(
+        tenant_id.clone(),
+        nimbus_sandbox::SandboxId::new("sandbox-search"),
+        "search",
+        nimbus_sandbox::SandboxBackendKind::Container,
+        nimbus_sandbox::SandboxStatus::Ready,
+        vec![
+            nimbus_sandbox::PublishedEndpoint::new(
+                "http",
+                nimbus_sandbox::PublishedEndpointProtocol::Http,
+                "127.0.0.1:28080".parse().expect("endpoint should parse"),
+            )
+            .with_guest_port(8080),
+        ],
+    );
+    record_service_handle_async(&engine, &tenant_id, &updated_search)
+        .await
+        .expect("updated service handle should replace stale ports");
+
+    let ports = engine
+        .list_documents_async(
+            system_tenant_id().expect("system tenant should parse"),
+            table_name(SystemTable::Ports),
+        )
+        .await
+        .expect("ports should list");
+    assert_eq!(
+        ports.len(),
+        2,
+        "expected one search port and one billing port"
+    );
+    assert!(ports.iter().any(|document| {
+        document.fields.get("serviceName") == Some(&json!("search"))
+            && document.fields.get("endpointName") == Some(&json!("http"))
+            && document.fields.get("hostPort") == Some(&json!(28080))
+    }));
+    assert!(!ports.iter().any(|document| {
+        document.fields.get("serviceName") == Some(&json!("search"))
+            && document.fields.get("endpointName") == Some(&json!("metrics"))
+    }));
+    assert!(ports.iter().any(|document| {
+        document.fields.get("serviceName") == Some(&json!("billing"))
+            && document.fields.get("endpointName") == Some(&json!("api"))
+    }));
 }
 
 #[tokio::test]
@@ -409,7 +594,7 @@ async fn record_subscription_state_projects_live_subscription_document() {
     let document = engine
         .get_document_async(
             system_tenant_id().expect("system id should parse"),
-            TableName::new("subscriptions").expect("table should parse"),
+            table_name(SystemTable::Subscriptions),
             DocumentId::from_key(subscription_document_id("convex", &tenant_id, 42))
                 .expect("id should parse"),
         )
@@ -425,12 +610,60 @@ async fn record_subscription_state_projects_live_subscription_document() {
     let deleted = engine
         .get_document_async(
             system_tenant_id().expect("system id should parse"),
-            TableName::new("subscriptions").expect("table should parse"),
+            table_name(SystemTable::Subscriptions),
             DocumentId::from_key(subscription_document_id("convex", &tenant_id, 42))
                 .expect("id should parse"),
         )
         .await;
     assert!(matches!(deleted, Err(Error::DocumentNotFound(_))));
+}
+
+#[tokio::test]
+async fn subscription_projection_skips_system_tenant_state_delivery_and_error() {
+    let temp = tempfile::tempdir().expect("tempdir should create");
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+    prepare_system_tenant_async(&engine, None)
+        .await
+        .expect("system tenant should prepare");
+    let tenant_id = system_tenant_id().expect("system tenant should parse");
+
+    record_subscription_state_async(
+        &engine,
+        &tenant_id,
+        "convex",
+        42,
+        "named:{\"name\":\"subscriptions:list\"}",
+    )
+    .await
+    .expect("system tenant subscription state should be skipped");
+    record_subscription_delivery_async(
+        &engine,
+        &tenant_id,
+        "convex",
+        42,
+        "named:{\"name\":\"subscriptions:list\"}",
+    )
+    .await
+    .expect("system tenant subscription delivery should be skipped");
+    record_subscription_error_async(
+        &engine,
+        &tenant_id,
+        "convex",
+        42,
+        "named:{\"name\":\"subscriptions:list\"}",
+        "subscription failed",
+    )
+    .await
+    .expect("system tenant subscription error should be skipped");
+
+    let subscriptions = engine
+        .list_documents_async(tenant_id, table_name(SystemTable::Subscriptions))
+        .await
+        .expect("subscriptions should list");
+    assert!(
+        subscriptions.is_empty(),
+        "system tenant subscription churn must not project into _nimbus.subscriptions: {subscriptions:?}"
+    );
 }
 
 #[tokio::test]
@@ -537,7 +770,7 @@ async fn workload_status_projection_requires_system_or_operator_authority() {
     let document = engine
         .get_document_async(
             system_tenant_id().expect("system tenant should parse"),
-            TableName::new("workload_status").expect("table should parse"),
+            table_name(SystemTable::WorkloadStatus),
             DocumentId::from_key(workload_status_document_id(
                 projection.tenant_id(),
                 projection.workload_uid().as_str(),

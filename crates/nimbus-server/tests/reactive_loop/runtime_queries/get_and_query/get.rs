@@ -119,9 +119,12 @@ async fn convex_runtime_get_subscription_skips_unrelated_writes() {
         ]),
         Some(
             r#"
-globalThis.__nimbusInvoke = async function(request) {
-  const ctx = globalThis.__nimbusCreateContext();
-  const value = await ctx.db.get("messages", request.args.id);
+	globalThis.__nimbusInvoke = async function(request) {
+	  const ctx = globalThis.__nimbusCreateContext({
+	    hostCallSessionId: `${request.kind}:${request.function_name}`,
+	    request,
+	  });
+	  const value = await ctx.db.get("messages", request.args.id);
   return {
     status: "ok",
     value: {

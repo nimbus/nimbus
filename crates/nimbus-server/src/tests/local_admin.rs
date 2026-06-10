@@ -125,3 +125,50 @@ async fn system_shutdown_endpoint_stops_live_server() {
         .expect("server shutdown should be graceful");
     service.quiesce().await;
 }
+
+#[tokio::test]
+async fn system_shutdown_endpoint_rejects_missing_and_invalid_credentials() {
+    let temp = tempdir().expect("tempdir should build");
+    let paths = sample_paths(temp.path());
+    let token = load_or_create_local_admin_token(&paths).expect("token should exist");
+    let local_server_security = Arc::new(LocalServerSecurityState::new(paths, token));
+    let fixture = EngineFixture::new(|path| nimbus_engine::Engine::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.engine())
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let missing = server
+        .client()
+        .post(server.http_url("/api/system/shutdown"))
+        .send()
+        .await
+        .expect("missing-auth shutdown request should send");
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let invalid = server
+        .client()
+        .post(server.http_url("/api/system/shutdown"))
+        .bearer_auth("not-the-local-admin-token")
+        .send()
+        .await
+        .expect("invalid-auth shutdown request should send");
+    assert_eq!(invalid.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn system_shutdown_endpoint_rejects_when_local_security_unconfigured() {
+    let fixture = EngineFixture::new(|path| nimbus_engine::Engine::new(path));
+    let server = ServerFixture::start(RouterBuildConfig::core(fixture.engine()).build()).await;
+
+    let response = server
+        .client()
+        .post(server.http_url("/api/system/shutdown"))
+        .send()
+        .await
+        .expect("shutdown request should send");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}

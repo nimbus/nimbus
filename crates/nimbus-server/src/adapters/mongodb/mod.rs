@@ -13,21 +13,14 @@ pub struct MongoDbConfig {
 }
 
 impl MongoDbConfig {
-    pub fn new(port: u16) -> Self {
+    pub fn new(bind_addr: SocketAddr, auth: AuthConfig) -> Self {
         Self {
-            bind_addr: SocketAddr::from(([127, 0, 0, 1], port)),
-            auth: Arc::new(AuthConfig::default()),
+            bind_addr,
+            auth: Arc::new(auth),
         }
     }
 
-    pub fn with_auth(mut self, username: String, password: String) -> Self {
-        self.auth = Arc::new(AuthConfig::new(username, password));
-        self
-    }
-}
-
-impl Default for MongoDbConfig {
-    fn default() -> Self {
-        Self::new(27017)
+    pub fn localhost(port: u16, auth: AuthConfig) -> Self {
+        Self::new(SocketAddr::from(([127, 0, 0, 1], port)), auth)
     }
 }

@@ -90,7 +90,7 @@ async fn convex_named_subscription_uses_runtime_bundle_when_available() {
 globalThis.__nimbusInvoke = async function(request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   switch (request.function_name) {
     case "tasks:all":

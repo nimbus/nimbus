@@ -91,7 +91,7 @@ impl SqliteTenantStore {
     ) -> Result<Self> {
         Self::open_internal(
             path,
-            Some(*dek),
+            Some(DataEncryptionKey::new(*dek)),
             clock,
             fault_injector,
             max_read_connections,
@@ -100,7 +100,7 @@ impl SqliteTenantStore {
 
     fn open_internal(
         path: impl AsRef<Path>,
-        dek: Option<[u8; 32]>,
+        dek: Option<DataEncryptionKey>,
         clock: Arc<dyn Clock>,
         fault_injector: Arc<dyn FaultInjector>,
         max_read_connections: usize,
@@ -180,6 +180,7 @@ impl SqliteTenantStore {
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
             trigger_write_origin: None,
+            commit_timestamp: None,
             check_cancel: Box::new(check_cancel),
             schema_cache: self.schema_cache.clone(),
             schema_cache_dirty: false,

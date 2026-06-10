@@ -146,9 +146,9 @@ impl MySqlTenantStore {
         Ok(())
     }
 
-    pub fn claim_due_jobs(&self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
+    pub fn claim_due_jobs(&self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
         Ok(self
-            .execute_write(move |transaction| transaction.claim_due_jobs(now))?
+            .execute_write(move |transaction| transaction.claim_due_jobs(now, max_jobs))?
             .value)
     }
 
@@ -193,7 +193,7 @@ impl MySqlTenantStore {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
     ) -> Result<Option<CommitEntry>> {
-        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None)
+        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None, None)
     }
 
     pub fn apply_execution_unit_batch_with_origin(
@@ -201,6 +201,7 @@ impl MySqlTenantStore {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
         trigger_write_origin: Option<&TriggerWriteOrigin>,
+        commit_timestamp: Option<Timestamp>,
     ) -> Result<Option<CommitEntry>> {
         if writes.is_empty() && schedule_ops.is_empty() {
             return Err(Error::Internal(
@@ -212,6 +213,7 @@ impl MySqlTenantStore {
         let schedule_ops = schedule_ops.to_vec();
         let committed = self.execute_write(move |transaction| {
             transaction.set_trigger_write_origin(trigger_write_origin.cloned());
+            transaction.set_commit_timestamp(commit_timestamp);
             for write in &writes {
                 transaction.apply_resolved_write(write)?;
             }
@@ -495,6 +497,7 @@ impl MySqlWriteTransaction {
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
             trigger_write_origin: None,
+            commit_timestamp: None,
             schema_cache_changed: false,
             check_cancel,
         };
@@ -736,19 +739,23 @@ impl MySqlWriteTransaction {
         })
     }
 
-    pub fn claim_due_jobs(&mut self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
+    pub fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
         self.check_cancel()?;
+        if max_jobs == 0 {
+            return Ok(Vec::new());
+        }
         let runtime_handle = self.provider.runtime_handle.clone();
         let database_name = self.database_name.clone();
+        let max_jobs = u64::try_from(max_jobs).unwrap_or(u64::MAX);
         let due: Vec<ScheduledJob> = {
             let conn = self.session()?;
             Self::block_on(&runtime_handle, async move {
                 let query = format!(
-                    "SELECT data_json FROM {} WHERE run_at <= ? ORDER BY run_at, id FOR UPDATE",
+                    "SELECT data_json FROM {} WHERE run_at <= ? ORDER BY run_at, id LIMIT ? FOR UPDATE",
                     qualified_table(&database_name, "scheduled_jobs")
                 );
                 let rows: Vec<Row> = conn
-                    .exec(query, (claim_due_jobs_upper_bound(now),))
+                    .exec(query, (claim_due_jobs_upper_bound(now), max_jobs))
                     .await
                     .map_err(map_mysql_error)?;
                 rows.into_iter()
@@ -1252,7 +1259,9 @@ impl MySqlWriteTransaction {
         events: Vec<TenantEventKind>,
     ) -> Result<CommitEntry> {
         let sequence = SequenceNumber(self.latest_sequence()?.0.saturating_add(1));
-        let timestamp = self.provider.clock.now();
+        let timestamp = self
+            .commit_timestamp
+            .unwrap_or_else(|| self.provider.clock.now());
         let record = TenantEventRecord::from_events(sequence, timestamp, events)?;
         let entry = CommitEntry {
             sequence,
@@ -1428,6 +1437,10 @@ impl MySqlWriteTransaction {
 
     fn set_trigger_write_origin(&mut self, trigger_write_origin: Option<TriggerWriteOrigin>) {
         self.trigger_write_origin = trigger_write_origin;
+    }
+
+    fn set_commit_timestamp(&mut self, commit_timestamp: Option<Timestamp>) {
+        self.commit_timestamp = commit_timestamp;
     }
 
     fn record_commit_write(&mut self, mut write: WriteOp) {

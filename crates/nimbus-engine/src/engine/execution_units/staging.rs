@@ -171,7 +171,7 @@ impl MutationExecutionUnit {
         indexes: Vec<nimbus_core::IndexDefinition>,
         resource_path_binding: Option<nimbus_core::ResourcePathBinding>,
     ) -> Result<()> {
-        let table_id = self.runtime.store().table_id(&table)?;
+        let table_id = self.snapshot.table_id(&table)?;
         let mut state = self.active_state()?;
         let key = (table.clone(), document_id.clone());
         if !state.staged_writes.contains_key(&key) {

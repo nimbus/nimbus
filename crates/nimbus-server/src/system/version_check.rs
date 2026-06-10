@@ -356,6 +356,9 @@ fn format_rfc3339(ts: OffsetDateTime) -> Option<String> {
 #[cfg(unix)]
 fn get_hostname() -> String {
     let mut buf = [0u8; 256];
+    // SAFETY: `buf` is a valid writable stack buffer and the length passed to
+    // libc matches its capacity. The return code is checked before reading, and
+    // the result is truncated at the first NUL byte or the fixed buffer length.
     let rc = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
     if rc == 0 {
         let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());

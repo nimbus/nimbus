@@ -107,6 +107,7 @@ impl<'a> RuntimeInvocationContext<'a> {
                 normalize_principal_context(request.auth.as_ref()),
                 server_request_id.clone(),
                 invocation_kind.clone(),
+                request.function_name.clone(),
             ),
         )?);
         let (response, read_set) = invoke_runtime_bundle_on_worker_with_host_state(
@@ -120,7 +121,9 @@ impl<'a> RuntimeInvocationContext<'a> {
                 server_request_id.as_deref(),
                 Some(cancellation),
             )
-            .with_runtime_bundle_provenance_gate(self.registry.runtime_bundle_provenance()),
+            .with_optional_runtime_bundle_provenance_gate(
+                self.registry.runtime_bundle_provenance(),
+            ),
             |bridge| bridge.snapshot_read_set(),
         )
         .await

@@ -40,7 +40,7 @@ fn hidden_machine_api_subcommand_falls_back_without_home() {
 
 #[test]
 fn machine_paths_use_short_runtime_root_and_typed_socket_layout() {
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         PathBuf::from("/tmp/config-root"),
         PathBuf::from("/tmp/state-root"),
         PathBuf::from("/tmp/nimbus"),
@@ -74,16 +74,16 @@ fn machine_paths_use_short_runtime_root_and_typed_socket_layout() {
 #[test]
 fn machine_volume_requires_absolute_host_and_guest_paths() {
     let error = MachineVolume::parse("Users:/Users").expect_err("relative source should fail");
-    assert!(error.contains("source path must be absolute"));
+    assert!(error.to_string().contains("source path must be absolute"));
 
     let error = MachineVolume::parse("/Users:Users").expect_err("relative target should fail");
-    assert!(error.contains("target path must be absolute"));
+    assert!(error.to_string().contains("target path must be absolute"));
 }
 
 #[test]
 fn machine_init_writes_config_and_status_files() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -150,7 +150,7 @@ fn machine_init_writes_config_and_status_files() {
 #[test]
 fn machine_init_writes_named_machine_records() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -210,7 +210,7 @@ fn write_json_file_atomically_replaces_existing_state_record() {
 #[test]
 fn machine_remove_releases_reserved_machine_port() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -272,7 +272,7 @@ fn machine_remove_releases_reserved_machine_port() {
 #[test]
 fn machine_remove_only_deletes_requested_machine() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -319,7 +319,7 @@ fn machine_remove_only_deletes_requested_machine() {
 #[test]
 fn machine_set_updates_stopped_machine_config() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -370,7 +370,7 @@ fn machine_set_updates_stopped_machine_config() {
 #[test]
 fn machine_set_requires_at_least_one_resource_flag() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -414,7 +414,7 @@ fn machine_set_requires_at_least_one_resource_flag() {
 #[test]
 fn machine_set_rejects_running_machine() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -483,7 +483,7 @@ fn machine_set_rejects_running_machine() {
 #[test]
 fn load_machine_config_rejects_older_schema_versions_with_clear_error() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -537,7 +537,7 @@ fn load_machine_config_rejects_older_schema_versions_with_clear_error() {
 #[test]
 fn load_machine_config_rejects_newer_schema_version_with_clear_error() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -592,7 +592,7 @@ fn load_machine_config_rejects_newer_schema_version_with_clear_error() {
 #[test]
 fn load_machine_state_rebuilds_older_schema_versions_with_explicit_error() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -635,7 +635,7 @@ fn load_machine_state_rebuilds_older_schema_versions_with_explicit_error() {
 #[test]
 fn load_machine_state_rebuilds_unreadable_record_with_explicit_error() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -667,7 +667,7 @@ fn load_machine_state_rebuilds_unreadable_record_with_explicit_error() {
 #[test]
 fn machine_remove_deletes_config_state_and_runtime_roots() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),

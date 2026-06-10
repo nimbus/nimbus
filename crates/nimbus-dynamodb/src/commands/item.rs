@@ -51,39 +51,43 @@ pub(crate) fn atomic_overwrite(
     fields: serde_json::Map<String, serde_json::Value>,
     precondition: WritePrecondition,
 ) -> Result<(), nimbus_core::Error> {
-    let batch = AtomicWriteBatch::new(vec![AtomicWrite::Set {
-        key: WriteKey::from(DocumentLocator::new(table, id)),
-        document: fields,
-        mode: WriteSetMode::Overwrite,
+    let batch = AtomicWriteBatch::new(vec![overwrite_atomic_write(
+        table,
+        id,
+        fields,
         precondition,
-        transforms: Vec::new(),
-    }])?;
+    )])?;
     engine
         .begin_mutation_execution_unit(context.tenant_id().clone(), PrincipalContext::system())?
         .execute_atomic_write_batch(batch)?;
     Ok(())
 }
 
-/// Atomically delete `id` (a no-op success if already absent — DeleteItem
-/// semantics). `precondition` closes the conditional-delete TOCTOU (F9): a
-/// concurrent existence flip between the condition check and the commit fails
-/// the precondition. Returns the raw core error for conditional remapping.
-fn atomic_delete(
-    engine: &Arc<Engine>,
-    context: &TenantIsolationContext,
+pub(crate) fn overwrite_atomic_write(
+    table: TableName,
+    id: DocumentId,
+    fields: serde_json::Map<String, serde_json::Value>,
+    precondition: WritePrecondition,
+) -> AtomicWrite {
+    AtomicWrite::Set {
+        key: WriteKey::from(DocumentLocator::new(table, id)),
+        document: fields,
+        mode: WriteSetMode::Overwrite,
+        precondition,
+        transforms: Vec::new(),
+    }
+}
+
+pub(crate) fn delete_atomic_write(
     table: TableName,
     id: DocumentId,
     precondition: WritePrecondition,
-) -> Result<(), nimbus_core::Error> {
-    let batch = AtomicWriteBatch::new(vec![AtomicWrite::Delete {
+) -> AtomicWrite {
+    AtomicWrite::Delete {
         key: WriteKey::from(DocumentLocator::new(table, id)),
         precondition,
         missing_ok: true,
-    }])?;
-    engine
-        .begin_mutation_execution_unit(context.tenant_id().clone(), PrincipalContext::system())?
-        .execute_atomic_write_batch(batch)?;
-    Ok(())
+    }
 }
 
 /// Map a single-item **conditional** write failure. A lost existence
@@ -152,13 +156,6 @@ pub fn put_item(
     let fields = item_to_fields(&input.item)?;
     let conditional = has_condition(input.condition_expression.as_deref());
     let precondition = write_precondition(conditional, existing.is_some());
-    atomic_overwrite(engine, context, table, id, fields, precondition).map_err(|error| {
-        if conditional {
-            map_conditional_write_error(error)
-        } else {
-            map_core_error(error)
-        }
-    })?;
 
     // Capture a stream event (no-op unless the table has a stream enabled).
     let event_name = if existing.is_some() {
@@ -167,16 +164,25 @@ pub fn put_item(
         StreamEventName::Insert
     };
     let keys = extract_key(&input.item, &key_schema);
-    stream::capture_event(
+    let change = stream::StreamChange::new(
+        input.table_name.clone(),
+        event_name,
+        keys,
+        existing.clone(),
+        Some(input.item.clone()),
+        None,
+    );
+    stream::execute_atomic_write_batch_with_streams(
         engine,
         context,
-        &input.table_name,
-        stream::ChangeEvent {
-            event_name,
-            keys: &keys,
-            old_image: existing.as_ref(),
-            new_image: Some(&input.item),
-            user_identity: None,
+        vec![overwrite_atomic_write(table, id, fields, precondition)],
+        &[change],
+        |error| {
+            if conditional {
+                map_conditional_write_error(error)
+            } else {
+                map_core_error(error)
+            }
         },
     )?;
 
@@ -276,25 +282,27 @@ pub fn delete_item(
         // no precondition (last-writer-wins).
         let conditional = has_condition(input.condition_expression.as_deref());
         let precondition = write_precondition(conditional, true);
-        atomic_delete(engine, context, table, id, precondition).map_err(|error| {
-            if conditional {
-                map_conditional_write_error(error)
-            } else {
-                map_core_error(error)
-            }
-        })?;
         // Capture a REMOVE stream event (no-op unless a stream is enabled).
         let keys = extract_key(&input.key, &key_schema);
-        stream::capture_event(
+        let change = stream::StreamChange::new(
+            input.table_name.clone(),
+            StreamEventName::Remove,
+            keys,
+            existing.clone(),
+            None,
+            None,
+        );
+        stream::execute_atomic_write_batch_with_streams(
             engine,
             context,
-            &input.table_name,
-            stream::ChangeEvent {
-                event_name: StreamEventName::Remove,
-                keys: &keys,
-                old_image: existing.as_ref(),
-                new_image: None,
-                user_identity: None,
+            vec![delete_atomic_write(table, id, precondition)],
+            &[change],
+            |error| {
+                if conditional {
+                    map_conditional_write_error(error)
+                } else {
+                    map_core_error(error)
+                }
             },
         )?;
     }
@@ -364,13 +372,6 @@ pub fn update_item(
     let fields = item_to_fields(&new_item)?;
     let conditional = has_condition(input.condition_expression.as_deref());
     let precondition = write_precondition(conditional, old_item.is_some());
-    atomic_overwrite(engine, context, table, id, fields, precondition).map_err(|error| {
-        if conditional {
-            map_conditional_write_error(error)
-        } else {
-            map_core_error(error)
-        }
-    })?;
 
     // Capture a stream event (no-op unless the table has a stream enabled).
     let event_name = if old_item.is_some() {
@@ -379,16 +380,25 @@ pub fn update_item(
         StreamEventName::Insert
     };
     let keys = extract_key(&new_item, &key_schema);
-    stream::capture_event(
+    let change = stream::StreamChange::new(
+        input.table_name.clone(),
+        event_name,
+        keys,
+        old_item.clone(),
+        Some(new_item.clone()),
+        None,
+    );
+    stream::execute_atomic_write_batch_with_streams(
         engine,
         context,
-        &input.table_name,
-        stream::ChangeEvent {
-            event_name,
-            keys: &keys,
-            old_image: old_item.as_ref(),
-            new_image: Some(&new_item),
-            user_identity: None,
+        vec![overwrite_atomic_write(table, id, fields, precondition)],
+        &[change],
+        |error| {
+            if conditional {
+                map_conditional_write_error(error)
+            } else {
+                map_core_error(error)
+            }
         },
     )?;
 
@@ -411,11 +421,11 @@ pub fn update_item(
 }
 
 /// Store `item` under its primary key (full replace, no condition/ReturnValues).
-/// Shared by BatchWriteItem (D3.2) and TransactWriteItems (D3.4).
 ///
 /// # Errors
 /// `ResourceNotFoundException` if the table is absent; `ValidationException`
 /// for an invalid item or missing key.
+#[cfg(test)]
 pub(crate) fn store_item(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
@@ -438,29 +448,6 @@ pub(crate) fn store_item(
         WritePrecondition::default(),
     )
     .map_err(map_core_error)?;
-    Ok(())
-}
-
-/// Delete the item at `key` (no condition). A no-op if the key is absent.
-/// Shared by BatchWriteItem (D3.2) and TransactWriteItems (D3.4).
-///
-/// # Errors
-/// `ResourceNotFoundException` if the table is absent; `ValidationException`
-/// for a missing key.
-pub(crate) fn remove_item(
-    engine: &Arc<Engine>,
-    context: &TenantIsolationContext,
-    table_name: &str,
-    key: &Item,
-) -> Result<(), DynamoDbError> {
-    let key_schema = control_plane::load_key_schema(engine, context, table_name)?;
-    let id = primary_key_id(key, &key_schema)?;
-    let table = TableName::new(table_name).map_err(map_core_error)?;
-    if read_item(engine, context, &table, id.clone())?.is_some() {
-        engine
-            .delete_document(context.tenant_id(), table, id)
-            .map_err(map_core_error)?;
-    }
     Ok(())
 }
 

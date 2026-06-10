@@ -334,3 +334,61 @@ fn cli_overrides_config_file_postgres_pool_settings() {
     assert_eq!(config.tenant_provider.pool.min_connections, Some(2));
     assert_eq!(config.tenant_provider.pool.max_connections, Some(8));
 }
+
+#[test]
+fn persistence_sources_merge_with_command_env_file_precedence() {
+    let cli = parse_start([
+        "nimbus",
+        "start",
+        "--tenant-provider",
+        "postgres",
+        "--control-data-dir",
+        "./control-from-cli",
+        "--postgres-max-connections",
+        "12",
+    ]);
+    let env = PersistenceEnv {
+        tenant_provider: Some(CliTenantProvider::Mysql),
+        control_data_dir: Some(PathBuf::from("./control-from-env")),
+        postgres_url: Some("host=/tmp user=env dbname=postgres".to_string()),
+        postgres_min_connections: Some(3),
+        postgres_max_connections: Some(9),
+        ..PersistenceEnv::default()
+    };
+    let file = PersistenceFileConfig {
+        tenant_provider: Some(CliTenantProvider::LibsqlReplica),
+        control_data_dir: Some(PathBuf::from("./control-from-file")),
+        postgres_url: Some("host=/tmp user=file dbname=postgres".to_string()),
+        postgres_metadata_schema: Some("provider_meta_file".to_string()),
+        postgres_min_connections: Some(2),
+        postgres_max_connections: Some(4),
+        ..PersistenceFileConfig::default()
+    };
+
+    let config =
+        persistence_config_from_sources(&cli, &file, &env).expect("merged config should build");
+
+    assert_eq!(
+        config.control_plane,
+        nimbus::ControlPlaneConfig::embedded_redb("./control-from-cli")
+    );
+    assert_eq!(
+        config.tenant_provider.dialect,
+        nimbus::PersistenceDialect::Postgres
+    );
+    assert_eq!(
+        config.tenant_provider.credentials,
+        nimbus::ProviderCredentials::ConnectionString(
+            "host=/tmp user=env dbname=postgres".to_string()
+        )
+    );
+    assert_eq!(config.tenant_provider.pool.min_connections, Some(3));
+    assert_eq!(config.tenant_provider.pool.max_connections, Some(12));
+    assert_eq!(
+        config.tenant_provider.routing,
+        nimbus::TenantRoutingConfig::SchemaPerTenant {
+            metadata_schema: "provider_meta_file".to_string(),
+            tenant_schema_prefix: "tenant_".to_string(),
+        }
+    );
+}

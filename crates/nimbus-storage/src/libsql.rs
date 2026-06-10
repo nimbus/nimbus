@@ -34,7 +34,10 @@ use tower_service::Service;
 use tracing::{debug, warn};
 
 use crate::RetentionFloor;
-use crate::async_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
+use crate::async_storage::{
+    TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, map_executor_join_error,
+    map_executor_permit_error,
+};
 use crate::commit_log::{
     deserialize_durable_record, serialize_durable_record, serialize_tenant_event_record,
 };
@@ -45,7 +48,7 @@ use crate::runtime_bridge::{bridge_tokio_runtime, bridge_tokio_runtime_local};
 use crate::simulation::{Clock, FaultInjector, NoopFaultInjector, SystemClock};
 use crate::sqlite::{
     SQLITE_INIT_SQL, SqliteReadSnapshot, SqliteTenantStore,
-    rebuild_sqlite_indexes_from_loaded_schema,
+    rebuild_sqlite_indexes_from_loaded_schema, scheduled_run_at_key,
 };
 use crate::store::{
     APPLIED_SEQUENCE_KEY, DurableJournalBootstrap, DurableJournalPage, HistoricalIndexDocumentPage,
@@ -57,6 +60,8 @@ use crate::store::{
 mod backend;
 mod document_versions;
 mod freshness;
+#[cfg(test)]
+mod freshness_tests;
 mod index_versions;
 mod provider;
 mod read;
@@ -223,8 +228,14 @@ pub struct LibsqlReplicaTenantStore {
     refresh_complete: Arc<Notify>,
     required_cache_sequence: Arc<AtomicU64>,
     freshness_metrics: Arc<LibsqlReplicaFreshnessMetrics>,
+    #[cfg(test)]
+    refresh_override: Option<TestRefreshOverride>,
     pub(crate) retention_floor: Arc<RetentionFloor>,
 }
+
+#[cfg(test)]
+type TestRefreshOverride =
+    Arc<dyn Fn(&LibsqlReplicaTenantStore) -> Result<ReplicaRefreshOutcome> + Send + Sync>;
 
 #[derive(Clone)]
 struct ReplicaCacheHandle {
@@ -246,6 +257,7 @@ pub struct LibsqlReplicaWriteTransaction {
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
+    commit_timestamp: Option<Timestamp>,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
     refresh_cache_after_commit: bool,
 }
@@ -287,6 +299,8 @@ impl LibsqlReplicaTenantStore {
             refresh_complete: Arc::new(Notify::new()),
             required_cache_sequence: Arc::new(AtomicU64::new(initial_applied)),
             freshness_metrics: Arc::new(LibsqlReplicaFreshnessMetrics::new()),
+            #[cfg(test)]
+            refresh_override: None,
             retention_floor: RetentionFloor::new(),
         }
     }
@@ -381,15 +395,7 @@ impl LibsqlReplicaTenantStore {
             SequenceNumber(self.required_cache_sequence.load(Ordering::Acquire));
         let local_progress = self.active_cache_store()?.journal_progress()?;
         let started = Instant::now();
-        let refresh_result = if !self.refresh_needed.load(Ordering::Acquire) {
-            self.freshness_metrics
-                .note_refresh_attempt_path(LibsqlReplicaRefreshPath::IncrementalCatchUp);
-            self.catch_up_local_cache_from_remote_durable_journal()
-        } else {
-            self.freshness_metrics
-                .note_refresh_attempt_path(LibsqlReplicaRefreshPath::FullSnapshotRebuild);
-            self.refresh_local_cache_from_snapshot()
-        };
+        let refresh_result = self.refresh_local_cache_once();
         let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
         match refresh_result {
             Ok(outcome) => {
@@ -439,6 +445,23 @@ impl LibsqlReplicaTenantStore {
         }
     }
 
+    fn refresh_local_cache_once(&self) -> Result<ReplicaRefreshOutcome> {
+        #[cfg(test)]
+        if let Some(refresh_override) = &self.refresh_override {
+            return refresh_override(self);
+        }
+
+        if !self.refresh_needed.load(Ordering::Acquire) {
+            self.freshness_metrics
+                .note_refresh_attempt_path(LibsqlReplicaRefreshPath::IncrementalCatchUp);
+            self.catch_up_local_cache_from_remote_durable_journal()
+        } else {
+            self.freshness_metrics
+                .note_refresh_attempt_path(LibsqlReplicaRefreshPath::FullSnapshotRebuild);
+            self.refresh_local_cache_from_snapshot()
+        }
+    }
+
     fn refresh_local_cache_from_snapshot(&self) -> Result<ReplicaRefreshOutcome> {
         let snapshot = self.block_on(fetch_remote_namespace_snapshot(
             &self.provider.primary_url,
@@ -478,7 +501,7 @@ impl LibsqlReplicaTenantStore {
                 replica_dir.as_path(),
                 path_for_materialize.as_path(),
                 snapshot,
-                dek.as_ref(),
+                dek.as_ref().map(|key| key.as_bytes()),
             )?;
             if let Some(key) = dek {
                 SqliteTenantStore::open_encrypted_with_simulation_and_max_read_connections(
@@ -770,7 +793,12 @@ impl LibsqlReplicaTenantStore {
 
     async fn load_remote_scheduled_jobs(&self, table: &str) -> Result<Vec<ScheduledJob>> {
         let conn = self.remote_connection()?;
-        let sql = format!("SELECT data_json FROM {table}");
+        let order_by = if table == "scheduled_jobs" {
+            "run_at, id"
+        } else {
+            "id"
+        };
+        let sql = format!("SELECT data_json FROM {table} ORDER BY {order_by}");
         let mut rows = conn
             .query(sql.as_str(), ())
             .await

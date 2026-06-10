@@ -91,9 +91,9 @@ impl FirestoreGrpcService {
     }
 
     fn app_state(&self) -> Result<Arc<AppState>, Status> {
-        self.state
-            .clone()
-            .ok_or_else(|| Status::unimplemented("Not yet implemented"))
+        self.state.clone().ok_or_else(|| {
+            Status::internal("Firestore gRPC server constructed without application state")
+        })
     }
 }
 
@@ -252,26 +252,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn firestore_grpc_unary_stub_returns_unimplemented() {
+    async fn firestore_grpc_unary_stub_reports_missing_application_state() {
         let error = match FirestoreGrpcService::new()
             .commit(Request::new(CommitRequest::default()))
             .await
         {
-            Ok(_) => panic!("default Firestore commit stub should be unimplemented"),
+            Ok(_) => panic!("default Firestore commit stub should require application state"),
             Err(error) => error,
         };
-        assert_eq!(error.code(), Code::Unimplemented);
+        assert_eq!(error.code(), Code::Internal);
+        assert_eq!(
+            error.message(),
+            "Firestore gRPC server constructed without application state"
+        );
     }
 
     #[tokio::test]
-    async fn firestore_grpc_server_streaming_stub_returns_unimplemented() {
+    async fn firestore_grpc_server_streaming_stub_reports_missing_application_state() {
         let error = match FirestoreGrpcService::new()
             .run_query(Request::new(RunQueryRequest::default()))
             .await
         {
-            Ok(_) => panic!("default Firestore run_query stub should be unimplemented"),
+            Ok(_) => panic!("default Firestore run_query stub should require application state"),
             Err(error) => error,
         };
-        assert_eq!(error.code(), Code::Unimplemented);
+        assert_eq!(error.code(), Code::Internal);
+        assert_eq!(
+            error.message(),
+            "Firestore gRPC server constructed without application state"
+        );
     }
 }

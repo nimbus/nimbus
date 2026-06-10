@@ -1,3 +1,5 @@
+use std::ops::Bound;
+
 use super::support::*;
 
 #[test]
@@ -295,10 +297,8 @@ fn sqlite_store_round_trips_schema_get_and_index_scans() {
             &table,
             "by_status_rank",
             &[json!("open")],
-            Some(&json!(2)),
-            Some(&json!(4)),
-            true,
-            true,
+            Bound::Included(&json!(2)),
+            Bound::Included(&json!(4)),
             &mut || Ok(()),
         )
         .expect("composite range scan should succeed");
@@ -523,10 +523,8 @@ fn sqlite_index_query_plan_builders_match_runtime_sql_shape() {
     let composite = crate::sqlite_index_scan_composite_range_query_sql(
         &["team", "status", "rank"],
         2,
-        true,
-        true,
-        true,
-        false,
+        Bound::Included(()),
+        Bound::Excluded(()),
     )
     .expect("composite indexed query SQL should build");
     assert_eq!(
@@ -610,10 +608,8 @@ fn sqlite_index_query_plans_elide_temp_btree_for_equality_prefixes() {
         &crate::sqlite_index_scan_composite_range_query_sql(
             &["team", "status", "rank"],
             2,
-            true,
-            true,
-            true,
-            false,
+            Bound::Included(()),
+            Bound::Excluded(()),
         )
         .expect("composite indexed query SQL should build"),
         rusqlite::params![

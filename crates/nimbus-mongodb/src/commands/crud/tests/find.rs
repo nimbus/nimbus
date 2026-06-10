@@ -117,6 +117,60 @@ fn find_with_combined_range() {
 }
 
 #[test]
+fn find_id_fast_path_applies_residual_range_filters() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    seed_users(&fixture);
+
+    let matched_names = |filter: bson::Document| {
+        let body = bson::doc! {
+            "find": "users",
+            "$db": "testdb",
+            "filter": filter,
+        };
+        let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
+        let cursor = result.get_document("cursor").unwrap();
+        cursor
+            .get_array("firstBatch")
+            .unwrap()
+            .iter()
+            .map(|value| {
+                value
+                    .as_document()
+                    .unwrap()
+                    .get_str("name")
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        matched_names(bson::doc! { "_id": "u1", "age": { "$gt": 100 } }),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        matched_names(bson::doc! { "_id": "u1", "age": { "$gt": 29 } }),
+        vec!["Alice".to_owned()]
+    );
+    assert_eq!(
+        matched_names(bson::doc! { "_id": "u1", "age": { "$gte": 30 } }),
+        vec!["Alice".to_owned()]
+    );
+    assert_eq!(
+        matched_names(bson::doc! { "_id": "u1", "age": { "$lt": 30 } }),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        matched_names(bson::doc! { "_id": "u1", "age": { "$lte": 30 } }),
+        vec!["Alice".to_owned()]
+    );
+    assert_eq!(
+        matched_names(bson::doc! { "_id": "u1", "missing": { "$lte": 30 } }),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
 fn find_with_limit() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
@@ -217,6 +271,49 @@ fn find_with_compound_sort() {
         .map(|b| b.as_document().unwrap().get_str("_id").unwrap())
         .collect();
     assert_eq!(ids, vec!["i2", "i3", "i1", "i4"]);
+}
+
+#[test]
+fn find_compound_sort_distinguishes_structured_values() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let body = bson::doc! {
+        "insert": "items",
+        "$db": "testdb",
+        "documents": [
+            { "_id": "bool", "category": "same", "shape": true },
+            { "_id": "array-long", "category": "same", "shape": [1, 2] },
+            { "_id": "array-short", "category": "same", "shape": [1] },
+            { "_id": "object-long", "category": "same", "shape": { "a": 1, "b": 0 } },
+            { "_id": "object-short", "category": "same", "shape": { "a": 1 } },
+            { "_id": "string", "category": "same", "shape": "shape" },
+        ],
+    };
+    insert(&body, &mut test_conn(), &fixture.engine()).unwrap();
+
+    let find_body = bson::doc! {
+        "find": "items",
+        "$db": "testdb",
+        "sort": { "category": 1, "shape": 1 },
+    };
+    let result = find(&find_body, &mut test_conn(), &fixture.engine()).unwrap();
+    let cursor = result.get_document("cursor").unwrap();
+    let batch = cursor.get_array("firstBatch").unwrap();
+    assert_eq!(batch.len(), 6);
+    let ids: Vec<&str> = batch
+        .iter()
+        .map(|b| b.as_document().unwrap().get_str("_id").unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![
+            "string",
+            "object-short",
+            "object-long",
+            "array-short",
+            "array-long",
+            "bool"
+        ]
+    );
 }
 
 #[test]

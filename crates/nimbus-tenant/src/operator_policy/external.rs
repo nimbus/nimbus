@@ -1,4 +1,4 @@
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use super::super::evidence::redact_evidence_text;
 
 pub const DEFAULT_OPERATOR_EXTERNAL_POLICY_TIMEOUT: Duration = Duration::from_secs(2);
+const DEFAULT_OPERATOR_EXTERNAL_POLICY_MAX_IN_FLIGHT: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OperatorExternalPolicyRequest {
@@ -48,6 +49,8 @@ pub struct OperatorExternalPolicyEngine {
     backend: Arc<dyn OperatorExternalPolicyBackend>,
     timeout: Duration,
     policy_bundle_hash: Option<String>,
+    in_flight: Arc<ExternalPolicyInFlight>,
+    max_in_flight: usize,
 }
 
 impl OperatorExternalPolicyEngine {
@@ -60,6 +63,8 @@ impl OperatorExternalPolicyEngine {
             backend,
             timeout: DEFAULT_OPERATOR_EXTERNAL_POLICY_TIMEOUT,
             policy_bundle_hash: None,
+            in_flight: Arc::new(ExternalPolicyInFlight::default()),
+            max_in_flight: DEFAULT_OPERATOR_EXTERNAL_POLICY_MAX_IN_FLIGHT,
         }
     }
 
@@ -86,6 +91,16 @@ impl OperatorExternalPolicyEngine {
         self.policy_bundle_hash = Some(policy_bundle_hash);
         Ok(self)
     }
+
+    pub fn with_max_concurrent_evaluations(mut self, max_in_flight: usize) -> Result<Self> {
+        if max_in_flight == 0 {
+            return Err(Error::InvalidInput(
+                "external policy max concurrent evaluations must be greater than 0".to_string(),
+            ));
+        }
+        self.max_in_flight = max_in_flight;
+        Ok(self)
+    }
 }
 
 impl std::fmt::Debug for OperatorExternalPolicyEngine {
@@ -94,7 +109,49 @@ impl std::fmt::Debug for OperatorExternalPolicyEngine {
             .debug_struct("OperatorExternalPolicyEngine")
             .field("timeout", &self.timeout)
             .field("policy_bundle_hash", &self.policy_bundle_hash)
+            .field("max_in_flight", &self.max_in_flight)
             .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Default)]
+struct ExternalPolicyInFlight {
+    active: Mutex<usize>,
+}
+
+impl ExternalPolicyInFlight {
+    fn try_acquire(
+        in_flight: &Arc<Self>,
+        max_in_flight: usize,
+    ) -> Option<ExternalPolicyWorkerPermit> {
+        let mut active = in_flight
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *active >= max_in_flight {
+            return None;
+        }
+        *active += 1;
+        Some(ExternalPolicyWorkerPermit {
+            in_flight: Arc::clone(in_flight),
+        })
+    }
+}
+
+#[derive(Debug)]
+struct ExternalPolicyWorkerPermit {
+    in_flight: Arc<ExternalPolicyInFlight>,
+}
+
+impl Drop for ExternalPolicyWorkerPermit {
+    fn drop(&mut self) {
+        let mut active = self
+            .in_flight
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        debug_assert!(*active > 0);
+        *active = active.saturating_sub(1);
     }
 }
 
@@ -321,11 +378,21 @@ pub(super) fn evaluate_external_policy_backend(
     let request =
         request.with_engine_metadata(engine.timeout, engine.policy_bundle_hash.clone())?;
     let (sender, receiver) = mpsc::sync_channel(1);
+    let worker_permit =
+        ExternalPolicyInFlight::try_acquire(&engine.in_flight, engine.max_in_flight).ok_or_else(
+            || {
+                Error::InvalidInput(format!(
+                    "operator policy external backend failed closed for workload `{}`: unavailable: external policy worker limit reached ({} in flight)",
+                    request.workload_key, engine.max_in_flight
+                ))
+            },
+        )?;
     let backend = Arc::clone(&engine.backend);
     let request_for_backend = request.clone();
     thread::Builder::new()
         .name("nimbus-external-policy".to_string())
         .spawn(move || {
+            let _worker_permit = worker_permit;
             let _ = sender.send(backend.evaluate(&request_for_backend));
         })
         .map_err(|error| {

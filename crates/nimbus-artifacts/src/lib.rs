@@ -556,6 +556,12 @@ impl ArtifactVerifierErrorKind {
     }
 }
 
+/// Redacts verifier subprocess diagnostics before they are exposed to callers.
+///
+/// This is a best-effort line redactor: any line containing a sensitive keyword
+/// or common unlabeled secret shape is replaced wholesale. The typed verifier
+/// result remains authoritative; this helper favors hiding suspicious output
+/// over preserving every benign diagnostic byte.
 pub fn redact_artifact_verifier_output(output: &str) -> String {
     if output.is_empty() {
         return String::new();
@@ -563,12 +569,8 @@ pub fn redact_artifact_verifier_output(output: &str) -> String {
     output
         .lines()
         .map(|line| {
-            let normalized = line.to_ascii_lowercase();
-            if SENSITIVE_OUTPUT_FRAGMENTS
-                .iter()
-                .any(|fragment| normalized.contains(fragment))
-            {
-                "[redacted verifier output]".to_string()
+            if line_contains_sensitive_artifact_verifier_output(line) {
+                REDACTED_ARTIFACT_VERIFIER_OUTPUT.to_string()
             } else {
                 line.to_string()
             }
@@ -576,6 +578,80 @@ pub fn redact_artifact_verifier_output(output: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+fn line_contains_sensitive_artifact_verifier_output(line: &str) -> bool {
+    let normalized = line.to_ascii_lowercase();
+    SENSITIVE_OUTPUT_FRAGMENTS
+        .iter()
+        .any(|fragment| normalized.contains(fragment))
+        || line_contains_sensitive_value_shape(line)
+}
+
+fn line_contains_sensitive_value_shape(line: &str) -> bool {
+    line.split(|ch: char| !is_secret_shape_char(ch))
+        .any(token_has_sensitive_value_shape)
+}
+
+fn token_has_sensitive_value_shape(token: &str) -> bool {
+    is_jwt_like(token)
+        || is_aws_access_key_id(token)
+        || is_long_hex_secret(token)
+        || is_long_base64_secret(token)
+}
+
+fn is_jwt_like(token: &str) -> bool {
+    if !token.starts_with("eyJ") {
+        return false;
+    }
+    let mut segments = token.split('.');
+    matches!(
+        (segments.next(), segments.next(), segments.next(), segments.next()),
+        (Some(header), Some(claims), Some(signature), None)
+            if [header, claims, signature]
+                .iter()
+                .all(|segment| !segment.is_empty() && segment.chars().all(is_base64url_char))
+    )
+}
+
+fn is_aws_access_key_id(token: &str) -> bool {
+    token.len() == 20
+        && (token.starts_with("AKIA") || token.starts_with("ASIA"))
+        && token
+            .as_bytes()
+            .iter()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+}
+
+fn is_long_hex_secret(token: &str) -> bool {
+    token.len() >= 40 && token.as_bytes().iter().all(u8::is_ascii_hexdigit)
+}
+
+fn is_long_base64_secret(token: &str) -> bool {
+    let has_uppercase = token.chars().any(|ch| ch.is_ascii_uppercase());
+    let has_lowercase = token.chars().any(|ch| ch.is_ascii_lowercase());
+    let has_strong_base64_marker = token
+        .chars()
+        .any(|ch| ch.is_ascii_digit() || matches!(ch, '+' | '/' | '=' | '_'));
+    token.len() >= 40
+        && token.chars().all(is_base64_or_base64url_char)
+        && has_uppercase
+        && has_lowercase
+        && has_strong_base64_marker
+}
+
+fn is_secret_shape_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=' | '_' | '-' | '.')
+}
+
+fn is_base64url_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_')
+}
+
+fn is_base64_or_base64url_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=' | '_' | '-')
+}
+
+const REDACTED_ARTIFACT_VERIFIER_OUTPUT: &str = "[redacted verifier output]";
 
 const SENSITIVE_OUTPUT_FRAGMENTS: &[&str] = &[
     "authorization",
@@ -718,5 +794,45 @@ mod tests {
                 "redacted output should not leak {secret}: {redacted}"
             );
         }
+    }
+
+    #[test]
+    fn redaction_covers_unlabeled_secret_value_shapes() {
+        let jwt = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJuaW1idXMifQ.signature";
+        let registry_auth_blob = "c2VjcmV0LXJlZ2lzdHJ5LWF1dGgtcGxhaW50ZXh0LWJsb2I=";
+        let hex_secret = "0123456789abcdef0123456789abcdef01234567";
+        let aws_access_key = "AKIAIOSFODNN7EXAMPLE";
+
+        let redacted = redact_artifact_verifier_output(&format!(
+            "verifier stderr: {jwt}\n\
+             verifier stderr: {registry_auth_blob}\n\
+             verifier stderr: {hex_secret}\n\
+             verifier stderr: {aws_access_key}\n\
+             ordinary diagnostic line"
+        ));
+
+        assert!(redacted.contains("ordinary diagnostic line"));
+        assert_eq!(
+            redacted.matches(REDACTED_ARTIFACT_VERIFIER_OUTPUT).count(),
+            4
+        );
+        for secret in [jwt, registry_auth_blob, hex_secret, aws_access_key] {
+            assert!(
+                !redacted.contains(secret),
+                "redacted output should not leak {secret}: {redacted}"
+            );
+        }
+    }
+
+    #[test]
+    fn redaction_preserves_actionable_missing_tool_diagnostics() {
+        let diagnostic = "failed to start artifact verifier `nimbus-artifact-verifier-definitely-missing`: \
+             No such file or directory (os error 2)";
+
+        let redacted = redact_artifact_verifier_output(diagnostic);
+
+        assert!(redacted.contains("failed to start artifact verifier"));
+        assert!(redacted.contains("nimbus-artifact-verifier-definitely-missing"));
+        assert!(!redacted.contains("[redacted verifier output]"));
     }
 }

@@ -1,4 +1,4 @@
-export interface UriOptions {
+export interface MongoUriOptions {
   host?: string;
   port?: number;
   database?: string;
@@ -9,7 +9,7 @@ export interface UriOptions {
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 27017;
 
-export function uri(options: UriOptions = {}): string {
+export function mongoUri(options: MongoUriOptions = {}): string {
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
   const db = options.database ?? "default";

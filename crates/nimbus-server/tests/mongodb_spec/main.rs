@@ -17,6 +17,15 @@ fn spec_test_dir() -> Option<PathBuf> {
     if path.exists() { Some(path) } else { None }
 }
 
+async fn authenticated_wire_client(fixture: &executor::SpecTestFixture) -> wire_client::WireClient {
+    let mut client = wire_client::WireClient::connect(fixture.addr).await;
+    client
+        .authenticate(executor::TEST_USERNAME, executor::TEST_PASSWORD)
+        .await
+        .expect("SCRAM authentication should succeed");
+    client
+}
+
 #[test]
 fn spec_runner_parses_find_test_file() {
     let Some(spec_dir) = spec_test_dir() else {
@@ -416,7 +425,7 @@ fn bson_corpus_roundtrip_report() {
 #[tokio::test]
 async fn handshake_hello_over_wire() {
     let fixture = executor::SpecTestFixture::new().await;
-    let mut client = wire_client::WireClient::connect(fixture.addr).await;
+    let mut client = authenticated_wire_client(&fixture).await;
 
     let resp = client
         .command(&bson::doc! { "hello": 1, "helloOk": true, "$db": "admin" })
@@ -442,7 +451,7 @@ async fn handshake_hello_over_wire() {
 #[tokio::test]
 async fn handshake_ismaster_over_wire() {
     let fixture = executor::SpecTestFixture::new().await;
-    let mut client = wire_client::WireClient::connect(fixture.addr).await;
+    let mut client = authenticated_wire_client(&fixture).await;
 
     let resp = client
         .command(&bson::doc! { "isMaster": 1, "$db": "admin" })
@@ -457,7 +466,7 @@ async fn handshake_ismaster_over_wire() {
 #[tokio::test]
 async fn handshake_build_info_over_wire() {
     let fixture = executor::SpecTestFixture::new().await;
-    let mut client = wire_client::WireClient::connect(fixture.addr).await;
+    let mut client = authenticated_wire_client(&fixture).await;
 
     let resp = client
         .command(&bson::doc! { "buildInfo": 1, "$db": "admin" })
@@ -474,7 +483,7 @@ async fn handshake_build_info_over_wire() {
 #[tokio::test]
 async fn handshake_sasl_supported_mechs() {
     let fixture = executor::SpecTestFixture::new().await;
-    let mut client = wire_client::WireClient::connect(fixture.addr).await;
+    let mut client = authenticated_wire_client(&fixture).await;
 
     let resp = client
         .command(&bson::doc! {
@@ -493,7 +502,7 @@ async fn handshake_sasl_supported_mechs() {
 #[tokio::test]
 async fn collection_create_and_list_over_wire() {
     let fixture = executor::SpecTestFixture::new().await;
-    let mut client = wire_client::WireClient::connect(fixture.addr).await;
+    let mut client = authenticated_wire_client(&fixture).await;
 
     let resp = client
         .command(&bson::doc! { "create": "wire_test_col", "$db": "testdb" })
@@ -516,7 +525,7 @@ async fn collection_create_and_list_over_wire() {
 #[tokio::test]
 async fn collection_create_drop_over_wire() {
     let fixture = executor::SpecTestFixture::new().await;
-    let mut client = wire_client::WireClient::connect(fixture.addr).await;
+    let mut client = authenticated_wire_client(&fixture).await;
 
     let resp = client
         .command(&bson::doc! { "create": "to_drop", "$db": "testdb" })
@@ -541,7 +550,7 @@ async fn collection_create_drop_over_wire() {
 #[tokio::test]
 async fn index_list_over_wire() {
     let fixture = executor::SpecTestFixture::new().await;
-    let mut client = wire_client::WireClient::connect(fixture.addr).await;
+    let mut client = authenticated_wire_client(&fixture).await;
 
     client
         .insert(
@@ -571,7 +580,7 @@ async fn index_list_over_wire() {
 #[tokio::test]
 async fn admin_server_status_over_wire() {
     let fixture = executor::SpecTestFixture::new().await;
-    let mut client = wire_client::WireClient::connect(fixture.addr).await;
+    let mut client = authenticated_wire_client(&fixture).await;
 
     let resp = client
         .command(&bson::doc! { "serverStatus": 1, "$db": "admin" })
@@ -585,7 +594,7 @@ async fn admin_server_status_over_wire() {
 #[tokio::test]
 async fn admin_whatsmyuri_over_wire() {
     let fixture = executor::SpecTestFixture::new().await;
-    let mut client = wire_client::WireClient::connect(fixture.addr).await;
+    let mut client = authenticated_wire_client(&fixture).await;
 
     let resp = client
         .command(&bson::doc! { "whatsmyuri": 1, "$db": "admin" })
@@ -597,7 +606,7 @@ async fn admin_whatsmyuri_over_wire() {
 #[tokio::test]
 async fn admin_get_log_over_wire() {
     let fixture = executor::SpecTestFixture::new().await;
-    let mut client = wire_client::WireClient::connect(fixture.addr).await;
+    let mut client = authenticated_wire_client(&fixture).await;
 
     let resp = client
         .command(&bson::doc! { "getLog": "*", "$db": "admin" })
@@ -615,7 +624,7 @@ async fn admin_get_log_over_wire() {
 #[tokio::test]
 async fn list_databases_over_wire() {
     let fixture = executor::SpecTestFixture::new().await;
-    let mut client = wire_client::WireClient::connect(fixture.addr).await;
+    let mut client = authenticated_wire_client(&fixture).await;
 
     client
         .insert("mydb", "docs", &[bson::doc! { "_id": "x", "v": 1 }])
@@ -632,7 +641,7 @@ async fn list_databases_over_wire() {
 #[tokio::test]
 async fn transaction_commit_over_wire() {
     let fixture = executor::SpecTestFixture::new().await;
-    let mut client = wire_client::WireClient::connect(fixture.addr).await;
+    let mut client = authenticated_wire_client(&fixture).await;
 
     client
         .insert("testdb", "txn_col", &[bson::doc! { "_id": "seed", "v": 0 }])
@@ -687,7 +696,7 @@ async fn transaction_commit_over_wire() {
 #[tokio::test]
 async fn transaction_abort_over_wire() {
     let fixture = executor::SpecTestFixture::new().await;
-    let mut client = wire_client::WireClient::connect(fixture.addr).await;
+    let mut client = authenticated_wire_client(&fixture).await;
 
     client
         .insert(
@@ -724,7 +733,7 @@ async fn transaction_abort_over_wire() {
 #[tokio::test]
 async fn change_stream_over_wire() {
     let fixture = executor::SpecTestFixture::new().await;
-    let mut client = wire_client::WireClient::connect(fixture.addr).await;
+    let mut client = authenticated_wire_client(&fixture).await;
 
     client
         .insert("testdb", "cs_col", &[bson::doc! { "_id": "s1", "v": 1 }])

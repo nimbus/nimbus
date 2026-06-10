@@ -43,4 +43,11 @@ impl TenantRuntime {
     pub(crate) fn document_cache_stats(&self) -> DocumentCacheStats {
         self.document_cache.stats()
     }
+
+    #[cfg(test)]
+    pub(crate) fn document_cache_invalidation_pause_handle_for_testing(
+        &self,
+    ) -> DocumentCacheInvalidationPauseHandle {
+        self.document_cache.invalidation_pause_handle()
+    }
 }
