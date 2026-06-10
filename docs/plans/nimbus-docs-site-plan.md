@@ -114,7 +114,10 @@ nimbus/nimbus  (one repo)
 │                                    design-review), technical-debt.md,
 │                                    generated compat evidence, fork ledgers,
 │                                    CI/build contracts, agent working docs
-├── website/                        Astro 6 + Starlight (renderer only; npm workspace)
+├── website/                        Astro 6 + Starlight (renderer only; standalone
+│                                   npm project with its own lockfile — NOT a
+│                                   workspace member, so the docs toolchain never
+│                                   enters the product's --workspaces CI lanes)
 │   ├── astro.config.mjs            site=https://nimbusdocs.com; loads ../docs/public
 │   │                               via Content Layer glob loader; starlight-llms-txt
 │   └── wrangler.jsonc              assets.directory=./dist; no "main"
@@ -373,11 +376,12 @@ consume the Activation prerequisites.
   conditions in Verification) and register this plan in
   `docs/plans/README.md`. *Gate:* verifier runs and reports each condition
   (red until satisfied).
-- **DOC1 — Scaffold renderer.** Add the `website/` npm workspace: Astro 6 +
-  `@astrojs/starlight` + `starlight-llms-txt`; `astro.config.mjs` with
-  `site: 'https://nimbusdocs.com'`, default static output, and the Content Layer
-  glob loader reading `../docs/public`. *Gate:* `npm run build -w website`
-  succeeds against a single placeholder page and emits `dist/` + `llms.txt`.
+- **DOC1 — Scaffold renderer.** Add `website/` as a standalone npm project
+  (own lockfile, not a workspace member): Astro 6 + `@astrojs/starlight` +
+  `starlight-llms-txt`; `astro.config.mjs` with
+  `site: 'https://nimbusdocs.com'` and default static output. *Gate:*
+  `npm --prefix website run build` succeeds against a single placeholder page
+  and emits `dist/` + `llms.txt` (the five-group glob loaders land in DOC3).
 - **DOC2 — Design harmonization (frontend-design skill).** Review Starlight's
   default theming recommendations, crabbox's styling, and `DESIGN.md`'s two-tier
   brand system (`brand-system-plan.md`: Brand tier vs Industrial Precision
@@ -520,7 +524,7 @@ consume the Activation prerequisites.
 5. `docs/` top level contains only the five public groups plus `brand/`,
    `private/`, `README.md`, and `source-map.md`; no published page links into
    `docs/private/**` — fail-closed leak guard.
-6. `npm run build -w website` succeeds and emits `dist/`, `llms.txt`,
+6. `npm --prefix website run build` succeeds and emits `dist/`, `llms.txt`,
    `llms-full.txt`, `llms-small.txt`.
 7. `website/wrangler.jsonc` sets `assets.directory: ./dist` and has no `main`.
 8. `.github/workflows/docs.yml` exists with the paths filter, PR preview step,
