@@ -4575,7 +4575,6 @@ const FS_HOST_IO_LOW_ROI_PATHS: &[&str] = &[
     "test/parallel/test-fs-sir-writes-alot.js",
     "test/parallel/test-fs-write-buffer-large.js",
     "test/parallel/test-fs-write-sigxfsz.js",
-    "test/parallel/test-fs-writesync-crash.js",
 ];
 
 const FS_HOST_IO_LOW_ROI_PREFIXES: &[&str] = &["test/parallel/test-fs-promises-watch"];
@@ -4678,6 +4677,12 @@ const FS_HOST_IO_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
     // an AbortError before issuing the stat). Greened by the same fork tag.
     "test/parallel/test-fs-stat-abort-test.js",
     "test/parallel/test-fs-write-stream.js",
+    // NDS3 cycle 10: module_fs_modules.js wraps fsModule.writeSync to route a
+    // thrown error through denoErrorToNodeError so a poisoned Object.prototype
+    // errno setter fires and propagates an empty-message Error, matching Node's
+    // test-fs-writesync-crash.js crash-path contract. No host-process exit or
+    // signal primitive is granted; this runs in the fs-host-io promoted batch.
+    "test/parallel/test-fs-writesync-crash.js",
 ];
 
 fn fs_host_io_promoted_fixture_paths(groups: &[&[&str]]) -> Vec<String> {
@@ -4773,8 +4778,11 @@ fn node24_fs_constants_watchpoint() {
     );
 }
 
+// Greened by NDS3 cycle 10: module_fs_helpers.js wrapDirHandle now defines
+// Dir[Symbol.asyncDispose]/[Symbol.dispose] (idempotent close, no double-close),
+// matching Node 24's opendir disposal semantics. Now a passing dynamic
+// green-guard, no longer an ignored watchpoint.
 #[test]
-#[ignore = "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-promises-file-handle-dispose.js now also asserts opendir Dir[Symbol.asyncDispose]() close semantics that the current runtime does not yet match"]
 fn node24_fs_promises_file_handle_dispose_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-promises-file-handle-dispose.js",
@@ -4813,8 +4821,11 @@ fn node24_fs_symlink_watchpoint() {
     );
 }
 
+// Greened by NDS3 cycle 10: module_fs_helpers.js ensureDirPathInvalidThisGetter
+// now wraps Dir.prototype.path with an ERR_INVALID_THIS receiver guard, matching
+// Node 24's newer Dir handle receiver checks. Now a passing dynamic green-guard,
+// no longer an ignored watchpoint.
 #[test]
-#[ignore = "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-opendir.js now also asserts ERR_INVALID_THIS for newer Dir handle receiver checks, while the current runtime intentionally keeps the older Node22-compatible directory-handle surface"]
 fn node24_fs_opendir_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-opendir.js",

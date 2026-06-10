@@ -316,6 +316,31 @@ function createNimbusFsModule(fsPromisesModule) {
   fsModule.appendFileSync = function appendFileSync(path, data, options) {
     return writeFileSyncWithCurrentFsBindings(fsModule, path, data, options, "a");
   };
+  function rebuildWriteSyncError(originalError) {
+    // The underlying op surfaces an OS write failure as a raw Deno error
+    // (e.g. "Bad file descriptor (os error 9)"). Node instead throws a
+    // UVException whose construction assigns `errno` via plain property
+    // assignment. test-fs-writesync-crash.js relies on that exact mechanism:
+    // it poisons Object.prototype.errno with a throwing setter, so the errno
+    // assignment must propagate that setter's error instead of crashing. It
+    // also pins the canonical EBADF shape (message
+    // "EBADF: bad file descriptor, write", errno UV_EBADF, code "EBADF",
+    // syscall "write") asserted by test-fs-error-messages.js. Route through
+    // Deno's denoErrorToNodeError, which maps the os errno and rebuilds the
+    // error exactly like Node's UVException (assigning errno by plain
+    // assignment so a poisoned prototype setter fires).
+    if (typeof internalErrors?.denoErrorToNodeError !== "function") {
+      return originalError;
+    }
+    return internalErrors.denoErrorToNodeError(originalError, { syscall: "write" });
+  }
+  fsModule.writeSync = function writeSync(fd, buffer, offsetOrOptions, length, position) {
+    try {
+      return fsBuiltin.writeSync(fd, buffer, offsetOrOptions, length, position);
+    } catch (error) {
+      throw rebuildWriteSyncError(error);
+    }
+  };
   fsPromisesModule.writeFile = async function writeFile(path, data, options) {
     const normalizedOptions = copyObject(getOptions(options, {
       encoding: "utf8",

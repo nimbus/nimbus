@@ -24,6 +24,7 @@ const {
   ERR_INVALID_ARG_TYPE,
   ERR_INVALID_ARG_VALUE,
   ERR_INVALID_THIS,
+  ERR_MISSING_ARGS,
   ERR_OUT_OF_RANGE,
 } = core.loadExtScript("ext:deno_node/internal/errors.ts");
 const {
@@ -994,6 +995,13 @@ const isVisiblePerformanceEntry = (entry) =>
 const filterVisiblePerformanceEntries = (entries) =>
   entries.filter(isVisiblePerformanceEntry);
 
+// Node sorts every getEntries* result ascending by startTime through a single
+// shared comparator (upstream lib/internal/perf/observe.js performanceObserverSorter).
+// Array.prototype.sort is stable, so ties preserve insertion order.
+const performanceEntrySorter = (first, second) => first.startTime - second.startTime;
+const sortPerformanceEntriesByStartTime = (entries) =>
+  entries.sort(performanceEntrySorter);
+
 const coerceNodeMarkName = (markName) => {
   if (typeof markName === "symbol") {
     `${markName}`;
@@ -1039,28 +1047,49 @@ performance.clearMarks = (markName = undefined) => {
 
 const originalGetEntries = performance.getEntries.bind(performance);
 performance.getEntries = () =>
-  filterVisiblePerformanceEntries(originalGetEntries()).concat(resourceTimingEntries);
+  sortPerformanceEntriesByStartTime(
+    filterVisiblePerformanceEntries(originalGetEntries()).concat(resourceTimingEntries),
+  );
 
 const originalGetEntriesByType = performance.getEntriesByType.bind(performance);
-performance.getEntriesByType = (type) => {
-  if (type === "resource") {
-    return resourceTimingEntries.slice();
+performance.getEntriesByType = function getEntriesByType(type) {
+  if (arguments.length === 0) {
+    throw new ERR_MISSING_ARGS("type");
   }
-  return filterVisiblePerformanceEntries(originalGetEntriesByType(type));
+  if (type === "resource") {
+    return sortPerformanceEntriesByStartTime(resourceTimingEntries.slice());
+  }
+  return sortPerformanceEntriesByStartTime(
+    filterVisiblePerformanceEntries(originalGetEntriesByType(type)),
+  );
 };
 
 const originalGetEntriesByName = performance.getEntriesByName.bind(performance);
-performance.getEntriesByName = (name, type = undefined) => {
+performance.getEntriesByName = function getEntriesByName(name, type = undefined) {
+  if (arguments.length === 0) {
+    throw new ERR_MISSING_ARGS("name");
+  }
   const webEntries = filterVisiblePerformanceEntries(originalGetEntriesByName(name, type));
   if (type !== undefined && type !== "resource") {
-    return webEntries;
+    return sortPerformanceEntriesByStartTime(webEntries);
   }
-  return webEntries.concat(resourceTimingEntries.filter((entry) => entry.name === name));
+  return sortPerformanceEntriesByStartTime(
+    webEntries.concat(resourceTimingEntries.filter((entry) => entry.name === name)),
+  );
 };
 
 performance.clearResourceTimings = () => {
   resourceTimingEntries.length = 0;
 };
+
+// The deno_web global performance.toJSON() only emits { timeOrigin }. Node's
+// Performance#toJSON (lib/internal/perf/performance.js) additionally exposes
+// nodeTiming and eventLoopUtilization, so wrap it to match Node's shape.
+performance.toJSON = () => ({
+  nodeTiming,
+  timeOrigin: performance.timeOrigin,
+  eventLoopUtilization: eventLoopUtilization(),
+});
 
 performance.markResourceTiming = (
   timingInfo,

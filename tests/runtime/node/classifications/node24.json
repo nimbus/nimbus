@@ -33,20 +33,6 @@
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_fs_constants_watchpoint"
     },
     {
-      "test_path": "test/parallel/test-fs-opendir.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "streams-local-io/fs-host-io",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_fs_opendir_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-fs-promises-file-handle-dispose.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "streams-local-io/fs-host-io",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_fs_promises_file_handle_dispose_watchpoint"
-    },
-    {
       "test_path": "test/parallel/test-fs-symlink.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
@@ -2218,7 +2204,6 @@
         "test/parallel/test-performance-nodetiming-uvmetricsinfo.js",
         "test/parallel/test-performance-resourcetimingbufferfull.js",
         "test/parallel/test-performance-resourcetimingbuffersize.js",
-        "test/parallel/test-performance-timeline.mjs",
         "test/parallel/test-permission-allow-addons-cli.js",
         "test/parallel/test-permission-allow-child-process-cli.js",
         "test/parallel/test-permission-allow-inspector.js",
@@ -2616,7 +2601,6 @@
         "test/parallel/test-throw-undefined-or-null-traced.mjs",
         "test/parallel/test-tick-processor-arguments.js",
         "test/parallel/test-tick-processor-version-check.js",
-        "test/parallel/test-tojson-perf_hooks.js",
         "test/parallel/test-trace-env-stack.js",
         "test/parallel/test-trace-env.js",
         "test/parallel/test-trace-events-api-worker-disabled.js",
@@ -3117,8 +3101,7 @@
         "test/parallel/test-fs-write-stream-eagain.mjs",
         "test/parallel/test-fs-write-stream-flush.js",
         "test/parallel/test-fs-write-stream-patch-open.js",
-        "test/parallel/test-fs-write.js",
-        "test/parallel/test-fs-writesync-crash.js"
+        "test/parallel/test-fs-write.js"
       ]
     },
     {

@@ -816,6 +816,41 @@ function createDirClosedError() {
   return error;
 }
 
+function createDirInvalidThisError() {
+  const error = new TypeError('Value of "this" must be of type Dir');
+  error.code = "ERR_INVALID_THIS";
+  return error;
+}
+
+function ensureDirPathInvalidThisGetter(dir) {
+  const prototype = Object.getPrototypeOf(dir);
+  if (!prototype || prototype.__nimbusDirPathInvalidThisGetter === true) {
+    return;
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, "path");
+  if (!descriptor || typeof descriptor.get !== "function") {
+    return;
+  }
+  const originalGetter = descriptor.get;
+  Object.defineProperty(prototype, "path", {
+    configurable: descriptor.configurable !== false,
+    enumerable: descriptor.enumerable === true,
+    get: function path() {
+      try {
+        return originalGetter.call(this);
+      } catch (_error) {
+        throw createDirInvalidThisError();
+      }
+    },
+  });
+  Object.defineProperty(prototype, "__nimbusDirPathInvalidThisGetter", {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+}
+
 function createDirConcurrentOperationError() {
   const error = new Error("Cannot synchronously operate on a directory while an async read is pending");
   error.code = "ERR_DIR_CONCURRENT_OPERATION";
@@ -969,6 +1004,32 @@ function wrapDirHandle(dir) {
     closed = true;
     return originalCloseSync();
   };
+
+  ensureDirPathInvalidThisGetter(dir);
+
+  Object.defineProperty(dir, Symbol.asyncDispose, {
+    value: function asyncDispose() {
+      if (closed) {
+        return Promise.resolve();
+      }
+      return dir.close();
+    },
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+
+  Object.defineProperty(dir, Symbol.dispose, {
+    value: function dispose() {
+      if (closed) {
+        return;
+      }
+      dir.closeSync();
+    },
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
 
   return dir;
 }
