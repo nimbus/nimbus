@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for
-# docs/plans/nimbus-capability-segregation-plan.md.
+# docs/private/plans/nimbus-capability-segregation-plan.md.
 #
 # CB0 ships this as a failing control gate. Each later CB phase flips its own
 # numbered condition to PASS without weakening previous conditions.
@@ -10,8 +10,8 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/plans/nimbus-capability-segregation-plan.md"
-PLANS_README="docs/plans/README.md"
+PLAN="docs/private/plans/nimbus-capability-segregation-plan.md"
+PLANS_README="docs/private/plans/README.md"
 AGENTS_MD="AGENTS.md"
 
 PASS=0
@@ -89,7 +89,7 @@ condition_1_engine_rename() {
   [ -d crates/nimbus-engine/src/engine ] || ok=1
   [ ! -d crates/nimbus-engine/src/service ] || ok=1
   if grep -RqE 'nimbus_engine::Service|ServiceBootstrapPlan|ServicePersistenceConfig|crates/nimbus-engine/src/service' \
-    crates docs/architecture docs/operating docs/plans/*.md 2>/dev/null; then
+    crates docs/private/staging/architecture docs/private/staging/operating docs/private/plans/*.md 2>/dev/null; then
     ok=1
   fi
   return "${ok}"
@@ -261,7 +261,7 @@ condition_9_principal_route_policy() {
     grep -RqE 'spawned.*admin|admin.*spawned' crates/nimbus-server/src &&
     grep -RqE 'exact.*service|service.*exact' crates/nimbus-server/src &&
     ! grep -RqE 'TenantWorkloadStableIdentity|TenantWorkloadIdentity|TenantWorkloadLocation' \
-      crates docs/architecture docs/operating docs/plans/*.md 2>/dev/null
+      crates docs/private/staging/architecture docs/private/staging/operating docs/private/plans/*.md 2>/dev/null
 }
 
 condition_10_debrand_and_routing() {

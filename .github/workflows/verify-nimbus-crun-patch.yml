@@ -16,7 +16,7 @@ on:
       - "scripts/prepare-conmon-krun-drill.sh"
       - "scripts/verify-conmon-krun-drill-helper.sh"
       - "scripts/fixtures/crun-spec-config.json"
-      - "docs/architecture/sandbox/krun-vmm-host-validation.md"
+      - "docs/private/staging/architecture/sandbox/krun-vmm-host-validation.md"
       - "Makefile"
       - ".github/workflows/verify-nimbus-crun-patch.yml"
   push:
@@ -36,7 +36,7 @@ on:
       - "scripts/prepare-conmon-krun-drill.sh"
       - "scripts/verify-conmon-krun-drill-helper.sh"
       - "scripts/fixtures/crun-spec-config.json"
-      - "docs/architecture/sandbox/krun-vmm-host-validation.md"
+      - "docs/private/staging/architecture/sandbox/krun-vmm-host-validation.md"
       - "Makefile"
       - ".github/workflows/verify-nimbus-crun-patch.yml"
   workflow_dispatch:

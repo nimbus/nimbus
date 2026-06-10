@@ -155,7 +155,7 @@ async fn mint_launch_url_or_fallback(console_url: &str) -> String {
 /// Append `/ui/` to the daemon's base URL so the dev banner can advertise the
 /// operator console without the caller having to assemble paths. Mirrors
 /// the CockroachDB precedent (`webui:\t<url>`) — see CD3 in
-/// `docs/plans/cli-daemon-canonicalization-plan.md`.
+/// `docs/private/plans/cli-daemon-canonicalization-plan.md`.
 pub(super) fn operator_console_url(local_url: &str) -> String {
     let trimmed = local_url.trim_end_matches('/');
     format!("{trimmed}/ui/")

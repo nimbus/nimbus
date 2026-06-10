@@ -12,7 +12,7 @@ SINGLE_FLIGHT = bash scripts/single-flight.sh
 # recipes make the dependency explicit so a fresh clone running
 # `make check` / `make test` / `make verify-desktop-ui` / `make ci-required`
 # walks the graph and builds UI prerequisites on demand.
-# See docs/plans/archive/local-dev-canonicalization-plan.md for the design.
+# See docs/private/plans/archive/local-dev-canonicalization-plan.md for the design.
 
 UI_PKG := packages/nimbus-ui
 
@@ -66,7 +66,7 @@ $(UI_DIST_INDEX): $(UI_CODEGEN_SENTINEL) $(UI_SPA_SOURCES)
 # each provisioned package's dist and stage them + a checksummed manifest, so a
 # fresh clone running `make build` / `check` / `test` walks the graph and
 # produces the payload before cargo compiles nimbus-bin.
-# See docs/plans/archive/binary-embedded-package-distribution-plan.md (BPD1).
+# See docs/private/plans/archive/binary-embedded-package-distribution-plan.md (BPD1).
 
 # Provisioned (app-facing) package dirs. `codegen` is build-time tooling
 # (prebundled + embedded as a tooling run target), tracked here for sources.

@@ -66,20 +66,20 @@ from pathlib import Path
 repo = Path.cwd()
 errors: list[str] = []
 
-active_plan = repo / "docs/plans/node-lts-runtime-trust-plan.md"
-archived_plan = repo / "docs/plans/archive/node-lts-runtime-trust-plan.md"
-plan_readme = repo / "docs/plans/README.md"
-proof_root = repo / "docs/plans/proof/node-lts-runtime-trust"
+active_plan = repo / "docs/private/plans/node-lts-runtime-trust-plan.md"
+archived_plan = repo / "docs/private/plans/archive/node-lts-runtime-trust-plan.md"
+plan_readme = repo / "docs/private/plans/README.md"
+proof_root = repo / "docs/private/plans/proof/node-lts-runtime-trust"
 proof_readme = proof_root / "README.md"
-research = repo / "docs/plans/research/node-lts-runtime-and-deno-fork-strategy.md"
-lane_registry = repo / "docs/architecture/runtime/node-lts-compat/node-lts-lanes.json"
-compat_doc = repo / "docs/runtimes/nodejs/compatibility.md"
-node_readme = repo / "docs/runtimes/nodejs/README.md"
-evidence_latest = repo / "docs/runtimes/nodejs/evidence/latest.md"
-supplementary_failures = repo / "docs/architecture/runtime/node-compat-supplementary-failures.md"
-harness_doc = repo / "docs/architecture/runtime/node-lts-compat/harness-timeouts-and-hangs.md"
-permission_doc = repo / "docs/architecture/runtime/permission-model.md"
-dashboard = repo / "docs/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json"
+research = repo / "docs/private/plans/research/node-lts-runtime-and-deno-fork-strategy.md"
+lane_registry = repo / "docs/private/staging/architecture/runtime/node-lts-compat/node-lts-lanes.json"
+compat_doc = repo / "docs/private/staging/runtimes/nodejs/compatibility.md"
+node_readme = repo / "docs/private/staging/runtimes/nodejs/README.md"
+evidence_latest = repo / "docs/private/staging/runtimes/nodejs/evidence/latest.md"
+supplementary_failures = repo / "docs/private/staging/architecture/runtime/node-compat-supplementary-failures.md"
+harness_doc = repo / "docs/private/staging/architecture/runtime/node-lts-compat/harness-timeouts-and-hangs.md"
+permission_doc = repo / "docs/private/staging/architecture/runtime/permission-model.md"
+dashboard = repo / "docs/private/staging/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json"
 process_shape_tests = repo / "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs"
 
 expected_proofs = {
@@ -126,9 +126,9 @@ for idx in range(12):
         errors.append(f"missing proof file: {proof_path.relative_to(repo)}")
 if "| 2026-05-28 | NLRT11 | done |" not in plan_text:
     errors.append("execution log is missing the NLRT11 done row")
-if "docs/plans/node-lts-runtime-trust-plan.md" in plan_index_text:
+if "docs/private/plans/node-lts-runtime-trust-plan.md" in plan_index_text:
     errors.append("plans index still routes to the active Node LTS plan")
-if "docs/plans/archive/node-lts-runtime-trust-plan.md" not in plan_index_text:
+if "docs/private/plans/archive/node-lts-runtime-trust-plan.md" not in plan_index_text:
     errors.append("plans index does not list the archived Node LTS baseline")
 if "NLRT0 through NLRT11 completed" not in proof_readme_text:
     errors.append("proof README does not record completed NLRT0 through NLRT11 state")

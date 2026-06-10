@@ -19,8 +19,8 @@
       "subset_test": "runtime::tests::node_compat::node_compat_supplementary_module_bridge_node24"
     }
   ],
-  "manifest_doc": "docs/architecture/runtime/node-compat-supplementary.md",
-  "failure_doc": "docs/architecture/runtime/node-compat-supplementary-failures.md",
+  "manifest_doc": "docs/private/staging/architecture/runtime/node-compat-supplementary.md",
+  "failure_doc": "docs/private/staging/architecture/runtime/node-compat-supplementary-failures.md",
   "fixture_seeds": [
     {
       "id": "supplementary/module-resolution-bridge.mjs",

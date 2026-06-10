@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the DynamoDB Adapter Hardening plan
-# (`docs/plans/dynamodb-adapter-hardening-plan.md`).
+# (`docs/private/plans/dynamodb-adapter-hardening-plan.md`).
 #
 # Exits 0 iff every condition in the plan's "## Completion gate" is satisfied.
 # Scaffolded RED on day one: it FAILS on every unimplemented item today, and
@@ -16,8 +16,8 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}" || exit 2
 
-PLAN_ACTIVE="docs/plans/dynamodb-adapter-hardening-plan.md"
-PLAN_ARCHIVED="docs/plans/archive/dynamodb-adapter-hardening-plan.md"
+PLAN_ACTIVE="docs/private/plans/dynamodb-adapter-hardening-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/dynamodb-adapter-hardening-plan.md"
 
 CRATE="crates/nimbus-dynamodb"
 VERIFY="${CRATE}/src/auth/sigv4/verify.rs"
@@ -30,9 +30,9 @@ BATCH="${CRATE}/src/commands/batch.rs"
 TRANSACT="${CRATE}/src/commands/transact.rs"
 QUERY="${CRATE}/src/commands/query.rs"
 BENCH="${CRATE}/benches/operations.rs"
-DIVERGENCES="docs/adapters/dynamodb/divergences.md"
+DIVERGENCES="docs/private/staging/adapters/dynamodb/divergences.md"
 PARITY="crates/nimbus-server/tests/dynamodb_spec"
-PROOF="docs/plans/proof/dynamodb-adapter-hardening"
+PROOF="docs/private/plans/proof/dynamodb-adapter-hardening"
 
 PASS=0
 FAIL=0

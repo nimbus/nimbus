@@ -217,7 +217,7 @@ pub(super) fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport
 
     markdown.push_str("## Operator Assumptions\n\n");
     markdown.push_str(
-        "- MySQL tenant persistence is benchmarked with the global usage/control path still local and redb-backed.\n- The engine-path benchmark includes provider-owned pooling, typed construction, scheduler/journal semantics, and the provider background poll wake path; authoritative recovery still comes from durable journal progress rather than from wake signals.\n- Companion operational drills for poll catch-up, restart recovery, transient backend failure, unloaded-tenant scheduler wake, and tenant cleanup are covered by focused storage/engine verification and recorded in `/Users/jack/src/github.com/nimbus/nimbus/docs/plans/archive/mysql-storage-provider-plan.md`.\n",
+        "- MySQL tenant persistence is benchmarked with the global usage/control path still local and redb-backed.\n- The engine-path benchmark includes provider-owned pooling, typed construction, scheduler/journal semantics, and the provider background poll wake path; authoritative recovery still comes from durable journal progress rather than from wake signals.\n- Companion operational drills for poll catch-up, restart recovery, transient backend failure, unloaded-tenant scheduler wake, and tenant cleanup are covered by focused storage/engine verification and recorded in `/Users/jack/src/github.com/nimbus/nimbus/docs/private/plans/archive/mysql-storage-provider-plan.md`.\n",
     );
 
     markdown

@@ -14,7 +14,7 @@ workspace = true
 
 [dependencies]
 # DynamoDB protocol core (AttributeValue, expression language, validation,
-# error taxonomy) — pinned git rev; see docs/plans/archive/dynamodb-adapter-plan.md.
+# error taxonomy) — pinned git rev; see docs/private/plans/archive/dynamodb-adapter-plan.md.
 extenddb-core = { workspace = true }
 # Nimbus document value model (StoredValue typed sidecar, promoted in D0.1b).
 nimbus-core = { path = "../nimbus-core" }
@@ -39,7 +39,7 @@ sha2.workspace = true
 tempfile.workspace = true
 
 # Operation-family latency baseline (p50/p95/p99). Custom harness — a plain
-# `fn main` driven by `cargo bench`; see docs/plans/proof/dynamodb-adapter/
+# `fn main` driven by `cargo bench`; see docs/private/plans/proof/dynamodb-adapter/
 # performance-baseline.md.
 [[bench]]
 name = "operations"

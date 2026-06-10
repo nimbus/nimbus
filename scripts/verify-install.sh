@@ -4,7 +4,7 @@
 # Checks that all required components are installed and accessible.
 # Run standalone after install, or called automatically by install.sh.
 #
-# See docs/plans/install-script-plan.md for the full verification contract.
+# See docs/private/plans/install-script-plan.md for the full verification contract.
 
 set -euo pipefail
 

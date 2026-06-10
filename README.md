@@ -128,8 +128,8 @@ Public support states follow the generated compatibility baseline:
 
 Use these documents together:
 
-- [Generated Node LTS baseline](docs/architecture/runtime/node-lts-compat/node-lts-compat-summary.md)
-- [Detailed runtime surface matrix](docs/architecture/runtime/node-compat-surface-matrix.md)
+- [Generated Node LTS baseline](docs/private/staging/architecture/runtime/node-lts-compat/node-lts-compat-summary.md)
+- [Detailed runtime surface matrix](docs/private/staging/architecture/runtime/node-compat-surface-matrix.md)
 
 Current high-level posture:
 
@@ -195,7 +195,7 @@ const messages = useQuery(api.messages.list);
 
 Write TypeScript functions, run `nimbus dev`, and your frontend gets reactive
 queries and mutations — no REST endpoints, no GraphQL, no polling. Everything
-runs locally in a single process. See the [full tutorial](docs/adapters/convex/).
+runs locally in a single process. See the [full tutorial](docs/private/staging/adapters/convex/).
 
 ### Or use it with curl
 
@@ -230,9 +230,9 @@ curl -s -X POST http://localhost:8080/api/tenants/demo/query \
 ```
 
 `nimbus start` runs the same engine without codegen — connect with
-[stock MongoDB drivers](docs/adapters/mongodb/),
-[Firebase SDKs](docs/adapters/firebase/), or any HTTP client.
-See the [getting started guide](docs/getting-started.md) to pick your adapter.
+[stock MongoDB drivers](docs/private/staging/adapters/mongodb/),
+[Firebase SDKs](docs/private/staging/adapters/firebase/), or any HTTP client.
+See the [getting started guide](docs/get-started/) to pick your adapter.
 
 ## Why Nimbus
 
@@ -252,18 +252,18 @@ real-time subscriptions.
 
 | Adapter | What you get | Guide |
 |---------|-------------|-------|
-| **Convex** | Server-side TypeScript functions, reactive queries, React hooks | [docs/adapters/convex/](docs/adapters/convex/) |
-| **MongoDB** | Stock MongoDB drivers in any language — no codegen, no schema | [docs/adapters/mongodb/](docs/adapters/mongodb/) |
-| **Firebase / Firestore** | Firestore-compatible SDK, real-time listeners | [docs/adapters/firebase/](docs/adapters/firebase/) |
-| **Cloud Functions** | Firebase v2 triggers and Functions Framework handlers | [docs/adapters/cloud-functions/](docs/adapters/cloud-functions/) |
-| **Native HTTP/WS** | Direct REST + WebSocket API — just curl | [docs/adapters/native/](docs/adapters/native/) |
+| **Convex** | Server-side TypeScript functions, reactive queries, React hooks | [docs/private/staging/adapters/convex/](docs/private/staging/adapters/convex/) |
+| **MongoDB** | Stock MongoDB drivers in any language — no codegen, no schema | [docs/private/staging/adapters/mongodb/](docs/private/staging/adapters/mongodb/) |
+| **Firebase / Firestore** | Firestore-compatible SDK, real-time listeners | [docs/private/staging/adapters/firebase/](docs/private/staging/adapters/firebase/) |
+| **Cloud Functions** | Firebase v2 triggers and Functions Framework handlers | [docs/private/staging/adapters/cloud-functions/](docs/private/staging/adapters/cloud-functions/) |
+| **Native HTTP/WS** | Direct REST + WebSocket API — just curl | [docs/private/staging/adapters/native/](docs/private/staging/adapters/native/) |
 
 > [!TIP]
 > Running on one of these today and the bill, the lock-in, or the compliance gap has you looking for the door? [Open an issue](https://github.com/nimbus/nimbus/issues) -- we want to hear about your migration scenario.
 
 ## What's in the box
 
-**Storage** — Document storage with optional schemas, indexed queries, cursor-based pagination. Pluggable backends: SQLite (default), Postgres, MySQL, libSQL, redb. Tenant isolation built into the storage layer. See the [storage backends guide](docs/operating/storage-backends.md).
+**Storage** — Document storage with optional schemas, indexed queries, cursor-based pagination. Pluggable backends: SQLite (default), Postgres, MySQL, libSQL, redb. Tenant isolation built into the storage layer. See the [storage backends guide](docs/private/staging/operating/storage-backends.md).
 
 **Compute** — V8 JavaScript runtime for server-side queries, mutations, actions, and HTTP routes, with Node compatibility lanes and an optional fail-closed Bun/JSC lane behind a verified adapter artifact. Durable scheduling with `runAfter`, `runAt`, and cron jobs that survive restarts.
 
@@ -322,7 +322,7 @@ and smoke evidence in the GitHub Release.
 docker pull ghcr.io/nimbus/nimbus:vX.Y.Z
 ```
 
-See [`docs/operating/container-image.md`](docs/operating/container-image.md)
+See [`docs/private/staging/operating/container-image.md`](docs/private/staging/operating/container-image.md)
 for digest pinning, the one-time admin-token rotation required before public
 binds, and Compose/Podman/Kubernetes examples.
 
@@ -361,7 +361,7 @@ it discovers a running instance via `server.json` or spawns one on demand.
 
 For how the CLI and desktop shell update themselves, what the staleness
 indicators in the UI mean, and how to disable update checks on air-gapped
-hosts, see [`docs/operating/updates.md`](docs/operating/updates.md).
+hosts, see [`docs/private/staging/operating/updates.md`](docs/private/staging/operating/updates.md).
 
 ## Community
 

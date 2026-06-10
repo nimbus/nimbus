@@ -5,7 +5,7 @@
 //! in-process, tempdir-backed `Service` and reports p50/p95/p99 latency. This is
 //! an in-process protocol+engine baseline (no network), so the numbers isolate
 //! adapter + engine cost. Initial non-regression thresholds are documented in
-//! `docs/plans/proof/dynamodb-adapter/performance-baseline.md`.
+//! `docs/private/plans/proof/dynamodb-adapter/performance-baseline.md`.
 
 use std::sync::Arc;
 use std::time::Instant;

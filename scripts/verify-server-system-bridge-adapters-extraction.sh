@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Completion-gate verifier for
-# docs/plans/nimbus-system-bridge-adapters-extraction-plan.md.
+# docs/private/plans/nimbus-system-bridge-adapters-extraction-plan.md.
 
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/plans/nimbus-system-bridge-adapters-extraction-plan.md"
-PROOF_DIR="docs/plans/proof/nimbus-system-bridge-adapters-extraction"
-FCE_PROOF_DIR="docs/plans/proof/server-crate-extraction-completion"
+PLAN="docs/private/plans/nimbus-system-bridge-adapters-extraction-plan.md"
+PROOF_DIR="docs/private/plans/proof/nimbus-system-bridge-adapters-extraction"
+FCE_PROOF_DIR="docs/private/plans/proof/server-crate-extraction-completion"
 SCRIPT="scripts/verify-server-system-bridge-adapters-extraction.sh"
 
 PASS=0

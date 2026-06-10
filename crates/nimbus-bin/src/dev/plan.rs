@@ -125,7 +125,7 @@ pub(super) fn detect_app_dir(cwd: &Path) -> PathBuf {
         // Stop the walk-up at the project's `.git` boundary so a sibling
         // `nimbus/`, `convex/`, or `firebase.json` *outside* the repo can
         // never accidentally become the app dir. See
-        // `docs/plans/cli-daemon-canonicalization-plan.md` CD2.
+        // `docs/private/plans/cli-daemon-canonicalization-plan.md` CD2.
         if crate::path_boundary::at_git_boundary(candidate) {
             break;
         }

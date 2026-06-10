@@ -679,7 +679,7 @@ chmod 0755 "${queue_runner}"
 
 cat > "${checklist_file}" <<EOF
 Record these paths and outcomes alongside the current task and compare against
-docs/plans/archive/vmm-infrastructure-plan.md:
+docs/private/plans/archive/vmm-infrastructure-plan.md:
 
 LH1:
 - ${lh1_dir}/check-vmm-host.txt

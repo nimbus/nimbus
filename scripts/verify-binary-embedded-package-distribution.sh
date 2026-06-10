@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the Binary-Embedded Package
-# Distribution plan (docs/plans/binary-embedded-package-distribution-plan.md).
+# Distribution plan (docs/private/plans/binary-embedded-package-distribution-plan.md).
 #
 # Exits 0 iff every condition in the plan's Completion Gate (1-27) holds.
 # Shipped in BPD0 as a FAILING control gate: conditions already true at baseline
@@ -18,9 +18,9 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN_ACTIVE="docs/plans/binary-embedded-package-distribution-plan.md"
-PLAN_ARCHIVED="docs/plans/archive/binary-embedded-package-distribution-plan.md"
-PROOF_DIR="docs/plans/proof/binary-embedded-package-distribution"
+PLAN_ACTIVE="docs/private/plans/binary-embedded-package-distribution-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/binary-embedded-package-distribution-plan.md"
+PROOF_DIR="docs/private/plans/proof/binary-embedded-package-distribution"
 CONVEX_TMPL="crates/nimbus-assets/embedded/templates/convex/package.json.tmpl"
 CF_TMPL="crates/nimbus-assets/embedded/templates/cloud-functions/functions/package.json.tmpl"
 CODEGEN_RS="crates/nimbus-bin/src/codegen.rs"
@@ -179,7 +179,7 @@ check "10. no registry range in templates; node.rs fixtures rewritten to file:" 
 # ---- 11: Cloud Functions in-contract offline OR documented fallback [BPD3] ----
 c11() {
   has 'external Node\.js runner|preinstall|developer-supplied|fallback' \
-    docs/adapters/cloud-functions/README.md
+    docs/private/staging/adapters/cloud-functions/README.md
 }
 check "11. Cloud Functions classified (offline-installable or fallback)" c11
 
@@ -258,12 +258,12 @@ c15() {
 check "15. ExternalNode classification is consistent (Convex in-binary/diagnostic-opt-out; CF out-of-contract supported; auth.config in-contract)" c15
 
 # ---- 16: documented codegen is in-binary; no stale npm-style instructions [BPD4]
-# User-facing docs scope: live docs + package READMEs, EXCLUDING docs/plans/**
+# User-facing docs scope: live docs + package READMEs, EXCLUDING docs/private/plans/**
 # (plans/archive legitimately keep historical `npx convex codegen` prose).
-# Scope: live user docs + package READMEs. Excludes docs/plans/**, where
+# Scope: live user docs + package READMEs. Excludes docs/private/plans/**, where
 # historical plans/proofs legitimately keep old command transcripts.
-USER_DOCS=(docs/adapters docs/operating packages/convex/README.md
-  packages/nimbus/README.md packages/codegen/README.md docs/runtimes)
+USER_DOCS=(docs/private/staging/adapters docs/private/staging/operating packages/convex/README.md
+  packages/nimbus/README.md packages/codegen/README.md docs/private/staging/runtimes)
 # Detect a stale POSITIVE codegen instruction (`npx convex codegen`,
 # `convex codegen --app`, `nimbus-codegen --app`) while ALLOWING negative
 # disclaimers ("there is no `npx convex codegen` step"). Markdown wraps such
@@ -295,7 +295,7 @@ c16() {
   # "in-binary" co-occur in either order, tolerating markdown bold and a few
   # words between — e.g. "Codegen runs **in-binary**", "codegen ... in-binary").
   has 'codegen[^.]{0,40}in-binary|in-binary[^.]{0,40}codegen' \
-    docs/operating/cli.md docs/adapters/convex/compatibility.md || return 1
+    docs/private/staging/operating/cli.md docs/private/staging/adapters/convex/compatibility.md || return 1
   # Negative gate: no surviving stale npm-style codegen *instruction* in user
   # docs (negative disclaimers are allowed).
   ! stale_codegen_instruction || return 1
@@ -341,9 +341,9 @@ check "19. adapter SDKs provisioned only when requested/imported" c19
 # ---- 20: no docs/READMEs/demos/launch-plan instruct registry install/publish --
 c20() {
   # User-facing docs must not instruct a registry install of a Nimbus package.
-  # docs/plans/* legitimately describes the migration/defect and is excluded.
+  # docs/private/plans/* legitimately describes the migration/defect and is excluded.
   ! grep -RqE 'npm install @nimbus/|npm install convex' \
-    docs/adapters docs/operating packages/*/README.md demos 2>/dev/null &&
+    docs/private/staging/adapters docs/private/staging/operating packages/*/README.md demos 2>/dev/null &&
     { [ ! -f "${LAUNCH_PLAN}" ] || ! grep -qE '[Pp]ublish .*to npm' "${LAUNCH_PLAN}"; }
 }
 check "20. no Nimbus-package registry-install/publish instructions in docs" c20

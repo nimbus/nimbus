@@ -2,7 +2,7 @@
 
 The catalog is a Storybook-based fixture surface for the eleven reusable
 components called out in the desktop-ui architecture-hardening plan
-(`docs/plans/desktop-ui-architecture-hardening-plan.md`, phase A5).
+(`docs/private/plans/desktop-ui-architecture-hardening-plan.md`, phase A5).
 
 ## Why Storybook (not Ladle)
 

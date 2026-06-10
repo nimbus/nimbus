@@ -9,7 +9,7 @@
       "compat_family": "runtime-supplementary",
       "canary_surfaces": ["esm_cjs_loading", "process_metadata", "fs_path", "streams", "timers", "crypto", "fetch_http"],
       "public_claim": "Node platform builtin smoke is fixture-backed for each supported LTS lane and exercises ESM/CJS loading, process metadata, fs/path, streams, timers, crypto, and fetch/http.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-networking-express",
@@ -19,7 +19,7 @@
       "compat_family": "networking",
       "canary_surfaces": ["fetch_http", "streams", "timers"],
       "public_claim": "Express application networking smoke is fixture-backed for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-networking-fastify",
@@ -29,7 +29,7 @@
       "compat_family": "networking",
       "canary_surfaces": ["fetch_http", "streams", "timers"],
       "public_claim": "Fastify application networking smoke is fixture-backed for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-networking-socket-io",
@@ -39,7 +39,7 @@
       "compat_family": "networking",
       "canary_surfaces": ["fetch_http", "streams", "timers"],
       "public_claim": "Socket.IO application networking smoke is fixture-backed for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-networking-undici",
@@ -49,7 +49,7 @@
       "compat_family": "networking",
       "canary_surfaces": ["fetch_http", "streams"],
       "public_claim": "Undici application networking smoke is fixture-backed for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-networking-axios",
@@ -59,7 +59,7 @@
       "compat_family": "networking",
       "canary_surfaces": ["fetch_http", "streams"],
       "public_claim": "Axios application networking smoke is fixture-backed for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "convex-use-node-action-packaging",
@@ -69,7 +69,7 @@
       "compat_family": "loader-context",
       "canary_surfaces": ["convex_use_node_action_packaging"],
       "public_claim": "Convex-compatible use node action package metadata is fixture-backed for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "convex-use-node-real-app",
@@ -89,7 +89,7 @@
         "convex_use_node_dangling_promise_diagnostic"
       ],
       "public_claim": "Convex-compatible use node action app flow is fixture-backed for each supported LTS lane and exercises runtime invocation, package import, ctx calls, scheduling, serialization, Node builtins, env/secret boundary semantics, and dangling-promise diagnostics.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-openai",
@@ -99,7 +99,7 @@
       "compat_family": "sdk",
       "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
       "public_claim": "OpenAI SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-anthropic",
@@ -109,7 +109,7 @@
       "compat_family": "sdk",
       "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
       "public_claim": "Anthropic SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-vercel-ai",
@@ -119,7 +119,7 @@
       "compat_family": "sdk",
       "canary_surfaces": ["esm_cjs_loading", "value_serialization"],
       "public_claim": "Vercel AI SDK helper smoke is fixture-backed for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-stripe",
@@ -129,7 +129,7 @@
       "compat_family": "sdk",
       "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
       "public_claim": "Stripe SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-resend",
@@ -139,7 +139,7 @@
       "compat_family": "sdk",
       "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
       "public_claim": "Resend SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-aws-sdk-v3-s3",
@@ -149,7 +149,7 @@
       "compat_family": "sdk",
       "canary_surfaces": ["fetch_http", "streams", "crypto", "esm_cjs_loading"],
       "public_claim": "AWS SDK v3 S3 client application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-slack-web-api",
@@ -159,7 +159,7 @@
       "compat_family": "sdk",
       "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
       "public_claim": "Slack Web API SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-octokit",
@@ -169,7 +169,7 @@
       "compat_family": "sdk",
       "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
       "public_claim": "Octokit SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-jose",
@@ -179,7 +179,7 @@
       "compat_family": "sdk",
       "canary_surfaces": ["crypto", "esm_cjs_loading"],
       "public_claim": "jose JWT signing and verification smoke is fixture-backed for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-zod",
@@ -189,7 +189,7 @@
       "compat_family": "sdk",
       "canary_surfaces": ["esm_cjs_loading", "value_serialization"],
       "public_claim": "Zod validation smoke is fixture-backed for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-uuid",
@@ -199,7 +199,7 @@
       "compat_family": "sdk",
       "canary_surfaces": ["crypto", "esm_cjs_loading"],
       "public_claim": "uuid deterministic ID smoke is fixture-backed for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-nanoid",
@@ -209,7 +209,7 @@
       "compat_family": "sdk",
       "canary_surfaces": ["crypto", "esm_cjs_loading"],
       "public_claim": "nanoid ID-generation smoke is fixture-backed for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-upstash-redis",
@@ -219,7 +219,7 @@
       "compat_family": "sdk",
       "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
       "public_claim": "Upstash Redis HTTP client smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "host-heavy-child-process-denied",
@@ -231,7 +231,7 @@
       "compat_family": "host-heavy",
       "canary_surfaces": ["child_process_denial"],
       "public_claim": "Production in-process Node application functions deny child_process execution with an actionable service/microVM boundary diagnostic.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "host-heavy-worker-threads-denied",
@@ -243,7 +243,7 @@
       "compat_family": "host-heavy",
       "canary_surfaces": ["worker_threads_denial"],
       "public_claim": "Production in-process Node application functions deny worker thread creation with an actionable service/microVM boundary diagnostic.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "host-heavy-inspector-denied",
@@ -255,7 +255,7 @@
       "compat_family": "host-heavy",
       "canary_surfaces": ["inspector_denial"],
       "public_claim": "Production in-process Node application functions deny inspector authority with an actionable service/microVM boundary diagnostic.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "host-heavy-repl-denied",
@@ -267,7 +267,7 @@
       "compat_family": "host-heavy",
       "canary_surfaces": ["repl_denial"],
       "public_claim": "Production in-process Node application functions deny REPL authority with an actionable service/microVM boundary diagnostic.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "host-heavy-node-test-runner-denied",
@@ -279,7 +279,7 @@
       "compat_family": "host-heavy",
       "canary_surfaces": ["node_test_runner_denial"],
       "public_claim": "Production in-process Node application functions deny Node CLI test-runner subprocess execution with an actionable service/microVM boundary diagnostic.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "host-heavy-native-addon-denied",
@@ -291,7 +291,7 @@
       "compat_family": "host-heavy",
       "canary_surfaces": ["native_addon_denial"],
       "public_claim": "Production in-process Node application functions reject .node native addon loading with an actionable service/microVM boundary diagnostic.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "host-heavy-persistent-filesystem-denied",
@@ -303,7 +303,7 @@
       "compat_family": "host-heavy",
       "canary_surfaces": ["persistent_filesystem_denial"],
       "public_claim": "Production in-process Node application functions deny persistent filesystem assumptions outside declared runtime roots with an actionable service/microVM boundary diagnostic.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "host-heavy-raw-server-listen-denied",
@@ -315,7 +315,7 @@
       "compat_family": "host-heavy",
       "canary_surfaces": ["raw_server_listen_denial"],
       "public_claim": "Production in-process Node application functions deny raw server listen behavior with an actionable service/microVM boundary diagnostic.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "host-heavy-prisma-engine-routed",
@@ -327,7 +327,7 @@
       "compat_family": "host-heavy",
       "canary_surfaces": ["prisma_engine_service_route"],
       "public_claim": "Prisma engine execution is service/microVM-routed rather than granted to production in-process Node application functions.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "host-heavy-sharp-native-routed",
@@ -339,7 +339,7 @@
       "compat_family": "host-heavy",
       "canary_surfaces": ["sharp_native_service_route"],
       "public_claim": "sharp native module loading is service/microVM-routed rather than granted to production in-process Node application functions.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "host-heavy-esbuild-binary-routed",
@@ -351,7 +351,7 @@
       "compat_family": "host-heavy",
       "canary_surfaces": ["esbuild_binary_service_route"],
       "public_claim": "esbuild binary execution is service/microVM-routed rather than granted to production in-process Node application functions.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "tooling-loader-tsx",
@@ -361,7 +361,7 @@
       "compat_family": "loader-context",
       "canary_surfaces": ["esm_cjs_loading", "fs_path", "process_metadata"],
       "public_claim": "tsx tooling smoke is fixture-backed for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "tooling-loader-ts-node",
@@ -371,7 +371,7 @@
       "compat_family": "loader-context",
       "canary_surfaces": ["esm_cjs_loading", "fs_path", "process_metadata"],
       "public_claim": "ts-node tooling smoke is fixture-backed for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "tooling-loader-jest",
@@ -381,7 +381,7 @@
       "compat_family": "loader-context",
       "canary_surfaces": ["esm_cjs_loading", "fs_path", "process_metadata"],
       "public_claim": "jest tooling smoke is fixture-backed for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "tooling-loader-prisma",
@@ -391,7 +391,7 @@
       "compat_family": "loader-context",
       "canary_surfaces": ["esm_cjs_loading", "fs_path", "process_metadata"],
       "public_claim": "Prisma tooling smoke is fixture-backed for each supported LTS lane and records either a successful SQLite roundtrip or a documented unsupported engine boundary.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
       "id": "tooling-loader-next",
@@ -401,7 +401,7 @@
       "compat_family": "loader-context",
       "canary_surfaces": ["esm_cjs_loading", "fs_path", "process_metadata", "fetch_http", "streams", "timers"],
       "public_claim": "Next tooling smoke is fixture-backed for each supported LTS lane with a checked build and route-response probe.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md"
     }
   ],
   "canaries": [

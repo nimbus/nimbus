@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Enforces G4 (Fork-Health Guardrails) from docs/plans/nimbus-sandbox-plan.md.
+# Enforces G4 (Fork-Health Guardrails) from docs/private/plans/nimbus-sandbox-plan.md.
 #
 # For each Nimbus crate that hosts lifted upstream code, this gate enforces:
 #   1. A LICENSE-* file matching the upstream license is present at the crate root.

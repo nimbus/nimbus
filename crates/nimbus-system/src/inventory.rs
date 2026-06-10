@@ -305,7 +305,7 @@ pub(super) fn adapter_capability_inventory() -> Vec<AdapterCapabilityEntry> {
             "system-tenant-ui-functions",
             "supported-with-caveats",
             "The system table contract exists; the packaged function bundle is still tracked by ST4.",
-            "docs/plans/system-tenant-api-plan.md",
+            "docs/private/plans/system-tenant-api-plan.md",
         ),
         capability(
             "mongodb",
@@ -333,7 +333,7 @@ pub(super) fn adapter_capability_inventory() -> Vec<AdapterCapabilityEntry> {
             "bootc-macos-machine",
             "supported-with-caveats",
             "Published bootc image is the current macOS default; live machine state persistence into _nimbus is still tracked by ST2.",
-            "docs/architecture/sandbox/macos-machine-flow.md",
+            "docs/private/staging/architecture/sandbox/macos-machine-flow.md",
         ),
     ]
 }

@@ -79,22 +79,22 @@ else
 fi
 
 # --- 3. content loaded only from the five public docs/ groups ----------------
-C="3. Starlight content loads only from docs/{get-started,developers,operators,concepts,reference}"
-if [[ -f "${CONTENT_CONFIG}" ]]; then
-  missing_groups=()
-  for g in "${PUBLIC_GROUPS[@]}"; do
-    grep -q "${g}" "${CONTENT_CONFIG}" || missing_groups+=("${g}")
-  done
-  extra_content="$(find website/src/content/docs -type f ! -name 'index.mdx' ! -name 'index.md' 2>/dev/null | head -5)"
-  if [[ ${#missing_groups[@]} -eq 0 && -z "${extra_content}" ]] \
-    && grep -q '\.\./docs' "${CONTENT_CONFIG}" \
-    && grep -q 'glob(' "${CONTENT_CONFIG}"; then
-    pass "${C}"
-  else
-    fail "${C}" "loader missing groups [${missing_groups[*]:-}] or extra authored content: ${extra_content:-none}"
+# Allow-list is implemented as five symlinks under website/src/content/docs/,
+# each resolving into the matching docs/<group>; the only real file there is
+# the splash landing index.mdx, so nothing outside the groups can publish.
+C="3. Starlight content loads only from docs/{get-started,developers,operators,concepts,reference} (symlink allow-list)"
+bad_links=()
+for g in "${PUBLIC_GROUPS[@]}"; do
+  link="website/src/content/docs/${g}"
+  if [[ ! -L "${link}" ]] || [[ "$(readlink "${link}")" != "../../../../docs/${g}" ]]; then
+    bad_links+=("${g}")
   fi
+done
+real_files="$(find website/src/content/docs -type f ! -name 'index.mdx' 2>/dev/null | head -5)"
+if [[ ${#bad_links[@]} -eq 0 && -z "${real_files}" && -f "${CONTENT_CONFIG}" ]]; then
+  pass "${C}"
 else
-  fail "${C}" "missing ${CONTENT_CONFIG}"
+  fail "${C}" "bad/missing symlinks: [${bad_links[*]:-}] unexpected real files: [${real_files:-none}]"
 fi
 
 # --- 4. five public groups each have a landing page --------------------------
@@ -248,7 +248,7 @@ legacy_present=()
 for p in docs/plans docs/prompts docs/decisions docs/code-review docs/design-review docs/technical-debt.md; do
   [[ -e "${p}" ]] && legacy_present+=("${p}")
 done
-stale_refs="$(grep -rl 'docs/plans/' \
+stale_refs="$(grep -rIl 'docs/plans/' \
   --exclude-dir=.git \
   --exclude-dir=private \
   --exclude-dir=node_modules \

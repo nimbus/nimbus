@@ -703,7 +703,7 @@ jobs:
     # (libsql external-provider shard shows 0% sccache (Rust) on CW5 while
     # storage harness shows 77%), so retiring warm-sccache would expose
     # the consistently-cold lanes to full cold-compile cost on every PR.
-    # See docs/plans/proof/ci-pr-wall-sub-15/pw4c-warm-sccache-retained.md
+    # See docs/private/plans/proof/ci-pr-wall-sub-15/pw4c-warm-sccache-retained.md
     # for the measurement and the deferred cache-invalidation investigation.
     # CC5: warm the per-rustc-call sccache before downstream parallel Rust
     # jobs fan out. `cargo check --workspace` rustc's every workspace

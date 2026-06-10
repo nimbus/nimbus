@@ -2,7 +2,7 @@
 # Desktop UI shell-component regression gates.
 #
 # These checks lock in the UX2/UX4/UX6/UX7 fixes from
-# `docs/plans/archive/desktop-ui-ux-review-fixes-plan.md`. They catch a
+# `docs/private/plans/archive/desktop-ui-ux-review-fixes-plan.md`. They catch a
 # regression at lint-time before it ships to the operator console.
 #
 # Gates:

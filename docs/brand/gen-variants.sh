@@ -5,9 +5,9 @@
 # Writes:  docs/brand/logo/nimbus-<variant>.svg (9 files)
 #
 # Idempotent: running twice produces byte-identical output (verified via
-# sha256sum diff in docs/plans/brand-system-plan.md §L9).
+# sha256sum diff in docs/private/plans/brand-system-plan.md §L9).
 #
-# See docs/plans/brand-system-plan.md for variant table source of truth.
+# See docs/private/plans/brand-system-plan.md for variant table source of truth.
 
 set -euo pipefail
 
@@ -23,7 +23,7 @@ fi
 mkdir -p "${out_dir}"
 
 # Variant table: name|stroke|fill|background
-# Source: docs/plans/brand-system-plan.md §L2
+# Source: docs/private/plans/brand-system-plan.md §L2
 variants=(
   "warm|#0F172A|#FFE7B3|#FFFAF2"
   "cool-blue|#3B82F6|#FFFFFF|#F8FAFC"
