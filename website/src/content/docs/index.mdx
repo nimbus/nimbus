@@ -1,0 +1,36 @@
+---
+title: Nimbus
+description: The single-binary backend for apps and AI agents. Drop-in compatible with Convex, Firestore, MongoDB, and DynamoDB.
+template: splash
+hero:
+  title: Your whole backend in one binary
+  tagline: The single-binary backend for apps and AI agents. Drop-in compatible with Convex, Firestore, MongoDB, and DynamoDB.
+  actions:
+    - text: Get started
+      link: /get-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/nimbus/nimbus
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+  <Card title="One binary" icon="rocket">
+    Storage, compute, networking, realtime, and scheduling in a single
+    self-hostable Rust binary.
+  </Card>
+  <Card title="Drop-in compatible" icon="puzzle">
+    Speaks Convex, Firestore, Cloud Functions, MongoDB, and DynamoDB wire
+    protocols — bring your existing clients.
+  </Card>
+  <Card title="Built for agents" icon="seti:powershell">
+    A backend AI agents can run, inspect, and build against — with llms.txt
+    and an agent-readable surface.
+  </Card>
+  <Card title="No lock-in" icon="setting">
+    Self-hosted, source-available, and protocol-portable by design.
+  </Card>
+</CardGrid>
