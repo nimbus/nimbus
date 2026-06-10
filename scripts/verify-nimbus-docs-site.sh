@@ -148,7 +148,7 @@ fi
 C="7. wrangler.jsonc sets assets.directory=./dist and has no main"
 if [[ -f "${WRANGLER_CONFIG}" ]] \
   && grep -q '"directory": "./dist"' "${WRANGLER_CONFIG}" \
-  && ! grep -q '"main"' "${WRANGLER_CONFIG}"; then
+  && ! grep -Eq '"main"[[:space:]]*:' "${WRANGLER_CONFIG}"; then
   pass "${C}"
 else
   fail "${C}" "missing ${WRANGLER_CONFIG}, assets directory, or unexpected main entry"
