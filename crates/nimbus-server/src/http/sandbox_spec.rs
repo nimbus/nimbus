@@ -275,8 +275,7 @@ struct SandboxProcessInput {
 
 impl SandboxProcessInput {
     fn into_process(self) -> SandboxProcessSpec {
-        let mut process =
-            SandboxProcessSpec::new(self.argv.or(self.args).unwrap_or_default().into_iter());
+        let mut process = SandboxProcessSpec::new(self.argv.or(self.args).unwrap_or_default());
         if let Some(entrypoint) = self.entrypoint {
             process.entrypoint = Some(entrypoint);
         }

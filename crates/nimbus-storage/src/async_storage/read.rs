@@ -8,7 +8,7 @@ use tokio::sync::Semaphore;
 
 use crate::{TenantStore, UsageStore};
 
-use super::helpers::{map_join_error, map_permit_error};
+use super::task_error::{map_join_error, map_permit_error};
 use super::traits::{TenantReadStorage, UsageStorage};
 use super::write::BlockingWriteExecutor;
 
@@ -114,7 +114,6 @@ where
         tokio::select! {
             _ = &mut cancel_wait => {
                 cancelled.store(true, Ordering::SeqCst);
-                handle.abort();
                 Err(Error::Cancelled)
             }
             result = &mut handle => result.map_err(map_join_error)?,

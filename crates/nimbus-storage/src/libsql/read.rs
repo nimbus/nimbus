@@ -1,4 +1,6 @@
 use super::*;
+use crate::IndexRangeBound;
+use crate::index::history_scan::HistoricalIndexPageRequest;
 
 impl LibsqlReplicaTenantStore {
     pub fn read_snapshot(&self) -> Result<SqliteReadSnapshot> {
@@ -254,6 +256,27 @@ impl LibsqlReplicaTenantStore {
             )
     }
 
+    pub fn scan_table_id_prefix_cancellable(
+        &self,
+        table: &TableName,
+        id_prefix: &str,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        self.current_query_cache_store()?
+            .scan_table_id_prefix_cancellable(table, id_prefix, check_cancel)
+    }
+
+    pub fn scan_table_id_starting_at_cancellable(
+        &self,
+        table: &TableName,
+        start_id: &str,
+        limit: usize,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        self.current_query_cache_store()?
+            .scan_table_id_starting_at_cancellable(table, start_id, limit, check_cancel)
+    }
+
     pub fn index_scan_eq_cancellable(
         &self,
         table: &TableName,
@@ -280,39 +303,25 @@ impl LibsqlReplicaTenantStore {
             .index_scan_prefix_cancellable(table, index_name, prefix_values, check_cancel)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn index_scan_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
-        start: Option<&serde_json::Value>,
-        end: Option<&serde_json::Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         self.current_query_cache_store()?
-            .index_scan_range_cancellable(
-                table,
-                index_name,
-                start,
-                end,
-                start_inclusive,
-                end_inclusive,
-                check_cancel,
-            )
+            .index_scan_range_cancellable(table, index_name, start, end, check_cancel)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn index_scan_composite_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
         exact_prefix: &[serde_json::Value],
-        start: Option<&serde_json::Value>,
-        end: Option<&serde_json::Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         self.current_query_cache_store()?
@@ -322,8 +331,6 @@ impl LibsqlReplicaTenantStore {
                 exact_prefix,
                 start,
                 end,
-                start_inclusive,
-                end_inclusive,
                 check_cancel,
             )
     }
@@ -406,15 +413,12 @@ impl LibsqlReplicaTenantStore {
             )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn historical_index_scan_range_cancellable(
         &self,
         read_shape: &HistoricalReadShape,
         index_name: &str,
-        start: Option<&serde_json::Value>,
-        end: Option<&serde_json::Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         self.historical_index_scan_range_page_cancellable(
@@ -422,53 +426,35 @@ impl LibsqlReplicaTenantStore {
             index_name,
             start,
             end,
-            start_inclusive,
-            end_inclusive,
-            None,
-            usize::MAX,
-            check_cancel,
+            HistoricalIndexPageRequest {
+                after: None,
+                limit: usize::MAX,
+                check_cancel,
+            },
         )
         .map(|page| page.documents)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn historical_index_scan_range_page_cancellable(
+    pub(crate) fn historical_index_scan_range_page_cancellable(
         &self,
         read_shape: &HistoricalReadShape,
         index_name: &str,
-        start: Option<&serde_json::Value>,
-        end: Option<&serde_json::Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
-        after: Option<&HistoricalIndexCursor>,
-        limit: usize,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
+        page: HistoricalIndexPageRequest<'_, '_>,
     ) -> Result<HistoricalIndexDocumentPage> {
         self.current_query_cache_store()?
             .read_snapshot()?
-            .historical_index_scan_range_page_cancellable(
-                read_shape,
-                index_name,
-                start,
-                end,
-                start_inclusive,
-                end_inclusive,
-                after,
-                limit,
-                check_cancel,
-            )
+            .historical_index_scan_range_page_cancellable(read_shape, index_name, start, end, page)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn historical_index_scan_composite_range_cancellable(
         &self,
         read_shape: &HistoricalReadShape,
         index_name: &str,
         exact_prefix: &[serde_json::Value],
-        start: Option<&serde_json::Value>,
-        end: Option<&serde_json::Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         self.historical_index_scan_composite_range_page_cancellable(
@@ -477,28 +463,23 @@ impl LibsqlReplicaTenantStore {
             exact_prefix,
             start,
             end,
-            start_inclusive,
-            end_inclusive,
-            None,
-            usize::MAX,
-            check_cancel,
+            HistoricalIndexPageRequest {
+                after: None,
+                limit: usize::MAX,
+                check_cancel,
+            },
         )
         .map(|page| page.documents)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn historical_index_scan_composite_range_page_cancellable(
+    pub(crate) fn historical_index_scan_composite_range_page_cancellable(
         &self,
         read_shape: &HistoricalReadShape,
         index_name: &str,
         exact_prefix: &[serde_json::Value],
-        start: Option<&serde_json::Value>,
-        end: Option<&serde_json::Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
-        after: Option<&HistoricalIndexCursor>,
-        limit: usize,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
+        page: HistoricalIndexPageRequest<'_, '_>,
     ) -> Result<HistoricalIndexDocumentPage> {
         self.current_query_cache_store()?
             .read_snapshot()?
@@ -508,11 +489,7 @@ impl LibsqlReplicaTenantStore {
                 exact_prefix,
                 start,
                 end,
-                start_inclusive,
-                end_inclusive,
-                after,
-                limit,
-                check_cancel,
+                page,
             )
     }
 }

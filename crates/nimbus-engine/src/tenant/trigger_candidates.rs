@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use nimbus_core::CommitEntry;
 use tracing::warn;
@@ -11,6 +12,8 @@ use crate::triggers::dispatch::build_trigger_commit_candidates;
 use crate::triggers::materialize::build_trigger_invocation_records;
 
 use super::TenantRuntime;
+
+const TRIGGER_CANDIDATE_RETRY_BACKOFF: Duration = Duration::from_millis(10);
 
 struct QueuedTriggerCommitBatch {
     commits: Vec<CommitEntry>,
@@ -78,6 +81,18 @@ impl TriggerCandidateQueueState {
             .lock()
             .expect("trigger candidate queue lock should not be poisoned");
         queue.push_back(QueuedTriggerCommitBatch { commits });
+        self.queue_ready.notify_one();
+    }
+
+    fn requeue_front(&self, commits: Vec<CommitEntry>) {
+        if commits.is_empty() {
+            return;
+        }
+        let mut queue = self
+            .queue
+            .lock()
+            .expect("trigger candidate queue lock should not be poisoned");
+        queue.push_front(QueuedTriggerCommitBatch { commits });
         self.queue_ready.notify_one();
     }
 
@@ -183,13 +198,12 @@ impl TriggerCandidateWorker {
         self.start_inner(runtime, queue);
     }
 
-    #[cfg(test)]
     fn start_inner(
         &self,
         runtime: &Arc<TenantRuntime>,
         queue: Arc<TriggerCandidateQueueState>,
-        pending: Arc<PendingTriggerCandidateState>,
-        pause: Option<Arc<TriggerCandidatePauseState>>,
+        #[cfg(test)] pending: Arc<PendingTriggerCandidateState>,
+        #[cfg(test)] pause: Option<Arc<TriggerCandidatePauseState>>,
     ) {
         let mut worker = self
             .worker
@@ -205,28 +219,16 @@ impl TriggerCandidateWorker {
             std::thread::Builder::new()
                 .name("nimbus-trigger-candidates".to_string())
                 .spawn(move || {
-                    run_trigger_candidate_worker(runtime, queue, pending, shutdown, pause)
+                    run_trigger_candidate_worker(
+                        runtime,
+                        queue,
+                        #[cfg(test)]
+                        pending,
+                        shutdown,
+                        #[cfg(test)]
+                        pause,
+                    )
                 })
-                .expect("trigger candidate worker should spawn"),
-        );
-    }
-
-    #[cfg(not(test))]
-    fn start_inner(&self, runtime: &Arc<TenantRuntime>, queue: Arc<TriggerCandidateQueueState>) {
-        let mut worker = self
-            .worker
-            .lock()
-            .expect("trigger candidate worker lock should not be poisoned");
-        if worker.is_some() {
-            return;
-        }
-        self.shutdown.store(false, Ordering::Release);
-        let runtime = Arc::downgrade(runtime);
-        let shutdown = self.shutdown.clone();
-        *worker = Some(
-            std::thread::Builder::new()
-                .name("nimbus-trigger-candidates".to_string())
-                .spawn(move || run_trigger_candidate_worker(runtime, queue, shutdown))
                 .expect("trigger candidate worker should spawn"),
         );
     }
@@ -413,18 +415,18 @@ impl TriggerCandidatePauseState {
     }
 }
 
-#[cfg(test)]
 fn run_trigger_candidate_worker(
     runtime: std::sync::Weak<TenantRuntime>,
     queue: Arc<TriggerCandidateQueueState>,
     #[cfg(test)] pending: Arc<PendingTriggerCandidateState>,
     shutdown: Arc<AtomicBool>,
-    pause: Option<Arc<TriggerCandidatePauseState>>,
+    #[cfg(test)] pause: Option<Arc<TriggerCandidatePauseState>>,
 ) {
     loop {
         let Some(first_batch) = queue.pop_next(&shutdown) else {
             return;
         };
+        #[cfg(test)]
         if let Some(pause) = pause.as_ref() {
             pause.wait_if_armed();
         }
@@ -432,99 +434,65 @@ fn run_trigger_candidate_worker(
             return;
         };
         ready_batches.insert(0, first_batch);
+        let mut commits = ready_batches
+            .into_iter()
+            .flat_map(|batch| batch.commits)
+            .collect::<Vec<_>>();
 
         let Some(runtime) = runtime.upgrade() else {
             return;
         };
+        #[cfg(test)]
         let mut candidates = Vec::new();
+        let mut processed_count = 0usize;
         let result: nimbus_core::Result<()> = (|| {
-            for batch in ready_batches {
-                for commit in batch.commits {
-                    let commit_candidates = build_trigger_commit_candidates(&commit, |locator| {
-                        runtime.store.resource_path_binding(locator)
-                    })?;
-                    candidates.extend(commit_candidates.clone());
-                    if !runtime.trigger_registry().is_ready() {
-                        continue;
-                    }
-                    let mut records = Vec::new();
-                    for candidate in &commit_candidates {
-                        records.extend(build_trigger_invocation_records(
-                            runtime.tenant_id(),
-                            runtime.trigger_registry(),
-                            candidate,
-                        )?);
-                    }
-                    materialize_trigger_invocations_and_sync(
-                        &runtime,
-                        records.as_slice(),
-                        nimbus_core::TriggerDeliveryCursor::new(commit.sequence),
-                    )?;
-                    runtime.enqueue_trigger_invocation_keys(
-                        records.iter().map(|record| record.key.clone()).collect(),
-                    );
+            for commit in &commits {
+                let commit_candidates = build_trigger_commit_candidates(commit, |locator| {
+                    runtime.store.resource_path_binding(locator)
+                })?;
+                if !runtime.trigger_registry().is_ready() {
+                    #[cfg(test)]
+                    candidates.extend(commit_candidates);
+                    processed_count = processed_count.saturating_add(1);
+                    continue;
                 }
-            }
-            Ok(())
-        })();
-        match result {
-            Ok(()) => pending.push_all(candidates),
-            Err(error) => {
-                warn!(error = %error, "trigger candidate worker failed to build candidates")
-            }
-        }
-    }
-}
-
-#[cfg(not(test))]
-fn run_trigger_candidate_worker(
-    runtime: std::sync::Weak<TenantRuntime>,
-    queue: Arc<TriggerCandidateQueueState>,
-    shutdown: Arc<AtomicBool>,
-) {
-    loop {
-        let Some(first_batch) = queue.pop_next(&shutdown) else {
-            return;
-        };
-        let Some(mut ready_batches) = queue.drain_ready_batches(&shutdown) else {
-            return;
-        };
-        ready_batches.insert(0, first_batch);
-
-        let Some(runtime) = runtime.upgrade() else {
-            return;
-        };
-        let result: nimbus_core::Result<()> = (|| {
-            for batch in ready_batches {
-                for commit in batch.commits {
-                    let commit_candidates = build_trigger_commit_candidates(&commit, |locator| {
-                        runtime.store.resource_path_binding(locator)
-                    })?;
-                    if !runtime.trigger_registry().is_ready() {
-                        continue;
-                    }
-                    let mut records = Vec::new();
-                    for candidate in &commit_candidates {
-                        records.extend(build_trigger_invocation_records(
-                            runtime.tenant_id(),
-                            runtime.trigger_registry(),
-                            candidate,
-                        )?);
-                    }
-                    materialize_trigger_invocations_and_sync(
-                        &runtime,
-                        records.as_slice(),
-                        nimbus_core::TriggerDeliveryCursor::new(commit.sequence),
-                    )?;
-                    runtime.enqueue_trigger_invocation_keys(
-                        records.iter().map(|record| record.key.clone()).collect(),
-                    );
+                let mut records = Vec::new();
+                for candidate in &commit_candidates {
+                    records.extend(build_trigger_invocation_records(
+                        runtime.tenant_id(),
+                        runtime.trigger_registry(),
+                        candidate,
+                    )?);
                 }
+                materialize_trigger_invocations_and_sync(
+                    &runtime,
+                    records.as_slice(),
+                    nimbus_core::TriggerDeliveryCursor::new(commit.sequence),
+                )?;
+                runtime.enqueue_trigger_invocation_keys(
+                    records.iter().map(|record| record.key.clone()).collect(),
+                );
+                #[cfg(test)]
+                candidates.extend(commit_candidates);
+                processed_count = processed_count.saturating_add(1);
             }
             Ok(())
         })();
         if let Err(error) = result {
-            warn!(error = %error, "trigger candidate worker failed to build candidates");
+            let unprocessed_count = commits.len().saturating_sub(processed_count);
+            let retry_commits = commits.split_off(processed_count);
+            queue.requeue_front(retry_commits);
+            #[cfg(test)]
+            pending.push_all(candidates);
+            warn!(
+                error = %error,
+                unprocessed_count,
+                "trigger candidate worker failed to process candidates; requeued unprocessed commits"
+            );
+            std::thread::sleep(TRIGGER_CANDIDATE_RETRY_BACKOFF);
+        } else {
+            #[cfg(test)]
+            pending.push_all(candidates);
         }
     }
 }
@@ -535,6 +503,9 @@ fn materialize_trigger_invocations_and_sync(
     cursor: nimbus_core::TriggerDeliveryCursor,
 ) -> nimbus_core::Result<()> {
     let _sequence_guard = runtime.lock_mutation_sequence();
+    runtime
+        .store
+        .check_fault(nimbus_storage::FaultPoint::TriggerInvocationMaterializeBeforeCommit)?;
     runtime
         .store
         .materialize_trigger_invocations(records, cursor)?;

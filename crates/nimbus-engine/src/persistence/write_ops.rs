@@ -6,7 +6,7 @@ use nimbus_storage::{
 
 pub(crate) trait TenantPersistenceWriteOps {
     fn insert_scheduled_job(&mut self, job: &ScheduledJob) -> Result<()>;
-    fn claim_due_jobs(&mut self, now: Timestamp) -> Result<Vec<ScheduledJob>>;
+    fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>>;
     fn complete_scheduled_job(&mut self, job_id: &DocumentId) -> Result<()>;
     fn cancel_scheduled_job(&mut self, job_id: &DocumentId) -> Result<bool>;
     fn record_scheduled_job_result(&mut self, result: &ScheduledJobResult) -> Result<()>;
@@ -19,8 +19,8 @@ impl TenantPersistenceWriteOps for RedbWriteTransaction {
         self.insert_scheduled_job(job)
     }
 
-    fn claim_due_jobs(&mut self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
-        self.claim_due_jobs(now)
+    fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
+        self.claim_due_jobs(now, max_jobs)
     }
 
     fn complete_scheduled_job(&mut self, job_id: &DocumentId) -> Result<()> {
@@ -49,8 +49,8 @@ impl TenantPersistenceWriteOps for nimbus_storage::SqliteWriteTransaction {
         self.insert_scheduled_job(job)
     }
 
-    fn claim_due_jobs(&mut self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
-        self.claim_due_jobs(now)
+    fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
+        self.claim_due_jobs(now, max_jobs)
     }
 
     fn complete_scheduled_job(&mut self, job_id: &DocumentId) -> Result<()> {
@@ -79,8 +79,8 @@ impl TenantPersistenceWriteOps for PostgresWriteTransaction {
         self.insert_scheduled_job(job)
     }
 
-    fn claim_due_jobs(&mut self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
-        self.claim_due_jobs(now)
+    fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
+        self.claim_due_jobs(now, max_jobs)
     }
 
     fn complete_scheduled_job(&mut self, job_id: &DocumentId) -> Result<()> {
@@ -109,8 +109,8 @@ impl TenantPersistenceWriteOps for LibsqlReplicaWriteTransaction {
         self.insert_scheduled_job(job)
     }
 
-    fn claim_due_jobs(&mut self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
-        self.claim_due_jobs(now)
+    fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
+        self.claim_due_jobs(now, max_jobs)
     }
 
     fn complete_scheduled_job(&mut self, job_id: &DocumentId) -> Result<()> {
@@ -139,8 +139,8 @@ impl TenantPersistenceWriteOps for MySqlWriteTransaction {
         self.insert_scheduled_job(job)
     }
 
-    fn claim_due_jobs(&mut self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
-        self.claim_due_jobs(now)
+    fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
+        self.claim_due_jobs(now, max_jobs)
     }
 
     fn complete_scheduled_job(&mut self, job_id: &DocumentId) -> Result<()> {

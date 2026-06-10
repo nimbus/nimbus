@@ -18,9 +18,9 @@
 
 mod control;
 mod engine;
-mod helpers;
 mod read;
 mod sqlite;
+mod task_error;
 mod traits;
 mod write;
 
@@ -28,6 +28,7 @@ pub use self::control::EmbeddedRedbControlPlaneProvider;
 pub use self::engine::{EmbeddedProviderKind, EmbeddedRedbProvider, OpenedEmbeddedRedbTenant};
 pub use self::read::{RedbTenantStorage, RedbUsageStorage};
 pub use self::sqlite::{EmbeddedSqliteProvider, OpenedEmbeddedSqliteTenant, SqliteTenantStorage};
+pub(crate) use self::task_error::{map_executor_join_error, map_executor_permit_error};
 pub use self::traits::{
     EmbeddedPersistenceProvider, TenantReadStorage, TenantWriteOutcome, TenantWriteStorage,
     UsageStorage,

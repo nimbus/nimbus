@@ -66,3 +66,7 @@ pub use nimbus_storage::{
     export_plaintext_to_encrypted, migrate_encrypted_to_plaintext, migrate_plaintext_to_encrypted,
     rekey_encrypted_database, rekey_encrypted_database_at_path,
 };
+pub use nimbus_storage::{
+    commit_staged_redb_dek_rotation, recover_interrupted_redb_dek_rotation,
+    redb_dek_rotation_database_stage_path, redb_dek_rotation_manifest_stage_path,
+};

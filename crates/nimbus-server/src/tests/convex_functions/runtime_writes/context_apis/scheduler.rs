@@ -34,9 +34,12 @@ async fn convex_named_mutation_can_use_bootstrapped_ctx_scheduler_api() {
         json!([]),
         Some(
             r#"
-globalThis.__nimbusInvoke = function(request) {
-  const ctx = globalThis.__nimbusCreateContext();
-  return (async () => {
+	globalThis.__nimbusInvoke = function(request) {
+	  const ctx = globalThis.__nimbusCreateContext({
+	    hostCallSessionId: `${request.kind}:${request.function_name}`,
+	    request,
+	  });
+	  return (async () => {
     const value = await ctx.scheduler.runAfter(
       request.args.delayMs,
       {

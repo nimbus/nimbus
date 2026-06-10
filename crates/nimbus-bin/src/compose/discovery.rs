@@ -26,6 +26,7 @@ pub(crate) struct ResolvedComposeSelection {
 }
 
 impl ResolvedComposeSelection {
+    #[cfg(test)]
     pub(crate) fn explicit(path: PathBuf) -> Self {
         let project_root = path
             .parent()

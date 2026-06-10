@@ -13,9 +13,12 @@ async fn convex_runtime_ordered_take_subscription_ignores_matching_writes_outsid
         ]),
         Some(
             r#"
-globalThis.__nimbusInvoke = async function(request) {
-  const ctx = globalThis.__nimbusCreateContext();
-  return {
+	globalThis.__nimbusInvoke = async function(request) {
+	  const ctx = globalThis.__nimbusCreateContext({
+	    hostCallSessionId: `${request.kind}:${request.function_name}`,
+	    request,
+	  });
+	  return {
     status: "ok",
     value: {
       runtime: true,

@@ -1307,6 +1307,252 @@ async fn paginated_query_uses_composite_index_for_exact_prefix_and_cursor_progre
     assert!(second_page.next_cursor.is_none());
 }
 
+#[tokio::test]
+async fn paginated_query_cursor_survives_index_plan_change_between_pages() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let indexed_schema = TableSchema {
+        table: tasks_table(),
+        fields: vec![
+            FieldSchema {
+                name: "status".to_string(),
+                field_type: FieldType::String,
+                required: false,
+            },
+            FieldSchema {
+                name: "rank".to_string(),
+                field_type: FieldType::Number,
+                required: false,
+            },
+        ],
+        indexes: vec![nimbus_core::IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
+            name: "by_status_rank".to_string(),
+            fields: vec!["status".to_string(), "rank".to_string()],
+        }],
+        access_policy: None,
+    };
+    engine
+        .set_table_schema(&tenant_id, indexed_schema)
+        .expect("indexed schema should save");
+
+    for (status, rank) in [
+        ("open", 1),
+        ("open", 2),
+        ("open", 3),
+        ("open", 4),
+        ("done", 0),
+        ("done", 5),
+    ] {
+        engine
+            .insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([
+                    ("status".to_string(), json!(status)),
+                    ("rank".to_string(), json!(rank)),
+                ]),
+            )
+            .expect("insert should succeed");
+    }
+
+    let query = Query {
+        table: tasks_table(),
+        filters: vec![filter("status", FilterOp::Eq, json!("open"))],
+        order: Some(OrderBy {
+            field: "rank".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+    let first_page = engine
+        .paginate_documents(
+            &tenant_id,
+            &PaginatedQuery {
+                query: query.clone(),
+                page_size: 2,
+                after: None,
+            },
+        )
+        .expect("first page should use the composite index");
+    assert_eq!(first_page.data.len(), 2);
+    assert_eq!(first_page.data[0]["rank"], json!(1));
+    assert_eq!(first_page.data[1]["rank"], json!(2));
+    let cursor = first_page
+        .next_cursor
+        .clone()
+        .expect("first page should return a cursor");
+
+    engine
+        .set_table_schema(
+            &tenant_id,
+            TableSchema {
+                table: tasks_table(),
+                fields: vec![
+                    FieldSchema {
+                        name: "status".to_string(),
+                        field_type: FieldType::String,
+                        required: false,
+                    },
+                    FieldSchema {
+                        name: "rank".to_string(),
+                        field_type: FieldType::Number,
+                        required: false,
+                    },
+                ],
+                indexes: Vec::new(),
+                access_policy: None,
+            },
+        )
+        .expect("schema without index should save");
+
+    let second_page = engine
+        .paginate_documents(
+            &tenant_id,
+            &PaginatedQuery {
+                query,
+                page_size: 2,
+                after: Some(cursor),
+            },
+        )
+        .expect("cursor should survive the plan change for the same user query");
+    assert_eq!(second_page.data.len(), 2);
+    assert_eq!(second_page.data[0]["rank"], json!(3));
+    assert_eq!(second_page.data[1]["rank"], json!(4));
+    assert!(!second_page.has_more);
+    assert!(second_page.next_cursor.is_none());
+}
+
+#[test]
+fn paginated_query_cursor_signature_excludes_principal_auth_filters() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let schema = TableSchema {
+        table: tasks_table(),
+        fields: vec![
+            FieldSchema {
+                name: "owner".to_string(),
+                field_type: FieldType::String,
+                required: true,
+            },
+            FieldSchema {
+                name: "rank".to_string(),
+                field_type: FieldType::Number,
+                required: true,
+            },
+        ],
+        indexes: vec![IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
+            name: "by_owner_rank".to_string(),
+            fields: vec!["owner".to_string(), "rank".to_string()],
+        }],
+        access_policy: Some(read_only_owner_policy()),
+    };
+    engine
+        .set_table_schema(&tenant_id, schema)
+        .expect("owner-indexed schema should save");
+
+    for (owner, rank) in [
+        ("alice", 1),
+        ("alice", 2),
+        ("bob", 3),
+        ("bob", 4),
+        ("carol", 5),
+    ] {
+        engine
+            .insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([
+                    ("owner".to_string(), json!(owner)),
+                    ("rank".to_string(), json!(rank)),
+                ]),
+            )
+            .expect("document insert should succeed");
+    }
+
+    let user_query = Query {
+        table: tasks_table(),
+        filters: Vec::new(),
+        order: Some(OrderBy {
+            field: "rank".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+    let alice = principal_with_subject("alice");
+    let first_page = engine
+        .paginate_documents_with_principal(
+            &tenant_id,
+            &PaginatedQuery {
+                query: user_query.clone(),
+                page_size: 1,
+                after: None,
+            },
+            &alice,
+        )
+        .expect("first page should be authorized for alice");
+    assert_eq!(first_page.data.len(), 1);
+    assert_eq!(first_page.data[0]["owner"], json!("alice"));
+    assert_eq!(first_page.data[0]["rank"], json!(1));
+    let cursor = first_page
+        .next_cursor
+        .clone()
+        .expect("alice page should produce a cursor");
+
+    engine
+        .set_table_schema(
+            &tenant_id,
+            TableSchema {
+                table: tasks_table(),
+                fields: vec![
+                    FieldSchema {
+                        name: "owner".to_string(),
+                        field_type: FieldType::String,
+                        required: true,
+                    },
+                    FieldSchema {
+                        name: "rank".to_string(),
+                        field_type: FieldType::Number,
+                        required: true,
+                    },
+                ],
+                indexes: Vec::new(),
+                access_policy: Some(read_only_owner_policy()),
+            },
+        )
+        .expect("schema without index should save");
+
+    let bob = principal_with_subject("bob");
+    let second_page = engine
+        .paginate_documents_with_principal(
+            &tenant_id,
+            &PaginatedQuery {
+                query: user_query,
+                page_size: 2,
+                after: Some(cursor),
+            },
+            &bob,
+        )
+        .expect("cursor should not embed alice's authorization filter");
+    assert_eq!(second_page.data.len(), 2);
+    assert!(
+        second_page
+            .data
+            .iter()
+            .all(|document| document["owner"] == json!("bob")),
+        "the replaying principal's authorization filter must still constrain results"
+    );
+    assert_eq!(second_page.data[0]["rank"], json!(3));
+    assert_eq!(second_page.data[1]["rank"], json!(4));
+    assert!(!second_page.has_more);
+    assert!(second_page.next_cursor.is_none());
+}
+
 #[test]
 fn query_planning_stats_distinguish_composite_single_field_and_fallback_paths() {
     let fixture = EngineFixture::new(|path| Engine::new(path));

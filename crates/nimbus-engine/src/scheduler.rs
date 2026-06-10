@@ -160,8 +160,24 @@ fn process_due_jobs(engine: &Engine, tenant_id: &TenantId, now: Timestamp) -> Re
             },
             error: result.as_ref().err().map(ToString::to_string),
         };
-        engine.record_scheduled_job_result(tenant_id, &execution_result)?;
-        engine.complete_scheduled_job(tenant_id, &job.id)?;
+        if let Err(error) = engine.record_scheduled_job_result(tenant_id, &execution_result) {
+            tracing::warn!(
+                tenant = %tenant_id,
+                job_id = %job.id,
+                error = %error,
+                "scheduled job result bookkeeping failed"
+            );
+            continue;
+        }
+        if let Err(error) = engine.complete_scheduled_job(tenant_id, &job.id) {
+            tracing::warn!(
+                tenant = %tenant_id,
+                job_id = %job.id,
+                error = %error,
+                "scheduled job completion bookkeeping failed"
+            );
+            continue;
+        }
     }
     Ok(())
 }
@@ -211,12 +227,30 @@ async fn process_due_jobs_async(
             },
             error: result.as_ref().err().map(ToString::to_string),
         };
-        engine
+        if let Err(error) = engine
             .record_scheduled_job_result_async(tenant_id.clone(), execution_result)
-            .await?;
-        engine
-            .complete_scheduled_job_async(tenant_id.clone(), job_id)
-            .await?;
+            .await
+        {
+            tracing::warn!(
+                tenant = %tenant_id,
+                job_id = %job_id,
+                error = %error,
+                "scheduled job result bookkeeping failed"
+            );
+            continue;
+        }
+        if let Err(error) = engine
+            .complete_scheduled_job_async(tenant_id.clone(), job_id.clone())
+            .await
+        {
+            tracing::warn!(
+                tenant = %tenant_id,
+                job_id = %job_id,
+                error = %error,
+                "scheduled job completion bookkeeping failed"
+            );
+            continue;
+        }
     }
     Ok(())
 }

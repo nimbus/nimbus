@@ -10,6 +10,14 @@ pub fn document_key(table_id: &TableId, id: &DocumentId) -> Vec<u8> {
     key
 }
 
+/// Builds the primary document-key prefix for all document IDs beginning with
+/// `id_prefix` in one table.
+pub fn document_id_prefix_key(table_id: &TableId, id_prefix: &str) -> Vec<u8> {
+    let mut key = table_prefix(table_id);
+    key.extend_from_slice(id_prefix.as_bytes());
+    key
+}
+
 /// Builds the prefix for all historical versions of one document identity.
 pub fn document_version_prefix(table_id: &TableId, id: &DocumentId) -> Vec<u8> {
     let mut key = document_key(table_id, id);

@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use futures::{Stream, StreamExt, stream};
@@ -74,10 +74,7 @@ impl RetainedListenRegistry {
         snapshot: &SubscriptionResultSnapshot,
         read_time: Timestamp,
     ) {
-        let mut targets = self
-            .targets
-            .lock()
-            .expect("listen target registry lock should not be poisoned");
+        let mut targets = self.targets();
         prune_expired_retained_targets(&mut targets);
         if !targets.contains_key(&key) && targets.len() >= MAX_RETAINED_LISTEN_TARGETS {
             evict_oldest_retained_target(&mut targets);
@@ -93,10 +90,7 @@ impl RetainedListenRegistry {
     }
 
     fn clear(&self, key: &RetainedListenTargetKey) {
-        self.targets
-            .lock()
-            .expect("listen target registry lock should not be poisoned")
-            .remove(key);
+        self.targets().remove(key);
     }
 
     fn resolve_resume(
@@ -104,10 +98,7 @@ impl RetainedListenRegistry {
         key: &RetainedListenTargetKey,
         selector: &ResumeSelector,
     ) -> ResumeDecision {
-        let mut targets = self
-            .targets
-            .lock()
-            .expect("listen target registry lock should not be poisoned");
+        let mut targets = self.targets();
         prune_expired_retained_targets(&mut targets);
         let Some(retained) = targets.get(key).cloned() else {
             return match selector {
@@ -126,6 +117,14 @@ impl RetainedListenRegistry {
             }
             ResumeSelector::Token(_) | ResumeSelector::ReadTime(_) => ResumeDecision::Reset,
         }
+    }
+
+    fn targets(
+        &self,
+    ) -> MutexGuard<'_, HashMap<RetainedListenTargetKey, RetainedListenTargetState>> {
+        self.targets
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -1152,4 +1151,37 @@ fn decode_resume_token(token: &[u8]) -> Result<SequenceNumber, Status> {
 
 fn encode_resume_token(sequence: SequenceNumber) -> Vec<u8> {
     sequence.0.to_be_bytes().to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nimbus_core::{CollectionName, TableName};
+
+    #[test]
+    fn retained_listen_registry_recovers_after_poisoned_lock() {
+        let registry = RetainedListenRegistry::new();
+        let key = RetainedListenTargetKey {
+            project_id: "demo".to_string(),
+            collection_path: CollectionPath::root(
+                CollectionName::new("cities").expect("collection name should parse"),
+            ),
+            query: Query {
+                table: TableName::new("firebase_collection_test").expect("table name should parse"),
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+        };
+
+        let poison = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = registry.targets.lock().expect("lock should start clean");
+            panic!("poison retained listen registry");
+        }));
+        assert!(poison.is_err());
+
+        let resume = registry.resolve_resume(&key, &ResumeSelector::None);
+
+        assert!(matches!(resume, ResumeDecision::ColdStart));
+    }
 }

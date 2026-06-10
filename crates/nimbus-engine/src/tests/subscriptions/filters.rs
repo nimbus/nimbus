@@ -1,5 +1,46 @@
 use super::*;
 
+fn document_write_sequence(
+    engine: &Engine,
+    tenant_id: &TenantId,
+    document_id: &DocumentId,
+) -> SequenceNumber {
+    durable_journal_commits(engine, tenant_id, SequenceNumber(0))
+        .into_iter()
+        .find(|commit| {
+            commit
+                .writes
+                .iter()
+                .any(|write| write.doc_id == *document_id)
+        })
+        .expect("document write should be durable")
+        .sequence
+}
+
+async fn assert_no_subscription_update_covering(
+    rx: &mut mpsc::Receiver<SubscriptionUpdate>,
+    blocked_sequence: SequenceNumber,
+    message: &str,
+) {
+    let update = timeout(Duration::from_millis(100), async {
+        loop {
+            let update = rx
+                .recv()
+                .await
+                .expect("subscription channel should remain open");
+            let snapshot = match update {
+                SubscriptionUpdate::Result { snapshot, .. } => snapshot,
+                other => panic!("unexpected subscription update: {other:?}"),
+            };
+            if snapshot.covered_sequence.0 >= blocked_sequence.0 {
+                return snapshot;
+            }
+        }
+    })
+    .await;
+    assert!(update.is_err(), "{message}");
+}
+
 #[tokio::test]
 async fn engine_only_notifies_subscriptions_for_affected_tables() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
@@ -383,7 +424,7 @@ async fn engine_limited_subscriptions_skip_out_of_window_ordered_writes() {
         other => panic!("unexpected initial subscription update: {other:?}"),
     }
 
-    engine
+    let outside_window_document_id = engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -393,12 +434,14 @@ async fn engine_limited_subscriptions_skip_out_of_window_ordered_writes() {
             ]),
         )
         .expect("outside-window insert should succeed");
-    assert!(
-        timeout(Duration::from_millis(100), rx.recv())
-            .await
-            .is_err(),
-        "writes beyond the visible ordered window should not invalidate the subscription"
-    );
+    let outside_window_sequence =
+        document_write_sequence(&engine, &tenant_id, &outside_window_document_id);
+    assert_no_subscription_update_covering(
+        &mut rx,
+        outside_window_sequence,
+        "writes beyond the visible ordered window should not invalidate the subscription",
+    )
+    .await;
 
     let document_id = engine
         .query_documents(
@@ -434,7 +477,7 @@ async fn engine_limited_subscriptions_skip_out_of_window_ordered_writes() {
         other => panic!("unexpected shifted subscription update: {other:?}"),
     }
 
-    engine
+    let second_outside_window_document_id = engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -444,12 +487,14 @@ async fn engine_limited_subscriptions_skip_out_of_window_ordered_writes() {
             ]),
         )
         .expect("second outside-window insert should succeed");
-    assert!(
-        timeout(Duration::from_millis(100), rx.recv())
-            .await
-            .is_err(),
-        "dependency tracking should refresh after reevaluation and keep skipping later out-of-window writes"
-    );
+    let second_outside_window_sequence =
+        document_write_sequence(&engine, &tenant_id, &second_outside_window_document_id);
+    assert_no_subscription_update_covering(
+        &mut rx,
+        second_outside_window_sequence,
+        "dependency tracking should refresh after reevaluation and keep skipping later out-of-window writes",
+    )
+    .await;
 
     engine
         .insert_document(

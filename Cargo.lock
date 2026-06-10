@@ -6044,6 +6044,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
  "zstd",
 ]
 
@@ -6081,7 +6082,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tokio",
  "tracing",
 ]
 

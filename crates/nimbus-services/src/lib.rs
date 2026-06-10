@@ -14,6 +14,6 @@ pub use manager::{
     NoopServiceEvidenceWriter, ServiceEvidenceFuture, ServiceEvidenceWriter, ServiceManager,
 };
 pub use registry::{
-    RuntimeServiceBindingFuture, RuntimeServiceRegistry, ServiceInstanceBindingRegistry,
-    service_binding_from_handle,
+    RuntimeServiceBindingFuture, RuntimeServiceRegistry, RuntimeServiceTeardownFuture,
+    ServiceInstanceBindingRegistry, service_binding_from_handle,
 };

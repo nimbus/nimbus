@@ -1,11 +1,10 @@
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use nimbus_core::StructuredQuery;
 use serde::Deserialize;
 use serde_json::Value;
 use thiserror::Error;
 
 use super::serializer;
+use super::transaction_token;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedRunQueryRequest {
@@ -53,8 +52,9 @@ pub fn parse_run_query_request(
     let transaction = request
         .transaction
         .as_deref()
-        .map(parse_transaction)
-        .transpose()?;
+        .map(transaction_token::decode)
+        .transpose()
+        .map_err(|error| invalid_request(error.to_string()))?;
 
     Ok(ParsedRunQueryRequest {
         structured_query,
@@ -187,12 +187,6 @@ fn invalid_request(reason: impl Into<String>) -> FirestoreRunQueryRequestError {
 
 fn unsupported_request(feature: impl Into<String>) -> FirestoreRunQueryRequestError {
     FirestoreRunQueryRequestError::Unsupported(feature.into())
-}
-
-fn parse_transaction(value: &str) -> Result<Vec<u8>, FirestoreRunQueryRequestError> {
-    BASE64_STANDARD
-        .decode(value)
-        .map_err(|error| invalid_request(format!("invalid base64 transaction bytes: {error}")))
 }
 
 #[cfg(test)]

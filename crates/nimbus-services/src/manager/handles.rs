@@ -1,4 +1,3 @@
-use futures::executor::block_on;
 use nimbus_core::{Error, TenantId};
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_tenant::TenantIsolationContext;
@@ -15,38 +14,6 @@ impl ServiceManager {
             .handles
             .get(key)
             .cloned()
-    }
-
-    pub(super) fn refresh_handle(
-        &self,
-        key: &TenantServiceKey,
-    ) -> Result<Option<SandboxHandle>, Error> {
-        let Some(handle) = self.current_handle(key) else {
-            return Ok(None);
-        };
-        let inspected = block_on(self.sandbox_backend.inspect(&handle.id))
-            .map_err(|error| sandbox_backend_error(key, "inspect", &error))?;
-        let mut state = self
-            .state
-            .lock()
-            .expect("manager lock should not be poisoned");
-        match inspected {
-            Some(handle) => {
-                if matches!(
-                    handle.status,
-                    SandboxStatus::Stopped | SandboxStatus::Failed
-                ) {
-                    state.handles.remove(key);
-                } else {
-                    state.handles.insert(key.clone(), handle.clone());
-                }
-                Ok(Some(handle))
-            }
-            None => {
-                state.handles.remove(key);
-                Ok(None)
-            }
-        }
     }
 
     pub(super) async fn refresh_handle_async(

@@ -52,23 +52,8 @@ pub(super) fn load_host_backed_service_manager_for_platform(
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
 ) -> Result<ServiceManager, Error> {
-    load_host_backed_service_manager_for_platform_selection(
-        &ResolvedComposeSelection::explicit(file.to_path_buf()),
-        control_data_dir,
-        host_platform,
-        machine_api_client,
-    )
-}
-
-#[allow(dead_code)]
-pub(super) fn load_host_backed_service_manager_for_platform_selection(
-    selection: &ResolvedComposeSelection,
-    control_data_dir: &Path,
-    host_platform: ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-) -> Result<ServiceManager, Error> {
     load_host_backed_service_manager_for_platform_selection_with_admission(
-        selection,
+        &ResolvedComposeSelection::explicit(file.to_path_buf()),
         control_data_dir,
         host_platform,
         machine_api_client,

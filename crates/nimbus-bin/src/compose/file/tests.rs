@@ -1,4 +1,4 @@
-use super::parse::compose_lifecycle_spec;
+use super::parse::{compose_lifecycle_spec, parse_compose_duration};
 use super::*;
 use crate::compose::discovery::{ResolvedComposeSelection, resolve_compose_selection};
 
@@ -10,7 +10,7 @@ fn write_compose_fixture(tempdir: &tempfile::TempDir, name: &str, contents: &str
 
 fn sandbox_spec_from_backend(service_backend: ServiceBackend) -> SandboxSpec {
     match service_backend {
-        ServiceBackend::Sandbox(spec) => spec,
+        ServiceBackend::Sandbox(spec) => *spec,
         other => panic!("service should lower as sandbox-backed, got {other:?}"),
     }
 }
@@ -559,6 +559,43 @@ services:
         SandboxRestartPolicy::OnFailure { max_restarts: 3 }
     );
     assert_eq!(lifecycle.stop_timeout, Some(Duration::from_secs(90)));
+}
+
+#[test]
+fn compose_duration_parser_accepts_every_supported_unit() {
+    let cases = [
+        ("1ns", Duration::from_nanos(1)),
+        ("1us", Duration::from_micros(1)),
+        ("1µs", Duration::from_micros(1)),
+        ("1μs", Duration::from_micros(1)),
+        ("1ms", Duration::from_millis(1)),
+        ("1s", Duration::from_secs(1)),
+        ("1m", Duration::from_secs(60)),
+        ("1h", Duration::from_secs(60 * 60)),
+        ("1m30s", Duration::from_secs(90)),
+    ];
+
+    for (value, expected) in cases {
+        assert_eq!(
+            parse_compose_duration("services.db.stop_grace_period", value)
+                .expect("supported duration unit should parse"),
+            expected,
+            "duration literal {value:?} should parse through the shared unit table"
+        );
+    }
+}
+
+#[test]
+fn compose_duration_parser_rejects_unknown_units_without_panicking() {
+    let error = parse_compose_duration("services.db.stop_grace_period", "1d")
+        .expect_err("unknown duration unit should return a parse error");
+
+    assert!(
+        error
+            .to_string()
+            .contains("Supported units are ns, us, ms, s, m, h"),
+        "unknown unit should be reported as validation error, got: {error}"
+    );
 }
 
 #[test]
@@ -1144,4 +1181,59 @@ services:
     assert_eq!(image_reference_from_spec(&other_db), "postgres:16");
     assert_eq!(other_db.tenant_id, other_tenant);
     assert_eq!(other_db.service_name(), Some("db"));
+}
+
+#[test]
+fn compose_service_catalog_stamps_cached_backends_for_each_tenant() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+name: Demo App
+services:
+  db:
+    image: postgres:16
+  api:
+    image: ghcr.io/example/api:latest
+"#,
+    );
+    let catalog = ComposeProjectPlan::load(&compose)
+        .expect("compose file should resolve")
+        .into_service_catalog()
+        .expect("compose project should lower into a service catalog");
+
+    let tenant_a = TenantId::new("tenant-a").expect("tenant id should be valid");
+    let tenant_b = TenantId::new("tenant-b").expect("tenant id should be valid");
+    let tenant_a_backends = catalog.service_backends_for_tenant(&tenant_a);
+    let tenant_b_backends = catalog.service_backends_for_tenant(&tenant_b);
+
+    assert_eq!(
+        tenant_a_backends.keys().cloned().collect::<Vec<_>>(),
+        vec!["api".to_owned(), "db".to_owned()]
+    );
+    assert_eq!(
+        tenant_b_backends.keys().cloned().collect::<Vec<_>>(),
+        vec!["api".to_owned(), "db".to_owned()]
+    );
+
+    let tenant_a_db = sandbox_spec_from_backend(
+        tenant_a_backends
+            .get("db")
+            .expect("db backend should exist")
+            .clone(),
+    );
+    let tenant_b_db = sandbox_spec_from_backend(
+        tenant_b_backends
+            .get("db")
+            .expect("db backend should exist")
+            .clone(),
+    );
+
+    assert_eq!(tenant_a_db.tenant_id, tenant_a);
+    assert_eq!(tenant_b_db.tenant_id, tenant_b);
+    assert_eq!(tenant_a_db.service_name(), Some("db"));
+    assert_eq!(tenant_b_db.service_name(), Some("db"));
+    assert_eq!(image_reference_from_spec(&tenant_a_db), "postgres:16");
+    assert_eq!(image_reference_from_spec(&tenant_b_db), "postgres:16");
 }

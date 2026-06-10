@@ -129,22 +129,24 @@ fn ensure_artifact_policy_evidence(
             )));
         };
         let source_uri = provenance.source_uri();
-        if provenance.predicate_types().is_empty()
-            && !evidence.attestations().iter().any(|candidate| {
+        let matching_attestations = evidence
+            .attestations()
+            .iter()
+            .filter(|candidate| {
                 candidate.builder_id() == builder_id
                     && source_uri.is_none_or(|expected| candidate.source_uri() == Some(expected))
             })
-        {
+            .collect::<Vec<_>>();
+        if matching_attestations.is_empty() {
             return Err(Error::PermissionDenied(format!(
                 "{context} requires provenance from builder `{builder_id}` for {subject_label}"
             )));
         }
         for predicate_type in provenance.predicate_types() {
-            if !evidence.attestations().iter().any(|candidate| {
-                candidate.builder_id() == builder_id
-                    && source_uri.is_none_or(|expected| candidate.source_uri() == Some(expected))
-                    && candidate.predicate_type() == predicate_type
-            }) {
+            if !matching_attestations
+                .iter()
+                .any(|candidate| candidate.predicate_type() == predicate_type)
+            {
                 return Err(Error::PermissionDenied(format!(
                     "{context} requires provenance predicate `{predicate_type}` from builder `{builder_id}` for {subject_label}"
                 )));
@@ -187,9 +189,13 @@ mod tests {
     }
 
     impl StaticArtifactVerifier {
+        fn with_evidence(evidence: ArtifactVerificationEvidence) -> Self {
+            Self { evidence }
+        }
+
         fn with_attestation(builder_id: &str, predicate_type: &str) -> Self {
-            Self {
-                evidence: ArtifactVerificationEvidence::new(ArtifactVerifierBackendIdentity::new(
+            Self::with_evidence(
+                ArtifactVerificationEvidence::new(ArtifactVerifierBackendIdentity::new(
                     "fixture", "test",
                 ))
                 .with_attestation_from_source(
@@ -197,7 +203,7 @@ mod tests {
                     SOURCE_URI,
                     predicate_type,
                 ),
-            }
+            )
         }
     }
 
@@ -308,6 +314,40 @@ mod tests {
             wrong_predicate_error
                 .to_string()
                 .contains("requires provenance")
+        );
+    }
+
+    #[test]
+    fn runtime_bundle_artifact_admission_rejects_predicate_from_wrong_attestation_scope() {
+        let evidence = ArtifactVerificationEvidence::new(ArtifactVerifierBackendIdentity::new(
+            "fixture", "test",
+        ))
+        .with_attestation_from_source(BUILDER_ID, SOURCE_URI, "https://example.com/not-slsa")
+        .with_attestation_from_source(
+            "https://github.com/other/builder",
+            SOURCE_URI,
+            SLSA_PROVENANCE_V1_PREDICATE_TYPE,
+        )
+        .with_attestation_from_source(
+            BUILDER_ID,
+            "github.com/nimbus/other",
+            SLSA_PROVENANCE_V1_PREDICATE_TYPE,
+        );
+        let verifier = StaticArtifactVerifier::with_evidence(evidence);
+
+        let error = admit_artifact_subject(
+            runtime_subject(DIGEST),
+            &policy(),
+            &verifier,
+            "runtime invocation",
+        )
+        .expect_err("required predicate must be present on matching builder/source evidence");
+
+        assert!(
+            error.to_string().contains(
+                "requires provenance predicate `https://slsa.dev/provenance/v1` from builder"
+            ),
+            "wrong-scope predicate error should be precise: {error}"
         );
     }
 

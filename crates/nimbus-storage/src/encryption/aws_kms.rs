@@ -13,10 +13,10 @@ use aws_sdk_kms::config::Region;
 use aws_sdk_kms::error::{ProvideErrorMetadata, SdkError};
 use aws_sdk_kms::primitives::Blob;
 use aws_sdk_kms::types::DataKeySpec;
-use tokio::runtime::Handle;
+use tokio::runtime::{Handle, RuntimeFlavor};
 use zeroize::Zeroize;
 
-use super::key::{GeneratedDatabaseKey, WrappedDatabaseKey, WrappingCipher};
+use super::key::{DataEncryptionKey, GeneratedDatabaseKey, WrappedDatabaseKey, WrappingCipher};
 use super::manifest::KeyManifestHeader;
 use super::provider::{
     KeyProviderKind, KeyProviderResult, LocalKeyProvider, LocalKeyProviderError,
@@ -159,7 +159,7 @@ impl LocalKeyProvider for AwsKmsKeyProvider {
         _subject: &LocalKeySubject,
         wrapped: &WrappedDatabaseKey,
         header: &KeyManifestHeader,
-    ) -> KeyProviderResult<[u8; 32]> {
+    ) -> KeyProviderResult<DataEncryptionKey> {
         if wrapped.cipher != WrappingCipher::AwsKms {
             return Err(LocalKeyProviderError::UnsupportedCipher {
                 cipher: wrapped.cipher.as_str().to_string(),
@@ -187,7 +187,7 @@ impl LocalKeyProvider for AwsKmsKeyProvider {
                     message: "aws kms decrypt returned no plaintext".to_string(),
                 })?;
 
-        Self::extract_plaintext_key(plaintext_blob, "Decrypt")
+        Self::extract_plaintext_key(plaintext_blob, "Decrypt").map(DataEncryptionKey::new)
     }
 
     fn rewrap_database_key(
@@ -277,13 +277,12 @@ where
     T: Send + 'static,
 {
     if let Ok(handle) = Handle::try_current() {
-        let join = std::thread::spawn(move || handle.block_on(future));
-        return join
-            .join()
-            .map_err(|_| LocalKeyProviderError::AwsKmsOperationError {
-                operation: "runtime-bridge",
-                message: "aws kms bridge thread panicked".to_string(),
+        if handle.runtime_flavor() != RuntimeFlavor::MultiThread {
+            return Err(LocalKeyProviderError::AwsKmsConfigurationError {
+                message: "aws kms sync provider requires a multi-thread tokio runtime when called from async context".to_string(),
             });
+        }
+        return Ok(tokio::task::block_in_place(move || handle.block_on(future)));
     }
 
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -559,6 +558,31 @@ mod tests {
         }
     }
 
+    #[test]
+    fn block_on_future_runs_without_existing_runtime() {
+        let value = block_on_future(async { 42 }).expect("future should complete");
+
+        assert_eq!(value, 42);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn block_on_future_uses_multithread_runtime_without_spawning_bridge_thread() {
+        let value = block_on_future(async { 42 }).expect("future should complete");
+
+        assert_eq!(value, 42);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn block_on_future_rejects_current_thread_runtime() {
+        let err = block_on_future(async { 42 }).expect_err("current-thread runtime must fail");
+
+        assert!(matches!(
+            err,
+            LocalKeyProviderError::AwsKmsConfigurationError { .. }
+        ));
+        assert!(err.to_string().contains("multi-thread tokio runtime"));
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn generate_and_unwrap_round_trip_with_bound_encryption_context() {
@@ -600,7 +624,7 @@ mod tests {
         let unwrapped = provider
             .unwrap_database_key(&subject, generated.wrapped(), &header)
             .expect("unwrap should succeed");
-        assert_eq!(unwrapped, *generated.plaintext());
+        assert_eq!(unwrapped.as_bytes(), generated.plaintext());
 
         let requests = server.requests();
         assert_eq!(requests.len(), 2);

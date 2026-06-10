@@ -340,7 +340,7 @@ pub fn firestore_value_from_typed_scalar(
     }
 }
 
-fn special_double_from_firestore(value: FirestoreDouble) -> SpecialDouble {
+pub(crate) fn special_double_from_firestore(value: FirestoreDouble) -> SpecialDouble {
     match value {
         FirestoreDouble::NegativeZero => SpecialDouble::NegativeZero,
         FirestoreDouble::NaN => SpecialDouble::Nan,

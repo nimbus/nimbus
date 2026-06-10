@@ -219,8 +219,13 @@ fn start_transaction(
         "lsid": lsid_field(&lsid),
         "documents": [],
     };
-    crate::commands::session::handle_start_transaction(&start_body, conn, &fixture.engine())
-        .expect("transaction should start");
+    crate::commands::session::handle_start_transaction(
+        &start_body,
+        conn,
+        &fixture.engine(),
+        &test_principal(),
+    )
+    .expect("transaction should start");
     lsid
 }
 
@@ -234,8 +239,13 @@ fn commit_transaction(
         "$db": "admin",
         "lsid": lsid_field(lsid),
     };
-    crate::commands::session::commit_transaction(&commit_body, conn, &fixture.engine())
-        .expect("transaction should commit");
+    crate::commands::session::commit_transaction(
+        &commit_body,
+        conn,
+        &fixture.engine(),
+        &test_principal(),
+    )
+    .expect("transaction should commit");
 }
 
 fn lsid_field(lsid: &bson::Document) -> bson::Bson {

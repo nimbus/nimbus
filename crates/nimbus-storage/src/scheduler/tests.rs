@@ -28,7 +28,7 @@ fn scheduled_job_insert_and_claim_due_removes_pending_entry() {
         .expect("scheduled insert should succeed");
 
     let claimed = store
-        .claim_due_jobs(Timestamp(1_000))
+        .claim_due_jobs(Timestamp(1_000), usize::MAX)
         .expect("claim should succeed");
     assert_eq!(claimed, vec![job.clone()]);
     assert!(
@@ -40,7 +40,7 @@ fn scheduled_job_insert_and_claim_due_removes_pending_entry() {
     );
     assert!(
         store
-            .claim_due_jobs(Timestamp(1_000))
+            .claim_due_jobs(Timestamp(1_000), usize::MAX)
             .expect("second claim should succeed")
             .is_empty()
     );
@@ -48,6 +48,37 @@ fn scheduled_job_insert_and_claim_due_removes_pending_entry() {
     store
         .complete_scheduled_job(&job.id)
         .expect("complete should succeed");
+}
+
+#[test]
+fn claim_due_jobs_respects_batch_limit_and_leaves_remainder_pending() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let first = scheduled_insert_job(Timestamp(1_000), "first");
+    let second = scheduled_insert_job(Timestamp(1_000), "second");
+    let third = scheduled_insert_job(Timestamp(1_000), "third");
+    for job in [&first, &second, &third] {
+        store
+            .insert_scheduled_job(job)
+            .expect("scheduled insert should succeed");
+    }
+    let mut expected = [first.clone(), second.clone(), third.clone()];
+    expected.sort_by(|left, right| left.run_at.cmp(&right.run_at).then(left.id.cmp(&right.id)));
+
+    let claimed = store
+        .claim_due_jobs(Timestamp(1_000), 2)
+        .expect("claim should succeed");
+    assert_eq!(claimed, expected[..2].to_vec());
+    assert_eq!(
+        store
+            .list_scheduled_jobs()
+            .expect("pending list should succeed"),
+        expected[2..]
+    );
+
+    let remaining = store
+        .claim_due_jobs(Timestamp(1_000), 2)
+        .expect("second claim should succeed");
+    assert_eq!(remaining, expected[2..].to_vec());
 }
 
 #[test]
@@ -59,7 +90,7 @@ fn scheduled_job_future_not_due() {
         .expect("scheduled insert should succeed");
 
     let claimed = store
-        .claim_due_jobs(Timestamp(4_999))
+        .claim_due_jobs(Timestamp(4_999), usize::MAX)
         .expect("claim should succeed");
     assert!(
         claimed.is_empty(),
@@ -93,7 +124,7 @@ fn scheduled_job_with_firestore_style_id_roundtrips() {
         .expect("scheduled insert should succeed");
 
     let claimed = store
-        .claim_due_jobs(Timestamp(1_000))
+        .claim_due_jobs(Timestamp(1_000), usize::MAX)
         .expect("claim should succeed");
 
     assert_eq!(claimed, vec![job.clone()]);
@@ -138,7 +169,7 @@ fn recover_running_jobs_moves_orphaned_work_back_to_pending() {
         .insert_scheduled_job(&job)
         .expect("scheduled insert should succeed");
     store
-        .claim_due_jobs(Timestamp(1_000))
+        .claim_due_jobs(Timestamp(1_000), usize::MAX)
         .expect("claim should succeed");
 
     store
@@ -213,7 +244,7 @@ fn has_scheduled_work_detects_pending_or_running_jobs() {
     );
 
     store
-        .claim_due_jobs(Timestamp(1_000))
+        .claim_due_jobs(Timestamp(1_000), usize::MAX)
         .expect("claim should succeed");
     assert!(
         store
@@ -253,7 +284,7 @@ fn next_scheduled_work_at_prefers_earliest_pending_or_enabled_cron() {
     );
 
     store
-        .claim_due_jobs(Timestamp(2_000))
+        .claim_due_jobs(Timestamp(2_000), usize::MAX)
         .expect("claim should succeed");
     assert_eq!(
         store
@@ -333,7 +364,7 @@ fn claim_due_jobs_includes_u64_max_boundary() {
         .expect("scheduled insert should succeed");
 
     let claimed = store
-        .claim_due_jobs(Timestamp(u64::MAX))
+        .claim_due_jobs(Timestamp(u64::MAX), usize::MAX)
         .expect("claim should succeed");
     assert_eq!(claimed, vec![job]);
 }

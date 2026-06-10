@@ -1,5 +1,7 @@
 use super::resource_paths::load_resource_path_bindings_from_session;
 use super::*;
+use crate::IndexRangeBound;
+use crate::range_bound::{borrow_index_range_bound, clone_index_range_bound};
 
 impl MySqlTenantStore {
     pub fn load_schema(&self) -> Result<Schema> {
@@ -140,6 +142,49 @@ impl MySqlTenantStore {
         filter_documents_with_predicate(documents, filters, check_cancel, include_document)
     }
 
+    pub fn scan_table_id_prefix_cancellable(
+        &self,
+        table: &TableName,
+        id_prefix: &str,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        let provider = self.provider.clone();
+        let database_name = self.database_name.clone();
+        let table = table.clone();
+        let id_prefix = id_prefix.to_owned();
+        let documents = self.block_on(async move {
+            let mut conn = provider.conn().await?;
+            load_documents_by_id_prefix_from_session(&mut conn, &database_name, &table, &id_prefix)
+                .await
+        })?;
+        filter_documents_with_predicate(documents, &[], check_cancel, |_| Ok(true))
+    }
+
+    pub fn scan_table_id_starting_at_cancellable(
+        &self,
+        table: &TableName,
+        start_id: &str,
+        limit: usize,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        let provider = self.provider.clone();
+        let database_name = self.database_name.clone();
+        let table = table.clone();
+        let start_id = start_id.to_owned();
+        let documents = self.block_on(async move {
+            let mut conn = provider.conn().await?;
+            load_documents_starting_at_id_from_session(
+                &mut conn,
+                &database_name,
+                &table,
+                &start_id,
+                limit,
+            )
+            .await
+        })?;
+        filter_documents_with_predicate(documents, &[], check_cancel, |_| Ok(true))
+    }
+
     pub fn index_scan_eq_cancellable(
         &self,
         table: &TableName,
@@ -166,47 +211,30 @@ impl MySqlTenantStore {
             table,
             index_name,
             prefix_values,
-            None,
-            None,
-            true,
-            true,
+            std::ops::Bound::Unbounded,
+            std::ops::Bound::Unbounded,
             check_cancel,
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn index_scan_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
-        self.load_index_documents_cancellable(
-            table,
-            index_name,
-            &[],
-            start,
-            end,
-            start_inclusive,
-            end_inclusive,
-            check_cancel,
-        )
+        self.load_index_documents_cancellable(table, index_name, &[], start, end, check_cancel)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn index_scan_composite_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
         exact_prefix: &[Value],
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         self.load_index_documents_cancellable(
@@ -215,8 +243,6 @@ impl MySqlTenantStore {
             exact_prefix,
             start,
             end,
-            start_inclusive,
-            end_inclusive,
             check_cancel,
         )
     }
@@ -238,16 +264,13 @@ impl MySqlTenantStore {
             .ok_or(Error::SchemaNotFound(table.clone()))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn load_index_documents_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
         exact_prefix: &[Value],
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         let table_schema = self.load_table_schema(table)?;
@@ -260,7 +283,10 @@ impl MySqlTenantStore {
                 index_fields.len()
             )));
         }
-        if (start.is_some() || end.is_some()) && exact_prefix.len() >= index_fields.len() {
+        if (!matches!(start, std::ops::Bound::Unbounded)
+            || !matches!(end, std::ops::Bound::Unbounded))
+            && exact_prefix.len() >= index_fields.len()
+        {
             return Err(Error::InvalidInput(format!(
                 "composite range prefix length {} leaves no range field for index '{}'",
                 exact_prefix.len(),
@@ -275,10 +301,12 @@ impl MySqlTenantStore {
         let table_schema_for_query = table_schema.clone();
         let exact_prefix = exact_prefix.to_vec();
         let exact_prefix_for_query = exact_prefix.clone();
-        let start = start.cloned();
-        let start_for_query = start.clone();
-        let end = end.cloned();
-        let end_for_query = end.clone();
+        let start = clone_index_range_bound(start);
+        let end = clone_index_range_bound(end);
+        let bounds_for_query = crate::range_bound::OwnedIndexRangeBounds {
+            start: start.clone(),
+            end: end.clone(),
+        };
         let index_name = index_name.to_string();
         let documents = self.block_on(async move {
             let mut conn = provider.conn().await?;
@@ -289,10 +317,7 @@ impl MySqlTenantStore {
                 &table_schema_for_query,
                 index_name.as_str(),
                 &exact_prefix_for_query,
-                start_for_query.as_ref(),
-                end_for_query.as_ref(),
-                start_inclusive,
-                end_inclusive,
+                bounds_for_query,
             )
             .await
         })?;
@@ -302,10 +327,8 @@ impl MySqlTenantStore {
             &table_for_filter,
             &index_fields,
             &exact_prefix,
-            start.as_ref(),
-            end.as_ref(),
-            start_inclusive,
-            end_inclusive,
+            borrow_index_range_bound(&start),
+            borrow_index_range_bound(&end),
             check_cancel,
         )
     }
@@ -619,6 +642,47 @@ impl MySqlReadSnapshot {
         Ok(documents)
     }
 
+    pub fn scan_table_id_prefix_cancellable(
+        &self,
+        table: &TableName,
+        id_prefix: &str,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        let mut documents = Vec::new();
+        for document in self
+            .documents
+            .iter()
+            .filter(|document| &document.table == table)
+        {
+            check_cancel()?;
+            if document.id.as_str().starts_with(id_prefix) {
+                documents.push(document.clone());
+            }
+        }
+        Ok(documents)
+    }
+
+    pub fn scan_table_id_starting_at_cancellable(
+        &self,
+        table: &TableName,
+        start_id: &str,
+        limit: usize,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        let mut documents = Vec::new();
+        for document in self
+            .documents
+            .iter()
+            .filter(|document| &document.table == table)
+            .filter(|document| document.id.as_str() >= start_id)
+            .take(limit)
+        {
+            check_cancel()?;
+            documents.push(document.clone());
+        }
+        Ok(documents)
+    }
+
     pub fn index_scan_eq_cancellable(
         &self,
         table: &TableName,
@@ -654,48 +718,31 @@ impl MySqlReadSnapshot {
             table,
             &index_fields,
             prefix_values,
-            None,
-            None,
-            true,
-            true,
+            std::ops::Bound::Unbounded,
+            std::ops::Bound::Unbounded,
             check_cancel,
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn index_scan_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         let index_fields = self.index_fields(table, index_name)?;
-        self.filter_index_documents(
-            table,
-            &index_fields,
-            &[],
-            start,
-            end,
-            start_inclusive,
-            end_inclusive,
-            check_cancel,
-        )
+        self.filter_index_documents(table, &index_fields, &[], start, end, check_cancel)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn index_scan_composite_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
         exact_prefix: &[Value],
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         let index_fields = self.index_fields(table, index_name)?;
@@ -706,16 +753,7 @@ impl MySqlReadSnapshot {
                 index_name
             )));
         }
-        self.filter_index_documents(
-            table,
-            &index_fields,
-            exact_prefix,
-            start,
-            end,
-            start_inclusive,
-            end_inclusive,
-            check_cancel,
-        )
+        self.filter_index_documents(table, &index_fields, exact_prefix, start, end, check_cancel)
     }
 
     pub fn stream_durable_journal(
@@ -774,16 +812,13 @@ impl MySqlReadSnapshot {
         Ok(index.fields.clone())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn filter_index_documents(
         &self,
         table: &TableName,
         index_fields: &[String],
         exact_prefix: &[Value],
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         let range_field = index_fields.get(exact_prefix.len());
@@ -798,14 +833,7 @@ impl MySqlReadSnapshot {
                 continue;
             }
             if let Some(range_field) = range_field
-                && !document_matches_range_bounds(
-                    document,
-                    range_field,
-                    start,
-                    end,
-                    start_inclusive,
-                    end_inclusive,
-                )?
+                && !document_matches_range_bounds(document, range_field, start, end)?
             {
                 continue;
             }

@@ -1,6 +1,6 @@
 use nimbus_core::{
-    AtomicWrite, Document, FieldTransform, FieldTransformOperation, NumericValue, WriteKey,
-    WriteSetMode,
+    ArrayPopSide, AtomicWrite, BitwiseOperation, Document, FieldTransform, FieldTransformOperation,
+    NumericValue, WriteKey, WriteSetMode,
 };
 
 use super::super::super::error::{BAD_VALUE, MongoError};
@@ -113,14 +113,11 @@ pub(super) fn build_operator_write(
             }
             "$mul" => {
                 for (field, mul_val) in op_doc.iter() {
-                    let multiplier = bson_to_f64(mul_val)?;
-                    let current = current_doc
-                        .and_then(|d| d.get_field(field))
-                        .and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
-                        .unwrap_or(0.0);
-                    let result = current * multiplier;
-                    field_patch.insert(field.to_string(), serde_json::json!(result));
-                    mask.push(field.to_string());
+                    let operand = bson_to_numeric_value(mul_val)?;
+                    transforms.push(FieldTransform {
+                        field: field.to_string(),
+                        transform: FieldTransformOperation::Multiply { operand },
+                    });
                 }
             }
             "$addToSet" => {
@@ -139,21 +136,17 @@ pub(super) fn build_operator_write(
             }
             "$push" => {
                 for (field, push_val) in op_doc.iter() {
-                    let new_elements: Vec<serde_json::Value> =
+                    let values: Vec<serde_json::Value> =
                         match push_val.as_document().and_then(|d| d.get("$each")) {
                             Some(bson::Bson::Array(arr)) => {
                                 arr.iter().map(bson_to_filter_value).collect()
                             }
                             _ => vec![bson_to_filter_value(push_val)],
                         };
-                    let mut current_arr = current_doc
-                        .and_then(|d| d.get_field(field))
-                        .and_then(|v| v.as_array())
-                        .cloned()
-                        .unwrap_or_default();
-                    current_arr.extend(new_elements);
-                    field_patch.insert(field.to_string(), serde_json::Value::Array(current_arr));
-                    mask.push(field.to_string());
+                    transforms.push(FieldTransform {
+                        field: field.to_string(),
+                        transform: FieldTransformOperation::AppendElements { values },
+                    });
                 }
             }
             "$pull" => {
@@ -181,22 +174,21 @@ pub(super) fn build_operator_write(
             }
             "$pop" => {
                 for (field, pop_val) in op_doc.iter() {
-                    let remove_last =
-                        matches!(pop_val, bson::Bson::Int32(1) | bson::Bson::Int64(1));
-                    let mut current_arr = current_doc
-                        .and_then(|d| d.get_field(field))
-                        .and_then(|v| v.as_array())
-                        .cloned()
-                        .unwrap_or_default();
-                    if !current_arr.is_empty() {
-                        if remove_last {
-                            current_arr.pop();
-                        } else {
-                            current_arr.remove(0);
+                    let side = match pop_val {
+                        bson::Bson::Int32(1) | bson::Bson::Int64(1) => ArrayPopSide::Last,
+                        bson::Bson::Int32(-1) | bson::Bson::Int64(-1) => ArrayPopSide::First,
+                        _ => {
+                            return Err(MongoError::Command {
+                                code: BAD_VALUE.code,
+                                code_name: BAD_VALUE.code_name.into(),
+                                message: "$pop requires a value of 1 or -1".into(),
+                            });
                         }
-                    }
-                    field_patch.insert(field.to_string(), serde_json::Value::Array(current_arr));
-                    mask.push(field.to_string());
+                    };
+                    transforms.push(FieldTransform {
+                        field: field.to_string(),
+                        transform: FieldTransformOperation::PopArray { side },
+                    });
                 }
             }
             "$bit" => {
@@ -206,26 +198,25 @@ pub(super) fn build_operator_write(
                         code_name: BAD_VALUE.code_name.into(),
                         message: "$bit requires a document value".into(),
                     })?;
-                    let current = current_doc
-                        .and_then(|d| d.get_field(field))
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(0);
-                    let mut result = current;
                     for (bit_op, bit_operand) in bit_doc.iter() {
-                        let operand = match bit_operand {
-                            bson::Bson::Int32(n) => *n as i64,
-                            bson::Bson::Int64(n) => *n,
-                            _ => 0,
+                        let operand = bson_to_i64(bit_operand, "$bit requires integer operands")?;
+                        let operation = match bit_op.as_str() {
+                            "and" => BitwiseOperation::And,
+                            "or" => BitwiseOperation::Or,
+                            "xor" => BitwiseOperation::Xor,
+                            _ => {
+                                return Err(MongoError::Command {
+                                    code: BAD_VALUE.code,
+                                    code_name: BAD_VALUE.code_name.into(),
+                                    message: format!("unsupported $bit operator: {bit_op}"),
+                                });
+                            }
                         };
-                        result = match bit_op.as_str() {
-                            "and" => result & operand,
-                            "or" => result | operand,
-                            "xor" => result ^ operand,
-                            _ => result,
-                        };
+                        transforms.push(FieldTransform {
+                            field: field.to_string(),
+                            transform: FieldTransformOperation::Bitwise { operation, operand },
+                        });
                     }
-                    field_patch.insert(field.to_string(), serde_json::json!(result));
-                    mask.push(field.to_string());
                 }
             }
             other => {
@@ -263,28 +254,32 @@ pub(super) fn build_operator_write(
     }
 }
 
-pub(super) fn bson_to_f64(value: &bson::Bson) -> Result<f64, MongoError> {
-    match value {
-        bson::Bson::Int32(n) => Ok(*n as f64),
-        bson::Bson::Int64(n) => Ok(*n as f64),
-        bson::Bson::Double(f) => Ok(*f),
-        _ => Err(MongoError::Command {
-            code: BAD_VALUE.code,
-            code_name: BAD_VALUE.code_name.into(),
-            message: "$mul requires a numeric value".into(),
-        }),
-    }
-}
-
 pub(super) fn bson_to_numeric_value(value: &bson::Bson) -> Result<NumericValue, MongoError> {
     match value {
         bson::Bson::Int32(n) => Ok(NumericValue::Integer { value: *n as i64 }),
         bson::Bson::Int64(n) => Ok(NumericValue::Integer { value: *n }),
-        bson::Bson::Double(f) => Ok(NumericValue::Double { value: *f }),
+        bson::Bson::Double(f) if f.is_finite() => Ok(NumericValue::Double { value: *f }),
+        bson::Bson::Double(_) => Err(MongoError::Command {
+            code: BAD_VALUE.code,
+            code_name: BAD_VALUE.code_name.into(),
+            message: "numeric update operator requires a finite numeric value".into(),
+        }),
         _ => Err(MongoError::Command {
             code: BAD_VALUE.code,
             code_name: BAD_VALUE.code_name.into(),
             message: "numeric update operator requires a numeric value".into(),
+        }),
+    }
+}
+
+fn bson_to_i64(value: &bson::Bson, message: &str) -> Result<i64, MongoError> {
+    match value {
+        bson::Bson::Int32(n) => Ok(*n as i64),
+        bson::Bson::Int64(n) => Ok(*n),
+        _ => Err(MongoError::Command {
+            code: BAD_VALUE.code,
+            code_name: BAD_VALUE.code_name.into(),
+            message: message.to_string(),
         }),
     }
 }

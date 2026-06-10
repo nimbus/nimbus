@@ -5,13 +5,13 @@ use std::time::Instant;
 use nimbus_core::{
     CommitEntry, PrincipalContext, Query, SequenceNumber, SubscriptionResultSnapshot,
 };
-use tokio::sync::mpsc;
 
 use crate::engine::evaluate_with_index_cancellable_for_principal;
 use crate::tenant::TenantRuntime;
 
 use super::dependencies::subscription_dependencies;
 use super::queue::QueuedSubscriptionWork;
+use super::registry::SubscriptionPublishResult;
 
 /// A subscription event emitted by the engine.
 #[derive(Debug, Clone)]
@@ -36,28 +36,12 @@ pub(super) struct SubscriptionDelivery {
     pub(super) id: u64,
     pub(super) query: Query,
     pub(super) principal: PrincipalContext,
-    pub(super) sender: mpsc::Sender<SubscriptionUpdate>,
     pub(super) last_delivered_sequence: Arc<AtomicU64>,
 }
 
 impl SubscriptionDelivery {
     pub(super) fn is_stale_for_sequence(&self, sequence: SequenceNumber) -> bool {
         self.last_delivered_sequence.load(Ordering::Acquire) >= sequence.0
-    }
-
-    pub(super) fn mark_delivered(&self, sequence: SequenceNumber) {
-        let mut current = self.last_delivered_sequence.load(Ordering::Acquire);
-        while current < sequence.0 {
-            match self.last_delivered_sequence.compare_exchange_weak(
-                current,
-                sequence.0,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => break,
-                Err(observed) => current = observed,
-            }
-        }
     }
 }
 
@@ -125,12 +109,20 @@ pub(crate) fn dispatch_subscription_work(
                     snapshot,
                     commit_hint: work.commit.clone(),
                 };
-                if subscription.sender.try_send(update).is_ok() {
-                    runtime
-                        .subscriptions
-                        .record_delivery(subscription.id, sequence, dependencies);
-                } else {
-                    runtime.subscriptions.remove(subscription.id);
+                #[cfg(test)]
+                runtime
+                    .subscriptions
+                    .wait_before_delivery_publish_for_testing(sequence);
+                if matches!(
+                    runtime.subscriptions.publish_delivery_update(
+                        subscription.id,
+                        sequence,
+                        update,
+                        Some(dependencies)
+                    ),
+                    SubscriptionPublishResult::Stale
+                ) {
+                    stats.coalesced_work_count += 1;
                 }
             }
             Err(error) => {
@@ -139,18 +131,24 @@ pub(crate) fn dispatch_subscription_work(
                     error = %error,
                     "subscription re-evaluation failed"
                 );
-                if subscription
-                    .sender
-                    .try_send(SubscriptionUpdate::Error {
-                        subscription_id: subscription.id,
-                        request_id: None,
-                        message: error.to_string(),
-                    })
-                    .is_ok()
-                {
-                    subscription.mark_delivered(sequence);
-                } else {
-                    runtime.subscriptions.remove(subscription.id);
+                #[cfg(test)]
+                runtime
+                    .subscriptions
+                    .wait_before_delivery_publish_for_testing(sequence);
+                if matches!(
+                    runtime.subscriptions.publish_delivery_update(
+                        subscription.id,
+                        sequence,
+                        SubscriptionUpdate::Error {
+                            subscription_id: subscription.id,
+                            request_id: None,
+                            message: error.to_string(),
+                        },
+                        None,
+                    ),
+                    SubscriptionPublishResult::Stale
+                ) {
+                    stats.coalesced_work_count += 1;
                 }
             }
         }

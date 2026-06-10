@@ -808,7 +808,13 @@ fn handle_whiteout(rootfs_path: &Path, relative_path: &Path) -> Result<bool> {
 }
 
 fn clear_directory_contents(path: &Path) -> Result<()> {
-    if !path.is_dir() {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if metadata.file_type().is_symlink() {
+        return remove_path_if_exists(path);
+    }
+    if !metadata.is_dir() {
         return Ok(());
     }
     for entry in fs::read_dir(path).map_err(|error| SandboxError::OperationFailed {
@@ -845,8 +851,10 @@ fn remove_path_if_exists(path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::io::{Cursor, Read, Write};
     use std::net::TcpListener;
+    use std::path::{Path, PathBuf};
     use std::thread;
 
     use flate2::Compression;
@@ -854,7 +862,7 @@ mod tests {
     use sha2::{Digest, Sha256};
     use tempfile::TempDir;
 
-    use super::{OciImageMaterializer, current_oci_architectures};
+    use super::{OciImageMaterializer, apply_layer_archive, current_oci_architectures};
     use crate::backends::oci::buildah::OciExposedPortProtocol;
     use crate::instance::SandboxId;
     use crate::spec::SandboxProcessSpec;
@@ -921,26 +929,122 @@ mod tests {
         );
     }
 
+    #[test]
+    fn materializer_rejects_parent_directory_layer_paths() {
+        let temp_dir = TempDir::new().expect("tempdir should build");
+        let rootfs = temp_dir.path().join("rootfs");
+        let outside = temp_dir.path().join("escape.txt");
+        fs::create_dir(&rootfs).expect("rootfs should create");
+        let layer_path = write_layer_file(
+            &temp_dir,
+            "parent-escape.tar.gz",
+            build_raw_layer_archive_file("../escape.txt", b"escaped", 0o644),
+        );
+
+        let error = apply_layer_archive(&layer_path, &rootfs)
+            .expect_err("parent-directory layer path should be rejected");
+
+        assert!(
+            error.to_string().contains("escapes the target rootfs"),
+            "escape-path error should name the confinement violation: {error}"
+        );
+        assert!(
+            !outside.exists(),
+            "rejected parent-directory layer must not write outside rootfs"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn materializer_symlink_write_through_layer_does_not_write_outside_rootfs() {
+        let temp_dir = TempDir::new().expect("tempdir should build");
+        let rootfs = temp_dir.path().join("rootfs");
+        let outside = temp_dir.path().join("outside");
+        fs::create_dir(&rootfs).expect("rootfs should create");
+        fs::create_dir(&outside).expect("outside dir should create");
+        let layer_path = write_layer_file(
+            &temp_dir,
+            "symlink-write-through.tar.gz",
+            build_layer_archive_with_entries(|builder| {
+                write_tar_symlink(builder, "evil", &outside);
+                write_tar_file(builder, "evil/escaped.txt", b"escaped", 0o644);
+            }),
+        );
+
+        let _ = apply_layer_archive(&layer_path, &rootfs);
+
+        assert!(
+            !outside.join("escaped.txt").exists(),
+            "symlink write-through layer must not write through to the host path"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn materializer_opaque_whiteout_removes_symlink_parent_without_following_it() {
+        let temp_dir = TempDir::new().expect("tempdir should build");
+        let rootfs = temp_dir.path().join("rootfs");
+        let outside = temp_dir.path().join("outside");
+        fs::create_dir(&rootfs).expect("rootfs should create");
+        fs::create_dir(&outside).expect("outside dir should create");
+        fs::write(outside.join("keep.txt"), b"keep").expect("outside sentinel should write");
+        std::os::unix::fs::symlink(&outside, rootfs.join("evil"))
+            .expect("symlinked parent should create");
+        let layer_path = write_layer_file(
+            &temp_dir,
+            "opaque-whiteout-symlink.tar.gz",
+            build_layer_archive_with_entries(|builder| {
+                write_tar_file(builder, "evil/.wh..wh..opq", b"", 0o000);
+            }),
+        );
+
+        apply_layer_archive(&layer_path, &rootfs)
+            .expect("opaque whiteout over symlink parent should be handled safely");
+
+        assert!(
+            fs::symlink_metadata(rootfs.join("evil")).is_err(),
+            "opaque whiteout should remove the symlink itself"
+        );
+        assert!(
+            outside.join("keep.txt").is_file(),
+            "opaque whiteout must not follow the symlink and clear the host directory"
+        );
+    }
+
     fn build_layer_archive() -> Vec<u8> {
+        build_layer_archive_with_entries(|builder| {
+            write_tar_file(
+                builder,
+                "etc/passwd",
+                b"demo:x:1000:1000:demo:/home/demo:/bin/sh\n",
+                0o644,
+            );
+            write_tar_file(builder, "etc/group", b"demo:x:1000:\n", 0o644);
+            write_tar_file(
+                builder,
+                "usr/bin/demo",
+                b"#!/bin/sh\nexec sleep 60\n",
+                0o755,
+            );
+        })
+    }
+
+    fn build_layer_archive_with_entries(
+        write_entries: impl FnOnce(&mut tar::Builder<GzEncoder<Vec<u8>>>),
+    ) -> Vec<u8> {
         let encoder = GzEncoder::new(Vec::new(), Compression::default());
         let mut builder = tar::Builder::new(encoder);
 
-        write_tar_file(
-            &mut builder,
-            "etc/passwd",
-            b"demo:x:1000:1000:demo:/home/demo:/bin/sh\n",
-            0o644,
-        );
-        write_tar_file(&mut builder, "etc/group", b"demo:x:1000:\n", 0o644);
-        write_tar_file(
-            &mut builder,
-            "usr/bin/demo",
-            b"#!/bin/sh\nexec sleep 60\n",
-            0o755,
-        );
+        write_entries(&mut builder);
 
         let encoder = builder.into_inner().expect("tar encoder should finish");
         encoder.finish().expect("gzip layer should finish")
+    }
+
+    fn write_layer_file(temp_dir: &TempDir, name: &str, body: Vec<u8>) -> PathBuf {
+        let path = temp_dir.path().join(name);
+        fs::write(&path, body).expect("layer archive should write");
+        path
     }
 
     fn write_tar_file(
@@ -956,6 +1060,66 @@ mod tests {
         builder
             .append_data(&mut header, path, Cursor::new(body))
             .expect("layer entry should append");
+    }
+
+    #[cfg(unix)]
+    fn write_tar_symlink(
+        builder: &mut tar::Builder<GzEncoder<Vec<u8>>>,
+        path: &str,
+        target: &Path,
+    ) {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_mode(0o777);
+        header.set_size(0);
+        header
+            .set_link_name(target)
+            .expect("symlink target should encode");
+        header.set_cksum();
+        builder
+            .append_data(&mut header, path, Cursor::new(Vec::<u8>::new()))
+            .expect("symlink layer entry should append");
+    }
+
+    fn build_raw_layer_archive_file(path: &str, body: &[u8], mode: u32) -> Vec<u8> {
+        let mut archive = Vec::new();
+        append_raw_tar_file(&mut archive, path, body, mode);
+        archive.extend([0_u8; 1024]);
+
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder
+            .write_all(&archive)
+            .expect("raw tar archive should gzip");
+        encoder.finish().expect("raw gzip layer should finish")
+    }
+
+    fn append_raw_tar_file(archive: &mut Vec<u8>, path: &str, body: &[u8], mode: u32) {
+        let path = path.as_bytes();
+        assert!(path.len() <= 100, "test fixture path must fit tar header");
+        let mut header = [0_u8; 512];
+        header[..path.len()].copy_from_slice(path);
+        write_octal(&mut header[100..108], u64::from(mode));
+        write_octal(&mut header[108..116], 0);
+        write_octal(&mut header[116..124], 0);
+        write_octal(&mut header[124..136], body.len() as u64);
+        write_octal(&mut header[136..148], 0);
+        header[148..156].fill(b' ');
+        header[156] = b'0';
+        header[257..263].copy_from_slice(b"ustar\0");
+        header[263..265].copy_from_slice(b"00");
+        let checksum = header.iter().map(|byte| u64::from(*byte)).sum();
+        write_octal(&mut header[148..156], checksum);
+
+        archive.extend_from_slice(&header);
+        archive.extend_from_slice(body);
+        let padding = (512 - (body.len() % 512)) % 512;
+        archive.resize(archive.len() + padding, 0);
+    }
+
+    fn write_octal(field: &mut [u8], value: u64) {
+        field.fill(0);
+        let rendered = format!("{value:0width$o}", width = field.len() - 1);
+        field[..rendered.len()].copy_from_slice(rendered.as_bytes());
     }
 
     fn serve_fake_oci_registry(layer_body: Vec<u8>) -> String {

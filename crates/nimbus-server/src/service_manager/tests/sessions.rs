@@ -2,7 +2,7 @@ use super::*;
 #[tokio::test]
 async fn session_routes_open_service_sessions_with_target_snapshot_and_audit() {
     let temp = tempfile::tempdir().expect("tempdir should create");
-    let (local_server_security, _token) = local_server_security(temp.path());
+    let (local_server_security, token) = local_server_security(temp.path());
     let audit_log_path = local_server_security.paths().audit_log_path.clone();
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
     let backend = Arc::new(ReadySandboxBackend {
@@ -76,6 +76,33 @@ async fn session_routes_open_service_sessions_with_target_snapshot_and_audit() {
         .await
         .expect("session get should send");
     assert_eq!(get.status(), StatusCode::OK);
+
+    let operator_missing_tenant = server
+        .client()
+        .get(server.http_url(&format!("/api/sessions/{session_id}")))
+        .bearer_auth(&token.token)
+        .send()
+        .await
+        .expect("operator session get without tenantId should send");
+    assert_eq!(operator_missing_tenant.status(), StatusCode::BAD_REQUEST);
+
+    let operator_wrong_tenant = server
+        .client()
+        .get(server.http_url(&format!("/api/sessions/{session_id}?tenantId=tenantb")))
+        .bearer_auth(&token.token)
+        .send()
+        .await
+        .expect("operator wrong-tenant session get should send");
+    assert_eq!(operator_wrong_tenant.status(), StatusCode::NOT_FOUND);
+
+    let operator_get = server
+        .client()
+        .get(server.http_url(&format!("/api/sessions/{session_id}?tenantId=tenanta")))
+        .bearer_auth(&token.token)
+        .send()
+        .await
+        .expect("operator session get with tenantId should send");
+    assert_eq!(operator_get.status(), StatusCode::OK);
 
     let unauthenticated_existing = server
         .client()
@@ -239,6 +266,31 @@ async fn session_routes_open_service_sessions_with_target_snapshot_and_audit() {
         .await
         .expect("service-scoped session get should send");
     assert_eq!(service_scoped_get.status(), StatusCode::OK);
+
+    let operator_close_missing_tenant = server
+        .client()
+        .post(server.http_url(&format!("/api/sessions/{service_scoped_session_id}/close")))
+        .bearer_auth(&token.token)
+        .json(&json!({ "reason": "operator_missing_tenant" }))
+        .send()
+        .await
+        .expect("operator session close without tenantId should send");
+    assert_eq!(
+        operator_close_missing_tenant.status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let operator_close_wrong_tenant = server
+        .client()
+        .post(server.http_url(&format!(
+            "/api/sessions/{service_scoped_session_id}/close?tenantId=tenantb"
+        )))
+        .bearer_auth(&token.token)
+        .json(&json!({ "reason": "operator_wrong_tenant" }))
+        .send()
+        .await
+        .expect("operator wrong-tenant session close should send");
+    assert_eq!(operator_close_wrong_tenant.status(), StatusCode::NOT_FOUND);
 
     let service_scoped_close = server
         .client()

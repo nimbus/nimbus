@@ -40,7 +40,7 @@ impl TenantReadStorage for PostgresTenantStorage {
             .clone()
             .acquire_owned()
             .await
-            .map_err(map_permit_error)?;
+            .map_err(|error| map_executor_permit_error(POSTGRES_EXECUTOR_CONTEXT, error))?;
         let store = self.store.clone();
         self.runtime_handle
             .spawn_blocking(move || {
@@ -48,7 +48,7 @@ impl TenantReadStorage for PostgresTenantStorage {
                 task(store)
             })
             .await
-            .map_err(map_join_error)?
+            .map_err(|error| map_executor_join_error(POSTGRES_EXECUTOR_CONTEXT, error))?
     }
 
     async fn execute_cancellable<T, Fut, Check, F>(
@@ -69,7 +69,8 @@ impl TenantReadStorage for PostgresTenantStorage {
 
         let permit = tokio::select! {
             _ = &mut cancel_wait => return Err(Error::Cancelled),
-            permit = self.permits.clone().acquire_owned() => permit.map_err(map_permit_error)?,
+            permit = self.permits.clone().acquire_owned() => permit
+                .map_err(|error| map_executor_permit_error(POSTGRES_EXECUTOR_CONTEXT, error))?,
         };
 
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -89,10 +90,10 @@ impl TenantReadStorage for PostgresTenantStorage {
         tokio::select! {
             _ = &mut cancel_wait => {
                 cancelled.store(true, AtomicOrdering::SeqCst);
-                handle.abort();
                 Err(Error::Cancelled)
             }
-            result = &mut handle => result.map_err(map_join_error)?,
+            result = &mut handle => result
+                .map_err(|error| map_executor_join_error(POSTGRES_EXECUTOR_CONTEXT, error))?,
         }
     }
 }
@@ -145,7 +146,7 @@ impl PostgresBlockingWriteExecutor {
             .clone()
             .acquire_owned()
             .await
-            .map_err(map_permit_error)?;
+            .map_err(|error| map_executor_permit_error(POSTGRES_EXECUTOR_CONTEXT, error))?;
         let store = self.store.clone();
         self.runtime_handle
             .spawn_blocking(move || {
@@ -153,7 +154,7 @@ impl PostgresBlockingWriteExecutor {
                 store.execute_write(task)
             })
             .await
-            .map_err(map_join_error)?
+            .map_err(|error| map_executor_join_error(POSTGRES_EXECUTOR_CONTEXT, error))?
     }
 
     async fn execute_write_cancellable<T, Fut, Check, F>(
@@ -172,7 +173,8 @@ impl PostgresBlockingWriteExecutor {
 
         let permit = tokio::select! {
             _ = &mut cancel_wait => return Ok(TenantWriteOutcome::CancelledBeforeCommit),
-            permit = self.permits.clone().acquire_owned() => permit.map_err(map_permit_error)?,
+            permit = self.permits.clone().acquire_owned() => permit
+                .map_err(|error| map_executor_permit_error(POSTGRES_EXECUTOR_CONTEXT, error))?,
         };
 
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -192,10 +194,12 @@ impl PostgresBlockingWriteExecutor {
         });
 
         tokio::select! {
-            result = &mut handle => map_write_result(result.map_err(map_join_error)?),
+            result = &mut handle => map_write_result(result
+                .map_err(|error| map_executor_join_error(POSTGRES_EXECUTOR_CONTEXT, error))?),
             _ = &mut cancel_wait => {
                 cancelled.store(true, AtomicOrdering::SeqCst);
-                map_write_result(handle.await.map_err(map_join_error)?)
+                map_write_result(handle.await
+                    .map_err(|error| map_executor_join_error(POSTGRES_EXECUTOR_CONTEXT, error))?)
             }
         }
     }

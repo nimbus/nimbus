@@ -1,6 +1,32 @@
 use super::support::*;
 use super::*;
 
+#[cfg(windows)]
+fn synthetic_runtime_exec_path() -> &'static str {
+    r"C:\nimbus\runtime\node.exe"
+}
+
+#[cfg(not(windows))]
+fn synthetic_runtime_exec_path() -> &'static str {
+    "/nimbus/runtime/node"
+}
+
+fn expected_self_exec_path(bundle_path: &std::path::Path) -> String {
+    let current_exec = std::env::current_exe().expect("current executable path should resolve");
+    let exec_name = current_exec
+        .file_name()
+        .expect("current executable should have a file name");
+    bundle_path
+        .parent()
+        .expect("bundle should have a generated root")
+        .canonicalize()
+        .expect("generated root should canonicalize")
+        .join("bin")
+        .join(exec_name)
+        .display()
+        .to_string()
+}
+
 #[tokio::test]
 async fn node22_target_exposes_minimal_node_globals() {
     let _guard = acquire_basic_invocation_suite_lock().await;
@@ -63,12 +89,160 @@ export {};
             "moduleVersion": "127",
             "releaseName": "node",
             "releaseLts": "Jod",
-            "processExecPath": std::env::current_exe().expect("current executable path should resolve").display().to_string(),
+            "processExecPath": synthetic_runtime_exec_path(),
             "stdoutType": "object",
             "stdoutWriteType": "function",
             "stderrType": "object",
             "stderrWriteType": "function",
         })
+    );
+}
+
+#[tokio::test]
+async fn node22_exec_path_uses_synthetic_path_without_run_grant() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(
+        r#"
+globalThis.__nimbusInvoke = function () {
+  return {
+    execPath: process.execPath,
+    denoExecPath: Deno.execPath(),
+  };
+};
+
+export {};
+"#,
+    );
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+    );
+    let result = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:list".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect("bundle should execute");
+
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "execPath": synthetic_runtime_exec_path(),
+            "denoExecPath": synthetic_runtime_exec_path(),
+        })
+    );
+    assert_ne!(
+        result["execPath"],
+        serde_json::json!(
+            std::env::current_exe()
+                .expect("current executable path should resolve")
+                .display()
+                .to_string()
+        )
+    );
+}
+
+#[tokio::test]
+async fn node22_self_exec_grant_exposes_staged_exec_path() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(
+        r#"
+globalThis.__nimbusInvoke = function () {
+  return {
+    execPath: process.execPath,
+    denoExecPath: Deno.execPath(),
+  };
+};
+
+export {};
+"#,
+    );
+    let expected_exec_path = expected_self_exec_path(&bundle_path);
+
+    let mut limits = RuntimeLimits::application_node22();
+    limits.grants.run = vec!["$runtime_self_exec".to_string()];
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        Arc::new(RuntimePolicy::new(limits)),
+    );
+    let result = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:list".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect("bundle should execute");
+
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "execPath": expected_exec_path,
+            "denoExecPath": expected_exec_path,
+        })
+    );
+}
+
+#[tokio::test]
+async fn node22_host_exec_grant_is_required_to_expose_host_exec_path() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(
+        r#"
+globalThis.__nimbusInvoke = function () {
+  return process.execPath;
+};
+
+export {};
+"#,
+    );
+
+    let mut limits = RuntimeLimits::application_node22();
+    limits.grants.run = vec!["$runtime_host_exec".to_string()];
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        Arc::new(RuntimePolicy::new(limits)),
+    );
+    let result = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:list".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect("bundle should execute");
+
+    assert_eq!(
+        result,
+        serde_json::json!(
+            std::env::current_exe()
+                .expect("current executable path should resolve")
+                .display()
+                .to_string()
+        )
     );
 }
 

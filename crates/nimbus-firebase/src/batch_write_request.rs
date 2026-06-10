@@ -73,8 +73,6 @@ struct BatchWriteRequestJson {
     database: String,
     #[serde(default)]
     writes: Vec<Value>,
-    #[serde(default)]
-    _labels: std::collections::HashMap<String, String>,
 }
 
 fn invalid_request(message: impl Into<String>) -> FirestoreBatchWriteRequestError {
@@ -105,9 +103,7 @@ mod tests {
                     }
                 }
             }],
-            "labels": {
-                "sdk": "web"
-            }
+            "labels": "ignored request metadata"
         });
 
         let parsed = parse_batch_write_request_with_resolver(&request, resolve_write_key)

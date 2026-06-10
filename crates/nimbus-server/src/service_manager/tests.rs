@@ -491,11 +491,13 @@ impl ApplicationAuthVerifier for StaticServiceRouteAuthVerifier {
                     &["browser"],
                     &["open", "list", "get", "close"],
                     &["cdp", "page"],
-                    json!({
-                        "kind": "service",
-                        "name": "browser",
-                    }),
-                    false,
+                    SessionRouteScopeOptions {
+                        scope: json!({
+                            "kind": "service",
+                            "name": "browser",
+                        }),
+                        include_sandbox_reach: false,
+                    },
                 )),
                 "tenant-b-browser-session" => Ok(session_route_auth(
                     token,
@@ -549,11 +551,13 @@ impl ApplicationAuthVerifier for StaticServiceRouteAuthVerifier {
                     &[],
                     &["list", "get", "close"],
                     &["stdio", "files"],
-                    json!({
-                        "kind": "sandbox",
-                        "id": "sandbox-tenanta-task",
-                    }),
-                    true,
+                    SessionRouteScopeOptions {
+                        scope: json!({
+                            "kind": "sandbox",
+                            "id": "sandbox-tenanta-task",
+                        }),
+                        include_sandbox_reach: true,
+                    },
                 )),
                 "tenant-a-operator-db" => Ok(service_route_auth(
                     token,
@@ -662,11 +666,18 @@ fn session_route_auth(
         service_grants,
         session_actions,
         channels,
-        json!({
-            "kind": "tenant",
-        }),
-        include_sandbox_reach,
+        SessionRouteScopeOptions {
+            scope: json!({
+                "kind": "tenant",
+            }),
+            include_sandbox_reach,
+        },
     )
+}
+
+struct SessionRouteScopeOptions {
+    scope: Value,
+    include_sandbox_reach: bool,
 }
 
 fn session_route_auth_with_scope(
@@ -676,8 +687,7 @@ fn session_route_auth_with_scope(
     service_grants: &[&str],
     session_actions: &[&str],
     channels: &[&str],
-    scope: Value,
-    include_sandbox_reach: bool,
+    options: SessionRouteScopeOptions,
 ) -> InvocationAuth {
     let mut claims = service_route_claims(tenant_id, principal_class, service_grants);
     claims.insert(
@@ -685,10 +695,10 @@ fn session_route_auth_with_scope(
         json!([{
             "actions": session_actions,
             "channels": channels,
-            "scope": scope,
+            "scope": options.scope,
         }]),
     );
-    if include_sandbox_reach {
+    if options.include_sandbox_reach {
         claims.insert(
             "nimbus_sandbox_permissions".to_string(),
             json!([{

@@ -119,6 +119,7 @@ impl CloudFunctionsTriggerExecutor {
                 record.event.execution.principal().clone(),
                 Some(server_request_id.clone()),
                 InvocationKind::Mutation,
+                target.entrypoint.clone(),
             )
             .with_trigger_write_origin(nimbus_core::TriggerWriteOrigin::new(
                 record.key.clone(),

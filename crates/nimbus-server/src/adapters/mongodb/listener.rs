@@ -12,15 +12,20 @@ use nimbus_mongodb::connection::{ConnectionState, next_request_id};
 use nimbus_mongodb::error::MongoError;
 use nimbus_mongodb::wire::{self, WireError};
 
-pub async fn run_listener(listener: TcpListener, engine: Arc<Engine>) {
-    run_listener_with_auth(listener, engine, Arc::new(AuthConfig::default())).await;
+pub(crate) fn guard_listener_is_loopback_only(addr: SocketAddr) -> std::io::Result<()> {
+    if !addr.ip().is_loopback() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "MongoDB listener refuses to bind non-loopback address {addr}; bind to loopback \
+                 and require explicit SCRAM credentials"
+            ),
+        ));
+    }
+    Ok(())
 }
 
-pub async fn run_listener_with_auth(
-    listener: TcpListener,
-    engine: Arc<Engine>,
-    auth: Arc<AuthConfig>,
-) {
+pub async fn run_listener(listener: TcpListener, engine: Arc<Engine>, auth: Arc<AuthConfig>) {
     let local_addr = listener.local_addr().ok();
     info!("MongoDB listener started on {:?}", local_addr);
 
@@ -152,7 +157,11 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        tokio::spawn(run_listener(listener, fixture.engine()));
+        tokio::spawn(run_listener(
+            listener,
+            fixture.engine(),
+            Arc::new(AuthConfig::new("test-user".into(), "test-password".into())),
+        ));
 
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         let msg = make_op_msg_from_doc(1, &bson::doc! { "ping": 1 });
@@ -164,21 +173,41 @@ mod tests {
         assert_eq!(doc.get_f64("ok").unwrap(), 1.0);
     }
 
+    #[test]
+    fn listener_rejects_non_loopback_bind_address() {
+        let addr: SocketAddr = "0.0.0.0:27017".parse().unwrap();
+        let error = guard_listener_is_loopback_only(addr)
+            .expect_err("network-reachable MongoDB listener must be refused");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("non-loopback"));
+    }
+
     #[tokio::test]
-    async fn listener_rejects_unknown_command() {
+    async fn listener_rejects_unauthenticated_data_command() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        tokio::spawn(run_listener(listener, fixture.engine()));
+        tokio::spawn(run_listener(
+            listener,
+            fixture.engine(),
+            Arc::new(AuthConfig::new("test-user".into(), "test-password".into())),
+        ));
 
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-        let msg = make_op_msg_from_doc(2, &bson::doc! { "foobar": 1 });
+        let msg = make_op_msg_from_doc(
+            2,
+            &bson::doc! {
+                "insert": "users",
+                "$db": "testdb",
+                "documents": [{ "_id": "blocked" }],
+            },
+        );
         stream.write_all(&msg).await.unwrap();
 
         let (_, _, doc) = read_response(&mut stream).await;
         assert_eq!(doc.get_f64("ok").unwrap(), 0.0);
-        assert_eq!(doc.get_str("codeName").unwrap(), "CommandNotFound");
+        assert_eq!(doc.get_str("codeName").unwrap(), "Unauthorized");
     }
 
     #[tokio::test]
@@ -187,7 +216,11 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        tokio::spawn(run_listener(listener, fixture.engine()));
+        tokio::spawn(run_listener(
+            listener,
+            fixture.engine(),
+            Arc::new(AuthConfig::new("test-user".into(), "test-password".into())),
+        ));
 
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         stream.write_all(&make_legacy_insert_msg()).await.unwrap();

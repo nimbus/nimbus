@@ -338,7 +338,7 @@ fn parse_machine_name(value: String) -> Result<String, AppError> {
 fn describe_image_source(source: &MachineImageSource) -> String {
     match source {
         MachineImageSource::OciReference { reference } => reference.clone(),
-        MachineImageSource::HttpUrl { url } => url.clone(),
+        MachineImageSource::HttpUrl { url, sha256 } => format!("{url}#sha256={sha256}"),
         MachineImageSource::LocalDisk { path } => path.display().to_string(),
     }
 }

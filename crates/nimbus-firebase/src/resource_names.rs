@@ -14,6 +14,15 @@ pub struct FirestoreDatabaseName {
     pub project_id: String,
 }
 
+impl FirestoreDatabaseName {
+    pub fn canonical_resource_name(&self) -> String {
+        format!(
+            "projects/{}/databases/{DEFAULT_DATABASE_ID}",
+            self.project_id
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FirestoreDocumentName {
     pub database: FirestoreDatabaseName,
@@ -42,11 +51,41 @@ pub enum FirestoreResourceNameError {
     UnsupportedDatabase(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("Firestore database `{actual}` does not match request database `{expected}`")]
+pub struct FirestoreDatabaseMatchError {
+    expected: String,
+    actual: String,
+}
+
+impl FirestoreDatabaseMatchError {
+    pub fn expected(&self) -> &str {
+        &self.expected
+    }
+
+    pub fn actual(&self) -> &str {
+        &self.actual
+    }
+}
+
 pub fn parse_database_name(
     resource_name: &str,
 ) -> Result<FirestoreDatabaseName, FirestoreResourceNameError> {
     let segments = split_resource_name(resource_name, "database resource name")?;
     parse_database_segments(&segments, "database resource name")
+}
+
+pub fn ensure_database_match(
+    expected: &FirestoreDatabaseName,
+    actual: &FirestoreDatabaseName,
+) -> Result<(), FirestoreDatabaseMatchError> {
+    if expected == actual {
+        return Ok(());
+    }
+    Err(FirestoreDatabaseMatchError {
+        expected: expected.canonical_resource_name(),
+        actual: actual.canonical_resource_name(),
+    })
 }
 
 pub fn parse_document_name(
@@ -303,6 +342,20 @@ mod tests {
             FirestoreResourceNameError::UnsupportedDatabase(database_id)
                 if database_id == "custom"
         ));
+    }
+
+    #[test]
+    fn ensure_database_match_reports_expected_and_actual_database_names() {
+        let expected = parse_database_name("projects/demo/databases/(default)")
+            .expect("expected database should parse");
+        let actual = parse_database_name("projects/other/databases/(default)")
+            .expect("actual database should parse");
+
+        let error = ensure_database_match(&expected, &actual)
+            .expect_err("different Firestore databases should not match");
+
+        assert_eq!(error.expected(), "projects/demo/databases/(default)");
+        assert_eq!(error.actual(), "projects/other/databases/(default)");
     }
 
     #[test]

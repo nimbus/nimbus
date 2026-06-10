@@ -9,14 +9,21 @@
 //! listening), and complete only when the `JobRemoved` signal whose `job`
 //! object path matches ours arrives — classifying its `result`.
 
+use std::future::Future;
+use std::time::Duration;
+
 use futures::StreamExt;
 use nimbus_core::{Error, Result};
+use tokio::time;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 use zbus_systemd::systemd1::ManagerProxy;
 
 use super::map_zbus;
 
+pub(crate) const DEFAULT_SYSTEMD_JOB_COMPLETION_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Classified outcome of a systemd job, from the `JobRemoved` `result` string.
+#[derive(Debug)]
 pub(crate) enum JobOutcome {
     /// `"done"` — the job completed and the unit reached its target state.
     Done,
@@ -62,6 +69,7 @@ pub(crate) async fn start_transient_unit_and_wait(
     name: String,
     mode: String,
     properties: Vec<(String, OwnedValue)>,
+    job_completion_timeout: Duration,
 ) -> Result<(OwnedObjectPath, JobOutcome)> {
     ensure_subscribed(manager).await?;
     let mut job_removed = manager.receive_job_removed().await.map_err(map_zbus)?;
@@ -69,7 +77,8 @@ pub(crate) async fn start_transient_unit_and_wait(
         .start_transient_unit(name, mode, properties, Vec::new())
         .await
         .map_err(map_zbus)?;
-    let outcome = wait_for_job(&mut job_removed, &job_path, "start").await?;
+    let outcome =
+        wait_for_job(&mut job_removed, &job_path, "start", job_completion_timeout).await?;
     Ok((job_path, outcome))
 }
 
@@ -78,16 +87,43 @@ pub(crate) async fn stop_unit_and_wait(
     manager: &ManagerProxy<'_>,
     name: String,
     mode: String,
+    job_completion_timeout: Duration,
 ) -> Result<(OwnedObjectPath, JobOutcome)> {
     ensure_subscribed(manager).await?;
     let mut job_removed = manager.receive_job_removed().await.map_err(map_zbus)?;
     let job_path = manager.stop_unit(name, mode).await.map_err(map_zbus)?;
-    let outcome = wait_for_job(&mut job_removed, &job_path, "stop").await?;
+    let outcome = wait_for_job(&mut job_removed, &job_path, "stop", job_completion_timeout).await?;
     Ok((job_path, outcome))
 }
 
 /// Drain `JobRemoved` signals until the one for `job_path` arrives.
 async fn wait_for_job(
+    job_removed: &mut zbus_systemd::systemd1::JobRemovedStream,
+    job_path: &OwnedObjectPath,
+    phase: &str,
+    job_completion_timeout: Duration,
+) -> Result<JobOutcome> {
+    wait_for_job_result_with_timeout(
+        job_path,
+        phase,
+        job_completion_timeout,
+        drain_job_removed(job_removed, job_path, phase),
+    )
+    .await
+}
+
+async fn wait_for_job_result_with_timeout(
+    job_path: &OwnedObjectPath,
+    phase: &str,
+    job_completion_timeout: Duration,
+    wait_for_result: impl Future<Output = Result<JobOutcome>>,
+) -> Result<JobOutcome> {
+    time::timeout(job_completion_timeout, wait_for_result)
+        .await
+        .map_err(|_| job_wait_timeout_error(job_path, phase, job_completion_timeout))?
+}
+
+async fn drain_job_removed(
     job_removed: &mut zbus_systemd::systemd1::JobRemovedStream,
     job_path: &OwnedObjectPath,
     phase: &str,
@@ -104,6 +140,18 @@ async fn wait_for_job(
     )))
 }
 
+fn job_wait_timeout_error(
+    job_path: &OwnedObjectPath,
+    phase: &str,
+    job_completion_timeout: Duration,
+) -> Error {
+    Error::Internal(format!(
+        "systemd JobRemoved stream did not report the {phase} job {} within {}ms",
+        job_path.as_str(),
+        job_completion_timeout.as_millis()
+    ))
+}
+
 fn classify_result(result: &str) -> JobOutcome {
     match result {
         "done" => JobOutcome::Done,
@@ -112,5 +160,34 @@ fn classify_result(result: &str) -> JobOutcome {
         // result (`once`/`merged`/`assert`/`unsupported`/`collected`, …) are
         // errors — an unknown result is never silently treated as success.
         other => JobOutcome::Failed(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn wait_for_job_result_times_out_when_matching_signal_never_arrives() {
+        let job_path = OwnedObjectPath::try_from("/org/freedesktop/systemd1/job/42".to_string())
+            .expect("test job path should be valid");
+
+        let error = wait_for_job_result_with_timeout(
+            &job_path,
+            "start",
+            Duration::from_millis(5),
+            future::pending::<Result<JobOutcome>>(),
+        )
+        .await
+        .expect_err("missing JobRemoved signal should time out");
+
+        assert!(
+            error.to_string().contains(
+                "did not report the start job /org/freedesktop/systemd1/job/42 within 5ms"
+            ),
+            "timeout error should identify the missing job path and deadline: {error}"
+        );
     }
 }

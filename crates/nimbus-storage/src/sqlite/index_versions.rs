@@ -10,12 +10,14 @@ use serde_json::Value;
 use crate::diagnostics::IndexVersionStorageDiagnostic;
 use crate::index::encoded_index_tuple_for_document;
 use crate::index::history_scan::{
-    HistoricalIndexDocumentEntry, HistoricalIndexScanPlan, finish_historical_index_page,
+    HistoricalIndexDocumentEntry, HistoricalIndexPageRequest, HistoricalIndexScanPlan,
+    finish_historical_index_page,
 };
 use crate::store::HistoricalIndexDocumentPage;
 use crate::{
     CURRENT_INDEX_VERSION_STORAGE_FORMAT, INDEX_VERSION_STORAGE_FORMAT_METADATA_KEY,
-    StorageFormatVersion, storage_format_version_from_u64, validate_index_version_storage_format,
+    IndexRangeBound, StorageFormatVersion, storage_format_version_from_u64,
+    validate_index_version_storage_format,
 };
 
 use super::{
@@ -89,7 +91,15 @@ impl SqliteReadSnapshot {
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<HistoricalIndexDocumentPage> {
         let plan = HistoricalIndexScanPlan::equal(read_shape, index_name, value)?;
-        self.historical_index_scan_page_for_plan(read_shape, &plan, after, limit, check_cancel)
+        self.historical_index_scan_page_for_plan(
+            read_shape,
+            &plan,
+            HistoricalIndexPageRequest {
+                after,
+                limit,
+                check_cancel,
+            },
+        )
     }
 
     pub fn historical_index_scan_prefix_cancellable(
@@ -121,18 +131,23 @@ impl SqliteReadSnapshot {
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<HistoricalIndexDocumentPage> {
         let plan = HistoricalIndexScanPlan::prefix(read_shape, index_name, prefix_values)?;
-        self.historical_index_scan_page_for_plan(read_shape, &plan, after, limit, check_cancel)
+        self.historical_index_scan_page_for_plan(
+            read_shape,
+            &plan,
+            HistoricalIndexPageRequest {
+                after,
+                limit,
+                check_cancel,
+            },
+        )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn historical_index_scan_range_cancellable(
         &self,
         read_shape: &HistoricalReadShape,
         index_name: &str,
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         Ok(self
@@ -141,49 +156,34 @@ impl SqliteReadSnapshot {
                 index_name,
                 start,
                 end,
-                start_inclusive,
-                end_inclusive,
-                None,
-                usize::MAX,
-                check_cancel,
+                HistoricalIndexPageRequest {
+                    after: None,
+                    limit: usize::MAX,
+                    check_cancel,
+                },
             )?
             .documents)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn historical_index_scan_range_page_cancellable(
+    pub(crate) fn historical_index_scan_range_page_cancellable(
         &self,
         read_shape: &HistoricalReadShape,
         index_name: &str,
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
-        after: Option<&HistoricalIndexCursor>,
-        limit: usize,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
+        page: HistoricalIndexPageRequest<'_, '_>,
     ) -> Result<HistoricalIndexDocumentPage> {
-        let plan = HistoricalIndexScanPlan::range(
-            read_shape,
-            index_name,
-            start,
-            end,
-            start_inclusive,
-            end_inclusive,
-        )?;
-        self.historical_index_scan_page_for_plan(read_shape, &plan, after, limit, check_cancel)
+        let plan = HistoricalIndexScanPlan::range(read_shape, index_name, start, end)?;
+        self.historical_index_scan_page_for_plan(read_shape, &plan, page)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn historical_index_scan_composite_range_cancellable(
         &self,
         read_shape: &HistoricalReadShape,
         index_name: &str,
         exact_prefix: &[Value],
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         Ok(self
@@ -193,28 +193,23 @@ impl SqliteReadSnapshot {
                 exact_prefix,
                 start,
                 end,
-                start_inclusive,
-                end_inclusive,
-                None,
-                usize::MAX,
-                check_cancel,
+                HistoricalIndexPageRequest {
+                    after: None,
+                    limit: usize::MAX,
+                    check_cancel,
+                },
             )?
             .documents)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn historical_index_scan_composite_range_page_cancellable(
+    pub(crate) fn historical_index_scan_composite_range_page_cancellable(
         &self,
         read_shape: &HistoricalReadShape,
         index_name: &str,
         exact_prefix: &[Value],
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
-        after: Option<&HistoricalIndexCursor>,
-        limit: usize,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
+        page: HistoricalIndexPageRequest<'_, '_>,
     ) -> Result<HistoricalIndexDocumentPage> {
         let plan = HistoricalIndexScanPlan::composite_range(
             read_shape,
@@ -222,21 +217,25 @@ impl SqliteReadSnapshot {
             exact_prefix,
             start,
             end,
-            start_inclusive,
-            end_inclusive,
         )?;
-        self.historical_index_scan_page_for_plan(read_shape, &plan, after, limit, check_cancel)
+        self.historical_index_scan_page_for_plan(read_shape, &plan, page)
     }
 
     fn historical_index_scan_page_for_plan(
         &self,
         read_shape: &HistoricalReadShape,
         plan: &HistoricalIndexScanPlan,
-        after: Option<&HistoricalIndexCursor>,
-        limit: usize,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
+        page: HistoricalIndexPageRequest<'_, '_>,
     ) -> Result<HistoricalIndexDocumentPage> {
+        let HistoricalIndexPageRequest {
+            after,
+            limit,
+            check_cancel,
+        } = page;
         plan.validate_page_request(read_shape, after, limit)?;
+        if plan.empty {
+            return finish_historical_index_page(read_shape, plan, after, limit, Vec::new());
+        }
         let entries = self.visible_historical_index_entries_for_tuple_bounds(
             read_shape,
             &plan.index,

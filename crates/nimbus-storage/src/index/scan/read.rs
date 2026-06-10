@@ -75,7 +75,7 @@ pub(super) fn scan_documents_for_index_key_bounds_in_read_txn(
             if !key.value().starts_with(match_prefix) {
                 break;
             }
-            let doc_id = doc_id_from_index_key(key.value());
+            let doc_id = doc_id_from_index_key(key.value())?;
             let doc_key = document_key(table_id, &doc_id);
             if let Some(value) = documents_table
                 .get(doc_key.as_slice())
@@ -91,7 +91,7 @@ pub(super) fn scan_documents_for_index_key_bounds_in_read_txn(
             if !key.value().starts_with(match_prefix) {
                 break;
             }
-            let doc_id = doc_id_from_index_key(key.value());
+            let doc_id = doc_id_from_index_key(key.value())?;
             let doc_key = document_key(table_id, &doc_id);
             if let Some(value) = documents_table
                 .get(doc_key.as_slice())

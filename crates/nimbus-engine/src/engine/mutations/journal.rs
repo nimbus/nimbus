@@ -7,7 +7,7 @@ use std::{
 
 use nimbus_core::{
     AccessAction, CommitEntry, Document, DocumentId, DurableMutationRecord, Error, Mutation,
-    Result, TableId, TableName, TenantId,
+    Result, SequenceNumber, TableId, TableName, TenantId,
 };
 use tokio::sync::oneshot;
 use tracing::warn;
@@ -280,11 +280,19 @@ fn process_queued_mutation_batch(
             progress.applied_head
         }
     };
+    retain_commits_through_applied_head(&mut applied, applied_head);
     runtime.invalidate_document_cache_for_commits(applied.iter());
     runtime.mark_applied_head(applied_head);
     drop(sequence_guard);
 
     Ok(QueuedMutationBatchResult { applied, responses })
+}
+
+fn retain_commits_through_applied_head(
+    applied: &mut Vec<CommitEntry>,
+    applied_head: SequenceNumber,
+) {
+    applied.retain(|commit| commit.sequence.0 <= applied_head.0);
 }
 
 fn plan_queued_mutation_request(
@@ -550,4 +558,46 @@ fn resolve_queued_table_id(
     };
     overlay.insert(table.clone(), table_id.clone());
     Ok(table_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn commit(sequence: u64) -> CommitEntry {
+        CommitEntry {
+            sequence: SequenceNumber(sequence),
+            timestamp: nimbus_core::Timestamp(sequence),
+            writes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn retain_commits_through_applied_head_clips_recovered_batches() {
+        let mut applied = vec![commit(10), commit(11), commit(12)];
+        retain_commits_through_applied_head(&mut applied, SequenceNumber(11));
+        assert_eq!(
+            applied
+                .iter()
+                .map(|commit| commit.sequence)
+                .collect::<Vec<_>>(),
+            vec![SequenceNumber(10), SequenceNumber(11)]
+        );
+
+        retain_commits_through_applied_head(&mut applied, SequenceNumber(9));
+        assert!(
+            applied.is_empty(),
+            "no downstream commit should remain when recovery reports an applied head before the batch"
+        );
+
+        let mut fully_visible = vec![commit(20), commit(21)];
+        retain_commits_through_applied_head(&mut fully_visible, SequenceNumber(25));
+        assert_eq!(
+            fully_visible
+                .iter()
+                .map(|commit| commit.sequence)
+                .collect::<Vec<_>>(),
+            vec![SequenceNumber(20), SequenceNumber(21)]
+        );
+    }
 }

@@ -56,7 +56,9 @@ impl CronSchedule {
     /// Calculates the next time this schedule should fire after the provided timestamp.
     pub fn next_after(&self, after: Timestamp) -> Timestamp {
         match self {
-            Self::Interval { seconds } => Timestamp(after.0 + (seconds * 1000)),
+            Self::Interval { seconds } => {
+                Timestamp(after.0.saturating_add(seconds.saturating_mul(1000)))
+            }
         }
     }
 }
@@ -89,6 +91,23 @@ mod tests {
         let now = Timestamp(1_000_000);
 
         assert_eq!(schedule.next_after(now), Timestamp(1_060_000));
+    }
+
+    #[test]
+    fn cron_next_after_saturates_interval_multiplication() {
+        let schedule = CronSchedule::Interval { seconds: u64::MAX };
+
+        assert_eq!(schedule.next_after(Timestamp(0)), Timestamp(u64::MAX));
+    }
+
+    #[test]
+    fn cron_next_after_saturates_timestamp_addition() {
+        let schedule = CronSchedule::Interval { seconds: 2 };
+
+        assert_eq!(
+            schedule.next_after(Timestamp(u64::MAX - 500)),
+            Timestamp(u64::MAX)
+        );
     }
 
     #[test]

@@ -293,9 +293,12 @@ pub(in super::super) async fn op_nimbus_runtime_stat(
             .paths
             .clone()
     };
-    let path = path_policy
-        .ensure_read_metadata_path(Path::new(&payload.path))
-        .map_err(capability_denied_error)?;
+    let path = if payload.follow_symlink {
+        path_policy.ensure_read_metadata_target_path(Path::new(&payload.path))
+    } else {
+        path_policy.ensure_read_metadata_path(Path::new(&payload.path))
+    }
+    .map_err(capability_denied_error)?;
     let metadata = if payload.follow_symlink {
         tokio::fs::metadata(&path).await
     } else {
@@ -322,9 +325,12 @@ pub(in super::super) fn op_nimbus_runtime_stat_sync(
         .borrow::<InstalledRuntimeCapabilityPolicy>()
         .paths
         .clone();
-    let path = path_policy
-        .ensure_read_metadata_path(Path::new(&payload.path))
-        .map_err(capability_denied_error)?;
+    let path = if payload.follow_symlink {
+        path_policy.ensure_read_metadata_target_path(Path::new(&payload.path))
+    } else {
+        path_policy.ensure_read_metadata_path(Path::new(&payload.path))
+    }
+    .map_err(capability_denied_error)?;
     let metadata = if payload.follow_symlink {
         std::fs::metadata(&path)
     } else {
@@ -778,13 +784,17 @@ pub(in super::super) async fn op_nimbus_runtime_read_link(
             .clone()
     };
     let path = path_policy
-        .ensure_read_path_lexical(Path::new(&payload.path))
-        .map_err(capability_denied_error)?
-        .to_path_buf();
+        .ensure_read_link_path(Path::new(&payload.path))
+        .map_err(capability_denied_error)?;
     Ok(match tokio::fs::read_link(&path).await {
-        Ok(target) => RuntimeHostCallEnvelope::Ok {
-            value: Value::String(target.to_string_lossy().into_owned()),
-        },
+        Ok(target) => {
+            path_policy
+                .ensure_read_link_target_path(&target, &path)
+                .map_err(capability_denied_error)?;
+            RuntimeHostCallEnvelope::Ok {
+                value: Value::String(target.to_string_lossy().into_owned()),
+            }
+        }
         Err(error) => RuntimeHostCallEnvelope::Error {
             error: runtime_fs_error_value(&path, "readLink", &error),
         },
@@ -802,13 +812,17 @@ pub(in super::super) fn op_nimbus_runtime_read_link_sync(
         .paths
         .clone();
     let path = path_policy
-        .ensure_read_path_lexical(Path::new(&payload.path))
-        .map_err(capability_denied_error)?
-        .to_path_buf();
+        .ensure_read_link_path(Path::new(&payload.path))
+        .map_err(capability_denied_error)?;
     Ok(match std::fs::read_link(&path) {
-        Ok(target) => RuntimeHostCallEnvelope::Ok {
-            value: Value::String(target.to_string_lossy().into_owned()),
-        },
+        Ok(target) => {
+            path_policy
+                .ensure_read_link_target_path(&target, &path)
+                .map_err(capability_denied_error)?;
+            RuntimeHostCallEnvelope::Ok {
+                value: Value::String(target.to_string_lossy().into_owned()),
+            }
+        }
         Err(error) => RuntimeHostCallEnvelope::Error {
             error: runtime_fs_error_value(&path, "readLinkSync", &error),
         },

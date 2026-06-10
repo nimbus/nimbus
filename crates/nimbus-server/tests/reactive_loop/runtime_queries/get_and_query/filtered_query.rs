@@ -17,9 +17,12 @@ async fn convex_runtime_filtered_query_subscription_skips_non_matching_writes() 
         ]),
         Some(
             r#"
-globalThis.__nimbusInvoke = async function(_request) {
-  const ctx = globalThis.__nimbusCreateContext();
-  const value = await ctx.db
+	globalThis.__nimbusInvoke = async function(request) {
+	  const ctx = globalThis.__nimbusCreateContext({
+	    hostCallSessionId: `${request.kind}:${request.function_name}`,
+	    request,
+	  });
+	  const value = await ctx.db
     .query("messages")
     .filter((q) => q.eq(q.field("author"), "Ada"))
     .collect();

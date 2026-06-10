@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use nimbus_core::{Error, TenantId};
 use nimbus_sandbox::SandboxStatus;
@@ -12,6 +11,7 @@ use crate::{
 };
 
 use super::ServiceManager;
+use super::clock::{next_version, now_millis};
 use super::types::TenantServiceKey;
 
 const DEFAULT_SESSION_TTL_MILLIS: u64 = 15 * 60 * 1000;
@@ -109,7 +109,7 @@ impl ServiceManager {
             }
         }
         let now = now_millis();
-        let resource_version = next_session_version(&mut state.next_session_version);
+        let resource_version = next_version(&mut state.next_session_version, "session");
         let id = next_session_id();
         let session = SessionResource {
             tenant_id: tenant_id.clone(),
@@ -130,8 +130,8 @@ impl ServiceManager {
         Ok(session)
     }
 
-    pub fn get_session(&self, session_id: &str) -> Option<SessionResource> {
-        self.refresh_session_expiration(session_id)
+    pub fn get_session(&self, tenant_id: &TenantId, session_id: &str) -> Option<SessionResource> {
+        self.refresh_session_expiration(tenant_id, session_id)
     }
 
     pub fn list_sessions_for_tenant(&self, tenant_id: &TenantId) -> Vec<SessionResource> {
@@ -148,6 +148,7 @@ impl ServiceManager {
 
     pub fn close_session(
         &self,
+        tenant_id: &TenantId,
         session_id: &str,
         reason: impl Into<String>,
     ) -> Option<SessionResource> {
@@ -156,23 +157,27 @@ impl ServiceManager {
             .lock()
             .expect("manager lock should not be poisoned");
         let now = now_millis();
-        let action =
-            state
-                .sessions
-                .get(session_id)
-                .and_then(|session| match session.lifecycle_state {
-                    SessionLifecycleState::Open if now >= session.expires_at_millis => {
-                        Some(SessionCloseAction::Expire)
-                    }
-                    SessionLifecycleState::Open => Some(SessionCloseAction::Close),
-                    SessionLifecycleState::Closed | SessionLifecycleState::Expired => None,
-                });
+        let action = state.sessions.get(session_id).and_then(|session| {
+            if &session.tenant_id != tenant_id {
+                return None;
+            }
+            match session.lifecycle_state {
+                SessionLifecycleState::Open if now >= session.expires_at_millis => {
+                    Some(SessionCloseAction::Expire)
+                }
+                SessionLifecycleState::Open => Some(SessionCloseAction::Close),
+                SessionLifecycleState::Closed | SessionLifecycleState::Expired => None,
+            }
+        });
         let next_resource_version = if action.is_some() {
-            Some(next_session_version(&mut state.next_session_version))
+            Some(next_version(&mut state.next_session_version, "session"))
         } else {
             None
         };
         let session = state.sessions.get_mut(session_id)?;
+        if &session.tenant_id != tenant_id {
+            return None;
+        }
         match (action, next_resource_version) {
             (Some(SessionCloseAction::Expire), Some(next_resource_version)) => {
                 session.lifecycle_state = SessionLifecycleState::Expired;
@@ -195,22 +200,30 @@ impl ServiceManager {
         Some(session.clone())
     }
 
-    fn refresh_session_expiration(&self, session_id: &str) -> Option<SessionResource> {
+    fn refresh_session_expiration(
+        &self,
+        tenant_id: &TenantId,
+        session_id: &str,
+    ) -> Option<SessionResource> {
         let mut state = self
             .state
             .lock()
             .expect("manager lock should not be poisoned");
         let now = now_millis();
         let should_expire = state.sessions.get(session_id).is_some_and(|session| {
-            session.lifecycle_state == SessionLifecycleState::Open
+            &session.tenant_id == tenant_id
+                && session.lifecycle_state == SessionLifecycleState::Open
                 && now >= session.expires_at_millis
         });
         let next_resource_version = if should_expire {
-            Some(next_session_version(&mut state.next_session_version))
+            Some(next_version(&mut state.next_session_version, "session"))
         } else {
             None
         };
         let session = state.sessions.get_mut(session_id)?;
+        if &session.tenant_id != tenant_id {
+            return None;
+        }
         if let Some(next_resource_version) = next_resource_version {
             session.lifecycle_state = SessionLifecycleState::Expired;
             session.generation = session.generation.saturating_add(1);
@@ -233,7 +246,7 @@ impl ServiceManager {
             .map(|session| session.id.clone())
             .collect::<Vec<_>>();
         for id in ids {
-            let _ = self.refresh_session_expiration(&id);
+            let _ = self.refresh_session_expiration(tenant_id, &id);
         }
     }
 }
@@ -375,18 +388,6 @@ fn sandbox_backend_wire(backend: nimbus_sandbox::SandboxBackendKind) -> String {
     .to_owned()
 }
 
-pub(super) fn next_session_version(next: &mut u64) -> String {
-    *next = next.saturating_add(1).max(1);
-    format!("session-v{}", *next)
-}
-
 fn next_session_id() -> String {
     format!("session-{}", Ulid::new().to_string().to_ascii_lowercase())
-}
-
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().try_into().unwrap_or(u64::MAX))
-        .unwrap_or(0)
 }

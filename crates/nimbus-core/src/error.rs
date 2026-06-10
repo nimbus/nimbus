@@ -120,6 +120,9 @@ pub enum Error {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
+    #[error("structured query requires an index covering fields: {}", fields.join(", "))]
+    MissingIndex { fields: Vec<String> },
+
     #[error("schema validation error: {0}")]
     SchemaValidation(String),
 

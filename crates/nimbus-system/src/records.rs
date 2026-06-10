@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nimbus_core::{
-    CronJob, CronSchedule, DocumentId, Error, Mutation, Result, ScheduledJob, ScheduledJobOutcome,
-    ScheduledJobResult, TableName, TenantId,
+    CronJob, CronSchedule, Document, DocumentId, Error, Filter, FilterOp, Mutation, Query, Result,
+    ScheduledJob, ScheduledJobOutcome, ScheduledJobResult, TableName, TenantId,
 };
 use nimbus_engine::Engine;
 use nimbus_machine::{MachineConfigRecord, MachineLifecycle, MachineStateRecord};
@@ -26,7 +26,7 @@ use super::keys::{
     scheduled_job_document_id, service_document_id, service_port_document_id,
     subscription_document_id, table_document_id, workload_status_document_id,
 };
-use super::schema::system_table_schemas;
+use super::schema::{SystemTable, system_table_schemas};
 
 pub async fn ensure_system_tenant_async(engine: &Arc<Engine>) -> Result<()> {
     let tenant_id = system_tenant_id()?;
@@ -66,7 +66,7 @@ pub(crate) async fn record_system_status_async(
     }
     upsert_system_document_async(
         engine,
-        "system_status",
+        SystemTable::SystemStatus,
         "system:server",
         object_fields(json!({
             "name": "server",
@@ -103,7 +103,7 @@ pub async fn record_service_handle_async(
 
     upsert_system_document_async(
         engine,
-        "services",
+        SystemTable::Services,
         &service_id,
         object_fields(json!({
             "name": handle.name.as_str(),
@@ -135,7 +135,7 @@ pub async fn record_service_handle_async(
         }
         upsert_system_document_async(
             engine,
-            "ports",
+            SystemTable::Ports,
             &service_port_document_id(tenant_id, &handle.name, &endpoint.name),
             fields,
         )
@@ -154,7 +154,7 @@ pub async fn record_machine_state_async(
     let paths = config.roots.paths(&config.name);
     upsert_system_document_async(
         engine,
-        "machines",
+        SystemTable::Machines,
         &machine_document_id(&config.name),
         object_fields(json!({
             "name": config.name.as_str(),
@@ -184,7 +184,7 @@ pub async fn record_machine_state_async(
     };
     upsert_system_document_async(
         engine,
-        "listeners",
+        SystemTable::Listeners,
         &machine_listener_document_id(&config.name),
         object_fields(json!({
             "adapter": "machine",
@@ -199,7 +199,7 @@ pub async fn record_machine_state_async(
     if let Some(runtime) = state.runtime.as_ref() {
         upsert_system_document_async(
             engine,
-            "ports",
+            SystemTable::Ports,
             &machine_port_document_id(&config.name, "ssh"),
             object_fields(json!({
                 "machineId": config.name.as_str(),
@@ -217,15 +217,24 @@ pub async fn record_machine_state_async(
 
 pub async fn delete_machine_state_async(engine: &Arc<Engine>, name: &str) -> Result<()> {
     ensure_system_tenant_async(engine).await?;
-    delete_system_document_if_exists_async(engine, "machines", &machine_document_id(name)).await?;
     delete_system_document_if_exists_async(
         engine,
-        "listeners",
+        SystemTable::Machines,
+        &machine_document_id(name),
+    )
+    .await?;
+    delete_system_document_if_exists_async(
+        engine,
+        SystemTable::Listeners,
         &machine_listener_document_id(name),
     )
     .await?;
-    delete_system_document_if_exists_async(engine, "ports", &machine_port_document_id(name, "ssh"))
-        .await?;
+    delete_system_document_if_exists_async(
+        engine,
+        SystemTable::Ports,
+        &machine_port_document_id(name, "ssh"),
+    )
+    .await?;
     Ok(())
 }
 
@@ -242,7 +251,7 @@ pub async fn record_system_event_async(
     engine
         .insert_document_async(
             system_tenant_id()?,
-            TableName::new("events")?,
+            SystemTable::Events.table_name()?,
             object_fields(json!({
                 "source": source,
                 "level": level,
@@ -312,7 +321,7 @@ pub(crate) async fn record_tenant_workload_status_async(
         .map_err(|error| Error::Serialization(error.to_string()))?;
     upsert_system_document_async(
         engine,
-        "workload_status",
+        SystemTable::WorkloadStatus,
         &workload_status_document_id(projection.tenant_id(), projection.workload_uid().as_str()),
         object_fields(json!({
             "tenantId": projection.tenant_id().as_str(),
@@ -349,7 +358,7 @@ pub async fn record_table_state_async(
         .await?;
     let document_id = table_document_id(tenant_id, table);
     if schema.is_none() && row_count == 0 {
-        delete_system_document_if_exists_async(engine, "tables", &document_id).await?;
+        delete_system_document_if_exists_async(engine, SystemTable::Tables, &document_id).await?;
         return Ok(());
     }
 
@@ -366,7 +375,7 @@ pub async fn record_table_state_async(
                 .map_err(|error| Error::Serialization(error.to_string()))?,
         );
     }
-    upsert_system_document_async(engine, "tables", &document_id, fields).await
+    upsert_system_document_async(engine, SystemTable::Tables, &document_id, fields).await
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -400,7 +409,7 @@ pub async fn record_deployment_state_async(
     let bundle_sha256 = deployment_bundle_sha256(input);
     upsert_system_document_async(
         engine,
-        "bundles",
+        SystemTable::Bundles,
         &bundle_document_id(&bundle_sha256),
         object_fields(json!({
             "sha256": bundle_sha256.as_str(),
@@ -418,7 +427,7 @@ pub async fn record_deployment_state_async(
     for function in &input.functions {
         upsert_system_document_async(
             engine,
-            "functions",
+            SystemTable::Functions,
             &function_document_id(&bundle_sha256, function.name),
             object_fields(json!({
                 "bundleId": bundle_sha256.as_str(),
@@ -457,7 +466,7 @@ pub async fn record_run_async(engine: &Arc<Engine>, record: RunRecord<'_>) -> Re
         fields.insert("error".to_owned(), json!({ "message": error }));
     }
     engine
-        .insert_document_async(system_tenant_id()?, TableName::new("runs")?, fields)
+        .insert_document_async(system_tenant_id()?, SystemTable::Runs.table_name()?, fields)
         .await?;
     Ok(())
 }
@@ -470,7 +479,7 @@ pub(crate) async fn record_scheduled_job_state_async(
     ensure_system_tenant_async(engine).await?;
     upsert_system_document_async(
         engine,
-        "scheduled_jobs",
+        SystemTable::ScheduledJobs,
         &scheduled_job_document_id(tenant_id, &job.id),
         scheduled_job_fields(tenant_id, &job.run_at, &job.mutation, "pending", None)?,
     )
@@ -489,7 +498,7 @@ pub async fn record_scheduled_job_result_state_async(
     };
     upsert_system_document_async(
         engine,
-        "scheduled_jobs",
+        SystemTable::ScheduledJobs,
         &scheduled_job_document_id(tenant_id, &result.id),
         scheduled_job_fields(
             tenant_id,
@@ -510,7 +519,7 @@ pub async fn delete_scheduled_job_state_async(
     ensure_system_tenant_async(engine).await?;
     delete_system_document_if_exists_async(
         engine,
-        "scheduled_jobs",
+        SystemTable::ScheduledJobs,
         &scheduled_job_document_id(tenant_id, job_id),
     )
     .await
@@ -524,7 +533,7 @@ pub(crate) async fn record_cron_job_state_async(
     ensure_system_tenant_async(engine).await?;
     upsert_system_document_async(
         engine,
-        "cron_jobs",
+        SystemTable::CronJobs,
         &cron_job_document_id(tenant_id, &cron.name),
         cron_job_fields(tenant_id, cron)?,
     )
@@ -539,7 +548,7 @@ pub async fn delete_cron_job_state_async(
     ensure_system_tenant_async(engine).await?;
     delete_system_document_if_exists_async(
         engine,
-        "cron_jobs",
+        SystemTable::CronJobs,
         &cron_job_document_id(tenant_id, name),
     )
     .await
@@ -560,7 +569,7 @@ pub async fn sync_scheduler_state_for_tenant_async(
     }
     delete_stale_scheduler_documents_async(
         engine,
-        "scheduled_jobs",
+        SystemTable::ScheduledJobs,
         tenant_id,
         "pending",
         &active_scheduled_ids,
@@ -577,7 +586,7 @@ pub async fn sync_scheduler_state_for_tenant_async(
     }
     delete_stale_scheduler_documents_async(
         engine,
-        "cron_jobs",
+        SystemTable::CronJobs,
         tenant_id,
         "active",
         &active_cron_ids,
@@ -609,7 +618,7 @@ pub async fn record_listener_state_async(
     }
     upsert_system_document_async(
         engine,
-        "listeners",
+        SystemTable::Listeners,
         &listener_document_id(adapter, protocol),
         fields,
     )
@@ -623,10 +632,13 @@ pub async fn record_subscription_state_async(
     subscription_id: u64,
     query_key: &str,
 ) -> Result<()> {
+    if should_skip_subscription_projection(tenant_id) {
+        return Ok(());
+    }
     ensure_system_tenant_async(engine).await?;
     upsert_system_document_async(
         engine,
-        "subscriptions",
+        SystemTable::Subscriptions,
         &subscription_document_id(adapter, tenant_id, subscription_id),
         object_fields(json!({
             "tenantId": tenant_id.as_str(),
@@ -646,9 +658,6 @@ pub async fn record_subscription_delivery_async(
     subscription_id: u64,
     query_key: &str,
 ) -> Result<()> {
-    if is_system_tenant_id(tenant_id) {
-        return Ok(());
-    }
     record_subscription_state_async(engine, tenant_id, adapter, subscription_id, query_key).await
 }
 
@@ -660,10 +669,13 @@ pub async fn record_subscription_error_async(
     query_key: &str,
     error: &str,
 ) -> Result<()> {
+    if should_skip_subscription_projection(tenant_id) {
+        return Ok(());
+    }
     ensure_system_tenant_async(engine).await?;
     upsert_system_document_async(
         engine,
-        "subscriptions",
+        SystemTable::Subscriptions,
         &subscription_document_id(adapter, tenant_id, subscription_id),
         object_fields(json!({
             "tenantId": tenant_id.as_str(),
@@ -677,6 +689,10 @@ pub async fn record_subscription_error_async(
     .await
 }
 
+fn should_skip_subscription_projection(tenant_id: &TenantId) -> bool {
+    is_system_tenant_id(tenant_id)
+}
+
 pub async fn delete_subscription_state_async(
     engine: &Arc<Engine>,
     tenant_id: &TenantId,
@@ -686,7 +702,7 @@ pub async fn delete_subscription_state_async(
     ensure_system_tenant_async(engine).await?;
     delete_system_document_if_exists_async(
         engine,
-        "subscriptions",
+        SystemTable::Subscriptions,
         &subscription_document_id(adapter, tenant_id, subscription_id),
     )
     .await
@@ -694,11 +710,11 @@ pub async fn delete_subscription_state_async(
 
 async fn delete_system_document_if_exists_async(
     engine: &Arc<Engine>,
-    table: &str,
+    table: SystemTable,
     document_id: &str,
 ) -> Result<()> {
     let tenant_id = system_tenant_id()?;
-    let table = TableName::new(table.to_owned())?;
+    let table = table.table_name()?;
     let document_id = DocumentId::from_key(document_id.to_owned())?;
     match engine
         .delete_document_async(tenant_id, table, document_id)
@@ -711,16 +727,17 @@ async fn delete_system_document_if_exists_async(
 
 async fn delete_service_port_documents_async(engine: &Arc<Engine>, service_id: &str) -> Result<()> {
     let tenant_id = system_tenant_id()?;
-    let table = TableName::new("ports")?;
-    let documents = engine
-        .list_documents_async(tenant_id.clone(), table.clone())
-        .await?;
+    let table = SystemTable::Ports.table_name()?;
+    let documents = query_system_documents_by_eq_async(
+        engine,
+        SystemTable::Ports,
+        [("serviceId", json!(service_id))],
+    )
+    .await?;
     for document in documents {
-        if document.fields.get("serviceId") == Some(&json!(service_id)) {
-            engine
-                .delete_document_async(tenant_id.clone(), table.clone(), document.id)
-                .await?;
-        }
+        engine
+            .delete_document_async(tenant_id.clone(), table.clone(), document.id)
+            .await?;
     }
     Ok(())
 }
@@ -738,19 +755,25 @@ async fn sync_all_scheduler_state_async(engine: &Arc<Engine>) -> Result<()> {
 
 async fn existing_system_started_at_async(engine: &Arc<Engine>) -> Result<u64> {
     let system_tenant = system_tenant_id()?;
-    let table = TableName::new("system_status")?;
+    let table = SystemTable::SystemStatus.table_name()?;
     let document_id = DocumentId::from_key("system:server")?;
     match engine
         .get_document_async(system_tenant, table, document_id)
         .await
     {
-        Ok(document) => Ok(document
-            .fields
-            .get("startedAt")
-            .and_then(Value::as_u64)
-            .unwrap_or(unix_time_millis()?)),
+        Ok(document) => started_at_or_else(&document.fields, unix_time_millis),
         Err(Error::DocumentNotFound(_)) => unix_time_millis(),
         Err(error) => Err(error),
+    }
+}
+
+fn started_at_or_else<F>(fields: &Map<String, Value>, fallback: F) -> Result<u64>
+where
+    F: FnOnce() -> Result<u64>,
+{
+    match fields.get("startedAt").and_then(Value::as_u64) {
+        Some(started_at) => Ok(started_at),
+        None => fallback(),
     }
 }
 
@@ -760,56 +783,80 @@ async fn delete_stale_deployment_documents_async(
     active_function_ids: &std::collections::BTreeSet<String>,
 ) -> Result<()> {
     let system_tenant = system_tenant_id()?;
-    let bundles_table = TableName::new("bundles")?;
-    let bundles = engine
-        .list_documents_async(system_tenant.clone(), bundles_table.clone())
-        .await?;
+    let bundles_table = SystemTable::Bundles.table_name()?;
+    let bundles = query_system_documents_by_eq_async(
+        engine,
+        SystemTable::Bundles,
+        [("status", json!("active"))],
+    )
+    .await?;
     for bundle in bundles {
-        if bundle.fields.get("status") != Some(&json!("active"))
-            || bundle.fields.get("sha256") == Some(&json!(active_bundle_sha256))
-        {
+        let Some(bundle_sha256) = bundle.fields.get("sha256").and_then(Value::as_str) else {
+            engine
+                .delete_document_async(system_tenant.clone(), bundles_table.clone(), bundle.id)
+                .await?;
+            continue;
+        };
+        if bundle_sha256 == active_bundle_sha256 {
             continue;
         }
+        delete_functions_for_bundle_async(engine, bundle_sha256, |_| true).await?;
         engine
             .delete_document_async(system_tenant.clone(), bundles_table.clone(), bundle.id)
             .await?;
     }
 
-    let functions_table = TableName::new("functions")?;
-    let functions = engine
-        .list_documents_async(system_tenant.clone(), functions_table.clone())
-        .await?;
-    for function in functions {
-        if function.fields.get("bundleId") == Some(&json!(active_bundle_sha256))
-            && active_function_ids.contains(&function.id.to_string())
-        {
-            continue;
-        }
-        engine
-            .delete_document_async(system_tenant.clone(), functions_table.clone(), function.id)
-            .await?;
-    }
+    delete_functions_for_bundle_async(engine, active_bundle_sha256, |function| {
+        !active_function_ids.contains(&function.id.to_string())
+    })
+    .await?;
 
+    Ok(())
+}
+
+async fn delete_functions_for_bundle_async(
+    engine: &Arc<Engine>,
+    bundle_sha256: &str,
+    should_delete: impl Fn(&Document) -> bool,
+) -> Result<()> {
+    let system_tenant = system_tenant_id()?;
+    let functions_table = SystemTable::Functions.table_name()?;
+    let functions = query_system_documents_by_eq_async(
+        engine,
+        SystemTable::Functions,
+        [("bundleId", json!(bundle_sha256))],
+    )
+    .await?;
+    for function in functions {
+        if should_delete(&function) {
+            engine
+                .delete_document_async(system_tenant.clone(), functions_table.clone(), function.id)
+                .await?;
+        }
+    }
     Ok(())
 }
 
 async fn delete_stale_scheduler_documents_async(
     engine: &Arc<Engine>,
-    table: &str,
+    table: SystemTable,
     tenant_id: &TenantId,
     stale_status: &str,
     active_document_ids: &std::collections::BTreeSet<String>,
 ) -> Result<()> {
     let system_tenant = system_tenant_id()?;
-    let table_name = TableName::new(table.to_owned())?;
-    let documents = engine
-        .list_documents_async(system_tenant.clone(), table_name.clone())
-        .await?;
+    let table_name = table.table_name()?;
+    let documents = query_system_documents_by_eq_async(
+        engine,
+        table,
+        [
+            ("tenantId", json!(tenant_id.as_str())),
+            ("status", json!(stale_status)),
+        ],
+    )
+    .await?;
     for document in documents {
-        if document.fields.get("tenantId") != Some(&json!(tenant_id.as_str()))
-            || document.fields.get("status") != Some(&json!(stale_status))
-            || active_document_ids.contains(&document.id.to_string())
-        {
+        if active_document_ids.contains(&document.id.to_string()) {
             continue;
         }
         engine
@@ -817,6 +864,31 @@ async fn delete_stale_scheduler_documents_async(
             .await?;
     }
     Ok(())
+}
+
+async fn query_system_documents_by_eq_async(
+    engine: &Arc<Engine>,
+    table: SystemTable,
+    filters: impl IntoIterator<Item = (&'static str, Value)>,
+) -> Result<Vec<Document>> {
+    engine
+        .query_documents_async(
+            system_tenant_id()?,
+            Query {
+                table: table.table_name()?,
+                filters: filters
+                    .into_iter()
+                    .map(|(field, value)| Filter {
+                        field: field.to_owned(),
+                        op: FilterOp::Eq,
+                        value,
+                    })
+                    .collect(),
+                order: None,
+                limit: None,
+            },
+        )
+        .await
 }
 
 fn scheduled_job_fields(
@@ -920,7 +992,7 @@ async fn seed_system_documents_async(
     for route in route_inventory() {
         upsert_system_document_async(
             engine,
-            "routes",
+            SystemTable::Routes,
             &route.document_id(),
             object_fields(json!({
                 "method": route.method,
@@ -936,7 +1008,7 @@ async fn seed_system_documents_async(
     for capability in adapter_capability_inventory() {
         upsert_system_document_async(
             engine,
-            "adapter_capabilities",
+            SystemTable::AdapterCapabilities,
             &capability.document_id(),
             object_fields(json!({
                 "adapter": capability.adapter,
@@ -952,7 +1024,7 @@ async fn seed_system_documents_async(
     if let Some(listen_addr) = listen_addr {
         upsert_system_document_async(
             engine,
-            "listeners",
+            SystemTable::Listeners,
             "listener:http",
             object_fields(json!({
                 "adapter": "native",
@@ -977,12 +1049,12 @@ fn unix_time_millis() -> Result<u64> {
 
 async fn upsert_system_document_async(
     engine: &Arc<Engine>,
-    table: &str,
+    table: SystemTable,
     document_id: &str,
     fields: Map<String, Value>,
 ) -> Result<()> {
     let tenant_id = system_tenant_id()?;
-    let table = TableName::new(table.to_owned())?;
+    let table = table.table_name()?;
     let document_id = DocumentId::from_key(document_id.to_owned())?;
 
     match engine
@@ -1030,7 +1102,9 @@ fn object_fields(value: Value) -> Map<String, Value> {
 fn describe_machine_image_source(source: &nimbus_machine::MachineImageSource) -> String {
     match source {
         nimbus_machine::MachineImageSource::OciReference { reference } => reference.clone(),
-        nimbus_machine::MachineImageSource::HttpUrl { url } => url.clone(),
+        nimbus_machine::MachineImageSource::HttpUrl { url, sha256 } => {
+            format!("{url}#sha256={sha256}")
+        }
         nimbus_machine::MachineImageSource::LocalDisk { path } => path.display().to_string(),
     }
 }
@@ -1058,5 +1132,33 @@ pub fn endpoint_protocol(protocol: PublishedEndpointProtocol) -> &'static str {
         PublishedEndpointProtocol::Tcp => "tcp",
         PublishedEndpointProtocol::Http => "http",
         PublishedEndpointProtocol::Https => "https",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn started_at_or_else_uses_persisted_value_without_calling_fallback() {
+        let fields = object_fields(json!({ "startedAt": 42 }));
+
+        let started_at = started_at_or_else(&fields, || {
+            Err(Error::Internal(
+                "fallback should not run when startedAt is present".to_owned(),
+            ))
+        })
+        .expect("persisted startedAt should be used");
+
+        assert_eq!(started_at, 42);
+    }
+
+    #[test]
+    fn started_at_or_else_calls_fallback_when_started_at_is_missing_or_invalid() {
+        let missing = object_fields(json!({}));
+        let invalid = object_fields(json!({ "startedAt": "not-a-number" }));
+
+        assert_eq!(started_at_or_else(&missing, || Ok(7)).unwrap(), 7);
+        assert_eq!(started_at_or_else(&invalid, || Ok(9)).unwrap(), 9);
     }
 }

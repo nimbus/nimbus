@@ -216,14 +216,14 @@ fn run_trigger_execution_worker(
             let Some(mut record) = runtime.store.trigger_invocation(&key)? else {
                 return Ok(());
             };
-            if !matches!(
-                record.state,
-                TriggerInvocationState::Pending | TriggerInvocationState::RetryPending { .. }
-            ) {
-                return Ok(());
+            match record.state {
+                TriggerInvocationState::Pending | TriggerInvocationState::RetryPending { .. } => {
+                    record.begin_attempt(clock.now())?;
+                    runtime.store.save_trigger_invocation(&record)?;
+                }
+                TriggerInvocationState::Running { .. } => {}
+                _ => return Ok(()),
             }
-            record.begin_attempt(clock.now())?;
-            runtime.store.save_trigger_invocation(&record)?;
             match executor.execute_invocation(runtime.tenant_id(), &record) {
                 TriggerInvocationExecution::Completed => {
                     record.complete(clock.now())?;

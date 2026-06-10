@@ -38,6 +38,9 @@ pub enum ConvexRuntimeEncodedError {
     InvalidInput {
         message: String,
     },
+    MissingIndex {
+        fields: Vec<String>,
+    },
     SchemaValidation {
         message: String,
     },
@@ -104,6 +107,7 @@ impl ConvexRuntimeEncodedError {
             Error::ResourceExhausted(message) => Self::ResourceExhausted { message },
             Error::PermissionDenied(message) => Self::PermissionDenied { message },
             Error::InvalidInput(message) => Self::InvalidInput { message },
+            Error::MissingIndex { fields } => Self::MissingIndex { fields },
             Error::SchemaValidation(message) => Self::SchemaValidation { message },
             Error::SchemaNotFound(table) => Self::SchemaNotFound {
                 table: table.to_string(),
@@ -143,6 +147,7 @@ impl ConvexRuntimeEncodedError {
             Self::ResourceExhausted { message } => Error::ResourceExhausted(message),
             Self::PermissionDenied { message } => Error::PermissionDenied(message),
             Self::InvalidInput { message } => Error::InvalidInput(message),
+            Self::MissingIndex { fields } => Error::MissingIndex { fields },
             Self::SchemaValidation { message } => Error::SchemaValidation(message),
             Self::SchemaNotFound { table } => TableName::new(table)
                 .map(Error::SchemaNotFound)
@@ -240,6 +245,19 @@ mod tests {
         assert!(matches!(
             decoded,
             Error::PreconditionFailed(message) if message == "stale generation"
+        ));
+    }
+
+    #[test]
+    fn missing_index_error_round_trips_through_runtime_encoding() {
+        let encoded = ConvexRuntimeEncodedError::from_core_error(Error::MissingIndex {
+            fields: vec!["state".to_string(), "rank".to_string()],
+        });
+
+        let decoded = encoded.into_core_error();
+        assert!(matches!(
+            decoded,
+            Error::MissingIndex { fields } if fields == vec!["state".to_string(), "rank".to_string()]
         ));
     }
 }

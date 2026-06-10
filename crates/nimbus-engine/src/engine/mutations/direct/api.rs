@@ -317,7 +317,7 @@ impl Engine {
         execution_id: &str,
         mutation: Mutation,
     ) -> Result<bool> {
-        Ok(expect_scheduled_applied(
+        expect_scheduled_applied(
             self.apply_mutation_with_mode(
                 tenant_id,
                 MutationExecutionMode::Scheduled {
@@ -327,7 +327,7 @@ impl Engine {
                 &PrincipalContext::anonymous(),
             )?,
             "scheduled mutation execution should not return an immediate result",
-        ))
+        )
     }
 
     pub(crate) async fn execute_scheduled_mutation_async(
@@ -419,7 +419,7 @@ impl Engine {
             )
             .await?,
             messages.scheduled,
-        );
+        )?;
         expect_immediate_document_id(document_id, messages.value)
     }
 
@@ -447,7 +447,7 @@ impl Engine {
             )
             .await?,
             messages.scheduled,
-        );
+        )?;
         expect_immediate_unit(document_id, messages.value)
     }
 
@@ -464,7 +464,7 @@ impl Engine {
         Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        Ok(expect_scheduled_applied(
+        expect_scheduled_applied(
             self.apply_mutation_with_mode_async_cancellable(
                 tenant_id,
                 MutationExecutionMode::Scheduled { execution_id },
@@ -475,6 +475,6 @@ impl Engine {
             )
             .await?,
             immediate_message,
-        ))
+        )
     }
 }

@@ -41,6 +41,10 @@ impl TenantLifecycle {
     }
 
     pub(super) fn release_operation(&self) {
+        let _guard = self
+            .zero_active_lock
+            .lock()
+            .expect("tenant lifecycle wait lock should not be poisoned");
         if self.active_operations.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.zero_active.notify_all();
             self.zero_active_notify.notify_waiters();
@@ -73,5 +77,115 @@ impl TenantLifecycle {
             }
             notified.await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::thread;
+    use std::time::Duration;
+
+    use super::*;
+
+    fn signal(pair: &(Mutex<bool>, Condvar)) {
+        let (lock, cvar) = pair;
+        let mut signaled = lock
+            .lock()
+            .expect("test signal lock should not be poisoned");
+        *signaled = true;
+        cvar.notify_all();
+    }
+
+    fn wait_for_signal(pair: &(Mutex<bool>, Condvar), timeout: Duration, context: &str) {
+        let (lock, cvar) = pair;
+        let signaled = lock
+            .lock()
+            .expect("test signal lock should not be poisoned");
+        let (signaled, result) = cvar
+            .wait_timeout_while(signaled, timeout, |signaled| !*signaled)
+            .expect("test signal wait should not be poisoned");
+        assert!(
+            !result.timed_out() && *signaled,
+            "{context} should be signaled before timeout"
+        );
+    }
+
+    #[test]
+    fn release_operation_notifies_blocking_delete_after_waiter_registers() {
+        let lifecycle = Arc::new(TenantLifecycle::new());
+        let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
+        lifecycle
+            .enter_operation(&tenant_id)
+            .expect("operation should enter before deletion begins");
+        lifecycle.deleted.store(true, Ordering::Release);
+
+        let wait_guard = lifecycle
+            .zero_active_lock
+            .lock()
+            .expect("tenant lifecycle wait lock should not be poisoned");
+        assert_eq!(lifecycle.active_operations.load(Ordering::Acquire), 1);
+
+        let release_started = Arc::new((Mutex::new(false), Condvar::new()));
+        let release_allowed = Arc::new((Mutex::new(false), Condvar::new()));
+        let release_finished = Arc::new((Mutex::new(false), Condvar::new()));
+
+        let releaser = {
+            let lifecycle = lifecycle.clone();
+            let release_started = release_started.clone();
+            let release_allowed = release_allowed.clone();
+            let release_finished = release_finished.clone();
+            thread::spawn(move || {
+                signal(&release_started);
+                wait_for_signal(
+                    &release_allowed,
+                    Duration::from_secs(1),
+                    "release allowance",
+                );
+                lifecycle.release_operation();
+                signal(&release_finished);
+            })
+        };
+
+        wait_for_signal(
+            &release_started,
+            Duration::from_secs(1),
+            "release thread start",
+        );
+        signal(&release_allowed);
+
+        let finished = release_finished
+            .0
+            .lock()
+            .expect("release-finished lock should not be poisoned");
+        let (finished, result) = release_finished
+            .1
+            .wait_timeout_while(finished, Duration::from_millis(100), |finished| !*finished)
+            .expect("release-finished wait should not be poisoned");
+        assert!(
+            result.timed_out() && !*finished,
+            "release_operation must not notify while the blocking deleter still holds the wait lock"
+        );
+        drop(finished);
+
+        let (wait_guard, result) = lifecycle
+            .zero_active
+            .wait_timeout(wait_guard, Duration::from_secs(1))
+            .expect("blocking delete wait should not be poisoned");
+        assert!(
+            !result.timed_out(),
+            "blocking delete waiter should be notified after it parks"
+        );
+        assert_eq!(lifecycle.active_operations.load(Ordering::Acquire), 0);
+        drop(wait_guard);
+
+        wait_for_signal(
+            &release_finished,
+            Duration::from_secs(1),
+            "release completion",
+        );
+        releaser
+            .join()
+            .expect("release thread should not panic during lifecycle test");
     }
 }

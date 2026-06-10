@@ -62,7 +62,7 @@ pub(crate) struct ResolvedBunJscAdapterLibrary {
 #[derive(Debug, Clone)]
 pub(crate) struct BunJscAdapterDiscoveryError {
     message: String,
-    diagnostics: RuntimeExecutionAdapterArtifactDiagnostics,
+    diagnostics: Box<RuntimeExecutionAdapterArtifactDiagnostics>,
 }
 
 impl BunJscAdapterDiscoveryError {
@@ -71,7 +71,7 @@ impl BunJscAdapterDiscoveryError {
     }
 
     pub(crate) fn diagnostics(&self) -> RuntimeExecutionAdapterArtifactDiagnostics {
-        self.diagnostics.clone()
+        self.diagnostics.as_ref().clone()
     }
 }
 
@@ -445,7 +445,7 @@ fn discovery_error_from_diagnostics(
 ) -> BunJscAdapterDiscoveryError {
     BunJscAdapterDiscoveryError {
         message: message.into(),
-        diagnostics,
+        diagnostics: Box::new(diagnostics),
     }
 }
 

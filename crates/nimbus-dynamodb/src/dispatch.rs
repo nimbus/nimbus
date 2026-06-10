@@ -155,7 +155,7 @@ pub fn dispatch(ctx: &DispatchContext<'_>, headers: &HeaderMap, body: &[u8]) -> 
 /// ±15-minute window and a signature that matches the per-key secret over the
 /// canonical `POST /` request; otherwise the binding's secret being absent is a
 /// configuration error surfaced as `UnrecognizedClientException`. `LookupOnly`
-/// (the default) skips signature verification — convenient for local dev.
+/// skips signature verification only when explicitly selected for local dev.
 fn authenticate(
     ctx: &DispatchContext<'_>,
     headers: &HeaderMap,

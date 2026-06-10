@@ -1,4 +1,4 @@
-use nimbus_core::{CommitEntry, Document, Error, Result, TableId, WriteOp, WriteOpType};
+use nimbus_core::{CommitEntry, Document, Error, Result, TableId, Timestamp, WriteOp, WriteOpType};
 use redb::ReadableTable;
 
 use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
@@ -30,7 +30,7 @@ impl TenantStore {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
     ) -> Result<Option<CommitEntry>> {
-        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None)
+        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None, None)
     }
 
     pub fn apply_execution_unit_batch_with_origin(
@@ -38,6 +38,7 @@ impl TenantStore {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
         trigger_write_origin: Option<&nimbus_core::TriggerWriteOrigin>,
+        commit_timestamp: Option<Timestamp>,
     ) -> Result<Option<CommitEntry>> {
         if writes.is_empty() && schedule_ops.is_empty() {
             return Err(Error::Internal(
@@ -127,7 +128,7 @@ impl TenantStore {
         let commit = if commit_writes.is_empty() {
             None
         } else {
-            Some(self.append_commit_entry(&write_txn, commit_writes)?)
+            Some(self.append_commit_entry(&write_txn, commit_writes, commit_timestamp)?)
         };
         self.commit_write_txn(write_txn)?;
         Ok(commit)
@@ -173,6 +174,8 @@ fn apply_insert(
                 .map_err(map_redb_error)?;
         }
     }
+    // Resource path bindings are stable metadata for the document locator.
+    // Updates may refresh a supplied binding, but only deletes remove it.
     if let Some(resource_path_binding) = resource_path_binding {
         upsert_resource_path_binding_in_write_txn(write_txn, resource_path_binding)?;
     }
@@ -431,6 +434,62 @@ mod tests {
                 .expect("latest sequence should remain readable"),
             SequenceNumber(2),
             "failed batch must not append a commit log entry"
+        );
+    }
+
+    #[test]
+    fn update_without_resource_path_binding_keeps_existing_binding() {
+        let store = TenantStore::create_in_memory().expect("store should open");
+        let table = TableName::new("tasks_bound_update").expect("table should parse");
+        let schema = schema(&table);
+        store
+            .replace_table_schema(&schema)
+            .expect("schema should persist");
+
+        let previous = document(&table, "bound", "before");
+        let binding = ResourcePathBinding::new(
+            DocumentLocator::new(table.clone(), previous.id.clone()),
+            DocumentPath::from_segments(["projects", "alpha", "tasks", "bound"])
+                .expect("path should parse"),
+        );
+        store
+            .apply_execution_unit_batch(
+                &[ResolvedWrite::Insert {
+                    document: previous.clone(),
+                    indexes: schema.indexes.clone(),
+                    resource_path_binding: Some(binding.clone()),
+                }],
+                &[],
+            )
+            .expect("bound insert batch should succeed")
+            .expect("bound insert should emit a commit");
+
+        let current = document(&table, "bound", "after");
+        store
+            .apply_execution_unit_batch(
+                &[ResolvedWrite::Update {
+                    previous,
+                    current,
+                    indexes: schema.indexes,
+                    resource_path_binding: None,
+                }],
+                &[],
+            )
+            .expect("update batch should succeed")
+            .expect("update should emit a commit");
+
+        assert_eq!(
+            store
+                .resource_path_binding(&binding.locator)
+                .expect("binding lookup should succeed"),
+            Some(binding.clone()),
+            "an update without a replacement binding must not remove locator-stable path metadata"
+        );
+        assert_eq!(
+            store
+                .locator_for_document_path(&binding.document_path)
+                .expect("path lookup should succeed"),
+            Some(binding.locator)
         );
     }
 }

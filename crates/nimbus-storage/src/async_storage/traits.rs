@@ -35,9 +35,10 @@ pub trait TenantReadStorage: Send + Sync {
     /// Executes a cancellable read task.
     ///
     /// Cancellation may short-circuit before the blocking work starts or while
-    /// long scans periodically poll `check_cancel`. The engine depends on this
-    /// to abort query, materialized-read, and subscription-bootstrap work
-    /// without changing the underlying read semantics.
+    /// long scans periodically poll `check_cancel`. Once blocking work starts,
+    /// cancellation is cooperative: the executor returns `Cancelled` to the
+    /// waiter, and the read permit is released when the task observes
+    /// cancellation or completes naturally.
     async fn execute_cancellable<T, Fut, Check, F>(
         &self,
         cancel_wait: Fut,

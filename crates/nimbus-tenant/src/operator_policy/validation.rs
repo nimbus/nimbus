@@ -10,11 +10,10 @@ use super::{
     DEFAULT_REDACTED_FIELDS, OPERATOR_POLICY_SCHEMA_VERSION, OperatorAuditPolicy,
     OperatorImagePolicy, OperatorImageProvenancePolicy, OperatorImageSignaturePolicy,
     OperatorNetworkEndpointPolicy, OperatorNetworkPolicy, OperatorPolicyDocument,
-    OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorRuntimePolicy, OperatorRuntimeProfile,
-    OperatorSandboxPolicy, OperatorSecretPolicy, OperatorServicePolicy, OperatorStoragePolicy,
-    OperatorVolumePolicy,
+    OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorSandboxPolicy, OperatorSecretPolicy,
+    OperatorServicePolicy, OperatorStoragePolicy, OperatorVolumePolicy,
 };
-use crate::{RuntimeIsolationTier, TenantIsolationMode, WorkloadKind};
+use crate::{TenantIsolationMode, WorkloadKind};
 
 impl OperatorPolicyDocument {
     pub fn validate(&self) -> Result<()> {
@@ -58,7 +57,6 @@ impl OperatorPolicyWorkload {
         if self.name.trim().is_empty() {
             return invalid_policy("workload.name cannot be empty");
         }
-        self.runtime.validate(&self.key())?;
         self.sandbox.validate(&self.key(), self.kind)?;
         self.services.validate(&self.key())?;
         self.network.validate(&self.key(), &self.services)?;
@@ -71,24 +69,6 @@ impl OperatorPolicyWorkload {
         self.secrets.validate(&self.key())?;
         self.quotas.validate(&self.key())?;
         self.audit.validate(&self.key())?;
-        Ok(())
-    }
-}
-
-impl OperatorRuntimePolicy {
-    fn validate(&self, workload_key: &str) -> Result<()> {
-        if matches!(
-            self.profile,
-            OperatorRuntimeProfile::Node20
-                | OperatorRuntimeProfile::Node22
-                | OperatorRuntimeProfile::Node24
-        ) && matches!(self.tier, RuntimeIsolationTier::InProcessUntrusted)
-        {
-            // This is allowed: Node runtime profile selects API shape. The
-            // deployment mode and tier choose the concrete grant profile.
-            return Ok(());
-        }
-        let _ = workload_key;
         Ok(())
     }
 }
@@ -351,10 +331,30 @@ fn validate_redactions(fields: &[String], field: &str) -> Result<()> {
 }
 
 fn validate_host(host: &str, workload_key: &str) -> Result<()> {
-    let host = host.trim();
-    if host.is_empty() || matches!(host, "*" | "0.0.0.0" | "::" | "[::]") {
+    if host.trim().is_empty() {
+        return invalid_policy(format!(
+            "workload `{workload_key}` network host must be a concrete non-empty value"
+        ));
+    }
+    if host != host.trim() || host.contains(char::is_whitespace) {
+        return invalid_policy(format!(
+            "workload `{workload_key}` network host `{host}` must not contain whitespace"
+        ));
+    }
+    if host == "*" || host.contains('*') {
         return invalid_policy(format!(
             "workload `{workload_key}` network host `{host}` is a wildcard bind, not an admitted egress endpoint"
+        ));
+    }
+    if host.contains("://")
+        || host.contains('/')
+        || host.contains('\\')
+        || host.contains('@')
+        || host.starts_with('[')
+        || host.ends_with(']')
+    {
+        return invalid_policy(format!(
+            "workload `{workload_key}` network host `{host}` must be a bare DNS name or IP literal, not a URL or authority"
         ));
     }
     if let Ok(ip) = host.parse::<IpAddr>()
@@ -364,7 +364,35 @@ fn validate_host(host: &str, workload_key: &str) -> Result<()> {
             "workload `{workload_key}` network host `{host}` is unspecified"
         ));
     }
+    if host.parse::<IpAddr>().is_ok() {
+        return Ok(());
+    }
+    if host.contains(':') {
+        return invalid_policy(format!(
+            "workload `{workload_key}` network host `{host}` must not include a port or brackets"
+        ));
+    }
+    if !is_valid_dns_hostname(host) {
+        return invalid_policy(format!(
+            "workload `{workload_key}` network host `{host}` must be a valid DNS hostname or IP literal"
+        ));
+    }
     Ok(())
+}
+
+fn is_valid_dns_hostname(host: &str) -> bool {
+    if host.len() > 253 || host.starts_with('.') || host.ends_with('.') {
+        return false;
+    }
+    host.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    })
 }
 
 fn validate_port(port: u16, field: &str, workload_key: &str) -> Result<()> {

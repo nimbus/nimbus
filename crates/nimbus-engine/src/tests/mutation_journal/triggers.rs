@@ -7,7 +7,9 @@ use nimbus_core::{
     ResourcePathBinding, TenantId, Timestamp, TriggerDeliveryCursor, TriggerInvocationRecord,
     TriggerInvocationState,
 };
-use nimbus_storage::{ManualClock, NoopFaultInjector};
+use nimbus_storage::{
+    FaultOccurrence, FaultPoint, ManualClock, NoopFaultInjector, ScriptedFaultInjector,
+};
 use tempfile::{TempDir, tempdir};
 
 use super::support::{
@@ -533,6 +535,89 @@ async fn trigger_invocations_materialize_exact_and_wildcard_matches() {
             .map(String::as_str),
         Some("exact")
     );
+}
+
+#[tokio::test]
+async fn trigger_candidate_worker_retries_transient_materialization_failure() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    let document_id = DocumentId::from_key("materialize-retry").expect("document id should build");
+    let engine = Arc::new(
+        Engine::new_with_simulation(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(50_000))),
+            Arc::new(ScriptedFaultInjector::new([FaultOccurrence {
+                point: FaultPoint::TriggerInvocationMaterializeBeforeCommit,
+                visit: 1,
+            }])),
+        )
+        .expect("engine should create"),
+    );
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    engine
+        .replace_trigger_registrations_for_testing(
+            &tenant_id,
+            vec![trigger_registration(
+                "firebase:materializeRetryWritten",
+                FirestoreCloudEventType::Written,
+                ["tasks", "{taskId}"],
+            )],
+        )
+        .expect("trigger registrations should persist in runtime");
+    engine
+        .upsert_resource_path_binding_for_testing(&tenant_id, trigger_binding(&document_id))
+        .expect("resource path binding should persist");
+
+    engine
+        .insert_document_with_id(
+            &tenant_id,
+            tasks_table(),
+            document_id,
+            serde_json::Map::from_iter([("title".to_string(), json!("materialize-retry"))]),
+        )
+        .expect("insert should succeed despite a transient trigger materialization failure");
+
+    let (records, cursor, pending_count) = wait_for_value(
+        "trigger candidate worker should retry transient materialization failure in-process",
+        mutation_journal_progress_timeout(),
+        mutation_journal_poll_interval(),
+        || async {
+            let records = engine
+                .list_trigger_invocations_for_testing(&tenant_id)
+                .expect("trigger invocations should load");
+            let cursor = engine
+                .trigger_delivery_cursor_for_testing(&tenant_id)
+                .expect("trigger delivery cursor should load");
+            let pending_count = engine
+                .pending_trigger_candidate_count_for_testing(&tenant_id)
+                .expect("pending trigger candidate count should load");
+            (records, cursor, pending_count)
+        },
+        |(records, cursor, pending_count)| {
+            records.len() == 1
+                && *cursor == TriggerDeliveryCursor::new(SequenceNumber(1))
+                && *pending_count == 2
+        },
+    )
+    .await;
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].key.registration_id,
+        "firebase:materializeRetryWritten"
+    );
+    assert!(matches!(records[0].state, TriggerInvocationState::Pending));
+    assert_eq!(cursor, TriggerDeliveryCursor::new(SequenceNumber(1)));
+    assert_eq!(pending_count, 2);
+
+    let candidates = engine
+        .drain_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger candidates should drain");
+    assert_eq!(candidates.len(), 2);
+    assert_eq!(candidates[0].event_type, FirestoreCloudEventType::Created);
+    assert_eq!(candidates[1].event_type, FirestoreCloudEventType::Written);
 }
 
 #[tokio::test]
@@ -1078,5 +1163,121 @@ async fn installing_executor_bootstraps_due_retry_invocations_after_restart() {
     assert_eq!(
         executor.calls(),
         vec!["firebase:retryRestartWritten".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn installing_executor_replays_running_invocations_after_restart() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    let document_id = DocumentId::from_key("running-restart").expect("document id should build");
+    let initial_clock = Arc::new(ManualClock::new(Timestamp(90_000)));
+
+    {
+        let engine = Arc::new(
+            Engine::new_with_simulation(
+                data_dir.path(),
+                initial_clock.clone(),
+                Arc::new(NoopFaultInjector),
+            )
+            .expect("engine should create"),
+        );
+        engine
+            .create_tenant(tenant_id.clone())
+            .expect("tenant should create");
+        engine
+            .replace_trigger_registrations_for_testing(
+                &tenant_id,
+                vec![trigger_registration(
+                    "firebase:runningRestartWritten",
+                    FirestoreCloudEventType::Written,
+                    ["tasks", "{taskId}"],
+                )],
+            )
+            .expect("trigger registrations should persist in runtime");
+        engine
+            .upsert_resource_path_binding_for_testing(&tenant_id, trigger_binding(&document_id))
+            .expect("resource path binding should persist");
+
+        engine
+            .insert_document_with_id(
+                &tenant_id,
+                tasks_table(),
+                document_id.clone(),
+                serde_json::Map::from_iter([("title".to_string(), json!("running-restart"))]),
+            )
+            .expect("insert should succeed");
+
+        let mut records = wait_for_value(
+            "trigger materialization should persist pending invocation before running restart",
+            mutation_journal_progress_timeout(),
+            mutation_journal_poll_interval(),
+            || async {
+                engine
+                    .list_trigger_invocations_for_testing(&tenant_id)
+                    .expect("trigger invocations should load")
+            },
+            |records| {
+                records.len() == 1 && matches!(records[0].state, TriggerInvocationState::Pending)
+            },
+        )
+        .await;
+        let mut record = records.pop().expect("pending trigger should exist");
+        record
+            .begin_attempt(Timestamp(90_000))
+            .expect("test should mark invocation running");
+        engine
+            .save_trigger_invocation_for_testing(&tenant_id, &record)
+            .expect("running trigger invocation should persist");
+
+        let records = engine
+            .list_trigger_invocations_for_testing(&tenant_id)
+            .expect("trigger invocations should load");
+        assert!(
+            records.len() == 1
+                && matches!(
+                    records[0].state,
+                    TriggerInvocationState::Running { attempt: 1, .. }
+                ),
+            "test setup should leave one durable running invocation before restart"
+        );
+        engine.quiesce().await;
+    }
+
+    let restart_clock = Arc::new(ManualClock::new(Timestamp(91_000)));
+    let engine = Arc::new(
+        Engine::new_with_simulation(data_dir.path(), restart_clock, Arc::new(NoopFaultInjector))
+            .expect("engine should recreate"),
+    );
+    engine
+        .ensure_tenant_exists(&tenant_id)
+        .expect("tenant should load");
+    let executor = Arc::new(RecordingTriggerExecutor::default());
+    engine
+        .install_trigger_invocation_executor(executor.clone())
+        .expect("trigger executor should install");
+
+    wait_for_value(
+        "installing the executor should replay running durable trigger invocations after restart",
+        mutation_journal_progress_timeout(),
+        mutation_journal_poll_interval(),
+        || async {
+            engine
+                .list_trigger_invocations_for_testing(&tenant_id)
+                .expect("trigger invocations should load")
+        },
+        |records| {
+            records.len() == 1
+                && matches!(
+                    records[0].state,
+                    TriggerInvocationState::Completed { attempt: 1, .. }
+                )
+        },
+    )
+    .await;
+
+    assert_eq!(
+        executor.calls(),
+        vec!["firebase:runningRestartWritten".to_string()]
     );
 }

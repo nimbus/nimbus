@@ -1,3 +1,4 @@
+use std::ops::Bound;
 use std::time::{Duration as StdDuration, Instant};
 
 use super::*;
@@ -511,10 +512,8 @@ fn redb_historical_index_scan_eq_and_range_use_versioned_visibility() {
         .historical_index_scan_range_cancellable(
             &at_update,
             "by_rank",
-            Some(&json!(2)),
-            Some(&json!(2)),
-            true,
-            true,
+            Bound::Included(&json!(2)),
+            Bound::Included(&json!(2)),
             &mut || Ok(()),
         )
         .expect("historical rank range scan should succeed");
@@ -585,10 +584,8 @@ fn redb_historical_index_prefix_composite_range_and_pagination_are_stable() {
             &read_shape,
             "by_status_rank",
             &[json!("open")],
-            Some(&json!(2)),
-            Some(&json!(2)),
-            true,
-            true,
+            Bound::Included(&json!(2)),
+            Bound::Included(&json!(2)),
             &mut || Ok(()),
         )
         .expect("historical composite range scan should succeed");
@@ -708,17 +705,18 @@ fn redb_storage_engine_quality_performance_budget_covers_latest_historical_cdc_p
     let mut cursor = None;
     let mut historical_index_rows = 0_usize;
     loop {
+        let mut check_cancel = || Ok(());
         let page = snapshot
             .historical_index_scan_range_page_cancellable(
                 &read_shape,
                 "by_rank",
-                Some(&json!(0)),
-                Some(&json!(2000)),
-                true,
-                true,
-                cursor.as_ref(),
-                8,
-                &mut || Ok(()),
+                Bound::Included(&json!(0)),
+                Bound::Included(&json!(2000)),
+                crate::index::history_scan::HistoricalIndexPageRequest {
+                    after: cursor.as_ref(),
+                    limit: 8,
+                    check_cancel: &mut check_cancel,
+                },
             )
             .expect("historical index page should read");
         historical_index_rows += page.documents.len();

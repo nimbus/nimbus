@@ -38,7 +38,8 @@ async function invokeLocal(request) {
   );
   return await handler(
     globalThis.__nimbusCreateContext({
-      hostCallSessionId: `${request.kind}:${request.function_name}`,
+      hostCallSessionId: request.hostCallSessionId ?? `${request.kind}:${request.function_name}`,
+      request,
     }),
     request.args ?? {},
     request,

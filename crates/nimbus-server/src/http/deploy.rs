@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use nimbus_core::Error;
 use serde::{Deserialize, Serialize};
@@ -22,14 +21,13 @@ use crate::local_server::authorize_deploy_admin_bearer;
 use crate::state::DeploymentState;
 use nimbus_auth::ApplicationAuthVerifier;
 
-static STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
-
 pub(crate) async fn deploy_app(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(request): Json<DeployRequest>,
 ) -> Result<Json<DeployResponse>, AppError> {
     authorize_deploy_admin_bearer(state.deploy_admin_token.as_deref(), &headers)?;
+    let DeployRequest { dry_run, artifacts } = request;
     let previous_deployment = state.current_deployment();
     let previous_generation = previous_deployment.generation;
     let previous_registry = previous_deployment.convex_registry();
@@ -47,7 +45,11 @@ pub(crate) async fn deploy_app(
         .as_deref()
         .map(ConvexRegistry::deploy_summary);
 
-    let staged = stage_deploy_artifacts(&request.artifacts)?;
+    let staged = tokio::task::spawn_blocking(move || stage_deploy_artifacts(&artifacts))
+        .await
+        .map_err(|error| {
+            Error::Internal(format!("deploy artifact staging task failed: {error}"))
+        })??;
     let next_registry = staged
         .includes_convex()
         .then(|| {
@@ -69,7 +71,7 @@ pub(crate) async fn deploy_app(
         })
         .transpose()?;
 
-    let generation = if request.dry_run {
+    let generation = if dry_run {
         previous_generation
     } else {
         let next_convex_registry = next_registry
@@ -104,8 +106,8 @@ pub(crate) async fn deploy_app(
     };
 
     Ok(Json(DeployResponse {
-        dry_run: request.dry_run,
-        activated: !request.dry_run,
+        dry_run,
+        activated: !dry_run,
         generation,
         previous_generation,
         diff,
@@ -309,14 +311,14 @@ impl DeployHttpRouteChange {
 }
 
 struct StagedDeployArtifacts {
-    app_dir: PathBuf,
+    app_dir: tempfile::TempDir,
     includes_convex: bool,
     includes_cloud_functions: bool,
 }
 
 impl StagedDeployArtifacts {
     fn app_dir(&self) -> &Path {
-        &self.app_dir
+        self.app_dir.path()
     }
 
     fn includes_convex(&self) -> bool {
@@ -328,21 +330,31 @@ impl StagedDeployArtifacts {
     }
 }
 
-impl Drop for StagedDeployArtifacts {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.app_dir);
-    }
-}
-
 fn stage_deploy_artifacts(artifacts: &DeployArtifacts) -> Result<StagedDeployArtifacts, Error> {
     validate_deploy_artifacts(artifacts)?;
-    let app_dir = std::env::temp_dir().join(format!(
-        "nimbus-deploy-{}-{}",
-        std::process::id(),
-        STAGING_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
+    let app_dir = tempfile::Builder::new()
+        .prefix("nimbus-deploy-")
+        .tempdir()
+        .map_err(|error| {
+            Error::InvalidInput(format!(
+                "failed to create deploy staging directory: {error}"
+            ))
+        })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(app_dir.path(), std::fs::Permissions::from_mode(0o700)).map_err(
+            |error| {
+                Error::InvalidInput(format!(
+                    "failed to make deploy staging directory private {}: {error}",
+                    app_dir.path().display()
+                ))
+            },
+        )?;
+    }
     if let Some(convex) = &artifacts.convex {
-        let convex_dir = app_dir.join(".nimbus").join("convex");
+        let convex_dir = app_dir.path().join(".nimbus").join("convex");
         std::fs::create_dir_all(&convex_dir).map_err(|error| {
             Error::InvalidInput(format!(
                 "failed to create deploy staging directory {}: {error}",
@@ -372,7 +384,7 @@ fn stage_deploy_artifacts(artifacts: &DeployArtifacts) -> Result<StagedDeployArt
     }
 
     if let Some(cloud_functions) = &artifacts.cloud_functions {
-        let cloud_functions_dir = app_dir.join(CLOUD_FUNCTIONS_INTERNAL_ARTIFACT_DIR);
+        let cloud_functions_dir = app_dir.path().join(CLOUD_FUNCTIONS_INTERNAL_ARTIFACT_DIR);
         std::fs::create_dir_all(&cloud_functions_dir).map_err(|error| {
             Error::InvalidInput(format!(
                 "failed to create deploy staging directory {}: {error}",
@@ -451,4 +463,49 @@ fn write_json_file(path: &Path, value: &Value) -> Result<(), Error> {
             path.display()
         ))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn stage_deploy_artifacts_uses_private_randomized_directory() {
+        let artifacts = DeployArtifacts {
+            convex: Some(ConvexDeployArtifacts {
+                functions_json: json!([]),
+                http_routes_json: None,
+                schema_json: None,
+                auth_config_json: None,
+                bundle_mjs: None,
+                bundle_sha256: None,
+            }),
+            cloud_functions: None,
+        };
+
+        let staged = stage_deploy_artifacts(&artifacts).expect("deploy artifacts should stage");
+        let app_dir = staged.app_dir();
+        assert!(
+            app_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("nimbus-deploy-")),
+            "staging directory should use the Nimbus deploy prefix with a random suffix"
+        );
+        assert!(app_dir.join(".nimbus/convex/functions.json").is_file());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mode = std::fs::metadata(app_dir)
+                .expect("staging directory metadata should load")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o700);
+        }
+    }
 }

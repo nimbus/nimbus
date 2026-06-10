@@ -1,7 +1,8 @@
 use nimbus_core::{
-    AccessAction, AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, AtomicWriteResult,
-    Document, Error, FieldTransform, FieldTransformOperation, NumericValue, Result, SpecialDouble,
-    StoredValue, Timestamp, TypedScalarValue, WriteKey, WritePrecondition, WriteSetMode,
+    AccessAction, ArrayPopSide, AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome,
+    AtomicWriteResult, BitwiseOperation, Document, Error, FieldTransform, FieldTransformOperation,
+    NumericValue, Result, SpecialDouble, StoredValue, Timestamp, TypedScalarValue, WriteKey,
+    WritePrecondition, WriteSetMode,
 };
 
 use super::super::mutations::enforce_mutation_authorization;
@@ -12,30 +13,39 @@ struct PendingAtomicWriteResult {
     transform_results: Vec<StoredValue>,
 }
 
+struct PreparedAtomicWriteBatch {
+    timestamp: Timestamp,
+    results: Vec<PendingAtomicWriteResult>,
+}
+
 impl MutationExecutionUnit {
     pub fn stage_atomic_write_batch(
         &self,
         batch: AtomicWriteBatch,
     ) -> Result<AtomicWriteBatchOutcome> {
-        let pending_results = self.prepare_atomic_write_batch(batch)?;
-        Ok(self.atomic_write_batch_outcome(None, self.engine.now(), pending_results))
+        let prepared = self.prepare_atomic_write_batch(batch)?;
+        Ok(self.atomic_write_batch_outcome(None, prepared.timestamp, prepared.results))
     }
 
     pub fn execute_atomic_write_batch(
         &self,
         batch: AtomicWriteBatch,
     ) -> Result<AtomicWriteBatchOutcome> {
-        let pending_results = self.prepare_atomic_write_batch(batch)?;
+        let prepared = self.prepare_atomic_write_batch(batch)?;
 
-        let commit = self.commit()?;
+        let commit = self.commit_at(prepared.timestamp)?;
         let commit_time = commit
             .as_ref()
             .map(|commit| commit.timestamp)
-            .unwrap_or_else(|| self.engine.now());
-        Ok(self.atomic_write_batch_outcome(commit, commit_time, pending_results))
+            .unwrap_or(prepared.timestamp);
+        Ok(self.atomic_write_batch_outcome(commit, commit_time, prepared.results))
     }
 
-    fn apply_atomic_write(&self, write: AtomicWrite) -> Result<PendingAtomicWriteResult> {
+    fn apply_atomic_write(
+        &self,
+        write: AtomicWrite,
+        write_time: Timestamp,
+    ) -> Result<PendingAtomicWriteResult> {
         match write {
             AtomicWrite::Set {
                 key,
@@ -43,14 +53,16 @@ impl MutationExecutionUnit {
                 mode,
                 precondition,
                 transforms,
-            } => self.apply_set_write(key, document, mode, precondition, transforms),
+            } => self.apply_set_write(key, document, mode, precondition, transforms, write_time),
             AtomicWrite::Patch {
                 key,
                 field_patch,
                 mask,
                 precondition,
                 transforms,
-            } => self.apply_patch_write(key, field_patch, mask, precondition, transforms),
+            } => {
+                self.apply_patch_write(key, field_patch, mask, precondition, transforms, write_time)
+            }
             AtomicWrite::Delete {
                 key,
                 precondition,
@@ -61,25 +73,29 @@ impl MutationExecutionUnit {
                 key,
                 transforms,
                 precondition,
-            } => self.apply_transform_write(key, transforms, precondition),
+            } => self.apply_transform_write(key, transforms, precondition, write_time),
         }
     }
 
     fn prepare_atomic_write_batch(
         &self,
         batch: AtomicWriteBatch,
-    ) -> Result<Vec<PendingAtomicWriteResult>> {
+    ) -> Result<PreparedAtomicWriteBatch> {
         if batch.writes.is_empty() {
             return Err(Error::InvalidInput(
                 "atomic write batch must contain at least one write".to_string(),
             ));
         }
 
+        let timestamp = self.engine.now();
         let mut pending_results = Vec::with_capacity(batch.writes.len());
         for write in batch.writes {
-            pending_results.push(self.apply_atomic_write(write)?);
+            pending_results.push(self.apply_atomic_write(write, timestamp)?);
         }
-        Ok(pending_results)
+        Ok(PreparedAtomicWriteBatch {
+            timestamp,
+            results: pending_results,
+        })
     }
 
     fn atomic_write_batch_outcome(
@@ -110,6 +126,7 @@ impl MutationExecutionUnit {
         mode: WriteSetMode,
         precondition: WritePrecondition,
         transforms: Vec<FieldTransform>,
+        write_time: Timestamp,
     ) -> Result<PendingAtomicWriteResult> {
         precondition.validate()?;
 
@@ -138,7 +155,7 @@ impl MutationExecutionUnit {
                 table.clone(),
                 existing.as_ref(),
                 document,
-                self.engine.now(),
+                write_time,
             ),
             WriteSetMode::MergeAll => merge_document(
                 &locator,
@@ -146,7 +163,7 @@ impl MutationExecutionUnit {
                 existing.as_ref(),
                 document,
                 None,
-                self.engine.now(),
+                write_time,
             ),
             WriteSetMode::MergeFields(mask) => merge_document(
                 &locator,
@@ -154,11 +171,10 @@ impl MutationExecutionUnit {
                 existing.as_ref(),
                 document,
                 Some(mask),
-                self.engine.now(),
+                write_time,
             ),
         };
-        let transform_results =
-            apply_field_transforms_at(&mut current, &transforms, self.engine.now())?;
+        let transform_results = apply_field_transforms_at(&mut current, &transforms, write_time)?;
 
         if let Some(table_schema) = table_schema.as_ref() {
             table_schema.validate(&current.fields)?;
@@ -174,7 +190,7 @@ impl MutationExecutionUnit {
             Some(&current),
             existing.as_ref(),
         )?;
-        preserve_document_lifecycle_times(existing.as_ref(), &mut current, self.engine.now());
+        preserve_document_lifecycle_times(existing.as_ref(), &mut current, write_time);
 
         self.stage_write(
             table,
@@ -186,7 +202,7 @@ impl MutationExecutionUnit {
         )?;
 
         Ok(PendingAtomicWriteResult {
-            update_time: Some(self.engine.now()),
+            update_time: Some(write_time),
             transform_results,
         })
     }
@@ -198,6 +214,7 @@ impl MutationExecutionUnit {
         mask: Vec<String>,
         precondition: WritePrecondition,
         transforms: Vec<FieldTransform>,
+        write_time: Timestamp,
     ) -> Result<PendingAtomicWriteResult> {
         precondition.validate()?;
 
@@ -215,8 +232,7 @@ impl MutationExecutionUnit {
             Document::with_id(locator.id.clone(), table.clone(), serde_json::Map::new())
         });
         apply_patch_mask(&mut current, &field_patch, &mask);
-        let transform_results =
-            apply_field_transforms_at(&mut current, &transforms, self.engine.now())?;
+        let transform_results = apply_field_transforms_at(&mut current, &transforms, write_time)?;
         if let Some(table_schema) = table_schema.as_ref() {
             table_schema.validate(&current.fields)?;
         }
@@ -231,7 +247,7 @@ impl MutationExecutionUnit {
             Some(&current),
             existing.as_ref(),
         )?;
-        preserve_document_lifecycle_times(existing.as_ref(), &mut current, self.engine.now());
+        preserve_document_lifecycle_times(existing.as_ref(), &mut current, write_time);
 
         self.stage_write(
             table,
@@ -243,7 +259,7 @@ impl MutationExecutionUnit {
         )?;
 
         Ok(PendingAtomicWriteResult {
-            update_time: Some(self.engine.now()),
+            update_time: Some(write_time),
             transform_results,
         })
     }
@@ -333,6 +349,7 @@ impl MutationExecutionUnit {
         key: WriteKey,
         transforms: Vec<FieldTransform>,
         precondition: WritePrecondition,
+        write_time: Timestamp,
     ) -> Result<PendingAtomicWriteResult> {
         precondition.validate()?;
         if transforms.is_empty() {
@@ -354,8 +371,7 @@ impl MutationExecutionUnit {
         let mut current = existing.clone().unwrap_or_else(|| {
             Document::with_id(locator.id.clone(), table.clone(), serde_json::Map::new())
         });
-        let transform_results =
-            apply_field_transforms_at(&mut current, &transforms, self.engine.now())?;
+        let transform_results = apply_field_transforms_at(&mut current, &transforms, write_time)?;
         if let Some(table_schema) = table_schema.as_ref() {
             table_schema.validate(&current.fields)?;
         }
@@ -370,7 +386,7 @@ impl MutationExecutionUnit {
             Some(&current),
             existing.as_ref(),
         )?;
-        preserve_document_lifecycle_times(existing.as_ref(), &mut current, self.engine.now());
+        preserve_document_lifecycle_times(existing.as_ref(), &mut current, write_time);
 
         self.stage_write(
             table,
@@ -382,7 +398,7 @@ impl MutationExecutionUnit {
         )?;
 
         Ok(PendingAtomicWriteResult {
-            update_time: Some(self.engine.now()),
+            update_time: Some(write_time),
             transform_results,
         })
     }
@@ -412,10 +428,15 @@ impl MutationExecutionUnit {
         precondition: &WritePrecondition,
     ) -> Result<()> {
         if let Some(update_time) = precondition.update_time {
-            return Err(Error::InvalidInput(format!(
-                "update-time preconditions are modeled but not executable yet (requested {})",
-                update_time.0
-            )));
+            let Some(existing) = existing else {
+                return Err(Error::DocumentNotFound(locator.id.clone()));
+            };
+            if existing.update_time != update_time {
+                return Err(Error::PreconditionFailed(format!(
+                    "document update_time precondition failed for {}: expected {}, found {}",
+                    locator.id, update_time.0, existing.update_time.0
+                )));
+            }
         }
 
         match precondition.exists {
@@ -787,6 +808,11 @@ fn apply_field_transform(
             document.set_field(field_name.to_string(), next.clone());
             Ok(StoredValue::Json { value: next })
         }
+        FieldTransformOperation::Multiply { operand } => {
+            let next = transform_multiply(document.get_field(field_name), operand)?;
+            document.set_field(field_name.to_string(), next.clone());
+            Ok(StoredValue::Json { value: next })
+        }
         FieldTransformOperation::Maximum { operand } => {
             let next = transform_extreme(document, field_name, operand, ExtremeKind::Maximum)?;
             next.write_to_document(document, field_name);
@@ -818,6 +844,43 @@ fn apply_field_transform(
                 value: serde_json::Value::Null,
             })
         }
+        FieldTransformOperation::AppendElements { values } => {
+            let mut next_values = match document.get_field(field_name) {
+                Some(serde_json::Value::Array(values)) => values.clone(),
+                _ => Vec::new(),
+            };
+            next_values.extend(values.iter().cloned());
+            document.set_field(
+                field_name.to_string(),
+                serde_json::Value::Array(next_values),
+            );
+            Ok(StoredValue::Json {
+                value: serde_json::Value::Null,
+            })
+        }
+        FieldTransformOperation::PopArray { side } => {
+            let mut next_values = match document.get_field(field_name) {
+                Some(serde_json::Value::Array(values)) => values.clone(),
+                _ => Vec::new(),
+            };
+            if !next_values.is_empty() {
+                match side {
+                    ArrayPopSide::First => {
+                        next_values.remove(0);
+                    }
+                    ArrayPopSide::Last => {
+                        next_values.pop();
+                    }
+                }
+            }
+            document.set_field(
+                field_name.to_string(),
+                serde_json::Value::Array(next_values),
+            );
+            Ok(StoredValue::Json {
+                value: serde_json::Value::Null,
+            })
+        }
         FieldTransformOperation::RemoveAllFromArray { values } => {
             let next_values = match document.get_field(field_name) {
                 Some(serde_json::Value::Array(existing)) => existing
@@ -838,6 +901,17 @@ fn apply_field_transform(
             Ok(StoredValue::Json {
                 value: serde_json::Value::Null,
             })
+        }
+        FieldTransformOperation::Bitwise { operation, operand } => {
+            let current = transform_integer_value(document.get_field(field_name)).unwrap_or(0);
+            let next = match operation {
+                BitwiseOperation::And => current & operand,
+                BitwiseOperation::Or => current | operand,
+                BitwiseOperation::Xor => current ^ operand,
+            };
+            let value = serde_json::Value::Number(serde_json::Number::from(next));
+            document.set_field(field_name.to_string(), value.clone());
+            Ok(StoredValue::Json { value })
         }
     }
 }
@@ -875,6 +949,34 @@ fn transform_increment(
         },
         None => operand.into_value(),
     }
+}
+
+fn transform_multiply(
+    current: Option<&serde_json::Value>,
+    operand: &NumericValue,
+) -> Result<serde_json::Value> {
+    let operand = FiniteNumericTransformValue::from_operand(operand, "multiply transform operand")?;
+    match current.and_then(FiniteNumericTransformValue::from_document) {
+        Some(current) => match (current, operand) {
+            (
+                FiniteNumericTransformValue::Integer(current),
+                FiniteNumericTransformValue::Integer(operand),
+            ) => FiniteNumericTransformValue::Integer(current.saturating_mul(operand)).into_value(),
+            (current, operand) => {
+                FiniteNumericTransformValue::Double(current.as_f64() * operand.as_f64())
+                    .into_value()
+            }
+        },
+        None => FiniteNumericTransformValue::Integer(0).into_value(),
+    }
+}
+
+fn transform_integer_value(current: Option<&serde_json::Value>) -> Option<i64> {
+    let value = current?;
+    if let Some(value) = value.as_i64() {
+        return Some(value);
+    }
+    value.as_u64().and_then(|value| i64::try_from(value).ok())
 }
 
 #[derive(Debug, Clone, Copy)]

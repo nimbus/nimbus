@@ -290,6 +290,126 @@ async fn subscription_delivery_queue_overflow_falls_back_without_regressing_mono
 }
 
 #[tokio::test]
+async fn subscription_delivery_overflow_fallback_does_not_regress_while_worker_is_publishing() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+
+    let document_id = engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("seed"))]),
+        )
+        .expect("seed insert should succeed");
+
+    let (tx, mut rx) = subscription_channel();
+    let _subscription = engine
+        .subscribe(
+            &tenant_id,
+            query_for("tasks"),
+            "concurrent-overflow-sub".to_string(),
+            tx,
+        )
+        .expect("subscribe should succeed");
+    let _ = rx
+        .recv()
+        .await
+        .expect("initial subscription update should arrive");
+
+    engine
+        .set_subscription_delivery_queue_capacity_for_testing(&tenant_id, 1)
+        .expect("queue capacity should be configurable for the test");
+    let publish_pause = engine
+        .subscription_delivery_publish_pause_handle_for_testing(&tenant_id)
+        .expect("publish pause handle should load");
+    publish_pause.arm_next_publish();
+
+    engine
+        .update_document(
+            &tenant_id,
+            tasks_table(),
+            document_id.clone(),
+            serde_json::Map::from_iter([("title".to_string(), json!("worker-old"))]),
+        )
+        .expect("first update should enqueue worker delivery");
+    let paused_delivery_sequence = publish_pause
+        .wait_until_entered(Duration::from_secs(1))
+        .expect("worker should pause after evaluating the older delivery but before publishing it");
+
+    engine
+        .update_document(
+            &tenant_id,
+            tasks_table(),
+            document_id.clone(),
+            serde_json::Map::from_iter([("title".to_string(), json!("queued-middle"))]),
+        )
+        .expect("second update should queue behind the paused worker delivery");
+    engine
+        .update_document(
+            &tenant_id,
+            tasks_table(),
+            document_id,
+            serde_json::Map::from_iter([("title".to_string(), json!("fallback-newer"))]),
+        )
+        .expect("overflow update should dispatch through the sync fallback");
+
+    timeout(Duration::from_secs(1), async {
+        let mut last_sequence = paused_delivery_sequence.0;
+        loop {
+            let update = rx
+                .recv()
+                .await
+                .expect("subscription channel should stay open");
+            let snapshot = match update {
+                SubscriptionUpdate::Result { snapshot, .. } => snapshot,
+                other => panic!("unexpected fallback subscription update: {other:?}"),
+            };
+            assert!(
+                snapshot.covered_sequence.0 > last_sequence,
+                "subscription deliveries must increase after the paused worker sequence"
+            );
+            last_sequence = snapshot.covered_sequence.0;
+
+            let data = snapshot.to_json_documents();
+            assert_eq!(data.len(), 1);
+            match data[0]["title"].as_str() {
+                Some("queued-middle") => continue,
+                Some("fallback-newer") => break,
+                other => panic!("unexpected concurrent overflow title: {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("newer fallback update should arrive");
+
+    publish_pause.release();
+
+    assert!(
+        timeout(Duration::from_millis(200), rx.recv())
+            .await
+            .is_err(),
+        "older worker or queued deliveries must not arrive after the newer fallback snapshot"
+    );
+
+    let stats = wait_for_subscription_delivery_stats(
+        &engine,
+        &tenant_id,
+        "concurrent overflow fallback stats",
+        |stats| stats.overflow_sync_fallback_count >= 1 && stats.coalesced_work_count >= 1,
+    )
+    .await;
+    assert!(
+        stats.overflow_sync_fallback_count >= 1,
+        "the newer delivery should have used sync fallback"
+    );
+    assert!(
+        stats.coalesced_work_count >= 1,
+        "stale worker or queued deliveries should be coalesced after the newer fallback publishes"
+    );
+}
+
+#[tokio::test]
 async fn subscription_delivery_queue_merge_coalesces_overlapping_work_items() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();

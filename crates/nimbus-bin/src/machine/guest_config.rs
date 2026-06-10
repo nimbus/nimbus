@@ -833,7 +833,7 @@ mod tests {
                 source: PathBuf::from("/Users"),
                 target: PathBuf::from("/Users"),
             }],
-            roots: MachineRootLayout::new(
+            roots: MachineRootLayout::test_sibling_roots(
                 temp_dir.path().join("config"),
                 temp_dir.path().join("state"),
                 temp_dir.path().join("runtime"),

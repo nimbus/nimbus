@@ -2,9 +2,6 @@ use std::collections::BTreeMap;
 
 use axum::http::HeaderMap;
 use nimbus_core::PrincipalContext;
-use nimbus_operator::{
-    ExtractedServerAccessStatus, LocalServerCredentialMode, extract_server_access,
-};
 use nimbus_runtime::HostCallCancellation;
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_services::{
@@ -13,30 +10,15 @@ use nimbus_services::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 
+use super::authz::{
+    OperatorRouteAccess, PrincipalClass, extract_operator_route_access, format_millis_rfc3339,
+    permission_actions_allow, permission_claim_values, principal_class_from_principal,
+};
 use super::sandbox_spec::{SandboxSpecInput, SandboxSpecResponse};
 use super::service_grants::principal_has_exact_service_grant;
 use super::*;
 use crate::local_server::{LocalServerAuditEvent, LocalServerRouteFamily, origin_from_headers};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PrincipalClass {
-    Operator,
-    Tenant,
-    SpawnedWorkload,
-}
-
-impl PrincipalClass {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Operator => "operator",
-            Self::Tenant => "tenant",
-            Self::SpawnedWorkload => "spawned_workload",
-        }
-    }
-}
 
 #[derive(Debug)]
 struct ServiceRouteAuthorization {
@@ -343,7 +325,7 @@ struct ServiceDefinitionSpecInput {
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 enum ServiceBackendInput {
     #[serde(rename = "sandbox")]
-    Sandbox { sandbox: SandboxSpecInput },
+    Sandbox { sandbox: Box<SandboxSpecInput> },
     #[serde(rename = "builtIn")]
     BuiltIn { provider: String },
     #[serde(rename = "external")]
@@ -775,7 +757,7 @@ impl ServiceBackendResponse {
     fn from_backend(backend: ServiceBackend) -> Self {
         match backend {
             ServiceBackend::Sandbox(sandbox) => Self::Sandbox {
-                sandbox: SandboxSpecResponse::from_spec(sandbox),
+                sandbox: SandboxSpecResponse::from_spec(*sandbox),
             },
             ServiceBackend::BuiltIn(spec) => Self::BuiltIn {
                 provider: spec.provider().to_owned(),
@@ -924,7 +906,7 @@ async fn authorize_service_definition_route(
     }
 
     let tenant = parse_user_tenant_id(tenant_id)?;
-    let principal_class = principal_class_from_principal(&resolved.principal)?;
+    let principal_class = principal_class_from_principal(&resolved.principal, "service")?;
     let tenant_context =
         TenantIsolationContext::application(tenant.clone(), resolved.principal.clone(), surface);
     if let Err(error) =
@@ -1022,7 +1004,7 @@ async fn authorize_service_route(
     }
 
     let tenant = parse_user_tenant_id(tenant_id)?;
-    let principal_class = principal_class_from_principal(&resolved.principal)?;
+    let principal_class = principal_class_from_principal(&resolved.principal, "service")?;
     let tenant_context =
         TenantIsolationContext::application(tenant.clone(), resolved.principal.clone(), surface);
     if let Err(error) = tenant_context
@@ -1076,65 +1058,26 @@ fn authorize_operator_service_route(
     surface: &'static str,
 ) -> Result<Option<ServiceRouteAuthorization>, AppError> {
     let route_tenant = parse_user_tenant_id(tenant_id)?;
-    if state.local_server_security.is_none() {
-        return Ok(None);
-    }
-
-    let extracted = extract_server_access(
-        headers,
-        LocalServerCredentialMode::AuthorizationOrAdminHeader,
-        state.local_server_security.as_deref(),
-    )
-    .map_err(AppError::from)?;
-    match extracted.status {
-        ExtractedServerAccessStatus::Authorized => Ok(Some(ServiceRouteAuthorization {
-            principal_class: PrincipalClass::Operator,
-            tenant_context: parse_operator_tenant_context(tenant_id.to_owned(), surface)?,
-            auth_method: extracted.auth_method,
-        })),
-        ExtractedServerAccessStatus::Missing => Ok(None),
-        ExtractedServerAccessStatus::Invalid
-            if extracted.auth_method == Some("local_admin_bearer") =>
-        {
-            Ok(None)
+    match extract_operator_route_access(headers, state.local_server_security.as_deref())? {
+        Ok(OperatorRouteAccess::Authorized { auth_method }) => {
+            Ok(Some(ServiceRouteAuthorization {
+                principal_class: PrincipalClass::Operator,
+                tenant_context: parse_operator_tenant_context(tenant_id.to_owned(), surface)?,
+                auth_method,
+            }))
         }
-        ExtractedServerAccessStatus::Revoked => {
+        Ok(OperatorRouteAccess::Missing) => Ok(None),
+        Err(rejection) => {
             record_service_authorization_audit(
                 state,
                 headers,
                 &route_tenant,
                 PrincipalClass::Operator,
-                extracted.auth_method,
+                rejection.auth_method(),
                 false,
-                "operator service route rejected: auth.token_revoked",
+                format!("operator service route rejected: {}", rejection.reason()),
             );
-            Err(AppError::unauthorized("auth.token_revoked"))
-        }
-        ExtractedServerAccessStatus::Expired => {
-            record_service_authorization_audit(
-                state,
-                headers,
-                &route_tenant,
-                PrincipalClass::Operator,
-                extracted.auth_method,
-                false,
-                "operator service route rejected: auth.session_expired",
-            );
-            Err(AppError::unauthorized("auth.session_expired"))
-        }
-        ExtractedServerAccessStatus::Invalid => {
-            record_service_authorization_audit(
-                state,
-                headers,
-                &route_tenant,
-                PrincipalClass::Operator,
-                extracted.auth_method,
-                false,
-                "operator service route rejected: invalid local admin credential",
-            );
-            Err(AppError::unauthorized(
-                LocalServerCredentialMode::AuthorizationOrAdminHeader.unauthorized_message(),
-            ))
+            Err(rejection.app_error())
         }
     }
 }
@@ -1159,54 +1102,13 @@ fn health_from_status(status: SandboxStatus) -> &'static str {
     }
 }
 
-fn principal_class_from_principal(
-    principal: &PrincipalContext,
-) -> Result<PrincipalClass, AppError> {
-    let Some(value) = principal_claim_string(
-        principal,
-        &[
-            "nimbus_principal_class",
-            "nimbusPrincipalClass",
-            "principal_class",
-            "principalClass",
-        ],
-    ) else {
-        return Ok(PrincipalClass::Tenant);
-    };
-    match value {
-        "tenant" => Ok(PrincipalClass::Tenant),
-        "spawned" | "spawned_workload" | "spawnedWorkload" | "workload" | "workload_identity" => {
-            Ok(PrincipalClass::SpawnedWorkload)
-        }
-        "operator" => Err(AppError::forbidden(
-            "application credentials cannot resolve to operator principal class",
-        )),
-        other => Err(AppError::forbidden(format!(
-            "unknown service route principal class `{other}`"
-        ))),
-    }
-}
-
-fn principal_claim_string<'a>(
-    principal: &'a PrincipalContext,
-    claim_names: &[&str],
-) -> Option<&'a str> {
-    for claims in [&principal.verified_claims, &principal.claims] {
-        for claim_name in claim_names {
-            if let Some(value) = claims.get(*claim_name).and_then(Value::as_str) {
-                return Some(value);
-            }
-        }
-    }
-    None
-}
-
 fn principal_has_any_service_definition_permission(
     principal: &PrincipalContext,
     action: ServiceDefinitionAction,
 ) -> bool {
     service_definition_permission_values(principal)
-        .any(|permission| service_definition_permission_actions_allow(permission, action))
+        .into_iter()
+        .any(|permission| permission_actions_allow(permission, action.as_str()))
 }
 
 fn principal_has_service_definition_permission(
@@ -1214,47 +1116,24 @@ fn principal_has_service_definition_permission(
     action: ServiceDefinitionAction,
     service_name: &str,
 ) -> bool {
-    service_definition_permission_values(principal).any(|permission| {
-        service_definition_permission_actions_allow(permission, action)
-            && service_definition_permission_scope_allows(permission, service_name)
-    })
-}
-
-fn service_definition_permission_values(
-    principal: &PrincipalContext,
-) -> impl Iterator<Item = &Value> {
-    [&principal.verified_claims, &principal.claims]
+    service_definition_permission_values(principal)
         .into_iter()
-        .flat_map(|claims| {
-            [
-                "nimbus_service_definition_permissions",
-                "nimbusServiceDefinitionPermissions",
-                "service_definition_permissions",
-                "serviceDefinitionPermissions",
-            ]
-            .into_iter()
-            .filter_map(|claim_name| claims.get(claim_name))
-        })
-        .flat_map(|value| match value {
-            Value::Array(values) => values.iter().collect::<Vec<_>>(),
-            value => vec![value],
+        .any(|permission| {
+            permission_actions_allow(permission, action.as_str())
+                && service_definition_permission_scope_allows(permission, service_name)
         })
 }
 
-fn service_definition_permission_actions_allow(
-    permission: &Value,
-    action: ServiceDefinitionAction,
-) -> bool {
-    let Some(actions) = permission.get("actions") else {
-        return false;
-    };
-    match actions {
-        Value::String(value) => value == action.as_str(),
-        Value::Array(values) => values
-            .iter()
-            .any(|value| value.as_str() == Some(action.as_str())),
-        _ => false,
-    }
+fn service_definition_permission_values(principal: &PrincipalContext) -> Vec<&Value> {
+    permission_claim_values(
+        principal,
+        &[
+            "nimbus_service_definition_permissions",
+            "nimbusServiceDefinitionPermissions",
+            "service_definition_permissions",
+            "serviceDefinitionPermissions",
+        ],
+    )
 }
 
 fn service_definition_permission_scope_allows(permission: &Value, service_name: &str) -> bool {
@@ -1282,7 +1161,7 @@ fn service_backend_from_input(
 ) -> Result<ServiceBackend, AppError> {
     match input {
         ServiceBackendInput::Sandbox { sandbox } => Ok(ServiceBackend::sandbox(
-            sandbox.into_spec(tenant_id, Some(service_name))?,
+            (*sandbox).into_spec(tenant_id, Some(service_name))?,
         )),
         ServiceBackendInput::BuiltIn { provider } => Ok(ServiceBackend::built_in(provider)),
         ServiceBackendInput::External {
@@ -1342,16 +1221,6 @@ fn service_backend_wire_kind(backend: &ServiceBackend) -> &'static str {
         ServiceBackend::Sandbox(_) => "sandbox",
         ServiceBackend::BuiltIn(_) => "builtIn",
         ServiceBackend::External(_) => "external",
-    }
-}
-
-fn format_millis_rfc3339(millis: u64) -> String {
-    let nanos = (millis as i128).saturating_mul(1_000_000);
-    match OffsetDateTime::from_unix_timestamp_nanos(nanos) {
-        Ok(timestamp) => timestamp
-            .format(&Rfc3339)
-            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned()),
-        Err(_) => "1970-01-01T00:00:00Z".to_owned(),
     }
 }
 

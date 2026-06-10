@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use nimbus_core::{Document, Error, Page, PaginatedQuery, Result};
+use nimbus_core::{Document, Error, Page, PaginatedQuery, Query, Result};
 use nimbus_storage::QueryReadStore;
 
 use super::cursor::{
@@ -61,6 +61,26 @@ where
     S: QueryReadStore + ?Sized,
     F: FnMut(&Document) -> Result<bool>,
 {
+    evaluate_paginated_cancellable_with_predicate_using_cursor_query(
+        store,
+        paginated,
+        &paginated.query,
+        check_cancel,
+        include_document,
+    )
+}
+
+pub(crate) fn evaluate_paginated_cancellable_with_predicate_using_cursor_query<S, F>(
+    store: &S,
+    paginated: &PaginatedQuery,
+    cursor_query: &Query,
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+    include_document: &mut F,
+) -> Result<Page>
+where
+    S: QueryReadStore + ?Sized,
+    F: FnMut(&Document) -> Result<bool>,
+{
     let filtered = store.scan_table_matching_with_filters_cancellable(
         &paginated.query.table,
         &paginated.query.filters,
@@ -69,12 +89,36 @@ where
             Ok(matches_filters(document, &paginated.query.filters)? && include_document(document)?)
         },
     )?;
-    evaluate_paginated_with_filtered_docs_cancellable(filtered, paginated, check_cancel)
+    evaluate_paginated_with_filtered_docs_cancellable(
+        filtered,
+        paginated,
+        cursor_query,
+        check_cancel,
+    )
 }
 
 pub(crate) fn evaluate_paginated_with_docs_cancellable_and_predicate<F>(
     documents: Vec<Document>,
     paginated: &PaginatedQuery,
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+    include_document: &mut F,
+) -> Result<Page>
+where
+    F: FnMut(&Document) -> Result<bool>,
+{
+    evaluate_paginated_with_docs_cancellable_and_predicate_using_cursor_query(
+        documents,
+        paginated,
+        &paginated.query,
+        check_cancel,
+        include_document,
+    )
+}
+
+pub(crate) fn evaluate_paginated_with_docs_cancellable_and_predicate_using_cursor_query<F>(
+    documents: Vec<Document>,
+    paginated: &PaginatedQuery,
+    cursor_query: &Query,
     check_cancel: &mut dyn FnMut() -> Result<()>,
     include_document: &mut F,
 ) -> Result<Page>
@@ -95,12 +139,18 @@ where
         check_cancel,
         include_document,
     )?;
-    evaluate_paginated_with_filtered_docs_cancellable(filtered, paginated, check_cancel)
+    evaluate_paginated_with_filtered_docs_cancellable(
+        filtered,
+        paginated,
+        cursor_query,
+        check_cancel,
+    )
 }
 
 fn evaluate_paginated_with_filtered_docs_cancellable(
     mut filtered: Vec<Document>,
     paginated: &PaginatedQuery,
+    cursor_query: &Query,
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<Page> {
     if paginated.page_size == 0 {
@@ -111,11 +161,13 @@ fn evaluate_paginated_with_filtered_docs_cancellable(
 
     let mut unbounded_query = paginated.query.clone();
     unbounded_query.limit = None;
+    let mut unbounded_cursor_query = cursor_query.clone();
+    unbounded_cursor_query.limit = None;
     check_cancel()?;
     sort_documents(&mut filtered, unbounded_query.order.as_ref())?;
 
     let start_index = if let Some(cursor) = &paginated.after {
-        let (cursor_sort_values, cursor_doc_id) = decode_cursor(cursor, &unbounded_query)?;
+        let (cursor_sort_values, cursor_doc_id) = decode_cursor(cursor, &unbounded_cursor_query)?;
         let mut start = filtered.len();
         for (index, document) in filtered.iter().enumerate() {
             check_cancel()?;
@@ -150,7 +202,7 @@ fn evaluate_paginated_with_filtered_docs_cancellable(
             .map(|document| {
                 let sort_values =
                     cursor_sort_values_for_document(paginated.query.order.as_ref(), document);
-                encode_cursor(&sort_values, &document.id, &unbounded_query)
+                encode_cursor(&sort_values, &document.id, &unbounded_cursor_query)
             })
             .transpose()?
     } else {

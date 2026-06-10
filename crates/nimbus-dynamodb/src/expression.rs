@@ -11,8 +11,8 @@
 //!
 //! The evaluators operate on `extenddb_core::types::Item`
 //! (`BTreeMap<String, AttributeValue>`). Stored Nimbus documents bridge to/from
-//! that item shape through [`crate::attribute_value::stored_to_item`] /
-//! [`crate::attribute_value::item_to_stored`] — so the typed AttributeValue
+//! that item shape through [`crate::attribute_value::fields_to_item`] /
+//! [`crate::attribute_value::item_to_fields`] — so the AttributeValue wire JSON
 //! contract (`N`/`B`/`SS`/`NS`/`BS` precision) is preserved across evaluation.
 //!
 //! The composition mirrors ExtendDB's own `engine/expression_helpers.rs`
@@ -323,35 +323,18 @@ pub fn project_item(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::attribute_value::stored_to_item;
     use extenddb_core::types::Item;
-    use nimbus_core::typed_scalar::StoredValue;
 
-    /// A stored item `{ alpha: "hello", score: 7 (N), beta: "old" }` bridged to
-    /// the AttributeValue item shape the evaluators consume. Uses the typed
-    /// sidecar for `score` so numeric comparison exercises the bridge.
+    /// A DynamoDB item `{ alpha: "hello", score: 7 (N), beta: "old" }` in the
+    /// AttributeValue shape the evaluators consume.
     fn item() -> Item {
-        use nimbus_core::typed_scalar::TypedScalarValue;
-        let mut stored = std::collections::BTreeMap::new();
-        stored.insert(
-            "alpha".to_string(),
-            StoredValue::Json {
-                value: serde_json::Value::String("hello".into()),
-            },
-        );
-        stored.insert(
-            "score".to_string(),
-            StoredValue::TypedScalar {
-                value: TypedScalarValue::Number { repr: "7".into() },
-            },
-        );
-        stored.insert(
-            "beta".to_string(),
-            StoredValue::Json {
-                value: serde_json::Value::String("old".into()),
-            },
-        );
-        stored_to_item(&stored)
+        [
+            ("alpha".to_string(), AttributeValue::S("hello".into())),
+            ("score".to_string(), AttributeValue::N("7".into())),
+            ("beta".to_string(), AttributeValue::S("old".into())),
+        ]
+        .into_iter()
+        .collect()
     }
 
     fn values(pairs: &[(&str, AttributeValue)]) -> HashMap<String, AttributeValue> {

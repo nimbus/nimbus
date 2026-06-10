@@ -238,11 +238,18 @@ unsafe extern "C" fn bun_jsc_host_bridge_call_json(
         Ok(response) => response,
         Err(_) => return 312,
     };
+    if response.len() > output_cap {
+        // SAFETY: `output_len` was validated non-null above. On overflow the
+        // ABI reports the required capacity and performs no buffer write.
+        unsafe {
+            *output_len = response.len();
+        }
+        return 307;
+    }
+    // SAFETY: `output_len` was validated non-null above and the capacity check
+    // has established that this length fits the caller-provided output buffer.
     unsafe {
         *output_len = response.len();
-    }
-    if response.len() > output_cap {
-        return 307;
     }
     // SAFETY: `output_ptr` was validated non-null and the capacity check bounds
     // the copy into the caller-provided ABI buffer.
@@ -344,4 +351,92 @@ unsafe fn load_required_symbol<T: Copy>(
     let loaded = unsafe { library.get::<T>(symbol.as_bytes()) }
         .map_err(|error| format!("missing Bun/JSC shared adapter symbol {symbol}: {error}"))?;
     Ok(*loaded)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::host::HostCallOperation;
+
+    #[derive(Debug)]
+    struct FixedResponseHost(Value);
+
+    impl HostBridge for FixedResponseHost {
+        fn call(&self, _request: HostCallRequest) -> Result<Value> {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn host_bridge_context(value: Value) -> BunJscHostBridgeCallContext {
+        BunJscHostBridgeCallContext {
+            host: Arc::new(FixedResponseHost(value)),
+            cancellation: HostCallCancellation::default(),
+        }
+    }
+
+    fn serialized_host_call_request() -> Vec<u8> {
+        serde_json::to_vec(&HostCallRequest::new(
+            HostCallOperation::RuntimeExtensionCall,
+            json!({}),
+        ))
+        .expect("host call request should serialize")
+    }
+
+    #[test]
+    fn host_bridge_callback_reports_required_length_without_copy_on_overflow() {
+        let context = host_bridge_context(json!("response larger than the output buffer"));
+        let request = serialized_host_call_request();
+        let expected_response = serde_json::to_vec(&json!({
+            "status": "ok",
+            "value": "response larger than the output buffer",
+        }))
+        .expect("expected response should serialize");
+        let mut output = [0xA5_u8; 8];
+        let mut output_len = usize::MAX;
+
+        let status = unsafe {
+            bun_jsc_host_bridge_call_json(
+                &context as *const BunJscHostBridgeCallContext as *mut c_void,
+                request.as_ptr(),
+                request.len(),
+                output.as_mut_ptr(),
+                output.len(),
+                &mut output_len,
+            )
+        };
+
+        assert_eq!(status, 307);
+        assert_eq!(output_len, expected_response.len());
+        assert_eq!(output, [0xA5_u8; 8]);
+    }
+
+    #[test]
+    fn host_bridge_callback_sets_output_length_after_successful_capacity_check() {
+        let context = host_bridge_context(json!("ok"));
+        let request = serialized_host_call_request();
+        let expected_response = serde_json::to_vec(&json!({
+            "status": "ok",
+            "value": "ok",
+        }))
+        .expect("expected response should serialize");
+        let mut output = [0_u8; 128];
+        let mut output_len = usize::MAX;
+
+        let status = unsafe {
+            bun_jsc_host_bridge_call_json(
+                &context as *const BunJscHostBridgeCallContext as *mut c_void,
+                request.as_ptr(),
+                request.len(),
+                output.as_mut_ptr(),
+                output.len(),
+                &mut output_len,
+            )
+        };
+
+        assert_eq!(status, 0);
+        assert_eq!(output_len, expected_response.len());
+        assert_eq!(&output[..output_len], expected_response.as_slice());
+    }
 }

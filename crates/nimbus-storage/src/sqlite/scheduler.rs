@@ -11,9 +11,9 @@ impl SqliteTenantStore {
         Ok(())
     }
 
-    pub fn claim_due_jobs(&self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
+    pub fn claim_due_jobs(&self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
         Ok(self
-            .execute_write(move |transaction| transaction.claim_due_jobs(now))?
+            .execute_write(move |transaction| transaction.claim_due_jobs(now, max_jobs))?
             .value)
     }
 
@@ -89,7 +89,12 @@ pub(super) fn load_scheduled_jobs_from_conn(
     conn: &Connection,
     table_name: &str,
 ) -> Result<Vec<ScheduledJob>> {
-    let sql = format!("SELECT data_json FROM {table_name}");
+    let order_by = if table_name == "scheduled_jobs" {
+        "run_at, id"
+    } else {
+        "id"
+    };
+    let sql = format!("SELECT data_json FROM {table_name} ORDER BY {order_by}");
     let mut stmt = conn.prepare(sql.as_str()).map_err(map_sqlite_error)?;
     let mut rows = stmt.query([]).map_err(map_sqlite_error)?;
     let mut jobs = Vec::new();
@@ -98,7 +103,40 @@ pub(super) fn load_scheduled_jobs_from_conn(
             row.get::<_, String>(0).map_err(map_sqlite_error)?.as_str(),
         )?);
     }
-    jobs.sort_by(|left, right| left.run_at.cmp(&right.run_at).then(left.id.cmp(&right.id)));
+    Ok(jobs)
+}
+
+pub(crate) fn scheduled_run_at_key(timestamp: Timestamp) -> String {
+    format!("{:020}", timestamp.0)
+}
+
+pub(super) fn load_due_scheduled_jobs_from_conn(
+    conn: &Connection,
+    now: Timestamp,
+    max_jobs: usize,
+) -> Result<Vec<ScheduledJob>> {
+    if max_jobs == 0 {
+        return Ok(Vec::new());
+    }
+    let max_jobs = i64::try_from(max_jobs).unwrap_or(i64::MAX);
+    let run_at_upper = scheduled_run_at_key(now);
+    let mut stmt = conn
+        .prepare(
+            "SELECT data_json FROM scheduled_jobs
+             WHERE run_at <= ?1
+             ORDER BY run_at, id
+             LIMIT ?2",
+        )
+        .map_err(map_sqlite_error)?;
+    let mut rows = stmt
+        .query(params![run_at_upper, max_jobs])
+        .map_err(map_sqlite_error)?;
+    let mut jobs = Vec::new();
+    while let Some(row) = rows.next().map_err(map_sqlite_error)? {
+        jobs.push(deserialize_json::<ScheduledJob>(
+            row.get::<_, String>(0).map_err(map_sqlite_error)?.as_str(),
+        )?);
+    }
     Ok(jobs)
 }
 

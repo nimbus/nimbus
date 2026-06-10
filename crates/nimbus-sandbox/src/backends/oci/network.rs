@@ -22,6 +22,7 @@ use serde_json::Value;
 use nimbus_core::TenantId;
 
 use crate::artifact_paths;
+use crate::backends::oci::command::render_command_failure;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 use crate::spec::SandboxPortBinding;
@@ -487,6 +488,19 @@ fn build_bridge_network(config: &OciNetworkConfig) -> Result<NetavarkNetwork> {
 }
 
 fn parse_ipv4_subnet_and_gateway(subnet_cidr: &str) -> Result<(String, String)> {
+    let subnet = parse_ipv4_bridge_subnet(subnet_cidr)?;
+    Ok((subnet.cidr, subnet.gateway.to_string()))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Ipv4BridgeSubnet {
+    cidr: String,
+    network: Ipv4Addr,
+    gateway: Ipv4Addr,
+    broadcast: Ipv4Addr,
+}
+
+fn parse_ipv4_bridge_subnet(subnet_cidr: &str) -> Result<Ipv4BridgeSubnet> {
     let (ip, prefix) = subnet_cidr
         .split_once('/')
         .ok_or_else(|| SandboxError::InvalidSpec {
@@ -502,27 +516,59 @@ fn parse_ipv4_subnet_and_gateway(subnet_cidr: &str) -> Result<(String, String)> 
             message: format!("invalid container bridge subnet {subnet_cidr:?}: bad prefix"),
         });
     }
-    let octets = ip
-        .split('.')
-        .map(str::trim)
-        .map(|segment| segment.parse::<u8>())
-        .collect::<std::result::Result<Vec<_>, _>>()
+    if prefix > 30 {
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "invalid container bridge subnet {subnet_cidr:?}: bridge subnet must leave room for gateway and container addresses"
+            ),
+        });
+    }
+
+    let configured_ip = ip
+        .trim()
+        .parse::<Ipv4Addr>()
         .map_err(|_| SandboxError::InvalidSpec {
             message: format!("invalid container bridge subnet {subnet_cidr:?}: bad IPv4 address"),
         })?;
-    if octets.len() != 4 {
+    let configured = ipv4_to_u32(configured_ip);
+    let mask = if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix)
+    };
+    let network = configured & mask;
+    if configured != network {
         return Err(SandboxError::InvalidSpec {
-            message: format!("invalid container bridge subnet {subnet_cidr:?}: bad IPv4 address"),
+            message: format!(
+                "invalid container bridge subnet {subnet_cidr:?}: address must be the network address for /{prefix}"
+            ),
         });
     }
-    let gateway = format!(
-        "{}.{}.{}.{}",
-        octets[0],
-        octets[1],
-        octets[2],
-        octets[3] + 1
-    );
-    Ok((subnet_cidr.to_owned(), gateway))
+
+    let broadcast = network | !mask;
+    let gateway = network
+        .checked_add(1)
+        .filter(|gateway| *gateway < broadcast)
+        .ok_or_else(|| SandboxError::InvalidSpec {
+            message: format!(
+                "invalid container bridge subnet {subnet_cidr:?}: bridge subnet must leave room for a gateway address"
+            ),
+        })?;
+    gateway
+        .checked_add(1)
+        .filter(|first_container| *first_container < broadcast)
+        .ok_or_else(|| SandboxError::InvalidSpec {
+            message: format!(
+                "invalid container bridge subnet {subnet_cidr:?}: bridge subnet must leave room for container addresses"
+            ),
+        })?;
+
+    Ok(Ipv4BridgeSubnet {
+        cidr: format!("{}/{}", u32_to_ipv4(network), prefix),
+        network: u32_to_ipv4(network),
+        gateway: u32_to_ipv4(gateway),
+        broadcast: u32_to_ipv4(broadcast),
+    })
 }
 
 fn allocate_container_ips(
@@ -649,42 +695,9 @@ fn with_ipam_state<T>(
 }
 
 fn allocate_next_ipv4(config: &OciNetworkConfig, state: &IpamState) -> Result<Ipv4Addr> {
-    let (network_cidr, gateway) = parse_ipv4_subnet_and_gateway(&config.network_subnet)?;
-    let (network_ip, prefix) =
-        network_cidr
-            .split_once('/')
-            .ok_or_else(|| SandboxError::InvalidSpec {
-                message: format!(
-                    "invalid container bridge subnet {:?}: missing prefix",
-                    config.network_subnet
-                ),
-            })?;
-    let network_ip = parse_ipv4_address(network_ip)?;
-    let gateway = parse_ipv4_address(&gateway)?;
-    let prefix = prefix
-        .parse::<u8>()
-        .map_err(|_| SandboxError::InvalidSpec {
-            message: format!(
-                "invalid container bridge subnet {:?}: bad prefix",
-                config.network_subnet
-            ),
-        })?;
-    if prefix > 32 {
-        return Err(SandboxError::InvalidSpec {
-            message: format!(
-                "invalid container bridge subnet {:?}: bad prefix",
-                config.network_subnet
-            ),
-        });
-    }
-
-    let network_base = ipv4_to_u32(network_ip);
-    let broadcast = if prefix == 32 {
-        network_base
-    } else {
-        let mask = u32::MAX << (32 - prefix);
-        network_base | !mask
-    };
+    let subnet = parse_ipv4_bridge_subnet(&config.network_subnet)?;
+    let network_base = ipv4_to_u32(subnet.network);
+    let broadcast = ipv4_to_u32(subnet.broadcast);
     let range_start = network_base
         .checked_add(1)
         .ok_or_else(|| SandboxError::OperationFailed {
@@ -693,18 +706,14 @@ fn allocate_next_ipv4(config: &OciNetworkConfig, state: &IpamState) -> Result<Ip
                 config.network_subnet
             ),
         })?;
-    let range_end = if prefix == 32 {
-        broadcast
-    } else {
-        broadcast
-            .checked_sub(1)
-            .ok_or_else(|| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to derive OCI IP allocation range end from subnet {}",
-                    config.network_subnet
-                ),
-            })?
-    };
+    let range_end = broadcast
+        .checked_sub(1)
+        .ok_or_else(|| SandboxError::OperationFailed {
+            message: format!(
+                "failed to derive OCI IP allocation range end from subnet {}",
+                config.network_subnet
+            ),
+        })?;
     if range_start > range_end {
         return Err(SandboxError::OperationFailed {
             message: format!(
@@ -720,7 +729,7 @@ fn allocate_next_ipv4(config: &OciNetworkConfig, state: &IpamState) -> Result<Ip
         .flatten()
         .map(|ip| parse_ipv4_address(ip).map(ipv4_to_u32))
         .collect::<Result<BTreeSet<_>>>()?;
-    let gateway = ipv4_to_u32(gateway);
+    let gateway = ipv4_to_u32(subnet.gateway);
     let start_ip = state
         .last_assigned_ip
         .as_deref()
@@ -911,15 +920,6 @@ fn ignore_not_found(error: std::io::Error) -> std::io::Result<()> {
     }
 }
 
-fn render_command_failure(stderr: &[u8]) -> String {
-    let rendered = String::from_utf8_lossy(stderr).trim().to_owned();
-    if rendered.is_empty() {
-        "stderr was empty".to_owned()
-    } else {
-        rendered
-    }
-}
-
 fn netavark_path_env(current_path: Option<OsString>) -> OsString {
     let path = current_path
         .and_then(|path| path.into_string().ok())
@@ -947,12 +947,7 @@ fn render_netavark_failure(stdout: &[u8], stderr: &[u8]) -> String {
         return stdout_rendered;
     }
 
-    let stderr_rendered = render_command_failure(stderr);
-    if stderr_rendered != "stderr was empty" {
-        return stderr_rendered;
-    }
-
-    "stdout and stderr were empty".to_owned()
+    render_command_failure(stdout, stderr)
 }
 
 #[derive(Debug, Serialize)]
@@ -1038,9 +1033,11 @@ mod tests {
         DEFAULT_MACHINE_FORWARDER_HOST, DEFAULT_MACHINE_FORWARDER_PATH,
         DEFAULT_MACHINE_FORWARDER_PORT, OciMachinePortForwarderConfig, OciNetworkConfig,
         OciNetworkDirectEgress, OciNetworkLayout, allocate_container_ips, build_netavark_request,
-        deallocate_container_ips, load_container_ips, netavark_path_env, render_netavark_failure,
+        deallocate_container_ips, load_container_ips, netavark_path_env,
+        parse_ipv4_subnet_and_gateway, render_netavark_failure,
     };
     use crate::backend::SandboxBackendKind;
+    use crate::error::SandboxError;
     use crate::spec::{
         SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec,
         SandboxRootfsSpec, SandboxSpec,
@@ -1129,6 +1126,39 @@ mod tests {
     }
 
     #[test]
+    fn bridge_subnet_parser_rejects_broadcast_base_without_overflow() {
+        let error = parse_ipv4_subnet_and_gateway("10.0.0.255/24")
+            .expect_err("broadcast-address subnet base should be rejected");
+
+        assert!(matches!(
+            error,
+            SandboxError::InvalidSpec { message }
+                if message.contains("address must be the network address for /24")
+        ));
+    }
+
+    #[test]
+    fn bridge_subnet_parser_rejects_prefixes_without_gateway_and_container_space() {
+        let error = parse_ipv4_subnet_and_gateway("10.0.0.0/31")
+            .expect_err("/31 bridge subnet should not have enough host space");
+
+        assert!(matches!(
+            error,
+            SandboxError::InvalidSpec { message }
+                if message.contains("must leave room for gateway and container addresses")
+        ));
+    }
+
+    #[test]
+    fn bridge_subnet_parser_accepts_smallest_gateway_and_container_subnet() {
+        let (subnet, gateway) = parse_ipv4_subnet_and_gateway("10.0.0.0/30")
+            .expect("/30 has one gateway and one container address");
+
+        assert_eq!(subnet, "10.0.0.0/30");
+        assert_eq!(gateway, "10.0.0.1");
+    }
+
+    #[test]
     fn machine_forwarder_default_matches_podman_shape() {
         let config = OciMachinePortForwarderConfig::gvproxy_default();
         assert_eq!(config.host, DEFAULT_MACHINE_FORWARDER_HOST);
@@ -1187,6 +1217,34 @@ mod tests {
             load_container_ips(&layout, &second_id).expect("second allocation should load"),
             second
         );
+    }
+
+    #[test]
+    fn allocate_container_ips_uses_only_container_slot_in_smallest_bridge_subnet() {
+        let temp_dir = tempdir().expect("temp dir should create");
+        let config = OciNetworkConfig {
+            network_subnet: "10.0.0.0/30".to_owned(),
+            ..OciNetworkConfig::default()
+        };
+        let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
+        let first_id = crate::instance::SandboxId::new("db-01");
+        let second_id = crate::instance::SandboxId::new("db-02");
+        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &first_id);
+
+        let first = allocate_container_ips(&layout, &config, &first_id)
+            .expect("single allocatable container address should succeed");
+        let second = allocate_container_ips(&layout, &config, &second_id)
+            .expect_err("gateway plus one container should exhaust a /30 subnet");
+
+        assert_eq!(
+            first,
+            vec!["10.0.0.2".parse::<Ipv4Addr>().expect("IPv4 should parse")]
+        );
+        assert!(matches!(
+            second,
+            SandboxError::OperationFailed { message }
+                if message.contains("failed to find free OCI IPv4 address")
+        ));
     }
 
     #[test]

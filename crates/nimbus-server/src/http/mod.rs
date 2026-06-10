@@ -21,6 +21,7 @@ use crate::protocol::{
 use crate::state::{AppError, AppState, RequestCancellationGuard};
 use crate::tenant::TenantIsolationContext;
 
+mod authz;
 mod deploy;
 mod documents;
 mod local_admin;

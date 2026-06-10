@@ -3,13 +3,15 @@ use std::{future, sync::Arc};
 use nimbus_core::{
     Error, JobId, Result, ScheduleRequest, ScheduledJob, ScheduledJobResult, TenantId, Timestamp,
 };
-use nimbus_storage::TenantWriteOutcome;
+use nimbus_storage::{FaultPoint, TenantWriteOutcome};
 
 use super::super::Engine;
 use super::access::{
     read_scheduler_store, with_scheduler_runtime, write_scheduler_transaction,
     write_scheduler_transaction_cancellable,
 };
+
+pub(crate) const SCHEDULED_JOB_CLAIM_BATCH_LIMIT: usize = 128;
 
 impl Engine {
     /// Schedules a mutation to execute in the future.
@@ -69,31 +71,35 @@ impl Engine {
         Ok(job_id)
     }
 
-    /// Claims all due scheduled jobs for execution.
+    /// Claims a bounded batch of due scheduled jobs for execution.
     pub fn claim_due_jobs(
         &self,
         tenant_id: &TenantId,
         now: Timestamp,
     ) -> Result<Vec<ScheduledJob>> {
         with_scheduler_runtime(self, tenant_id, move |runtime| {
-            runtime.store.claim_due_jobs(now)
+            runtime
+                .store
+                .claim_due_jobs(now, SCHEDULED_JOB_CLAIM_BATCH_LIMIT)
         })
     }
 
-    /// Claims all due scheduled jobs for execution asynchronously.
+    /// Claims a bounded batch of due scheduled jobs for execution asynchronously.
     pub async fn claim_due_jobs_async(
         self: &Arc<Self>,
         tenant_id: TenantId,
         now: Timestamp,
     ) -> Result<Vec<ScheduledJob>> {
         write_scheduler_transaction(self, tenant_id, move |transaction| {
-            transaction.claim_due_jobs(now)
+            transaction.claim_due_jobs(now, SCHEDULED_JOB_CLAIM_BATCH_LIMIT)
         })
         .await
     }
 
     /// Marks a claimed scheduled job as complete.
     pub fn complete_scheduled_job(&self, tenant_id: &TenantId, job_id: &JobId) -> Result<()> {
+        self.storage_fault_injector
+            .check(FaultPoint::ScheduledJobCompleteBeforeWrite)?;
         with_scheduler_runtime(self, tenant_id, move |runtime| {
             runtime.store.complete_scheduled_job(job_id)
         })
@@ -105,6 +111,8 @@ impl Engine {
         tenant_id: TenantId,
         job_id: JobId,
     ) -> Result<()> {
+        self.storage_fault_injector
+            .check(FaultPoint::ScheduledJobCompleteBeforeWrite)?;
         write_scheduler_transaction(self, tenant_id, move |transaction| {
             transaction.complete_scheduled_job(&job_id)
         })
@@ -161,6 +169,8 @@ impl Engine {
         tenant_id: &TenantId,
         result: &ScheduledJobResult,
     ) -> Result<()> {
+        self.storage_fault_injector
+            .check(FaultPoint::ScheduledJobRecordResultBeforeWrite)?;
         with_scheduler_runtime(self, tenant_id, move |runtime| {
             runtime.store.record_scheduled_job_result(result)
         })
@@ -172,6 +182,8 @@ impl Engine {
         tenant_id: TenantId,
         result: ScheduledJobResult,
     ) -> Result<()> {
+        self.storage_fault_injector
+            .check(FaultPoint::ScheduledJobRecordResultBeforeWrite)?;
         write_scheduler_transaction(self, tenant_id, move |transaction| {
             transaction.record_scheduled_job_result(&result)
         })

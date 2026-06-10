@@ -7,6 +7,10 @@ use rmp::Marker;
 use rmp::decode::{read_array_len, read_map_len, read_marker, read_str_len};
 use serde_json::Value;
 
+use crate::document_codec::{
+    DOCUMENT_MSGPACK_FIELDS_INDEX, is_supported_document_msgpack_field_count,
+};
+
 #[cfg(test)]
 mod tests;
 
@@ -173,14 +177,13 @@ fn probe_document_fields_from_msgpack(
 
     let mut cursor = Cursor::new(bytes);
     let array_len = read_array_len(&mut cursor).ok()?;
-    if array_len != 5 && array_len != 6 {
+    if !is_supported_document_msgpack_field_count(array_len) {
         return None;
     }
 
-    skip_msgpack_value(&mut cursor).ok()?;
-    skip_msgpack_value(&mut cursor).ok()?;
-    skip_msgpack_value(&mut cursor).ok()?;
-    skip_msgpack_value(&mut cursor).ok()?;
+    for _ in 0..DOCUMENT_MSGPACK_FIELDS_INDEX {
+        skip_msgpack_value(&mut cursor).ok()?;
+    }
 
     let field_count = read_map_len(&mut cursor).ok()?;
     let mut remaining = fields.len();

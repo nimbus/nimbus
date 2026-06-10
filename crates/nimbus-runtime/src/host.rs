@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -513,11 +513,14 @@ impl TryFrom<HostCallRequest> for HostCallEnvelope {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use serde_json::json;
 
     use super::{
-        HOST_CALL_ABI_VERSION, HostCallEnvelope, HostCallOperation, HostCallRequest,
-        RuntimeAsyncDbGetPayload,
+        HOST_CALL_ABI_VERSION, HostCallCancellation, HostCallCancellationCause, HostCallEnvelope,
+        HostCallOperation, HostCallRequest, RuntimeAsyncDbGetPayload,
     };
 
     #[test]
@@ -589,6 +592,51 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn host_call_cancellation_notifies_listeners_once_and_immediate_after_cancel() {
+        let cancellation = HostCallCancellation::default();
+        let fired = Arc::new(AtomicUsize::new(0));
+        for _ in 0..2 {
+            let fired = fired.clone();
+            cancellation.notify_on_cancel(move || {
+                fired.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+
+        cancellation.cancel();
+        cancellation.cancel_due_to_disconnect();
+        assert_eq!(fired.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            cancellation.cause(),
+            Some(HostCallCancellationCause::Explicit)
+        );
+
+        let fired_after_cancel = fired.clone();
+        cancellation.notify_on_cancel(move || {
+            fired_after_cancel.fetch_add(1, Ordering::SeqCst);
+        });
+        assert_eq!(fired.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn host_call_cancellation_waiter_completes_after_cancel() {
+        let cancellation = HostCallCancellation::default();
+        let waiter_cancellation = cancellation.clone();
+        let waiter = tokio::spawn(async move {
+            waiter_cancellation.cancelled().await;
+            waiter_cancellation.cause()
+        });
+
+        tokio::task::yield_now().await;
+        cancellation.cancel_due_to_disconnect();
+
+        let cause = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+            .await
+            .expect("cancellation waiter should complete after notification")
+            .expect("waiter task should not panic");
+        assert_eq!(cause, Some(HostCallCancellationCause::Disconnect));
+    }
 }
 
 pub type HostBridgeFuture = Pin<Box<dyn Future<Output = Result<Value>> + Send + 'static>>;
@@ -605,11 +653,26 @@ pub struct HostCallCancellation {
     inner: Arc<HostCallCancellationState>,
 }
 
-#[derive(Debug, Default)]
+type HostCallCancellationListener = Box<dyn FnOnce() + Send + 'static>;
+
+#[derive(Default)]
 struct HostCallCancellationState {
     canceled: AtomicBool,
     cause: AtomicU8,
     notify: Notify,
+    listeners: Mutex<Vec<HostCallCancellationListener>>,
+}
+
+impl std::fmt::Debug for HostCallCancellationState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostCallCancellationState")
+            .field("canceled", &self.canceled.load(Ordering::SeqCst))
+            .field(
+                "cause",
+                &HostCallCancellationCause::from_u8(self.cause.load(Ordering::SeqCst)),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl HostCallCancellation {
@@ -630,8 +693,22 @@ impl HostCallCancellation {
             self.inner
                 .cause
                 .compare_exchange(0, cause.as_u8(), Ordering::SeqCst, Ordering::SeqCst);
-        self.inner.canceled.store(true, Ordering::SeqCst);
+        let first_cancel = !self.inner.canceled.swap(true, Ordering::SeqCst);
+        let listeners = if first_cancel {
+            std::mem::take(
+                &mut *self
+                    .inner
+                    .listeners
+                    .lock()
+                    .expect("host cancellation listener lock should not be poisoned"),
+            )
+        } else {
+            Vec::new()
+        };
         self.inner.notify.notify_waiters();
+        for listener in listeners {
+            listener();
+        }
     }
 
     pub fn is_cancelled(&self) -> bool {
@@ -639,10 +716,34 @@ impl HostCallCancellation {
     }
 
     pub async fn cancelled(&self) {
+        let notified = self.inner.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         if self.is_cancelled() {
             return;
         }
-        self.inner.notify.notified().await;
+        notified.await;
+    }
+
+    pub(crate) fn notify_on_cancel<F>(&self, listener: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let mut listener = Some(Box::new(listener) as HostCallCancellationListener);
+        {
+            let mut listeners = self
+                .inner
+                .listeners
+                .lock()
+                .expect("host cancellation listener lock should not be poisoned");
+            if !self.is_cancelled() {
+                listeners.push(listener.take().expect("listener should be available"));
+                return;
+            }
+        }
+        if let Some(listener) = listener {
+            listener();
+        }
     }
 }
 

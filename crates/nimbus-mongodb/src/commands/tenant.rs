@@ -18,17 +18,21 @@ fn resolve_tenant_id(db_name: &str) -> Result<TenantId, MongoError> {
 pub fn resolve_tenant_context(
     db_name: &str,
     surface: &'static str,
+    principal: &PrincipalContext,
 ) -> Result<TenantIsolationContext, MongoError> {
     let tenant_id = resolve_tenant_id(db_name)?;
-    let context =
-        TenantIsolationContext::application(tenant_id, PrincipalContext::system(), surface);
+    let context = TenantIsolationContext::application(tenant_id, principal.clone(), surface);
     ensure_database_matches_context(&context, db_name, "MongoDB database selection")?;
     Ok(context)
 }
 
-pub fn default_tenant_context(surface: &'static str) -> TenantIsolationContext {
-    TenantIsolationContext::system(
+pub fn default_tenant_context(
+    surface: &'static str,
+    principal: &PrincipalContext,
+) -> TenantIsolationContext {
+    TenantIsolationContext::application(
         TenantId::new(DEFAULT_TENANT).expect("default tenant id should be valid"),
+        principal.clone(),
         surface,
     )
 }
@@ -60,19 +64,32 @@ mod tests {
     use super::*;
     use crate::error::BAD_VALUE;
 
+    fn test_principal() -> PrincipalContext {
+        PrincipalContext {
+            authenticated: true,
+            claims: serde_json::Map::from_iter([(
+                "subject".to_string(),
+                serde_json::json!("mongodb-test-user"),
+            )]),
+            verified_claims: serde_json::Map::new(),
+        }
+    }
+
     #[test]
     fn resolves_mongodb_database_to_tenant_context() {
-        let context =
-            resolve_tenant_context("tenant-a", "mongodb test").expect("context should resolve");
+        let principal = test_principal();
+        let context = resolve_tenant_context("tenant-a", "mongodb test", &principal)
+            .expect("context should resolve");
 
         assert_eq!(context.tenant_id().as_str(), "tenant-a");
     }
 
     #[test]
     fn maps_mongodb_internal_databases_to_default_tenant_context() {
+        let principal = test_principal();
         for db_name in ["admin", "local", "config"] {
-            let context =
-                resolve_tenant_context(db_name, "mongodb test").expect("context should resolve");
+            let context = resolve_tenant_context(db_name, "mongodb test", &principal)
+                .expect("context should resolve");
 
             assert_eq!(context.tenant_id().as_str(), DEFAULT_TENANT);
         }

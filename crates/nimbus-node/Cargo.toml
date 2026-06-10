@@ -18,6 +18,7 @@ nimbus-tenant = { path = "../nimbus-tenant" }
 serde.workspace = true
 sha2.workspace = true
 futures = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 zbus = { workspace = true, optional = true }
 zbus_systemd = { workspace = true, optional = true }
 
@@ -33,7 +34,7 @@ zbus_systemd = { workspace = true, optional = true }
 # tests. `systemd-dbus-integration-tests` is the explicit opt-in that NDB5's
 # Linux-gated `systemctl --user` tests require — it never turns on implicitly.
 default = ["systemd-dbus"]
-systemd-dbus = ["dep:zbus", "dep:zbus_systemd", "dep:futures"]
+systemd-dbus = ["dep:zbus", "dep:zbus_systemd", "dep:futures", "dep:tokio"]
 systemd-dbus-test-bus = ["systemd-dbus"]
 systemd-dbus-integration-tests = ["systemd-dbus"]
 

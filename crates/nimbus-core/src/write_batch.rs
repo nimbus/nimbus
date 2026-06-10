@@ -101,16 +101,54 @@ pub struct FieldTransform {
     pub transform: FieldTransformOperation,
 }
 
-/// Protocol-neutral transform operations modeled by Firestore writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArrayPopSide {
+    First,
+    Last,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BitwiseOperation {
+    And,
+    Or,
+    Xor,
+}
+
+/// Protocol-neutral transform operations applied atomically by the engine.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FieldTransformOperation {
     ServerTimestamp,
-    Increment { operand: NumericValue },
-    Maximum { operand: NumericValue },
-    Minimum { operand: NumericValue },
-    AppendMissingElements { values: Vec<Value> },
-    RemoveAllFromArray { values: Vec<Value> },
+    Increment {
+        operand: NumericValue,
+    },
+    Multiply {
+        operand: NumericValue,
+    },
+    Maximum {
+        operand: NumericValue,
+    },
+    Minimum {
+        operand: NumericValue,
+    },
+    AppendElements {
+        values: Vec<Value>,
+    },
+    PopArray {
+        side: ArrayPopSide,
+    },
+    AppendMissingElements {
+        values: Vec<Value>,
+    },
+    RemoveAllFromArray {
+        values: Vec<Value>,
+    },
+    Bitwise {
+        operation: BitwiseOperation,
+        operand: i64,
+    },
 }
 
 /// One ordered write in an atomic batch.

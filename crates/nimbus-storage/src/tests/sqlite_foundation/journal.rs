@@ -1,5 +1,6 @@
 use super::support::*;
 use crate::RetentionGcConfig;
+use std::ops::Bound;
 
 #[test]
 fn sqlite_direct_writes_emit_commit_entries_and_round_trip_journal_reads() {
@@ -541,10 +542,8 @@ fn sqlite_historical_index_scan_eq_and_range_use_versioned_visibility() {
         .historical_index_scan_range_cancellable(
             &at_update,
             "by_rank",
-            Some(&json!(2)),
-            Some(&json!(2)),
-            true,
-            true,
+            Bound::Included(&json!(2)),
+            Bound::Included(&json!(2)),
             &mut || Ok(()),
         )
         .expect("historical rank range scan should succeed");
@@ -632,10 +631,8 @@ fn sqlite_historical_index_prefix_composite_range_and_pagination_are_stable() {
             &read_shape,
             "by_status_rank",
             &[json!("open")],
-            Some(&json!(2)),
-            Some(&json!(2)),
-            true,
-            true,
+            Bound::Included(&json!(2)),
+            Bound::Included(&json!(2)),
             &mut || Ok(()),
         )
         .expect("historical composite range scan should succeed");

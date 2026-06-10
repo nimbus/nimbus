@@ -273,7 +273,7 @@ mod tests {
                     target: PathBuf::from("/var/folders"),
                 },
             ],
-            roots: MachineRootLayout::new(
+            roots: MachineRootLayout::test_sibling_roots(
                 temp_dir.path().join("config"),
                 temp_dir.path().join("state"),
                 temp_dir.path().join("runtime"),

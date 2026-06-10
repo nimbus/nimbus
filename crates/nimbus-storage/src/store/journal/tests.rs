@@ -279,6 +279,42 @@ fn tenant_event_journal_appends_schema_table_index_scheduler_and_trigger_events_
 }
 
 #[test]
+fn tenant_event_journal_advances_next_sequence_once_per_commit() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+
+    for (execution_id, expected_sequence) in [
+        ("scheduled:first", SequenceNumber(1)),
+        ("scheduled:second", SequenceNumber(2)),
+    ] {
+        let committed = store
+            .execute_write(|transaction| {
+                assert!(transaction.begin_scheduled_execution(Some(execution_id))?);
+                Ok(())
+            })
+            .expect("scheduled execution transaction should commit");
+        let commit = committed
+            .commit
+            .expect("metadata-only transaction should append a tenant event");
+
+        assert_eq!(commit.sequence, expected_sequence);
+        assert_eq!(
+            store
+                .latest_sequence()
+                .expect("latest sequence should reflect committed event"),
+            expected_sequence
+        );
+    }
+
+    let sequences = store
+        .read_durable_journal_from(SequenceNumber(1))
+        .expect("tenant event journal should read")
+        .into_iter()
+        .map(|record| record.sequence)
+        .collect::<Vec<_>>();
+    assert_eq!(sequences, vec![SequenceNumber(1), SequenceNumber(2)]);
+}
+
+#[test]
 fn redb_tenant_event_journal_replays_mixed_history() {
     let table = TableName::new("tasks").expect("table name should be valid");
     let table_id = TableId::new();

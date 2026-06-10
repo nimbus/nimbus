@@ -32,4 +32,4 @@ pub use records::{
     sync_scheduler_state_for_tenant_async,
 };
 #[cfg(test)]
-use schema::system_table_schemas;
+use schema::{SystemTable, system_table_schemas};

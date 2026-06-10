@@ -1,4 +1,5 @@
 use std::fmt::Write as _;
+use std::ops::Bound;
 
 use mysql_async::Value as MySqlValue;
 use nimbus_core::{
@@ -8,7 +9,7 @@ use nimbus_core::{
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::store::MAX_DURABLE_JOURNAL_STREAM_LIMIT;
+use crate::{IndexRangeBound, store::MAX_DURABLE_JOURNAL_STREAM_LIMIT};
 
 use super::backend::quote_identifier;
 
@@ -97,16 +98,13 @@ pub(super) fn compare_values(left: &Value, right: &Value) -> Result<std::cmp::Or
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn filter_index_documents_with_cancel(
     documents: Vec<Document>,
     table: &TableName,
     index_fields: &[String],
     exact_prefix: &[Value],
-    start: Option<&Value>,
-    end: Option<&Value>,
-    start_inclusive: bool,
-    end_inclusive: bool,
+    start: IndexRangeBound<'_>,
+    end: IndexRangeBound<'_>,
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<Vec<Document>> {
     let range_field = index_fields.get(exact_prefix.len());
@@ -120,14 +118,7 @@ pub(super) fn filter_index_documents_with_cancel(
             continue;
         }
         if let Some(range_field) = range_field
-            && !document_matches_range_bounds(
-                &document,
-                range_field,
-                start,
-                end,
-                start_inclusive,
-                end_inclusive,
-            )?
+            && !document_matches_range_bounds(&document, range_field, start, end)?
         {
             continue;
         }
@@ -199,20 +190,30 @@ pub(super) fn append_mysql_range_clause(
     clauses: &mut Vec<String>,
     params: &mut Vec<MySqlValue>,
     expr: String,
-    start: Option<MySqlValue>,
-    end: Option<MySqlValue>,
-    start_inclusive: bool,
-    end_inclusive: bool,
+    start: Bound<MySqlValue>,
+    end: Bound<MySqlValue>,
 ) {
-    if let Some(start) = start {
-        let operator = if start_inclusive { ">=" } else { ">" };
-        clauses.push(format!("{expr} {operator} ?"));
-        params.push(start);
+    match start {
+        Bound::Included(start) => {
+            clauses.push(format!("{expr} >= ?"));
+            params.push(start);
+        }
+        Bound::Excluded(start) => {
+            clauses.push(format!("{expr} > ?"));
+            params.push(start);
+        }
+        Bound::Unbounded => {}
     }
-    if let Some(end) = end {
-        let operator = if end_inclusive { "<=" } else { "<" };
-        clauses.push(format!("{expr} {operator} ?"));
-        params.push(end);
+    match end {
+        Bound::Included(end) => {
+            clauses.push(format!("{expr} <= ?"));
+            params.push(end);
+        }
+        Bound::Excluded(end) => {
+            clauses.push(format!("{expr} < ?"));
+            params.push(end);
+        }
+        Bound::Unbounded => {}
     }
 }
 
@@ -227,40 +228,44 @@ pub(super) fn document_matches_exact_prefix(
         .all(|(field, expected)| document.get_field(field) == Some(expected))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn document_matches_range_bounds(
     document: &Document,
     field: &str,
-    start: Option<&Value>,
-    end: Option<&Value>,
-    start_inclusive: bool,
-    end_inclusive: bool,
+    start: IndexRangeBound<'_>,
+    end: IndexRangeBound<'_>,
 ) -> Result<bool> {
-    if let Some(start) = start {
-        let Some(value) = document.get_field(field) else {
-            return Ok(false);
-        };
-        let ordering = compare_values(value, start)?;
-        if start_inclusive {
+    let Some(value) = document.get_field(field) else {
+        return Ok(false);
+    };
+    match start {
+        Bound::Included(start) => {
+            let ordering = compare_values(value, start)?;
             if ordering == std::cmp::Ordering::Less {
                 return Ok(false);
             }
-        } else if !matches!(ordering, std::cmp::Ordering::Greater) {
-            return Ok(false);
         }
+        Bound::Excluded(start) => {
+            let ordering = compare_values(value, start)?;
+            if !matches!(ordering, std::cmp::Ordering::Greater) {
+                return Ok(false);
+            }
+        }
+        Bound::Unbounded => {}
     }
-    if let Some(end) = end {
-        let Some(value) = document.get_field(field) else {
-            return Ok(false);
-        };
-        let ordering = compare_values(value, end)?;
-        if end_inclusive {
+    match end {
+        Bound::Included(end) => {
+            let ordering = compare_values(value, end)?;
             if ordering == std::cmp::Ordering::Greater {
                 return Ok(false);
             }
-        } else if !matches!(ordering, std::cmp::Ordering::Less) {
-            return Ok(false);
         }
+        Bound::Excluded(end) => {
+            let ordering = compare_values(value, end)?;
+            if !matches!(ordering, std::cmp::Ordering::Less) {
+                return Ok(false);
+            }
+        }
+        Bound::Unbounded => {}
     }
     Ok(true)
 }

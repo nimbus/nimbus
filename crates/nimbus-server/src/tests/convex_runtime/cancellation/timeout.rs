@@ -23,11 +23,18 @@ globalThis.__nimbusInvoke = async function(request) {
     "request",
     "return (async () => { while (true) {} })(ctx, args, request);",
   );
-  return {
-    status: "ok",
-    value: await handler(globalThis.__nimbusCreateContext(), request.args ?? {}, request),
-  };
-};
+	  return {
+	    status: "ok",
+	    value: await handler(
+	      globalThis.__nimbusCreateContext({
+	        hostCallSessionId: `${request.kind}:${request.function_name}`,
+	        request,
+	      }),
+	      request.args ?? {},
+	      request,
+	    ),
+	  };
+	};
 
 export {};
 "#,

@@ -73,20 +73,24 @@ pub(super) struct UpdateMutationRequest<'a> {
 pub(super) fn expect_immediate_result(
     result: MutationExecutionResult,
     scheduled_message: &'static str,
-) -> Option<DocumentId> {
+) -> Result<Option<DocumentId>> {
     match result {
-        MutationExecutionResult::Immediate(document_id) => document_id,
-        MutationExecutionResult::Scheduled(_) => unreachable!("{scheduled_message}"),
+        MutationExecutionResult::Immediate(document_id) => Ok(document_id),
+        MutationExecutionResult::Scheduled(_) => {
+            Err(Error::Internal(scheduled_message.to_string()))
+        }
     }
 }
 
 pub(super) fn expect_scheduled_applied(
     result: MutationExecutionResult,
     immediate_message: &'static str,
-) -> bool {
+) -> Result<bool> {
     match result {
-        MutationExecutionResult::Scheduled(applied) => applied,
-        MutationExecutionResult::Immediate(_) => unreachable!("{immediate_message}"),
+        MutationExecutionResult::Scheduled(applied) => Ok(applied),
+        MutationExecutionResult::Immediate(_) => {
+            Err(Error::Internal(immediate_message.to_string()))
+        }
     }
 }
 
@@ -104,5 +108,52 @@ pub(super) fn expect_immediate_unit(
     match document_id {
         None => Ok(()),
         Some(_) => Err(Error::Internal(unexpected_message.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nimbus_core::{DocumentId, Error};
+
+    use super::{MutationExecutionResult, expect_immediate_result, expect_scheduled_applied};
+
+    #[test]
+    fn expect_immediate_result_reports_scheduled_variant_as_internal_error() {
+        let error = expect_immediate_result(
+            MutationExecutionResult::Scheduled(false),
+            "scheduled result",
+        )
+        .expect_err("scheduled result should be rejected by immediate helper");
+
+        assert!(matches!(error, Error::Internal(message) if message == "scheduled result"));
+    }
+
+    #[test]
+    fn expect_scheduled_applied_reports_immediate_variant_as_internal_error() {
+        let document_id = DocumentId::from_key("unexpected").expect("document id should parse");
+        let error = expect_scheduled_applied(
+            MutationExecutionResult::Immediate(Some(document_id)),
+            "immediate result",
+        )
+        .expect_err("immediate result should be rejected by scheduled helper");
+
+        assert!(matches!(error, Error::Internal(message) if message == "immediate result"));
+    }
+
+    #[test]
+    fn expect_result_helpers_return_matching_variants() {
+        let document_id = DocumentId::from_key("expected").expect("document id should parse");
+        assert_eq!(
+            expect_immediate_result(
+                MutationExecutionResult::Immediate(Some(document_id.clone())),
+                "scheduled result",
+            )
+            .expect("immediate result should pass"),
+            Some(document_id)
+        );
+        assert!(
+            expect_scheduled_applied(MutationExecutionResult::Scheduled(true), "immediate result")
+                .expect("scheduled result should pass")
+        );
     }
 }

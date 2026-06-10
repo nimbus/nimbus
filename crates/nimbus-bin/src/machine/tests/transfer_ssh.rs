@@ -18,7 +18,7 @@ fn parses_machine_ssh_with_guest_command() {
 #[test]
 fn machine_ssh_prefers_existing_machine_name_before_guest_command() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -65,7 +65,7 @@ fn machine_ssh_prefers_existing_machine_name_before_guest_command() {
 #[test]
 fn machine_ssh_treats_unknown_first_arg_as_guest_command() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),

@@ -120,16 +120,6 @@ async fn machine_api_inspect_service_sandbox(
 ) -> Result<Json<MachineApiServiceSandboxInspectResponse>, MachineApiHttpError> {
     let backend = require_service_backend(&state)?;
     let sandbox_id = nimbus::SandboxId::new(sandbox_id);
-    let view = container_state_view(&state);
-    let Some(_) = view
-        .inspect(&sandbox_id)
-        .map_err(container_state_error_to_http_error)?
-    else {
-        return Ok(Json(MachineApiServiceSandboxInspectResponse {
-            sandbox_id,
-            handle: None,
-        }));
-    };
     let handle = backend
         .inspect(&sandbox_id)
         .await
@@ -296,10 +286,10 @@ async fn machine_api_stop_service_sandbox(
 ) -> Result<Json<MachineApiServiceSandboxStopResponse>, MachineApiHttpError> {
     let backend = require_service_backend(&state)?;
     let sandbox_id = nimbus::SandboxId::new(sandbox_id);
-    let view = container_state_view(&state);
-    let Some(_) = view
+    let Some(_) = backend
         .inspect(&sandbox_id)
-        .map_err(container_state_error_to_http_error)?
+        .await
+        .map_err(sandbox_error_to_http_error)?
     else {
         return Err(MachineApiHttpError {
             status: StatusCode::NOT_FOUND,

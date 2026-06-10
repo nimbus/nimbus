@@ -168,6 +168,7 @@ pub(crate) async fn consume_ui_launch_ticket(
     let issued = local_server_security
         .create_session_for_launch_ticket(ticket)
         .map_err(|error| {
+            let app_error = map_session_bootstrap_error(&error);
             state.record_local_server_audit(LocalServerAuditEvent {
                 route_family: LocalServerRouteFamily::UiAuthSession,
                 tenant_id: None,
@@ -175,9 +176,9 @@ pub(crate) async fn consume_ui_launch_ticket(
                 auth_method: Some("launch_ticket"),
                 success: false,
                 origin: origin.clone(),
-                reason: map_session_bootstrap_error(error.clone()).to_string(),
+                reason: app_error.to_string(),
             });
-            map_session_bootstrap_error(error)
+            app_error
         })?;
     state.record_local_server_audit(LocalServerAuditEvent {
         route_family: LocalServerRouteFamily::UiAuthSession,
@@ -283,7 +284,7 @@ pub(crate) async fn create_ui_session(
     let request = parse_ui_auth_session_request(&body)?;
     let origin = origin_from_headers(&headers);
     let record_failure = |error: SessionBootstrapFailure, auth_method: &'static str| -> Response {
-        let app_error = map_session_bootstrap_error(error);
+        let app_error = map_session_bootstrap_error(&error);
         let reason = app_error.to_string();
         state.record_local_server_audit(LocalServerAuditEvent {
             route_family: LocalServerRouteFamily::UiAuthSession,
@@ -463,7 +464,7 @@ fn build_session_set_cookie(issued: &IssuedSessionCookie) -> String {
     )
 }
 
-fn map_session_bootstrap_error(error: SessionBootstrapFailure) -> AppError {
+fn map_session_bootstrap_error(error: &SessionBootstrapFailure) -> AppError {
     match error {
         SessionBootstrapFailure::InvalidToken => {
             AppError::unauthorized("invalid local admin token")
@@ -471,6 +472,9 @@ fn map_session_bootstrap_error(error: SessionBootstrapFailure) -> AppError {
         SessionBootstrapFailure::InvalidLaunchTicket => {
             AppError::unauthorized("invalid or expired launch ticket")
         }
+        SessionBootstrapFailure::SessionIssueFailed(message) => AppError::from(
+            nimbus_core::Error::Internal(format!("failed to issue ui session: {message}")),
+        ),
     }
 }
 

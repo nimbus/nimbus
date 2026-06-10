@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -7,7 +8,7 @@ use deno_web::{JsMessageData, MessagePort};
 
 use crate::RuntimeBundle;
 use crate::backends::v8::embedder::{CancelHandle, JsRuntime};
-use crate::error::Result;
+use crate::error::{NimbusRuntimeError, Result};
 use crate::executor::SharedInvocationPermit;
 use crate::host::{HostBridge, HostCallCancellation};
 use crate::limits::RuntimeLimits;
@@ -90,6 +91,91 @@ pub(crate) struct RuntimeWorkerBootstrapDescriptor {
 pub(crate) struct InstalledRuntimeWorkerBootstrapState {
     pub(crate) descriptor: RuntimeWorkerBootstrapDescriptor,
     pub(crate) parent_port: Option<Rc<MessagePort>>,
+    pub(crate) shared_env: RuntimeSharedWorkerEnv,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct RuntimeSharedWorkerEnv {
+    inner: Arc<Mutex<RuntimeSharedWorkerEnvState>>,
+}
+
+#[derive(Default)]
+struct RuntimeSharedWorkerEnvState {
+    values: BTreeMap<String, String>,
+    policy: Option<RuntimeEnvPolicy>,
+}
+
+impl RuntimeSharedWorkerEnv {
+    pub(crate) fn install_policy(&self, policy: RuntimeEnvPolicy) {
+        self.inner
+            .lock()
+            .expect("shared worker env lock should not be poisoned")
+            .policy = Some(policy);
+    }
+
+    pub(crate) fn seed(&self, snapshot: BTreeMap<String, String>) -> Result<()> {
+        let mut state = self
+            .inner
+            .lock()
+            .expect("shared worker env lock should not be poisoned");
+        let policy = state.policy()?;
+        for name in snapshot.keys() {
+            policy.ensure_read_name(name)?;
+        }
+        state.values = snapshot;
+        Ok(())
+    }
+
+    pub(crate) fn get(&self, name: &str) -> Result<Option<String>> {
+        let state = self
+            .inner
+            .lock()
+            .expect("shared worker env lock should not be poisoned");
+        if state.policy()?.ensure_read_name(name).is_err() {
+            return Ok(None);
+        }
+        Ok(state.values.get(name).cloned())
+    }
+
+    pub(crate) fn snapshot(&self) -> Result<BTreeMap<String, String>> {
+        let state = self
+            .inner
+            .lock()
+            .expect("shared worker env lock should not be poisoned");
+        Ok(state
+            .policy()?
+            .filter_readable_snapshot(state.values.clone()))
+    }
+
+    pub(crate) fn set(&self, name: String, value: String) -> Result<()> {
+        let mut state = self
+            .inner
+            .lock()
+            .expect("shared worker env lock should not be poisoned");
+        state.policy()?.ensure_write_name(&name)?;
+        state.values.insert(name, value);
+        Ok(())
+    }
+
+    pub(crate) fn delete(&self, name: &str) -> Result<()> {
+        let mut state = self
+            .inner
+            .lock()
+            .expect("shared worker env lock should not be poisoned");
+        state.policy()?.ensure_write_name(name)?;
+        state.values.remove(name);
+        Ok(())
+    }
+}
+
+impl RuntimeSharedWorkerEnvState {
+    fn policy(&self) -> Result<&RuntimeEnvPolicy> {
+        self.policy.as_ref().ok_or_else(|| {
+            NimbusRuntimeError::Contract(
+                "runtime shared worker env policy is not installed".to_string(),
+            )
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -240,6 +326,13 @@ fn install_runtime_contract(
     let limits = runtime_owner.policy().limits().clone();
     let paths = RuntimePathPolicy::for_bundle(bundle, &limits)?;
     let env = RuntimeEnvPolicy::for_grants(&limits.grants);
+    {
+        let op_state = runtime.op_state();
+        let state = op_state.borrow();
+        if let Some(shared_env) = state.try_borrow::<RuntimeSharedWorkerEnv>().cloned() {
+            shared_env.install_policy(env.clone());
+        }
+    }
     let capability_policy = InstalledRuntimeCapabilityPolicy {
         permissions: build_permissions_container_for_profile(
             &paths,
@@ -287,6 +380,7 @@ pub(crate) fn main_thread_worker_bootstrap_state() -> InstalledRuntimeWorkerBoot
             worker_metadata: None,
         },
         parent_port: None,
+        shared_env: RuntimeSharedWorkerEnv::default(),
     }
 }
 

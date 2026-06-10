@@ -205,6 +205,37 @@ fn executes_repeated_order_cursors_offset_limit_and_projection() {
 }
 
 #[test]
+fn structured_query_rejects_ordering_on_boolean_fields() {
+    let prepared = prepare_structured_query(
+        &tasks_table(),
+        &StructuredQuery {
+            order_by: vec![StructuredOrder {
+                field: field("active"),
+                direction: QueryDirection::Ascending,
+            }],
+            ..StructuredQuery::default()
+        },
+    )
+    .expect("structured query should prepare");
+    let docs = vec![Document::with_id(
+        DocumentId::from_key("alpha").expect("doc id should parse"),
+        tasks_table(),
+        serde_json::Map::from_iter([("active".to_string(), json!(true))]),
+    )];
+    let mut check_cancel = || Ok(());
+
+    let error = finalize_structured_documents(docs, &prepared, &mut check_cancel)
+        .expect_err("structured query should reject unsupported order value types");
+
+    assert!(
+        error
+            .to_string()
+            .contains("ordering only supports string and number fields"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn derives_required_index_fields_for_compound_structured_queries() {
     let prepared = prepare_structured_query(
         &tasks_table(),
@@ -271,7 +302,10 @@ fn compound_structured_queries_require_matching_schema_indexes() {
     };
     let error = ensure_structured_query_index(Some(&missing_index), &prepared)
         .expect_err("compound query should require a matching composite index");
-    assert!(matches!(error, Error::InvalidInput(message) if message.contains("requires an index")));
+    assert!(matches!(
+        error,
+        Error::MissingIndex { fields } if fields == vec!["status".to_string(), "rank".to_string()]
+    ));
 
     let matching_index = TableSchema {
         table: tasks_table(),

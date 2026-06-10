@@ -94,6 +94,9 @@ impl Engine {
                 nimbus_core::TriggerInvocationState::RetryPending {
                     next_attempt_at, ..
                 } => Some((record.key, next_attempt_at)),
+                nimbus_core::TriggerInvocationState::Running { .. } => {
+                    Some((record.key, nimbus_core::Timestamp(0)))
+                }
                 _ => None,
             })
             .collect::<Vec<_>>();

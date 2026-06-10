@@ -44,6 +44,11 @@ impl MachineCommandLine {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         #[cfg(unix)]
+        // SAFETY: `pre_exec` runs in the child process after fork and before
+        // exec. The closure only invokes `setsid`, an async-signal-safe libc
+        // call that does not touch shared Rust state; the returned OS error is
+        // immediately propagated to abort the child launch if session creation
+        // fails.
         unsafe {
             // Machine helpers should survive the launching CLI process exiting.
             // Put them in their own session so host validation and normal shell

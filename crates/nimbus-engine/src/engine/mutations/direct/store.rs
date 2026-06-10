@@ -18,10 +18,10 @@ impl Engine {
             let _sequence_guard = runtime.lock_mutation_sequence();
             let commit = mutate(runtime.store())?;
             runtime.mark_durable_head(commit.sequence);
+            runtime.invalidate_document_cache_for_commit(&commit);
             runtime.mark_applied_head(commit.sequence);
             commit
         };
-        runtime.invalidate_document_cache_for_commit(&commit);
         self.process_commit(runtime, &commit);
         Ok(commit)
     }
@@ -39,6 +39,7 @@ impl Engine {
             let commit = mutate(runtime.store())?;
             if let Some(commit) = &commit {
                 runtime.mark_durable_head(commit.sequence);
+                runtime.invalidate_document_cache_for_commit(commit);
                 runtime.mark_applied_head(commit.sequence);
             }
             commit
@@ -46,7 +47,6 @@ impl Engine {
         let Some(commit) = commit else {
             return Ok(false);
         };
-        runtime.invalidate_document_cache_for_commit(&commit);
         self.process_commit(runtime, &commit);
         Ok(true)
     }
@@ -63,10 +63,10 @@ impl Engine {
             let _sequence_guard = runtime.lock_mutation_sequence();
             let (commit, deleted_document) = mutate(runtime.store())?;
             runtime.mark_durable_head(commit.sequence);
+            runtime.invalidate_document_cache_for_commit(&commit);
             runtime.mark_applied_head(commit.sequence);
             (commit, deleted_document)
         };
-        runtime.invalidate_document_cache_for_commit(&commit);
         self.process_commit(runtime, &commit);
         Ok(commit)
     }
@@ -84,6 +84,7 @@ impl Engine {
             let commit = mutate(runtime.store())?;
             if let Some((commit, _deleted_document)) = &commit {
                 runtime.mark_durable_head(commit.sequence);
+                runtime.invalidate_document_cache_for_commit(commit);
                 runtime.mark_applied_head(commit.sequence);
             }
             commit
@@ -91,7 +92,6 @@ impl Engine {
         let Some((commit, _deleted_document)) = commit else {
             return Ok(false);
         };
-        runtime.invalidate_document_cache_for_commit(&commit);
         self.process_commit(runtime, &commit);
         Ok(true)
     }

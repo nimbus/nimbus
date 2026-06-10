@@ -1,6 +1,9 @@
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI64, Ordering};
 
+use nimbus_core::PrincipalContext;
+use serde_json::{Map, Value};
+
 use super::commands::cursor::CursorStore;
 use super::commands::session::SessionStore;
 
@@ -47,5 +50,22 @@ impl ConnectionState {
             cursor_store: CursorStore::default(),
             session_store: SessionStore::default(),
         }
+    }
+
+    pub(crate) fn authenticated_principal(&self) -> Option<PrincipalContext> {
+        if !self.authenticated {
+            return None;
+        }
+        let user = self.auth_user.as_ref()?;
+        let mut claims = Map::new();
+        claims.insert("subject".to_string(), Value::String(user.clone()));
+        claims.insert("sub".to_string(), Value::String(user.clone()));
+        claims.insert("mongodb_user".to_string(), Value::String(user.clone()));
+        claims.insert("provider".to_string(), Value::String("mongodb".to_string()));
+        Some(PrincipalContext {
+            authenticated: true,
+            claims,
+            verified_claims: Map::new(),
+        })
     }
 }

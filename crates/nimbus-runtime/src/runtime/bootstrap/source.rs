@@ -231,6 +231,7 @@ async function __nimbusRunNamedFunction(
       function_name: normalized.name,
       args,
       visibility: normalized.visibility,
+      hostCallSessionId,
       ...(nestedAuthContext ? { auth: nestedAuthContext } : {}),
     });
   }
@@ -802,8 +803,24 @@ if (Promise.reject.__nimbusDomainAware !== true) {
 }
 "#;
 
-const RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE: &str =
-    "__nimbusNextHostCallSessionId = 1; __nimbusInvocationGeneration++;";
+const RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE: &str = r#"
+__nimbusNextHostCallSessionId = 1;
+__nimbusInvocationGeneration++;
+{
+  const __nimbusRuntimeExecPath = __nimbusCoreOps.op_nimbus_runtime_exec_path();
+  if (
+    globalThis.process &&
+    typeof globalThis.process === "object" &&
+    typeof __nimbusRuntimeExecPath === "string" &&
+    __nimbusRuntimeExecPath.length > 0
+  ) {
+    globalThis.process.execPath = __nimbusRuntimeExecPath;
+    if (Array.isArray(globalThis.process.argv) && globalThis.process.argv.length > 0) {
+      globalThis.process.argv[0] = __nimbusRuntimeExecPath;
+    }
+  }
+}
+"#;
 
 pub(crate) fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
     runtime

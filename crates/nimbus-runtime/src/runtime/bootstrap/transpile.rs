@@ -160,13 +160,20 @@ fn maybe_transpile_source(
     match media_type {
         MediaType::TypeScript => {}
         MediaType::JavaScript | MediaType::Mjs => return Ok((source.into(), None)),
-        _ => panic!(
-            "unsupported media type for runtime extension transpilation {media_type:?} for file {name}",
-        ),
+        _ => {
+            return Err(JsErrorBox::generic(format!(
+                "unsupported media type for runtime extension transpilation {media_type:?} for file {name}",
+            )));
+        }
     }
 
+    let specifier = deno_core::url::Url::parse(&name).map_err(|error| {
+        JsErrorBox::generic(format!(
+            "invalid runtime extension specifier {name}: {error}"
+        ))
+    })?;
     let parsed = deno_ast::parse_module(ParseParams {
-        specifier: deno_core::url::Url::parse(&name).unwrap(),
+        specifier,
         text: source.into(),
         media_type,
         capture_tokens: false,
@@ -250,4 +257,39 @@ fn inject_node_lazy_script_prelude(source: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extension_transpiler_rejects_unsupported_media_type_without_panicking() {
+        let error = maybe_transpile_source(
+            String::from("ext:nimbus_runtime/bootstrap/data.json").into(),
+            String::from("{}").into(),
+        )
+        .expect_err("unsupported extension media type should return an error");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("unsupported media type for runtime extension transpilation"),
+            "unexpected transpiler error: {message}"
+        );
+    }
+
+    #[test]
+    fn extension_transpiler_rejects_invalid_specifier_without_panicking() {
+        let error = maybe_transpile_source(
+            String::from("runtime_extension.ts").into(),
+            String::from("export {};").into(),
+        )
+        .expect_err("malformed extension specifier should return an error");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("invalid runtime extension specifier"),
+            "unexpected transpiler error: {message}"
+        );
+    }
 }

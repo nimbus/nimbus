@@ -70,6 +70,22 @@ pub(super) struct SubscriptionStatusRecord {
 
 pub(super) type SubscriptionStatuses = Arc<RwLock<HashMap<u64, SubscriptionStatusRecord>>>;
 
+fn read_subscription_statuses(
+    statuses: &SubscriptionStatuses,
+) -> std::sync::RwLockReadGuard<'_, HashMap<u64, SubscriptionStatusRecord>> {
+    statuses
+        .read()
+        .expect("subscription status lock should not be poisoned")
+}
+
+fn write_subscription_statuses(
+    statuses: &SubscriptionStatuses,
+) -> std::sync::RwLockWriteGuard<'_, HashMap<u64, SubscriptionStatusRecord>> {
+    statuses
+        .write()
+        .expect("subscription status lock should not be poisoned")
+}
+
 pub(super) struct SocketSessionCtx<'a> {
     pub(super) state: &'a Arc<AppState>,
     pub(super) tenant_id: &'a TenantId,
@@ -204,19 +220,14 @@ pub(super) async fn record_active_subscription_status(
             .await;
         return;
     }
-    ctx.subscription_statuses
-        .write()
-        .expect("subscription status lock should not be poisoned")
-        .insert(subscription_id, record);
+    write_subscription_statuses(ctx.subscription_statuses).insert(subscription_id, record);
 }
 
 fn subscription_status(
     statuses: &SubscriptionStatuses,
     subscription_id: u64,
 ) -> Option<SubscriptionStatusRecord> {
-    statuses
-        .read()
-        .expect("subscription status lock should not be poisoned")
+    read_subscription_statuses(statuses)
         .get(&subscription_id)
         .cloned()
 }
@@ -264,10 +275,7 @@ async fn delete_subscription_status(
     statuses: &SubscriptionStatuses,
     subscription_id: u64,
 ) {
-    let record = statuses
-        .write()
-        .expect("subscription status lock should not be poisoned")
-        .remove(&subscription_id);
+    let record = write_subscription_statuses(statuses).remove(&subscription_id);
     let Some(record) = record else {
         return;
     };

@@ -12,6 +12,7 @@ pub mod run_aggregation_query_request;
 pub mod run_query_request;
 pub mod serializer;
 pub mod transaction_request;
+mod transaction_token;
 
 pub use errors::{
     batch_get_request_error_to_core, batch_write_request_error_to_core,

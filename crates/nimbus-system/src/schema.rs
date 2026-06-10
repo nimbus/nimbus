@@ -1,9 +1,76 @@
 use nimbus_core::{FieldSchema, FieldType, IndexDefinition, Result, TableName, TableSchema};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum SystemTable {
+    AdapterCapabilities,
+    Bundles,
+    CronJobs,
+    Events,
+    Functions,
+    Listeners,
+    Machines,
+    Ports,
+    Routes,
+    Runs,
+    ScheduledJobs,
+    Services,
+    Subscriptions,
+    SystemStatus,
+    Tables,
+    WorkloadStatus,
+}
+
+impl SystemTable {
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 16] = [
+        Self::AdapterCapabilities,
+        Self::Bundles,
+        Self::CronJobs,
+        Self::Events,
+        Self::Functions,
+        Self::Listeners,
+        Self::Machines,
+        Self::Ports,
+        Self::Routes,
+        Self::Runs,
+        Self::ScheduledJobs,
+        Self::Services,
+        Self::Subscriptions,
+        Self::SystemStatus,
+        Self::Tables,
+        Self::WorkloadStatus,
+    ];
+
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::AdapterCapabilities => "adapter_capabilities",
+            Self::Bundles => "bundles",
+            Self::CronJobs => "cron_jobs",
+            Self::Events => "events",
+            Self::Functions => "functions",
+            Self::Listeners => "listeners",
+            Self::Machines => "machines",
+            Self::Ports => "ports",
+            Self::Routes => "routes",
+            Self::Runs => "runs",
+            Self::ScheduledJobs => "scheduled_jobs",
+            Self::Services => "services",
+            Self::Subscriptions => "subscriptions",
+            Self::SystemStatus => "system_status",
+            Self::Tables => "tables",
+            Self::WorkloadStatus => "workload_status",
+        }
+    }
+
+    pub(crate) fn table_name(self) -> Result<TableName> {
+        TableName::new(self.name().to_owned())
+    }
+}
+
 pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
     Ok(vec![
         table(
-            "machines",
+            SystemTable::Machines,
             &[
                 string("name", true),
                 string("kind", true),
@@ -19,7 +86,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             ],
         )?,
         table(
-            "services",
+            SystemTable::Services,
             &[
                 string("tenantId", true),
                 string("name", true),
@@ -38,7 +105,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             ],
         )?,
         table(
-            "bundles",
+            SystemTable::Bundles,
             &[
                 string("sha256", true),
                 number("sizeBytes", false),
@@ -51,7 +118,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             ],
         )?,
         table(
-            "functions",
+            SystemTable::Functions,
             &[
                 string("bundleId", true),
                 string("path", true),
@@ -65,7 +132,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             ],
         )?,
         table(
-            "tables",
+            SystemTable::Tables,
             &[
                 string("tenantId", true),
                 string("name", true),
@@ -80,7 +147,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             ],
         )?,
         table(
-            "events",
+            SystemTable::Events,
             &[
                 string("source", true),
                 string("level", true),
@@ -99,7 +166,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             ],
         )?,
         table(
-            "runs",
+            SystemTable::Runs,
             &[
                 string("bundleId", false),
                 string("functionPath", true),
@@ -117,7 +184,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             ],
         )?,
         table(
-            "scheduled_jobs",
+            SystemTable::ScheduledJobs,
             &[
                 string("tenantId", true),
                 string("functionPath", true),
@@ -129,11 +196,12 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             &[
                 index("by_tenantId", &["tenantId"]),
                 index("by_status", &["status"]),
+                index("by_tenantId_and_status", &["tenantId", "status"]),
                 index("by_scheduledTime", &["scheduledTime"]),
             ],
         )?,
         table(
-            "cron_jobs",
+            SystemTable::CronJobs,
             &[
                 string("tenantId", true),
                 string("name", true),
@@ -146,11 +214,12 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             &[
                 index("by_tenantId", &["tenantId"]),
                 index("by_status", &["status"]),
+                index("by_tenantId_and_status", &["tenantId", "status"]),
                 index("by_nextRunAt", &["nextRunAt"]),
             ],
         )?,
         table(
-            "routes",
+            SystemTable::Routes,
             &[
                 string("method", true),
                 string("path", true),
@@ -165,7 +234,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             ],
         )?,
         table(
-            "listeners",
+            SystemTable::Listeners,
             &[
                 string("adapter", true),
                 string("protocol", true),
@@ -180,7 +249,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             ],
         )?,
         table(
-            "subscriptions",
+            SystemTable::Subscriptions,
             &[
                 string("tenantId", false),
                 string("adapter", true),
@@ -195,7 +264,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             ],
         )?,
         table(
-            "ports",
+            SystemTable::Ports,
             &[
                 string("machineId", false),
                 string("serviceId", false),
@@ -211,7 +280,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             ],
         )?,
         table(
-            "adapter_capabilities",
+            SystemTable::AdapterCapabilities,
             &[
                 string("adapter", true),
                 string("feature", true),
@@ -225,7 +294,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             ],
         )?,
         table(
-            "system_status",
+            SystemTable::SystemStatus,
             &[
                 string("name", true),
                 string("version", true),
@@ -237,7 +306,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             &[index("by_name", &["name"]), index("by_health", &["health"])],
         )?,
         table(
-            "workload_status",
+            SystemTable::WorkloadStatus,
             &[
                 string("tenantId", true),
                 string("workloadUid", true),
@@ -259,9 +328,13 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
     ])
 }
 
-fn table(name: &str, fields: &[FieldSchema], indexes: &[IndexDefinition]) -> Result<TableSchema> {
+fn table(
+    table: SystemTable,
+    fields: &[FieldSchema],
+    indexes: &[IndexDefinition],
+) -> Result<TableSchema> {
     Ok(TableSchema {
-        table: TableName::new(name.to_string())?,
+        table: table.table_name()?,
         fields: fields.to_vec(),
         indexes: indexes.to_vec(),
         access_policy: None,

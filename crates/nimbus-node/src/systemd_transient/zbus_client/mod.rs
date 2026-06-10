@@ -13,6 +13,8 @@
 //!
 //! [`UnavailableSystemdDbusClient`]: super::UnavailableSystemdDbusClient
 
+use std::time::Duration;
+
 use nimbus_core::{Error, Result};
 use zbus::Connection;
 use zbus_systemd::systemd1::{ManagerProxy, ServiceProxy, UnitProxy};
@@ -29,7 +31,7 @@ mod properties;
 mod signals;
 
 use error::map_zbus;
-use signals::JobOutcome;
+use signals::{DEFAULT_SYSTEMD_JOB_COMPLETION_TIMEOUT, JobOutcome};
 
 /// Which systemd D-Bus instance the client speaks to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,12 +63,14 @@ pub struct ZbusSystemdClient {
     connection: Connection,
     manager: ManagerProxy<'static>,
     capabilities: SystemdTransientCapabilities,
+    job_completion_timeout: Duration,
 }
 
 impl std::fmt::Debug for ZbusSystemdClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ZbusSystemdClient")
             .field("capabilities", &self.capabilities)
+            .field("job_completion_timeout", &self.job_completion_timeout)
             .finish_non_exhaustive()
     }
 }
@@ -98,7 +102,18 @@ impl ZbusSystemdClient {
             connection,
             manager,
             capabilities,
+            job_completion_timeout: DEFAULT_SYSTEMD_JOB_COMPLETION_TIMEOUT,
         })
+    }
+
+    pub fn with_job_completion_timeout(mut self, timeout: Duration) -> Result<Self> {
+        if timeout.is_zero() {
+            return Err(Error::InvalidInput(
+                "systemd job completion timeout must be greater than 0".to_string(),
+            ));
+        }
+        self.job_completion_timeout = timeout;
+        Ok(self)
     }
 
     /// Borrow the cached `Manager` proxy. Used by NDB3's signal wiring.
@@ -197,9 +212,14 @@ impl SystemdDbusClient for ZbusSystemdClient {
             let name = request.unit_name().as_str().to_string();
             let mode = request.mode().as_dbus_str().to_string();
             let properties = properties::encode_start_properties(request.properties())?;
-            let (job_path, outcome) =
-                signals::start_transient_unit_and_wait(&self.manager, name, mode, properties)
-                    .await?;
+            let (job_path, outcome) = signals::start_transient_unit_and_wait(
+                &self.manager,
+                name,
+                mode,
+                properties,
+                self.job_completion_timeout,
+            )
+            .await?;
             if !outcome.succeeded() {
                 return Err(job_failed_error(
                     "StartTransientUnit",
@@ -222,7 +242,8 @@ impl SystemdDbusClient for ZbusSystemdClient {
             let name = request.unit_name().as_str().to_string();
             let mode = request.mode().as_dbus_str().to_string();
             let (job_path, outcome) =
-                signals::stop_unit_and_wait(&self.manager, name, mode).await?;
+                signals::stop_unit_and_wait(&self.manager, name, mode, self.job_completion_timeout)
+                    .await?;
             if !outcome.succeeded() {
                 return Err(job_failed_error(
                     "StopUnit",

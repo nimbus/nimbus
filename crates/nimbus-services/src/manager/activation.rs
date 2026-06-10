@@ -10,8 +10,6 @@ use nimbus_tenant::{
 };
 use tokio::time::sleep;
 
-use crate::registry::service_binding_from_handle;
-
 use super::ServiceManager;
 use super::types::{ActivationClaim, TenantServiceKey, sandbox_backend_error};
 
@@ -57,9 +55,7 @@ impl ServiceManager {
             let Some(handle) = self.refresh_handle_async(key).await? else {
                 return Ok(None);
             };
-            if handle.status == SandboxStatus::Ready
-                || service_binding_from_handle(&handle).is_some()
-            {
+            if handle.status == SandboxStatus::Ready {
                 return Ok(Some(handle));
             }
             if matches!(

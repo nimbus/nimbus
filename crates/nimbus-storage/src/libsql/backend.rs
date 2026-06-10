@@ -804,13 +804,7 @@ pub(super) fn map_local_sqlite_error(error: rusqlite::Error) -> Error {
     }
 }
 
-pub(super) fn map_permit_error(_error: tokio::sync::AcquireError) -> Error {
-    Error::Internal("libsql replica executor unexpectedly closed".to_string())
-}
-
-pub(super) fn map_join_error(error: tokio::task::JoinError) -> Error {
-    Error::Internal(format!("libsql replica read task failed: {error}"))
-}
+pub(super) const LIBSQL_REPLICA_EXECUTOR_CONTEXT: &str = "libsql replica executor";
 
 pub(super) fn storage_io_error(error: impl std::fmt::Display) -> Error {
     Error::storage(StorageErrorKind::Io, error.to_string())

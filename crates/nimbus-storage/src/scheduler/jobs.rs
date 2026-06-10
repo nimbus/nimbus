@@ -16,8 +16,11 @@ impl TenantWriteTransaction {
         insert_scheduled_job_in_write_txn(self.write_txn()?, job)
     }
 
-    pub fn claim_due_jobs(&mut self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
+    pub fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
         self.check_cancel()?;
+        if max_jobs == 0 {
+            return Ok(Vec::new());
+        }
         let due = {
             let table = match self.write_txn()?.open_table(SCHEDULED_JOBS) {
                 Ok(table) => table,
@@ -29,6 +32,7 @@ impl TenantWriteTransaction {
             for entry in table
                 .range::<&[u8]>(..=upper.as_slice())
                 .map_err(map_redb_error)?
+                .take(max_jobs)
             {
                 self.check_cancel()?;
                 let (key, value) = entry.map_err(map_redb_error)?;
@@ -92,10 +96,10 @@ impl TenantStore {
         Ok(())
     }
 
-    /// Claims all scheduled jobs due at or before `now`.
-    pub fn claim_due_jobs(&self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
+    /// Claims up to `max_jobs` scheduled jobs due at or before `now`.
+    pub fn claim_due_jobs(&self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
         Ok(self
-            .execute_write(move |transaction| transaction.claim_due_jobs(now))?
+            .execute_write(move |transaction| transaction.claim_due_jobs(now, max_jobs))?
             .value)
     }
 

@@ -15,7 +15,7 @@ async fn convex_runtime_only_paginated_subscription_bootstraps_and_tracks_reads(
             r#"
 globalThis.__nimbusInvoke = async function(request) {
   const ctx = globalThis.__nimbusCreateContext({
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   const normalizedAuthor = request.args.author?.trim();
   const builder = normalizedAuthor

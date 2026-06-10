@@ -1,11 +1,16 @@
 use super::*;
 
+fn lock_query_builders(
+    builders: &std::sync::Mutex<ConvexRuntimeQueryBuilders>,
+) -> std::sync::MutexGuard<'_, ConvexRuntimeQueryBuilders> {
+    builders
+        .lock()
+        .expect("convex runtime query builder lock should not be poisoned")
+}
+
 impl ConvexHostBridge {
     pub(in crate::adapters::convex) fn new_builder_id(&self) -> String {
-        let mut builders = self
-            .query_builders()
-            .lock()
-            .expect("convex runtime query builder lock should not be poisoned");
+        let mut builders = lock_query_builders(self.query_builders().as_ref());
         builders.next_builder_id += 1;
         format!(
             "{}-builder-{}",
@@ -19,9 +24,7 @@ impl ConvexHostBridge {
         builder_id: String,
         state: ConvexRuntimeQueryBuilderState,
     ) {
-        self.query_builders()
-            .lock()
-            .expect("convex runtime query builder lock should not be poisoned")
+        lock_query_builders(self.query_builders().as_ref())
             .builders
             .insert(builder_id, state);
     }
@@ -31,10 +34,7 @@ impl ConvexHostBridge {
         builder_id: &str,
         update: impl FnOnce(&mut ConvexRuntimeQueryBuilderState) -> Result<R, Error>,
     ) -> Result<R, Error> {
-        let mut builders = self
-            .query_builders()
-            .lock()
-            .expect("convex runtime query builder lock should not be poisoned");
+        let mut builders = lock_query_builders(self.query_builders().as_ref());
         let state = builders.builders.get_mut(builder_id).ok_or_else(|| {
             Error::InvalidInput(format!(
                 "convex runtime query builder not found: {builder_id}"
@@ -47,9 +47,7 @@ impl ConvexHostBridge {
         &self,
         builder_id: &str,
     ) -> Result<ConvexRuntimeQueryBuilderState, Error> {
-        self.query_builders()
-            .lock()
-            .expect("convex runtime query builder lock should not be poisoned")
+        lock_query_builders(self.query_builders().as_ref())
             .builders
             .remove(builder_id)
             .ok_or_else(|| {

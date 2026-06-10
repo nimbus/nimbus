@@ -39,7 +39,11 @@ impl TypedScalarValue {
             Self::Timestamp { value } => Value::Number(Number::from(value.0)),
             Self::SpecialDouble { value } => value.projected_json(),
             Self::ObjectId { hex } => Value::String(hex.clone()),
-            Self::Binary { data, .. } => Value::String(base64_encode(data)),
+            Self::Binary { data, .. } => {
+                // Clean JSON cannot represent BSON binary subtype metadata; the
+                // typed sidecar remains the authoritative lossless value.
+                Value::String(base64_encode(data))
+            }
             Self::Decimal128 { repr } => Value::String(repr.clone()),
             Self::Regex { pattern, .. } => Value::String(pattern.clone()),
             Self::MongoTimestamp { seconds, increment } => {
@@ -187,34 +191,6 @@ pub enum NumericValue {
     SpecialDouble { value: SpecialDouble },
 }
 
-impl NumericValue {
-    pub fn projected_json(&self) -> Value {
-        match self {
-            Self::Integer { value } => Value::Number(Number::from(*value)),
-            Self::Double { value } => Number::from_f64(*value)
-                .map(Value::Number)
-                .expect("finite numeric transform doubles should serialize"),
-            Self::SpecialDouble { value } => value.projected_json(),
-        }
-    }
-
-    pub fn into_stored_value(self) -> StoredValue {
-        match self {
-            Self::Integer { value } => StoredValue::Json {
-                value: Value::Number(Number::from(value)),
-            },
-            Self::Double { value } => StoredValue::Json {
-                value: Number::from_f64(value)
-                    .map(Value::Number)
-                    .expect("finite numeric transform doubles should serialize"),
-            },
-            Self::SpecialDouble { value } => StoredValue::TypedScalar {
-                value: TypedScalarValue::SpecialDouble { value },
-            },
-        }
-    }
-}
-
 pub type TypedFieldMap = BTreeMap<String, StoredValue>;
 
 #[cfg(test)]
@@ -267,6 +243,25 @@ mod tests {
             data: vec![0xDE, 0xAD, 0xBE, 0xEF],
         };
         assert_eq!(value.projected_json(), json!("3q2+7w=="));
+    }
+
+    #[test]
+    fn binary_projection_is_lossy_but_roundtrip_preserves_subtype() {
+        let generic = TypedScalarValue::Binary {
+            subtype: 0,
+            data: vec![1, 2, 3],
+        };
+        let user_defined = TypedScalarValue::Binary {
+            subtype: 0x80,
+            data: vec![1, 2, 3],
+        };
+
+        assert_eq!(generic.projected_json(), user_defined.projected_json());
+
+        let encoded = serde_json::to_string(&user_defined).expect("typed binary should serialize");
+        let decoded: TypedScalarValue =
+            serde_json::from_str(&encoded).expect("typed binary should deserialize");
+        assert_eq!(decoded, user_defined);
     }
 
     #[test]

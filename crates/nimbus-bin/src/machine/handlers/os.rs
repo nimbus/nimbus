@@ -364,7 +364,7 @@ fn restart_bootc_machine(
 fn bootc_target_reference_from_source(source: &MachineImageSource) -> Result<String, Error> {
     match source {
         MachineImageSource::OciReference { reference } => Ok(reference.clone()),
-        MachineImageSource::HttpUrl { url } => Err(Error::InvalidInput(format!(
+        MachineImageSource::HttpUrl { url, .. } => Err(Error::InvalidInput(format!(
             "bootc-native machine os apply requires an OCI image reference, not HTTP URL '{}'",
             url
         ))),
@@ -570,7 +570,7 @@ pub(in crate::machine) fn current_machine_oci_reference(
 ) -> Result<String, Error> {
     match &config.guest.image_source {
         MachineImageSource::OciReference { reference } => Ok(reference.clone()),
-        MachineImageSource::HttpUrl { url } => Err(Error::InvalidInput(format!(
+        MachineImageSource::HttpUrl { url, .. } => Err(Error::InvalidInput(format!(
             "machine os upgrade only supports OCI image sources, but this machine uses HTTP override '{}'. Use `nimbus machine os apply <oci-ref-or-digest>` to return to a supported release stream.",
             url
         ))),

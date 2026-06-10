@@ -63,8 +63,9 @@ pub fn server_status() -> Result<bson::Document, MongoError> {
 
 pub fn connection_status(conn: &ConnectionState) -> Result<bson::Document, MongoError> {
     let auth_info = if conn.authenticated {
+        let user = conn.auth_user.as_deref().unwrap_or("");
         bson::doc! {
-            "authenticatedUsers": [{ "user": "admin", "db": "admin" }],
+            "authenticatedUsers": [{ "user": user, "db": "admin" }],
             "authenticatedUserRoles": [],
         }
     } else {
@@ -176,10 +177,13 @@ mod tests {
     fn connection_status_authenticated() {
         let mut conn = test_conn();
         conn.authenticated = true;
+        conn.auth_user = Some("alice".to_string());
         let doc = connection_status(&conn).unwrap();
         let auth = doc.get_document("authInfo").unwrap();
         let users = auth.get_array("authenticatedUsers").unwrap();
         assert_eq!(users.len(), 1);
+        let user = users[0].as_document().unwrap();
+        assert_eq!(user.get_str("user").unwrap(), "alice");
     }
 
     #[test]

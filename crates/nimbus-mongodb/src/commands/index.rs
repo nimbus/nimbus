@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use nimbus_core::{IndexDefinition, TableName, TableSchema, TenantId};
+use nimbus_core::{IndexDefinition, PrincipalContext, TableName, TableSchema, TenantId};
 use nimbus_engine::Engine;
 
 use super::super::error::{BAD_VALUE, MongoError};
@@ -9,6 +9,7 @@ use super::tenant::{DEFAULT_TENANT, ensure_tenant, resolve_tenant_context};
 pub fn create_indexes(
     body: &bson::Document,
     engine: &Arc<Engine>,
+    principal: &PrincipalContext,
 ) -> Result<bson::Document, MongoError> {
     let collection = body
         .get_str("createIndexes")
@@ -19,7 +20,7 @@ pub fn create_indexes(
         })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_context = resolve_tenant_context(db_name, "mongodb create indexes")?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb create indexes", principal)?;
     let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
@@ -88,6 +89,7 @@ pub fn create_indexes(
 pub fn drop_indexes(
     body: &bson::Document,
     engine: &Arc<Engine>,
+    principal: &PrincipalContext,
 ) -> Result<bson::Document, MongoError> {
     let collection = body
         .get_str("dropIndexes")
@@ -98,7 +100,7 @@ pub fn drop_indexes(
         })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_context = resolve_tenant_context(db_name, "mongodb drop indexes")?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb drop indexes", principal)?;
     let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
@@ -156,6 +158,7 @@ pub fn drop_indexes(
 pub fn list_indexes(
     body: &bson::Document,
     engine: &Arc<Engine>,
+    principal: &PrincipalContext,
 ) -> Result<bson::Document, MongoError> {
     let collection = body
         .get_str("listIndexes")
@@ -166,7 +169,7 @@ pub fn list_indexes(
         })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_context = resolve_tenant_context(db_name, "mongodb list indexes")?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb list indexes", principal)?;
     let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
@@ -237,6 +240,10 @@ mod tests {
     use super::*;
     use nimbus_testing::EngineFixture;
 
+    fn test_principal() -> PrincipalContext {
+        PrincipalContext::system()
+    }
+
     fn create_schema_with_fields(fixture: &EngineFixture<Engine>, collection: &str) {
         let tenant_id = TenantId::new("testdb").unwrap();
         let _ = fixture.engine().create_tenant(tenant_id.clone());
@@ -277,7 +284,7 @@ mod tests {
                 "name": "name_1",
             }],
         };
-        let result = create_indexes(&body, &fixture.engine()).unwrap();
+        let result = create_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
         assert_eq!(result.get_i32("numIndexesBefore").unwrap(), 0);
         assert_eq!(result.get_i32("numIndexesAfter").unwrap(), 1);
@@ -296,8 +303,8 @@ mod tests {
                 "name": "name_1",
             }],
         };
-        create_indexes(&body, &fixture.engine()).unwrap();
-        let result = create_indexes(&body, &fixture.engine()).unwrap();
+        create_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
+        let result = create_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_i32("numIndexesBefore").unwrap(), 1);
         assert_eq!(result.get_i32("numIndexesAfter").unwrap(), 1);
     }
@@ -314,7 +321,7 @@ mod tests {
                 "key": { "name": 1 },
             }],
         };
-        let result = create_indexes(&body, &fixture.engine()).unwrap();
+        let result = create_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_i32("numIndexesAfter").unwrap(), 1);
     }
 
@@ -331,14 +338,14 @@ mod tests {
                 "name": "name_1",
             }],
         };
-        create_indexes(&create_body, &fixture.engine()).unwrap();
+        create_indexes(&create_body, &fixture.engine(), &test_principal()).unwrap();
 
         let body = bson::doc! {
             "dropIndexes": "dropme",
             "$db": "testdb",
             "index": "name_1",
         };
-        let result = drop_indexes(&body, &fixture.engine()).unwrap();
+        let result = drop_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
     }
 
@@ -355,18 +362,18 @@ mod tests {
                 { "key": { "age": 1 }, "name": "age_1" },
             ],
         };
-        create_indexes(&create_body, &fixture.engine()).unwrap();
+        create_indexes(&create_body, &fixture.engine(), &test_principal()).unwrap();
 
         let body = bson::doc! {
             "dropIndexes": "dropall",
             "$db": "testdb",
             "index": "*",
         };
-        let result = drop_indexes(&body, &fixture.engine()).unwrap();
+        let result = drop_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
 
         let list_body = bson::doc! { "listIndexes": "dropall", "$db": "testdb" };
-        let list_result = list_indexes(&list_body, &fixture.engine()).unwrap();
+        let list_result = list_indexes(&list_body, &fixture.engine(), &test_principal()).unwrap();
         let cursor = list_result.get_document("cursor").unwrap();
         let batch = cursor.get_array("firstBatch").unwrap();
         assert_eq!(batch.len(), 1);
@@ -382,7 +389,7 @@ mod tests {
             "$db": "testdb",
             "index": "nonexistent",
         };
-        let err = drop_indexes(&body, &fixture.engine()).unwrap_err();
+        let err = drop_indexes(&body, &fixture.engine(), &test_principal()).unwrap_err();
         match err {
             MongoError::Command { code, .. } => assert_eq!(code, 27),
             other => panic!("expected Command, got {:?}", other),
@@ -395,7 +402,7 @@ mod tests {
         create_schema_with_fields(&fixture, "listed");
 
         let body = bson::doc! { "listIndexes": "listed", "$db": "testdb" };
-        let result = list_indexes(&body, &fixture.engine()).unwrap();
+        let result = list_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
         let cursor = result.get_document("cursor").unwrap();
         let batch = cursor.get_array("firstBatch").unwrap();
@@ -417,10 +424,10 @@ mod tests {
                 "name": "name_1",
             }],
         };
-        create_indexes(&create_body, &fixture.engine()).unwrap();
+        create_indexes(&create_body, &fixture.engine(), &test_principal()).unwrap();
 
         let body = bson::doc! { "listIndexes": "withidx", "$db": "testdb" };
-        let result = list_indexes(&body, &fixture.engine()).unwrap();
+        let result = list_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
         let cursor = result.get_document("cursor").unwrap();
         let batch = cursor.get_array("firstBatch").unwrap();
         assert_eq!(batch.len(), 2);
@@ -433,7 +440,7 @@ mod tests {
         let _ = fixture.engine().create_tenant(tenant_id);
 
         let body = bson::doc! { "listIndexes": "nosuch", "$db": "testdb" };
-        let err = list_indexes(&body, &fixture.engine()).unwrap_err();
+        let err = list_indexes(&body, &fixture.engine(), &test_principal()).unwrap_err();
         match err {
             MongoError::Command { code, .. } => assert_eq!(code, 26),
             other => panic!("expected Command, got {:?}", other),
@@ -444,7 +451,7 @@ mod tests {
     fn create_indexes_missing_collection_returns_error() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let body = bson::doc! { "indexes": [] };
-        let err = create_indexes(&body, &fixture.engine()).unwrap_err();
+        let err = create_indexes(&body, &fixture.engine(), &test_principal()).unwrap_err();
         match err {
             MongoError::Command { code, .. } => assert_eq!(code, BAD_VALUE.code),
             other => panic!("expected Command, got {:?}", other),

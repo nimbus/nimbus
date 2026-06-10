@@ -15,7 +15,7 @@ async fn convex_runtime_multi_table_paginated_subscription_tracks_secondary_tabl
             r#"
 globalThis.__nimbusInvoke = async function(request) {
   const ctx = globalThis.__nimbusCreateContext({
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   const matchingProfiles = await ctx.db
     .query("profiles")

@@ -232,7 +232,7 @@ globalThis.__nimbusInvoke = async function (request) {
   }
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `http:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   await ctx.db.insert("audit", {
     path: request.args.path,

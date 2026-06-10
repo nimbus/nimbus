@@ -7,7 +7,7 @@ impl TenantPersistence {
             Self::Sqlite(store) => store.check_fault(point),
             Self::LibsqlReplica(store) => store.check_fault(point),
             Self::Postgres(store) => store.check_fault(point),
-            Self::MySql(_store) => Ok(()),
+            Self::MySql(store) => store.check_fault(point),
         }
     }
 
@@ -53,6 +53,29 @@ impl TenantPersistence {
     {
         match_tenant_persistence!(self, |store| {
             store.scan_table_matching_cancellable(table, check_cancel, include_document)
+        })
+    }
+
+    pub(crate) fn scan_table_id_prefix_cancellable(
+        &self,
+        table: &TableName,
+        id_prefix: &str,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        match_tenant_persistence!(self, |store| {
+            store.scan_table_id_prefix_cancellable(table, id_prefix, check_cancel)
+        })
+    }
+
+    pub(crate) fn scan_table_id_starting_at_cancellable(
+        &self,
+        table: &TableName,
+        start_id: &str,
+        limit: usize,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        match_tenant_persistence!(self, |store| {
+            store.scan_table_id_starting_at_cancellable(table, start_id, limit, check_cancel)
         })
     }
 }

@@ -1,12 +1,16 @@
 use std::sync::Arc;
 
-use nimbus_core::{TableName, TableSchema};
+use nimbus_core::{PrincipalContext, TableName, TableSchema};
 use nimbus_engine::Engine;
 
 use super::super::error::{BAD_VALUE, MongoError};
 use super::tenant::{DEFAULT_TENANT, ensure_tenant, resolve_tenant_context};
 
-pub fn create(body: &bson::Document, engine: &Arc<Engine>) -> Result<bson::Document, MongoError> {
+pub fn create(
+    body: &bson::Document,
+    engine: &Arc<Engine>,
+    principal: &PrincipalContext,
+) -> Result<bson::Document, MongoError> {
     let collection = body.get_str("create").map_err(|_| MongoError::Command {
         code: BAD_VALUE.code,
         code_name: BAD_VALUE.code_name.into(),
@@ -14,7 +18,7 @@ pub fn create(body: &bson::Document, engine: &Arc<Engine>) -> Result<bson::Docum
     })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_context = resolve_tenant_context(db_name, "mongodb create collection")?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb create collection", principal)?;
     let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
@@ -45,6 +49,7 @@ pub fn create(body: &bson::Document, engine: &Arc<Engine>) -> Result<bson::Docum
 pub fn drop_collection(
     body: &bson::Document,
     engine: &Arc<Engine>,
+    principal: &PrincipalContext,
 ) -> Result<bson::Document, MongoError> {
     let collection = body.get_str("drop").map_err(|_| MongoError::Command {
         code: BAD_VALUE.code,
@@ -53,7 +58,7 @@ pub fn drop_collection(
     })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_context = resolve_tenant_context(db_name, "mongodb drop collection")?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb drop collection", principal)?;
     let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
@@ -89,9 +94,10 @@ pub fn drop_collection(
 pub fn list_collections(
     body: &bson::Document,
     engine: &Arc<Engine>,
+    principal: &PrincipalContext,
 ) -> Result<bson::Document, MongoError> {
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_context = resolve_tenant_context(db_name, "mongodb list collections")?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb list collections", principal)?;
     let tenant_id = tenant_context.tenant_id().clone();
     let name_only = body.get_bool("nameOnly").unwrap_or(false);
     let filter = body.get_document("filter").ok();
@@ -136,6 +142,7 @@ pub fn list_collections(
 pub fn list_databases(
     _body: &bson::Document,
     engine: &Arc<Engine>,
+    _principal: &PrincipalContext,
 ) -> Result<bson::Document, MongoError> {
     let tenants = engine.list_tenants().map_err(MongoError::from)?;
 
@@ -169,13 +176,25 @@ mod tests {
         ConnectionState::new(([127, 0, 0, 1], 12345).into())
     }
 
+    fn test_principal() -> PrincipalContext {
+        PrincipalContext {
+            authenticated: true,
+            claims: serde_json::Map::from_iter([(
+                "subject".to_string(),
+                serde_json::json!("mongodb-test-user"),
+            )]),
+            verified_claims: serde_json::Map::new(),
+        }
+    }
+
     fn seed_collection(fixture: &EngineFixture<Engine>, collection: &str) {
+        let principal = test_principal();
         let body = bson::doc! {
             "insert": collection,
             "$db": "testdb",
             "documents": [{ "_id": "tmp", "val": 1 }],
         };
-        crud::insert(&body, &mut test_conn(), &fixture.engine()).unwrap();
+        crud::insert(&body, &mut test_conn(), &fixture.engine(), &principal).unwrap();
     }
 
     #[test]
@@ -185,7 +204,7 @@ mod tests {
         let _ = fixture.engine().create_tenant(tenant_id);
 
         let body = bson::doc! { "create": "newcol", "$db": "testdb" };
-        let result = create(&body, &fixture.engine()).unwrap();
+        let result = create(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
     }
 
@@ -196,9 +215,9 @@ mod tests {
         let _ = fixture.engine().create_tenant(tenant_id);
 
         let body = bson::doc! { "create": "dupcol", "$db": "testdb" };
-        create(&body, &fixture.engine()).unwrap();
+        create(&body, &fixture.engine(), &test_principal()).unwrap();
 
-        let err = create(&body, &fixture.engine()).unwrap_err();
+        let err = create(&body, &fixture.engine(), &test_principal()).unwrap_err();
         match err {
             MongoError::Command { code, .. } => assert_eq!(code, 48),
             other => panic!("expected Command, got {:?}", other),
@@ -212,10 +231,10 @@ mod tests {
         let _ = fixture.engine().create_tenant(tenant_id);
 
         let create_body = bson::doc! { "create": "todrop", "$db": "testdb" };
-        create(&create_body, &fixture.engine()).unwrap();
+        create(&create_body, &fixture.engine(), &test_principal()).unwrap();
 
         let body = bson::doc! { "drop": "todrop", "$db": "testdb" };
-        let result = drop_collection(&body, &fixture.engine()).unwrap();
+        let result = drop_collection(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
     }
 
@@ -226,7 +245,7 @@ mod tests {
         let _ = fixture.engine().create_tenant(tenant_id);
 
         let body = bson::doc! { "drop": "nosuch", "$db": "testdb" };
-        let result = drop_collection(&body, &fixture.engine()).unwrap();
+        let result = drop_collection(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 0.0);
         assert_eq!(result.get_i32("code").unwrap(), 26);
     }
@@ -238,7 +257,7 @@ mod tests {
         seed_collection(&fixture, "beta");
 
         let body = bson::doc! { "listCollections": 1, "$db": "testdb" };
-        let result = list_collections(&body, &fixture.engine()).unwrap();
+        let result = list_collections(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
         let cursor = result.get_document("cursor").unwrap();
         let batch = cursor.get_array("firstBatch").unwrap();
@@ -255,7 +274,7 @@ mod tests {
             "$db": "testdb",
             "nameOnly": true,
         };
-        let result = list_collections(&body, &fixture.engine()).unwrap();
+        let result = list_collections(&body, &fixture.engine(), &test_principal()).unwrap();
         let cursor = result.get_document("cursor").unwrap();
         let batch = cursor.get_array("firstBatch").unwrap();
         assert!(!batch.is_empty());
@@ -275,7 +294,7 @@ mod tests {
             "$db": "testdb",
             "filter": { "name": "target" },
         };
-        let result = list_collections(&body, &fixture.engine()).unwrap();
+        let result = list_collections(&body, &fixture.engine(), &test_principal()).unwrap();
         let cursor = result.get_document("cursor").unwrap();
         let batch = cursor.get_array("firstBatch").unwrap();
         assert_eq!(batch.len(), 1);
@@ -289,7 +308,7 @@ mod tests {
         seed_collection(&fixture, "col1");
 
         let body = bson::doc! { "listDatabases": 1 };
-        let result = list_databases(&body, &fixture.engine()).unwrap();
+        let result = list_databases(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
         let databases = result.get_array("databases").unwrap();
         assert!(!databases.is_empty());
@@ -299,7 +318,7 @@ mod tests {
     fn create_missing_name_returns_error() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let body = bson::doc! { "$db": "testdb" };
-        let err = create(&body, &fixture.engine()).unwrap_err();
+        let err = create(&body, &fixture.engine(), &test_principal()).unwrap_err();
         match err {
             MongoError::Command { code, .. } => assert_eq!(code, BAD_VALUE.code),
             other => panic!("expected Command, got {:?}", other),
@@ -310,7 +329,7 @@ mod tests {
     fn drop_missing_name_returns_error() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let body = bson::doc! { "$db": "testdb" };
-        let err = drop_collection(&body, &fixture.engine()).unwrap_err();
+        let err = drop_collection(&body, &fixture.engine(), &test_principal()).unwrap_err();
         match err {
             MongoError::Command { code, .. } => assert_eq!(code, BAD_VALUE.code),
             other => panic!("expected Command, got {:?}", other),

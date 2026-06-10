@@ -56,7 +56,8 @@ async function invokeLocal(request) {
   const handler = handlers.get(request.function_name);
   return await handler(
     globalThis.__nimbusCreateContext({
-      sessionId: `${request.kind}:${request.function_name}`,
+      hostCallSessionId: request.hostCallSessionId ?? `${request.kind}:${request.function_name}`,
+      request,
     }),
     request.args ?? {},
     request,

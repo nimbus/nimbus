@@ -1,6 +1,7 @@
 use nimbus_core::{Document, Result, TableName};
 use serde_json::Value;
 
+use crate::IndexRangeBound;
 use crate::store::{TenantReadSnapshot, TenantStore, map_redb_error};
 
 use super::exact::index_scan_eq_in_read_txn;
@@ -35,45 +36,23 @@ impl TenantStore {
         &self,
         table: &TableName,
         index_name: &str,
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
     ) -> Result<Vec<Document>> {
-        self.index_scan_range_cancellable(
-            table,
-            index_name,
-            start,
-            end,
-            start_inclusive,
-            end_inclusive,
-            &mut || Ok(()),
-        )
+        self.index_scan_range_cancellable(table, index_name, start, end, &mut || Ok(()))
     }
 
     /// Returns documents whose indexed field falls within the provided range, checking for cancellation between rows.
-    #[allow(clippy::too_many_arguments)]
     pub fn index_scan_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         let read_txn = self.db.begin_read().map_err(map_redb_error)?;
-        index_scan_range_in_read_txn(
-            &read_txn,
-            table,
-            index_name,
-            start,
-            end,
-            start_inclusive,
-            end_inclusive,
-            check_cancel,
-        )
+        index_scan_range_in_read_txn(&read_txn, table, index_name, start, end, check_cancel)
     }
 
     /// Returns documents whose indexed tuple matches the provided exact leading prefix.
@@ -99,16 +78,13 @@ impl TenantStore {
     }
 
     /// Returns documents whose composite index matches an exact leading prefix and one range on the next field.
-    #[allow(clippy::too_many_arguments)]
     pub fn index_scan_composite_range(
         &self,
         table: &TableName,
         index_name: &str,
         exact_prefix: &[Value],
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
     ) -> Result<Vec<Document>> {
         self.index_scan_composite_range_cancellable(
             table,
@@ -116,23 +92,18 @@ impl TenantStore {
             exact_prefix,
             start,
             end,
-            start_inclusive,
-            end_inclusive,
             &mut || Ok(()),
         )
     }
 
     /// Returns documents whose composite index matches an exact leading prefix and one range on the next field, checking for cancellation between rows.
-    #[allow(clippy::too_many_arguments)]
     pub fn index_scan_composite_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
         exact_prefix: &[Value],
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         let read_txn = self.db.begin_read().map_err(map_redb_error)?;
@@ -143,8 +114,6 @@ impl TenantStore {
             exact_prefix,
             start,
             end,
-            start_inclusive,
-            end_inclusive,
             check_cancel,
         )
     }
@@ -161,27 +130,15 @@ impl TenantReadSnapshot {
         index_scan_eq_in_read_txn(&self.read_txn, table, index_name, value, check_cancel)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn index_scan_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
-        index_scan_range_in_read_txn(
-            &self.read_txn,
-            table,
-            index_name,
-            start,
-            end,
-            start_inclusive,
-            end_inclusive,
-            check_cancel,
-        )
+        index_scan_range_in_read_txn(&self.read_txn, table, index_name, start, end, check_cancel)
     }
 
     pub fn index_scan_prefix_cancellable(
@@ -200,16 +157,13 @@ impl TenantReadSnapshot {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn index_scan_composite_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
         exact_prefix: &[Value],
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         index_scan_composite_range_in_read_txn(
@@ -219,8 +173,6 @@ impl TenantReadSnapshot {
             exact_prefix,
             start,
             end,
-            start_inclusive,
-            end_inclusive,
             check_cancel,
         )
     }

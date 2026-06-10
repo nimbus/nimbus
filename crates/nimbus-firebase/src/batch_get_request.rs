@@ -1,13 +1,13 @@
 use std::collections::HashSet;
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use nimbus_core::DocumentPath;
 use serde::Deserialize;
 use serde_json::Value;
 use thiserror::Error;
 
 use super::resource_names::{self, FirestoreDatabaseName, FirestoreResourceNameError};
+use super::response::firestore_document_name;
+use super::transaction_token;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedBatchGetRequest {
@@ -62,15 +62,24 @@ pub fn parse_batch_get_request(
     let transaction = request
         .transaction
         .as_deref()
-        .map(parse_transaction)
-        .transpose()?;
+        .map(transaction_token::decode)
+        .transpose()
+        .map_err(|error| invalid_request(error.to_string()))?;
     let mask = request.mask.map(lower_document_mask).transpose()?;
 
     let mut seen_documents = HashSet::new();
     let mut documents = Vec::new();
     for document_name in request.documents {
         let parsed_document = resource_names::parse_document_name(&document_name)?;
-        ensure_database_match(database, &parsed_document.database, "requested document")?;
+        resource_names::ensure_database_match(database, &parsed_document.database).map_err(
+            |error| {
+                invalid_request(format!(
+                    "requested document belongs to database `{}`, but request database is `{}`",
+                    error.actual(),
+                    error.expected()
+                ))
+            },
+        )?;
         let canonical_name = firestore_document_name(database, &parsed_document.document_path);
         if seen_documents.insert(canonical_name.clone()) {
             documents.push(ParsedBatchGetDocument {
@@ -136,36 +145,6 @@ where
     Ok(deduped)
 }
 
-fn parse_transaction(value: &str) -> Result<Vec<u8>, FirestoreBatchGetRequestError> {
-    BASE64_STANDARD
-        .decode(value)
-        .map_err(|error| invalid_request(format!("invalid base64 transaction bytes: {error}")))
-}
-
-fn ensure_database_match(
-    expected: &FirestoreDatabaseName,
-    actual: &FirestoreDatabaseName,
-    context: &str,
-) -> Result<(), FirestoreBatchGetRequestError> {
-    if expected.project_id == actual.project_id {
-        return Ok(());
-    }
-    Err(invalid_request(format!(
-        "{context} belongs to project `{}`, but request database project is `{}`",
-        actual.project_id, expected.project_id
-    )))
-}
-
-fn firestore_document_name(
-    database: &FirestoreDatabaseName,
-    document_path: &DocumentPath,
-) -> String {
-    format!(
-        "projects/{}/databases/(default)/documents/{}",
-        database.project_id, document_path
-    )
-}
-
 fn invalid_request(reason: impl Into<String>) -> FirestoreBatchGetRequestError {
     FirestoreBatchGetRequestError::InvalidRequest(reason.into())
 }
@@ -204,6 +183,10 @@ mod tests {
             parsed.documents[0].document_path.to_string(),
             "cities/SF".to_string()
         );
+        assert_eq!(
+            parsed.documents[0].document_name,
+            "projects/demo/databases/(default)/documents/cities/SF"
+        );
         assert_eq!(parsed.mask, Some(vec!["name".to_string()]));
         assert_eq!(parsed.transaction, Some(vec![1, 2, 3]));
     }
@@ -234,5 +217,23 @@ mod tests {
 
         assert!(unsupported_error.to_string().contains("newTransaction"));
         assert!(mask_error.to_string().contains("mask.fieldPaths"));
+    }
+
+    #[test]
+    fn rejects_documents_from_a_different_database() {
+        let database = resource_names::parse_database_name("projects/demo/databases/(default)")
+            .expect("database should parse");
+        let request = json!({
+            "documents": [
+                "projects/other/databases/(default)/documents/cities/SF"
+            ]
+        });
+
+        let error = parse_batch_get_request(&request, &database)
+            .expect_err("database mismatch should fail");
+
+        let error = error.to_string();
+        assert!(error.contains("projects/other/databases/(default)"));
+        assert!(error.contains("projects/demo/databases/(default)"));
     }
 }

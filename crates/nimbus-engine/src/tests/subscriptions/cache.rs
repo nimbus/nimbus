@@ -156,6 +156,110 @@ async fn query_cache_entries_are_invalidated_before_the_next_read_after_mutation
 }
 
 #[tokio::test]
+async fn direct_mutations_invalidate_document_cache_before_applied_head_is_visible() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+
+    let document_id = engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("Before"))]),
+        )
+        .expect("insert should succeed");
+
+    let cached = engine
+        .get_document(&tenant_id, &tasks_table(), document_id.clone())
+        .expect("cached get should succeed");
+    assert_eq!(cached.fields.get("title"), Some(&json!("Before")));
+
+    let pause = engine
+        .document_cache_invalidation_pause_handle_for_testing(&tenant_id)
+        .expect("document cache invalidation pause handle should load");
+    pause.arm();
+
+    let update_task = {
+        let engine = Arc::clone(&engine);
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        tokio::task::spawn_blocking(move || {
+            engine.update_document(
+                &tenant_id,
+                tasks_table(),
+                document_id,
+                serde_json::Map::from_iter([("title".to_string(), json!("After"))]),
+            )
+        })
+    };
+    let mut update_task = update_task;
+
+    let pause_wait = pause.clone();
+    let reached_pause =
+        tokio::task::spawn_blocking(move || pause_wait.wait_until_entered(Duration::from_secs(1)))
+            .await
+            .expect("pause wait should join");
+    assert!(
+        reached_pause,
+        "direct mutation should reach document cache invalidation before publishing applied head"
+    );
+
+    let pending_window =
+        ci_or_local_duration(Duration::from_millis(100), Duration::from_millis(250));
+    assert!(
+        timeout(pending_window, &mut update_task).await.is_err(),
+        "direct update should remain paused at cache invalidation"
+    );
+
+    let read_task = {
+        let engine = Arc::clone(&engine);
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        tokio::spawn(async move {
+            engine
+                .get_document_async(tenant_id, tasks_table(), document_id)
+                .await
+        })
+    };
+    let mut read_task = read_task;
+
+    match timeout(pending_window, &mut read_task).await {
+        Err(_) => {}
+        Ok(joined) => {
+            let document = joined
+                .expect("premature read task should join")
+                .expect("premature read should succeed");
+            panic!(
+                "read completed while cache invalidation was paused with title {:?}",
+                document.fields.get("title")
+            );
+        }
+    }
+
+    pause.release();
+
+    let updated_id = timeout(Duration::from_secs(1), update_task)
+        .await
+        .expect("direct update should complete after invalidation is released")
+        .expect("direct update task should join")
+        .expect("direct update should succeed");
+    assert_eq!(updated_id, document_id);
+
+    let refreshed = timeout(Duration::from_secs(1), read_task)
+        .await
+        .expect("pending read should complete after applied head advances")
+        .expect("pending read task should join")
+        .expect("pending read should succeed");
+    assert_eq!(refreshed.fields.get("title"), Some(&json!("After")));
+
+    let stats = engine
+        .document_cache_stats_for_testing(&tenant_id)
+        .expect("cache stats should load");
+    assert_eq!(stats.hits, 0);
+    assert_eq!(stats.misses, 2);
+}
+
+#[tokio::test]
 async fn subscription_re_evaluation_after_mutation_sees_fresh_cached_data() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();

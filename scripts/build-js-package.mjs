@@ -30,7 +30,7 @@ const TSC = path.join(REPO_ROOT, "node_modules", ".bin", "tsc");
 //     and that are co-provisioned (e.g. cross-package Nimbus deps).
 // Anything not listed defaults to dropped, so the closure is explicit.
 const SANITIZE = {
-  // Helper-only surface: shipped `uri()` imports nothing; the official mongodb
+  // Helper-only surface: shipped `mongoUri()` imports nothing; the official mongodb
   // driver is developer-supplied (Offline contract boundaries).
   "@nimbus/mongodb": { dropDependencies: ["mongodb"], keepDependencies: [] },
   // Helper-only config surface; AWS SDK stays an optional peer (kept).

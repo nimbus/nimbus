@@ -284,6 +284,7 @@ fn service_capable_bridge(
             nimbus_core::PrincipalContext::anonymous(),
             None,
             InvocationKind::Query,
+            "convex_service_capability_test",
         ),
     )
     .expect("service capable bridge should build")
@@ -325,6 +326,7 @@ fn mutation_bridge(
             principal,
             None,
             InvocationKind::Mutation,
+            "convex_authorization_test",
         ),
     )
     .expect("mutation bridge should build")
@@ -585,6 +587,7 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
             normalize_principal_context(Some(&auth)),
             None,
             InvocationKind::Query,
+            "convex_authorization_query_test",
         ),
     );
 
@@ -888,6 +891,59 @@ fn convex_read_get_round_trips_custom_table_scoped_ids() {
     assert_eq!(
         raw_document_id_from_convex_value(&table, &value["_id"]),
         raw_id
+    );
+}
+
+#[test]
+fn runtime_host_bridge_get_records_missing_durable_document_reads() {
+    let (_tempdir, engine, tenant_id, _bridge) = host_bridge_fixture();
+    let table = messages_table();
+    let seed_id = engine
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Seed")),
+            ]),
+        )
+        .expect("seed document should create the durable table");
+    engine
+        .delete_document(&tenant_id, table.clone(), seed_id)
+        .expect("seed document should be deleted while preserving table identity");
+    let missing_id = DocumentId::from_key("missing-doc".to_string())
+        .expect("missing document id should be valid");
+    let convex_id = convex_document_id(&table, &missing_id);
+    let bridge = mutation_bridge(
+        engine.clone(),
+        Arc::new(ConvexRegistry::empty()),
+        tenant_id.clone(),
+        nimbus_core::PrincipalContext::anonymous(),
+    );
+
+    let read_back = decode_runtime_result(
+        bridge
+            .invoke_ctx_db_get(json!({
+                "table": table,
+                "id": convex_id
+            }))
+            .expect("missing get should encode"),
+    )
+    .expect("missing get should succeed");
+
+    assert_eq!(read_back, Value::Null);
+    let committed_table_id = engine
+        .table_id(&tenant_id, &table)
+        .expect("table id lookup should succeed")
+        .expect("deleted seed should leave a durable table id");
+    let dependencies = bridge.snapshot_read_set().dependency_set();
+    assert!(
+        dependencies.documents.iter().any(|dependency| {
+            dependency.table == table
+                && dependency.table_id == committed_table_id
+                && dependency.document_id == missing_id
+        }),
+        "Convex ctx.db.get should record absent document reads through the shared bridge helper"
     );
 }
 

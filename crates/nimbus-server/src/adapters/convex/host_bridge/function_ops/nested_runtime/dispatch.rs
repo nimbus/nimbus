@@ -147,6 +147,14 @@ impl ConvexHostBridge {
         let NestedRuntimeInvocationPlan { bundle, request } =
             self.prepare_nested_runtime_invocation(kind, name, args, visibility, auth)?;
         let (runtime_executor, runtime_policy) = self.registry().runtime_lane_for_function(name)?;
+        let _host_call_session = self
+            .host_state()
+            .enter_host_call_session(format!(
+                "{}:{}",
+                request.kind.as_str(),
+                &request.function_name
+            ))
+            .map_err(runtime_error_to_core)?;
         let response = invoke_runtime_bundle_on_worker_with_host(
             &runtime_executor,
             runtime_policy,
@@ -158,7 +166,9 @@ impl ConvexHostBridge {
                 self.server_request_id(),
                 Some(cancellation.clone()),
             )
-            .with_runtime_bundle_provenance_gate(self.registry().runtime_bundle_provenance()),
+            .with_optional_runtime_bundle_provenance_gate(
+                self.registry().runtime_bundle_provenance(),
+            ),
         )
         .await
         .map_err(runtime_error_to_core)?;
@@ -179,6 +189,14 @@ impl ConvexHostBridge {
         let NestedRuntimeInvocationPlan { bundle, request } =
             self.prepare_nested_runtime_invocation(kind, name, args, visibility, auth)?;
         let (runtime_executor, runtime_policy) = self.registry().runtime_lane_for_function(name)?;
+        let _host_call_session = self
+            .host_state()
+            .enter_host_call_session(format!(
+                "{}:{}",
+                request.kind.as_str(),
+                &request.function_name
+            ))
+            .map_err(runtime_error_to_core)?;
         let response = invoke_runtime_bundle_blocking_with_host(
             &runtime_executor,
             runtime_policy,
@@ -190,7 +208,9 @@ impl ConvexHostBridge {
                 self.server_request_id(),
                 Some(cancellation.clone()),
             )
-            .with_runtime_bundle_provenance_gate(self.registry().runtime_bundle_provenance()),
+            .with_optional_runtime_bundle_provenance_gate(
+                self.registry().runtime_bundle_provenance(),
+            ),
         )
         .map_err(runtime_error_to_core)?;
         let envelope: ConvexRuntimeResponseEnvelope = serde_json::from_value(response)

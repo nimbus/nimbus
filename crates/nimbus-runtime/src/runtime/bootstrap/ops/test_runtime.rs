@@ -3,6 +3,7 @@ mod invocation;
 mod ops_impl;
 mod parser;
 mod render;
+mod render_eval;
 mod types;
 
 pub(super) use ops_impl::{

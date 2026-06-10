@@ -4,37 +4,20 @@ use axum::Json;
 use axum::extract::{Path, Query as QueryParams, State};
 use axum::http::{HeaderMap, StatusCode};
 use nimbus_core::{PrincipalContext, TenantId};
-use nimbus_operator::{
-    ExtractedServerAccessStatus, LocalServerCredentialMode, extract_server_access,
-};
 use nimbus_services::{
     SessionLifecycleState, SessionResource, SessionTarget, SessionTargetSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 
+use super::authz::{
+    OperatorRouteAccess, PrincipalClass, extract_operator_route_access, format_millis_rfc3339,
+    permission_actions_allow, permission_claim_values, principal_claim_string,
+    principal_class_from_principal,
+};
 use super::service_grants::principal_has_exact_service_grant;
 use super::{AppError, AppState, parse_operator_tenant_context, parse_user_tenant_id};
 use crate::local_server::{LocalServerAuditEvent, LocalServerRouteFamily, origin_from_headers};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SessionPrincipalClass {
-    Operator,
-    Tenant,
-    SpawnedWorkload,
-}
-
-impl SessionPrincipalClass {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Operator => "operator",
-            Self::Tenant => "tenant",
-            Self::SpawnedWorkload => "spawned_workload",
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SessionAction {
@@ -57,7 +40,7 @@ impl SessionAction {
 
 #[derive(Debug)]
 struct SessionAuthorization {
-    principal_class: SessionPrincipalClass,
+    principal_class: PrincipalClass,
     tenant_id: TenantId,
     auth_method: Option<&'static str>,
     principal: Option<PrincipalContext>,
@@ -98,6 +81,12 @@ pub(crate) struct SessionListQuery {
     limit: Option<usize>,
     page_token: Option<String>,
     state: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SessionLookupQuery {
+    tenant_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -231,12 +220,14 @@ pub(crate) async fn open_session(
     let authorization = authorize_session_route(
         &state,
         &headers,
-        &tenant_id,
-        SessionAction::Open,
-        None,
-        Some(&target),
-        &request.channels,
-        "native_http.session.open",
+        SessionRouteAuthorizationRequest {
+            tenant_id: &tenant_id,
+            action: SessionAction::Open,
+            session_id: None,
+            target: Some(&target),
+            channels: &request.channels,
+            surface: "native_http.session.open",
+        },
     )
     .await?;
     let manager = service_manager(&state)?;
@@ -279,12 +270,14 @@ pub(crate) async fn list_sessions(
     let authorization = authorize_session_route(
         &state,
         &headers,
-        &tenant_id,
-        SessionAction::List,
-        None,
-        None,
-        &[],
-        "native_http.session.list",
+        SessionRouteAuthorizationRequest {
+            tenant_id: &tenant_id,
+            action: SessionAction::List,
+            session_id: None,
+            target: None,
+            channels: &[],
+            surface: "native_http.session.list",
+        },
     )
     .await?;
     let manager = service_manager(&state)?;
@@ -331,24 +324,26 @@ pub(crate) async fn list_sessions(
 pub(crate) async fn get_session(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
+    QueryParams(query): QueryParams<SessionLookupQuery>,
     headers: HeaderMap,
 ) -> Result<Json<SessionResourceResponse>, AppError> {
-    let lookup_authorization =
-        authorize_session_resource_lookup(&state, &headers, SessionAction::Get, &session_id)
-            .await?;
+    let route_tenant_id = optional_tenant_id(query.tenant_id.as_deref())?;
+    let lookup_authorization = authorize_session_resource_lookup(
+        &state,
+        &headers,
+        SessionAction::Get,
+        &session_id,
+        route_tenant_id.as_ref(),
+    )
+    .await?;
     let manager = service_manager(&state)?;
     let session = manager
-        .get_session(&session_id)
+        .get_session(&lookup_authorization.tenant_id, &session_id)
         .ok_or_else(|| session_not_found(&session_id))?;
-    ensure_session_lookup_tenant_matches(
-        lookup_authorization.as_ref().map(|auth| &auth.tenant_id),
-        &session,
-        &session_id,
-    )?;
     let authorization = authorize_session_resource_target(
         &state,
         &headers,
-        lookup_authorization,
+        &lookup_authorization,
         &session,
         SessionAction::Get,
     )
@@ -368,25 +363,27 @@ pub(crate) async fn get_session(
 pub(crate) async fn close_session(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
+    QueryParams(query): QueryParams<SessionLookupQuery>,
     headers: HeaderMap,
     Json(request): Json<SessionCloseRequest>,
 ) -> Result<Json<SessionResourceResponse>, AppError> {
-    let lookup_authorization =
-        authorize_session_resource_lookup(&state, &headers, SessionAction::Close, &session_id)
-            .await?;
+    let route_tenant_id = optional_tenant_id(query.tenant_id.as_deref())?;
+    let lookup_authorization = authorize_session_resource_lookup(
+        &state,
+        &headers,
+        SessionAction::Close,
+        &session_id,
+        route_tenant_id.as_ref(),
+    )
+    .await?;
     let manager = service_manager(&state)?;
     let current = manager
-        .get_session(&session_id)
+        .get_session(&lookup_authorization.tenant_id, &session_id)
         .ok_or_else(|| session_not_found(&session_id))?;
-    ensure_session_lookup_tenant_matches(
-        lookup_authorization.as_ref().map(|auth| &auth.tenant_id),
-        &current,
-        &session_id,
-    )?;
     let authorization = authorize_session_resource_target(
         &state,
         &headers,
-        lookup_authorization,
+        &lookup_authorization,
         &current,
         SessionAction::Close,
     )
@@ -398,7 +395,7 @@ pub(crate) async fn close_session(
         .filter(|reason| !reason.is_empty())
         .unwrap_or("client_close");
     let session = manager
-        .close_session(&session_id, reason)
+        .close_session(&authorization.tenant_id, &session_id, reason)
         .ok_or_else(|| session_not_found(&session_id))?;
     record_session_authorization_audit(
         &state,
@@ -417,35 +414,31 @@ async fn authorize_session_resource_lookup(
     headers: &HeaderMap,
     action: SessionAction,
     _session_id: &str,
-) -> Result<Option<SessionAuthorization>, AppError> {
+    route_tenant_id: Option<&TenantId>,
+) -> Result<SessionAuthorization, AppError> {
     let surface = match action {
         SessionAction::Get => "native_http.session.get",
         SessionAction::Close => "native_http.session.close",
         SessionAction::Open | SessionAction::List => unreachable!("session resource lookup"),
     };
-    if state.local_server_security.is_some() {
-        let extracted = extract_server_access(
-            headers,
-            LocalServerCredentialMode::AuthorizationOrAdminHeader,
-            state.local_server_security.as_deref(),
-        )
-        .map_err(AppError::from)?;
-        match extracted.status {
-            ExtractedServerAccessStatus::Authorized => return Ok(None),
-            ExtractedServerAccessStatus::Missing => {}
-            ExtractedServerAccessStatus::Invalid
-                if extracted.auth_method == Some("local_admin_bearer") => {}
-            ExtractedServerAccessStatus::Revoked => {
-                return Err(AppError::unauthorized("auth.token_revoked"));
-            }
-            ExtractedServerAccessStatus::Expired => {
-                return Err(AppError::unauthorized("auth.session_expired"));
-            }
-            ExtractedServerAccessStatus::Invalid => {
-                return Err(AppError::unauthorized(
-                    LocalServerCredentialMode::AuthorizationOrAdminHeader.unauthorized_message(),
-                ));
-            }
+    match extract_operator_route_access(headers, state.local_server_security.as_deref())? {
+        Ok(OperatorRouteAccess::Authorized { auth_method }) => {
+            let tenant_id = route_tenant_id.ok_or_else(|| {
+                AppError::from(nimbus_core::Error::InvalidInput(format!(
+                    "{surface} with operator credentials requires tenantId"
+                )))
+            })?;
+            let tenant_context = parse_operator_tenant_context(tenant_id.as_str(), surface)?;
+            return Ok(SessionAuthorization {
+                principal_class: PrincipalClass::Operator,
+                tenant_id: tenant_context.tenant_id().clone(),
+                auth_method,
+                principal: None,
+            });
+        }
+        Ok(OperatorRouteAccess::Missing) => {}
+        Err(rejection) => {
+            return Err(rejection.app_error());
         }
     }
 
@@ -456,8 +449,11 @@ async fn authorize_session_resource_lookup(
             "session resource lookup requires operator credentials or authenticated tenant/spawned workload identity",
         ));
     }
-    let tenant_id = application_session_tenant_id(&resolved.principal, surface)?;
-    let principal_class = session_principal_class_from_principal(&resolved.principal)?;
+    let tenant_id = match route_tenant_id {
+        Some(tenant_id) => tenant_id.clone(),
+        None => application_session_tenant_id(&resolved.principal, surface)?,
+    };
+    let principal_class = principal_class_from_principal(&resolved.principal, "session")?;
     let tenant_context = crate::tenant::TenantIsolationContext::application(
         tenant_id.clone(),
         resolved.principal.clone(),
@@ -471,18 +467,18 @@ async fn authorize_session_resource_lookup(
             action.as_str()
         )));
     }
-    Ok(Some(SessionAuthorization {
+    Ok(SessionAuthorization {
         principal_class,
         tenant_id,
         auth_method: Some("application_bearer"),
         principal: Some(resolved.principal),
-    }))
+    })
 }
 
 async fn authorize_session_resource_target(
     state: &Arc<AppState>,
     headers: &HeaderMap,
-    lookup_authorization: Option<SessionAuthorization>,
+    lookup_authorization: &SessionAuthorization,
     session: &SessionResource,
     action: SessionAction,
 ) -> Result<SessionAuthorization, AppError> {
@@ -494,21 +490,20 @@ async fn authorize_session_resource_target(
     let authorization = authorize_session_route(
         state,
         headers,
-        &session.tenant_id,
-        action,
-        Some(&session.id),
-        Some(&session.target),
-        &[],
-        surface,
+        SessionRouteAuthorizationRequest {
+            tenant_id: &session.tenant_id,
+            action,
+            session_id: Some(&session.id),
+            target: Some(&session.target),
+            channels: &[],
+            surface,
+        },
     )
     .await?;
-    if let Some(preauthorized) = lookup_authorization {
-        return Ok(SessionAuthorization {
-            auth_method: preauthorized.auth_method,
-            ..authorization
-        });
-    }
-    Ok(authorization)
+    Ok(SessionAuthorization {
+        auth_method: lookup_authorization.auth_method,
+        ..authorization
+    })
 }
 
 fn application_session_tenant_id(
@@ -529,17 +524,6 @@ fn application_session_tenant_id(
         )));
     };
     parse_user_tenant_id(tenant_id.to_owned())
-}
-
-fn ensure_session_lookup_tenant_matches(
-    lookup_tenant: Option<&TenantId>,
-    session: &SessionResource,
-    session_id: &str,
-) -> Result<(), AppError> {
-    if lookup_tenant.is_some_and(|tenant_id| tenant_id != &session.tenant_id) {
-        return Err(session_not_found(session_id));
-    }
-    Ok(())
 }
 
 impl SessionResourceResponse {
@@ -588,16 +572,27 @@ impl SessionResourceResponse {
     }
 }
 
+struct SessionRouteAuthorizationRequest<'a> {
+    tenant_id: &'a TenantId,
+    action: SessionAction,
+    session_id: Option<&'a str>,
+    target: Option<&'a SessionTarget>,
+    channels: &'a [String],
+    surface: &'static str,
+}
+
 async fn authorize_session_route(
     state: &Arc<AppState>,
     headers: &HeaderMap,
-    tenant_id: &TenantId,
-    action: SessionAction,
-    session_id: Option<&str>,
-    target: Option<&SessionTarget>,
-    channels: &[String],
-    surface: &'static str,
+    request: SessionRouteAuthorizationRequest<'_>,
 ) -> Result<SessionAuthorization, AppError> {
+    let tenant_id = request.tenant_id;
+    let action = request.action;
+    let session_id = request.session_id;
+    let target = request.target;
+    let channels = request.channels;
+    let surface = request.surface;
+
     if let Some(operator) = authorize_operator_session_route(state, headers, tenant_id, surface)? {
         return Ok(operator);
     }
@@ -609,7 +604,7 @@ async fn authorize_session_route(
                 state,
                 headers,
                 tenant_id,
-                SessionPrincipalClass::Tenant,
+                PrincipalClass::Tenant,
                 Some("application_bearer"),
                 false,
                 format!("tenant/spawned session authorization failed: {error}"),
@@ -621,7 +616,7 @@ async fn authorize_session_route(
             state,
             headers,
             tenant_id,
-            SessionPrincipalClass::Tenant,
+            PrincipalClass::Tenant,
             None,
             false,
             "session route requires operator credentials or authenticated tenant/spawned workload identity",
@@ -631,7 +626,7 @@ async fn authorize_session_route(
         ));
     }
 
-    let principal_class = session_principal_class_from_principal(&resolved.principal)?;
+    let principal_class = principal_class_from_principal(&resolved.principal, "session")?;
     let tenant_context = crate::tenant::TenantIsolationContext::application(
         tenant_id.clone(),
         resolved.principal.clone(),
@@ -654,21 +649,21 @@ async fn authorize_session_route(
             action.as_str()
         )));
     }
-    if let Some(SessionTarget::Service { name }) = target {
-        if !principal_has_exact_service_grant(&resolved.principal, name) {
-            return Err(AppError::forbidden(format!(
-                "{} principal requires an exact service grant for `{name}` before opening a service-targeted session",
-                principal_class.as_str()
-            )));
-        }
+    if let Some(SessionTarget::Service { name }) = target
+        && !principal_has_exact_service_grant(&resolved.principal, name)
+    {
+        return Err(AppError::forbidden(format!(
+            "{} principal requires an exact service grant for `{name}` before opening a service-targeted session",
+            principal_class.as_str()
+        )));
     }
-    if let Some(SessionTarget::Sandbox { id }) = target {
-        if !principal_has_sandbox_reach(&resolved.principal, id) {
-            return Err(AppError::forbidden(format!(
-                "{} principal requires sandbox reach for `{id}` before opening a sandbox-targeted session",
-                principal_class.as_str()
-            )));
-        }
+    if let Some(SessionTarget::Sandbox { id }) = target
+        && !principal_has_sandbox_reach(&resolved.principal, id)
+    {
+        return Err(AppError::forbidden(format!(
+            "{} principal requires sandbox reach for `{id}` before opening a sandbox-targeted session",
+            principal_class.as_str()
+        )));
     }
 
     Ok(SessionAuthorization {
@@ -685,68 +680,28 @@ fn authorize_operator_session_route(
     tenant_id: &TenantId,
     surface: &'static str,
 ) -> Result<Option<SessionAuthorization>, AppError> {
-    if state.local_server_security.is_none() {
-        return Ok(None);
-    }
-    let extracted = extract_server_access(
-        headers,
-        LocalServerCredentialMode::AuthorizationOrAdminHeader,
-        state.local_server_security.as_deref(),
-    )
-    .map_err(AppError::from)?;
-    match extracted.status {
-        ExtractedServerAccessStatus::Authorized => {
+    match extract_operator_route_access(headers, state.local_server_security.as_deref())? {
+        Ok(OperatorRouteAccess::Authorized { auth_method }) => {
             let tenant_context = parse_operator_tenant_context(tenant_id.as_str(), surface)?;
             Ok(Some(SessionAuthorization {
-                principal_class: SessionPrincipalClass::Operator,
+                principal_class: PrincipalClass::Operator,
                 tenant_id: tenant_context.tenant_id().clone(),
-                auth_method: extracted.auth_method,
+                auth_method,
                 principal: None,
             }))
         }
-        ExtractedServerAccessStatus::Missing => Ok(None),
-        ExtractedServerAccessStatus::Invalid
-            if extracted.auth_method == Some("local_admin_bearer") =>
-        {
-            Ok(None)
-        }
-        ExtractedServerAccessStatus::Revoked => {
+        Ok(OperatorRouteAccess::Missing) => Ok(None),
+        Err(rejection) => {
             record_session_authorization_audit(
                 state,
                 headers,
                 tenant_id,
-                SessionPrincipalClass::Operator,
-                extracted.auth_method,
+                PrincipalClass::Operator,
+                rejection.auth_method(),
                 false,
-                "operator session route rejected: auth.token_revoked",
+                format!("operator session route rejected: {}", rejection.reason()),
             );
-            Err(AppError::unauthorized("auth.token_revoked"))
-        }
-        ExtractedServerAccessStatus::Expired => {
-            record_session_authorization_audit(
-                state,
-                headers,
-                tenant_id,
-                SessionPrincipalClass::Operator,
-                extracted.auth_method,
-                false,
-                "operator session route rejected: auth.session_expired",
-            );
-            Err(AppError::unauthorized("auth.session_expired"))
-        }
-        ExtractedServerAccessStatus::Invalid => {
-            record_session_authorization_audit(
-                state,
-                headers,
-                tenant_id,
-                SessionPrincipalClass::Operator,
-                extracted.auth_method,
-                false,
-                "operator session route rejected: invalid local admin credential",
-            );
-            Err(AppError::unauthorized(
-                LocalServerCredentialMode::AuthorizationOrAdminHeader.unauthorized_message(),
-            ))
+            Err(rejection.app_error())
         }
     }
 }
@@ -775,18 +730,22 @@ fn principal_has_session_permission(
     target: Option<&SessionTarget>,
     channels: &[String],
 ) -> bool {
-    session_permission_values(principal).any(|permission| {
-        session_permission_actions_allow(permission, action)
-            && session_permission_scope_allows(permission, session_id, target)
-            && session_permission_channels_allow(permission, channels)
-    })
+    session_permission_values(principal)
+        .into_iter()
+        .any(|permission| {
+            permission_actions_allow(permission, action.as_str())
+                && session_permission_scope_allows(permission, session_id, target)
+                && session_permission_channels_allow(permission, channels)
+        })
 }
 
 fn principal_has_session_list_permission(principal: &PrincipalContext) -> bool {
-    session_permission_values(principal).any(|permission| {
-        session_permission_actions_allow(permission, SessionAction::List)
-            && session_permission_scope_is_listable(permission)
-    })
+    session_permission_values(principal)
+        .into_iter()
+        .any(|permission| {
+            permission_actions_allow(permission, SessionAction::List.as_str())
+                && session_permission_scope_is_listable(permission)
+        })
 }
 
 fn principal_has_session_action_permission(
@@ -794,39 +753,20 @@ fn principal_has_session_action_permission(
     action: SessionAction,
 ) -> bool {
     session_permission_values(principal)
-        .any(|permission| session_permission_actions_allow(permission, action))
-}
-
-fn session_permission_values(principal: &PrincipalContext) -> impl Iterator<Item = &Value> {
-    [&principal.verified_claims, &principal.claims]
         .into_iter()
-        .flat_map(|claims| {
-            [
-                "nimbus_session_permissions",
-                "nimbusSessionPermissions",
-                "session_permissions",
-                "sessionPermissions",
-            ]
-            .into_iter()
-            .filter_map(|claim_name| claims.get(claim_name))
-        })
-        .flat_map(|value| match value {
-            Value::Array(values) => values.iter().collect::<Vec<_>>(),
-            value => vec![value],
-        })
+        .any(|permission| permission_actions_allow(permission, action.as_str()))
 }
 
-fn session_permission_actions_allow(permission: &Value, action: SessionAction) -> bool {
-    let Some(actions) = permission.get("actions") else {
-        return false;
-    };
-    match actions {
-        Value::String(value) => value == action.as_str(),
-        Value::Array(values) => values
-            .iter()
-            .any(|value| value.as_str() == Some(action.as_str())),
-        _ => false,
-    }
+fn session_permission_values(principal: &PrincipalContext) -> Vec<&Value> {
+    permission_claim_values(
+        principal,
+        &[
+            "nimbus_session_permissions",
+            "nimbusSessionPermissions",
+            "session_permissions",
+            "sessionPermissions",
+        ],
+    )
 }
 
 fn session_permission_scope_allows(
@@ -887,42 +827,24 @@ fn session_permission_channels_allow(permission: &Value, channels: &[String]) ->
 }
 
 fn principal_has_sandbox_reach(principal: &PrincipalContext, sandbox_id: &str) -> bool {
-    sandbox_permission_values(principal).any(|permission| {
-        sandbox_permission_actions_allow(permission, "get")
-            && sandbox_permission_scope_allows(permission, sandbox_id)
-    })
-}
-
-fn sandbox_permission_values(principal: &PrincipalContext) -> impl Iterator<Item = &Value> {
-    [&principal.verified_claims, &principal.claims]
+    sandbox_permission_values(principal)
         .into_iter()
-        .flat_map(|claims| {
-            [
-                "nimbus_sandbox_permissions",
-                "nimbusSandboxPermissions",
-                "sandbox_permissions",
-                "sandboxPermissions",
-            ]
-            .into_iter()
-            .filter_map(|claim_name| claims.get(claim_name))
-        })
-        .flat_map(|value| match value {
-            Value::Array(values) => values.iter().collect::<Vec<_>>(),
-            value => vec![value],
+        .any(|permission| {
+            permission_actions_allow(permission, "get")
+                && sandbox_permission_scope_allows(permission, sandbox_id)
         })
 }
 
-fn sandbox_permission_actions_allow(permission: &Value, required_action: &str) -> bool {
-    let Some(actions) = permission.get("actions") else {
-        return false;
-    };
-    match actions {
-        Value::String(value) => value == required_action,
-        Value::Array(values) => values
-            .iter()
-            .any(|value| value.as_str() == Some(required_action)),
-        _ => false,
-    }
+fn sandbox_permission_values(principal: &PrincipalContext) -> Vec<&Value> {
+    permission_claim_values(
+        principal,
+        &[
+            "nimbus_sandbox_permissions",
+            "nimbusSandboxPermissions",
+            "sandbox_permissions",
+            "sandboxPermissions",
+        ],
+    )
 }
 
 fn sandbox_permission_scope_allows(permission: &Value, sandbox_id: &str) -> bool {
@@ -941,48 +863,6 @@ fn sandbox_permission_scope_allows(permission: &Value, sandbox_id: &str) -> bool
             .is_some_and(|prefix| sandbox_id.starts_with(prefix)),
         _ => false,
     }
-}
-
-fn session_principal_class_from_principal(
-    principal: &PrincipalContext,
-) -> Result<SessionPrincipalClass, AppError> {
-    let Some(value) = principal_claim_string(
-        principal,
-        &[
-            "nimbus_principal_class",
-            "nimbusPrincipalClass",
-            "principal_class",
-            "principalClass",
-        ],
-    ) else {
-        return Ok(SessionPrincipalClass::Tenant);
-    };
-    match value {
-        "tenant" => Ok(SessionPrincipalClass::Tenant),
-        "spawned" | "spawned_workload" | "spawnedWorkload" | "workload" | "workload_identity" => {
-            Ok(SessionPrincipalClass::SpawnedWorkload)
-        }
-        "operator" => Err(AppError::forbidden(
-            "application credentials cannot resolve to operator principal class",
-        )),
-        other => Err(AppError::forbidden(format!(
-            "unknown session route principal class `{other}`"
-        ))),
-    }
-}
-
-fn principal_claim_string<'a>(
-    principal: &'a PrincipalContext,
-    claim_names: &[&str],
-) -> Option<&'a str> {
-    for claims in [&principal.verified_claims, &principal.claims] {
-        for claim_name in claim_names {
-            if let Some(value) = claims.get(*claim_name).and_then(Value::as_str) {
-                return Some(value);
-            }
-        }
-    }
-    None
 }
 
 fn session_target_from_input(input: SessionTargetInput) -> Result<SessionTarget, AppError> {
@@ -1051,6 +931,12 @@ fn required_tenant_id(value: Option<&str>, context: &str) -> Result<TenantId, Ap
     parse_user_tenant_id(value.to_owned())
 }
 
+fn optional_tenant_id(value: Option<&str>) -> Result<Option<TenantId>, AppError> {
+    value
+        .map(|value| parse_user_tenant_id(value.to_owned()))
+        .transpose()
+}
+
 fn service_manager(state: &AppState) -> Result<Arc<nimbus_services::ServiceManager>, AppError> {
     state
         .service_manager()
@@ -1073,7 +959,7 @@ fn record_session_authorization_audit(
     state: &AppState,
     headers: &HeaderMap,
     tenant_id: &TenantId,
-    principal_class: SessionPrincipalClass,
+    principal_class: PrincipalClass,
     auth_method: Option<&'static str>,
     success: bool,
     reason: impl Into<String>,
@@ -1091,14 +977,4 @@ fn record_session_authorization_audit(
             reason.into()
         ),
     });
-}
-
-fn format_millis_rfc3339(millis: u64) -> String {
-    let nanos = (millis as i128).saturating_mul(1_000_000);
-    match OffsetDateTime::from_unix_timestamp_nanos(nanos) {
-        Ok(timestamp) => timestamp
-            .format(&Rfc3339)
-            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned()),
-        Err(_) => "1970-01-01T00:00:00Z".to_owned(),
-    }
 }

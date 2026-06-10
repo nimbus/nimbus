@@ -1,18 +1,19 @@
 use nimbus_core::{DocumentId, TableName, TenantId};
 
 pub(super) fn stable_key_segment(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_owned()
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('~');
+            encoded.push(HEX[(byte >> 4) as usize] as char);
+            encoded.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+    }
+    encoded
 }
 
 pub(super) fn service_document_id(tenant_id: &TenantId, service_name: &str) -> String {
@@ -115,4 +116,61 @@ pub(super) fn workload_status_document_id(tenant_id: &TenantId, workload_uid: &s
         stable_key_segment(tenant_id.as_str()),
         stable_key_segment(workload_uid)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+
+    #[test]
+    fn stable_key_segment_is_injective_for_separator_and_case_variants() {
+        let inputs = [
+            "foo.bar",
+            "foo bar",
+            "foo-bar",
+            "foo/bar",
+            "Foo-Bar",
+            "foo~2dbar",
+            "東京",
+            "",
+        ];
+        let segments = inputs
+            .into_iter()
+            .map(stable_key_segment)
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(segments.len(), inputs.len());
+        assert_eq!(stable_key_segment("foo.bar"), "foo~2ebar");
+        assert_eq!(stable_key_segment("foo bar"), "foo~20bar");
+        assert_eq!(stable_key_segment("foo-bar"), "foo~2dbar");
+        assert_eq!(stable_key_segment("foo/bar"), "foo~2fbar");
+        assert_eq!(stable_key_segment("Foo-Bar"), "Foo~2dBar");
+        assert_eq!(stable_key_segment("東京"), "~e6~9d~b1~e4~ba~ac");
+    }
+
+    #[test]
+    fn system_document_ids_do_not_collide_for_distinct_projected_names() {
+        let tenant_id = TenantId::new("demo").expect("tenant should parse");
+        let service_ids = ["foo.bar", "foo bar", "foo-bar", "foo/bar"]
+            .into_iter()
+            .map(|name| service_document_id(&tenant_id, name))
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(service_ids.len(), 4);
+        for document_id in service_ids {
+            DocumentId::from_key(document_id).expect("system document id should parse");
+        }
+
+        let function_ids = ["messages:send", "messages/send", "messages send"]
+            .into_iter()
+            .map(|name| function_document_id("bundle:sha", name))
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(function_ids.len(), 3);
+        for document_id in function_ids {
+            DocumentId::from_key(document_id).expect("system document id should parse");
+        }
+    }
 }

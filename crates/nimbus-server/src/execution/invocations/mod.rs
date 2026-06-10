@@ -30,7 +30,13 @@ pub(crate) struct RuntimeBundleInvocationOptions<'a> {
     pub(crate) cancellation: Option<HostCallCancellation>,
     pub(crate) concurrency_mode: RuntimeConcurrencyMode,
     pub(crate) scope: RuntimeInvocationScope,
-    provenance_gate: Option<&'a RuntimeBundleProvenanceConfig>,
+    provenance_gate: RuntimeBundleProvenanceGate<'a>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum RuntimeBundleProvenanceGate<'a> {
+    Disabled,
+    Configured(&'a RuntimeBundleProvenanceConfig),
 }
 
 impl<'a> RuntimeBundleInvocationOptions<'a> {
@@ -45,9 +51,8 @@ impl<'a> RuntimeBundleInvocationOptions<'a> {
             cancellation,
             concurrency_mode: RuntimeConcurrencyMode::EnforcePolicyLimit,
             scope: RuntimeInvocationScope::TopLevel,
-            provenance_gate: None,
+            provenance_gate: RuntimeBundleProvenanceGate::Disabled,
         }
-        .with_runtime_bundle_provenance_gate(None)
     }
 
     pub(crate) fn budgeted_nested_invocation_bypass(
@@ -61,9 +66,8 @@ impl<'a> RuntimeBundleInvocationOptions<'a> {
             cancellation,
             concurrency_mode: RuntimeConcurrencyMode::BudgetedNestedInvocationBypass,
             scope: RuntimeInvocationScope::Nested,
-            provenance_gate: None,
+            provenance_gate: RuntimeBundleProvenanceGate::Disabled,
         }
-        .with_runtime_bundle_provenance_gate(None)
     }
 }
 

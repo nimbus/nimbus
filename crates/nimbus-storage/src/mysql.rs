@@ -22,7 +22,10 @@ use tokio::runtime::Handle as TokioRuntimeHandle;
 use tokio::sync::Semaphore;
 
 use crate::RetentionFloor;
-use crate::async_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
+use crate::async_storage::{
+    TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, map_executor_join_error,
+    map_executor_permit_error,
+};
 use crate::commit_log::{
     deserialize_durable_record, serialize_durable_record, serialize_tenant_event_record,
 };
@@ -145,6 +148,7 @@ pub struct MySqlWriteTransaction {
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
+    commit_timestamp: Option<Timestamp>,
     schema_cache_changed: bool,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
 }
@@ -185,6 +189,10 @@ impl MySqlTenantStore {
 
     pub fn now(&self) -> Timestamp {
         self.provider.clock.now()
+    }
+
+    pub fn check_fault(&self, point: FaultPoint) -> Result<()> {
+        self.provider.fault_injector.check(point)
     }
 
     pub fn block_on<F, T>(&self, future: F) -> Result<T>
@@ -245,4 +253,51 @@ fn tenant_database_name(prefix: &str, tenant_id: &TenantId) -> Result<String> {
         let _ = write!(&mut hash, "{byte:02x}");
     }
     Ok(format!("{prefix}{hash}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FailingFaultInjector;
+
+    impl FaultInjector for FailingFaultInjector {
+        fn check(&self, point: FaultPoint) -> Result<()> {
+            Err(Error::Internal(format!("fault point {}", point.as_str())))
+        }
+    }
+
+    #[test]
+    fn mysql_tenant_store_check_fault_delegates_to_provider_injector() {
+        let runtime = tokio::runtime::Runtime::new().expect("test runtime should build");
+        let provider = MySqlProvider {
+            pool: build_pool(&MySqlProviderConfig::new(
+                "mysql://root:password@127.0.0.1:1/nimbus",
+            ))
+            .expect("mysql pool should build without opening a connection"),
+            metadata_database: "nimbus_provider".to_string(),
+            tenant_database_prefix: "tenant_".to_string(),
+            runtime_handle: runtime.handle().clone(),
+            clock: Arc::new(SystemClock),
+            fault_injector: Arc::new(FailingFaultInjector),
+            tenant_read_parallelism: MIN_MYSQL_READ_PARALLELISM,
+        };
+        let store = MySqlTenantStore::new(
+            provider,
+            MySqlTenantRegistration {
+                tenant_id: TenantId::new("demo").expect("tenant id should be valid"),
+                database_name: "tenant_demo".to_string(),
+            },
+        );
+
+        let error = store
+            .check_fault(FaultPoint::StorageCommitBeforeVisibility)
+            .expect_err("mysql store should delegate to the configured fault injector");
+        assert!(
+            error
+                .to_string()
+                .contains(FaultPoint::StorageCommitBeforeVisibility.as_str()),
+            "delegated fault error should identify the fault point: {error}"
+        );
+    }
 }

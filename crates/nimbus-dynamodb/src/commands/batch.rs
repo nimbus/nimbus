@@ -12,11 +12,14 @@ use extenddb_core::types::{
     BatchGetItemInput, BatchGetItemOutput, BatchWriteItemInput, BatchWriteItemOutput, Item,
     StreamEventName, extract_key,
 };
-use nimbus_core::TableName;
+use nimbus_core::{TableName, WritePrecondition};
 use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 
-use crate::commands::item::{primary_key_id, read_item, remove_item, store_item};
+use crate::attribute_value::{item_to_fields, validate_item};
+use crate::commands::item::{
+    delete_atomic_write, overwrite_atomic_write, primary_key_id, read_item,
+};
 use crate::commands::{control_plane, stream};
 use crate::error::map_core_error;
 use crate::expression::{default_limits, project_item};
@@ -124,46 +127,59 @@ pub fn batch_write_item(
                 (Some(put), None) => {
                     // Read the prior image first so the stream record is a
                     // correct INSERT vs MODIFY with the right old image.
+                    validate_item(&put.item)?;
                     let id = primary_key_id(&put.item, &key_schema)?;
-                    let old = read_item(engine, context, &table, id)?;
-                    store_item(engine, context, table_name, &put.item)?;
+                    let old = read_item(engine, context, &table, id.clone())?;
+                    let write = overwrite_atomic_write(
+                        table.clone(),
+                        id,
+                        item_to_fields(&put.item)?,
+                        WritePrecondition::default(),
+                    );
                     let keys = extract_key(&put.item, &key_schema);
-                    stream::capture_event(
+                    let change = stream::StreamChange::new(
+                        table_name.clone(),
+                        if old.is_some() {
+                            StreamEventName::Modify
+                        } else {
+                            StreamEventName::Insert
+                        },
+                        keys,
+                        old,
+                        Some(put.item.clone()),
+                        None,
+                    );
+                    stream::execute_atomic_write_batch_with_streams(
                         engine,
                         context,
-                        table_name,
-                        stream::ChangeEvent {
-                            event_name: if old.is_some() {
-                                StreamEventName::Modify
-                            } else {
-                                StreamEventName::Insert
-                            },
-                            keys: &keys,
-                            old_image: old.as_ref(),
-                            new_image: Some(&put.item),
-                            user_identity: None,
-                        },
+                        vec![write],
+                        &[change],
+                        map_core_error,
                     )?;
                 }
                 (None, Some(delete)) => {
                     let id = primary_key_id(&delete.key, &key_schema)?;
-                    let old = read_item(engine, context, &table, id)?;
-                    remove_item(engine, context, table_name, &delete.key)?;
+                    let old = read_item(engine, context, &table, id.clone())?;
                     // DynamoDB emits a REMOVE record only when an item was
                     // actually deleted.
-                    if let Some(old_image) = old.as_ref() {
+                    if let Some(old_image) = old {
+                        let write =
+                            delete_atomic_write(table.clone(), id, WritePrecondition::default());
                         let keys = extract_key(&delete.key, &key_schema);
-                        stream::capture_event(
+                        let change = stream::StreamChange::new(
+                            table_name.clone(),
+                            StreamEventName::Remove,
+                            keys,
+                            Some(old_image),
+                            None,
+                            None,
+                        );
+                        stream::execute_atomic_write_batch_with_streams(
                             engine,
                             context,
-                            table_name,
-                            stream::ChangeEvent {
-                                event_name: StreamEventName::Remove,
-                                keys: &keys,
-                                old_image: Some(old_image),
-                                new_image: None,
-                                user_identity: None,
-                            },
+                            vec![write],
+                            &[change],
+                            map_core_error,
                         )?;
                     }
                 }
