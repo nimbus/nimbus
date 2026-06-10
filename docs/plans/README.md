@@ -4,6 +4,38 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
+- `docs/plans/nimbus-docs-site-plan.md`
+  - ready plan for the public documentation site at `nimbusdocs.com`
+    (DOC0..DOC13). Astro 6 + Starlight, Markdown authored in the public
+    top-level groups of `docs/` as source of truth, a hybrid persona×Diátaxis
+    IA (Get started · Developers · Operators · Concepts · Reference) mirroring
+    `DESIGN.md` — Tutorials/How-to persona-split, Reference/Concepts shared —
+    plus a source-grounded Diátaxis refactor and content-gap backlog (audit
+    found the current corpus is ~0% tutorials and ~40% internal-only),
+    `llms.txt` emitted via `starlight-llms-txt`, deployed to Cloudflare
+    Workers (Static Assets) through a dedicated `.github/workflows/docs.yml`
+    with per-PR preview deployments. apt stays on this repo's single GitHub
+    Pages site (Cloudflare hosting removes the collision). Owns the full
+    `docs/` restructure: DOC3 consolidates ALL internal working state
+    (plans/ incl. security+prompts subtrees, prompts/, decisions/,
+    code-review/, design-review/, technical-debt.md, agent working docs)
+    under `docs/private/` — the single never-published home — with a
+    repo-wide reference-fixup sweep, so the rest of `docs/` is the public
+    tree behind an explicit loader allow-list. DOC7 rewrites the
+    architecture docs as PUBLIC source-verified pages under
+    `concepts/architecture/` via a system-by-system codebase review (also
+    fixing the known `ARCHITECTURE.md` doc-drift); generated evidence and
+    fork ledgers stay private. Also owns the repo front door: Starlight
+    `template: splash` landing as interim marketing page, the
+    one-sentence-three-surfaces messaging canon (recorded in `DESIGN.md` by
+    DOC2), and the DOC11 README/repo-metadata refactor (PocketBase/Supabase
+    hybrid README, description rewrite, homepage, topics, social preview;
+    "source-available", never "open source"). DOC0..DOC8 need no Cloudflare
+    access; DOC9+ gate on owner-provided domain/account/token. `/goal`
+    control plane gated on `bash scripts/verify-nimbus-docs-site.sh`
+    (17 conditions). DOC2 runs a frontend-design harmonization review
+    (Starlight defaults + crabbox + `DESIGN.md`) and feeds learnings back
+    into `DESIGN.md`.
 - `docs/plans/storage-engine-quality-and-mvcc-plan.md`
   - proposed follow-on plan after the completed storage architecture
     trust-hardening baseline. Targets larger storage-engine quality features
