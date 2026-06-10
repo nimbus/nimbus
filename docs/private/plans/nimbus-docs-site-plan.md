@@ -2,8 +2,11 @@
 
 ## Status
 
-- **Status:** `ready` (pending owner-provided inputs — see Activation
-  prerequisites).
+- **Status:** `in_progress` — DOC0..DOC4 complete (DOC3 shipped the IA
+  shell + landing + Get started live at nimbusdocs.com on 2026-06-10;
+  DOC4 shipped the full Developers + adapter Reference corpus, 47 built
+  pages, same day). Next: DOC5 (Operators). Verifier: 12/17 (remaining
+  reds are DOC7/8/11/12 conditions 10, 11, 12, 15, 17).
 - **Primary goal:** ship the canonical public documentation site for Nimbus at
   **`nimbusdocs.com`**. Astro 6 + Starlight, Markdown authored in-repo in the
   public top-level groups of `docs/` as the source of truth, a hybrid persona ×

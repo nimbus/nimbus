@@ -18,9 +18,9 @@ brew install nimbus/tap/nimbus
 Other platforms ship via the install script and release binaries — see the
 [install options](https://github.com/nimbus/nimbus#install).
 
-For Convex-style authoring, also install Node.js 22 with `npm`: codegen runs
-through the external Node toolchain and verifies `node --version` against the
-`22.x` baseline.
+For Convex-style authoring, also install Node.js 22 or newer with `npm`.
+Nimbus runs codegen inside its own binary; Node is only needed to install
+your project's npm dependencies.
 
 ## 2. Scaffold an app
 

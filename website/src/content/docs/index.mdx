@@ -42,24 +42,66 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
     });
     ```
   </TabItem>
+  <TabItem label="MongoDB">
+    ```javascript
+    // Official MongoDB driver against Nimbus's wire-protocol endpoint
+    import { MongoClient } from "mongodb";
+
+    const client = new MongoClient(
+      "mongodb://app-user:app-secret@127.0.0.1:27017/myapp?directConnection=true",
+    );
+    await client.connect();
+
+    const messages = client.db("myapp").collection("messages");
+    await messages.insertOne({ author: "Ada", body: "Hello from Nimbus" });
+    const docs = await messages.find({ author: "Ada" }).toArray();
+    ```
+    See [the MongoDB guide](/developers/mongodb/) for enabling the endpoint.
+  </TabItem>
+  <TabItem label="DynamoDB">
+    ```javascript
+    // AWS SDK v3 pointed at Nimbus's DynamoDB endpoint
+    import { DynamoDBClient, PutItemCommand, GetItemCommand } from "@aws-sdk/client-dynamodb";
+
+    const client = new DynamoDBClient({
+      endpoint: "http://127.0.0.1:8000",
+      region: "us-east-1",
+      credentials: { accessKeyId: "AKIAACME", secretAccessKey: "acme-secret" },
+    });
+
+    await client.send(new PutItemCommand({
+      TableName: "orders",
+      Item: { pk: { S: "order-1" }, total: { N: "42" } },
+    }));
+    const { Item } = await client.send(new GetItemCommand({
+      TableName: "orders",
+      Key: { pk: { S: "order-1" } },
+    }));
+    ```
+    See [the DynamoDB guide](/developers/dynamodb/) for enabling the endpoint.
+  </TabItem>
   <TabItem label="curl" icon="seti:shell">
     ```bash
     # The same engine over plain HTTP — no codegen required
     nimbus start --port 8080 --data-dir ./data
+    # grab the local admin token — see the self-host quickstart
+
+    curl -s -X POST http://localhost:8080/api/tenants \
+      -H "Authorization: Bearer $NIMBUS_TOKEN" \
+      -H "Content-Type: application/json" -d '{"id": "demo"}'
 
     curl -s -X POST http://localhost:8080/api/tenants/demo/documents \
+      -H "Authorization: Bearer $NIMBUS_TOKEN" \
       -H "Content-Type: application/json" \
       -d '{"table": "messages", "fields": {"text": "hello world"}}'
-
-    curl -s -X POST http://localhost:8080/api/tenants/demo/query \
-      -H "Content-Type: application/json" \
-      -d '{"table": "messages", "filters": []}'
     ```
+    Full walkthrough in the [self-host quickstart](/get-started/self-host/).
   </TabItem>
 </Tabs>
 
-Stock MongoDB drivers, Firestore SDKs, and DynamoDB SDKs connect to the same
-data — see [Developers](/developers/) for every adapter.
+Nimbus speaks the Convex, Firestore, Cloud Functions, MongoDB, and DynamoDB
+surfaces from one engine — see [Developers](/developers/) for every adapter
+and how each is enabled.
 
 <CardGrid stagger>
   <Card title="One binary" icon="rocket">

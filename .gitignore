@@ -60,5 +60,14 @@ demos/convex/vendor/browser.bundle.js
 # Local runtime and machine state
 data/
 
-# Private docs (pricing, strategy, competitive research)
-docs/private
+# Private business docs (pricing, strategy, competitive research) stay
+# untracked; the in-repo working-state subtrees moved under docs/private
+# by the docs-site plan (plans, prompts, decisions, reviews, staging,
+# technical-debt) are tracked and must not be silently ignored.
+docs/private/*
+!docs/private/plans/
+!docs/private/prompts/
+!docs/private/decisions/
+!docs/private/reviews/
+!docs/private/staging/
+!docs/private/technical-debt.md
