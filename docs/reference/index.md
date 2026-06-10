@@ -9,6 +9,13 @@ Information-oriented reference that mirrors the product surface. One
 canonical page per fact; if a claim here disagrees with the code, the code
 wins and the page gets fixed.
 
+## Server
+
+- [Configuration](/reference/configuration/) — flag ↔ environment variable
+  ↔ config-key cross-reference.
+- [Deploy & admin API](/reference/deploy-admin-api/) — staging, diff, and
+  activation.
+
 ## Native API
 
 - [HTTP API](/reference/native/http-api/) — every endpoint, method, and
@@ -45,7 +52,8 @@ wins and the page gets fixed.
 ## Still arriving
 
 - **CLI** — every `nimbus` command, subcommand, and flag.
-- **Configuration** — the flag ↔ environment variable ↔ config-file
-  cross-reference.
-- **Deploy & admin API** — staging, diff, and activation.
 - **Current capabilities** — the honest snapshot of what works today.
+
+The [Configuration](/reference/configuration/) page currently covers the
+storage and encryption surface; the full cross-reference is being built
+out.

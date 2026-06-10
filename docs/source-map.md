@@ -126,3 +126,74 @@ sources exist.
 | `reference/runtimes/node-apis.md` | API-family support table | generated evidence: `docs/private/staging/runtimes/nodejs/reference/node-apis.md` |
 | `reference/runtimes/packages.md` | Package-support matrix | generated evidence: `docs/private/staging/runtimes/nodejs/reference/packages.md` |
 | `reference/runtimes/node-compat.md` | Version table, contract, headline coverage numbers (2026-05-28) | generated evidence: `docs/private/staging/runtimes/nodejs/compatibility.md`, `docs/private/staging/runtimes/nodejs/evidence/latest.md` |
+
+## Operators — install, deploy, lifecycle
+
+| Doc page | Claim / surface | Source |
+| --- | --- | --- |
+| `operators/deploy-linux.md` | Install script: platforms, deps, `/usr/local/bin/nimbus`, runtime stack under `/usr/libexec/nimbus`, checksum + attestation | `scripts/install.sh` |
+| `operators/deploy-linux.md` | `--port`/`--host`/`--data-dir`/`--tenant-provider`/`--allow-network` names + defaults; foreground start | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-bin/src/main.rs` |
+| `operators/deploy-linux.md` | Token minted on first boot before listener; JSON shape; `nimbus_at_` prefix; file 0600; path from service user's HOME/XDG | `crates/nimbus-operator/src/token.rs`, `crates/nimbus-operator/src/paths.rs`, `crates/nimbus-bin/src/start/boot.rs` |
+| `operators/deploy-linux.md` | `/health` unauthenticated `{"ok":true}`; `GET /api/tenants` admin-gated | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/http/metadata.rs`, `crates/nimbus-server/src/http/tenants.rs` |
+| `operators/deploy-linux.md` | No shipped systemd unit (tutorial authors one) | `crates/nimbus-assets/embedded/templates/` (absence; only machine-VM templates) |
+| `operators/container-image.md` | Image `ghcr.io/nimbus/nimbus:<version>`, per-arch tags, multi-arch manifest, `latest` on stable | `.github/workflows/release.yml`, `Containerfile` |
+| `operators/container-image.md` | Entrypoint/CMD, UID 10001, volume `/var/lib/nimbus`, port 8080, healthcheck, `HOME=/var/lib/nimbus` | `Containerfile` |
+| `operators/container-image.md` | OCI release assets (image ref, SBOM, vulns SARIF, attestation); `gh attestation verify` | `.github/workflows/release.yml` |
+| `operators/node-lifecycle.md` | `nimbus node install/status/logs/doctor/uninstall` flags and targets | `crates/nimbus-bin/src/node_service.rs`, `crates/nimbus-bin/src/cli_ux.rs` |
+| `operators/node-lifecycle.md` | Unit names, install dirs, generated defaults, hardening directives, provenance comments | `crates/nimbus-bin/src/node_service.rs` |
+| `operators/node-lifecycle.md` | `compose export quadlet` modes and flags; `compose up` | `crates/nimbus-bin/src/compose/commands.rs` |
+| `operators/node-lifecycle.md` | `machine status` / `machine os upgrade` / `machine os apply`; `ghcr.io/nimbus/machine-os` | `crates/nimbus-bin/src/machine/command.rs` |
+| `operators/updates.md` | No auto-upgrade; `brew upgrade --cask nimbus/tap/nimbus`; install-method detection | `crates/nimbus-server/src/system/install_method.rs` |
+| `operators/updates.md` | Update check: 24h TTL, cache path, `NIMBUS_DISABLE_UPDATE_CHECK=1`, `/api/system/version-info` admin-gated | `crates/nimbus-server/src/system/version_check.rs`, `crates/nimbus-server/src/system/cache.rs`, `crates/nimbus-server/src/router.rs` |
+| `operators/desktop-install.md` | Casks `nimbus/tap/nimbus` + `nimbus/tap/nimbus-desktop`; macOS 14+; notarized DMG | `nimbus/homebrew-tap` Casks (live), `scripts/install.sh` |
+| `operators/desktop-install.md` | Desktop Linux x64 AppImage/deb/rpm; Windows NSIS unsigned; spawn-on-demand; updater on quit | `nimbus/desktop` electron-builder.yml + release assets (live) |
+
+## Operators — data: storage, encryption, backup
+
+| Doc page | Claim / surface | Source |
+| --- | --- | --- |
+| `operators/storage-backends.md` | `--tenant-provider` values; sqlite default; data dir `./data`; control dir fallback | `crates/nimbus-bin/src/start/config.rs` |
+| `operators/storage-backends.md` | Per-tenant file layout `<data-dir>/<tenant-id>.sqlite3` / `.redb`; control plane `nimbus-control.db` embedded redb | `crates/nimbus-storage/src/async_storage/sqlite.rs`, `crates/nimbus-storage/src/async_storage/engine.rs`, `crates/nimbus-storage/src/async_storage/control.rs` |
+| `operators/storage-backends.md` | Postgres schema-per-tenant, MySQL database-per-tenant, libSQL namespace-per-tenant; `nimbus_provider` / `tenant_` defaults | `crates/nimbus-engine/src/persistence_config.rs`, `crates/nimbus-bin/src/start/config.rs` |
+| `operators/storage-backends.md` | libsql-replica required flags; pool min/max validation; cross-provider flag rejection | `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-storage/src/postgres/config.rs` |
+| `operators/encryption.md` | Disabled by default; providers master-key-file/key-dir/aws-kms; orphaned-flag rejection | `crates/nimbus-bin/src/start/config.rs` |
+| `operators/encryption.md` | Per-file DEK; `.nimbus-enc` manifest sidecar; plaintext-without-manifest startup failure | `crates/nimbus-storage/src/encryption/manifest.rs`, `crates/nimbus-storage/src/encryption/runtime.rs` |
+| `operators/encryption.md` | Coverage: SQLCipher for SQLite/libsql cache; AES-256-GCM-SIV for redb/control; external backends control-plane-only | `crates/nimbus-engine/src/engine/encryption/mod.rs`, `crates/nimbus-storage/src/sqlite/encryption.rs` |
+| `operators/encryption.md` | Master key 32 raw bytes; HKDF-SHA256 wrapping; key-dir hex descriptor naming; KMS GenerateDataKey/Decrypt/ReEncrypt | `crates/nimbus-storage/src/encryption/master_key_file.rs`, `crates/nimbus-storage/src/encryption/key_directory.rs`, `crates/nimbus-storage/src/encryption/aws_kms.rs` |
+| `operators/encryption.md` | `nimbus encryption status/migrate/export/rotate-kek/rotate-dek` flags and semantics | `crates/nimbus-bin/src/encryption/mod.rs`, `crates/nimbus-bin/src/encryption/migrate.rs`, `crates/nimbus-bin/src/encryption/rotate.rs`, `crates/nimbus-bin/src/encryption/status.rs` |
+| `operators/backup-restore.md` | No first-class backup/snapshot/PITR command | `crates/nimbus-bin/src/main.rs` (full CLI enum; absence) |
+| `operators/backup-restore.md` | WAL mode + synchronous=FULL; `-wal`/`-shm` sidecars matter | `crates/nimbus-storage/src/sqlite/config.rs` |
+| `operators/backup-restore.md` | Control DB holds usage tracking; present even with external backends | `crates/nimbus-storage/src/usage_store.rs`, `crates/nimbus-engine/src/persistence_config.rs` |
+| `operators/backup-restore.md` | Encrypted DBs are SQLCipher (stock sqlite3 can't open); `nimbus encryption export` plaintext recovery | `crates/nimbus-storage/src/sqlite/encryption.rs`, `crates/nimbus-bin/src/encryption/mod.rs` |
+| `operators/backup-restore.md` | Admin token regenerable; libSQL replica cache rebuildable | `crates/nimbus-bin/src/token.rs`, `crates/nimbus-storage/src/async_storage/libsql.rs` |
+
+## Operators — administration + observability
+
+| Doc page | Claim / surface | Source |
+| --- | --- | --- |
+| `operators/tenant-isolation.md` | Tenant CRUD endpoints + status codes (201/400/409/204); reserved `_` prefix; ID rules | `crates/nimbus-server/src/http/tenants.rs`, `crates/nimbus-core/src/types.rs`, `crates/nimbus-system/src/identity.rs` |
+| `operators/tenant-isolation.md` | Deletion teardown order; per-provider removal (file/schema/database/namespace) | `crates/nimbus-engine/src/engine/tenants.rs`, `crates/nimbus-storage/src/postgres/provider.rs`, `crates/nimbus-storage/src/mysql/provider.rs`, `crates/nimbus-storage/src/libsql/remote.rs` |
+| `operators/tenant-isolation.md` | `nimbus start` always Production isolation (no flag); `nimbus dev` LocalDevelopment + auto `demo` | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/dev.rs` |
+| `operators/tenant-isolation.md` | Per-tenant runtime limit flags; queue overflow → 429 | `crates/nimbus-bin/src/start/runtime_limits.rs`, `crates/nimbus-runtime/src/executor/admission.rs`, `crates/nimbus-server/src/error_envelope.rs` |
+| `operators/tenant-isolation.md` | `nimbus policy validate/explain/prove/diff` offline; accepted_risks fields | `crates/nimbus-bin/src/policy.rs`, `crates/nimbus-tenant/src/operator_policy/prove.rs` |
+| `operators/observability.md` | Full `/debug/*` route inventory + `/health` + `/api/system/version-info`; no readiness endpoint | `crates/nimbus-server/src/router.rs` |
+| `operators/observability.md` | License status fields + `NIMBUS_LICENSE_FILE`; encryption status shape; runtime metrics counters | `crates/nimbus-license/src/lib.rs`, `crates/nimbus-engine/src/engine/encryption/mod.rs`, `crates/nimbus-runtime/src/metrics.rs` |
+| `operators/observability.md` | Tenant engine diagnostics groups; consistency report shape | `crates/nimbus-engine/src/tenant.rs`, `crates/nimbus-engine/src/verification.rs` |
+| `operators/observability.md` | Logging via `RUST_LOG` (`target=level` directives, default info, stdout); latency WARN fields | `crates/nimbus-bin/src/main.rs`, `crates/nimbus-server/src/latency.rs`, `crates/nimbus-engine/src/engine/latency.rs` |
+| `operators/observability.md` | Access audit log JSONL paths + record fields | `crates/nimbus-operator/src/audit.rs`, `crates/nimbus-operator/src/paths.rs` |
+| `operators/hardening.md` | Local admin auth always on; token 32 bytes, 0600/0700, constant-time compare | `crates/nimbus-bin/src/start/boot.rs`, `crates/nimbus-operator/src/token.rs` |
+| `operators/hardening.md` | Public bind needs `--allow-network` + token rotated within 30 days | `crates/nimbus-bin/src/start/network_bind.rs`, `crates/nimbus-operator/src/token.rs` |
+| `operators/hardening.md` | CORS approval limited to localhost origins; admin route families audited | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/local_server/middleware.rs` |
+| `operators/troubleshooting.md` | Bind/auth/schema/storage/encryption/license/codegen/bundle error strings (each entry quotes source text) | `crates/nimbus-bin/src/start/network_bind.rs`, `crates/nimbus-operator/src/access_policy.rs`, `crates/nimbus-core/src/error.rs`, `crates/nimbus-storage/src/encryption/runtime.rs`, `crates/nimbus-storage/src/sqlite/backend.rs`, `crates/nimbus-license/src/loading.rs`, `crates/nimbus-bin/src/codegen.rs`, `crates/nimbus-runtime/src/error.rs` |
+
+## Concepts + Reference — tenancy and server
+
+| Doc page | Claim / surface | Source |
+| --- | --- | --- |
+| `concepts/tenant-isolation.md` | Admit-once model; decision envelope; storage namespaces structural per provider | `crates/nimbus-server/src/tenant.rs`, `crates/nimbus-tenant/src/context.rs`, `crates/nimbus-tenant/src/policy_input.rs` |
+| `concepts/tenant-isolation.md` | Production tier routing (in-process untrusted default; privileged/microvm/WASM routing) | `crates/nimbus-tenant/src/runtime_admission.rs` |
+| `concepts/tenant-isolation.md` | Egress deny-by-default; host binds denied; digest-pinned image floor | `crates/nimbus-sandbox/src/egress.rs`, `crates/nimbus-tenant/src/policy_input.rs`, `crates/nimbus-tenant/src/image_admission.rs` |
+| `concepts/tenant-isolation.md` | Application tenant claims must match route tenant; `_nimbus` operator-only | `crates/nimbus-tenant/src/context.rs`, `crates/nimbus-system/src/identity.rs` |
+| `reference/configuration.md` | Storage + encryption flag ↔ `NIMBUS_*` env ↔ `persistence` config keys; unknown keys rejected | `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-bin/src/start/mod.rs` |
+| `reference/deploy-admin-api.md` | `POST /api/admin/deploy`; `NIMBUS_DEPLOY_TOKEN` enablement; dual credentials (deploy bearer + admin header) | `crates/nimbus-server/src/router.rs`, `crates/nimbus-operator/src/access_policy.rs`, `crates/nimbus-server/src/local_server/middleware.rs` |
+| `reference/deploy-admin-api.md` | Nested `artifacts.convex`/`artifacts.cloud_functions` schema; staging/activation semantics; no rollback | `crates/nimbus-server/src/http/deploy.rs` |
