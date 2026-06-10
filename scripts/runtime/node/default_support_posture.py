@@ -361,6 +361,15 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         'test/parallel/test-process-warnings.mjs',
         'test/parallel/test-vm-sigint-existing-handler.js',
         'test/parallel/test-vm-sigint.js',
+        # NDS3 cycle-9 dossier wave (2026-06-09): source-confirmed +
+        # adversarially verified (analyze+refute, not refuted). Each fixture's
+        # BLOCKING assertion is common.spawnPromisified(process.execPath, ['-pe',
+        # ...]) (common/index.js:834 spawns a real child_process), executed to
+        # verify timers/promises ref/unref behavior in a fresh subprocess. The
+        # in-isolate timers/promises surface is exercised elsewhere; the
+        # subprocess postlude must fail closed.
+        'test/parallel/test-timers-interval-promisified.js',
+        'test/parallel/test-timers-timeout-promisified.js',
     }),
     ('diagnostic_only_non_isolate', 'host_owned_non_isolate_harness', 'diagnostic_stub'): frozenset({
         # NDS3 census wave (2026-06-05): source-confirmed + adversarially verified (analyze+refute).
@@ -623,6 +632,48 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         #     host (same lever as test-require-long-path.js directly above).
         'test/parallel/test-vm-global-property-enumerator.js',
         'test/parallel/test-path-win32-normalize-device-names.js',
+        # NDS3 cycle-9 dossier wave (2026-06-09): source-confirmed +
+        # adversarially verified. test-fileurltopathbuffer.js opens with
+        # `if (common.isMacOS) common.skip('Test unsupported on OSX')`, so on the
+        # macOS host it self-skips before exercising any runtime API (census
+        # outcome=skip). A host-platform self-skip is exactly this denominator.
+        'test/parallel/test-fileurltopathbuffer.js',
+    }),
+    ('upstream_or_platform_boundary', 'host_network_name_resolution_required', 'unsupported'): frozenset({
+        # NDS3 cycle-9 dossier wave (2026-06-09): source-confirmed +
+        # adversarially verified (not refuted). dnsPromises.lookupService(
+        # '127.0.0.1', 22) reverse-resolves via getnameinfo against a live host
+        # resolver and asserts the 'ssh'/'22' service name; the multi-tenant
+        # isolate denies ambient host network access (census shows code 'EPERM').
+        'test/parallel/test-dns-lookupService-promises.js',
+    }),
+    ('upstream_or_platform_boundary', 'host_global_timezone_mutation_sandboxed', 'unsupported'): frozenset({
+        # NDS3 cycle-9 dossier wave (2026-06-09): source-confirmed +
+        # adversarially verified (not refuted). Sets process.env.TZ then asserts
+        # Date.toString() reflects the new zone; Nimbus's tenant-scoped shared-env
+        # proxy (op_nimbus_runtime_shared_env_set) does not fire the host
+        # tzset/ICU timezone-change notification, because a single tenant must not
+        # mutate process-global ICU state shared across all tenants in the isolate.
+        'test/parallel/test-process-env-tz.js',
+    }),
+    ('upstream_or_platform_boundary', 'isolate_execution_termination_watchdog', 'unsupported'): frozenset({
+        # NDS3 cycle-9 dossier wave (2026-06-09): source-confirmed +
+        # adversarially verified (not refuted). Builds a 1000-deep circular graph
+        # and calls util.inspect(obj, {depth: Infinity}); census message is
+        # "Cannot evaluate dynamically imported module, because JavaScript
+        # execution has been terminated" - the multi-tenant isolate execution
+        # deadline (a fairness invariant) terminates the unbounded traversal.
+        'test/parallel/test-util-inspect-long-running.js',
+    }),
+    ('upstream_or_platform_boundary', 'cross_version_divergent_api_shape', 'unsupported'): frozenset({
+        # NDS3 cycle-9 dossier wave (2026-06-09): source-confirmed +
+        # adversarially verified (not refuted). The node22 fixture asserts a
+        # moduleRequests entry WITHOUT a 'phase' field, while the node24 fixture
+        # asserts `phase: 'evaluation'`; the single Nimbus runtime implements one
+        # current shape, so the stale node22-lane assertion cannot be satisfied
+        # without downgrading the API. Same version-divergence class handled by
+        # the newer-than-lane reclassification wave.
+        'test/parallel/test-vm-module-modulerequests.js',
     }),
     ('upstream_or_platform_boundary', 'pending_deprecation_flag_gated_warning_emission', 'unsupported'): frozenset({
         # NDS3 wave-3 disposition (2026-06-06): `// Flags: --pending-deprecation`
@@ -775,6 +826,10 @@ WAVE2_REASON_TEXT = {
     'experimental_shadow_realm_flag_gated': "fixture is gated by --experimental-shadow-realm and asserts the ShadowRealm global, an experimental off-by-default Node feature the pinned deno_core fork (and upstream Deno) does not enable via the harmony flag set; the multi-tenant isolate cannot honor a per-invocation experimental opt-in flag, so the global is intentionally absent and the assertion is not part of the required default Application surface",
     'host_owned_network_socket_surface': "fixture binds or connects a real host TCP/UDP/TLS socket (or listening server) and asserts the host libuv async-resource handle graph or socket-level address/error behavior; the default multi-tenant V8 isolate denies ambient host network access, so the socket-backed behavior is host-owned and must fail closed unless a host-capable (sandbox-backed service / microVM) backend is selected",
     'host_owned_system_resource_surface': "fixture reads or mutates a host-owned system resource (host process scheduling priority via os.getPriority/os.setPriority, or host free-memory introspection via process.availableMemory) that the default multi-tenant isolate denies as host sys access; isolate-safe-capable only through a host-capable backend, so it is a host-owned non-isolate surface rather than required default support",
+    'host_network_name_resolution_required': "fixture performs host network name resolution (dns.lookupService/getnameinfo reverse-DNS against a live resolver) and asserts the resolved service/hostname; the default multi-tenant isolate denies ambient host network access (the call fails closed with EPERM), so the name-resolution behavior is host-owned and not part of the required default Application surface",
+    'host_global_timezone_mutation_sandboxed': "fixture mutates the process-global timezone via process.env.TZ and asserts Date formatting reflects the change, which requires re-running the host tzset/ICU timezone-change notification; Nimbus replaces process.env with a tenant-scoped shared-env proxy so a single tenant cannot mutate process-global ICU timezone state shared across all tenants in the isolate, making the assertion a multi-tenant isolation boundary rather than required default behavior",
+    'isolate_execution_termination_watchdog': "fixture deliberately drives an unbounded-cost operation (a 1000-deep circular graph through util.inspect with depth:Infinity) that trips the multi-tenant isolate's execution-termination watchdog ('JavaScript execution has been terminated'); the wall-clock execution deadline is a Nimbus fairness invariant the isolate must enforce, so the fixture cannot complete as default Application behavior",
+    'cross_version_divergent_api_shape': "fixture asserts a Node-version-specific API shape that diverges across lanes (this lane's fixture expects an older moduleRequests shape without the newer 'phase' field) while the single Nimbus runtime implements one current shape; the stale-lane assertion cannot be satisfied without downgrading the implemented API, so it is a version-divergence boundary rather than a required gap",
 }
 
 
@@ -817,6 +872,12 @@ _WP_HOST_NETWORK_SOCKET = (
     "host_owned_network_socket_surface",
     "diagnostic_stub",
     WAVE2_REASON_TEXT["host_owned_network_socket_surface"],
+)
+_WP_UPSTREAM_PLATFORM = (
+    "upstream_or_platform_boundary",
+    "upstream_or_platform_boundary",
+    "unsupported",
+    WAVE2_REASON_TEXT["upstream_or_platform_boundary"],
 )
 
 # Watchpoint-pinned fixtures whose CORE assertion is structurally outside the
@@ -862,6 +923,20 @@ WATCHPOINT_STRUCTURAL_RECLASSIFICATIONS = {
     "test/parallel/test-dgram-udp6-send-default-host.js": _WP_HOST_NETWORK_SOCKET,
     "test/parallel/test-https-connect-address-family.js": _WP_HOST_NETWORK_SOCKET,
     "test/parallel/test-http-agent-reuse-drained-socket-only.js": _WP_HOST_PROCESS_CONTROL,
+    # NDS3 cycle-9 dossier wave (2026-06-09): node22 pins each as a
+    # rust_watchpoint expected-failure while the opposite lanes route the
+    # identical fixture through requires_unpromoted to the same disposition.
+    # Source-confirmed + adversarially verified (analyze+refute, not refuted):
+    #   test-fs-readdir-buffer.js: blocking call is
+    #     fs.readdir(Buffer.from('/dev'), {encoding:'buffer'}) which needs host
+    #     read access to /dev (census: "Requires read access to \"/dev\""); the
+    #     node24/node26 lanes already classify it upstream_or_platform_boundary
+    #     (it also self-skips on non-macOS). Mirror that tuple.
+    #   test-process-finalization.mjs: spawnSyncAndAssert(process.execPath,
+    #     ['--expose-gc', file], {cwd}) executes a real execPath subprocess with
+    #     a chosen cwd, the canonical host-process-control surface.
+    "test/parallel/test-fs-readdir-buffer.js": _WP_UPSTREAM_PLATFORM,
+    "test/parallel/test-process-finalization.mjs": _WP_HOST_PROCESS_CONTROL,
 }
 
 
