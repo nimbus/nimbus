@@ -2190,7 +2190,6 @@
         "test/parallel/test-parse-test-envs.js",
         "test/parallel/test-parse-test-only-envs.js",
         "test/parallel/test-pending-deprecation.js",
-        "test/parallel/test-performance-gc.js",
         "test/parallel/test-performance-many-marks.js",
         "test/parallel/test-performance-nodetiming-uvmetricsinfo.js",
         "test/parallel/test-permission-allow-addons-cli.js",

@@ -3037,7 +3037,13 @@ pub(super) fn default_postlude_behavior_for_fixture(
         | "test/parallel/test-process-exit-from-before-exit.js"
         | "test/parallel/test-file-write-stream5.js"
         | "test/parallel/test-stream-writable-samecb-singletick.js"
-        | "test/parallel/test-process-env-deprecation.js" => {
+        | "test/parallel/test-process-env-deprecation.js"
+        // test-performance-gc registers a PerformanceObserver for 'gc' entries
+        // and asserts on them at beforeExit; the GC entry and beforeExit
+        // emission are genuinely supported (node22 already greens). The node24
+        // lane only needs the single-emit beforeExit postlude against the
+        // settled loop, matching the other promoted lifecycle fixtures.
+        | "test/parallel/test-performance-gc.js" => {
             Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain)
         }
         // test/async-hooks/test-async-await.js registers `process.on('beforeExit',
@@ -3529,3 +3535,4 @@ include!("cases/nds3_wave25_staging.rs");
 include!("cases/nds3_cycle10.rs");
 include!("cases/nds3_cycle12.rs");
 include!("cases/nds3_cycle12c.rs");
+include!("cases/nds3_cycle12d.rs");
