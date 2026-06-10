@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the Coverage Acceleration plan
-# (`docs/plans/coverage-acceleration-plan.md`).
+# (`docs/private/plans/coverage-acceleration-plan.md`).
 #
 # Exits 0 iff every condition in the plan's Completion Gate is satisfied.
 # Ships in CA0 so /goal is verifiable from day one; CA1-CA4 progressively
@@ -13,10 +13,10 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN_ACTIVE="docs/plans/coverage-acceleration-plan.md"
-PLAN_ARCHIVED="docs/plans/archive/coverage-acceleration-plan.md"
+PLAN_ACTIVE="docs/private/plans/coverage-acceleration-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/coverage-acceleration-plan.md"
 AGENTS_MD="CLAUDE.md"  # symlinks to AGENTS.md
-PROOF_DIR="docs/plans/proof/coverage-acceleration"
+PROOF_DIR="docs/private/plans/proof/coverage-acceleration"
 PROOF_CA0="${PROOF_DIR}/ca0-baseline.md"
 
 COMPOSITE_ACTION=".github/actions/setup-rust-cached/action.yml"

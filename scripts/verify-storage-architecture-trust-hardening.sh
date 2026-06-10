@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for
-# docs/plans/archive/storage-architecture-trust-hardening-plan.md.
+# docs/private/plans/archive/storage-architecture-trust-hardening-plan.md.
 #
 # This gate is intentionally behavior-biased: proof files are necessary, but
 # each completed phase must also leave typed code, tests, or docs that can be
@@ -11,9 +11,9 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/plans/archive/storage-architecture-trust-hardening-plan.md"
-PROOF_DIR="docs/plans/proof/storage-architecture-trust-hardening"
-DEBT_DOC="docs/technical-debt.md"
+PLAN="docs/private/plans/archive/storage-architecture-trust-hardening-plan.md"
+PROOF_DIR="docs/private/plans/proof/storage-architecture-trust-hardening"
+DEBT_DOC="docs/private/technical-debt.md"
 
 PASS=0
 FAIL=0
@@ -68,10 +68,10 @@ if [ -f "${PLAN}" ] \
    && proof_done "${PROOF_DIR}/sath0-review.md" \
    && [ -x "scripts/verify-storage-architecture-trust-hardening.sh" ] \
    && [ "${SATH_DEBT_COUNT}" -ge 8 ] \
-   && grep -q "${PLAN}" docs/plans/README.md; then
+   && grep -q "${PLAN}" docs/private/plans/README.md; then
   pass "SATH0 control-plane artifacts exist"
 else
-  fail "SATH0 artifacts incomplete" "Expected plan, executable verifier, docs/plans routing, sath0 proof with status: done, and >= 8 SATH debt rows"
+  fail "SATH0 artifacts incomplete" "Expected plan, executable verifier, docs/private/plans routing, sath0 proof with status: done, and >= 8 SATH debt rows"
 fi
 
 step 2 "Tenant event journal covers replay-affecting state"
@@ -175,10 +175,10 @@ else
 fi
 
 step 11 "Operator and architecture docs describe the storage trust contract"
-if grep -q "tenant event journal" docs/architecture/storage/persistence-engine-baseline.md \
-   && grep -q "StorageHealthDiagnostic" docs/operating/storage-backends.md \
-   && grep -q "retention floor" docs/architecture/storage/persistence-engine-baseline.md \
-   && grep -q "storage format version" docs/architecture/storage/persistence-engine-baseline.md \
+if grep -q "tenant event journal" docs/private/staging/architecture/storage/persistence-engine-baseline.md \
+   && grep -q "StorageHealthDiagnostic" docs/private/staging/operating/storage-backends.md \
+   && grep -q "retention floor" docs/private/staging/architecture/storage/persistence-engine-baseline.md \
+   && grep -q "storage format version" docs/private/staging/architecture/storage/persistence-engine-baseline.md \
    && proof_done "${PROOF_DIR}/sath10-docs-operator-evidence.md"; then
   pass "Operator docs and architecture docs are updated"
 else

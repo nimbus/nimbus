@@ -4,7 +4,7 @@
 # Tests platform detection, argument parsing, and verification logic
 # without requiring actual installations or network access.
 #
-# See docs/plans/install-script-plan.md for the verification contract.
+# See docs/private/plans/install-script-plan.md for the verification contract.
 
 set -euo pipefail
 

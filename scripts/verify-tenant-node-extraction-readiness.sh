@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the Tenant and Node Crate Extraction
-# Readiness plan (`docs/plans/tenant-and-node-crate-extraction-readiness-plan.md`).
+# Readiness plan (`docs/private/plans/tenant-and-node-crate-extraction-readiness-plan.md`).
 #
 # Run from the repo root.
 
@@ -9,8 +9,8 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/plans/tenant-and-node-crate-extraction-readiness-plan.md"
-PROOF_DIR="docs/plans/proof/tenant-node-extraction-readiness"
+PLAN="docs/private/plans/tenant-and-node-crate-extraction-readiness-plan.md"
+PROOF_DIR="docs/private/plans/proof/tenant-node-extraction-readiness"
 TENANT_CRATE="crates/nimbus-tenant"
 NODE_CRATE="crates/nimbus-node"
 SERVER_CRATE="crates/nimbus-server"

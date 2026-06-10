@@ -12,7 +12,7 @@ matching signatures.
 > The compatibility surface is intentionally narrower than a blanket
 > "Firestore-compatible" claim. Every supported feature is backed by focused
 > server contract tests and the package selftest. Check the
-> [Firebase / Firestore compatibility matrix](../../docs/adapters/firebase/compatibility.md)
+> [Firebase / Firestore compatibility matrix](../../docs/private/staging/adapters/firebase/compatibility.md)
 > before relying on a specific feature.
 
 ## Entry points
@@ -63,7 +63,7 @@ const unsubscribe = onSnapshot(collection(db, "messages"), (snap) => {
 
 Authentication is supplied through `FirestoreSettings`/`initializeFirestore`
 via a token fetcher — see the
-[Firebase application auth contract](../../docs/adapters/firebase/auth-contract.md).
+[Firebase application auth contract](../../docs/private/staging/adapters/firebase/auth-contract.md).
 
 ## Codegen
 
@@ -84,7 +84,7 @@ npm run typecheck --workspace @nimbus/firebase   # type-only selftest pass
 
 ## Related
 
-- [Firebase / Firestore compatibility](../../docs/adapters/firebase/compatibility.md)
-- [Migration guide](../../docs/adapters/firebase/migration.md)
-- [Application auth contract](../../docs/adapters/firebase/auth-contract.md)
-- [WebSocket `Listen` surface](../../docs/adapters/firebase/websocket-listen.md)
+- [Firebase / Firestore compatibility](../../docs/private/staging/adapters/firebase/compatibility.md)
+- [Migration guide](../../docs/private/staging/adapters/firebase/migration.md)
+- [Application auth contract](../../docs/private/staging/adapters/firebase/auth-contract.md)
+- [WebSocket `Listen` surface](../../docs/private/staging/adapters/firebase/websocket-listen.md)

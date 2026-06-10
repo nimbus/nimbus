@@ -209,12 +209,12 @@ fi
 
 for current_guidance in \
   "${repo_root}/README.md" \
-  "${repo_root}/docs/operating/container-image.md" \
-  "${repo_root}/docs/operating/encryption.md" \
-  "${repo_root}/docs/plans/windows-machine-support-plan.md" \
-  "${repo_root}/docs/plans/research/bundle-distribution-from-object-storage.md" \
-  "${repo_root}/docs/plans/research/runtime-file-storage-surface.md" \
-  "${repo_root}/docs/plans/research/nimbus-agent-prompt.md"; do
+  "${repo_root}/docs/private/staging/operating/container-image.md" \
+  "${repo_root}/docs/private/staging/operating/encryption.md" \
+  "${repo_root}/docs/private/plans/windows-machine-support-plan.md" \
+  "${repo_root}/docs/private/plans/research/bundle-distribution-from-object-storage.md" \
+  "${repo_root}/docs/private/plans/research/runtime-file-storage-surface.md" \
+  "${repo_root}/docs/private/plans/research/nimbus-agent-prompt.md"; do
   assert_no_stale_nimbus_serve_command "${current_guidance}"
   assert_not_contains "${current_guidance}" "--privileged"
   assert_not_contains "${current_guidance}" "ghcr.io/nimbus/nimbus:latest"

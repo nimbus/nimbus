@@ -143,7 +143,7 @@ connects the two independent subsystems below it:
   path over the full spec rather than separate image/build launch APIs.
 
 The canonical resource vocabulary is in
-[`docs/architecture/sandbox/service-sandbox-session-model.md`](docs/architecture/sandbox/service-sandbox-session-model.md):
+[`docs/private/staging/architecture/sandbox/service-sandbox-session-model.md`](docs/private/staging/architecture/sandbox/service-sandbox-session-model.md):
 services are addressed by tenant plus service name; sandboxes are
 id/handle-addressed; future sessions are scoped leases or interaction channels
 targeting either a service name or a sandbox id; runtime isolates are invocation
@@ -553,7 +553,7 @@ storage types directly.
 - `runtime/bootstrap/state.rs` — installation of host bridge, cancellation
   state, and shared permit state into V8 `OpState`, plus runtime
   timeout-controller ownership.
-- `docs/architecture/runtime/engine-seam.md` — active architecture reference
+- `docs/private/staging/architecture/runtime/engine-seam.md` — active architecture reference
   for keeping Deno/V8-specific VM state below the runtime backend boundary and
   for adding future engines such as Bun/JSC or wasmtime without making their
   setup rules part of the generic runtime contract.
@@ -1053,7 +1053,7 @@ round trips.
 
 For the deeper provider-topology baselines and readiness gates for
 `PostgresProvider`, `LibsqlReplicaProvider`, and `MySqlProvider`, see
-[docs/architecture/storage/provider-topologies.md](docs/architecture/storage/provider-topologies.md).
+[docs/private/staging/architecture/storage/provider-topologies.md](docs/private/staging/architecture/storage/provider-topologies.md).
 
 ---
 
@@ -1243,7 +1243,7 @@ At the architecture level, the key rules are:
 The backend layouts, MVCC versioning contract, durable-journal baseline,
 serving-snapshot direction, shadow-materializer posture, diagnostics, and
 persistence-specific design decisions now live in
-[docs/architecture/storage/persistence-engine-baseline.md](docs/architecture/storage/persistence-engine-baseline.md).
+[docs/private/staging/architecture/storage/persistence-engine-baseline.md](docs/private/staging/architecture/storage/persistence-engine-baseline.md).
 
 ---
 
@@ -1251,7 +1251,7 @@ persistence-specific design decisions now live in
 
 Persistence-engine decisions that would otherwise dominate this document now
 live in
-[docs/architecture/storage/persistence-engine-baseline.md](docs/architecture/storage/persistence-engine-baseline.md).
+[docs/private/staging/architecture/storage/persistence-engine-baseline.md](docs/private/staging/architecture/storage/persistence-engine-baseline.md).
 That reference owns the settled backend layouts, durable-journal baseline,
 bootstrap and replay contract, MVCC versioning contract, CDC/PITR/retention
 posture, serving-snapshot direction, shadow-materializer posture, format
@@ -1418,12 +1418,12 @@ test files.
 For the deeper verification topology — simulation seams, harness ownership,
 generated-history oracles, differential runners, consistency reports, and
 named `pr` / `nightly` / `repro` corpora — see
-[docs/architecture/testing/verification-architecture.md](docs/architecture/testing/verification-architecture.md).
+[docs/private/staging/architecture/testing/verification-architecture.md](docs/private/staging/architecture/testing/verification-architecture.md).
 For the proof-discipline guidance that sits above those mechanics — semantic
 waits, bounded budgets, deterministic hardship, and CI investigation — see
-[docs/architecture/testing/reliability-posture.md](docs/architecture/testing/reliability-posture.md)
+[docs/private/staging/architecture/testing/reliability-posture.md](docs/private/staging/architecture/testing/reliability-posture.md)
 and
-[docs/architecture/testing/ci-failure-investigation.md](docs/architecture/testing/ci-failure-investigation.md).
+[docs/private/staging/architecture/testing/ci-failure-investigation.md](docs/private/staging/architecture/testing/ci-failure-investigation.md).
 
 The first composite-index slice is also in place behind that verification
 discipline. Table schemas now treat indexes as `IndexDefinition { name, fields

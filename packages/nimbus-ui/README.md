@@ -23,6 +23,6 @@ Common commands:
   operator's real local profile.
 
 The implementation plans are archived as
-`docs/plans/archive/desktop-ui-plan.md` (Phase 1 — embedded operator console)
-and `docs/plans/archive/desktop-shell-plan.md` (Phase 2 — native Electron
+`docs/private/plans/archive/desktop-ui-plan.md` (Phase 1 — embedded operator console)
+and `docs/private/plans/archive/desktop-shell-plan.md` (Phase 2 — native Electron
 shell at `nimbus/desktop`).

@@ -27,6 +27,13 @@ export default defineConfig({
         '@fontsource-variable/jetbrains-mono',
         './src/styles/custom.css',
       ],
+      sidebar: [
+        { label: 'Get started', items: [{ autogenerate: { directory: 'get-started' } }] },
+        { label: 'Developers', items: [{ autogenerate: { directory: 'developers' } }] },
+        { label: 'Operators', items: [{ autogenerate: { directory: 'operators' } }] },
+        { label: 'Concepts', items: [{ autogenerate: { directory: 'concepts' } }] },
+        { label: 'Reference', items: [{ autogenerate: { directory: 'reference' } }] },
+      ],
       plugins: [
         starlightLlmsTxt({
           projectName: 'Nimbus',

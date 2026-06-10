@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the CI caching canonicalization
-# plan (`docs/plans/ci-caching-canonicalization-plan.md`).
+# plan (`docs/private/plans/ci-caching-canonicalization-plan.md`).
 #
 # Exits 0 iff every condition in the plan's Completion Gate is satisfied.
 # This script is the single-shell-exit-code stop condition for the
@@ -17,11 +17,11 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN_ACTIVE="docs/plans/ci-caching-canonicalization-plan.md"
-PLAN_ARCHIVED="docs/plans/archive/ci-caching-canonicalization-plan.md"
-OPERATING_DOC="docs/operating/ci-caching.md"
+PLAN_ACTIVE="docs/private/plans/ci-caching-canonicalization-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/ci-caching-canonicalization-plan.md"
+OPERATING_DOC="docs/private/staging/operating/ci-caching.md"
 AGENTS_MD="CLAUDE.md"  # symlinks to AGENTS.md
-PROOF_DIR="docs/plans/proof/ci-caching-canonicalization"
+PROOF_DIR="docs/private/plans/proof/ci-caching-canonicalization"
 PROOF_BASELINE_CACHES="${PROOF_DIR}/baseline-cache-state.json"
 PROOF_BASELINE_TIMINGS="${PROOF_DIR}/baseline-coverage-timings.md"
 PROOF_CC1="${PROOF_DIR}/cc1-coverage-only-stats.md"
@@ -210,7 +210,7 @@ else
   fail "${CI_YML} missing"
 fi
 
-# 7. Caching contract documented at docs/operating/ci-caching.md.
+# 7. Caching contract documented at docs/private/staging/operating/ci-caching.md.
 step 7 "Caching contract doc exists"
 if [ -f "${OPERATING_DOC}" ]; then
   pass "${OPERATING_DOC} exists"

@@ -217,7 +217,7 @@ pub(super) fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport
 
     markdown.push_str("## Operator Assumptions\n\n");
     markdown.push_str(
-        "- Postgres tenant persistence is benchmarked with the global usage/control path still local and redb-backed.\n- The engine-path benchmark includes provider-owned pooling, typed construction, scheduler/journal semantics, and the provider hint-listener wake path, but notifications remain wake hints rather than the authoritative journal contract.\n- Companion operational drills for reconnect recovery, restart recovery, transient backend termination, unloaded-tenant scheduler wake, and tenant cleanup are covered by focused storage/engine verification and recorded in `/Users/jack/src/github.com/nimbus/nimbus/docs/plans/archive/postgres-storage-provider-plan.md`.\n",
+        "- Postgres tenant persistence is benchmarked with the global usage/control path still local and redb-backed.\n- The engine-path benchmark includes provider-owned pooling, typed construction, scheduler/journal semantics, and the provider hint-listener wake path, but notifications remain wake hints rather than the authoritative journal contract.\n- Companion operational drills for reconnect recovery, restart recovery, transient backend termination, unloaded-tenant scheduler wake, and tenant cleanup are covered by focused storage/engine verification and recorded in `/Users/jack/src/github.com/nimbus/nimbus/docs/private/plans/archive/postgres-storage-provider-plan.md`.\n",
     );
 
     markdown

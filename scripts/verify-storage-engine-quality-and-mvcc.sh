@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Bootstrap and completion-gate verifier for
-# docs/plans/storage-engine-quality-and-mvcc-plan.md.
+# docs/private/plans/storage-engine-quality-and-mvcc-plan.md.
 #
 # SEQ0 intentionally starts with control-plane checks. Later SEQ phases must
 # extend this script as their proof files, tests, benchmarks, and docs land.
@@ -10,8 +10,8 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/plans/storage-engine-quality-and-mvcc-plan.md"
-PROOF_DIR="docs/plans/proof/storage-engine-quality-and-mvcc"
+PLAN="docs/private/plans/storage-engine-quality-and-mvcc-plan.md"
+PROOF_DIR="docs/private/plans/proof/storage-engine-quality-and-mvcc"
 SEQ0_PROOF="${PROOF_DIR}/seq0-design-refresh.md"
 SEQ1_PROOF="${PROOF_DIR}/seq1-mvcc-semantics.md"
 SEQ2_PROOF="${PROOF_DIR}/seq2-versioned-registries.md"
@@ -27,12 +27,12 @@ SEQ11_PROOF="${PROOF_DIR}/seq11-deterministic-parity.md"
 SEQ12_PROOF="${PROOF_DIR}/seq12-diagnostics-knobs.md"
 SEQ13_PROOF="${PROOF_DIR}/seq13-performance.md"
 SEQ14_PROOF="${PROOF_DIR}/seq14-closeout.md"
-DEBT_DOC="docs/technical-debt.md"
+DEBT_DOC="docs/private/technical-debt.md"
 SATH_VERIFIER="scripts/verify-storage-architecture-trust-hardening.sh"
-EMBEDDED_BENCH_REPORT="docs/plans/research/sqlite-storage-benchmark-report.md"
-POSTGRES_BENCH_REPORT="docs/plans/research/postgres-provider-benchmark-report.md"
-MYSQL_BENCH_REPORT="docs/plans/research/mysql-provider-benchmark-report.md"
-LIBSQL_BENCH_REPORT="docs/plans/research/sqlite-replica-provider-benchmark-report.md"
+EMBEDDED_BENCH_REPORT="docs/private/plans/research/sqlite-storage-benchmark-report.md"
+POSTGRES_BENCH_REPORT="docs/private/plans/research/postgres-provider-benchmark-report.md"
+MYSQL_BENCH_REPORT="docs/private/plans/research/mysql-provider-benchmark-report.md"
+LIBSQL_BENCH_REPORT="docs/private/plans/research/sqlite-replica-provider-benchmark-report.md"
 SEQ0_EMBEDDED_POINT_READ_REPORT="${PROOF_DIR}/seq0-embedded-point-read-baseline.md"
 
 PASS=0
@@ -97,7 +97,7 @@ if [ -f "${PLAN}" ] \
    && [ -f "${SEQ13_PROOF}" ] \
    && [ -f "${SEQ14_PROOF}" ] \
    && [ -x "scripts/verify-storage-engine-quality-and-mvcc.sh" ] \
-   && grep -q "${PLAN}" docs/plans/README.md \
+   && grep -q "${PLAN}" docs/private/plans/README.md \
    && [ "${SEQ_DEBT_COUNT}" -ge 5 ]; then
   pass "SEQ control-plane artifacts exist"
 else
@@ -797,11 +797,11 @@ PERFORMANCE_OUTPUT="$(mktemp "${TMPDIR:-/tmp}/seq-performance.XXXXXX")"
 if contains "${PLAN}" 'SEQ13 | `done`' \
    && contains "${SEQ13_PROOF}" '^status: done$' \
    && contains "${SEQ13_PROOF}" 'seq13 performance budget' \
-   && contains "${SEQ13_PROOF}" 'docs/plans/research/sqlite-storage-benchmark-report.md' \
-   && contains "${SEQ13_PROOF}" 'docs/plans/proof/storage-engine-quality-and-mvcc/seq0-embedded-point-read-baseline.md' \
-   && contains "${SEQ13_PROOF}" 'docs/plans/research/postgres-provider-benchmark-report.md' \
-   && contains "${SEQ13_PROOF}" 'docs/plans/research/mysql-provider-benchmark-report.md' \
-   && contains "${SEQ13_PROOF}" 'docs/plans/research/sqlite-replica-provider-benchmark-report.md' \
+   && contains "${SEQ13_PROOF}" 'docs/private/plans/research/sqlite-storage-benchmark-report.md' \
+   && contains "${SEQ13_PROOF}" 'docs/private/plans/proof/storage-engine-quality-and-mvcc/seq0-embedded-point-read-baseline.md' \
+   && contains "${SEQ13_PROOF}" 'docs/private/plans/research/postgres-provider-benchmark-report.md' \
+   && contains "${SEQ13_PROOF}" 'docs/private/plans/research/mysql-provider-benchmark-report.md' \
+   && contains "${SEQ13_PROOF}" 'docs/private/plans/research/sqlite-replica-provider-benchmark-report.md' \
    && contains "${SEQ13_PROOF}" 'latest point reads' \
    && contains "${SEQ13_PROOF}" 'historical point reads' \
    && contains "${SEQ13_PROOF}" 'historical index pagination' \
@@ -834,20 +834,20 @@ fi
 
 step 20 "Closeout requires architecture docs and PR"
 if contains "${PLAN}" 'ARCHITECTURE.md' \
-   && contains "${PLAN}" 'docs/architecture/storage/persistence-engine-baseline.md' \
+   && contains "${PLAN}" 'docs/private/staging/architecture/storage/persistence-engine-baseline.md' \
    && contains "${PLAN}" 'pull request' \
    && contains "${PLAN}" 'pushed branch' \
    && contains "${PLAN}" 'draft PR' \
    && contains "${SEQ14_PROOF}" '^status: done$' \
    && contains "${SEQ14_PROOF}" 'ARCHITECTURE.md' \
-   && contains "${SEQ14_PROOF}" 'docs/architecture/storage/persistence-engine-baseline.md' \
-   && contains "${SEQ14_PROOF}" 'docs/operating/storage-backends.md' \
-   && contains "${SEQ14_PROOF}" 'docs/adapters/convex/compatibility.md' \
-   && contains "${SEQ14_PROOF}" 'docs/adapters/firebase/compatibility.md' \
-   && contains "${SEQ14_PROOF}" 'docs/adapters/cloud-functions/compatibility.md' \
-   && contains "${SEQ14_PROOF}" 'docs/adapters/mongodb/operations.md' \
-   && contains "${SEQ14_PROOF}" 'docs/adapters/dynamodb/enterprise-readiness.md' \
-   && contains "${SEQ14_PROOF}" 'docs/adapters/native/README.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/staging/architecture/storage/persistence-engine-baseline.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/staging/operating/storage-backends.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/staging/adapters/convex/compatibility.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/staging/adapters/firebase/compatibility.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/staging/adapters/cloud-functions/compatibility.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/staging/adapters/mongodb/operations.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/staging/adapters/dynamodb/enterprise-readiness.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/staging/adapters/native/README.md' \
    && contains "${SEQ14_PROOF}" 'Draft PR URL: `https://github.com/nimbus/nimbus/pull/13`' \
    && contains "${SEQ14_PROOF}" 'Branch push and draft PR creation are complete' \
    && contains "${SEQ14_PROOF}" '20 passed, 0 failed' \
@@ -869,9 +869,9 @@ if contains "${PLAN}" 'ARCHITECTURE.md' \
    && contains "${SEQ14_PROOF}" 'git diff --check' \
    && contains "${SEQ14_PROOF}" 'libSQL diagnostics freshness bug is fixed' \
    && contains "ARCHITECTURE.md" 'latest-row plus version-history architecture' \
-   && contains "docs/architecture/storage/persistence-engine-baseline.md" 'MVCC, PITR, CDC, and retention contract' \
-   && contains "docs/architecture/storage/persistence-engine-baseline.md" 'mysql/table_catalog.rs' \
-   && contains "docs/architecture/storage/persistence-engine-baseline.md" 'postgres/write_schema_events.rs' \
+   && contains "docs/private/staging/architecture/storage/persistence-engine-baseline.md" 'MVCC, PITR, CDC, and retention contract' \
+   && contains "docs/private/staging/architecture/storage/persistence-engine-baseline.md" 'mysql/table_catalog.rs' \
+   && contains "docs/private/staging/architecture/storage/persistence-engine-baseline.md" 'postgres/write_schema_events.rs' \
    && contains "${PLAN}" 'SQL-family production storage roots stay below' \
    && contains "${PLAN}" 'crates/nimbus-storage/src/mysql/table_catalog.rs' \
    && contains "${PLAN}" 'crates/nimbus-storage/src/postgres/write_schema_events.rs' \
@@ -886,14 +886,14 @@ if contains "${PLAN}" 'ARCHITECTURE.md' \
    && line_count_at_most "crates/nimbus-storage/src/mysql/backend.rs" 1499 \
    && line_count_at_most "crates/nimbus-storage/src/postgres/backend.rs" 1499 \
    && line_count_at_most "crates/nimbus-storage/src/postgres/write.rs" 1499 \
-   && contains "docs/operating/storage-backends.md" 'Historical reads use retained' \
-   && contains "docs/adapters/convex/compatibility.md" 'Storage Semantics Inherited By Convex' \
-   && contains "docs/adapters/firebase/compatibility.md" 'Storage Semantics Inherited By Firebase' \
-   && contains "docs/adapters/cloud-functions/compatibility.md" 'Storage Semantics Inherited By Cloud Functions' \
-   && contains "docs/adapters/mongodb/operations.md" 'Storage Semantics' \
-   && contains "docs/adapters/mongodb/operations.md" 'CommandNotSupported' \
-   && contains "docs/adapters/native/README.md" 'not implicitly' \
-   && contains "docs/adapters/native/README.md" 'UnsupportedAdapter' \
+   && contains "docs/private/staging/operating/storage-backends.md" 'Historical reads use retained' \
+   && contains "docs/private/staging/adapters/convex/compatibility.md" 'Storage Semantics Inherited By Convex' \
+   && contains "docs/private/staging/adapters/firebase/compatibility.md" 'Storage Semantics Inherited By Firebase' \
+   && contains "docs/private/staging/adapters/cloud-functions/compatibility.md" 'Storage Semantics Inherited By Cloud Functions' \
+   && contains "docs/private/staging/adapters/mongodb/operations.md" 'Storage Semantics' \
+   && contains "docs/private/staging/adapters/mongodb/operations.md" 'CommandNotSupported' \
+   && contains "docs/private/staging/adapters/native/README.md" 'not implicitly' \
+   && contains "docs/private/staging/adapters/native/README.md" 'UnsupportedAdapter' \
    && contains "packages/nimbus-ui/package.json" 'node ../codegen/src/cli.mjs --app .' \
    && ! grep -q 'convex codegen --app' packages/nimbus-ui/package.json Makefile; then
   pass "Plan closeout records architecture docs, adapter docs, pushed branch, draft PR, verification, and final proof"

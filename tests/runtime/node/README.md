@@ -57,7 +57,7 @@ artifact for each supported LTS lane plus the Node26 current-line lane, and
 zero required canary gaps in the published dashboard.
 
 The Node FaaS compatibility profile lives at
-`docs/architecture/runtime/node-faas-compatibility-profile.json`. It is the
+`docs/private/staging/architecture/runtime/node-faas-compatibility-profile.json`. It is the
 machine-readable support vocabulary for realistic functions-as-a-service and
 Convex-compatible `"use node"` app support. Its verifier rejects unknown support
 statuses, doc claims without evidence refs, unknown evidence refs, missing
@@ -74,7 +74,7 @@ Generated evidence lands under `target/node-compat/`, including:
 - aggregated dashboard summaries under `target/node-compat/dashboard/`
 - trend snapshots under `target/node-compat/trends/`
 - curated publish snapshots under
-  `docs/architecture/runtime/node-compat-evidence/latest/` or a custom
+  `docs/private/staging/architecture/runtime/node-compat-evidence/latest/` or a custom
   `PUBLISH_ROOT`
 
 All generated Node test check, canary, oracle, and dashboard summaries now carry the

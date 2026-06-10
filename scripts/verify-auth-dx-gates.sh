@@ -2,7 +2,7 @@
 # Desktop Auth & Sign-in DX regression gates.
 #
 # These checks lock in the cross-CLI microcopy decisions from
-# `docs/plans/desktop-auth-dx-plan.md` (DA1-DA6). They catch microcopy drift
+# `docs/private/plans/desktop-auth-dx-plan.md` (DA1-DA6). They catch microcopy drift
 # at lint-time before it reaches the operator console.
 #
 # Gates:

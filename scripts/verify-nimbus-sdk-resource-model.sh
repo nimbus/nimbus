@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for
-# docs/plans/nimbus-sdk-resource-model-plan.md.
+# docs/private/plans/nimbus-sdk-resource-model-plan.md.
 #
 # SRM0 ships this as a registration and model verifier. Later SRM phases add
 # concrete route/SDK/resource checks before marking their phases done.
@@ -10,16 +10,16 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/plans/nimbus-sdk-resource-model-plan.md"
-MODEL_DOC="docs/architecture/sandbox/service-sandbox-session-model.md"
-PLANS_README="docs/plans/README.md"
+PLAN="docs/private/plans/nimbus-sdk-resource-model-plan.md"
+MODEL_DOC="docs/private/staging/architecture/sandbox/service-sandbox-session-model.md"
+PLANS_README="docs/private/plans/README.md"
 AGENTS_MD="AGENTS.md"
 SDK_PACKAGE="packages/nimbus/package.json"
 SDK_ROOT="packages/nimbus/src/index.ts"
 SDK_SELFTEST="packages/nimbus/src/selftest.mjs"
 SDK_SURFACE_CONTRACT="packages/nimbus/src/capability_surface_contract.mjs"
 ROOT_SDK_POLICY="scripts/nimbus-root-sdk-artifact-policy.mjs"
-SDK_EXAMPLES_DOC="docs/examples/nimbus-sdk-resource-model.md"
+SDK_EXAMPLES_DOC="docs/private/staging/examples/nimbus-sdk-resource-model.md"
 DOCS_README="docs/README.md"
 SDK_README="packages/nimbus/README.md"
 SERVICES_MANAGER="crates/nimbus-services/src/manager.rs"

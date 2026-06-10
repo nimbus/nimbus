@@ -212,7 +212,7 @@ fn resolve_deploy_token(
 ) -> Result<String, Box<dyn std::error::Error>> {
     // Precedence: --token CLI flag > NIMBUS_DEPLOY_TOKEN env > credentials
     // file. Env wins over the file so that CI never accidentally consumes
-    // developer credentials. See `docs/plans/desktop-auth-dx-plan.md`
+    // developer credentials. See `docs/private/plans/desktop-auth-dx-plan.md`
     // DEP3.
     let token = if let Some(value) = explicit_token {
         value.to_owned()
@@ -271,7 +271,7 @@ fn detect_app_dir(cwd: &Path) -> PathBuf {
         }
         // Bound the walk-up at the project's `.git` boundary so the deploy
         // walker cannot escape into a parent repo or unrelated tree. See
-        // `docs/plans/cli-daemon-canonicalization-plan.md` CD2.
+        // `docs/private/plans/cli-daemon-canonicalization-plan.md` CD2.
         if crate::path_boundary::at_git_boundary(candidate) {
             break;
         }

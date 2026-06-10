@@ -23,7 +23,7 @@ required. Cloud Functions is the one out-of-contract surface and runs codegen on
 an external Node.js runner, but that runner still executes the
 binary-materialized embedded codegen bundle rather than an app-installed
 `@nimbus/codegen` package; see
-[`docs/adapters/convex/compatibility.md`](../../docs/adapters/convex/compatibility.md)
+[`docs/private/staging/adapters/convex/compatibility.md`](../../docs/private/staging/adapters/convex/compatibility.md)
 for the runner contract.
 
 ## Documentation

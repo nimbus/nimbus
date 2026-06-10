@@ -3,8 +3,8 @@
 # appeared verbatim at 12 sites across ci.yml, desktop-ui.yml, and
 # node-compat-nightly.yml.
 #
-# Owning plan: docs/plans/ci-modernization-plan.md (CM1).
-# Caching contract: docs/operating/ci-caching.md.
+# Owning plan: docs/private/plans/ci-modernization-plan.md (CM1).
+# Caching contract: docs/private/staging/operating/ci-caching.md.
 
 name: Set up Rust with cache
 description: >-

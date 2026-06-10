@@ -42,6 +42,6 @@ http://www.apache.org/licenses/LICENSE-2.0.
 The nimbus binary embeds these three packages (their published `dist/`) to
 provision the @nimbus/firebase client offline without a registry fetch. Each
 embedded JavaScript file retains its original Apache-2.0 SPDX/copyright header.
-See docs/plans/archive/binary-embedded-package-distribution-plan.md (BPD1) and
+See docs/private/plans/archive/binary-embedded-package-distribution-plan.md (BPD1) and
 scripts/stage-embedded-packages.mjs.
 ================================================================================

@@ -6,7 +6,7 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-ALLOWLIST="docs/architecture/runtime/deno-fork-provenance-allowlist.tsv"
+ALLOWLIST="docs/private/staging/architecture/runtime/deno-fork-provenance-allowlist.tsv"
 TREE_OUT="/tmp/nimbus-deno-fork-runtime-tree.out"
 LOCK_TABLE="/tmp/nimbus-deno-fork-lock-table.tsv"
 RUNTIME_CRATES="/tmp/nimbus-deno-fork-runtime-crates.txt"

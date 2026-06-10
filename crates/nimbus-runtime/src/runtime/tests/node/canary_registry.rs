@@ -269,7 +269,7 @@ fn node_compat_canary_registry_maps_active_claims_to_active_canaries() {
     let repo_root = repo_root();
     let registry = load_canary_registry();
     let generated_evidence =
-        std::fs::read_to_string(repo_root.join("docs/runtimes/nodejs/evidence/latest.md"))
+        std::fs::read_to_string(repo_root.join("docs/private/staging/runtimes/nodejs/evidence/latest.md"))
             .expect("generated Node runtime evidence should read");
 
     let canaries_by_claim: BTreeMap<&str, Vec<&NodeCompatCanaryEntry>> = registry

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the Node Default Runtime Support
-# Hardening plan (`docs/plans/node-default-runtime-support-hardening-plan.md`).
+# Hardening plan (`docs/private/plans/node-default-runtime-support-hardening-plan.md`).
 #
 # Ships in NDS0 as a failing control gate. Conditions already satisfied by the
 # scaffold pass; every condition tied to later NDS rows fails until that row
@@ -14,15 +14,15 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN_ACTIVE="docs/plans/node-default-runtime-support-hardening-plan.md"
-PLAN_ARCHIVED="docs/plans/archive/node-default-runtime-support-hardening-plan.md"
-PROOF_DIR="docs/plans/proof/node-default-runtime-support-hardening"
+PLAN_ACTIVE="docs/private/plans/node-default-runtime-support-hardening-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/node-default-runtime-support-hardening-plan.md"
+PROOF_DIR="docs/private/plans/proof/node-default-runtime-support-hardening"
 BASELINE_PROOF="${PROOF_DIR}/nds0-baseline.md"
 CONTROL_PROOF="${PROOF_DIR}/nds0-control-plane.md"
-POSTURE_JSON="docs/architecture/runtime/node-default-support-posture.json"
-POSTURE_MD="docs/architecture/runtime/node-default-support-posture.md"
+POSTURE_JSON="docs/private/staging/architecture/runtime/node-default-support-posture.json"
+POSTURE_MD="docs/private/staging/architecture/runtime/node-default-support-posture.md"
 CANARY_REGISTRY="tests/runtime/node/canary-registry.json"
-STATUS_SUMMARY="docs/architecture/runtime/node-compat-evidence/latest/status-summary.md"
+STATUS_SUMMARY="docs/private/staging/architecture/runtime/node-compat-evidence/latest/status-summary.md"
 
 PASS=0
 FAIL=0
@@ -247,8 +247,8 @@ else
 fi
 
 step 17 "Required canary gaps are zero"
-if [ -f "docs/architecture/runtime/node-compat-evidence/latest/dashboard-summary.md" ] &&
-   grep -q 'required canary gaps: `0`' docs/runtimes/nodejs/compatibility.md 2>/dev/null; then
+if [ -f "docs/private/staging/architecture/runtime/node-compat-evidence/latest/dashboard-summary.md" ] &&
+   grep -q 'required canary gaps: `0`' docs/private/staging/runtimes/nodejs/compatibility.md 2>/dev/null; then
   pass "Required Application canary gaps are zero"
 else
   fail "Required canary gap proof missing" "Expected generated docs/dashboard to show 0"
@@ -280,42 +280,42 @@ else
 fi
 
 step 21 "Package reference is per-version"
-if [ -f docs/runtimes/nodejs/reference/packages.md ] &&
-   grep -q 'Node22' docs/runtimes/nodejs/reference/packages.md &&
-   grep -q 'Node24' docs/runtimes/nodejs/reference/packages.md &&
-   grep -q 'Node26' docs/runtimes/nodejs/reference/packages.md; then
+if [ -f docs/private/staging/runtimes/nodejs/reference/packages.md ] &&
+   grep -q 'Node22' docs/private/staging/runtimes/nodejs/reference/packages.md &&
+   grep -q 'Node24' docs/private/staging/runtimes/nodejs/reference/packages.md &&
+   grep -q 'Node26' docs/private/staging/runtimes/nodejs/reference/packages.md; then
   pass "Package reference contains per-version support"
 else
   fail "Package reference lacks per-version support" "Expected Node22/Node24/Node26 package evidence"
 fi
 
 step 22 "API reference is per-version and boundary-aware"
-if [ -f docs/runtimes/nodejs/reference/node-apis.md ] &&
-   grep -q 'Node22' docs/runtimes/nodejs/reference/node-apis.md &&
-   grep -q 'Service/microVM required' docs/runtimes/nodejs/reference/node-apis.md; then
+if [ -f docs/private/staging/runtimes/nodejs/reference/node-apis.md ] &&
+   grep -q 'Node22' docs/private/staging/runtimes/nodejs/reference/node-apis.md &&
+   grep -q 'Service/microVM required' docs/private/staging/runtimes/nodejs/reference/node-apis.md; then
   pass "API reference contains per-version support and non-isolate boundaries"
 else
   fail "API reference incomplete" "Expected per-version support and non-isolate boundaries"
 fi
 
 step 23 "Shim/emulation inventory"
-if [ -f docs/architecture/runtime/node-isolate-shim-inventory.json ] ||
-   [ -f docs/architecture/runtime/node-isolate-shim-inventory.md ]; then
+if [ -f docs/private/staging/architecture/runtime/node-isolate-shim-inventory.json ] ||
+   [ -f docs/private/staging/architecture/runtime/node-isolate-shim-inventory.md ]; then
   pass "Shim/emulation inventory exists"
 else
   fail "Shim/emulation inventory missing" "Expected inventory covering nimbus/nimbus and nimbus/deno"
 fi
 
 step 24 "User-facing docs disclose capability classes"
-if has 'native|shimmed|emulated|test-harness-only|diagnostic|unsupported' docs/runtimes/nodejs docs/architecture/runtime 2>/dev/null; then
+if has 'native|shimmed|emulated|test-harness-only|diagnostic|unsupported' docs/private/staging/runtimes/nodejs docs/private/staging/architecture/runtime 2>/dev/null; then
   pass "User-facing docs disclose capability classes"
 else
   fail "Capability class docs missing" "Expected native/shimmed/emulated/diagnostic/unsupported disclosure"
 fi
 
 step 25 "Release-train and latest-suite drift"
-if [ -f docs/architecture/runtime/node-lts-compat/node-release-train.json ] &&
-   grep -q '"drift_detected": false' docs/architecture/runtime/node-lts-compat/node-release-train.json; then
+if [ -f docs/private/staging/architecture/runtime/node-lts-compat/node-release-train.json ] &&
+   grep -q '"drift_detected": false' docs/private/staging/architecture/runtime/node-lts-compat/node-release-train.json; then
   pass "Release-train drift check is clean"
 else
   fail "Release-train drift proof missing or dirty" "Expected drift_detected=false"

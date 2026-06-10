@@ -202,7 +202,7 @@ fn resolve_auto_discovered_compose_selection(
                 // Stop the walk-up at the project's `.git` boundary so a
                 // sibling compose file *outside* the repo cannot be
                 // discovered by accident. See
-                // `docs/plans/cli-daemon-canonicalization-plan.md` CD2.
+                // `docs/private/plans/cli-daemon-canonicalization-plan.md` CD2.
                 break;
             }
             continue;

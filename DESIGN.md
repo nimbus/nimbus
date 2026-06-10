@@ -119,7 +119,7 @@ the top-nav selector, not the URL. Services is **dual-persona** (it also
 appears in the Operator IA below); both consoles back onto the same
 `ServicesTable` and `ServiceDoc` shape, with the Developer side filtered
 to the active tenant. See
-`docs/plans/archive/desktop-ui-compute-services-redesign-plan.md` for the
+`docs/private/plans/archive/desktop-ui-compute-services-redesign-plan.md` for the
 IA decision rationale.
 
 ### Operator console — sidebar IA (`/operator/*`)
@@ -733,7 +733,7 @@ is identical across all variants.
 
 The completed execution record for brand rollout, including the variant
 regenerator (`docs/brand/gen-variants.sh`) and per-surface wiring, lives
-in `docs/plans/archive/brand-system-plan.md`.
+in `docs/private/plans/archive/brand-system-plan.md`.
 
 ### Documentation Site (nimbusdocs.com)
 
@@ -1229,7 +1229,7 @@ Tone:
   toasts, `shiki` for syntax highlighting, JetBrains Mono for monospace
   (via `@fontsource/jetbrains-mono`), Lucide for icons, TanStack Router,
   Zustand, Vitest, React Testing Library, and Playwright as described in
-  `docs/plans/archive/desktop-ui-plan.md`.
+  `docs/private/plans/archive/desktop-ui-plan.md`.
 
 ## Accessibility And Quality Gates
 
@@ -1247,15 +1247,15 @@ Every UI feature must satisfy:
 
 ## References Used
 
-- `docs/current-capabilities.md`
-- `docs/plans/archive/desktop-ui-plan.md`
-- `docs/plans/archive/system-tenant-api-plan.md`
-- `docs/adapters/convex/compatibility.md`
-- `docs/adapters/firebase/compatibility.md`
-- `docs/adapters/mongodb/README.md`
-- `docs/adapters/mongodb/operations.md`
-- `docs/adapters/native/README.md`
-- `docs/architecture/sandbox/microvm-service-baseline.md`
+- `docs/private/staging/current-capabilities.md`
+- `docs/private/plans/archive/desktop-ui-plan.md`
+- `docs/private/plans/archive/system-tenant-api-plan.md`
+- `docs/private/staging/adapters/convex/compatibility.md`
+- `docs/private/staging/adapters/firebase/compatibility.md`
+- `docs/private/staging/adapters/mongodb/README.md`
+- `docs/private/staging/adapters/mongodb/operations.md`
+- `docs/private/staging/adapters/native/README.md`
+- `docs/private/staging/architecture/sandbox/microvm-service-baseline.md`
 - VoltAgent `awesome-design-md` as the plain-text design-system pattern
 - Convex dashboard docs for Health, Data, Functions, Schedules, Logs, Settings
 - MongoDB Atlas docs for Data Explorer and Indexes

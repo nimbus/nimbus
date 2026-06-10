@@ -6,7 +6,7 @@
 //! transport-agnostic: it exposes a dispatch entrypoint rather than an HTTP
 //! router, and must not depend on `nimbus-server` or `axum`. `nimbus-server`
 //! mounts the dispatch on its own `POST /` route (see
-//! `docs/plans/archive/dynamodb-adapter-plan.md`).
+//! `docs/private/plans/archive/dynamodb-adapter-plan.md`).
 //!
 //! Scaffolded in D0.0. The protocol surfaces — wire envelope, AttributeValue
 //! codec, composite-key encoding, error mapping, control plane, item ops,

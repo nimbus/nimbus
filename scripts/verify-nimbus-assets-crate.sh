@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Control-plane verifier for docs/plans/archive/nimbus-assets-crate-plan.md.
+# Control-plane verifier for docs/private/plans/archive/nimbus-assets-crate-plan.md.
 #
 # AE0 starts as a baseline inventory gate: it proves the current in-scope
 # production embeds are known and rejects any new distribution/UI/template
@@ -41,9 +41,9 @@ absent() { ! grep -RqE "$1" "${@:2}" 2>/dev/null; }
 
 printf '\nNimbus Assets Crate — control-plane verifier\n\n'
 
-PLAN_ACTIVE="docs/plans/nimbus-assets-crate-plan.md"
-PLAN_ARCHIVED="docs/plans/archive/nimbus-assets-crate-plan.md"
-PLAN_INDEX="docs/plans/README.md"
+PLAN_ACTIVE="docs/private/plans/nimbus-assets-crate-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/nimbus-assets-crate-plan.md"
+PLAN_INDEX="docs/private/plans/README.md"
 BPD_OWNER="crates/nimbus-assets/src/js_packages.rs"
 OLD_BPD_OWNER="crates/nimbus-bin/src/embedded_packages.rs"
 UI_OWNER="crates/nimbus-assets/src/ui.rs"
@@ -72,7 +72,7 @@ c_plan_routed() {
       ! grep -qF "${PLAN_ACTIVE}" "${PLAN_INDEX}"
   fi
 }
-check "AE0. plan is routed correctly from docs/plans/README.md" c_plan_routed
+check "AE0. plan is routed correctly from docs/private/plans/README.md" c_plan_routed
 
 c_bpd_owner_inventory() {
   [ -f "${BPD_OWNER}" ] &&
@@ -187,7 +187,7 @@ c_ae5_cleanup() {
     has 'nimbus-assets embeds artifacts produced by the nimbus-ui JS' Makefile &&
     has 'nimbus-assets embeds the dependency-closed JS package payload' .github/workflows/ci.yml .github/workflows/coverage.yml &&
     absent "nimbus-server's \`include_str!\`s|nimbus-server via include_str|nimbus-server.*rust-embed" \
-      Makefile .github/workflows/ci.yml docs/operating/local-dev.md
+      Makefile .github/workflows/ci.yml docs/private/staging/operating/local-dev.md
 }
 check "AE5. old direct embed dependencies, build checks, and stale owner comments are gone" c_ae5_cleanup
 

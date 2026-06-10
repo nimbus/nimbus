@@ -19,7 +19,47 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/components';
+
+## One binary, your choice of client
+
+<Tabs>
+  <TabItem label="TypeScript" icon="seti:typescript">
+    ```typescript
+    // convex/messages.ts — server-side functions with reactive queries
+    import { query, mutation } from "./_generated/server";
+    import { v } from "convex/values";
+
+    export const list = query({
+      args: {},
+      handler: async (ctx) => await ctx.db.query("messages").take(50),
+    });
+
+    export const send = mutation({
+      args: { author: v.string(), body: v.string() },
+      handler: async (ctx, { author, body }) =>
+        await ctx.db.insert("messages", { author, body }),
+    });
+    ```
+  </TabItem>
+  <TabItem label="curl" icon="seti:shell">
+    ```bash
+    # The same engine over plain HTTP — no codegen required
+    nimbus start --port 8080 --data-dir ./data
+
+    curl -s -X POST http://localhost:8080/api/tenants/demo/documents \
+      -H "Content-Type: application/json" \
+      -d '{"table": "messages", "fields": {"text": "hello world"}}'
+
+    curl -s -X POST http://localhost:8080/api/tenants/demo/query \
+      -H "Content-Type: application/json" \
+      -d '{"table": "messages", "filters": []}'
+    ```
+  </TabItem>
+</Tabs>
+
+Stock MongoDB drivers, Firestore SDKs, and DynamoDB SDKs connect to the same
+data — see [Developers](/developers/) for every adapter.
 
 <CardGrid stagger>
   <Card title="One binary" icon="rocket">
@@ -37,4 +77,29 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
   <Card title="No lock-in" icon="setting">
     Self-hosted, source-available, and protocol-portable by design.
   </Card>
+</CardGrid>
+
+## Find your path
+
+<CardGrid>
+  <LinkCard
+    title="Developer quickstart"
+    description="Scaffold an app, write TypeScript functions, get reactive queries — about 5 minutes."
+    href="/get-started/quickstart/"
+  />
+  <LinkCard
+    title="Self-host quickstart"
+    description="Run the server and make your first requests with curl — about 2 minutes."
+    href="/get-started/self-host/"
+  />
+  <LinkCard
+    title="Coming from Convex"
+    description="What works today, what differs, and how to point an existing project at Nimbus."
+    href="/get-started/from-convex/"
+  />
+  <LinkCard
+    title="Concepts & architecture"
+    description="How the engine, data model, tenancy, and adapters fit together."
+    href="/concepts/"
+  />
 </CardGrid>

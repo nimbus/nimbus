@@ -24,7 +24,7 @@ pub enum TypedScalarValue {
     MinKey,
     MaxKey,
     JavaScriptCode { code: String },
-    // DynamoDB-specific scalars (see docs/plans/archive/dynamodb-adapter-plan.md): `Number`
+    // DynamoDB-specific scalars (see docs/private/plans/archive/dynamodb-adapter-plan.md): `Number`
     // is an arbitrary-precision decimal kept as its exact string (38 sig digits,
     // beyond f64/i64); `StringSet`/`NumberSet`/`BinarySet` are DynamoDB SS/NS/BS.
     Number { repr: String },

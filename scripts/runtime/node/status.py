@@ -117,7 +117,7 @@ def lane_passed_fixture_paths(lane: dict) -> set[str]:
 
 
 def public_node22_claim_count() -> int | None:
-    doc_path = repo_root() / "docs/architecture/runtime/deno-vs-nimbus-node-compat.md"
+    doc_path = repo_root() / "docs/private/staging/architecture/runtime/deno-vs-nimbus-node-compat.md"
     if not doc_path.is_file():
         return None
     text = doc_path.read_text(encoding="utf-8")
@@ -682,7 +682,7 @@ def build_summary(
                     "kind": "public_claim_exceeds_documented_manifested_green_count",
                     "public_claim_floor": public_claim,
                     "documented_manifested_green_count": documented_green,
-                    "doc_path": "docs/architecture/runtime/deno-vs-nimbus-node-compat.md",
+                    "doc_path": "docs/private/staging/architecture/runtime/deno-vs-nimbus-node-compat.md",
                 }
             )
     return {

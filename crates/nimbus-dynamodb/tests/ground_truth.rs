@@ -9,7 +9,7 @@
 //! so a drift from the documented contract fails CI. The Dockerized DynamoDB
 //! Local capture lane that the corpus is distilled from is the optional refresh
 //! path documented in
-//! `docs/plans/proof/dynamodb-adapter-hardening/ground-truth-corpus.md`.
+//! `docs/private/plans/proof/dynamodb-adapter-hardening/ground-truth-corpus.md`.
 
 use std::sync::Arc;
 
