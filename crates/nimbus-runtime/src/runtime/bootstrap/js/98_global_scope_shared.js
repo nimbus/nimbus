@@ -115,7 +115,10 @@ const windowOrWorkerGlobalScope = {
   ErrorEvent: core.propNonEnumerable(event.ErrorEvent),
   Event: core.propNonEnumerable(event.Event),
   EventTarget: core.propNonEnumerable(event.EventTarget),
-  EventSource: core.propWritable(eventSource.EventSource),
+  // Node 22/24 gate the EventSource global behind --experimental-eventsource, so
+  // it is absent by default (test/parallel/test-eventsource-disabled.js asserts
+  // `typeof EventSource === 'undefined'`). The ext script stays imported for
+  // opt-in callers; only the default global registration is withheld.
   File: core.propNonEnumerable(file.File),
   FileReader: core.propNonEnumerable(fileReader.FileReader),
   FormData: core.propNonEnumerable(formData.FormData),

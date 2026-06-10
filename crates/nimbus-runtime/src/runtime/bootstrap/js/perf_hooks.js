@@ -805,6 +805,76 @@ const denoPrivateCustomInspectSymbol = Symbol.for("Deno.privateCustomInspect");
 const resourceTimingEntries = [];
 const resourceTimingObservers = [];
 
+// Node mirrors the W3C Resource Timing buffer semantics
+// (lib/internal/perf/observe.js): a primary buffer capped at
+// resourceTimingBufferSizeLimit, a secondary overflow buffer, and a
+// 'resourcetimingbufferfull' event dispatched on the global performance object
+// once the primary buffer is full. deno_web implements
+// setResourceTimingBufferSize as a no-op and has no markResourceTiming, so
+// Nimbus owns the entire buffer here.
+let resourceTimingBufferSizeLimit = 250;
+let resourceTimingSecondaryBuffer = [];
+let resourceTimingBufferFullPending = false;
+
+// WebIDL `unsigned long` coercion (ToUint32): NaN / +/-Infinity coerce to 0,
+// otherwise the truncated value modulo 2^32. Matches Node's
+// converters['unsigned long'] used by Performance#setResourceTimingBufferSize.
+function toResourceTimingBufferSize(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number === 0) {
+    return 0;
+  }
+  let wrapped = Math.trunc(number) % 4294967296;
+  if (wrapped < 0) {
+    wrapped += 4294967296;
+  }
+  return wrapped;
+}
+
+// https://www.w3.org/TR/resource-timing-2/#dfn-add-a-performanceresourcetiming-entry
+function bufferResourceTiming(entry) {
+  if (
+    resourceTimingEntries.length < resourceTimingBufferSizeLimit &&
+    !resourceTimingBufferFullPending
+  ) {
+    resourceTimingEntries.push(entry);
+    return;
+  }
+
+  if (!resourceTimingBufferFullPending) {
+    resourceTimingBufferFullPending = true;
+    globalThis.setImmediate(() => {
+      while (resourceTimingSecondaryBuffer.length > 0) {
+        const excessNumberBefore = resourceTimingSecondaryBuffer.length;
+        performance.dispatchEvent(
+          new globalThis.Event("resourcetimingbufferfull"),
+        );
+
+        // Number of secondary entries that now fit in the primary buffer.
+        const numbersToPreserve = Math.max(
+          Math.min(
+            resourceTimingBufferSizeLimit - resourceTimingEntries.length,
+            resourceTimingSecondaryBuffer.length,
+          ),
+          0,
+        );
+        const excessNumberAfter =
+          resourceTimingSecondaryBuffer.length - numbersToPreserve;
+        for (let idx = 0; idx < numbersToPreserve; idx++) {
+          resourceTimingEntries.push(resourceTimingSecondaryBuffer[idx]);
+        }
+
+        if (excessNumberBefore <= excessNumberAfter) {
+          resourceTimingSecondaryBuffer = [];
+        }
+      }
+      resourceTimingBufferFullPending = false;
+    });
+  }
+
+  resourceTimingSecondaryBuffer.push(entry);
+}
+
 function createPerformanceEntryList(entries) {
   return {
     getEntries() {
@@ -1082,6 +1152,19 @@ performance.clearResourceTimings = () => {
   resourceTimingEntries.length = 0;
 };
 
+// deno_web's setResourceTimingBufferSize is a no-op. Node coerces maxSize via
+// the WebIDL `unsigned long` converter and updates the primary-buffer limit; the
+// buffer itself is not trimmed when the limit is lowered
+// (test/parallel/test-performance-resourcetimingbuffersize.js).
+performance.setResourceTimingBufferSize = function setResourceTimingBufferSize(
+  maxSize,
+) {
+  if (arguments.length === 0) {
+    throw new ERR_MISSING_ARGS("maxSize");
+  }
+  resourceTimingBufferSizeLimit = toResourceTimingBufferSize(maxSize);
+};
+
 // The deno_web global performance.toJSON() only emits { timeOrigin }. Node's
 // Performance#toJSON (lib/internal/perf/performance.js) additionally exposes
 // nodeTiming and eventLoopUtilization, so wrap it to match Node's shape.
@@ -1119,10 +1202,13 @@ performance.markResourceTiming = (
     responseStatus,
     deliveryType,
   });
-  resourceTimingEntries.push(resourceTiming);
+  // Node calls enqueue() (notify observers) before bufferResourceTiming()
+  // (lib/internal/perf/resource_timing.js markResourceTiming). Observers receive
+  // every entry; the global buffer applies the size limit / overflow event.
   for (const observer of resourceTimingObservers) {
     observer[enqueueResourceTimingSymbol](resourceTiming);
   }
+  bufferResourceTiming(resourceTiming);
   return resourceTiming;
 };
 
