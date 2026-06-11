@@ -53,6 +53,15 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   context, gated on `bash scripts/verify-nimbus-docs-site.sh` and
   `bash scripts/check-docs.sh`. Promote a new active plan before
   another docs-site wave.
+- Launch-readiness gap closure (deploy admin handshake, `X-Nimbus-Api-Key`
+  decision, admin-token freshness, configurable CORS, CLI wiring for
+  Firestore/MongoDB/DynamoDB, `rest.ts` parity, TLS termination, backup
+  command, systemd unit, apt-channel revival, `nimbus node run`
+  reconciler caller, `boot.rs` naming cleanup):
+  `docs/private/plans/launch-readiness-plan.md` (LR0..LR13), gated on
+  `bash scripts/verify-launch-readiness.sh` once LR0 creates it. Origin
+  gap list in `docs/private/plans/archive/nimbus-docs-site-plan.md`
+  (DOC13 closeout).
 - Generic maintainability, refactor, modularity, reliability hardening, or
   canonical naming:
   `docs/private/architecture/testing/reliability-posture.md`,
