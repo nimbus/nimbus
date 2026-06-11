@@ -72,6 +72,7 @@ SCHEMA_PATH = default_schema_path("node-release-train.schema.json")
 PROOF_PATH = (
     REPO_ROOT
     / "docs"
+    / "private"
     / "plans"
     / "proof"
     / "node-faas-runtime-compatibility"
