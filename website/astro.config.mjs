@@ -105,3 +105,5 @@ export default defineConfig({
     }),
   ],
 });
+
+// DOC9 preview-pipeline proof: short-lived test PR; closed unmerged.
