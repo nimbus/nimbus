@@ -17,9 +17,9 @@ SUPPORT_DOCS = (
     "docs/private/staging/runtimes/nodejs/configuration.md",
     "docs/private/staging/runtimes/nodejs/reference/node-apis.md",
     "docs/private/staging/runtimes/nodejs/reference/packages.md",
-    "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md",
-    "docs/private/staging/architecture/runtime/deno-vs-nimbus-node-compat.md",
-    "docs/private/staging/architecture/runtime/node-lts-compat/node-lts-lanes.md",
+    "docs/private/architecture/runtime/node-compat-surface-matrix.md",
+    "docs/private/architecture/runtime/deno-vs-nimbus-node-compat.md",
+    "docs/private/architecture/runtime/node-lts-compat/node-lts-lanes.md",
 )
 
 FORBIDDEN_PATTERNS = (
@@ -103,11 +103,11 @@ REQUIRED_SNIPPETS = {
         "`Diagnostic` rows prove an intentional denial or service route",
         "Native addons, package-owned binaries, child-process tools, and raw server listeners require service/microVM routing",
     ),
-    "docs/private/staging/architecture/runtime/node-compat-surface-matrix.md": (
+    "docs/private/architecture/runtime/node-compat-surface-matrix.md": (
         "Product default is a routing default, not an evidence priority.",
         "Node22 and Node24 are the current supported LTS lanes",
     ),
-    "docs/private/staging/architecture/runtime/deno-vs-nimbus-node-compat.md": (
+    "docs/private/architecture/runtime/deno-vs-nimbus-node-compat.md": (
         "it must not carry hand-maintained pass rates",
         "Product default is a routing default, not an evidence priority.",
     ),

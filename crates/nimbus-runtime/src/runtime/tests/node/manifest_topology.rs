@@ -156,8 +156,8 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             CORE_SEMANTICS_JSON,
             "core-semantics",
             "CORE_SEMANTICS_BATCH",
-            "docs/private/staging/architecture/runtime/node-lts-compat/manifests/core-semantics.md",
-            "docs/private/staging/architecture/runtime/node-lts-compat/failures/core-semantics.md",
+            "docs/private/architecture/runtime/node-lts-compat/manifests/core-semantics.md",
+            "docs/private/architecture/runtime/node-lts-compat/failures/core-semantics.md",
             [
                 (
                     "node20",
@@ -177,8 +177,8 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             PROCESS_AND_TIMING_JSON,
             "process-and-timing",
             "PROCESS_AND_TIMING_BATCH",
-            "docs/private/staging/architecture/runtime/node-lts-compat/manifests/process-and-timing.md",
-            "docs/private/staging/architecture/runtime/node-lts-compat/failures/process-and-timing.md",
+            "docs/private/architecture/runtime/node-lts-compat/manifests/process-and-timing.md",
+            "docs/private/architecture/runtime/node-lts-compat/failures/process-and-timing.md",
             [
                 (
                     "node20",
@@ -198,8 +198,8 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             STREAMS_AND_LOCAL_IO_JSON,
             "streams-and-local-io",
             "STREAMS_AND_LOCAL_IO_BATCH",
-            "docs/private/staging/architecture/runtime/node-lts-compat/manifests/streams-and-local-io.md",
-            "docs/private/staging/architecture/runtime/node-lts-compat/failures/streams-and-local-io.md",
+            "docs/private/architecture/runtime/node-lts-compat/manifests/streams-and-local-io.md",
+            "docs/private/architecture/runtime/node-lts-compat/failures/streams-and-local-io.md",
             [
                 (
                     "node20",
@@ -219,8 +219,8 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             NETWORKING_JSON,
             "networking",
             "NETWORKING_BATCH",
-            "docs/private/staging/architecture/runtime/node-lts-compat/manifests/networking.md",
-            "docs/private/staging/architecture/runtime/node-lts-compat/failures/networking.md",
+            "docs/private/architecture/runtime/node-lts-compat/manifests/networking.md",
+            "docs/private/architecture/runtime/node-lts-compat/failures/networking.md",
             [
                 (
                     "node20",
@@ -240,8 +240,8 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             LOADER_CONTEXT_JSON,
             "loader-context",
             "LOADER_CONTEXT_BATCH",
-            "docs/private/staging/architecture/runtime/node-lts-compat/manifests/loader-context.md",
-            "docs/private/staging/architecture/runtime/node-lts-compat/failures/loader-context.md",
+            "docs/private/architecture/runtime/node-lts-compat/manifests/loader-context.md",
+            "docs/private/architecture/runtime/node-lts-compat/failures/loader-context.md",
             [
                 (
                     "node20",
@@ -261,8 +261,8 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             LOADER_CONTEXT_SUPPLEMENTARY_GLOBAL_INJECTION_JSON,
             "loader-context-supplementary-global-injection",
             "LOADER_CONTEXT_SUPPLEMENTARY_GLOBAL_INJECTION_BATCH",
-            "docs/private/staging/architecture/runtime/node-compat-supplementary.md",
-            "docs/private/staging/architecture/runtime/node-compat-supplementary-failures.md",
+            "docs/private/architecture/runtime/node-compat-supplementary.md",
+            "docs/private/architecture/runtime/node-compat-supplementary-failures.md",
             [
                 (
                     "node20",
@@ -282,8 +282,8 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             LOADER_CONTEXT_SUPPLEMENTARY_MODULE_BRIDGE_JSON,
             "loader-context-supplementary-module-bridge",
             "LOADER_CONTEXT_SUPPLEMENTARY_MODULE_BRIDGE_BATCH",
-            "docs/private/staging/architecture/runtime/node-compat-supplementary.md",
-            "docs/private/staging/architecture/runtime/node-compat-supplementary-failures.md",
+            "docs/private/architecture/runtime/node-compat-supplementary.md",
+            "docs/private/architecture/runtime/node-compat-supplementary-failures.md",
             [
                 (
                     "node20",
@@ -303,8 +303,8 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             LOADER_CONTEXT_SUPPLEMENTARY_JSON,
             "loader-context-supplementary",
             "LOADER_CONTEXT_SUPPLEMENTARY_BATCH",
-            "docs/private/staging/architecture/runtime/node-compat-supplementary.md",
-            "docs/private/staging/architecture/runtime/node-compat-supplementary-failures.md",
+            "docs/private/architecture/runtime/node-compat-supplementary.md",
+            "docs/private/architecture/runtime/node-compat-supplementary-failures.md",
             [
                 (
                     "node20",
@@ -324,8 +324,8 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             PROCESS_AND_TIMING_SUPPLEMENTARY_JSON,
             "process-and-timing-supplementary",
             "PROCESS_AND_TIMING_SUPPLEMENTARY_BATCH",
-            "docs/private/staging/architecture/runtime/node-compat-supplementary.md",
-            "docs/private/staging/architecture/runtime/node-compat-supplementary-failures.md",
+            "docs/private/architecture/runtime/node-compat-supplementary.md",
+            "docs/private/architecture/runtime/node-compat-supplementary-failures.md",
             [
                 (
                     "node20",
@@ -345,8 +345,8 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             RUNTIME_SUPPLEMENTARY_JSON,
             "runtime-supplementary",
             "RUNTIME_SUPPLEMENTARY_BATCH",
-            "docs/private/staging/architecture/runtime/node-compat-supplementary.md",
-            "docs/private/staging/architecture/runtime/node-compat-supplementary-failures.md",
+            "docs/private/architecture/runtime/node-compat-supplementary.md",
+            "docs/private/architecture/runtime/node-compat-supplementary-failures.md",
             [
                 (
                     "node20",
@@ -366,8 +366,8 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             RUNTIME_SUPPLEMENTARY_SIGNAL_LIFECYCLE_JSON,
             "runtime-supplementary-signal-lifecycle",
             "RUNTIME_SUPPLEMENTARY_SIGNAL_LIFECYCLE_BATCH",
-            "docs/private/staging/architecture/runtime/node-compat-supplementary.md",
-            "docs/private/staging/architecture/runtime/node-compat-supplementary-failures.md",
+            "docs/private/architecture/runtime/node-compat-supplementary.md",
+            "docs/private/architecture/runtime/node-compat-supplementary-failures.md",
             [
                 (
                     "node20",
@@ -1183,8 +1183,8 @@ fn node_compat_preset_capability_model_rejects_ambiguous_seed_entries() {
                 "subset_test": "runtime::tests::node_compat::node22_supported_lane_executes_manifested_core_semantics_subset"
             }
         ],
-        "manifest_doc": "docs/private/staging/architecture/runtime/node-lts-compat/manifests/core-semantics.md",
-        "failure_doc": "docs/private/staging/architecture/runtime/node-lts-compat/failures/core-semantics.md"
+        "manifest_doc": "docs/private/architecture/runtime/node-lts-compat/manifests/core-semantics.md",
+        "failure_doc": "docs/private/architecture/runtime/node-lts-compat/failures/core-semantics.md"
     });
     assert!(
         serde_json::from_value::<NodeCompatFamilyCatalog>(invalid_execution_class).is_err(),

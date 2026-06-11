@@ -19,8 +19,8 @@
       "subset_test": "runtime::tests::node_compat::node24_default_lane_loader_context_watchpoint"
     }
   ],
-  "manifest_doc": "docs/private/staging/architecture/runtime/node-lts-compat/manifests/loader-context.md",
-  "failure_doc": "docs/private/staging/architecture/runtime/node-lts-compat/failures/loader-context.md",
+  "manifest_doc": "docs/private/architecture/runtime/node-lts-compat/manifests/loader-context.md",
+  "failure_doc": "docs/private/architecture/runtime/node-lts-compat/failures/loader-context.md",
   "fixture_seeds": [
     {
       "id": "test/parallel/test-module-builtin.js",

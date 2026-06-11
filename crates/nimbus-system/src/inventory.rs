@@ -333,7 +333,7 @@ pub(super) fn adapter_capability_inventory() -> Vec<AdapterCapabilityEntry> {
             "bootc-macos-machine",
             "supported-with-caveats",
             "Published bootc image is the current macOS default; live machine state persistence into _nimbus is still tracked by ST2.",
-            "docs/private/staging/architecture/sandbox/macos-machine-flow.md",
+            "docs/private/architecture/sandbox/macos-machine-flow.md",
         ),
     ]
 }

@@ -200,10 +200,10 @@ fn node_compat_manifest_resolution_supports_future_lane_keys_without_new_rust_fi
             },
             "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
             "manifest_docs": [
-                "docs/private/staging/architecture/runtime/node-lts-compat/manifests/core-semantics.md"
+                "docs/private/architecture/runtime/node-lts-compat/manifests/core-semantics.md"
             ],
             "failure_docs": [
-                "docs/private/staging/architecture/runtime/node-lts-compat/failures/core-semantics.md"
+                "docs/private/architecture/runtime/node-lts-compat/failures/core-semantics.md"
             ]
         }))
         .expect("synthetic node26 lane metadata should parse"),

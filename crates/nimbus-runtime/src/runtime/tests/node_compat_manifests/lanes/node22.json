@@ -23,17 +23,17 @@
   },
   "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
   "manifest_docs": [
-    "docs/private/staging/architecture/runtime/node-lts-compat/manifests/core-semantics.md",
-    "docs/private/staging/architecture/runtime/node-lts-compat/manifests/process-and-timing.md",
-    "docs/private/staging/architecture/runtime/node-lts-compat/manifests/streams-and-local-io.md",
-    "docs/private/staging/architecture/runtime/node-lts-compat/manifests/networking.md",
-    "docs/private/staging/architecture/runtime/node-lts-compat/manifests/loader-context.md"
+    "docs/private/architecture/runtime/node-lts-compat/manifests/core-semantics.md",
+    "docs/private/architecture/runtime/node-lts-compat/manifests/process-and-timing.md",
+    "docs/private/architecture/runtime/node-lts-compat/manifests/streams-and-local-io.md",
+    "docs/private/architecture/runtime/node-lts-compat/manifests/networking.md",
+    "docs/private/architecture/runtime/node-lts-compat/manifests/loader-context.md"
   ],
   "failure_docs": [
-    "docs/private/staging/architecture/runtime/node-lts-compat/failures/core-semantics.md",
-    "docs/private/staging/architecture/runtime/node-lts-compat/failures/process-and-timing.md",
-    "docs/private/staging/architecture/runtime/node-lts-compat/failures/streams-and-local-io.md",
-    "docs/private/staging/architecture/runtime/node-lts-compat/failures/networking.md",
-    "docs/private/staging/architecture/runtime/node-lts-compat/failures/loader-context.md"
+    "docs/private/architecture/runtime/node-lts-compat/failures/core-semantics.md",
+    "docs/private/architecture/runtime/node-lts-compat/failures/process-and-timing.md",
+    "docs/private/architecture/runtime/node-lts-compat/failures/streams-and-local-io.md",
+    "docs/private/architecture/runtime/node-lts-compat/failures/networking.md",
+    "docs/private/architecture/runtime/node-lts-compat/failures/loader-context.md"
   ]
 }

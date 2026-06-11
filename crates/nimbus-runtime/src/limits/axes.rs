@@ -7,8 +7,9 @@ use serde::{Deserializer, de};
 use super::grants::RuntimeLanguage;
 use super::resources::RuntimeLimits;
 
-const NODE_LTS_LANES_JSON: &str =
-    include_str!("../../../../docs/private/staging/architecture/runtime/node-lts-compat/node-lts-lanes.json");
+const NODE_LTS_LANES_JSON: &str = include_str!(
+    "../../../../docs/private/architecture/runtime/node-lts-compat/node-lts-lanes.json"
+);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

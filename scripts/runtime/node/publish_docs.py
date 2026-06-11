@@ -286,7 +286,7 @@ def api_reference_lines(
     lines = [
         "# Node API Reference",
         "",
-        *generated_header("docs/private/staging/architecture/runtime/node-faas-compatibility-profile.json"),
+        *generated_header("docs/private/architecture/runtime/node-faas-compatibility-profile.json"),
         "This generated reference lists the Node API families Nimbus exposes, denies, or routes for functions-as-a-service workloads. It is a measured support contract, not a blanket Node.js compatibility claim.",
         "",
         *version_support_lines(profile, status, registry),
@@ -397,7 +397,7 @@ def compatibility_lines(
     lines = [
         "# Node.js Runtime Compatibility",
         "",
-        *generated_header("docs/private/staging/architecture/runtime/node-faas-compatibility-profile.json"),
+        *generated_header("docs/private/architecture/runtime/node-faas-compatibility-profile.json"),
         "Nimbus's Node.js runtime compatibility is evidence-backed and deliberately bounded. A surface is considered supported only when it has checked-in fixture, canary, oracle, or classification evidence.",
         "",
         *version_support_lines(profile, status, registry),
@@ -461,11 +461,11 @@ def latest_lines(
         "## Snapshot",
         "",
         f"- generated at: `{status.get('generated_at', 'unknown')}`",
-        "- status source: `docs/private/staging/architecture/runtime/node-compat-evidence/latest/status-summary.json`",
-        "- dashboard source: `docs/private/staging/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json`",
+        "- status source: `docs/private/architecture/runtime/node-compat-evidence/latest/status-summary.json`",
+        "- dashboard source: `docs/private/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json`",
     ]
     if trends:
-        lines.append("- trend source: `docs/private/staging/architecture/runtime/node-compat-evidence/latest/trend-summary.json`")
+        lines.append("- trend source: `docs/private/architecture/runtime/node-compat-evidence/latest/trend-summary.json`")
     lines.extend(
         [
             "",
