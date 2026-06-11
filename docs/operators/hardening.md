@@ -28,9 +28,11 @@ read responses from the server's HTTP API.
 startup:
 
 1. The `--allow-network` flag.
-2. A local admin token that has been explicitly rotated within the last
-   30 days. The auto-minted first-boot token never qualifies — the server
-   refuses to expose a never-rotated token on a public interface.
+2. A local admin token that has been explicitly rotated at least once.
+   The auto-minted first-boot token never qualifies — the server refuses
+   to expose a never-rotated token on a public interface. Once rotated,
+   age never blocks a bind: a rotation older than 30 days logs a startup
+   warning instead, so a long-running public server always restarts.
 
 To satisfy the rotation gate, rotate as the service user and restart:
 

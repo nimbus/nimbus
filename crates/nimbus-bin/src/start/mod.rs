@@ -44,8 +44,9 @@ pub(crate) struct StartCommand {
     /// Opt-in to binding on a non-loopback interface. Without this flag,
     /// `nimbus start` refuses any `--host` that resolves outside the
     /// loopback range. With the flag set, the daemon additionally
-    /// requires that the local admin token has been rotated within
-    /// the staleness window (see `nimbus auth rotate-admin`).
+    /// requires that the local admin token has been explicitly rotated
+    /// at least once (`nimbus auth rotate-admin`); a rotation older than
+    /// 30 days logs a warning but never blocks startup.
     #[arg(long, default_value_t = false)]
     pub(crate) allow_network: bool,
 

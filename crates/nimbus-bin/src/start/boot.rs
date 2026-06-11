@@ -17,7 +17,7 @@ use super::config::{
     control_data_dir_from_persistence_config, persistence_config_from_start_command,
 };
 use super::first_boot::{is_first_boot, spawn_first_boot_announce};
-use super::network_bind::{ensure_admin_token_fresh_for_public_bind, ensure_host_opt_in};
+use super::network_bind::{ensure_admin_token_rotated_for_public_bind, ensure_host_opt_in};
 use super::runtime_limits::runtime_limits_from_command;
 use crate::cli_ux;
 use crate::codegen::{CodegenOptions, run_codegen_for_app_dir_with_options};
@@ -84,21 +84,23 @@ pub(crate) async fn run_start_command(
     let local_server_paths = LocalServerPaths::resolve_for_current_platform()?;
     let local_admin_token = load_or_create_local_admin_token(&local_server_paths)?;
     if !command.systemd_socket_activation {
-        ensure_admin_token_fresh_for_public_bind(
+        let rotation_warning = ensure_admin_token_rotated_for_public_bind(
             &command.host,
             &local_admin_token,
             time::OffsetDateTime::now_utc(),
         )?;
+        emit_rotation_warning(rotation_warning);
     }
     let activated_listener = if command.systemd_socket_activation {
         let listener = start_listener(&command).await?;
         let activated_host = listener.local_addr()?.ip().to_string();
         ensure_host_opt_in(&activated_host, command.allow_network)?;
-        ensure_admin_token_fresh_for_public_bind(
+        let rotation_warning = ensure_admin_token_rotated_for_public_bind(
             &activated_host,
             &local_admin_token,
             time::OffsetDateTime::now_utc(),
         )?;
+        emit_rotation_warning(rotation_warning);
         Some(listener)
     } else {
         None
@@ -274,6 +276,15 @@ pub(super) fn load_service_manager(
 fn emit_start_info(message: impl AsRef<str>) {
     if cli_ux::info_output_enabled() {
         let _ = cli_ux::write_stderr_prefixed_line("info:", message.as_ref());
+    }
+}
+
+/// Surface the advisory stale-rotation notice on both operator channels.
+/// Unlike `emit_start_info`, warnings are not gated on info output.
+fn emit_rotation_warning(warning: Option<super::network_bind::StaleRotationWarning>) {
+    if let Some(warning) = warning {
+        tracing::warn!(age_days = warning.age_days, "{warning}");
+        let _ = cli_ux::write_stderr_prefixed_line("warning:", &warning.to_string());
     }
 }
 

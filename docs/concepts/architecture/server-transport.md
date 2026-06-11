@@ -167,9 +167,10 @@ aborted with it — one lifecycle for the whole transport layer.
 - Loopback is the default. Binding a non-loopback host requires an
   explicit `--allow-network` opt-in, checked before any expensive
   startup work so a typo fails fast.
-- A second tripwire refuses a public bind when the local admin token
-  has not been rotated within its freshness window, so a long-lived
-  default credential is never exposed to a network.
+- A second tripwire refuses a public bind until the local admin token
+  has been explicitly rotated at least once, so the auto-minted
+  first-boot credential is never exposed to a network; rotations older
+  than 30 days log an advisory warning without blocking restarts.
 - Under systemd socket activation the binary adopts the inherited
   socket instead of binding, then applies the same two checks to the
   activated address.

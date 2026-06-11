@@ -36,16 +36,19 @@ nimbus start --port 8081
 refusing to bind on non-loopback host `0.0.0.0` without --allow-network.
 ```
 
-or, if the admin token is older than 30 days:
+or, if the admin token has never been explicitly rotated:
 
 ```text
-refusing to bind on non-loopback host `0.0.0.0` with a stale local admin token.
+refusing to bind on non-loopback host `0.0.0.0` with a never-rotated local
+admin token.
 ```
 
 **Cause:** the local admin token grants full control of the server, so
 binding on a public interface is opt-in, and Nimbus additionally requires
-the token to have been rotated within the last 30 days before a public
-bind.
+the auto-minted first-boot token to have been explicitly rotated at least
+once before a public bind. (A rotation older than 30 days logs a startup
+warning but never blocks a bind — restarts of a long-running public
+server always come back up.)
 
 **Fix:** rotate the token, then re-run with the explicit opt-in:
 

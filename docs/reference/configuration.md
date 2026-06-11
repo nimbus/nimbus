@@ -52,8 +52,9 @@ These settings have no environment variable and no config-file key.
 `nimbus start` refuses any `--host` outside the loopback range
 (`127.0.0.1`, `::1`, or `localhost`) unless `--allow-network` is set. With
 the flag set, a second gate still applies: the local admin token must have
-been rotated within the last 30 days (`nimbus auth rotate-admin`), or the
-bind is refused. See [Hardening](/operators/hardening/).
+been explicitly rotated at least once (`nimbus auth rotate-admin`), or the
+bind is refused; a rotation older than 30 days logs a startup warning but
+does not block. See [Hardening](/operators/hardening/).
 
 ### systemd socket activation
 

@@ -78,17 +78,18 @@ The server applies these policies as middleware in
 `crates/nimbus-server/src/local_server/middleware.rs`, together with an
 origin allowlist for browser-reachable route families.
 
-### The 30-day freshness gate
+### The explicit-rotation gate
 
 Binding to a non-loopback address is a two-stage opt-in
 (`crates/nimbus-bin/src/start/network_bind.rs`). First, a non-loopback
 host requires an explicit `--allow-network` flag. Second, the server
-refuses the bind unless the admin token has been **explicitly rotated
-within the last 30 days** — and the auto-minted first-boot token counts as
-never rotated, so it can never be exposed publicly at all. The credential
-that grants full control of the server cannot drift onto a public
-interface by accident, and cannot stay there indefinitely without
-deliberate rotation.
+refuses the bind unless the admin token has been **explicitly rotated at
+least once** — the auto-minted first-boot token can never be exposed
+publicly. The credential that grants full control of the server cannot
+drift onto a public interface by accident. Rotation age is advisory: a
+rotation older than 30 days logs a startup warning naming
+`nimbus auth rotate-admin`, but never refuses the bind — a long-running
+public server must always be able to restart.
 
 ## The deploy token
 

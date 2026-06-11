@@ -38,8 +38,8 @@ production — pin the version, and pin the digest for rollouts (below).
 ## 1. Rotate the admin token
 
 The container binds `0.0.0.0`, and Nimbus refuses a non-loopback bind
-unless the local admin token has been rotated within the last 30 days.
-Rotate it once against the state volume before the first run:
+until the auto-minted local admin token has been explicitly rotated at
+least once. Rotate it against the state volume before the first run:
 
 ```bash
 docker volume create nimbus-data
@@ -49,8 +49,9 @@ docker run --rm -v nimbus-data:/var/lib/nimbus \
 
 The token lives inside the volume at
 `/var/lib/nimbus/.local/share/nimbus/auth/token` and survives container
-recreation. Repeat the rotation when the 30-day freshness window lapses,
-then restart the container.
+recreation. When the last rotation is older than 30 days the server logs
+a rotation-hygiene warning at startup (it still binds); rotate again and
+restart the container to clear it.
 
 ## 2. Run the server
 
