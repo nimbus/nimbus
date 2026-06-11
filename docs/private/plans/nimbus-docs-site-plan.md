@@ -2,13 +2,17 @@
 
 ## Status
 
-- **Status:** `in_progress` — DOC0..DOC5 complete (DOC3 shipped the IA
+- **Status:** `in_progress` — DOC0..DOC6 complete (DOC3 shipped the IA
   shell + landing + Get started live at nimbusdocs.com on 2026-06-10;
   DOC4 shipped the full Developers + adapter Reference corpus; DOC5
-  shipped the Operators group + tenancy concepts + configuration/deploy
-  reference seeds — 62 built pages, same day). Next: DOC6 (Concepts +
-  Reference source-grounded). Verifier: 12/17 (remaining reds are
-  DOC7/8/11/12 conditions 10, 11, 12, 15, 17).
+  shipped the Operators group + tenancy concepts + reference seeds; DOC6
+  shipped the source-grounded Concepts core (how-nimbus-works,
+  data-and-mutations, adapter-boundary, runtime-permissions,
+  resource-model, scaling) + full CLI / configuration (45/45 flags) /
+  SDK (153/153 exports) / current-capabilities reference — 75 built
+  pages, same day). Next: DOC7 (architecture rewrite,
+  `concepts/architecture/` manifest pages). Verifier: 12/17 (remaining
+  reds are DOC7/8/11/12 conditions 10, 11, 12, 15, 17).
 - **Primary goal:** ship the canonical public documentation site for Nimbus at
   **`nimbusdocs.com`**. Astro 6 + Starlight, Markdown authored in-repo in the
   public top-level groups of `docs/` as the source of truth, a hybrid persona ×

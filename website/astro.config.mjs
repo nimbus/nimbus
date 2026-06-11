@@ -54,8 +54,11 @@ export default defineConfig({
           label: 'Reference',
           items: [
             'reference',
+            'reference/cli',
             'reference/configuration',
             'reference/deploy-admin-api',
+            'reference/current-capabilities',
+            { label: 'SDK', items: [{ autogenerate: { directory: 'reference/sdk' } }] },
             { label: 'Convex', items: [{ autogenerate: { directory: 'reference/convex' } }] },
             { label: 'Firestore', items: [{ autogenerate: { directory: 'reference/firebase' } }] },
             { label: 'Cloud Functions', items: [{ autogenerate: { directory: 'reference/cloud-functions' } }] },

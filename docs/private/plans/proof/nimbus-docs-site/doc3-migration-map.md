@@ -101,6 +101,29 @@ origins.
 
 ## DOC6 — Concepts + Reference (from root pages + `staging/architecture/` curation)
 
+**Status: done (2026-06-10).** Published 13 pages: 6 concepts
+(how-nimbus-works, data-and-mutations, adapter-boundary,
+runtime-permissions, resource-model, scaling), full `reference/cli.md`
+(every visible command; hidden commands excluded), `reference/configuration.md`
+rewritten to all 45 user-reachable `StartCommand` flags,
+`reference/current-capabilities.md`, and `reference/sdk/{index,server,client,
+resources,react}.md` (153/153 package exports machine-checked).
+Deviations: no separate Convex-compat-scope concepts page (covered by
+`reference/convex/compatibility.md` + `developers/convex/`); the README
+Node-compat contract row was already absorbed by DOC4's
+`reference/runtimes/node-compat.md`; `concepts/scaling.md` dropped ~1500
+staged lines of aspirational cluster substrate (Iroh/openraft/gossip —
+zero such dependencies exist) and documents the honest single-process
+posture; resource-model dropped future `profile: "isolate"`,
+browser-supervisor, and transport speculation. ARCHITECTURE.md drift
+(8 items, incl. `Service`→`Engine` and the missing adapter-crate
+extraction) recorded for the DOC7 rewrite. Product gaps surfaced at
+DOC6 closeout: stale `rest.ts` CRUD methods broken against server
+routes (documented under a "methods to avoid" caution);
+`X-Nimbus-Api-Key` sent by SDK clients but handled nowhere server-side;
+`CronJobRequest.schedule`/`TableSchema.indexes` TS types cannot express
+the server wire shapes.
+
 | Source | Action | Target |
 | --- | --- | --- |
 | `ARCHITECTURE.md` (root, 1497 lines, drift) | distill E overview (full rewrite happens DOC7) | `concepts/how-nimbus-works.md` |
