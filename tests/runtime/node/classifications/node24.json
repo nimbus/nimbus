@@ -33,25 +33,11 @@
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_fs_symlink_watchpoint"
     },
     {
-      "test_path": "test/parallel/test-fs-write-stream-autoclose-option.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "streams-local-io/fs-host-io",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_fs_write_stream_autoclose_option_watchpoint"
-    },
-    {
       "test_path": "test/parallel/test-module-loading-error.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "loader-context/module",
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_loader_context_followup_module_commonjs_remainder_batch_fixture"
-    },
-    {
-      "test_path": "test/parallel/test-stream-pipeline.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "streams-local-io/stream",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_stream_pipeline_watchpoint"
     },
     {
       "test_path": "test/parallel/test-v8-serdes.js",
@@ -490,12 +476,10 @@
         "test/parallel/test-vm-module-cached-data.js",
         "test/parallel/test-vm-module-dynamic-import.js",
         "test/parallel/test-vm-module-errors.js",
-        "test/parallel/test-vm-module-evaluate-while-evaluating.js",
         "test/parallel/test-vm-module-hasasyncgraph.js",
         "test/parallel/test-vm-module-hastoplevelawait.js",
         "test/parallel/test-vm-module-import-meta.js",
         "test/parallel/test-vm-module-referrer-realm.mjs",
-        "test/parallel/test-vm-module-synthetic.js",
         "test/parallel/test-vm-script-after-evaluate.js",
         "test/parallel/test-vm-sigint-existing-handler.js",
         "test/parallel/test-vm-sigint.js",
@@ -1598,7 +1582,6 @@
         "test/parallel/test-als-defaultvalue-original.js",
         "test/parallel/test-als-defaultvalue.js",
         "test/parallel/test-arm-math-illegal-instruction.js",
-        "test/parallel/test-async-hooks-http-parser-destroy.js",
         "test/parallel/test-async-hooks-stack-overflow-try-catch.js",
         "test/parallel/test-async-hooks-worker-asyncfn-terminate-1.js",
         "test/parallel/test-async-hooks-worker-asyncfn-terminate-2.js",
@@ -1607,8 +1590,6 @@
         "test/parallel/test-async-wrap-destroyid.js",
         "test/parallel/test-async-wrap-pop-id-during-load.js",
         "test/parallel/test-async-wrap-tlssocket-asyncreset.js",
-        "test/parallel/test-async-wrap-uncaughtexception.js",
-        "test/parallel/test-asyncresource-bind.js",
         "test/parallel/test-atomics-wake.js",
         "test/parallel/test-bad-unicode.js",
         "test/parallel/test-bash-completion.js",
@@ -1999,7 +1980,6 @@
         "test/parallel/test-eval-disallow-code-generation-from-strings.js",
         "test/parallel/test-eval-strict-referenceerror.js",
         "test/parallel/test-eval.js",
-        "test/parallel/test-eventemitter-asyncresource.js",
         "test/parallel/test-eventtarget-memoryleakwarning.js",
         "test/parallel/test-eventtarget.js",
         "test/parallel/test-exception-handler.js",
@@ -2162,7 +2142,6 @@
         "test/parallel/test-memory-usage-emfile.js",
         "test/parallel/test-memory-usage.js",
         "test/parallel/test-messagechannel.js",
-        "test/parallel/test-messageevent-brandcheck.js",
         "test/parallel/test-messageport-hasref.js",
         "test/parallel/test-messaging-marktransfermode.js",
         "test/parallel/test-microtask-queue-integration.js",
@@ -2633,7 +2612,6 @@
         "test/parallel/test-web-locks-query.js",
         "test/parallel/test-web-locks.js",
         "test/parallel/test-webapi-sharedarraybuffer-rejection.js",
-        "test/parallel/test-webcrypto-aead-decrypt-detached-buffer.js",
         "test/parallel/test-webcrypto-cryptokey-workers.js",
         "test/parallel/test-webcrypto-deduplicate-usages.js",
         "test/parallel/test-webcrypto-derivebits-argon2.js",
@@ -2683,7 +2661,6 @@
         "test/parallel/test-whatwg-webstreams-adapters-to-writablestream.js",
         "test/parallel/test-whatwg-webstreams-coverage.js",
         "test/parallel/test-whatwg-webstreams-transfer.js",
-        "test/parallel/test-whatwg-webstreams-transform-stream-members.js",
         "test/parallel/test-whatwg-writablestream.js",
         "test/parallel/test-windows-abort-exitcode.js",
         "test/parallel/test-windows-failed-heap-allocation.js",
@@ -2938,8 +2915,6 @@
         "test/parallel/test-process-dlopen-error-message-crash.js",
         "test/parallel/test-process-dlopen-undefined-exports.js",
         "test/parallel/test-process-env-allowed-flags-are-documented.js",
-        "test/parallel/test-process-env-deprecation.js",
-        "test/parallel/test-process-env-ignore-getter-setter.js",
         "test/parallel/test-process-env-tz.js",
         "test/parallel/test-process-env.js",
         "test/parallel/test-process-euid-egid.js",
@@ -3023,7 +2998,6 @@
         "test/parallel/test-v8-serialize-leak.js",
         "test/parallel/test-v8-startup-snapshot-api.js",
         "test/parallel/test-v8-stop-coverage.js",
-        "test/parallel/test-v8-string-is-one-byte-representation.js",
         "test/parallel/test-v8-take-coverage-noop.js",
         "test/parallel/test-v8-take-coverage.js"
       ]
@@ -3085,8 +3059,6 @@
         "test/parallel/test-fs-watch-recursive-linux-parallel-remove.js",
         "test/parallel/test-fs-write-file-invalid-path.js",
         "test/parallel/test-fs-write-sigxfsz.js",
-        "test/parallel/test-fs-write-stream-eagain.mjs",
-        "test/parallel/test-fs-write-stream-flush.js",
         "test/parallel/test-fs-write-stream-patch-open.js",
         "test/parallel/test-fs-write.js"
       ]
@@ -3121,7 +3093,6 @@
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
         "test/parallel/test-stream-base-typechecking.js",
-        "test/parallel/test-stream-destroy.js",
         "test/parallel/test-stream-once-readable-pipe.js",
         "test/parallel/test-stream-pipe-await-drain-manual-resume.js",
         "test/parallel/test-stream-pipe-await-drain-push-while-write.js",
@@ -3139,7 +3110,6 @@
         "test/parallel/test-stream-pipeline-queued-end-in-destroy.js",
         "test/parallel/test-stream-preprocess.js",
         "test/parallel/test-stream-readable-compose.js",
-        "test/parallel/test-stream-readable-to-web-termination-byob.js",
         "test/parallel/test-stream-readable-unpipe-resume.js",
         "test/parallel/test-stream-writable-samecb-singletick.js"
       ]

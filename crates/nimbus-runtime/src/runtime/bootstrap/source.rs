@@ -645,6 +645,16 @@ function __nimbusRuntimeEnvOverlay() {
   return globalThis[__nimbusRuntimeEnvOverlaySymbol];
 }
 
+// Node rejects accessor descriptors and partial data descriptors on
+// `process.env` with an `ERR_INVALID_OBJECT_DEFINE_PROPERTY` TypeError. Build
+// the same error shape (a TypeError carrying that `code`) for the proxy's
+// defineProperty trap.
+function __nimbusErrInvalidObjectDefineProperty(message) {
+  const error = new TypeError(message);
+  error.code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
+  return error;
+}
+
 function __nimbusCreateProcessEnvProxy() {
   const snapshot = __nimbusCoreOps.op_nimbus_runtime_env_snapshot();
   const target = Object.assign(Object.create(null), snapshot);
@@ -727,6 +737,21 @@ function __nimbusCreateProcessEnvProxy() {
       if (typeof property === "symbol" || typeof value === "symbol") {
         throw new TypeError("Cannot convert a Symbol value to a string");
       }
+      if (typeof value !== "string") {
+        // Node emits the DEP0104 deprecation warning when a non-string value is
+        // assigned to a process.env property; the value is still coerced to a
+        // string. Mirror that so the warning fires before the coercion.
+        const runtimeProcess = globalThis.process;
+        if (runtimeProcess && typeof runtimeProcess.emitWarning === "function") {
+          runtimeProcess.emitWarning(
+            "Assigning any value other than a string, number, or boolean to a " +
+              "process.env property is deprecated. Please make sure to convert the value " +
+              "to a string before setting process.env with it.",
+            "DeprecationWarning",
+            "DEP0104",
+          );
+        }
+      }
       const stringValue = String(value);
       const overlay = __nimbusRuntimeEnvOverlay();
       overlay[property] = stringValue;
@@ -740,6 +765,34 @@ function __nimbusCreateProcessEnvProxy() {
       const overlay = __nimbusRuntimeEnvOverlay();
       overlay[property] = __nimbusRuntimeEnvDeletedMarker;
       delete currentTarget[property];
+      return true;
+    },
+    defineProperty(_currentTarget, property, descriptor) {
+      // Node rejects accessor descriptors and any data descriptor that is not
+      // fully configurable/writable/enumerable, then writes accepted values
+      // through to the environment (matching the order in deno's process.env
+      // polyfill).
+      if (descriptor.get || descriptor.set) {
+        throw __nimbusErrInvalidObjectDefineProperty(
+          "'process.env' does not accept an accessor(getter/setter) descriptor",
+        );
+      }
+      if (
+        !descriptor.configurable ||
+        !descriptor.enumerable ||
+        !descriptor.writable
+      ) {
+        throw __nimbusErrInvalidObjectDefineProperty(
+          "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
+        );
+      }
+      if (typeof property === "symbol") {
+        return Reflect.defineProperty(target, property, descriptor);
+      }
+      const stringValue = String(descriptor.value);
+      const overlay = __nimbusRuntimeEnvOverlay();
+      overlay[property] = stringValue;
+      target[property] = stringValue;
       return true;
     },
   });

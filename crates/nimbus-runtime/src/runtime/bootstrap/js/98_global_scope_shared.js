@@ -146,4 +146,15 @@ const windowOrWorkerGlobalScope = {
   SubtleCrypto: core.propNonEnumerable(crypto.SubtleCrypto),
 };
 
+// Remove the non-standard `Intl.v8BreakIterator` that V8 exposes by default.
+// The Deno CLI strips it in `runtime/js/99_main.js`, but Nimbus runs its own
+// bootstrap and never loads that file, so the deletion has to happen here to
+// match Node (test/parallel/test-intl-v8BreakIterator.js asserts
+// `!('v8BreakIterator' in Intl)`). This only scrubs the main realm's `Intl`;
+// V8's `Intl` is per-realm, so fresh `vm.createContext` realms re-expose it and
+// must be cleaned in the contextify setup path, not here.
+if (typeof Intl !== "undefined") {
+  delete Intl.v8BreakIterator;
+}
+
 export { windowOrWorkerGlobalScope };

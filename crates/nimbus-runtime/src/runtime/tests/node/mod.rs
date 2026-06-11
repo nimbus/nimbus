@@ -3038,6 +3038,16 @@ pub(super) fn default_postlude_behavior_for_fixture(
         | "test/parallel/test-file-write-stream5.js"
         | "test/parallel/test-stream-writable-samecb-singletick.js"
         | "test/parallel/test-process-env-deprecation.js"
+        // test-async-wrap-uncaughtexception registers a single
+        // `process.on('beforeExit', mustCall())` whose handler runs the
+        // terminal asserts (call_id is a number; call_log deep-equals
+        // [1,1,1,1]). The randomBytes RANDOMBYTESREQUEST async resource
+        // (init/before/callback-throw->uncaughtException/after) is already
+        // flushed by the default async drain before the postlude, so the loop
+        // is settled and a single beforeExit emit fires the handler exactly
+        // once -- matching Node's own exit sequence. Byte-identical across
+        // node22/node24, so the lane-agnostic path keys both lanes.
+        | "test/parallel/test-async-wrap-uncaughtexception.js"
         // test-performance-gc registers a PerformanceObserver for 'gc' entries
         // and asserts on them at beforeExit; the GC entry and beforeExit
         // emission are genuinely supported (node22 already greens). The node24
@@ -3536,3 +3546,7 @@ include!("cases/nds3_cycle10.rs");
 include!("cases/nds3_cycle12.rs");
 include!("cases/nds3_cycle12c.rs");
 include!("cases/nds3_cycle12d.rs");
+include!("cases/nds3_cycle13_wave1.rs");
+include!("cases/nds3_cycle13_wave2_staging.rs");
+include!("cases/nds3_cycle13_wave3_staging.rs");
+include!("cases/nds3_cycle13_wave4_staging.rs");
