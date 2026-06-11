@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the Launch Readiness plan
-# (`docs/private/plans/launch-readiness-plan.md`, LR0..LR13).
+# (`docs/private/plans/archive/launch-readiness-plan.md`, LR0..LR13).
 #
 # Exits 0 iff every condition in the plan's Verification section is satisfied.
 # Ships in LR0 so /goal is verifiable from day one; LR1..LR12 progressively

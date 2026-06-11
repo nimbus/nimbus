@@ -54,14 +54,15 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `bash scripts/check-docs.sh`. Promote a new active plan before
   another docs-site wave.
 - Launch-readiness gap closure (deploy admin handshake, `X-Nimbus-Api-Key`
-  decision, admin-token freshness, configurable CORS, CLI wiring for
+  decision, admin-token rotation gate, configurable CORS, CLI wiring for
   Firestore/MongoDB/DynamoDB, `rest.ts` parity, TLS termination, backup
-  command, systemd unit, apt-channel revival, `nimbus node run`
-  reconciler caller, `boot.rs` naming cleanup):
-  `docs/private/plans/launch-readiness-plan.md` (LR0..LR13), gated on
-  `bash scripts/verify-launch-readiness.sh` once LR0 creates it. Origin
-  gap list in `docs/private/plans/archive/nimbus-docs-site-plan.md`
-  (DOC13 closeout).
+  command, systemd unit, apt channel, `nimbus node run` reconciler
+  caller): `docs/private/plans/archive/launch-readiness-plan.md` is the
+  completed baseline (LR0..LR13, closed 2026-06-11), gated on
+  `bash scripts/verify-launch-readiness.sh` (14 conditions). Promote a
+  new active plan before another launch-readiness wave. Note:
+  `docs/private/` is local-only (untracked by owner directive) — these
+  plan references resolve on agent machines, not in the public repo.
 - Generic maintainability, refactor, modularity, reliability hardening, or
   canonical naming:
   `docs/private/architecture/testing/reliability-posture.md`,
