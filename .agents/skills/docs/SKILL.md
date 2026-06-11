@@ -6,8 +6,9 @@ description: Author and maintain the public Nimbus docs site (nimbusdocs.com) â€
 # Nimbus docs site (nimbusdocs.com)
 
 The public documentation lives in-repo and is the source of truth. The site
-is a renderer; the Markdown is the product. Plan of record:
-`docs/private/plans/nimbus-docs-site-plan.md` (the `nimbus-docs-site` plan).
+is a renderer; the Markdown is the product. Completed baseline:
+`docs/private/plans/archive/nimbus-docs-site-plan.md` (the `nimbus-docs-site`
+plan, DOC0..DOC13, closed 2026-06-10).
 
 ## Where things live
 

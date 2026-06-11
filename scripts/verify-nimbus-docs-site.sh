@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the Nimbus Docs Site plan
-# (`docs/plans/nimbus-docs-site-plan.md`, DOC0..DOC13).
+# (`docs/private/plans/archive/nimbus-docs-site-plan.md`, DOC0..DOC13).
 #
 # Exits 0 iff every condition in the plan's Verification section is satisfied.
 # Ships in DOC0 so /goal is verifiable from day one; DOC1..DOC13 progressively

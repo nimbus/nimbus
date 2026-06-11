@@ -47,10 +47,12 @@ If you find yourself writing compatibility code, stop and make the breaking chan
 - Public docs site (nimbusdocs.com), the five public `docs/` groups,
   `website/`, llms.txt artifacts, or README/repo front-door messaging:
   `.agents/skills/docs/SKILL.md` (IA, Diátaxis rules, `docs/private/`
-  fence, messaging canon, verification gates) and
-  `docs/private/plans/nimbus-docs-site-plan.md` (the `nimbus-docs-site`
-  plan), gated on `bash scripts/verify-nimbus-docs-site.sh` and
-  `bash scripts/check-docs.sh`.
+  fence, messaging canon, verification gates), with
+  `docs/private/plans/archive/nimbus-docs-site-plan.md` (the completed
+  `nimbus-docs-site` baseline, DOC0..DOC13, closed 2026-06-10) as prior
+  context, gated on `bash scripts/verify-nimbus-docs-site.sh` and
+  `bash scripts/check-docs.sh`. Promote a new active plan before
+  another docs-site wave.
 - Generic maintainability, refactor, modularity, reliability hardening, or
   canonical naming:
   `docs/private/architecture/testing/reliability-posture.md`,
