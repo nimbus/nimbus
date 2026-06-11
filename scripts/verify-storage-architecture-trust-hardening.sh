@@ -176,7 +176,7 @@ fi
 
 step 11 "Operator and architecture docs describe the storage trust contract"
 if grep -q "tenant event journal" docs/private/architecture/storage/persistence-engine-baseline.md \
-   && grep -q "StorageHealthDiagnostic" docs/private/staging/operating/storage-backends.md \
+   && grep -q "StorageHealthDiagnostic" docs/private/operating/storage-backends.md \
    && grep -q "retention floor" docs/private/architecture/storage/persistence-engine-baseline.md \
    && grep -q "storage format version" docs/private/architecture/storage/persistence-engine-baseline.md \
    && proof_done "${PROOF_DIR}/sath10-docs-operator-evidence.md"; then

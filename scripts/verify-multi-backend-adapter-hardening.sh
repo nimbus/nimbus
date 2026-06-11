@@ -320,8 +320,8 @@ fi
 step 11 "Latency budgets are instrumented and documented"
 LATENCY_DETAIL=()
 LATENCY_PROOF="${PROOF_DIR}/mba8-latency-budgets.md"
-if [ ! -f "docs/private/staging/operating/latency-budgets.md" ]; then
-  LATENCY_DETAIL+=("docs/private/staging/operating/latency-budgets.md missing")
+if [ ! -f "docs/private/operating/latency-budgets.md" ]; then
+  LATENCY_DETAIL+=("docs/private/operating/latency-budgets.md missing")
 fi
 if [ ! -f "${LATENCY_PROOF}" ]; then
   LATENCY_DETAIL+=("${LATENCY_PROOF} missing")

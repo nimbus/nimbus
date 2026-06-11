@@ -21,7 +21,7 @@ PROOF_CW0="${PROOF_DIR}/cw0-baseline.md"
 
 HARNESS_SCRIPT="scripts/verification-harness.sh"
 CI_WF=".github/workflows/ci.yml"
-MODERN_DOC="docs/private/staging/operating/ci-modernization.md"
+MODERN_DOC="docs/private/operating/ci-modernization.md"
 
 PASS=0
 FAIL=0

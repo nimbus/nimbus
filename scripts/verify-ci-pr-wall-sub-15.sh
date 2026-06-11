@@ -22,7 +22,7 @@ PROOF_PW5="${PROOF_DIR}/pw5-green-proof.md"
 
 CI_WF=".github/workflows/ci.yml"
 COVERAGE_WF=".github/workflows/coverage.yml"
-PR_WALL_DOC="docs/private/staging/operating/ci-pr-wall.md"
+PR_WALL_DOC="docs/private/operating/ci-pr-wall.md"
 
 PASS=0
 FAIL=0
@@ -275,7 +275,7 @@ else
 fi
 
 # 9. Canonical contract doc exists with required sections.
-step 9 "docs/private/staging/operating/ci-pr-wall.md exists with Target / Pole attacks / Retain-retire-warm-sccache sections"
+step 9 "docs/private/operating/ci-pr-wall.md exists with Target / Pole attacks / Retain-retire-warm-sccache sections"
 if [ ! -f "${PR_WALL_DOC}" ]; then
   fail "${PR_WALL_DOC} missing" "Expected canonical contract page"
 else

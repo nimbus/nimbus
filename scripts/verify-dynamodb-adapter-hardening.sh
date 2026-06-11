@@ -30,7 +30,7 @@ BATCH="${CRATE}/src/commands/batch.rs"
 TRANSACT="${CRATE}/src/commands/transact.rs"
 QUERY="${CRATE}/src/commands/query.rs"
 BENCH="${CRATE}/benches/operations.rs"
-DIVERGENCES="docs/private/staging/adapters/dynamodb/divergences.md"
+DIVERGENCES="docs/private/adapters/dynamodb/divergences.md"
 PARITY="crates/nimbus-server/tests/dynamodb_spec"
 PROOF="docs/private/plans/proof/dynamodb-adapter-hardening"
 

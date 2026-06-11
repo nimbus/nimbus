@@ -33,7 +33,7 @@ SERVER_CARGO="crates/nimbus-server/Cargo.toml"
 SIGV4_DIR="${CRATE_DIR}/src/auth/sigv4"
 NOTICE_FILE="NOTICE"
 
-ADAPTER_DOCS="docs/private/staging/adapters/dynamodb"
+ADAPTER_DOCS="docs/private/adapters/dynamodb"
 COVERAGE_DOC="${ADAPTER_DOCS}/feature-coverage.md"
 SDK_DOC="${ADAPTER_DOCS}/sdk-compatibility.md"
 DIVERGENCES_DOC="${ADAPTER_DOCS}/divergences.md"

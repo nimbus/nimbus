@@ -841,13 +841,13 @@ if contains "${PLAN}" 'ARCHITECTURE.md' \
    && contains "${SEQ14_PROOF}" '^status: done$' \
    && contains "${SEQ14_PROOF}" 'ARCHITECTURE.md' \
    && contains "${SEQ14_PROOF}" 'docs/private/architecture/storage/persistence-engine-baseline.md' \
-   && contains "${SEQ14_PROOF}" 'docs/private/staging/operating/storage-backends.md' \
-   && contains "${SEQ14_PROOF}" 'docs/private/staging/adapters/convex/compatibility.md' \
-   && contains "${SEQ14_PROOF}" 'docs/private/staging/adapters/firebase/compatibility.md' \
-   && contains "${SEQ14_PROOF}" 'docs/private/staging/adapters/cloud-functions/compatibility.md' \
-   && contains "${SEQ14_PROOF}" 'docs/private/staging/adapters/mongodb/operations.md' \
-   && contains "${SEQ14_PROOF}" 'docs/private/staging/adapters/dynamodb/enterprise-readiness.md' \
-   && contains "${SEQ14_PROOF}" 'docs/private/staging/adapters/native/README.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/operating/storage-backends.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/adapters/convex/compatibility.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/adapters/firebase/compatibility.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/adapters/cloud-functions/compatibility.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/adapters/mongodb/operations.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/adapters/dynamodb/enterprise-readiness.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/adapters/native/README.md' \
    && contains "${SEQ14_PROOF}" 'Draft PR URL: `https://github.com/nimbus/nimbus/pull/13`' \
    && contains "${SEQ14_PROOF}" 'Branch push and draft PR creation are complete' \
    && contains "${SEQ14_PROOF}" '20 passed, 0 failed' \
@@ -886,14 +886,14 @@ if contains "${PLAN}" 'ARCHITECTURE.md' \
    && line_count_at_most "crates/nimbus-storage/src/mysql/backend.rs" 1499 \
    && line_count_at_most "crates/nimbus-storage/src/postgres/backend.rs" 1499 \
    && line_count_at_most "crates/nimbus-storage/src/postgres/write.rs" 1499 \
-   && contains "docs/private/staging/operating/storage-backends.md" 'Historical reads use retained' \
-   && contains "docs/private/staging/adapters/convex/compatibility.md" 'Storage Semantics Inherited By Convex' \
-   && contains "docs/private/staging/adapters/firebase/compatibility.md" 'Storage Semantics Inherited By Firebase' \
-   && contains "docs/private/staging/adapters/cloud-functions/compatibility.md" 'Storage Semantics Inherited By Cloud Functions' \
-   && contains "docs/private/staging/adapters/mongodb/operations.md" 'Storage Semantics' \
-   && contains "docs/private/staging/adapters/mongodb/operations.md" 'CommandNotSupported' \
-   && contains "docs/private/staging/adapters/native/README.md" 'not implicitly' \
-   && contains "docs/private/staging/adapters/native/README.md" 'UnsupportedAdapter' \
+   && contains "docs/private/operating/storage-backends.md" 'Historical reads use retained' \
+   && contains "docs/private/adapters/convex/compatibility.md" 'Storage Semantics Inherited By Convex' \
+   && contains "docs/private/adapters/firebase/compatibility.md" 'Storage Semantics Inherited By Firebase' \
+   && contains "docs/private/adapters/cloud-functions/compatibility.md" 'Storage Semantics Inherited By Cloud Functions' \
+   && contains "docs/private/adapters/mongodb/operations.md" 'Storage Semantics' \
+   && contains "docs/private/adapters/mongodb/operations.md" 'CommandNotSupported' \
+   && contains "docs/private/adapters/native/README.md" 'not implicitly' \
+   && contains "docs/private/adapters/native/README.md" 'UnsupportedAdapter' \
    && contains "packages/nimbus-ui/package.json" 'node ../codegen/src/cli.mjs --app .' \
    && ! grep -q 'convex codegen --app' packages/nimbus-ui/package.json Makefile; then
   pass "Plan closeout records architecture docs, adapter docs, pushed branch, draft PR, verification, and final proof"

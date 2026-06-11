@@ -1,7 +1,7 @@
 <!-- convex-ai-start -->
 This project implements a [Convex](https://convex.dev)-compatible backend server.
 
-When working on Convex-compatible code (`packages/convex/`, `demos/convex/`, or any Convex API surface), **always read `docs/private/staging/adapters/convex/ai-guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
+When working on Convex-compatible code (`packages/convex/`, `demos/convex/`, or any Convex API surface), **always read `docs/private/adapters/convex/ai-guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
 <!-- convex-ai-end -->
 
 # Nimbus
@@ -93,7 +93,7 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   existing backend and adapter, not only the DynamoDB lane. `/goal`
   control plane gated on
   `bash scripts/verify-multi-backend-adapter-hardening.sh` (fifteen
-  conditions). Use `docs/private/staging/operating/multi-backend-adapter-hardening.md`
+  conditions). Use `docs/private/operating/multi-backend-adapter-hardening.md`
   for the current contract.
 - Convex-informed storage trust gaps (table lifecycle after stable
   `table_catalog`, table-aware Convex document identity validation,
@@ -110,7 +110,7 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `docs/private/architecture/sandbox/service-sandbox-session-model.md`,
   `docs/private/architecture/sandbox/microvm-service-baseline.md`,
   `docs/private/architecture/sandbox/macos-machine-flow.md` when relevant,
-  `docs/private/staging/operating/cli.md`, and the active platform plan from
+  `docs/private/operating/cli.md`, and the active platform plan from
   `docs/private/plans/README.md`
 - SDK services/sandboxes/sessions resource model, built-in/external/sandbox-backed
   service implementations, dynamic services, sandbox APIs, runtime-isolate
@@ -169,7 +169,7 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   needs its own follow-up plan.
 - CLI daemon canonicalization, walk-up boundaries, or banner shape:
   `docs/private/plans/archive/cli-daemon-canonicalization-plan.md` (completed
-  baseline, closed 2026-05-19), `docs/private/staging/operating/cli.md`,
+  baseline, closed 2026-05-19), `docs/private/operating/cli.md`,
   `docs/private/plans/archive/cli-command-surface-plan.md` (prior wave),
   `docs/private/plans/archive/compose-discovery-plan.md` (compose precedent).
   Promote a new active plan before another CLI-canonicalization wave.
@@ -180,7 +180,7 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `docs/private/plans/distribution-plan.md` as parent context; promote a new active
   plan before another install-script wave
 - Local-dev / build-contract / Make-vs-Cargo orchestration:
-  `docs/private/staging/operating/local-dev.md` for the user-facing contract, then
+  `docs/private/operating/local-dev.md` for the user-facing contract, then
   `docs/private/plans/archive/local-dev-canonicalization-plan.md` as the
   completed baseline (LD0-LD7, closed 2026-05-21). The Makefile UI
   dependency graph at the top of `Makefile` (`UI_PKG`, `UI_DIST_INDEX`,
@@ -189,7 +189,7 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   and errors actionably otherwise. Promote a new active plan before
   another local-dev / build-graph wave.
 - CI caching / sccache / Swatinem orchestration:
-  `docs/private/staging/operating/ci-caching.md` for the canonical caching contract,
+  `docs/private/operating/ci-caching.md` for the canonical caching contract,
   then `docs/private/plans/archive/ci-caching-canonicalization-plan.md` as the
   completed baseline (CC0-CC9, closed 2026-05-22). The baseline
   covers sccache rollout across every Rust job in
@@ -204,7 +204,7 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   sccache / Swatinem wave.
 - CI infrastructure modernization (composite actions, SHA pinning,
   runner determinism, job summaries, SAST):
-  `docs/private/staging/operating/ci-modernization.md` for the canonical contract,
+  `docs/private/operating/ci-modernization.md` for the canonical contract,
   then `docs/private/plans/archive/ci-modernization-plan.md` as the completed
   baseline (CM0..CM8, closed 2026-05-22). The baseline covers the
   cross-workflow Rust + sccache + Swatinem composite action
@@ -221,7 +221,7 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   composite-action wave.
 - Coverage / release-pipeline acceleration (mold linker, coverage
   parallelism + sharding, release.yml composite adoption, Windows
-  release-build investigation): `docs/private/staging/operating/ci-modernization.md`
+  release-build investigation): `docs/private/operating/ci-modernization.md`
   for the canonical contract (see "Coverage and release acceleration"
   section), then `docs/private/plans/archive/coverage-acceleration-plan.md`
   as the completed baseline (CA0..CA5, closed 2026-05-22). The
@@ -243,7 +243,7 @@ If you find yourself writing compatibility code, stop and make the breaking chan
 - PR CI wall acceleration (verification-harness sharding, workspace-
   tests sharding via cargo-nextest --partition, external-provider
   matrix split by provider, warm-sccache shrink):
-  `docs/private/staging/operating/ci-modernization.md` for the canonical contract
+  `docs/private/operating/ci-modernization.md` for the canonical contract
   ("PR critical-path acceleration" section), then
   `docs/private/plans/archive/ci-wall-acceleration-plan.md` as the completed
   baseline (CW0..CW5, closed 2026-05-23). The baseline attacks the
@@ -265,7 +265,7 @@ If you find yourself writing compatibility code, stop and make the breaking chan
 - CI PR-wall sub-15 (post-CW pole attack — libsql image pin +
   docker-image cache, coverage extraction to its own workflow,
   branch-conditional concurrency cap, warm-sccache retain-or-retire
-  decision): `docs/private/staging/operating/ci-pr-wall.md` for the canonical
+  decision): `docs/private/operating/ci-pr-wall.md` for the canonical
   contract, then `docs/private/plans/archive/ci-pr-wall-sub-15-plan.md` as
   the completed baseline (PW0..PW6, closed 2026-05-23). The
   baseline pins
@@ -291,20 +291,20 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   ci.yml). Promote a new active plan before another PR-wall
   acceleration wave.
 - Firebase/Firestore compatibility:
-  `docs/private/staging/adapters/firebase/compatibility.md`,
-  `docs/private/staging/adapters/firebase/migration.md`,
-  `docs/private/staging/adapters/firebase/auth-contract.md`,
+  `docs/private/adapters/firebase/compatibility.md`,
+  `docs/private/adapters/firebase/migration.md`,
+  `docs/private/adapters/firebase/auth-contract.md`,
   `docs/private/architecture/runtime/adapter-boundary.md`,
   `docs/private/architecture/server/auth-runtime-trust.md`
 - Cloud Functions compatibility:
-  `docs/private/staging/adapters/cloud-functions/compatibility.md`,
-  `docs/private/staging/adapters/cloud-functions/migration.md`,
+  `docs/private/adapters/cloud-functions/compatibility.md`,
+  `docs/private/adapters/cloud-functions/migration.md`,
   `docs/private/architecture/runtime/adapter-boundary.md`,
   `docs/private/architecture/server/auth-runtime-trust.md`
 - Convex or Nimbus CLI/codegen workflow:
-  `docs/private/staging/adapters/convex/ai-guidelines.md`,
-  `docs/private/staging/operating/cli.md`,
-  `docs/private/staging/adapters/convex/compatibility.md`,
+  `docs/private/adapters/convex/ai-guidelines.md`,
+  `docs/private/operating/cli.md`,
+  `docs/private/adapters/convex/compatibility.md`,
   `docs/private/plans/archive/nimbus-init-plan.md`
 - Node-compatible runtime / `deno_core` / `rusty_v8` / embedded-codegen:
   `docs/private/architecture/runtime/adapter-boundary.md` and
@@ -465,7 +465,7 @@ A table without a schema accepts any document. Setting a schema adds constraints
 - **JS build:** `npm run build`
 - **All at once:** `make ci`
 
-See `docs/private/staging/operating/local-dev.md` for the build contract; Node is a dev
+See `docs/private/operating/local-dev.md` for the build contract; Node is a dev
 build dependency for any Rust target that touches `nimbus-server`.
 
 Prefer the `make` entrypoints above for long-running workspace-wide verification:

@@ -6,7 +6,7 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-OPERATING_DOC="docs/private/staging/operating/deno-fork-workflow.md"
+OPERATING_DOC="docs/private/operating/deno-fork-workflow.md"
 LEDGER_DOC="docs/private/architecture/runtime/deno-fork-bump-ledger.md"
 
 EXPECTED_DENO_TAG="v2.8.0-nimbus.5"

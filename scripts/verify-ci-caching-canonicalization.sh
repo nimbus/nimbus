@@ -19,7 +19,7 @@ cd "${REPO_ROOT}"
 
 PLAN_ACTIVE="docs/private/plans/ci-caching-canonicalization-plan.md"
 PLAN_ARCHIVED="docs/private/plans/archive/ci-caching-canonicalization-plan.md"
-OPERATING_DOC="docs/private/staging/operating/ci-caching.md"
+OPERATING_DOC="docs/private/operating/ci-caching.md"
 AGENTS_MD="CLAUDE.md"  # symlinks to AGENTS.md
 PROOF_DIR="docs/private/plans/proof/ci-caching-canonicalization"
 PROOF_BASELINE_CACHES="${PROOF_DIR}/baseline-cache-state.json"
@@ -210,7 +210,7 @@ else
   fail "${CI_YML} missing"
 fi
 
-# 7. Caching contract documented at docs/private/staging/operating/ci-caching.md.
+# 7. Caching contract documented at docs/private/operating/ci-caching.md.
 step 7 "Caching contract doc exists"
 if [ -f "${OPERATING_DOC}" ]; then
   pass "${OPERATING_DOC} exists"

@@ -4,7 +4,7 @@
 # node-compat-nightly.yml.
 #
 # Owning plan: docs/private/plans/ci-modernization-plan.md (CM1).
-# Caching contract: docs/private/staging/operating/ci-caching.md.
+# Caching contract: docs/private/operating/ci-caching.md.
 
 name: Set up Rust with cache
 description: >-

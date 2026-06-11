@@ -209,8 +209,8 @@ fi
 
 for current_guidance in \
   "${repo_root}/README.md" \
-  "${repo_root}/docs/private/staging/operating/container-image.md" \
-  "${repo_root}/docs/private/staging/operating/encryption.md" \
+  "${repo_root}/docs/private/operating/container-image.md" \
+  "${repo_root}/docs/private/operating/encryption.md" \
   "${repo_root}/docs/private/plans/windows-machine-support-plan.md" \
   "${repo_root}/docs/private/plans/research/bundle-distribution-from-object-storage.md" \
   "${repo_root}/docs/private/plans/research/runtime-file-storage-surface.md" \

@@ -187,7 +187,7 @@ c_ae5_cleanup() {
     has 'nimbus-assets embeds artifacts produced by the nimbus-ui JS' Makefile &&
     has 'nimbus-assets embeds the dependency-closed JS package payload' .github/workflows/ci.yml .github/workflows/coverage.yml &&
     absent "nimbus-server's \`include_str!\`s|nimbus-server via include_str|nimbus-server.*rust-embed" \
-      Makefile .github/workflows/ci.yml docs/private/staging/operating/local-dev.md
+      Makefile .github/workflows/ci.yml docs/private/operating/local-dev.md
 }
 check "AE5. old direct embed dependencies, build checks, and stale owner comments are gone" c_ae5_cleanup
 

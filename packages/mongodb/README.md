@@ -62,7 +62,7 @@ npm run typecheck --workspace @nimbus/mongodb   # type-only selftest pass
 
 ## Related
 
-- [Supported MongoDB drivers](../../docs/adapters/mongodb/drivers.md)
-- [Supported operations](../../docs/adapters/mongodb/operations.md)
-- [Usage examples](../../docs/adapters/mongodb/examples.md)
-- [Tenant isolation](../../docs/adapters/mongodb/tenant-isolation.md)
+- [Supported MongoDB drivers](../../docs/private/adapters/mongodb/drivers.md)
+- [Supported operations](../../docs/private/adapters/mongodb/operations.md)
+- [Usage examples](../../docs/private/adapters/mongodb/examples.md)
+- [Tenant isolation](../../docs/private/adapters/mongodb/tenant-isolation.md)

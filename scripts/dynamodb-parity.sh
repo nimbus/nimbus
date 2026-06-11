@@ -4,7 +4,7 @@
 # Runs the official-SDK scenario corpus against Nimbus and — when Docker is
 # available — against AWS DynamoDB Local, then reports the per-scenario result.
 # DynamoDB Local is the behavioral ground truth; any Nimbus deviation must be
-# either a fix or a recorded divergence in docs/private/staging/adapters/dynamodb/divergences.md.
+# either a fix or a recorded divergence in docs/private/adapters/dynamodb/divergences.md.
 #
 # Lanes:
 #   * Nimbus lane (always): the in-process official-SDK parity runner

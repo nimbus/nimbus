@@ -30,7 +30,7 @@ ZBUS_ERROR="crates/nimbus-node/src/systemd_transient/zbus_client/error.rs"
 CORE_ERROR="crates/nimbus-core/src/error.rs"
 INTEGRATION_TEST="crates/nimbus-node/tests/zbus_systemd_live.rs"
 CI_WF=".github/workflows/ci.yml"
-OPERATOR_DOC="docs/private/staging/operating/node-dbus-binding.md"
+OPERATOR_DOC="docs/private/operating/node-dbus-binding.md"
 
 PASS=0
 FAIL=0

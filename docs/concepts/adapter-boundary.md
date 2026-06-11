@@ -110,7 +110,7 @@ Nimbus server, and adopt another surface later without a migration.
 **Consistent guarantees everywhere.** Atomic writes, schema rules,
 index correctness, tenant isolation, and reactive updates behave the
 same on every surface, because they are implemented once. There is no
-"the Mongo surface is weaker about X" class of surprise — compatibility
+"the MongoDB surface is weaker about X" class of surprise — compatibility
 differences are differences of *dialect coverage*, not of storage
 semantics.
 

@@ -179,7 +179,7 @@ check "10. no registry range in templates; node.rs fixtures rewritten to file:" 
 # ---- 11: Cloud Functions in-contract offline OR documented fallback [BPD3] ----
 c11() {
   has 'external Node\.js runner|preinstall|developer-supplied|fallback' \
-    docs/private/staging/adapters/cloud-functions/README.md
+    docs/private/adapters/cloud-functions/README.md
 }
 check "11. Cloud Functions classified (offline-installable or fallback)" c11
 
@@ -262,7 +262,7 @@ check "15. ExternalNode classification is consistent (Convex in-binary/diagnosti
 # (plans/archive legitimately keep historical `npx convex codegen` prose).
 # Scope: live user docs + package READMEs. Excludes docs/private/plans/**, where
 # historical plans/proofs legitimately keep old command transcripts.
-USER_DOCS=(docs/private/staging/adapters docs/private/staging/operating packages/convex/README.md
+USER_DOCS=(docs/private/adapters docs/private/operating packages/convex/README.md
   packages/nimbus/README.md packages/codegen/README.md docs/private/staging/runtimes)
 # Detect a stale POSITIVE codegen instruction (`npx convex codegen`,
 # `convex codegen --app`, `nimbus-codegen --app`) while ALLOWING negative
@@ -295,7 +295,7 @@ c16() {
   # "in-binary" co-occur in either order, tolerating markdown bold and a few
   # words between — e.g. "Codegen runs **in-binary**", "codegen ... in-binary").
   has 'codegen[^.]{0,40}in-binary|in-binary[^.]{0,40}codegen' \
-    docs/private/staging/operating/cli.md docs/private/staging/adapters/convex/compatibility.md || return 1
+    docs/private/operating/cli.md docs/private/adapters/convex/compatibility.md || return 1
   # Negative gate: no surviving stale npm-style codegen *instruction* in user
   # docs (negative disclaimers are allowed).
   ! stale_codegen_instruction || return 1
@@ -343,7 +343,7 @@ c20() {
   # User-facing docs must not instruct a registry install of a Nimbus package.
   # docs/private/plans/* legitimately describes the migration/defect and is excluded.
   ! grep -RqE 'npm install @nimbus/|npm install convex' \
-    docs/private/staging/adapters docs/private/staging/operating packages/*/README.md demos 2>/dev/null &&
+    docs/private/adapters docs/private/operating packages/*/README.md demos 2>/dev/null &&
     { [ ! -f "${LAUNCH_PLAN}" ] || ! grep -qE '[Pp]ublish .*to npm' "${LAUNCH_PLAN}"; }
 }
 check "20. no Nimbus-package registry-install/publish instructions in docs" c20

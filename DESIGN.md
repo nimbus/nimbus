@@ -1247,14 +1247,14 @@ Every UI feature must satisfy:
 
 ## References Used
 
-- `docs/private/staging/current-capabilities.md`
+- `docs/private/current-capabilities.md`
 - `docs/private/plans/archive/desktop-ui-plan.md`
 - `docs/private/plans/archive/system-tenant-api-plan.md`
-- `docs/private/staging/adapters/convex/compatibility.md`
-- `docs/private/staging/adapters/firebase/compatibility.md`
-- `docs/private/staging/adapters/mongodb/README.md`
-- `docs/private/staging/adapters/mongodb/operations.md`
-- `docs/private/staging/adapters/native/README.md`
+- `docs/private/adapters/convex/compatibility.md`
+- `docs/private/adapters/firebase/compatibility.md`
+- `docs/private/adapters/mongodb/README.md`
+- `docs/private/adapters/mongodb/operations.md`
+- `docs/private/adapters/native/README.md`
 - `docs/private/architecture/sandbox/microvm-service-baseline.md`
 - VoltAgent `awesome-design-md` as the plain-text design-system pattern
 - Convex dashboard docs for Health, Data, Functions, Schedules, Logs, Settings

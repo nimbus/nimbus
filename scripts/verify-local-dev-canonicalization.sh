@@ -14,7 +14,7 @@ cd "${REPO_ROOT}"
 
 PLAN_ACTIVE="docs/private/plans/local-dev-canonicalization-plan.md"
 PLAN_ARCHIVED="docs/private/plans/archive/local-dev-canonicalization-plan.md"
-OPERATING_DOC="docs/private/staging/operating/local-dev.md"
+OPERATING_DOC="docs/private/operating/local-dev.md"
 CI_YML=".github/workflows/ci.yml"
 BUILD_RS="crates/nimbus-server/build.rs"
 MAKEFILE="Makefile"
