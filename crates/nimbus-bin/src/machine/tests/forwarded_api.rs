@@ -217,6 +217,9 @@ fn machine_status_detects_reachable_machine_api_socket() {
         stream
             .write_all(response.as_bytes())
             .expect("server should write response");
+        // Close the healthz connection before blocking in accept() so a
+        // client that drains to EOF can never deadlock this thread.
+        drop(stream);
 
         let (mut stream, _) = listener
             .accept()

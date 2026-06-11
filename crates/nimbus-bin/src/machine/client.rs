@@ -415,10 +415,17 @@ fn read_unix_http_request(
             Ok(0) => break,
             Ok(read) => {
                 response.extend_from_slice(&chunk[..read]);
+                // A satisfied Content-Length means the message is complete
+                // — break regardless of `Connection: close`. The close
+                // directive announces the server WILL close; it does not
+                // require draining to EOF once the length is known, and
+                // waiting here deadlocks against one-shot servers that
+                // keep the stream open while accepting their next
+                // connection. EOF delimits the body only when no
+                // Content-Length was sent (the `Ok(0)` arm).
                 if let Some(expected_len) =
                     expected_http_response_len(&response, socket_path, path)?
                     && response.len() >= expected_len
-                    && !http_response_declares_connection_close(&response)
                 {
                     break;
                 }
@@ -563,22 +570,6 @@ fn expected_http_response_len(
             })
         })
         .transpose()
-}
-
-fn http_response_declares_connection_close(response: &[u8]) -> bool {
-    let Some(body_offset) = http_response_body_offset(response) else {
-        return false;
-    };
-    let headers = String::from_utf8_lossy(&response[..body_offset]);
-    headers.lines().skip(1).any(|line| {
-        let Some((name, value)) = line.split_once(':') else {
-            return false;
-        };
-        name.eq_ignore_ascii_case("connection")
-            && value
-                .split(',')
-                .any(|directive| directive.trim().eq_ignore_ascii_case("close"))
-    })
 }
 
 fn parse_http_status_code(status_line: &str) -> Option<u16> {
