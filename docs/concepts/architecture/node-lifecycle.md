@@ -160,7 +160,7 @@ running node is the designed next step, not the current behavior.
 
 ## Related pages
 
-- [Node lifecycle (operators)](/operators/node-lifecycle/) — installing,
+- [Run Nimbus as a service](/operators/node-lifecycle/) — installing,
   inspecting, and removing the node service.
 - [Deploy to Linux](/operators/deploy-linux/) — a hand-written service
   unit, step by step.

@@ -181,7 +181,7 @@ authorization applies regardless of where the call originates.
   — the SDK walkthrough for every verb described here.
 - [Tenant isolation](/concepts/tenant-isolation/) — the admission and
   enforcement model these resources run inside.
-- [Tenant isolation operator guide](/operators/tenant-isolation/) —
+- [Manage tenants](/operators/tenant-isolation/) —
   operating the isolation boundary.
 - [HTTP API reference](/reference/native/http-api/) and
   [error reference](/reference/native/errors/) — the wire surface and

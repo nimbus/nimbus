@@ -1,8 +1,8 @@
 ---
-title: Node lifecycle
+title: Run Nimbus as a service
 description: Install, inspect, and remove the systemd or Podman Quadlet service that runs a Nimbus node — generated units, socket activation, diagnostics, and Compose export.
 sidebar:
-  label: Node lifecycle
+  label: Run Nimbus as a service
   order: 9
 ---
 

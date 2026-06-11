@@ -170,7 +170,7 @@ The boundary is deliberate about its edges:
 
 ## Related pages
 
-- [Tenant isolation operator guide](/operators/tenant-isolation/) —
+- [Manage tenants](/operators/tenant-isolation/) —
   create and administer tenants, configure storage scoping, verify
   isolation.
 - [MongoDB tenant isolation](/reference/mongodb/tenant-isolation/) — how

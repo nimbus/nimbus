@@ -459,7 +459,7 @@ reconciler. The artifact subcommands select a target with `--systemd`
 (native unit) or `--container` (Quadlet), and a scope with `--user` or
 `--system` (default: system). `node install` requires an explicit target;
 the other artifact subcommands default to `--systemd`. See
-[Node lifecycle](/operators/node-lifecycle/) and
+[Run Nimbus as a service](/operators/node-lifecycle/) and
 [Deploy on Linux](/operators/deploy-linux/).
 
 ### nimbus node run
@@ -664,7 +664,7 @@ review.
 ## nimbus policy
 
 Validates and explains Nimbus operator policy files. See
-[Tenant isolation](/operators/tenant-isolation/) for the policy model.
+[Manage tenants](/operators/tenant-isolation/) for the policy model.
 
 ```bash
 nimbus policy validate --file nimbus.policy.yaml [-f text|json]

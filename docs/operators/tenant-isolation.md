@@ -1,8 +1,8 @@
 ---
-title: Tenant isolation
+title: Manage tenants
 description: Create and administer tenants, choose where each tenant's data lives, and verify isolation on a running Nimbus server.
 sidebar:
-  label: Tenant isolation
+  label: Manage tenants
   order: 8
 ---
 

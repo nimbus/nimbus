@@ -32,11 +32,11 @@ haven't run a server yet, then work through
 
 ## Administration
 
-- [Tenant isolation](/operators/tenant-isolation/) — create and administer
+- [Manage tenants](/operators/tenant-isolation/) — create and administer
   tenants on a running server.
-- [Node lifecycle](/operators/node-lifecycle/) — systemd and Quadlet
+- [Run Nimbus as a service](/operators/node-lifecycle/) — systemd and Quadlet
   service management with `nimbus node`.
-- [Observability](/operators/observability/) — health, debug endpoints,
+- [Inspect the server](/operators/observability/) — health, debug endpoints,
   logs, and the access audit log.
 - [Security hardening](/operators/hardening/) — the checklist for exposed
   deployments.

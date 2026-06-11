@@ -1,5 +1,11 @@
 ---
-title: Nimbus
+title: nimbus
+# Starlight composes <title> as "<page> | <site>", which would render
+# "nimbus | nimbus" here — the head override gives the home page its own
+# tab title instead.
+head:
+  - tag: title
+    content: nimbus — your whole backend in one binary
 description: The single-binary backend for apps and AI agents. Drop-in compatible with Convex, Firestore, MongoDB, and DynamoDB.
 template: splash
 hero:
@@ -45,9 +51,9 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
     See [the Convex guide](/developers/convex/) — or scaffold this app in
     the [5-minute quickstart](/get-started/quickstart/).
   </TabItem>
-  <TabItem label="Firestore">
+  <TabItem label="Firebase">
     ```typescript
-    // Stock Firestore SDK surface, served by Nimbus
+    // Stock Firebase SDK, Firestore surface — served by Nimbus
     import { initializeApp } from "@nimbus/firebase/app";
     import {
       addDoc,
@@ -64,8 +70,9 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
     await addDoc(messages, { body: "hello from nimbus" });
     onSnapshot(messages, (live) => console.log("live size", live.size));
     ```
-    See [the Firestore guide](/developers/firebase/) for enabling the
-    routes (`nimbus start --firestore`).
+    Firestore is Firebase's database — Nimbus speaks its wire protocol, so
+    the stock SDK just works. See [the Firestore guide](/developers/firebase/)
+    for enabling the routes (`nimbus start --firestore`).
   </TabItem>
   <TabItem label="Cloud Functions">
     ```typescript

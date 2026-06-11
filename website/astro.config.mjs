@@ -23,6 +23,40 @@ export default defineConfig({
       description:
         'The single-binary backend for apps and AI agents. Drop-in compatible with Convex, Firestore, MongoDB, and DynamoDB.',
       favicon: '/favicon.svg',
+      head: [
+        // The favicon must follow the page's resolved theme, not the OS:
+        // an SVG prefers-color-scheme query only sees the OS scheme, so a
+        // light page on a dark OS would show the night favicon. Starlight
+        // resolves data-theme in a blocking head script before this runs;
+        // /favicon.svg (media-query auto) stays as the no-JS fallback.
+        {
+          tag: 'script',
+          content: `(function () {
+  var init = function () {
+    var link = document.querySelector('link[rel*="icon"]');
+    if (!link) return;
+    var update = function () {
+      link.href =
+        document.documentElement.dataset.theme === 'dark'
+          ? '/favicon-night.svg'
+          : '/favicon-warm.svg';
+    };
+    update();
+    new MutationObserver(update).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
+  };
+  // Head order is not guaranteed: this script can precede the favicon
+  // <link> in the parsed head, so wait for the DOM when it does.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();`,
+        },
+      ],
       social: [
         {
           icon: 'github',

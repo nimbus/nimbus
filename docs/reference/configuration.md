@@ -253,7 +253,7 @@ runs with the built-in community license.
   gates in depth.
 - [Deploy on Linux](/operators/deploy-linux/) — systemd units and socket
   activation.
-- [Tenant isolation](/operators/tenant-isolation/) — what the tenant
+- [Manage tenants](/operators/tenant-isolation/) — what the tenant
   provider choice means operationally.
 - [Self-host quickstart](/get-started/self-host/) — a minimal first
   configuration.

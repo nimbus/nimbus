@@ -138,7 +138,7 @@ its own version.
 
 - [Backup and restore](/operators/backup-restore/) — take a backup
   before every upgrade.
-- [Node lifecycle](/operators/node-lifecycle/) — the service units that
+- [Run Nimbus as a service](/operators/node-lifecycle/) — the service units that
   restart the new binary.
 - [Troubleshooting](/operators/troubleshooting/) — if the server doesn't
   come back after an upgrade.

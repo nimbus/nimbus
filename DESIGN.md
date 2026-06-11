@@ -779,9 +779,14 @@ site's single brand-tier moment.** Renderer: Astro Starlight in
   next to the lowercase wordmark `nimbus` (Starlight `title` +
   `logo.light/dark`). Hero and nav use `warm-transparent` (light) /
   `night-blue-transparent` (dark) so the mark sits on the page's own
-  background. The favicon is the shared `prefers-color-scheme` SVG (warm
-  by day, night-blue by night) — byte-identical to the operator console
-  favicon at `packages/nimbus-ui/public/favicon.svg`.
+  background. The favicon follows the **page's resolved theme**, not the
+  OS scheme: a head script swaps `favicon-warm.svg` / `favicon-night.svg`
+  on `data-theme` changes (an SVG `prefers-color-scheme` query can only
+  see the OS, so a light page on a dark OS would otherwise show the night
+  favicon). The auto media-query `favicon.svg` stays as the no-JS
+  fallback. All three files are byte-identical to the operator console
+  set under `packages/nimbus-ui/public/`, and the console's
+  `ThemeController` does the same swap.
 - **Typography.** Body uses the system UI stack; code/IDs/paths use
   JetBrains Mono (`@fontsource-variable/jetbrains-mono`) with `-0.01em`
   letter spacing; tables apply `tabular-nums`. Radius 6px default / 8px
