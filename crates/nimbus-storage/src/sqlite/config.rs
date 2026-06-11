@@ -374,6 +374,12 @@ const READ_POOL_WAIT: Duration = Duration::from_secs(2);
 const READ_POOL_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 
 pub(super) fn default_sqlite_read_connection_limit() -> usize {
+    if let Ok(value) = std::env::var("NIMBUS_SQLITE_MAX_READ_CONNECTIONS")
+        && let Ok(parsed) = value.parse::<usize>()
+        && parsed > 0
+    {
+        return parsed;
+    }
     std::thread::available_parallelism()
         .map(|parallelism| parallelism.get().max(MIN_SQLITE_READ_CONNECTIONS))
         .unwrap_or(MIN_SQLITE_READ_CONNECTIONS)

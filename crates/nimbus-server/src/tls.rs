@@ -44,7 +44,14 @@ impl TlsConfig {
 pub(crate) fn load_rustls_server_config(config: &TlsConfig) -> io::Result<Arc<ServerConfig>> {
     let certs = load_pem_certs(&config.cert_path)?;
     let key = load_pem_private_key(&config.key_path)?;
-    let server_config = ServerConfig::builder()
+    // Pin the crypto provider explicitly: the workspace dependency graph
+    // can enable both `ring` and `aws-lc-rs` rustls backends (the AWS SDK
+    // stack pulls aws-lc-rs), which makes the process-default provider
+    // ambiguous at runtime.
+    let provider = std::sync::Arc::new(tokio_rustls::rustls::crypto::aws_lc_rs::default_provider());
+    let server_config = ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|error| io::Error::other(format!("TLS protocol configuration failed: {error}")))?
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .map_err(|error| {

@@ -188,7 +188,12 @@ CREATE TABLE IF NOT EXISTS metadata (
 );
 "#;
 
-const MIN_SQLITE_READ_CONNECTIONS: usize = 2;
+// Floor for the read pool. The engine legitimately holds several read
+// snapshots concurrently during one mutation (measured envelope: 5 on the
+// atomic-write precondition path), so the floor must exceed that even when
+// `available_parallelism` is small (4-core CI runners). Override with
+// NIMBUS_SQLITE_MAX_READ_CONNECTIONS for diagnostics.
+const MIN_SQLITE_READ_CONNECTIONS: usize = 8;
 
 pub fn sqlite_init_sql() -> &'static str {
     SQLITE_INIT_SQL

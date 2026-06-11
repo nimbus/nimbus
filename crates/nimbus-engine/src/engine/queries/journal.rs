@@ -3,7 +3,7 @@ use std::sync::Arc;
 use nimbus_core::{DurableMutationRecord, Result, SequenceNumber, TenantId};
 use nimbus_storage::{
     ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage, DurableJournalBootstrap,
-    DurableJournalPage,
+    DurableJournalPage, PointInTimeRestoreArchive, PointInTimeRestoreTarget, RetentionGcConfig,
 };
 
 use crate::engine::Engine;
@@ -141,6 +141,38 @@ impl Engine {
             store.stream_changefeed(&cursor, limit)
         })
         .await
+    }
+
+    /// Exports a point-in-time restore archive of the tenant at its
+    /// latest committed sequence — the unit `nimbus backup` writes per
+    /// tenant. Rides the SEQ8 storage machinery; no new formats.
+    pub fn export_latest_point_in_time_restore_archive(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<PointInTimeRestoreArchive> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let latest = runtime.store.latest_sequence()?;
+        runtime.store.export_point_in_time_restore_archive(
+            PointInTimeRestoreTarget::Sequence(latest),
+            RetentionGcConfig::default(),
+        )
+    }
+
+    /// Imports a point-in-time restore archive into a tenant. The
+    /// storage layer fails closed unless the tenant's journal is empty
+    /// and the restored fingerprint matches the archive's.
+    pub fn import_point_in_time_restore_archive(
+        &self,
+        tenant_id: &TenantId,
+        archive: &PointInTimeRestoreArchive,
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        runtime
+            .store
+            .import_point_in_time_restore_archive(archive)?;
+        Ok(())
     }
 
     /// Returns the latest committed sequence number for a tenant.

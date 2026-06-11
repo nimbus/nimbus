@@ -12,6 +12,25 @@ impl TenantPersistence {
     delegate_store_method!(fn export_changefeed_bootstrap(&self) -> Result<ChangefeedBootstrap>);
     delegate_store_method!(fn stream_changefeed(&self, cursor: &ChangefeedCursor, limit: usize) -> Result<ChangefeedPage>);
 
+    pub(crate) fn export_point_in_time_restore_archive(
+        &self,
+        target: PointInTimeRestoreTarget,
+        retention_config: RetentionGcConfig,
+    ) -> Result<PointInTimeRestoreArchive> {
+        match_tenant_persistence!(self, |store| {
+            store.export_point_in_time_restore_archive(target, retention_config)
+        })
+    }
+
+    pub(crate) fn import_point_in_time_restore_archive(
+        &self,
+        archive: &PointInTimeRestoreArchive,
+    ) -> Result<JournalProgress> {
+        match_tenant_persistence!(self, |store| {
+            store.import_point_in_time_restore_archive(archive)
+        })
+    }
+
     pub(crate) fn append_durable_records_batch(
         &self,
         records: &[DurableMutationRecord],

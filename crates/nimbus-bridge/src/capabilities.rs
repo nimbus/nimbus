@@ -342,7 +342,7 @@ mod tests {
     use std::path::PathBuf;
     use std::pin::Pin;
     use std::sync::Arc;
-    use std::task::{Context, Poll, Wake, Waker};
+    use std::task::{Context, Poll, Waker};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use nimbus_core::{
@@ -359,15 +359,9 @@ mod tests {
     use super::*;
     use crate::{RuntimeHostContext, RuntimeHostInvocation, RuntimeHostScope};
 
-    struct NoopWake;
-
-    impl Wake for NoopWake {
-        fn wake(self: Arc<Self>) {}
-    }
-
     fn run_ready<F: Future>(future: F) -> F::Output {
-        let waker = Waker::from(Arc::new(NoopWake));
-        let mut context = Context::from_waker(&waker);
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
         let mut future = Box::pin(future);
         match Pin::as_mut(&mut future).poll(&mut context) {
             Poll::Ready(output) => output,
