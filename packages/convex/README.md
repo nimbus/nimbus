@@ -12,9 +12,9 @@ Under the hood this is a thin compatibility wrapper over the first-party
 Behavior matches Nimbus; the names match Convex.
 
 > The compatibility surface is intentionally partial and evolving. See the
-> [Convex compatibility reference](../../docs/adapters/convex/compatibility.md)
+> [Convex compatibility reference](../../docs/private/adapters/convex/compatibility.md)
 > for the precise support matrix, and **always read**
-> [`docs/adapters/convex/ai-guidelines.md`](../../docs/adapters/convex/ai-guidelines.md)
+> [`docs/private/adapters/convex/ai-guidelines.md`](../../docs/private/adapters/convex/ai-guidelines.md)
 > before working on Convex-compatible code.
 
 ## Entry points
@@ -94,4 +94,4 @@ npm run test:differential --workspace convex # compare behavior against upstream
 
 - [`nimbus`](../nimbus/README.md) — the native SDK this package wraps
 - [`@nimbus/codegen`](../codegen/README.md) — the codegen engine, embedded in the `nimbus` binary and run via `nimbus codegen`
-- [Convex adapter docs](../../docs/adapters/convex/README.md)
+- [Convex adapter docs](../../docs/private/adapters/convex/README.md)

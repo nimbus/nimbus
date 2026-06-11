@@ -28,7 +28,10 @@ const runtimeHandlersByName = new Map(
 function createRuntimeContext(request) {
   return globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId:
+      typeof request.hostCallSessionId === "string" && request.hostCallSessionId.length > 0
+        ? request.hostCallSessionId
+        : `${request.kind}:${request.function_name}`,
   });
 }
 
@@ -167,7 +170,7 @@ function executePaginatedQueryDefinition(definition, request) {
             builder_id: result.__builderId,
             page_size: request.page_size,
             cursor: request.cursor ?? null,
-            session_id: request.kind + ":" + request.function_name,
+            host_call_session_id: request.kind + ":" + request.function_name,
           });
         }
         return result;
@@ -181,7 +184,7 @@ function executePaginatedQueryDefinition(definition, request) {
     query: plan,
     page_size: request.page_size,
     cursor: request.cursor ?? null,
-    session_id: request.kind + ":" + request.function_name,
+    host_call_session_id: request.kind + ":" + request.function_name,
   });
 }
 
@@ -271,7 +274,7 @@ async function executeResolvedQueryPlan(ctx, plan) {
   }
   return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_query", {
     query: plan,
-    session_id: "convex-runtime-query-plan",
+    host_call_session_id: "convex-runtime-query-plan",
   });
 }
 
@@ -318,7 +321,7 @@ async function executeResolvedMutationPlan(ctx, plan) {
   }
   return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_mutation", {
     mutation: plan,
-    session_id: "convex-runtime-mutation-plan",
+    host_call_session_id: "convex-runtime-mutation-plan",
   });
 }
 
@@ -339,6 +342,7 @@ function invokeNamedDefinition(name, expectedKind, args, options = {}) {
     args,
     page_size: options.pageSize,
     cursor: options.cursor ?? null,
+    hostCallSessionId: options.hostCallSessionId,
   };
 
   switch (expectedKind) {
@@ -385,6 +389,7 @@ async function invokeNamedDefinitionLocally(request) {
   return invokeNamedDefinition(request.function_name, request.kind, request.args ?? {}, {
     pageSize: request.page_size,
     cursor: request.cursor ?? null,
+    hostCallSessionId: request.hostCallSessionId,
   });
 }
 
@@ -392,7 +397,7 @@ async function executeResolvedActionPlan(ctx, plan, request) {
   if (!isPlainObject(plan) || typeof plan.type !== "string") {
     return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_action", {
       action: plan,
-      session_id: request.kind + ":" + request.function_name,
+      host_call_session_id: request.kind + ":" + request.function_name,
     });
   }
 
@@ -404,7 +409,7 @@ async function executeResolvedActionPlan(ctx, plan, request) {
         query: plan.query.query,
         page_size: plan.query.page_size,
         cursor: plan.query.after ?? null,
-        session_id: request.kind + ":" + request.function_name,
+        host_call_session_id: request.kind + ":" + request.function_name,
       });
     case "mutation":
       return await executeResolvedMutationPlan(ctx, plan.mutation);
@@ -430,7 +435,7 @@ async function executeResolvedActionPlan(ctx, plan, request) {
     default:
       return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_action", {
         action: plan,
-        session_id: request.kind + ":" + request.function_name,
+        host_call_session_id: request.kind + ":" + request.function_name,
       });
   }
 }

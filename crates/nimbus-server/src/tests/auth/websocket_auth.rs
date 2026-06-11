@@ -49,8 +49,8 @@ async fn convex_websocket_auth_message_sets_runtime_identity() {
             ]
         })),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
     assert_eq!(
         api.create_tenant("demo").await.status(),
@@ -126,8 +126,8 @@ pub(crate) async fn convex_websocket_disconnect_releases_runtime_subscription_ch
         Some(runtime_auth_subscription_bundle_source()),
         None,
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     let server = ServerFixture::start(router_for_convex(service.clone(), registry)).await;
     let api = HttpApiFixture::new(&server);
     let tenant_id = nimbus_core::TenantId::new("demo").expect("tenant id should be valid");
@@ -216,8 +216,8 @@ pub(crate) async fn convex_websocket_auth_change_drops_active_subscriptions_unti
             ]
         })),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     let server = ServerFixture::start(router_for_convex(service.clone(), registry)).await;
     let api = HttpApiFixture::new(&server);
     let tenant_id = nimbus_core::TenantId::new("demo").expect("tenant id should be valid");

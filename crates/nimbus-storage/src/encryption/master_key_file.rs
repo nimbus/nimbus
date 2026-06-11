@@ -14,7 +14,7 @@ use rand::rngs::OsRng;
 use sha2::Sha256;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use super::key::{GeneratedDatabaseKey, WrappedDatabaseKey, WrappingCipher};
+use super::key::{DataEncryptionKey, GeneratedDatabaseKey, WrappedDatabaseKey, WrappingCipher};
 use super::manifest::KeyManifestHeader;
 use super::provider::{
     KeyProviderKind, KeyProviderResult, LocalKeyProvider, LocalKeyProviderError,
@@ -133,7 +133,7 @@ impl MasterKeyFileProvider {
         subject: &LocalKeySubject,
         wrapped: &WrappedDatabaseKey,
         header: &KeyManifestHeader,
-    ) -> KeyProviderResult<[u8; 32]> {
+    ) -> KeyProviderResult<DataEncryptionKey> {
         if wrapped.cipher != WrappingCipher::Aes256GcmSiv {
             return Err(LocalKeyProviderError::UnsupportedCipher {
                 cipher: format!("{:?}", wrapped.cipher),
@@ -191,7 +191,7 @@ impl MasterKeyFileProvider {
 
         let mut key = [0u8; 32];
         key.copy_from_slice(&plaintext);
-        Ok(key)
+        Ok(DataEncryptionKey::new(key))
     }
 }
 
@@ -215,7 +215,7 @@ impl LocalKeyProvider for MasterKeyFileProvider {
         subject: &LocalKeySubject,
         wrapped: &WrappedDatabaseKey,
         header: &KeyManifestHeader,
-    ) -> KeyProviderResult<[u8; 32]> {
+    ) -> KeyProviderResult<DataEncryptionKey> {
         self.unwrap_key(subject, wrapped, header)
     }
 
@@ -294,7 +294,7 @@ mod tests {
             .unwrap_database_key(&subject, generated.wrapped(), &header)
             .expect("key should unwrap");
 
-        assert_eq!(generated.plaintext(), &unwrapped);
+        assert_eq!(generated.plaintext(), unwrapped.as_bytes());
     }
 
     #[test]
@@ -349,7 +349,7 @@ mod tests {
             .unwrap_database_key(&subject, &rewrapped, &header)
             .expect("unwrap should succeed");
 
-        assert_eq!(plaintext, unwrapped);
+        assert_eq!(unwrapped.as_bytes(), &plaintext);
     }
 
     #[test]

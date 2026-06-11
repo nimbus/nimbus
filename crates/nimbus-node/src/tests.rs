@@ -8,7 +8,7 @@ use nimbus_tenant::{
     TenantIsolationDecision, TenantIsolationMode, TenantIsolationPolicyInput,
     TenantNetworkEndpointDecision, TenantNetworkPolicyDecision, TenantQuotaPolicyDecision,
     TenantSecretPolicyDecision, TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision,
-    TenantVolumePolicyDecision, TenantWorkloadIdentity, TenantWorkloadLocation,
+    TenantVolumePolicyDecision, WorkloadAttributes, WorkloadLocation,
 };
 
 fn principal_with_tenant_claim(tenant: &str) -> PrincipalContext {
@@ -36,12 +36,12 @@ fn admitted_decision(
     )
     .with_deployment_generation(generation)
     .with_workload_location(
-        TenantWorkloadLocation::new()
+        WorkloadLocation::new()
             .with_node_id(node_id)
             .with_machine_id("machine-a"),
     );
     let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
-    let workload = TenantWorkloadIdentity::runtime_function(
+    let workload = WorkloadAttributes::runtime_function(
         workload_name,
         RuntimeIsolationTier::InProcessUntrusted,
     )
@@ -158,8 +158,8 @@ fn binding_materializes_decision_derived_spec_and_projections() {
     assert_eq!(evidence.generation().as_u64(), 7);
     assert_eq!(evidence.workload_uid(), spec.workload_uid());
     assert!(
-        evidence.workload_stable_id().contains("messages%3Asend"),
-        "system evidence should use the admitted stable workload identity"
+        evidence.workload_subject().contains("messages%3Asend"),
+        "system evidence should use the admitted workload subject"
     );
     assert!(
         evidence
@@ -398,8 +398,8 @@ fn credential_projection_requires_admitted_scope_node_generation_invocation_and_
     assert_eq!(projection.scope().provider(), "vault");
     assert_eq!(projection.scope().audience(), "runtime");
     assert_eq!(
-        projection.subject(),
-        spec.workload_stable_identity().stable_id()
+        projection.workload_subject(),
+        spec.workload_identity().subject()
     );
     assert!(
         projection
@@ -479,7 +479,7 @@ fn credential_projection_requires_admitted_scope_node_generation_invocation_and_
                 "runtime",
             )
             .expect("credential request should build")
-            .with_echo_back_subject("spiffe://attacker"),
+            .with_echo_back_workload_subject("spiffe://attacker"),
         ),
         "echo back a subject",
     );

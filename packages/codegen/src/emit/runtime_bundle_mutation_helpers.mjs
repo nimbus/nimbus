@@ -42,7 +42,7 @@ function runtimeBundleMutationHelpers() {
   }
   return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_mutation", {
     mutation: plan,
-    session_id: "convex-runtime-mutation-plan",
+    host_call_session_id: "convex-runtime-mutation-plan",
   });
 }`;
 }

@@ -4,9 +4,10 @@ use std::path::{Path, PathBuf};
 
 use clap::Args;
 use nimbus::{
-    Error, InitializedKeyProvider, KeyManifest, LOGICAL_PAGE_SIZE, LocalKeySubject, ManifestCipher,
-    PHYSICAL_PAGE_SIZE, Result, ServicePersistenceConfig, TenantId, generate_database_manifest,
-    migrate_encrypted_to_plaintext, migrate_plaintext_to_encrypted, unwrap_database_manifest_key,
+    EnginePersistenceConfig, Error, InitializedKeyProvider, KeyManifest, LOGICAL_PAGE_SIZE,
+    LocalKeySubject, ManifestCipher, PHYSICAL_PAGE_SIZE, Result, TenantId,
+    generate_database_manifest, migrate_encrypted_to_plaintext, migrate_plaintext_to_encrypted,
+    unwrap_database_manifest_key,
 };
 
 /// Migrate plaintext databases to encrypted.
@@ -66,7 +67,7 @@ pub(crate) enum ProviderFamily {
 
 pub(crate) async fn run_migrate_command(
     command: MigrateCommand,
-    config: &ServicePersistenceConfig,
+    config: &EnginePersistenceConfig,
 ) -> Result<()> {
     if !config.local_encryption.is_enabled() {
         return Err(Error::InvalidInput(
@@ -106,7 +107,7 @@ pub(crate) async fn run_migrate_command(
 
 pub(crate) async fn run_export_command(
     command: ExportCommand,
-    config: &ServicePersistenceConfig,
+    config: &EnginePersistenceConfig,
 ) -> Result<()> {
     if !config.local_encryption.is_enabled() {
         return Err(Error::InvalidInput(
@@ -134,7 +135,7 @@ pub(crate) async fn run_export_command(
 fn migrate_sqlite(
     source: &Path,
     target: &Path,
-    config: &ServicePersistenceConfig,
+    config: &EnginePersistenceConfig,
     command: &MigrateCommand,
 ) -> Result<()> {
     println!("Migrating SQLite database to encrypted format...");
@@ -169,7 +170,7 @@ fn migrate_sqlite(
 fn migrate_redb(
     source: &Path,
     target: &Path,
-    config: &ServicePersistenceConfig,
+    config: &EnginePersistenceConfig,
     command: &MigrateCommand,
 ) -> Result<()> {
     println!("Migrating redb database to encrypted format...");
@@ -199,7 +200,7 @@ fn migrate_redb(
 fn export_sqlite(
     source: &Path,
     target: &Path,
-    config: &ServicePersistenceConfig,
+    config: &EnginePersistenceConfig,
     command: &ExportCommand,
 ) -> Result<()> {
     println!("Exporting encrypted SQLite database to plaintext...");
@@ -233,7 +234,7 @@ fn export_sqlite(
 fn export_redb(
     source: &Path,
     target: &Path,
-    config: &ServicePersistenceConfig,
+    config: &EnginePersistenceConfig,
     command: &ExportCommand,
 ) -> Result<()> {
     println!("Exporting encrypted redb database to plaintext...");
@@ -265,7 +266,7 @@ fn export_redb(
 }
 
 fn initialized_provider(
-    config: &ServicePersistenceConfig,
+    config: &EnginePersistenceConfig,
 ) -> Result<std::sync::Arc<dyn nimbus::LocalKeyProvider>> {
     let key_provider_config = config
         .local_encryption

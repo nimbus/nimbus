@@ -31,14 +31,22 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
 
         // Bad request shape / schema / value → ValidationException.
         CoreError::InvalidInput(_)
+        | CoreError::MissingIndex { .. }
         | CoreError::SchemaValidation(_)
-        | CoreError::Serialization(_) => DynamoDbError::ValidationException(message),
+        | CoreError::Serialization(_)
+        | CoreError::HistoricalRead { .. } => DynamoDbError::ValidationException(message),
 
         // Authorization.
         CoreError::PermissionDenied(_) => DynamoDbError::AccessDeniedException(message),
 
         // Optimistic-concurrency / write conflict.
         CoreError::Conflict(_) => DynamoDbError::TransactionConflictException(message),
+
+        // Failed generation / existence preconditions map to DynamoDB's
+        // conditional-write failure class.
+        CoreError::PreconditionFailed(_) => {
+            DynamoDbError::ConditionalCheckFailedException(message, None)
+        }
 
         // Quota/throttle.
         CoreError::ResourceExhausted(_) => {
@@ -59,7 +67,7 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
 mod tests {
     use super::*;
     use crate::wire::render_error;
-    use nimbus_core::StorageErrorKind;
+    use nimbus_core::{HistoricalReadErrorKind, StorageErrorKind};
 
     fn code(error: &DynamoDbError) -> &str {
         error.error_type()
@@ -80,7 +88,20 @@ mod tests {
             "ValidationException"
         );
         assert_eq!(
+            code(&map_core_error(CoreError::MissingIndex {
+                fields: vec!["state".to_string(), "rank".to_string()]
+            })),
+            "ValidationException"
+        );
+        assert_eq!(
             code(&map_core_error(CoreError::SchemaValidation("bad".into()))),
+            "ValidationException"
+        );
+        assert_eq!(
+            code(&map_core_error(CoreError::historical_read(
+                HistoricalReadErrorKind::UnsupportedAdapter,
+                "historical reads are not exposed through DynamoDB"
+            ))),
             "ValidationException"
         );
         assert_eq!(
@@ -90,6 +111,12 @@ mod tests {
         assert_eq!(
             code(&map_core_error(CoreError::Conflict("race".into()))),
             "TransactionConflictException"
+        );
+        assert_eq!(
+            code(&map_core_error(CoreError::PreconditionFailed(
+                "stale generation".into()
+            ))),
+            "ConditionalCheckFailedException"
         );
         assert_eq!(
             code(&map_core_error(CoreError::ResourceExhausted("rate".into()))),

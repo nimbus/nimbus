@@ -30,7 +30,7 @@ pub(crate) async fn benchmark_crud_throughput(
                         MeasuredBackend::MySqlInjectedRtt => unreachable!(),
                     };
                     let started = Instant::now();
-                    exercise_crud_sample(&fixture.service, &fixture.tenant_id, CRUD_DOCUMENTS)
+                    exercise_crud_sample(&fixture.engine, &fixture.tenant_id, CRUD_DOCUMENTS)
                         .await?;
                     Ok(started.elapsed())
                 }
@@ -40,14 +40,14 @@ pub(crate) async fn benchmark_crud_throughput(
         sqlite_fixture
             .resource
             .cleanup(
-                sqlite_fixture.service.clone(),
+                sqlite_fixture.engine.clone(),
                 "CRUD steady-state sqlite teardown",
             )
             .await?;
         mysql_fixture
             .resource
             .cleanup(
-                mysql_fixture.service.clone(),
+                mysql_fixture.engine.clone(),
                 "CRUD steady-state mysql teardown",
             )
             .await?;
@@ -60,11 +60,11 @@ pub(crate) async fn benchmark_crud_throughput(
                 let fixture =
                     create_crud_fixture("crud-cold", "crud", backend, environment).await?;
                 let started = Instant::now();
-                exercise_crud_sample(&fixture.service, &fixture.tenant_id, CRUD_DOCUMENTS).await?;
+                exercise_crud_sample(&fixture.engine, &fixture.tenant_id, CRUD_DOCUMENTS).await?;
                 let elapsed = started.elapsed();
                 fixture
                     .resource
-                    .cleanup(fixture.service.clone(), "CRUD cold-start teardown")
+                    .cleanup(fixture.engine.clone(), "CRUD cold-start teardown")
                     .await?;
                 Ok(elapsed)
             },
@@ -102,7 +102,7 @@ pub(crate) async fn benchmark_crud_throughput(
                         MeasuredBackend::Sqlite => unreachable!(),
                     };
                     let started = Instant::now();
-                    exercise_crud_sample(&fixture.service, &fixture.tenant_id, CRUD_RTT_DOCUMENTS)
+                    exercise_crud_sample(&fixture.engine, &fixture.tenant_id, CRUD_RTT_DOCUMENTS)
                         .await?;
                     Ok(started.elapsed())
                 }
@@ -112,13 +112,13 @@ pub(crate) async fn benchmark_crud_throughput(
         loopback_fixture
             .resource
             .cleanup(
-                loopback_fixture.service.clone(),
+                loopback_fixture.engine.clone(),
                 "CRUD RTT loopback teardown",
             )
             .await?;
         rtt_fixture
             .resource
-            .cleanup(rtt_fixture.service.clone(), "CRUD RTT injected teardown")
+            .cleanup(rtt_fixture.engine.clone(), "CRUD RTT injected teardown")
             .await?;
 
         let operations_per_sample = u64::try_from(CRUD_DOCUMENTS * 3)?;

@@ -119,7 +119,7 @@ the top-nav selector, not the URL. Services is **dual-persona** (it also
 appears in the Operator IA below); both consoles back onto the same
 `ServicesTable` and `ServiceDoc` shape, with the Developer side filtered
 to the active tenant. See
-`docs/plans/archive/desktop-ui-compute-services-redesign-plan.md` for the
+`docs/private/plans/archive/desktop-ui-compute-services-redesign-plan.md` for the
 IA decision rationale.
 
 ### Operator console — sidebar IA (`/operator/*`)
@@ -733,7 +733,51 @@ is identical across all variants.
 
 The completed execution record for brand rollout, including the variant
 regenerator (`docs/brand/gen-variants.sh`) and per-surface wiring, lives
-in `docs/plans/archive/brand-system-plan.md`.
+in `docs/private/plans/archive/brand-system-plan.md`.
+
+### Documentation Site (nimbusdocs.com)
+
+The Documentation site is the third brand surface, sitting between the
+product tier (operator console) and the brand tier (marketing). Its
+governing rule: **the doc body is product-tier; the splash hero is the
+site's single brand-tier moment.** Renderer: Astro Starlight in
+`website/`; tokens live in `website/src/styles/custom.css`.
+
+- **Doc body = product tier.** Starlight's gray scale maps to the Blue
+  palette OKLCH neutrals (`--bg`/`--surface`/`--border`/`--text`/`--muted`,
+  light and dark columns verbatim). Starlight has a single accent family,
+  so `--sl-color-accent` ← `--brand` (#3B82F6 light / #60A5FA dark) and
+  `--sl-color-accent-high` ← `--link`; the product tier's brand/accent/link
+  three-way split intentionally collapses to the brand family in docs —
+  teal stays out of the doc body. No gradients in the doc body.
+- **Splash hero = brand tier, once.** Dark mode renders the hero title in
+  the canonical brand "Interactive Elements" gradient `#67E8F9 → #06B6D4`.
+  That gradient has **no light-mode-safe form** (cyan-300 fails contrast on
+  white), so light mode composes the two tier-bridge solids instead:
+  `#06B6D4 → #3B82F6` (accent → brand). These are the only gradient sites
+  on the docs surface.
+- **Logo + favicon.** Hero image and favicon use `cool-blue` (light) /
+  `night-blue` (dark) — the product-adjacent variants. The baked background
+  rect in the generated variants reads as a card in the hero but disqualifies
+  them for the top-nav strip; the nav stays text-title until a
+  transparent-background variant is added to `gen-variants.sh`.
+- **Typography.** Body uses the system UI stack; code/IDs/paths use
+  JetBrains Mono (`@fontsource-variable/jetbrains-mono`) with `-0.01em`
+  letter spacing; tables apply `tabular-nums`. Radius 6px default / 8px
+  cards, per §Spacing And Shape.
+
+#### Messaging canon — one sentence, three surfaces
+
+The canonical sentence is:
+
+> **The single-binary backend for apps and AI agents. Drop-in compatible
+> with Convex, Firestore, MongoDB, and DynamoDB.**
+
+It must appear, identically or as a tight variant, on exactly three
+surfaces: the GitHub repo description, the README banner sub-line, and the
+docs splash-hero tagline. "**BaaS in a binary. For apps and agents.**" is
+the short spoken hook (README banner headline). Nimbus is
+**source-available** (`LICENSING.md`); no surface may claim "open source".
 
 ### Typography
 
@@ -1185,7 +1229,7 @@ Tone:
   toasts, `shiki` for syntax highlighting, JetBrains Mono for monospace
   (via `@fontsource/jetbrains-mono`), Lucide for icons, TanStack Router,
   Zustand, Vitest, React Testing Library, and Playwright as described in
-  `docs/plans/archive/desktop-ui-plan.md`.
+  `docs/private/plans/archive/desktop-ui-plan.md`.
 
 ## Accessibility And Quality Gates
 
@@ -1203,15 +1247,15 @@ Every UI feature must satisfy:
 
 ## References Used
 
-- `docs/current-capabilities.md`
-- `docs/plans/archive/desktop-ui-plan.md`
-- `docs/plans/archive/system-tenant-api-plan.md`
-- `docs/adapters/convex/compatibility.md`
-- `docs/adapters/firebase/compatibility.md`
-- `docs/adapters/mongodb/README.md`
-- `docs/adapters/mongodb/operations.md`
-- `docs/adapters/native/README.md`
-- `docs/architecture/sandbox/microvm-service-baseline.md`
+- `docs/private/current-capabilities.md`
+- `docs/private/plans/archive/desktop-ui-plan.md`
+- `docs/private/plans/archive/system-tenant-api-plan.md`
+- `docs/private/adapters/convex/compatibility.md`
+- `docs/private/adapters/firebase/compatibility.md`
+- `docs/private/adapters/mongodb/README.md`
+- `docs/private/adapters/mongodb/operations.md`
+- `docs/private/adapters/native/README.md`
+- `docs/private/architecture/sandbox/microvm-service-baseline.md`
 - VoltAgent `awesome-design-md` as the plain-text design-system pattern
 - Convex dashboard docs for Health, Data, Functions, Schedules, Logs, Settings
 - MongoDB Atlas docs for Data Explorer and Indexes

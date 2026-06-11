@@ -4,7 +4,7 @@ use nimbus_auth::normalize_principal_context;
 use nimbus_bridge::admission::RuntimeExecutionAdmission;
 use nimbus_bridge::{RuntimeHostInvocation, RuntimeHostScope};
 use nimbus_core::{Result, TenantId};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_runtime::{InvocationAuth, InvocationKind, InvocationRequest};
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::{
@@ -21,7 +21,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct CloudFunctionsRuntimeContext {
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     tenant_isolation_mode: TenantIsolationMode,
     runtime_invoker: Arc<dyn CloudFunctionsRuntimeInvoker>,
@@ -29,13 +29,13 @@ pub struct CloudFunctionsRuntimeContext {
 
 impl CloudFunctionsRuntimeContext {
     pub fn new(
-        service: Arc<Service>,
+        engine: Arc<Engine>,
         runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
         tenant_isolation_mode: TenantIsolationMode,
         runtime_invoker: Arc<dyn CloudFunctionsRuntimeInvoker>,
     ) -> Self {
         Self {
-            service,
+            engine,
             runtime_service_registry,
             tenant_isolation_mode,
             runtime_invoker,
@@ -76,7 +76,7 @@ pub fn execute_http_target(
         deployment_generation,
         "cloud functions http runtime deployment",
     )?;
-    isolation.ensure_application_principal_tenant_access("cloud functions http tenant")?;
+    isolation.admit_if_principal_claim_absent_or_matching("cloud functions http tenant")?;
     let bundle = registry.runtime_bundle();
     isolation.ensure_runtime_bundle_matches(&bundle, "cloud functions http runtime bundle")?;
     let services = runtime_context
@@ -106,7 +106,7 @@ pub fn execute_http_target(
     };
     let bridge = Arc::new(CloudFunctionsHostBridge::build(
         RuntimeHostScope::new(
-            runtime_context.service.clone(),
+            runtime_context.engine.clone(),
             registry.runtime_policy(),
             decision.clone(),
         ),
@@ -114,6 +114,7 @@ pub fn execute_http_target(
             normalize_principal_context(auth.as_ref()),
             Some(server_request_id.clone()),
             InvocationKind::Mutation,
+            request.function_name.clone(),
         ),
     )?);
 

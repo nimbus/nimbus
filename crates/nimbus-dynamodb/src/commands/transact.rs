@@ -19,7 +19,7 @@ use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, Document, DocumentLocator, PrincipalContext, TableName,
     TransactionSessionMode, TransactionSessionToken, WriteKey, WritePrecondition, WriteSetMode,
 };
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 
 use crate::attribute_value::{fields_to_item, item_to_fields};
@@ -42,7 +42,7 @@ const MAX_TRANSACT_ITEMS: usize = 100;
 /// `ValidationException` for an empty request or more than 100 items;
 /// `ResourceNotFoundException` if a referenced table is absent.
 pub fn transact_get_items(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: TransactGetItemsInput,
 ) -> Result<TransactGetItemsOutput, DynamoDbError> {
@@ -58,7 +58,7 @@ pub fn transact_get_items(
     }
 
     let principal = PrincipalContext::system();
-    let session = service
+    let session = engine
         .begin_transaction_session(
             context.tenant_id().clone(),
             principal.clone(),
@@ -68,8 +68,8 @@ pub fn transact_get_items(
     let token = session.token;
 
     // Compute under the snapshot, then always roll the read-only session back.
-    let result = read_all(service, context, &principal, &token, &input);
-    let _ = service.rollback_transaction_session(context.tenant_id(), &token, &principal);
+    let result = read_all(engine, context, &principal, &token, &input);
+    let _ = engine.rollback_transaction_session(context.tenant_id(), &token, &principal);
 
     Ok(TransactGetItemsOutput {
         responses: result?,
@@ -78,7 +78,7 @@ pub fn transact_get_items(
 }
 
 fn read_all(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     principal: &PrincipalContext,
     token: &nimbus_core::TransactionSessionToken,
@@ -88,10 +88,10 @@ fn read_all(
     let mut responses = Vec::with_capacity(input.transact_items.len());
     for transact in &input.transact_items {
         let get = &transact.get;
-        let key_schema = control_plane::load_key_schema(service, context, &get.table_name)?;
+        let key_schema = control_plane::load_key_schema(engine, context, &get.table_name)?;
         let id = primary_key_id(&get.key, &key_schema)?;
         let table = TableName::new(&get.table_name).map_err(map_core_error)?;
-        let item = match service
+        let item = match engine
             .get_document_in_transaction(context.tenant_id(), token, principal, &table, id)
             .map_err(map_core_error)?
         {
@@ -135,7 +135,7 @@ const TRANSACTION_CANCELLED: &str =
 /// `ResourceNotFoundException` for a missing table;
 /// `TransactionCanceledException` when any condition fails.
 pub fn transact_write_items(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: TransactWriteItemsInput,
 ) -> Result<TransactWriteItemsOutput, DynamoDbError> {
@@ -151,7 +151,7 @@ pub fn transact_write_items(
     }
 
     let principal = PrincipalContext::system();
-    let session = service
+    let session = engine
         .begin_transaction_session(
             context.tenant_id().clone(),
             principal.clone(),
@@ -160,18 +160,18 @@ pub fn transact_write_items(
         .map_err(map_core_error)?;
     let token = session.token;
 
-    let planned = plan_writes(service, context, &principal, &token, &input);
+    let planned = plan_writes(engine, context, &principal, &token, &input);
     let plans = match planned {
         Ok(plans) => plans,
         Err(error) => {
-            let _ = service.rollback_transaction_session(context.tenant_id(), &token, &principal);
+            let _ = engine.rollback_transaction_session(context.tenant_id(), &token, &principal);
             return Err(error);
         }
     };
 
     // If any condition failed, cancel the whole transaction.
     if plans.iter().any(|plan| plan.failed) {
-        let _ = service.rollback_transaction_session(context.tenant_id(), &token, &principal);
+        let _ = engine.rollback_transaction_session(context.tenant_id(), &token, &principal);
         return Err(DynamoDbError::TransactionCanceledException {
             message: TRANSACTION_CANCELLED.to_owned(),
             cancellation_reasons: plans.into_iter().map(|plan| plan.reason).collect(),
@@ -181,16 +181,16 @@ pub fn transact_write_items(
     // All conditions held: commit every write — plus the stream events they
     // produce — atomically in one batch.
     let mut writes: Vec<AtomicWrite> = Vec::with_capacity(plans.len());
-    let mut changes: Vec<StreamChange> = Vec::new();
+    let mut changes: Vec<stream::StreamChange> = Vec::new();
     for plan in plans {
         writes.push(plan.write);
         if let Some(change) = plan.change {
             changes.push(change);
         }
     }
-    append_stream_writes(service, context, &mut writes, &changes)?;
+    stream::append_stream_writes(engine, context, &mut writes, &changes)?;
     let batch = AtomicWriteBatch::new(writes).map_err(map_core_error)?;
-    service
+    engine
         .commit_transaction_session(context.tenant_id(), &token, &principal, Some(batch))
         .map_err(|error| match error {
             // A concurrent writer claimed one of our stream sequence numbers
@@ -218,56 +218,6 @@ fn existed_event(existed: bool) -> StreamEventName {
     }
 }
 
-/// A stream change produced by one transacted write, captured during planning so
-/// its event can be folded into the same atomic commit batch.
-struct StreamChange {
-    table_name: String,
-    event_name: StreamEventName,
-    keys: Item,
-    old_image: Option<Item>,
-    new_image: Option<Item>,
-}
-
-/// Append stream-event writes for every stream-enabled table touched by this
-/// transaction, so the events commit atomically with the data (F3) and the
-/// per-table sequence advances atomically in the same batch (F8). Sequence
-/// numbers are assigned from each table's high-water counter; a concurrent
-/// writer that claimed a number first makes the event's `Create` write collide,
-/// failing the whole transaction (surfaced as `TransactionConflictException`).
-fn append_stream_writes(
-    service: &Arc<Service>,
-    context: &TenantIsolationContext,
-    writes: &mut Vec<AtomicWrite>,
-    changes: &[StreamChange],
-) -> Result<(), DynamoDbError> {
-    // Distinct tables, in first-seen order, so sequence assignment is stable.
-    let mut tables: Vec<&str> = Vec::new();
-    for change in changes {
-        if !tables.contains(&change.table_name.as_str()) {
-            tables.push(&change.table_name);
-        }
-    }
-    for table_name in tables {
-        if !stream::stream_enabled(service, context, table_name)? {
-            continue;
-        }
-        let mut seq = stream::next_sequence_value(service, context, table_name)?;
-        for change in changes.iter().filter(|c| c.table_name == table_name) {
-            let event = stream::ChangeEvent {
-                event_name: change.event_name,
-                keys: &change.keys,
-                old_image: change.old_image.as_ref(),
-                new_image: change.new_image.as_ref(),
-                user_identity: None,
-            };
-            writes.push(stream::stream_event_write(table_name, seq, &event)?);
-            seq += 1;
-        }
-        writes.push(stream::sequence_counter_write(table_name, seq)?);
-    }
-    Ok(())
-}
-
 /// One planned write plus its cancellation reason (code `"None"` unless its
 /// condition failed) and the stream change it produces (`None` for
 /// ConditionCheck and for deletes of an absent item).
@@ -275,11 +225,11 @@ struct PlannedWrite {
     write: AtomicWrite,
     reason: CancellationReason,
     failed: bool,
-    change: Option<StreamChange>,
+    change: Option<stream::StreamChange>,
 }
 
 fn plan_writes(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     principal: &PrincipalContext,
     token: &TransactionSessionToken,
@@ -289,7 +239,7 @@ fn plan_writes(
     let mut plans = Vec::with_capacity(input.transact_items.len());
     for transact in &input.transact_items {
         plans.push(plan_one(
-            service, context, principal, token, transact, &limits,
+            engine, context, principal, token, transact, &limits,
         )?);
     }
     Ok(plans)
@@ -297,7 +247,7 @@ fn plan_writes(
 
 #[allow(clippy::too_many_lines)]
 fn plan_one(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     principal: &PrincipalContext,
     token: &TransactionSessionToken,
@@ -318,7 +268,7 @@ fn plan_one(
                 doc,
                 ..
             } = read_target(
-                service,
+                engine,
                 context,
                 principal,
                 token,
@@ -352,7 +302,7 @@ fn plan_one(
                 doc,
                 key_schema,
             } = read_target(
-                service,
+                engine,
                 context,
                 principal,
                 token,
@@ -366,13 +316,14 @@ fn plan_one(
                 &current,
                 limits,
             )?;
-            let change = Some(StreamChange {
-                table_name: put.table_name.clone(),
-                event_name: existed_event(doc.is_some()),
-                keys: extract_key(&put.item, &key_schema),
-                old_image: doc.is_some().then(|| current.clone()),
-                new_image: Some(put.item.clone()),
-            });
+            let change = Some(stream::StreamChange::new(
+                put.table_name.clone(),
+                existed_event(doc.is_some()),
+                extract_key(&put.item, &key_schema),
+                doc.is_some().then(|| current.clone()),
+                Some(put.item.clone()),
+                None,
+            ));
             Ok(PlannedWrite {
                 write: AtomicWrite::Set {
                     key,
@@ -394,7 +345,7 @@ fn plan_one(
                 doc,
                 key_schema,
             } = read_target(
-                service,
+                engine,
                 context,
                 principal,
                 token,
@@ -409,12 +360,15 @@ fn plan_one(
                 limits,
             )?;
             // DynamoDB emits a REMOVE record only when an item was deleted.
-            let change = doc.as_ref().map(|_| StreamChange {
-                table_name: delete.table_name.clone(),
-                event_name: StreamEventName::Remove,
-                keys: extract_key(&delete.key, &key_schema),
-                old_image: Some(current.clone()),
-                new_image: None,
+            let change = doc.as_ref().map(|_| {
+                stream::StreamChange::new(
+                    delete.table_name.clone(),
+                    StreamEventName::Remove,
+                    extract_key(&delete.key, &key_schema),
+                    Some(current.clone()),
+                    None,
+                    None,
+                )
             });
             Ok(PlannedWrite {
                 write: AtomicWrite::Delete {
@@ -439,7 +393,7 @@ fn plan_one(
                 doc,
                 key_schema,
             } = read_target(
-                service,
+                engine,
                 context,
                 principal,
                 token,
@@ -471,12 +425,15 @@ fn plan_one(
                 apply_update(&actions, &mut new_item, &maps)?;
                 (item_to_fields(&new_item)?, Some(new_item))
             };
-            let change = new_item.map(|new_item| StreamChange {
-                table_name: update.table_name.clone(),
-                event_name: existed_event(doc.is_some()),
-                keys: extract_key(&new_item, &key_schema),
-                old_image: doc.is_some().then(|| current.clone()),
-                new_image: Some(new_item),
+            let change = new_item.map(|new_item| {
+                stream::StreamChange::new(
+                    update.table_name.clone(),
+                    existed_event(doc.is_some()),
+                    extract_key(&new_item, &key_schema),
+                    doc.is_some().then(|| current.clone()),
+                    Some(new_item),
+                    None,
+                )
             });
             Ok(PlannedWrite {
                 write: AtomicWrite::Set {
@@ -506,17 +463,17 @@ fn plan_one(
 /// Resolve an op's target: read the current item through the snapshot and
 /// derive its write key + update-time precondition.
 fn read_target(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     principal: &PrincipalContext,
     token: &TransactionSessionToken,
     table_name: &str,
     key_or_item: &Item,
 ) -> Result<TargetSnapshot, DynamoDbError> {
-    let key_schema = control_plane::load_key_schema(service, context, table_name)?;
+    let key_schema = control_plane::load_key_schema(engine, context, table_name)?;
     let id = primary_key_id(key_or_item, &key_schema)?;
     let table = TableName::new(table_name).map_err(map_core_error)?;
-    let doc = service
+    let doc = engine
         .get_document_in_transaction(context.tenant_id(), token, principal, &table, id.clone())
         .map_err(map_core_error)?;
     let current = match &doc {
@@ -597,27 +554,27 @@ mod tests {
     use nimbus_core::TenantId;
     use serde_json::json;
 
-    fn fixture() -> (Arc<Service>, TenantIsolationContext, tempfile::TempDir) {
+    fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
-        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
         let context = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
-        crate::tenant::ensure_tenant(&service, &context).expect("tenant");
-        (service, context, temp)
+        crate::tenant::ensure_tenant(&engine, &context).expect("tenant");
+        (engine, context, temp)
     }
 
-    fn create_orders(service: &Arc<Service>, context: &TenantIsolationContext) {
+    fn create_orders(engine: &Arc<Engine>, context: &TenantIsolationContext) {
         let input: CreateTableInput = serde_json::from_value(json!({
             "TableName": "Orders",
             "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
             "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
         }))
         .unwrap();
-        control_plane::create_table(service, context, input).expect("create table");
+        control_plane::create_table(engine, context, input).expect("create table");
     }
 
-    fn put(service: &Arc<Service>, context: &TenantIsolationContext, pk: &str, v: &str) {
+    fn put(engine: &Arc<Engine>, context: &TenantIsolationContext, pk: &str, v: &str) {
         crate::commands::item::put_item(
-            service,
+            engine,
             context,
             serde_json::from_value(json!({
                 "TableName": "Orders",
@@ -629,21 +586,21 @@ mod tests {
     }
 
     fn transact_get(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         input: serde_json::Value,
     ) -> Result<TransactGetItemsOutput, DynamoDbError> {
-        transact_get_items(service, context, serde_json::from_value(input).unwrap())
+        transact_get_items(engine, context, serde_json::from_value(input).unwrap())
     }
 
     #[test]
     fn transact_get_returns_ordered_responses_with_gaps() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
-        put(&service, &ctx, "a", "1");
-        put(&service, &ctx, "c", "3");
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        put(&engine, &ctx, "a", "1");
+        put(&engine, &ctx, "c", "3");
         let out = transact_get(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TransactItems": [
@@ -668,11 +625,11 @@ mod tests {
 
     #[test]
     fn transact_get_applies_projection() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
-        put(&service, &ctx, "a", "1");
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        put(&engine, &ctx, "a", "1");
         let out = transact_get(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TransactItems": [
@@ -688,41 +645,41 @@ mod tests {
 
     #[test]
     fn transact_get_empty_is_validation_error() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
-        let err = transact_get(&service, &ctx, json!({ "TransactItems": [] }))
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        let err = transact_get(&engine, &ctx, json!({ "TransactItems": [] }))
             .expect_err("empty rejected");
         assert!(matches!(err, DynamoDbError::ValidationException(_)));
     }
 
     // ---- D3.4: TransactWriteItems ----
 
-    fn read(service: &Arc<Service>, context: &TenantIsolationContext, pk: &str) -> Option<Item> {
+    fn read(engine: &Arc<Engine>, context: &TenantIsolationContext, pk: &str) -> Option<Item> {
         let key: Item = [("pk".to_string(), AttributeValue::S(pk.into()))]
             .into_iter()
             .collect();
-        let schema = control_plane::load_key_schema(service, context, "Orders").unwrap();
+        let schema = control_plane::load_key_schema(engine, context, "Orders").unwrap();
         let id = primary_key_id(&key, &schema).unwrap();
-        crate::commands::item::read_item(service, context, &TableName::new("Orders").unwrap(), id)
+        crate::commands::item::read_item(engine, context, &TableName::new("Orders").unwrap(), id)
             .unwrap()
     }
 
     fn transact_write(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         input: serde_json::Value,
     ) -> Result<TransactWriteItemsOutput, DynamoDbError> {
-        transact_write_items(service, context, serde_json::from_value(input).unwrap())
+        transact_write_items(engine, context, serde_json::from_value(input).unwrap())
     }
 
     #[test]
     fn transact_write_applies_put_update_delete_atomically() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
-        put(&service, &ctx, "u", "1"); // updated
-        put(&service, &ctx, "d", "9"); // deleted
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        put(&engine, &ctx, "u", "1"); // updated
+        put(&engine, &ctx, "d", "9"); // deleted
         transact_write(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TransactItems": [
@@ -738,27 +695,27 @@ mod tests {
         )
         .expect("transact write");
         assert_eq!(
-            read(&service, &ctx, "p").and_then(|i| i.get("v").cloned()),
+            read(&engine, &ctx, "p").and_then(|i| i.get("v").cloned()),
             Some(AttributeValue::N("5".into())),
             "put applied"
         );
         assert_eq!(
-            read(&service, &ctx, "u").and_then(|i| i.get("v").cloned()),
+            read(&engine, &ctx, "u").and_then(|i| i.get("v").cloned()),
             Some(AttributeValue::N("2".into())),
             "update applied"
         );
-        assert!(read(&service, &ctx, "d").is_none(), "delete applied");
+        assert!(read(&engine, &ctx, "d").is_none(), "delete applied");
     }
 
     #[test]
     fn transact_write_condition_failure_cancels_everything() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
-        put(&service, &ctx, "exists", "1");
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        put(&engine, &ctx, "exists", "1");
         // Op 0 would create "fresh"; op 1's condition fails (item exists). The
         // whole transaction must cancel — "fresh" must NOT be written.
         let err = transact_write(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TransactItems": [
@@ -786,19 +743,19 @@ mod tests {
             other => panic!("expected TransactionCanceledException, got {other:?}"),
         }
         assert!(
-            read(&service, &ctx, "fresh").is_none(),
+            read(&engine, &ctx, "fresh").is_none(),
             "no partial write — op 0 rolled back with the cancelled transaction"
         );
     }
 
     #[test]
     fn transact_write_condition_check_gates_other_writes() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
-        put(&service, &ctx, "guard", "1");
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        put(&engine, &ctx, "guard", "1");
         // ConditionCheck passes (guard exists) → the Put applies.
         transact_write(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TransactItems": [
@@ -811,11 +768,11 @@ mod tests {
             }),
         )
         .expect("condition check passes");
-        assert!(read(&service, &ctx, "new").is_some());
+        assert!(read(&engine, &ctx, "new").is_some());
 
         // ConditionCheck fails (guard2 absent) → the Put does NOT apply.
         let err = transact_write(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TransactItems": [
@@ -833,17 +790,17 @@ mod tests {
             DynamoDbError::TransactionCanceledException { .. }
         ));
         assert!(
-            read(&service, &ctx, "new2").is_none(),
+            read(&engine, &ctx, "new2").is_none(),
             "gated write not applied"
         );
     }
 
     #[test]
     fn transact_write_requires_exactly_one_op_per_item() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         let err = transact_write(
-            &service,
+            &engine,
             &ctx,
             json!({ "TransactItems": [ {
                 "Put": { "TableName": "Orders", "Item": { "pk": {"S": "a"} } },
@@ -856,9 +813,9 @@ mod tests {
 
     #[test]
     fn transact_write_empty_is_validation_error() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
-        let err = transact_write(&service, &ctx, json!({ "TransactItems": [] }))
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        let err = transact_write(&engine, &ctx, json!({ "TransactItems": [] }))
             .expect_err("empty rejected");
         assert!(matches!(err, DynamoDbError::ValidationException(_)));
     }
@@ -867,11 +824,11 @@ mod tests {
     fn transact_get_repeatable_under_snapshot() {
         // Reading the same key twice in one transaction sees one consistent
         // snapshot value.
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
-        put(&service, &ctx, "a", "1");
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        put(&engine, &ctx, "a", "1");
         let out = transact_get(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TransactItems": [

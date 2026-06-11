@@ -4,10 +4,10 @@ use futures::future::{BoxFuture, FutureExt};
 use nimbus_storage::PostgresProvider;
 use tokio_util::sync::CancellationToken;
 
-use crate::service::{ProviderPollWorker, Service};
+use crate::engine::{Engine, ProviderPollWorker};
 
 pub(crate) struct WorkerContext {
-    pub(crate) service: Arc<Service>,
+    pub(crate) engine: Arc<Engine>,
     pub(crate) shutdown: CancellationToken,
 }
 
@@ -44,7 +44,7 @@ impl RuntimeHooks for PostgresRuntimeHooks {
     fn spawn_workers(self: Box<Self>, ctx: WorkerContext) -> BoxFuture<'static, ()> {
         let provider = self.provider;
         async move {
-            ctx.service
+            ctx.engine
                 .run_provider_notification_listener(provider, ctx.shutdown)
                 .await;
         }
@@ -66,7 +66,7 @@ impl RuntimeHooks for MySqlRuntimeHooks {
 
     fn spawn_workers(self: Box<Self>, ctx: WorkerContext) -> BoxFuture<'static, ()> {
         async move {
-            ctx.service
+            ctx.engine
                 .run_provider_poll_worker(ProviderPollWorker::MySql, ctx.shutdown)
                 .await;
         }
@@ -88,7 +88,7 @@ impl RuntimeHooks for LibsqlReplicaRuntimeHooks {
 
     fn spawn_workers(self: Box<Self>, ctx: WorkerContext) -> BoxFuture<'static, ()> {
         async move {
-            ctx.service
+            ctx.engine
                 .run_provider_poll_worker(ProviderPollWorker::LibsqlReplica, ctx.shutdown)
                 .await;
         }

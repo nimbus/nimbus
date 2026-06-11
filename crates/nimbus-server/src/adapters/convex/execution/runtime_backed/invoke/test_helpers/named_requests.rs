@@ -15,7 +15,7 @@ use super::super::super::sync_ops::{
 use super::runtime_invocation::invoke_named_convex_function;
 
 pub(in crate::adapters::convex) fn execute_named_query_request(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     request: ConvexNamedRequest,
@@ -41,7 +41,7 @@ pub(in crate::adapters::convex) fn execute_named_query_request(
 }
 
 pub(in crate::adapters::convex) fn execute_named_paginated_query_request(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     request: ConvexNamedPaginatedQueryRequest,
@@ -77,7 +77,7 @@ pub(in crate::adapters::convex) fn execute_named_paginated_query_request(
 }
 
 pub(in crate::adapters::convex) fn execute_named_mutation_request(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     request: ConvexNamedRequest,
@@ -109,7 +109,7 @@ pub(in crate::adapters::convex) fn execute_named_mutation_request(
 }
 
 pub(in crate::adapters::convex) fn execute_named_action_request(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     request: ConvexNamedRequest,

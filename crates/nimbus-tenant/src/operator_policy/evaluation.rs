@@ -104,7 +104,7 @@ impl OperatorPolicyDocument {
         runtime_limits.grants.service = services.clone();
         let runtime_policy = RuntimePolicy::new(runtime_limits);
 
-        let identity = workload.identity()?;
+        let attributes = workload.attributes()?;
         let storage_namespace = workload
             .storage
             .namespace
@@ -141,7 +141,7 @@ impl OperatorPolicyDocument {
         }
 
         let decision = context.admit_decision(
-            crate::TenantIsolationPolicyInput::new(identity)
+            crate::TenantIsolationPolicyInput::new(attributes)
                 .with_runtime_policy(&context, &runtime_policy, workload.runtime.tier, mode)
                 .with_services(TenantServiceGrantPolicyDecision::new(services.clone()))
                 .with_network(workload.network.to_decision()?)

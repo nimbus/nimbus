@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "registry_kind": "nimbus_node_lts_lane_registry",
+  "as_of": "2026-05-28",
+  "source_urls": [
+    "https://raw.githubusercontent.com/nodejs/Release/main/schedule.json",
+    "https://nodejs.org/en/about/releases/",
+    "https://nodejs.org/en/about/eol",
+    "https://nodejs.org/en/download",
+    "https://raw.githubusercontent.com/nodejs/node/main/doc/abi_version_registry.json"
+  ],
+  "product_default_lane": "node24",
+  "consumer_crates": [
+    {
+      "crate": "nimbus-runtime",
+      "responsibility": "Owns RuntimeCompatibilityTarget metadata, process metadata, runtime limits presets, and node-compat fixture evidence."
+    },
+    {
+      "crate": "nimbus-tenant",
+      "responsibility": "Maps tenant/operator runtime profiles to accepted Node compatibility targets and production admission policy."
+    },
+    {
+      "crate": "nimbus-bridge",
+      "responsibility": "Enforces execution-time runtime admission and fallback routing after tenant policy selection."
+    },
+    {
+      "crate": "nimbus-convex",
+      "responsibility": "Selects Node runtime lanes for Convex-compatible manifests and use-node action packaging."
+    }
+  ],
+  "lanes": [
+    {
+      "major": 20,
+      "lane_name": "node20",
+      "runtime_compatibility_target": "Node20",
+      "support_phase": "eol_legacy",
+      "codename": "Iron",
+      "release_name": "node",
+      "upstream_version": "20.20.2",
+      "upstream_tag": "v20.20.2",
+      "node_module_version": "115",
+      "fixture_corpus_path": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node20/test",
+      "fixture_corpus_upstream_tag": "v20.20.2",
+      "lts_start": "2023-10-24",
+      "maintenance_start": "2024-10-22",
+      "eol_date": "2026-04-30",
+      "product_default": false,
+      "evidence_policy": "legacy_grace_regression_only"
+    },
+    {
+      "major": 22,
+      "lane_name": "node22",
+      "runtime_compatibility_target": "Node22",
+      "support_phase": "maintenance_lts",
+      "codename": "Jod",
+      "release_name": "node",
+      "upstream_version": "22.22.3",
+      "upstream_tag": "v22.22.3",
+      "node_module_version": "127",
+      "fixture_corpus_path": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
+      "fixture_corpus_upstream_tag": "v22.22.3",
+      "lts_start": "2024-10-29",
+      "maintenance_start": "2025-10-21",
+      "eol_date": "2027-04-30",
+      "product_default": false,
+      "evidence_policy": "supported_lts_lane_local_evidence"
+    },
+    {
+      "major": 24,
+      "lane_name": "node24",
+      "runtime_compatibility_target": "Node24",
+      "support_phase": "active_lts",
+      "codename": "Krypton",
+      "release_name": "node",
+      "upstream_version": "24.16.0",
+      "upstream_tag": "v24.16.0",
+      "node_module_version": "137",
+      "fixture_corpus_path": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
+      "fixture_corpus_upstream_tag": "v24.16.0",
+      "lts_start": "2025-10-28",
+      "maintenance_start": "2026-10-20",
+      "eol_date": "2028-04-30",
+      "product_default": true,
+      "evidence_policy": "supported_lts_lane_local_evidence"
+    },
+    {
+      "major": 26,
+      "lane_name": "node26",
+      "runtime_compatibility_target": "Node26",
+      "support_phase": "current_non_lts",
+      "codename": null,
+      "release_name": "node",
+      "upstream_version": "26.2.0",
+      "upstream_tag": "v26.2.0",
+      "node_module_version": "147",
+      "fixture_corpus_path": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node26/test",
+      "fixture_corpus_upstream_tag": "v26.2.0",
+      "lts_start": "2026-10-28",
+      "maintenance_start": "2027-10-20",
+      "eol_date": "2029-04-30",
+      "product_default": false,
+      "evidence_policy": "current_non_lts_lane_local_evidence_until_lts_promotion"
+    }
+  ]
+}

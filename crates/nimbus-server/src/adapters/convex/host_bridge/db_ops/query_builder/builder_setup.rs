@@ -6,7 +6,7 @@ impl ConvexHostBridge {
         payload: Value,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeQueryStartPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         let builder_id = self.new_builder_id();
         self.insert_builder(
             builder_id.clone(),
@@ -27,7 +27,7 @@ impl ConvexHostBridge {
         payload: Value,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeQueryWithIndexPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         let response = self
             .with_builder_mut(&payload.builder_id, |builder| {
                 let order_field_hint = self
@@ -51,7 +51,7 @@ impl ConvexHostBridge {
         payload: Value,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeQueryFilterPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         let response = self
             .with_builder_mut(&payload.builder_id, |builder| {
                 if builder.order_field_hint.is_none() {
@@ -72,7 +72,7 @@ impl ConvexHostBridge {
         payload: Value,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeQueryOrderPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         let response = self
             .with_builder_mut(&payload.builder_id, |builder| {
                 let field = builder.order_field_hint.clone().ok_or_else(|| {

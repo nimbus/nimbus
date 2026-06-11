@@ -28,10 +28,12 @@ mod trigger_candidates;
 mod trigger_execution;
 
 #[cfg(test)]
-pub(crate) use self::document_cache::DOCUMENT_CACHE_CAPACITY;
-#[cfg(test)]
 pub(crate) use self::document_cache::DocumentCacheStats;
 use self::document_cache::TenantDocumentCache;
+#[cfg(test)]
+pub(crate) use self::document_cache::{
+    DOCUMENT_CACHE_CAPACITY, DocumentCacheInvalidationPauseHandle,
+};
 use self::lifecycle::TenantLifecycle;
 #[cfg(test)]
 pub(crate) use self::materialized_reads::MaterializedReadPublishPauseHandle;
@@ -39,7 +41,9 @@ pub(crate) use self::materialized_reads::MaterializedReadPublishPauseHandle;
 pub(crate) use self::materialized_reads::MaterializedTablePublicationStats;
 pub(crate) use self::materialized_reads::ServingSnapshot;
 use self::materialized_reads::TenantMaterializedReadSurface;
-pub use self::materialized_reads::{MaterializedReadSurfaceStats, ServingSnapshotManagerStats};
+pub use self::materialized_reads::{
+    MaterializedReadSurfaceStats, PinnedServingReadSnapshot, ServingSnapshotManagerStats,
+};
 #[cfg(test)]
 pub(crate) use self::mutation::DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY;
 #[cfg(test)]
@@ -64,6 +68,8 @@ use self::trigger_candidates::TriggerCandidateFeed;
 #[cfg(test)]
 pub(crate) use self::trigger_candidates::TriggerCandidatePauseHandle;
 use self::trigger_execution::TriggerExecutionQueue;
+#[cfg(test)]
+pub(crate) use crate::subscriptions::SubscriptionDeliveryPublishPauseHandle;
 
 /// Runtime state for a loaded tenant.
 ///

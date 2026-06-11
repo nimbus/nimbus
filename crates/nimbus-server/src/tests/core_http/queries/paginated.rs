@@ -2,8 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn paginated_query_endpoint_returns_pages() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -82,8 +82,8 @@ async fn paginated_query_endpoint_returns_pages() {
 
 #[tokio::test]
 async fn paginated_query_rejects_cursor_for_different_query_shape() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

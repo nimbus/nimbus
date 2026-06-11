@@ -616,8 +616,8 @@ fn is_non_global_or_internal_ipv4(ip: Ipv4Addr) -> bool {
 }
 
 fn is_non_global_or_internal_ipv6(ip: Ipv6Addr) -> bool {
-    if let Some(ipv4_mapped) = ip.to_ipv4_mapped() {
-        return is_non_global_or_internal_ipv4(ipv4_mapped);
+    if let Some(embedded_ipv4) = embedded_ipv4_for_ipv6(ip) {
+        return is_non_global_or_internal_ipv4(embedded_ipv4);
     }
     let segments = ip.segments();
     ip.is_loopback()
@@ -626,6 +626,22 @@ fn is_non_global_or_internal_ipv6(ip: Ipv6Addr) -> bool {
         || ip.is_unicast_link_local()
         || ip.is_multicast()
         || segments[0] == 0x2001 && segments[1] == 0x0db8
+}
+
+fn embedded_ipv4_for_ipv6(ip: Ipv6Addr) -> Option<Ipv4Addr> {
+    if let Some(ipv4_mapped) = ip.to_ipv4_mapped() {
+        return Some(ipv4_mapped);
+    }
+
+    let segments = ip.segments();
+    if segments[..6] == [0x0064, 0xff9b, 0, 0, 0, 0] || segments[..6] == [0, 0, 0, 0, 0, 0] {
+        return Some(ipv4_from_ipv6_tail(segments[6], segments[7]));
+    }
+    None
+}
+
+fn ipv4_from_ipv6_tail(high: u16, low: u16) -> Ipv4Addr {
+    Ipv4Addr::new((high >> 8) as u8, high as u8, (low >> 8) as u8, low as u8)
 }
 
 #[cfg(test)]
@@ -936,6 +952,16 @@ mod tests {
             IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1)),
             IpAddr::V4(Ipv4Addr::new(198, 18, 0, 1)),
             IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0xa9fe, 0xa9fe)),
+            IpAddr::V6(
+                "64:ff9b::169.254.169.254"
+                    .parse()
+                    .expect("NAT64 IPv6 address should parse"),
+            ),
+            IpAddr::V6(
+                "::169.254.169.254"
+                    .parse()
+                    .expect("IPv4-compatible IPv6 address should parse"),
+            ),
         ] {
             let denied = policy.authorize(
                 &SandboxEgressRequest::new(
@@ -950,6 +976,19 @@ mod tests {
                 "reserved/internal address {resolved_ip} should be denied: {denied:?}"
             );
         }
+
+        let allowed = policy.authorize(
+            &SandboxEgressRequest::new(PublishedEndpointProtocol::Http, "reserved.example.com", 80)
+                .with_resolved_ip(IpAddr::V6(
+                    "64:ff9b::93.184.216.34"
+                        .parse()
+                        .expect("global NAT64 IPv6 address should parse"),
+                )),
+        );
+        assert!(
+            allowed.is_allowed(),
+            "global NAT64 address should remain allowed when the rule matches: {allowed:?}"
+        );
     }
 
     #[test]

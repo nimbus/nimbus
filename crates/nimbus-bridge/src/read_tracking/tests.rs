@@ -77,6 +77,28 @@ fn synthesize_runtime_subscription_base_queries_prefers_broad_query_for_full_tab
 }
 
 #[test]
+fn synthesize_runtime_subscription_base_queries_uses_broad_query_for_document_only_reads() {
+    let table = TableName::new("messages").expect("table should be valid");
+    let table_id = nimbus_core::TableId::new();
+    let document_id = nimbus_core::DocumentId::new();
+    let mut read_set = RuntimeReadSet::default();
+    read_set.record_document(&table, Some(&table_id), &document_id);
+
+    let queries =
+        synthesize_runtime_subscription_base_queries(&read_set).expect("queries should synthesize");
+
+    assert_eq!(
+        queries,
+        vec![Query {
+            table,
+            filters: Vec::new(),
+            order: None,
+            limit: None,
+        }]
+    );
+}
+
+#[test]
 fn runtime_read_set_converts_to_shared_dependency_set_without_losing_skip_behavior() {
     let table = TableName::new("messages").expect("table should be valid");
     let table_id = nimbus_core::TableId::new();

@@ -11,6 +11,9 @@ license-file.workspace = true
 workspace = true
 
 [features]
+# LR12: opt-in lane for the live `nimbus node run` integration test against
+# session systemd (mirrors nimbus-node's systemd-dbus-integration-tests).
+node-run-integration-tests = []
 bun-jsc-linked-adapter = [
     "nimbus/bun-jsc-linked-adapter",
     "nimbus-server/bun-jsc-linked-adapter",
@@ -29,6 +32,7 @@ fs2.workspace = true
 indicatif.workspace = true
 libc.workspace = true
 nimbus = { path = "../nimbus", features = ["aws-kms"] }
+nimbus-assets = { path = "../nimbus-assets", features = ["js-packages", "templates"] }
 nimbus-machine = { path = "../nimbus-machine" }
 nimbus-server = { path = "../nimbus-server" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
@@ -49,10 +53,10 @@ tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+zeroize.workspace = true
 flate2 = "1"
 oci-client = "0.16"
 zstd = "0.13"
-rust-embed = { version = "=8.11.0", features = ["interpolate-folder-path"] }
 
 [build-dependencies]
 serde_json.workspace = true

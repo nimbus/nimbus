@@ -1,13 +1,17 @@
 use super::super::super::connection::ConnectionState;
 use super::*;
 use crate::commands::crud;
-use nimbus_testing::ServiceFixture;
+use nimbus_testing::EngineFixture;
 
 fn test_conn() -> ConnectionState {
     ConnectionState::new(([127, 0, 0, 1], 12345).into())
 }
 
-fn seed_users(fixture: &ServiceFixture<Service>) {
+fn test_principal() -> PrincipalContext {
+    PrincipalContext::system()
+}
+
+fn seed_users(fixture: &EngineFixture<Engine>) {
     let body = bson::doc! {
         "insert": "users",
         "$db": "testdb",
@@ -17,11 +21,17 @@ fn seed_users(fixture: &ServiceFixture<Service>) {
             { "_id": "u3", "name": "Charlie", "age": 35, "dept": "sales" },
         ],
     };
-    crud::insert(&body, &mut test_conn(), &fixture.service()).unwrap();
+    crud::insert(
+        &body,
+        &mut test_conn(),
+        &fixture.engine(),
+        &test_principal(),
+    )
+    .unwrap();
 }
 
 fn agg_result(
-    fixture: &ServiceFixture<Service>,
+    fixture: &EngineFixture<Engine>,
     collection: &str,
     pipeline: Vec<bson::Bson>,
 ) -> Vec<bson::Document> {
@@ -31,7 +41,13 @@ fn agg_result(
         "pipeline": pipeline,
         "cursor": {},
     };
-    let result = aggregate(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = aggregate(
+        &body,
+        &mut test_conn(),
+        &fixture.engine(),
+        &test_principal(),
+    )
+    .unwrap();
     let cursor = result.get_document("cursor").unwrap();
     cursor
         .get_array("firstBatch")
@@ -43,7 +59,7 @@ fn agg_result(
 
 #[test]
 fn aggregate_empty_pipeline() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(&fixture, "users", vec![]);
@@ -51,8 +67,38 @@ fn aggregate_empty_pipeline() {
 }
 
 #[test]
+fn aggregate_change_stream_fails_closed_until_backed_by_durable_cdc() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    seed_users(&fixture);
+    let body = bson::doc! {
+        "aggregate": "users",
+        "$db": "testdb",
+        "pipeline": [ { "$changeStream": {} } ],
+        "cursor": {},
+    };
+
+    let err = aggregate(
+        &body,
+        &mut test_conn(),
+        &fixture.engine(),
+        &test_principal(),
+    )
+    .expect_err("change streams must fail closed");
+
+    match err {
+        MongoError::Command {
+            code_name, message, ..
+        } => {
+            assert_eq!(code_name, "CommandNotSupported");
+            assert!(message.contains("durable Nimbus CDC cut model"));
+        }
+        other => panic!("expected command error, got {other:?}"),
+    }
+}
+
+#[test]
 fn aggregate_match_stage() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -67,7 +113,7 @@ fn aggregate_match_stage() {
 
 #[test]
 fn aggregate_match_with_comparison() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -81,8 +127,72 @@ fn aggregate_match_with_comparison() {
 }
 
 #[test]
+fn aggregate_initial_query_pushes_leading_match_and_limit() {
+    let table = TableName::new("users").unwrap();
+    let stages = parse_pipeline(&[
+        bson::Bson::Document(bson::doc! { "$match": { "dept": "eng", "age": { "$gte": 30 } } }),
+        bson::Bson::Document(bson::doc! { "$limit": 1 }),
+        bson::Bson::Document(bson::doc! { "$sort": { "age": -1 } }),
+    ])
+    .unwrap();
+
+    let query = initial_query_for_stages(&table, &stages);
+
+    assert_eq!(query.table, table);
+    assert_eq!(query.limit, Some(1));
+    assert_eq!(query.order, None);
+    assert!(query.filters.contains(&nimbus_core::Filter {
+        field: "dept".to_string(),
+        op: nimbus_core::FilterOp::Eq,
+        value: serde_json::json!("eng"),
+    }));
+    assert!(query.filters.contains(&nimbus_core::Filter {
+        field: "age".to_string(),
+        op: nimbus_core::FilterOp::Gte,
+        value: serde_json::json!(30),
+    }));
+}
+
+#[test]
+fn aggregate_initial_query_keeps_match_after_limit_in_pipeline() {
+    let table = TableName::new("users").unwrap();
+    let stages = parse_pipeline(&[
+        bson::Bson::Document(bson::doc! { "$limit": 2 }),
+        bson::Bson::Document(bson::doc! { "$match": { "dept": "eng" } }),
+    ])
+    .unwrap();
+
+    let query = initial_query_for_stages(&table, &stages);
+
+    assert_eq!(query.table, table);
+    assert_eq!(query.limit, Some(2));
+    assert!(
+        query.filters.is_empty(),
+        "a match after a limit cannot be pushed ahead of that limit"
+    );
+}
+
+#[test]
+fn aggregate_initial_query_keeps_id_match_in_pipeline() {
+    let table = TableName::new("users").unwrap();
+    let stages = parse_pipeline(&[bson::Bson::Document(
+        bson::doc! { "$match": { "_id": "u1", "dept": "eng" } },
+    )])
+    .unwrap();
+
+    let query = initial_query_for_stages(&table, &stages);
+
+    assert_eq!(query.table, table);
+    assert_eq!(query.limit, None);
+    assert!(
+        query.filters.is_empty(),
+        "aggregation sees _id in BSON output, not as a stored document field"
+    );
+}
+
+#[test]
 fn aggregate_sort_stage() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -96,7 +206,7 @@ fn aggregate_sort_stage() {
 
 #[test]
 fn aggregate_sort_descending() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -110,7 +220,7 @@ fn aggregate_sort_descending() {
 
 #[test]
 fn aggregate_limit_stage() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -123,7 +233,7 @@ fn aggregate_limit_stage() {
 
 #[test]
 fn aggregate_skip_stage() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -136,7 +246,7 @@ fn aggregate_skip_stage() {
 
 #[test]
 fn aggregate_match_sort_limit_chain() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -154,7 +264,7 @@ fn aggregate_match_sort_limit_chain() {
 
 #[test]
 fn aggregate_project_inclusion() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -172,7 +282,7 @@ fn aggregate_project_inclusion() {
 
 #[test]
 fn aggregate_add_fields() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -189,7 +299,7 @@ fn aggregate_add_fields() {
 
 #[test]
 fn aggregate_count_stage() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -206,7 +316,7 @@ fn aggregate_count_stage() {
 
 #[test]
 fn aggregate_group_sum() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -230,7 +340,7 @@ fn aggregate_group_sum() {
 
 #[test]
 fn aggregate_group_avg() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -254,7 +364,7 @@ fn aggregate_group_avg() {
 
 #[test]
 fn aggregate_group_min_max() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -275,7 +385,7 @@ fn aggregate_group_min_max() {
 
 #[test]
 fn aggregate_group_first_last() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -298,7 +408,7 @@ fn aggregate_group_first_last() {
 
 #[test]
 fn aggregate_group_push() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -322,7 +432,7 @@ fn aggregate_group_push() {
 
 #[test]
 fn aggregate_group_add_to_set() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let docs = agg_result(
@@ -340,8 +450,61 @@ fn aggregate_group_add_to_set() {
 }
 
 #[test]
+fn aggregate_group_uses_structured_bson_identity_for_array_and_document_keys() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let insert_body = bson::doc! {
+        "insert": "shapes",
+        "$db": "testdb",
+        "documents": [
+            { "_id": "s1", "shape": { "a": 1 } },
+            { "_id": "s2", "shape": { "a": 1 } },
+            { "_id": "s3", "shape": { "a": 1, "b": 0 } },
+            { "_id": "s4", "shape": [1] },
+            { "_id": "s5", "shape": [1] },
+        ],
+    };
+    crud::insert(
+        &insert_body,
+        &mut test_conn(),
+        &fixture.engine(),
+        &test_principal(),
+    )
+    .unwrap();
+
+    let docs = agg_result(
+        &fixture,
+        "shapes",
+        vec![bson::Bson::Document(bson::doc! {
+            "$group": {
+                "_id": "$shape",
+                "count": { "$sum": 1 },
+            }
+        })],
+    );
+    assert_eq!(docs.len(), 3);
+
+    let short_doc = docs
+        .iter()
+        .find(|doc| doc.get("_id") == Some(&bson::Bson::Document(bson::doc! { "a": 1 })))
+        .unwrap();
+    assert_eq!(short_doc.get_i64("count").unwrap(), 2);
+
+    let long_doc = docs
+        .iter()
+        .find(|doc| doc.get("_id") == Some(&bson::Bson::Document(bson::doc! { "a": 1, "b": 0 })))
+        .unwrap();
+    assert_eq!(long_doc.get_i64("count").unwrap(), 1);
+
+    let array_doc = docs
+        .iter()
+        .find(|doc| doc.get("_id") == Some(&bson::Bson::Array(vec![bson::Bson::Int32(1)])))
+        .unwrap();
+    assert_eq!(array_doc.get_i64("count").unwrap(), 2);
+}
+
+#[test]
 fn aggregate_unwind() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "tagged",
         "$db": "testdb",
@@ -350,7 +513,13 @@ fn aggregate_unwind() {
             { "_id": "t2", "tags": ["c"] },
         ],
     };
-    crud::insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    crud::insert(
+        &insert_body,
+        &mut test_conn(),
+        &fixture.engine(),
+        &test_principal(),
+    )
+    .unwrap();
 
     let docs = agg_result(
         &fixture,
@@ -362,7 +531,7 @@ fn aggregate_unwind() {
 
 #[test]
 fn aggregate_unwind_preserve_null() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "mixed",
         "$db": "testdb",
@@ -371,7 +540,13 @@ fn aggregate_unwind_preserve_null() {
             { "_id": "m2", "val": 1 },
         ],
     };
-    crud::insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    crud::insert(
+        &insert_body,
+        &mut test_conn(),
+        &fixture.engine(),
+        &test_principal(),
+    )
+    .unwrap();
 
     let docs = agg_result(
         &fixture,
@@ -388,13 +563,19 @@ fn aggregate_unwind_preserve_null() {
 
 #[test]
 fn aggregate_unwind_include_array_index() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let insert_body = bson::doc! {
         "insert": "indexed",
         "$db": "testdb",
         "documents": [{ "_id": "x1", "items": ["a", "b", "c"] }],
     };
-    crud::insert(&insert_body, &mut test_conn(), &fixture.service()).unwrap();
+    crud::insert(
+        &insert_body,
+        &mut test_conn(),
+        &fixture.engine(),
+        &test_principal(),
+    )
+    .unwrap();
 
     let docs = agg_result(
         &fixture,
@@ -413,7 +594,7 @@ fn aggregate_unwind_include_array_index() {
 
 #[test]
 fn aggregate_unsupported_stage_returns_error() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -422,7 +603,13 @@ fn aggregate_unsupported_stage_returns_error() {
         "pipeline": [{ "$lookup": {} }],
         "cursor": {},
     };
-    let err = aggregate(&body, &mut test_conn(), &fixture.service()).unwrap_err();
+    let err = aggregate(
+        &body,
+        &mut test_conn(),
+        &fixture.engine(),
+        &test_principal(),
+    )
+    .unwrap_err();
     match err {
         MongoError::Command { message, .. } => assert!(message.contains("$lookup")),
         other => panic!("expected Command, got {:?}", other),
@@ -431,9 +618,15 @@ fn aggregate_unsupported_stage_returns_error() {
 
 #[test]
 fn aggregate_missing_pipeline_returns_error() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let body = bson::doc! { "aggregate": "users", "$db": "testdb" };
-    let err = aggregate(&body, &mut test_conn(), &fixture.service()).unwrap_err();
+    let err = aggregate(
+        &body,
+        &mut test_conn(),
+        &fixture.engine(),
+        &test_principal(),
+    )
+    .unwrap_err();
     match err {
         MongoError::Command { code, .. } => assert_eq!(code, BAD_VALUE.code),
         other => panic!("expected Command, got {:?}", other),
@@ -442,7 +635,7 @@ fn aggregate_missing_pipeline_returns_error() {
 
 #[test]
 fn aggregate_with_cursor_batch_size() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);
 
     let body = bson::doc! {
@@ -451,7 +644,13 @@ fn aggregate_with_cursor_batch_size() {
         "pipeline": [],
         "cursor": { "batchSize": 1 },
     };
-    let result = aggregate(&body, &mut test_conn(), &fixture.service()).unwrap();
+    let result = aggregate(
+        &body,
+        &mut test_conn(),
+        &fixture.engine(),
+        &test_principal(),
+    )
+    .unwrap();
     let cursor = result.get_document("cursor").unwrap();
     let batch = cursor.get_array("firstBatch").unwrap();
     assert_eq!(batch.len(), 1);

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, BufReader, Read, Write};
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -14,6 +15,7 @@ use oci_client::manifest::{
     OCI_IMAGE_MEDIA_TYPE, OciDescriptor,
 };
 use oci_client::secrets::RegistryAuth;
+use reqwest::Url;
 use reqwest::blocking::Client as BlockingClient;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -102,11 +104,11 @@ pub(super) fn resolve_bootable_image_path(
             }
             materialize_oci_image(paths, reference, provider)
         }
-        MachineImageSource::HttpUrl { url } => {
+        MachineImageSource::HttpUrl { url, sha256 } => {
             if paths.materialized_image_path.is_file() {
                 return Ok(paths.materialized_image_path.clone());
             }
-            materialize_http_image(paths, url)
+            materialize_http_image(paths, url, sha256)
         }
     }
 }
@@ -120,7 +122,12 @@ fn ensure_image_materialization_supported(image_format: MachineImageFormat) -> R
     }
 }
 
-fn materialize_http_image(paths: &MachinePaths, url: &str) -> Result<PathBuf, Error> {
+fn materialize_http_image(
+    paths: &MachinePaths,
+    url: &str,
+    expected_sha256: &str,
+) -> Result<PathBuf, Error> {
+    validate_http_image_url(url)?;
     fs::create_dir_all(&paths.image_cache_dir).map_err(|error| {
         Error::Internal(format!(
             "failed to create machine image cache directory {}: {error}",
@@ -259,6 +266,8 @@ fn materialize_http_image(paths: &MachinePaths, url: &str) -> Result<PathBuf, Er
         })?;
     }
 
+    verify_http_materialized_image(temp_output.path(), expected_sha256, &url)?;
+
     temp_output
         .persist(&paths.materialized_image_path)
         .map_err(|error| {
@@ -270,6 +279,51 @@ fn materialize_http_image(paths: &MachinePaths, url: &str) -> Result<PathBuf, Er
         })?;
 
     Ok(paths.materialized_image_path.clone())
+}
+
+fn validate_http_image_url(url: &str) -> Result<(), Error> {
+    let parsed = Url::parse(url).map_err(|error| {
+        Error::InvalidInput(format!(
+            "invalid HTTP machine image source URL {url:?}: {error}"
+        ))
+    })?;
+    match parsed.scheme() {
+        "https" => Ok(()),
+        "http" if is_loopback_url(&parsed) => Ok(()),
+        "http" => Err(Error::InvalidInput(
+            "plaintext HTTP machine image sources are only allowed for loopback hosts; use HTTPS for remote machine images".to_owned(),
+        )),
+        scheme => Err(Error::InvalidInput(format!(
+            "machine image HTTP source must use http or https, got {scheme:?}"
+        ))),
+    }
+}
+
+fn is_loopback_url(url: &Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(address) => address.is_loopback(),
+        Err(_) => false,
+    }
+}
+
+fn verify_http_materialized_image(
+    path: &Path,
+    expected_sha256: &str,
+    url: &str,
+) -> Result<(), Error> {
+    let actual_sha256 = compute_sha256(path)?;
+    if actual_sha256 != expected_sha256 {
+        return Err(Error::InvalidInput(format!(
+            "materialized machine image from {url} has sha256 {actual_sha256}, expected {expected_sha256}"
+        )));
+    }
+    Ok(())
 }
 
 fn materialize_oci_image(
@@ -484,10 +538,32 @@ fn build_oci_client(reference: &str) -> Result<OciClient, Error> {
     })
 }
 
-fn is_loopback_registry(reference: &str) -> bool {
+pub(super) fn is_loopback_registry(reference: &str) -> bool {
     let stripped_reference = strip_docker_reference_prefix(reference);
-    let host = stripped_reference.split('/').next().unwrap_or_default();
-    host.starts_with("localhost") || host.starts_with("127.0.0.1") || host.starts_with("[::1]")
+    let registry = stripped_reference.split('/').next().unwrap_or_default();
+    let Some(host) = registry_host_without_port(registry) else {
+        return false;
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(address) => address.is_loopback(),
+        Err(_) => false,
+    }
+}
+
+fn registry_host_without_port(registry: &str) -> Option<&str> {
+    if let Some(bracketed) = registry.strip_prefix('[') {
+        let (host, suffix) = bracketed.split_once(']')?;
+        return (suffix.is_empty() || suffix.starts_with(':')).then_some(host);
+    }
+    Some(
+        registry
+            .split_once(':')
+            .map(|(host, _)| host)
+            .unwrap_or(registry),
+    )
 }
 
 fn strip_docker_reference_prefix(reference: &str) -> String {

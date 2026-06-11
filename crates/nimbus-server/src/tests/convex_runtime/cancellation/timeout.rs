@@ -23,19 +23,26 @@ globalThis.__nimbusInvoke = async function(request) {
     "request",
     "return (async () => { while (true) {} })(ctx, args, request);",
   );
-  return {
-    status: "ok",
-    value: await handler(globalThis.__nimbusCreateContext(), request.args ?? {}, request),
-  };
-};
+	  return {
+	    status: "ok",
+	    value: await handler(
+	      globalThis.__nimbusCreateContext({
+	        hostCallSessionId: `${request.kind}:${request.function_name}`,
+	        request,
+	      }),
+	      request.args ?? {},
+	      request,
+	    ),
+	  };
+	};
 
 export {};
 "#,
         ),
     )
     .with_runtime_limits(limits);
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

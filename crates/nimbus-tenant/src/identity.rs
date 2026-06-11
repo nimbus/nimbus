@@ -7,18 +7,20 @@ use super::{RuntimeIsolationTier, TenantIsolationDecision};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TenantWorkloadKind {
+pub enum WorkloadKind {
     RuntimeFunction,
-    SandboxService,
+    Service,
+    Sandbox,
     HttpRequest,
     SystemTask,
 }
 
-impl TenantWorkloadKind {
+impl WorkloadKind {
     pub fn label(self) -> &'static str {
         match self {
             Self::RuntimeFunction => "runtime_function",
-            Self::SandboxService => "sandbox_service",
+            Self::Service => "service",
+            Self::Sandbox => "sandbox",
             Self::HttpRequest => "http_request",
             Self::SystemTask => "system_task",
         }
@@ -26,8 +28,8 @@ impl TenantWorkloadKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct TenantWorkloadIdentity {
-    kind: TenantWorkloadKind,
+pub struct WorkloadAttributes {
+    kind: WorkloadKind,
     name: String,
     runtime_tier: Option<RuntimeIsolationTier>,
     sandbox_backend: Option<SandboxBackendKind>,
@@ -35,8 +37,8 @@ pub struct TenantWorkloadIdentity {
     invocation_id: Option<String>,
 }
 
-impl TenantWorkloadIdentity {
-    pub fn new(kind: TenantWorkloadKind, name: impl Into<String>) -> Self {
+impl WorkloadAttributes {
+    pub fn new(kind: WorkloadKind, name: impl Into<String>) -> Self {
         Self {
             kind,
             name: name.into(),
@@ -48,11 +50,15 @@ impl TenantWorkloadIdentity {
     }
 
     pub fn runtime_function(name: impl Into<String>, tier: RuntimeIsolationTier) -> Self {
-        Self::new(TenantWorkloadKind::RuntimeFunction, name).with_runtime_tier(tier)
+        Self::new(WorkloadKind::RuntimeFunction, name).with_runtime_tier(tier)
     }
 
-    pub fn sandbox_service(name: impl Into<String>, sandbox_id: impl Into<String>) -> Self {
-        Self::new(TenantWorkloadKind::SandboxService, name).with_sandbox_id(sandbox_id)
+    pub fn service(name: impl Into<String>) -> Self {
+        Self::new(WorkloadKind::Service, name)
+    }
+
+    pub fn sandbox(name: impl Into<String>) -> Self {
+        Self::new(WorkloadKind::Sandbox, name)
     }
 
     pub fn with_runtime_tier(mut self, tier: RuntimeIsolationTier) -> Self {
@@ -79,7 +85,7 @@ impl TenantWorkloadIdentity {
         &self.name
     }
 
-    pub fn kind(&self) -> TenantWorkloadKind {
+    pub fn kind(&self) -> WorkloadKind {
         self.kind
     }
 
@@ -101,12 +107,12 @@ impl TenantWorkloadIdentity {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub struct TenantWorkloadLocation {
+pub struct WorkloadLocation {
     node_id: Option<String>,
     machine_id: Option<String>,
 }
 
-impl TenantWorkloadLocation {
+impl WorkloadLocation {
     pub fn new() -> Self {
         Self::default()
     }
@@ -123,12 +129,12 @@ impl TenantWorkloadLocation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct TenantWorkloadStableIdentity {
+pub struct WorkloadIdentity {
     format_version: &'static str,
     tenant_id: String,
     surface: String,
     deployment_generation: Option<u64>,
-    workload_kind: TenantWorkloadKind,
+    workload_kind: WorkloadKind,
     workload_name: String,
     runtime_tier: Option<RuntimeIsolationTier>,
     runtime_backend: Option<RuntimeBackendKind>,
@@ -139,15 +145,12 @@ pub struct TenantWorkloadStableIdentity {
     invocation_id: Option<String>,
 }
 
-impl TenantWorkloadStableIdentity {
+impl WorkloadIdentity {
     const FORMAT_VERSION: &'static str = "v1";
 
     pub(super) fn from_decision(decision: &TenantIsolationDecision) -> Self {
-        let runtime_backend = matches!(
-            decision.workload.kind(),
-            TenantWorkloadKind::RuntimeFunction
-        )
-        .then_some(decision.runtime.backend_kind());
+        let runtime_backend = matches!(decision.workload.kind(), WorkloadKind::RuntimeFunction)
+            .then_some(decision.runtime.backend_kind());
         Self {
             format_version: Self::FORMAT_VERSION,
             tenant_id: decision.tenant_id.as_str().to_string(),
@@ -165,15 +168,15 @@ impl TenantWorkloadStableIdentity {
         }
     }
 
-    pub fn stable_id(&self) -> String {
+    pub fn subject(&self) -> String {
         format!(
             "nimbus-workload:{}{}",
             self.format_version,
-            self.stable_subject_suffix()
+            self.subject_suffix()
         )
     }
 
-    pub fn audit_projection_id(&self) -> String {
+    pub fn audit_projection(&self) -> String {
         format!(
             "nimbus-workload-audit:{}{}",
             self.format_version,
@@ -185,7 +188,7 @@ impl TenantWorkloadStableIdentity {
         format!(
             "/nimbus/workload/{}{}",
             self.format_version,
-            self.stable_subject_suffix()
+            self.subject_suffix()
         )
     }
 
@@ -226,7 +229,7 @@ impl TenantWorkloadStableIdentity {
         self.invocation_id.as_deref()
     }
 
-    fn stable_subject_suffix(&self) -> String {
+    fn subject_suffix(&self) -> String {
         self.path_suffix(false)
     }
 

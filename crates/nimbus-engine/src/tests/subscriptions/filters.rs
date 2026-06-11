@@ -1,10 +1,51 @@
 use super::*;
 
+fn document_write_sequence(
+    engine: &Engine,
+    tenant_id: &TenantId,
+    document_id: &DocumentId,
+) -> SequenceNumber {
+    durable_journal_commits(engine, tenant_id, SequenceNumber(0))
+        .into_iter()
+        .find(|commit| {
+            commit
+                .writes
+                .iter()
+                .any(|write| write.doc_id == *document_id)
+        })
+        .expect("document write should be durable")
+        .sequence
+}
+
+async fn assert_no_subscription_update_covering(
+    rx: &mut mpsc::Receiver<SubscriptionUpdate>,
+    blocked_sequence: SequenceNumber,
+    message: &str,
+) {
+    let update = timeout(Duration::from_millis(100), async {
+        loop {
+            let update = rx
+                .recv()
+                .await
+                .expect("subscription channel should remain open");
+            let snapshot = match update {
+                SubscriptionUpdate::Result { snapshot, .. } => snapshot,
+                other => panic!("unexpected subscription update: {other:?}"),
+            };
+            if snapshot.covered_sequence.0 >= blocked_sequence.0 {
+                return snapshot;
+            }
+        }
+    })
+    .await;
+    assert!(update.is_err(), "{message}");
+}
+
 #[tokio::test]
-async fn service_only_notifies_subscriptions_for_affected_tables() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_only_notifies_subscriptions_for_affected_tables() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
     let (tasks_tx, mut tasks_rx) = subscription_channel();
     let (users_tx, mut users_rx) = subscription_channel();
@@ -21,10 +62,10 @@ async fn service_only_notifies_subscriptions_for_affected_tables() {
         limit: None,
     };
 
-    let _tasks_subscription = service
+    let _tasks_subscription = engine
         .subscribe(&tenant_id, tasks_query, "tasks-1".to_string(), tasks_tx)
         .expect("tasks subscribe should succeed");
-    let _users_subscription = service
+    let _users_subscription = engine
         .subscribe(&tenant_id, users_query, "users-1".to_string(), users_tx)
         .expect("users subscribe should succeed");
 
@@ -37,7 +78,7 @@ async fn service_only_notifies_subscriptions_for_affected_tables() {
         .await
         .expect("users initial update should arrive");
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             TableName::new("tasks").expect("table name should be valid"),
@@ -63,10 +104,10 @@ async fn service_only_notifies_subscriptions_for_affected_tables() {
 }
 
 #[tokio::test]
-async fn service_insert_only_notifies_filtered_subscriptions_for_matching_documents() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_insert_only_notifies_filtered_subscriptions_for_matching_documents() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
     let (active_tx, mut active_rx) = subscription_channel();
     let (done_tx, mut done_rx) = subscription_channel();
@@ -83,10 +124,10 @@ async fn service_insert_only_notifies_filtered_subscriptions_for_matching_docume
         limit: None,
     };
 
-    let _active_subscription = service
+    let _active_subscription = engine
         .subscribe(&tenant_id, active_query, "active-1".to_string(), active_tx)
         .expect("active subscribe should succeed");
-    let _done_subscription = service
+    let _done_subscription = engine
         .subscribe(&tenant_id, done_query, "done-1".to_string(), done_tx)
         .expect("done subscribe should succeed");
 
@@ -99,7 +140,7 @@ async fn service_insert_only_notifies_filtered_subscriptions_for_matching_docume
         .await
         .expect("done initial update should arrive");
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -128,12 +169,12 @@ async fn service_insert_only_notifies_filtered_subscriptions_for_matching_docume
 }
 
 #[tokio::test]
-async fn service_delete_only_notifies_filtered_subscriptions_for_matching_documents() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_delete_only_notifies_filtered_subscriptions_for_matching_documents() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    let active_document_id = service
+    let active_document_id = engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -143,7 +184,7 @@ async fn service_delete_only_notifies_filtered_subscriptions_for_matching_docume
             ]),
         )
         .expect("active seed insert should succeed");
-    service
+    engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -169,7 +210,7 @@ async fn service_delete_only_notifies_filtered_subscriptions_for_matching_docume
         limit: None,
     };
 
-    let _active_subscription = service
+    let _active_subscription = engine
         .subscribe(
             &tenant_id,
             active_query,
@@ -177,7 +218,7 @@ async fn service_delete_only_notifies_filtered_subscriptions_for_matching_docume
             active_tx,
         )
         .expect("active subscribe should succeed");
-    let _done_subscription = service
+    let _done_subscription = engine
         .subscribe(&tenant_id, done_query, "done-delete".to_string(), done_tx)
         .expect("done subscribe should succeed");
 
@@ -191,10 +232,10 @@ async fn service_delete_only_notifies_filtered_subscriptions_for_matching_docume
         .expect("done initial update should arrive");
 
     let deleted_document_id = active_document_id.clone();
-    service
+    engine
         .delete_document(&tenant_id, tasks_table(), active_document_id)
         .expect("delete should succeed");
-    let delete_sequence = durable_journal_commits(&service, &tenant_id, SequenceNumber(0))
+    let delete_sequence = durable_journal_commits(&engine, &tenant_id, SequenceNumber(0))
         .into_iter()
         .find(|commit| {
             commit.writes.iter().any(|write| {
@@ -254,12 +295,12 @@ async fn service_delete_only_notifies_filtered_subscriptions_for_matching_docume
 }
 
 #[tokio::test]
-async fn service_updates_remain_conservative_for_filtered_subscriptions() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_updates_remain_conservative_for_filtered_subscriptions() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    let active_document_id = service
+    let active_document_id = engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -285,7 +326,7 @@ async fn service_updates_remain_conservative_for_filtered_subscriptions() {
         limit: None,
     };
 
-    let _active_subscription = service
+    let _active_subscription = engine
         .subscribe(
             &tenant_id,
             active_query,
@@ -293,7 +334,7 @@ async fn service_updates_remain_conservative_for_filtered_subscriptions() {
             active_tx,
         )
         .expect("active subscribe should succeed");
-    let _done_subscription = service
+    let _done_subscription = engine
         .subscribe(&tenant_id, done_query, "done-update".to_string(), done_tx)
         .expect("done subscribe should succeed");
 
@@ -306,7 +347,7 @@ async fn service_updates_remain_conservative_for_filtered_subscriptions() {
         .await
         .expect("done initial update should arrive");
 
-    service
+    engine
         .update_document(
             &tenant_id,
             tasks_table(),
@@ -339,13 +380,13 @@ async fn service_updates_remain_conservative_for_filtered_subscriptions() {
 }
 
 #[tokio::test]
-async fn service_limited_subscriptions_skip_out_of_window_ordered_writes() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_limited_subscriptions_skip_out_of_window_ordered_writes() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
     for rank in [1, 2, 3] {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
@@ -368,7 +409,7 @@ async fn service_limited_subscriptions_skip_out_of_window_ordered_writes() {
         limit: Some(2),
     };
 
-    let _subscription = service
+    let _subscription = engine
         .subscribe(&tenant_id, query, "ranked-limit".to_string(), tx)
         .expect("subscribe should succeed");
 
@@ -383,7 +424,7 @@ async fn service_limited_subscriptions_skip_out_of_window_ordered_writes() {
         other => panic!("unexpected initial subscription update: {other:?}"),
     }
 
-    service
+    let outside_window_document_id = engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -393,14 +434,16 @@ async fn service_limited_subscriptions_skip_out_of_window_ordered_writes() {
             ]),
         )
         .expect("outside-window insert should succeed");
-    assert!(
-        timeout(Duration::from_millis(100), rx.recv())
-            .await
-            .is_err(),
-        "writes beyond the visible ordered window should not invalidate the subscription"
-    );
+    let outside_window_sequence =
+        document_write_sequence(&engine, &tenant_id, &outside_window_document_id);
+    assert_no_subscription_update_covering(
+        &mut rx,
+        outside_window_sequence,
+        "writes beyond the visible ordered window should not invalidate the subscription",
+    )
+    .await;
 
-    let document_id = service
+    let document_id = engine
         .query_documents(
             &tenant_id,
             &Query {
@@ -414,7 +457,7 @@ async fn service_limited_subscriptions_skip_out_of_window_ordered_writes() {
         .first()
         .map(|document| document.id.clone())
         .expect("rank-2 document should exist");
-    service
+    engine
         .update_document(
             &tenant_id,
             tasks_table(),
@@ -434,7 +477,7 @@ async fn service_limited_subscriptions_skip_out_of_window_ordered_writes() {
         other => panic!("unexpected shifted subscription update: {other:?}"),
     }
 
-    service
+    let second_outside_window_document_id = engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -444,14 +487,16 @@ async fn service_limited_subscriptions_skip_out_of_window_ordered_writes() {
             ]),
         )
         .expect("second outside-window insert should succeed");
-    assert!(
-        timeout(Duration::from_millis(100), rx.recv())
-            .await
-            .is_err(),
-        "dependency tracking should refresh after reevaluation and keep skipping later out-of-window writes"
-    );
+    let second_outside_window_sequence =
+        document_write_sequence(&engine, &tenant_id, &second_outside_window_document_id);
+    assert_no_subscription_update_covering(
+        &mut rx,
+        second_outside_window_sequence,
+        "dependency tracking should refresh after reevaluation and keep skipping later out-of-window writes",
+    )
+    .await;
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             tasks_table(),

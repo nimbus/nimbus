@@ -63,7 +63,7 @@ pub(in crate::adapters::convex) async fn dispatch_http_route(
         deployment.generation,
         "convex http action active deployment",
     )?;
-    tenant_context.ensure_application_principal_tenant_access("convex http action tenant")?;
+    tenant_context.admit_if_principal_claim_absent_or_matching("convex http action tenant")?;
     let route = registry
         .resolve_http_route(&route_request.method, &route_request.request_path)
         .cloned();
@@ -88,7 +88,7 @@ pub(in crate::adapters::convex) async fn dispatch_http_route(
         route_request.query,
         route_request.body,
     );
-    let service = state.service.clone();
+    let service = state.engine.clone();
     execution::execute_http_action_async(
         &service,
         &registry,

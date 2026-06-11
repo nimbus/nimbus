@@ -1,5 +1,5 @@
 import { MongoClient } from "mongodb";
-import { uri } from "@nimbus/mongodb";
+import { mongoUri } from "@nimbus/mongodb";
 
 declare const process: {
   env: Record<string, string | undefined>;
@@ -10,11 +10,19 @@ const host = process.env.NIMBUS_MONGODB_HOST ?? "127.0.0.1";
 const port = process.env.NIMBUS_MONGODB_PORT
   ? Number(process.env.NIMBUS_MONGODB_PORT)
   : 27017;
+const username = process.env.NIMBUS_MONGODB_USERNAME;
+const password = process.env.NIMBUS_MONGODB_PASSWORD;
 
 async function main() {
+  if (!username || !password) {
+    throw new Error(
+      "Set NIMBUS_MONGODB_USERNAME and NIMBUS_MONGODB_PASSWORD before running the MongoDB demo.",
+    );
+  }
+
   console.log(`Connecting to Nimbus MongoDB at ${host}:${port}...`);
 
-  const client = new MongoClient(uri({ host, port }));
+  const client = new MongoClient(mongoUri({ host, port, username, password }));
   await client.connect();
 
   try {

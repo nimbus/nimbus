@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 
 use crate::adapters;
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
@@ -13,19 +13,21 @@ use crate::local_server::LocalServerSecurityState;
 use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::router::{RouterBuildConfig, RouterOptions};
 use crate::tenant::TenantIsolationMode;
-use nimbus_services::SandboxCatalog;
-use nimbus_services::SandboxServiceManager;
+use crate::tls::TlsConfig;
+use nimbus_services::ServiceInstanceCatalog;
+use nimbus_services::ServiceManager;
 
 /// Canonical public option bundle for serving Nimbus on a listener.
 pub struct ServeOptions {
     router_options: RouterOptions,
     mongodb_config: Option<MongoDbConfig>,
     dynamodb_config: Option<DynamoDbConfig>,
+    tls_config: Option<TlsConfig>,
 }
 
 impl ServeOptions {
-    pub fn new(service: Arc<Service>) -> Self {
-        Self::from_router_options(RouterOptions::new(service))
+    pub fn new(engine: Arc<Engine>) -> Self {
+        Self::from_router_options(RouterOptions::new(engine))
     }
 
     pub fn from_router_options(router_options: RouterOptions) -> Self {
@@ -33,6 +35,7 @@ impl ServeOptions {
             router_options,
             mongodb_config: None,
             dynamodb_config: None,
+            tls_config: None,
         }
     }
 
@@ -78,18 +81,18 @@ impl ServeOptions {
         self
     }
 
-    pub fn with_sandbox_catalog(mut self, sandbox_catalog: Arc<dyn SandboxCatalog>) -> Self {
-        self.router_options = self.router_options.with_sandbox_catalog(sandbox_catalog);
-        self
-    }
-
-    pub fn with_sandbox_service_manager(
+    pub fn with_service_instance_catalog(
         mut self,
-        sandbox_service_manager: Arc<SandboxServiceManager>,
+        service_instances: Arc<dyn ServiceInstanceCatalog>,
     ) -> Self {
         self.router_options = self
             .router_options
-            .with_sandbox_service_manager(sandbox_service_manager);
+            .with_service_instance_catalog(service_instances);
+        self
+    }
+
+    pub fn with_service_manager(mut self, service_manager: Arc<ServiceManager>) -> Self {
+        self.router_options = self.router_options.with_service_manager(service_manager);
         self
     }
 
@@ -122,12 +125,35 @@ impl ServeOptions {
         self.router_options = self.router_options.with_tenant_isolation_mode(mode);
         self
     }
+
+    /// Allow additional exact browser origins through the CORS layer
+    /// (loopback origins are always allowed). See
+    /// [`crate::normalize_cors_origin`] for the accepted form.
+    pub fn with_cors_allowed_origins(mut self, origins: Vec<String>) -> Self {
+        self.router_options = self.router_options.with_cors_allowed_origins(origins);
+        self
+    }
+
+    /// Terminate TLS on the main HTTP listener with this PEM pair. The
+    /// pair is loaded and validated at startup; sibling adapter listeners
+    /// stay plain TCP (see docs/private/decisions/adapter-listener-tls.md).
+    pub fn with_tls(mut self, tls_config: TlsConfig) -> Self {
+        self.tls_config = Some(tls_config);
+        self
+    }
 }
 
 async fn serve_with_router_config(
     listener: tokio::net::TcpListener,
     config: RouterBuildConfig,
+    tls_config: Option<TlsConfig>,
 ) -> std::io::Result<()> {
+    // Load and validate the TLS identity before any engine work so a bad
+    // certificate fails the boot, not the first connection.
+    let rustls_config = tls_config
+        .as_ref()
+        .map(crate::tls::load_rustls_server_config)
+        .transpose()?;
     let listen_addr = listener.local_addr()?;
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let config = config
@@ -137,15 +163,22 @@ async fn serve_with_router_config(
         .prepare_system_tenant()
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
-    axum::serve(listener, config.build())
-        .with_graceful_shutdown(async move {
-            while !*shutdown_rx.borrow() {
-                if shutdown_rx.changed().await.is_err() {
-                    break;
-                }
-            }
-        })
-        .await
+    match rustls_config {
+        Some(rustls_config) => {
+            crate::tls::serve_tls(listener, config.build(), rustls_config, shutdown_rx).await
+        }
+        None => {
+            axum::serve(listener, config.build())
+                .with_graceful_shutdown(async move {
+                    while !*shutdown_rx.borrow() {
+                        if shutdown_rx.changed().await.is_err() {
+                            break;
+                        }
+                    }
+                })
+                .await
+        }
+    }
 }
 
 fn load_default_system_convex_registry() -> std::io::Result<ConvexRegistry> {
@@ -162,23 +195,25 @@ pub async fn serve(
         mut router_options,
         mongodb_config,
         dynamodb_config,
+        tls_config,
     } = options;
-    let service = router_options.service();
+    let engine = router_options.engine();
     if !router_options.has_system_convex_registry() {
         router_options =
             router_options.with_system_convex_registry(load_default_system_convex_registry()?);
     }
     let config = router_options.into_build_config();
 
-    // Sibling adapter listeners share the same `Arc<Service>`; collect their
+    // Sibling adapter listeners share the same `Arc<Engine>`; collect their
     // task handles so the main HTTP server's return aborts every one of them.
     let mut adapter_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
     if let Some(mongodb_config) = mongodb_config {
         let mongodb_listener = tokio::net::TcpListener::bind(mongodb_config.bind_addr).await?;
         let mongodb_addr = mongodb_listener.local_addr()?;
+        adapters::mongodb::listener::guard_listener_is_loopback_only(mongodb_addr)?;
         crate::system_tenant::record_listener_state_async(
-            &service,
+            &engine,
             "mongodb",
             "tcp",
             &mongodb_addr.to_string(),
@@ -188,12 +223,12 @@ pub async fn serve(
         )
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
-        let mongodb_service = Arc::clone(&service);
+        let mongodb_engine = Arc::clone(&engine);
         let mongodb_auth = mongodb_config.auth;
         adapter_handles.push(tokio::spawn(async move {
-            adapters::mongodb::listener::run_listener_with_auth(
+            adapters::mongodb::listener::run_listener(
                 mongodb_listener,
-                mongodb_service,
+                mongodb_engine,
                 mongodb_auth,
             )
             .await;
@@ -211,7 +246,7 @@ pub async fn serve(
             &dynamodb_config.access_keys,
         )?;
         crate::system_tenant::record_listener_state_async(
-            &service,
+            &engine,
             "dynamodb",
             "http",
             &dynamodb_addr.to_string(),
@@ -221,16 +256,16 @@ pub async fn serve(
         )
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
-        let dynamodb_service = Arc::clone(&service);
+        let dynamodb_engine = Arc::clone(&engine);
         let dynamodb_access_keys = dynamodb_config.access_keys;
         // Spawn the background TTL sweeper before the access-key registry is
-        // moved into the listener task (it shares the same registry + service).
+        // moved into the listener task (it shares the same registry + engine).
         if let Some(interval) = dynamodb_config.ttl_sweep_interval {
-            let sweeper_service = Arc::clone(&service);
+            let sweeper_engine = Arc::clone(&engine);
             let sweeper_keys = Arc::new(dynamodb_access_keys.clone());
             adapter_handles.push(tokio::spawn(
                 adapters::dynamodb::ttl_sweeper::run_ttl_sweeper(
-                    sweeper_service,
+                    sweeper_engine,
                     sweeper_keys,
                     interval,
                 ),
@@ -239,14 +274,14 @@ pub async fn serve(
         adapter_handles.push(tokio::spawn(async move {
             adapters::dynamodb::listener::run_listener(
                 dynamodb_listener,
-                dynamodb_service,
+                dynamodb_engine,
                 dynamodb_access_keys,
             )
             .await;
         }));
     }
 
-    let http_result = serve_with_router_config(listener, config).await;
+    let http_result = serve_with_router_config(listener, config, tls_config).await;
     for handle in adapter_handles {
         handle.abort();
     }

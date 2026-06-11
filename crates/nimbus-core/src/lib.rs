@@ -3,8 +3,11 @@
 pub mod auth;
 pub mod dependency;
 pub mod document;
+pub mod document_history;
 pub mod error;
+pub mod index_history;
 pub mod mutation;
+pub mod mvcc;
 pub mod query;
 pub mod resource_path;
 pub mod scheduled;
@@ -14,6 +17,7 @@ pub mod transaction;
 pub mod trigger;
 pub mod typed_scalar;
 pub mod types;
+pub mod versioned_registry;
 pub mod visibility;
 pub mod write_batch;
 
@@ -27,10 +31,21 @@ pub use dependency::{
     commit_intersects_dependency_set, durable_record_intersects_dependency_set,
 };
 pub use document::Document;
-pub use error::{Error, Result, StorageErrorKind};
+pub use document_history::{DocumentVersion, DocumentVersionHistory};
+pub use error::{Error, HistoricalReadErrorKind, Result, StorageErrorKind};
+pub use index_history::{
+    HistoricalIndexCursor, HistoricalIndexHistory, HistoricalIndexNumberKey, HistoricalIndexPage,
+    HistoricalIndexQuery, HistoricalIndexScalar, HistoricalIndexTuple, HistoricalIndexVersion,
+    order_preserving_number_bits,
+};
 pub use mutation::{
     CommitEntry, DurableMutationRecord, IndexLifecycleEvent, Mutation, SchemaChangeEvent,
     TableLifecycleEvent, TenantEventKind, TenantEventRecord, WriteOp, WriteOpType,
+};
+pub use mvcc::{
+    CommitSequence, CommitTimestamp, HistoricalAuthorization, HistoricalCursorIdentity,
+    HistoricalQueryShape, HistoricalReadSnapshot, HistoricalReadSupport,
+    HistoricalVersionVisibility, HistoryWindow, PolicySnapshotId, ReadTimestamp, RetentionFloor,
 };
 pub use query::{
     AggregationOperator, CollectionSelector, CompositeFilter, CompositeOperator, CountAggregation,
@@ -64,10 +79,12 @@ pub use types::{
     DocumentId, IndexId, ResolvedDocumentId, SequenceNumber, TableId, TableName, TableState,
     TenantId, Timestamp,
 };
+pub use versioned_registry::{HistoricalReadShape, VersionedRegistry};
 pub use visibility::{PinnedServingSnapshot, ReadVisibility, RequiredSequence};
 pub use write_batch::{
-    AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, AtomicWriteResult, FieldTransform,
-    FieldTransformOperation, WriteKey, WritePrecondition, WriteSetMode,
+    ArrayPopSide, AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, AtomicWriteResult,
+    BitwiseOperation, FieldTransform, FieldTransformOperation, WriteKey, WritePrecondition,
+    WriteSetMode,
 };
 
 #[cfg(test)]

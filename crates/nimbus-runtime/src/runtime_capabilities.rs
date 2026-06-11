@@ -42,7 +42,8 @@ pub(crate) struct RuntimePathPolicy {
 
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeEnvPolicy {
-    allowed_names: BTreeSet<String>,
+    allowed_read_names: BTreeSet<String>,
+    allowed_write_names: BTreeSet<String>,
 }
 
 fn runtime_self_exec_target(generated_root: &Path) -> Result<PathBuf> {
@@ -164,6 +165,10 @@ impl RuntimePathPolicy {
         &self.run_targets
     }
 
+    pub(crate) fn runtime_self_exec_target(&self) -> Result<PathBuf> {
+        runtime_self_exec_target(&self.generated_root)
+    }
+
     pub(crate) fn ensure_module_read_path(&self, path: &Path) -> Result<PathBuf> {
         let canonical = canonicalize_preserving_missing_suffix(path)?;
         self.ensure_within_roots(&canonical, &self.read_roots, "read")?;
@@ -183,6 +188,41 @@ impl RuntimePathPolicy {
 
     pub(crate) fn ensure_read_metadata_path(&self, path: &Path) -> Result<PathBuf> {
         self.ensure_read_path_lexical(path)
+    }
+
+    pub(crate) fn ensure_read_metadata_target_path(&self, path: &Path) -> Result<PathBuf> {
+        let canonical = canonicalize_preserving_missing_suffix_from_base(path, &self.cwd)?;
+        self.ensure_within_roots(&canonical, &self.read_roots, "read")?;
+        Ok(canonical)
+    }
+
+    pub(crate) fn ensure_read_link_path(&self, path: &Path) -> Result<PathBuf> {
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.cwd.join(path)
+        };
+        let normalized = normalize_absolute_path_lexically(&absolute);
+        let Some(name) = normalized.file_name() else {
+            self.ensure_within_roots(&normalized, &self.read_roots, "read")?;
+            return Ok(normalized);
+        };
+        let parent = normalized.parent().unwrap_or(self.cwd.as_path());
+        let canonical_parent = canonicalize_preserving_missing_suffix_from_base(parent, &self.cwd)?;
+        let canonical_link = canonical_parent.join(name);
+        self.ensure_within_roots(&canonical_link, &self.read_roots, "read")?;
+        Ok(canonical_link)
+    }
+
+    pub(crate) fn ensure_read_link_target_path(
+        &self,
+        target: &Path,
+        link_path: &Path,
+    ) -> Result<()> {
+        let link_parent = link_path.parent().unwrap_or(self.cwd.as_path());
+        let resolved_target =
+            canonicalize_preserving_missing_suffix_from_base(target, link_parent)?;
+        self.ensure_within_roots(&resolved_target, &self.read_roots, "read")
     }
 
     pub(crate) fn ensure_write_path(&self, path: &Path) -> Result<PathBuf> {
@@ -228,30 +268,25 @@ impl RuntimePathPolicy {
 
 impl RuntimeEnvPolicy {
     pub(crate) fn for_grants(grants: &RuntimeGrants) -> Self {
-        let allowed_names = grants.env_read.iter().cloned().collect();
-        Self { allowed_names }
+        let allowed_read_names = grants.env_read.iter().cloned().collect();
+        let allowed_write_names = grants.env_write.iter().cloned().collect();
+        Self {
+            allowed_read_names,
+            allowed_write_names,
+        }
     }
 
     pub(crate) fn snapshot(&self) -> BTreeMap<String, String> {
-        self.allowed_names
+        self.allowed_read_names
             .iter()
             .filter_map(|name| std::env::var(name).ok().map(|value| (name.clone(), value)))
             .collect()
     }
 
     pub(crate) fn lookup(&self, name: &str) -> RuntimeEnvLookupDescriptor {
-        if !is_valid_env_name(name) {
+        if let Err(error) = self.ensure_read_name(name) {
             return RuntimeEnvLookupDescriptor::Denied {
-                message: format!(
-                    "runtime env capability denied for invalid variable name `{name}`"
-                ),
-            };
-        }
-        if !self.allowed_names.contains(name) {
-            return RuntimeEnvLookupDescriptor::Denied {
-                message: format!(
-                    "runtime env capability denied for `{name}`; env access is allowlist-only"
-                ),
+                message: error.to_string(),
             };
         }
         match std::env::var(name) {
@@ -266,8 +301,44 @@ impl RuntimeEnvPolicy {
     }
 
     pub(crate) fn allowed_names(&self) -> Vec<String> {
-        self.allowed_names.iter().cloned().collect()
+        self.allowed_read_names.iter().cloned().collect()
     }
+
+    pub(crate) fn ensure_read_name(&self, name: &str) -> Result<()> {
+        ensure_env_name_allowed(name, &self.allowed_read_names, "read")
+    }
+
+    pub(crate) fn ensure_write_name(&self, name: &str) -> Result<()> {
+        ensure_env_name_allowed(name, &self.allowed_write_names, "write")
+    }
+
+    pub(crate) fn filter_readable_snapshot(
+        &self,
+        snapshot: BTreeMap<String, String>,
+    ) -> BTreeMap<String, String> {
+        snapshot
+            .into_iter()
+            .filter(|(name, _)| self.allowed_read_names.contains(name))
+            .collect()
+    }
+}
+
+fn ensure_env_name_allowed(
+    name: &str,
+    allowed_names: &BTreeSet<String>,
+    access: &str,
+) -> Result<()> {
+    if !is_valid_env_name(name) {
+        return Err(NimbusRuntimeError::CapabilityDenied(format!(
+            "runtime env {access} capability denied for invalid variable name `{name}`"
+        )));
+    }
+    if !allowed_names.contains(name) {
+        return Err(NimbusRuntimeError::CapabilityDenied(format!(
+            "runtime env {access} capability denied for `{name}`; env {access} access is allowlist-only"
+        )));
+    }
+    Ok(())
 }
 
 impl RuntimePermissionDescriptorParser {
@@ -433,21 +504,50 @@ impl PermissionDescriptorParser for RuntimePermissionDescriptorParser {
     }
 }
 
+/// Worker permission contract: the configured `RuntimeLimits` grants and
+/// `RuntimePathPolicy` roots ARE the authority surface — every invocation
+/// kind gets exactly the profile's grants, no more, no less (the node22
+/// profile contract tests in `runtime/tests/basic_invocation/` pin this).
+/// Per-invocation-kind capability segregation is capability-segregation-
+/// plan scope and must land together with revised profile contracts.
 pub(crate) fn build_permissions_container(
     paths: &RuntimePathPolicy,
     env: &RuntimeEnvPolicy,
     limits: &RuntimeLimits,
 ) -> Result<PermissionsContainer> {
+    build_permissions_container_with_ambient(paths, env, limits, true)
+}
+
+/// Test fixture: a container whose configured ambient grants (read/write/
+/// net/ffi/run) are withheld, used to prove denial propagation paths.
+#[cfg(test)]
+pub(crate) fn build_ambient_denied_permissions_container(
+    paths: &RuntimePathPolicy,
+    env: &RuntimeEnvPolicy,
+    limits: &RuntimeLimits,
+) -> Result<PermissionsContainer> {
+    build_permissions_container_with_ambient(paths, env, limits, false)
+}
+
+fn build_permissions_container_with_ambient(
+    paths: &RuntimePathPolicy,
+    env: &RuntimeEnvPolicy,
+    limits: &RuntimeLimits,
+    ambient_authority_allowed: bool,
+) -> Result<PermissionsContainer> {
     let parser = Arc::new(RuntimePermissionDescriptorParser::new(paths.cwd.clone()));
     let options = PermissionsOptions {
-        allow_env: (!env.allowed_names.is_empty()).then(|| env.allowed_names()),
+        allow_env: (!env.allowed_read_names.is_empty()).then(|| env.allowed_names()),
         deny_env: None,
         ignore_env: None,
-        allow_net: allowed_net_descriptors(&limits.grants),
+        allow_net: ambient_authority_allowed
+            .then(|| allowed_net_descriptors(&limits.grants))
+            .flatten(),
         deny_net: None,
-        allow_ffi: (!limits.grants.ffi.is_empty()).then(|| limits.grants.ffi.clone()),
+        allow_ffi: (ambient_authority_allowed && !limits.grants.ffi.is_empty())
+            .then(|| limits.grants.ffi.clone()),
         deny_ffi: None,
-        allow_read: (!paths.read_roots().is_empty()).then(|| {
+        allow_read: (ambient_authority_allowed && !paths.read_roots().is_empty()).then(|| {
             paths
                 .read_roots()
                 .iter()
@@ -458,7 +558,7 @@ pub(crate) fn build_permissions_container(
         ignore_read: None,
         allow_sys: (!limits.grants.sys.is_empty()).then(|| limits.grants.sys.clone()),
         deny_sys: None,
-        allow_write: (!paths.write_roots().is_empty()).then(|| {
+        allow_write: (ambient_authority_allowed && !paths.write_roots().is_empty()).then(|| {
             paths
                 .write_roots()
                 .iter()
@@ -466,7 +566,7 @@ pub(crate) fn build_permissions_container(
                 .collect()
         }),
         deny_write: None,
-        allow_run: (!paths.run_targets().is_empty()).then(|| {
+        allow_run: (ambient_authority_allowed && !paths.run_targets().is_empty()).then(|| {
             paths
                 .run_targets()
                 .iter()
@@ -481,6 +581,45 @@ pub(crate) fn build_permissions_container(
     let permissions = Permissions::from_options(parser.as_ref(), &options).map_err(|error| {
         NimbusRuntimeError::Contract(format!(
             "failed to build runtime permission contract: {error}"
+        ))
+    })?;
+    Ok(PermissionsContainer::new(parser, permissions))
+}
+
+pub(crate) fn build_module_read_permissions_container(
+    paths: &RuntimePathPolicy,
+) -> Result<PermissionsContainer> {
+    let parser = Arc::new(RuntimePermissionDescriptorParser::new(paths.cwd.clone()));
+    let options = PermissionsOptions {
+        allow_env: None,
+        deny_env: None,
+        ignore_env: None,
+        allow_net: None,
+        deny_net: None,
+        allow_ffi: None,
+        deny_ffi: None,
+        allow_read: (!paths.read_roots().is_empty()).then(|| {
+            paths
+                .read_roots()
+                .iter()
+                .map(|root| root.display().to_string())
+                .collect()
+        }),
+        deny_read: None,
+        ignore_read: None,
+        allow_sys: None,
+        deny_sys: None,
+        allow_write: None,
+        deny_write: None,
+        allow_run: None,
+        deny_run: None,
+        allow_import: None,
+        deny_import: None,
+        prompt: false,
+    };
+    let permissions = Permissions::from_options(parser.as_ref(), &options).map_err(|error| {
+        NimbusRuntimeError::Contract(format!(
+            "failed to build runtime module-read permission contract: {error}"
         ))
     })?;
     Ok(PermissionsContainer::new(parser, permissions))
@@ -793,6 +932,142 @@ mod tests {
     use crate::RuntimeLimits;
     use deno_permissions::OpenAccessKind;
     use std::path::PathBuf;
+
+    fn privileged_permission_profile_fixture() -> (
+        tempfile::TempDir,
+        RuntimePathPolicy,
+        RuntimeEnvPolicy,
+        RuntimeLimits,
+        PathBuf,
+    ) {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let bundle_root = tempdir.path().join("app/.nimbus/convex");
+        std::fs::create_dir_all(&bundle_root).expect("bundle root should build");
+        let bundle_path = bundle_root.join("bundle.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+
+        let mut limits = RuntimeLimits::privileged_operator();
+        limits.grants.read = vec!["$generated_root".to_string()];
+        limits.grants.write = vec!["$generated_root".to_string()];
+        limits.grants.net_connect = vec!["127.0.0.1".to_string()];
+        limits.grants.run = vec!["$runtime_host_exec".to_string()];
+        limits.grants.ffi = vec![
+            bundle_path
+                .canonicalize()
+                .expect("bundle path should canonicalize")
+                .display()
+                .to_string(),
+        ];
+
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &limits).expect("policy should build");
+        let env = RuntimeEnvPolicy::for_grants(&limits.grants);
+        (tempdir, policy, env, limits, bundle_path)
+    }
+
+    #[test]
+    fn ambient_denied_container_denies_net_fs_run_ffi() {
+        let (_tempdir, policy, env, limits, bundle_path) = privileged_permission_profile_fixture();
+        let mut permissions = build_ambient_denied_permissions_container(&policy, &env, &limits)
+            .expect("permissions should build");
+
+        let net = permissions
+            .check_net(&("127.0.0.1", Some(8080)), "test")
+            .expect_err("ambient-denied container should deny net access");
+        assert!(
+            net.to_string().contains("Requires net access"),
+            "unexpected net denial: {net}"
+        );
+
+        let read = permissions
+            .check_open(
+                Cow::Borrowed(Path::new("./bundle.mjs")),
+                OpenAccessKind::Read,
+                Some("test"),
+            )
+            .expect_err("ambient-denied container should deny fs read access");
+        assert!(
+            read.to_string().contains("Requires read access"),
+            "unexpected read denial: {read}"
+        );
+
+        let write = permissions
+            .check_open(
+                Cow::Borrowed(Path::new("./created.txt")),
+                OpenAccessKind::Write,
+                Some("test"),
+            )
+            .expect_err("ambient-denied container should deny fs write access");
+        assert!(
+            write.to_string().contains("Requires write access"),
+            "unexpected write denial: {write}"
+        );
+
+        let parser = RuntimePermissionDescriptorParser::new(policy.cwd().to_path_buf());
+        let run_path = policy.run_targets()[0].to_string_lossy().into_owned();
+        let run_query = parser
+            .parse_run_query(run_path.as_str())
+            .expect("runtime host exec query should parse");
+        let run = permissions
+            .check_run(&run_query, "test")
+            .expect_err("ambient-denied container should deny run access");
+        assert!(
+            run.to_string().contains("Requires run access"),
+            "unexpected run denial: {run}"
+        );
+
+        let ffi_path = bundle_path
+            .canonicalize()
+            .expect("bundle path should canonicalize");
+        let ffi = permissions
+            .check_ffi(Cow::Borrowed(ffi_path.as_path()))
+            .expect_err("ambient-denied container should deny ffi access");
+        assert!(
+            ffi.to_string().contains("Requires ffi access"),
+            "unexpected ffi denial: {ffi}"
+        );
+    }
+
+    #[test]
+    fn worker_container_preserves_configured_authority_for_all_kinds() {
+        let (_tempdir, policy, env, limits, bundle_path) = privileged_permission_profile_fixture();
+        let mut permissions =
+            build_permissions_container(&policy, &env, &limits).expect("permissions should build");
+
+        permissions
+            .check_net(&("127.0.0.1", Some(8080)), "test")
+            .expect("worker container should preserve configured net authority");
+        permissions
+            .check_open(
+                Cow::Borrowed(Path::new("./bundle.mjs")),
+                OpenAccessKind::Read,
+                Some("test"),
+            )
+            .expect("worker container should preserve configured fs read authority");
+        permissions
+            .check_open(
+                Cow::Borrowed(Path::new("./created.txt")),
+                OpenAccessKind::Write,
+                Some("test"),
+            )
+            .expect("worker container should preserve configured fs write authority");
+
+        let parser = RuntimePermissionDescriptorParser::new(policy.cwd().to_path_buf());
+        let run_path = policy.run_targets()[0].to_string_lossy().into_owned();
+        let run_query = parser
+            .parse_run_query(run_path.as_str())
+            .expect("runtime host exec query should parse");
+        permissions
+            .check_run(&run_query, "test")
+            .expect("worker container should preserve configured run authority");
+
+        let ffi_path = bundle_path
+            .canonicalize()
+            .expect("bundle path should canonicalize");
+        permissions
+            .check_ffi(Cow::Borrowed(ffi_path.as_path()))
+            .expect("worker container should preserve configured ffi authority");
+    }
 
     #[test]
     fn application_preset_roots_stay_within_generated_bundle_root() {

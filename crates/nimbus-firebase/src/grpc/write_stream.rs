@@ -2,15 +2,15 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use futures::stream;
 use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, Error, FieldTransform,
-    FieldTransformOperation, NumericValue, PrincipalContext, SpecialDouble, StoredValue, Timestamp,
+    FieldTransformOperation, NumericValue, PrincipalContext, StoredValue, Timestamp,
     TypedScalarValue, WritePrecondition, WriteSetMode,
 };
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 use prost_types::Timestamp as ProstTimestamp;
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -31,6 +31,7 @@ use super::generated::google::r#type::LatLng;
 use crate::resource_names::{self, FirestoreDatabaseName};
 use crate::serializer::{
     FirestoreDouble, FirestoreProtoJsonError, FirestoreValue, firestore_value_from_typed_scalar,
+    special_double_from_firestore,
 };
 use crate::{
     firestore_grpc_code, resolve_write_key, resource_name_error_to_core,
@@ -60,10 +61,7 @@ impl WriteStreamRegistry {
         database: FirestoreDatabaseName,
         isolation: TenantIsolationContext,
     ) -> Result<(String, Arc<AsyncMutex<StoredWriteStream>>, WriteResponse), Status> {
-        let mut streams = self
-            .streams
-            .lock()
-            .expect("write stream lock should not be poisoned");
+        let mut streams = self.streams();
         prune_expired_streams(&mut streams);
         if streams.len() >= MAX_ACTIVE_WRITE_STREAMS {
             return Err(Status::resource_exhausted(format!(
@@ -83,14 +81,17 @@ impl WriteStreamRegistry {
     }
 
     fn get_stream(&self, stream_id: &str) -> Result<Arc<AsyncMutex<StoredWriteStream>>, Status> {
-        let mut streams = self
-            .streams
-            .lock()
-            .expect("write stream lock should not be poisoned");
+        let mut streams = self.streams();
         prune_expired_streams(&mut streams);
         streams.get(stream_id).cloned().ok_or_else(|| {
             Status::invalid_argument("write stream is not active; create a new stream")
         })
+    }
+
+    fn streams(&self) -> MutexGuard<'_, HashMap<String, Arc<AsyncMutex<StoredWriteStream>>>> {
+        self.streams
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -260,7 +261,7 @@ struct ActiveWriteStream {
 }
 
 struct ActiveWriteRequestStream {
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     registry: Arc<WriteStreamRegistry>,
     requests: Streaming<WriteRequest>,
     principal: PrincipalContext,
@@ -271,13 +272,13 @@ struct ActiveWriteRequestStream {
 
 impl ActiveWriteRequestStream {
     fn new(
-        service: Arc<Service>,
+        engine: Arc<Engine>,
         registry: Arc<WriteStreamRegistry>,
         requests: Streaming<WriteRequest>,
         principal: PrincipalContext,
     ) -> Self {
         Self {
-            service,
+            engine,
             registry,
             requests,
             principal,
@@ -429,7 +430,7 @@ impl ActiveWriteRequestStream {
         stream.acknowledge_only(token)?;
         let batch = lower_write_batch(&request.writes, &active_stream.database)?;
         let outcome = execute_write_batch(
-            &self.service,
+            &self.engine,
             &active_stream.isolation,
             &self.principal,
             batch,
@@ -440,24 +441,24 @@ impl ActiveWriteRequestStream {
 }
 
 pub fn write_response_stream(
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     registry: Arc<WriteStreamRegistry>,
     requests: Streaming<WriteRequest>,
     principal: PrincipalContext,
 ) -> tonic::codegen::BoxStream<WriteResponse> {
-    let session = ActiveWriteRequestStream::new(service, registry, requests, principal);
+    let session = ActiveWriteRequestStream::new(engine, registry, requests, principal);
     Box::pin(stream::unfold(session, |mut session| async move {
         session.next_response().await.map(|item| (item, session))
     }))
 }
 
 fn execute_write_batch(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     isolation: &TenantIsolationContext,
     principal: &PrincipalContext,
     batch: AtomicWriteBatch,
 ) -> Result<AtomicWriteBatchOutcome, Status> {
-    service
+    engine
         .begin_mutation_execution_unit(isolation.tenant_id().clone(), principal.clone())
         .and_then(|execution_unit| execution_unit.execute_atomic_write_batch(batch))
         .map_err(firebase_grpc_status)
@@ -504,7 +505,8 @@ fn lower_write(write: Write, database: &FirestoreDatabaseName) -> Result<AtomicW
         Some(Operation::Delete(document_name)) => {
             ensure_no_update_fields(update_mask.as_ref(), &update_transforms)?;
             let parsed_document = parse_document_name(&document_name)?;
-            ensure_database_match(database, &parsed_document.database, "delete document")?;
+            resource_names::ensure_database_match(database, &parsed_document.database)
+                .map_err(|_| database_mismatch_status("delete document"))?;
             let key = resolve_write_key(&parsed_document.document_path)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
             let precondition = lower_precondition(current_document)?;
@@ -517,7 +519,8 @@ fn lower_write(write: Write, database: &FirestoreDatabaseName) -> Result<AtomicW
         Some(Operation::Verify(document_name)) => {
             ensure_no_update_fields(update_mask.as_ref(), &update_transforms)?;
             let parsed_document = parse_document_name(&document_name)?;
-            ensure_database_match(database, &parsed_document.database, "verify document")?;
+            resource_names::ensure_database_match(database, &parsed_document.database)
+                .map_err(|_| database_mismatch_status("verify document"))?;
             let key = resolve_write_key(&parsed_document.document_path)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
             Ok(AtomicWrite::Verify {
@@ -528,7 +531,8 @@ fn lower_write(write: Write, database: &FirestoreDatabaseName) -> Result<AtomicW
         Some(Operation::Transform(transform)) => {
             ensure_no_update_fields(update_mask.as_ref(), &update_transforms)?;
             let parsed_document = parse_document_name(&transform.document)?;
-            ensure_database_match(database, &parsed_document.database, "transform document")?;
+            resource_names::ensure_database_match(database, &parsed_document.database)
+                .map_err(|_| database_mismatch_status("transform document"))?;
             let key = resolve_write_key(&parsed_document.document_path)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
             let transforms = lower_document_transforms(transform.field_transforms)?;
@@ -557,7 +561,8 @@ fn lower_update_write(
     database: &FirestoreDatabaseName,
 ) -> Result<AtomicWrite, Status> {
     let parsed_document = parse_document_name(&document.name)?;
-    ensure_database_match(database, &parsed_document.database, "update document")?;
+    resource_names::ensure_database_match(database, &parsed_document.database)
+        .map_err(|_| database_mismatch_status("update document"))?;
     if document.create_time.is_some() || document.update_time.is_some() {
         return Err(Status::invalid_argument(
             "update documents must not set create_time or update_time",
@@ -612,18 +617,10 @@ fn parse_document_name(
         .map_err(firebase_grpc_status)
 }
 
-fn ensure_database_match(
-    expected: &FirestoreDatabaseName,
-    actual: &FirestoreDatabaseName,
-    context: &str,
-) -> Result<(), Status> {
-    if expected == actual {
-        Ok(())
-    } else {
-        Err(Status::invalid_argument(format!(
-            "{context} database does not match the active write stream database"
-        )))
-    }
+fn database_mismatch_status(context: &str) -> Status {
+    Status::invalid_argument(format!(
+        "{context} database does not match the active write stream database"
+    ))
 }
 
 fn lower_document_fields(
@@ -898,18 +895,6 @@ fn firestore_double(value: f64) -> FirestoreDouble {
     }
 }
 
-fn special_double_from_firestore(value: FirestoreDouble) -> SpecialDouble {
-    match value {
-        FirestoreDouble::NegativeZero => SpecialDouble::NegativeZero,
-        FirestoreDouble::NaN => SpecialDouble::Nan,
-        FirestoreDouble::PositiveInfinity => SpecialDouble::PositiveInfinity,
-        FirestoreDouble::NegativeInfinity => SpecialDouble::NegativeInfinity,
-        FirestoreDouble::Number(_) => {
-            unreachable!("finite doubles should not map to special doubles")
-        }
-    }
-}
-
 fn encode_typed_scalar_to_grpc(value: &TypedScalarValue) -> Result<Value, Status> {
     let firestore_value = firestore_value_from_typed_scalar(value)
         .map_err(|error| Status::internal(error.to_string()))?;
@@ -986,7 +971,7 @@ pub(super) fn firebase_grpc_status(error: Error) -> Status {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nimbus_core::{Document, TableName, TypedScalarValue};
+    use nimbus_core::{Document, SpecialDouble, TableName, TypedScalarValue};
 
     #[test]
     fn encode_document_field_to_grpc_rejects_foreign_typed_scalars_as_internal() {
@@ -1019,5 +1004,46 @@ mod tests {
             error.message().contains("typedScalar:ObjectId"),
             "error should surface the rejected typed scalar kind: {error}"
         );
+    }
+
+    #[test]
+    fn decode_numeric_value_from_grpc_maps_special_doubles() {
+        for (raw, expected) in [
+            (-0.0, SpecialDouble::NegativeZero),
+            (f64::NAN, SpecialDouble::Nan),
+            (f64::INFINITY, SpecialDouble::PositiveInfinity),
+            (f64::NEG_INFINITY, SpecialDouble::NegativeInfinity),
+        ] {
+            let value = Value {
+                value_type: Some(ValueType::DoubleValue(raw)),
+            };
+
+            let decoded =
+                decode_numeric_value_from_grpc(&value).expect("special double should decode");
+
+            assert!(matches!(
+                decoded,
+                NumericValue::SpecialDouble { value } if value == expected
+            ));
+        }
+    }
+
+    #[test]
+    fn write_stream_registry_recovers_after_poisoned_lock() {
+        let registry = WriteStreamRegistry::new();
+
+        let poison = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = registry.streams.lock().expect("lock should start clean");
+            panic!("poison write stream registry");
+        }));
+        assert!(poison.is_err());
+
+        let error = match registry.get_stream("missing") {
+            Ok(_) => panic!("missing stream unexpectedly resolved after poison recovery"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        assert!(error.message().contains("write stream is not active"));
     }
 }

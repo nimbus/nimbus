@@ -12,7 +12,7 @@ use crate::local_server::{
     load_or_create_local_admin_token,
 };
 use crate::router::RouterBuildConfig;
-use crate::tests::{ServerFixture, ServiceFixture};
+use crate::tests::{EngineFixture, ServerFixture};
 use crate::{ServeOptions, serve};
 
 fn sample_paths(root: &std::path::Path) -> LocalServerPaths {
@@ -35,9 +35,9 @@ async fn local_admin_rotate_endpoint_rotates_token_and_rejects_previous_bearer()
     let session = local_server_security
         .create_session_for_local_admin_token(&current.token)
         .expect("session should mint for current local admin token");
-    let fixture = ServiceFixture::new(|path| nimbus_engine::Service::new(path));
+    let fixture = EngineFixture::new(|path| nimbus_engine::Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security.clone())
             .build(),
     )
@@ -77,7 +77,7 @@ async fn system_shutdown_endpoint_stops_live_server() {
     let token = load_or_create_local_admin_token(&paths).expect("token should exist");
     let local_server_security = Arc::new(LocalServerSecurityState::new(paths, token.clone()));
     let service = Arc::new(
-        nimbus_engine::Service::new(temp.path().join("data")).expect("service should initialize"),
+        nimbus_engine::Engine::new(temp.path().join("data")).expect("service should initialize"),
     );
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
@@ -124,4 +124,51 @@ async fn system_shutdown_endpoint_stops_live_server() {
         .expect("server task should join")
         .expect("server shutdown should be graceful");
     service.quiesce().await;
+}
+
+#[tokio::test]
+async fn system_shutdown_endpoint_rejects_missing_and_invalid_credentials() {
+    let temp = tempdir().expect("tempdir should build");
+    let paths = sample_paths(temp.path());
+    let token = load_or_create_local_admin_token(&paths).expect("token should exist");
+    let local_server_security = Arc::new(LocalServerSecurityState::new(paths, token));
+    let fixture = EngineFixture::new(|path| nimbus_engine::Engine::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.engine())
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let missing = server
+        .client()
+        .post(server.http_url("/api/system/shutdown"))
+        .send()
+        .await
+        .expect("missing-auth shutdown request should send");
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let invalid = server
+        .client()
+        .post(server.http_url("/api/system/shutdown"))
+        .bearer_auth("not-the-local-admin-token")
+        .send()
+        .await
+        .expect("invalid-auth shutdown request should send");
+    assert_eq!(invalid.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn system_shutdown_endpoint_rejects_when_local_security_unconfigured() {
+    let fixture = EngineFixture::new(|path| nimbus_engine::Engine::new(path));
+    let server = ServerFixture::start(RouterBuildConfig::core(fixture.engine()).build()).await;
+
+    let response = server
+        .client()
+        .post(server.http_url("/api/system/shutdown"))
+        .send()
+        .await
+        .expect("shutdown request should send");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }

@@ -7,7 +7,7 @@ pub(crate) async fn query_documents(
     Json(query): Json<Query>,
 ) -> Result<Json<DataResponse>, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.query")?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let guard = RequestCancellationGuard::new();
     let cancellation = guard.token();
     let cancellation_check = cancellation.clone();
@@ -40,7 +40,7 @@ pub(crate) async fn query_documents_paginated(
     Json(query): Json<PaginatedQuery>,
 ) -> Result<Json<Page>, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.query_paginated")?;
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let guard = RequestCancellationGuard::new();
     let cancellation = guard.token();
     let cancellation_check = cancellation.clone();
@@ -73,7 +73,7 @@ pub(crate) async fn read_journal(
         .limit
         .unwrap_or(DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT);
     let page = state
-        .service
+        .engine
         .clone()
         .stream_durable_journal_async(tenant.tenant_id().clone(), after, limit)
         .await?;
@@ -94,7 +94,7 @@ pub(crate) async fn bootstrap_journal(
 ) -> Result<Json<JournalBootstrapResponse>, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.journal.bootstrap")?;
     let bootstrap = state
-        .service
+        .engine
         .clone()
         .export_durable_journal_bootstrap_async(tenant.tenant_id().clone())
         .await?;

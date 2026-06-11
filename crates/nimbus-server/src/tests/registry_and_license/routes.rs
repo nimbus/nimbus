@@ -2,8 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn health_route_returns_ok() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
     let response = api.health().await;
 
@@ -19,8 +19,8 @@ async fn health_route_returns_ok() {
 
 #[tokio::test]
 async fn nimbus_demo_html_is_served_without_convex_support() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
 
     let response = server
         .client()

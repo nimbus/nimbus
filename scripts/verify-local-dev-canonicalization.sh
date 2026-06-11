@@ -2,8 +2,8 @@
 # Aggregate completion-gate verifier for the local-dev canonicalization plan.
 # Exits 0 iff every condition in the plan's Completion Gate is satisfied.
 # This script is the single-shell-exit-code stop condition for the
-# `/goal` control plane that drives `docs/plans/local-dev-canonicalization-plan.md`
-# (or `docs/plans/archive/local-dev-canonicalization-plan.md` after LD7).
+# `/goal` control plane that drives `docs/private/plans/local-dev-canonicalization-plan.md`
+# (or `docs/private/plans/archive/local-dev-canonicalization-plan.md` after LD7).
 #
 # Run from the repo root.
 
@@ -12,14 +12,14 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN_ACTIVE="docs/plans/local-dev-canonicalization-plan.md"
-PLAN_ARCHIVED="docs/plans/archive/local-dev-canonicalization-plan.md"
-OPERATING_DOC="docs/operating/local-dev.md"
+PLAN_ACTIVE="docs/private/plans/local-dev-canonicalization-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/local-dev-canonicalization-plan.md"
+OPERATING_DOC="docs/private/operating/local-dev.md"
 CI_YML=".github/workflows/ci.yml"
 BUILD_RS="crates/nimbus-server/build.rs"
 MAKEFILE="Makefile"
 AGENTS_MD="CLAUDE.md"  # symlinks to AGENTS.md
-PROOF_LOG="docs/plans/proof/local-dev-canonicalization/clean-tree-make-ci-required.log"
+PROOF_LOG="docs/private/plans/proof/local-dev-canonicalization/clean-tree-make-ci-required.log"
 
 PASS=0
 FAIL=0

@@ -28,7 +28,7 @@ impl CloudFunctionsRuntimeInvoker for ServerCloudFunctionsRuntimeInvoker {
                 invocation.server_request_id.as_deref(),
                 None,
             )
-            .with_runtime_bundle_provenance_gate(invocation.provenance_gate.as_ref()),
+            .with_optional_runtime_bundle_provenance_gate(invocation.provenance_gate.as_ref()),
         )
         .map_err(runtime_error_to_core)
     }
@@ -52,16 +52,16 @@ mod tests {
         TriggerCommitMetadata, TriggerEvent, TriggerExecutionPrincipal, TriggerInvocationKey,
         TriggerInvocationRecord, WriteKey, WritePrecondition, WriteSetMode,
     };
-    use nimbus_engine::{Service, TriggerInvocationExecution, TriggerInvocationExecutor};
+    use nimbus_engine::{Engine, TriggerInvocationExecution, TriggerInvocationExecutor};
     use serde_json::json;
     use tempfile::tempdir;
 
     use super::*;
-    use crate::EmptySandboxCatalog;
+    use crate::EmptyServiceInstanceCatalog;
     use crate::adapters::cloud_functions::{
         CLOUD_FUNCTIONS_ARTIFACT_MANIFEST_FILE, CLOUD_FUNCTIONS_INTERNAL_ARTIFACT_DIR,
         CLOUD_FUNCTIONS_TARGETS_MANIFEST_FILE, CloudFunctionsArtifactManifest,
-        CloudFunctionsAuthoringSurface, CloudFunctionsExecutionBinding, CloudFunctionsRegistry,
+        CloudFunctionsAuthoringSurface, CloudFunctionsExecutionPrincipal, CloudFunctionsRegistry,
         CloudFunctionsSignatureType, CloudFunctionsTargetBinding, CloudFunctionsTargetDefinition,
         CloudFunctionsTargetsManifest,
     };
@@ -71,7 +71,7 @@ mod tests {
         ArtifactVerifierBackend, ArtifactVerifierBackendIdentity, ArtifactVerifierResult,
         SLSA_PROVENANCE_V1_PREDICATE_TYPE,
     };
-    use nimbus_services::{RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry};
+    use nimbus_services::{RuntimeServiceRegistry, ServiceInstanceBindingRegistry};
     use nimbus_tenant::TenantIsolationMode;
     use nimbus_testing::{ServerFixture, wait_for_value};
 
@@ -92,16 +92,16 @@ mod tests {
     #[test]
     fn cloud_functions_trigger_executor_reads_and_writes_via_runtime_bundle() {
         let service_dir = tempdir().expect("service tempdir should build");
-        let service = Arc::new(Service::new(service_dir.path()).expect("service should build"));
+        let engine = Arc::new(Engine::new(service_dir.path()).expect("engine should build"));
         let tenant_id = TenantId::new("demo").expect("tenant id should build");
-        service
+        engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
 
         let users = TableName::new("users").expect("users table should parse");
         let audit = TableName::new("audit").expect("audit table should parse");
         let user_id = nimbus_core::DocumentId::from_key("alice").expect("user id should parse");
-        service
+        engine
             .insert_document_with_id(
                 &tenant_id,
                 users.clone(),
@@ -123,14 +123,14 @@ mod tests {
                     database: "(default)".to_string(),
                     document: "users/{userId}".to_string(),
                     namespace: None,
-                    execution: CloudFunctionsExecutionBinding::Service,
+                    execution: CloudFunctionsExecutionPrincipal::ServiceAccount,
                 },
             }],
             r#"
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `trigger:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   if (request.function_name !== "exports.syncUser") {
     throw new Error(`unknown handler ${request.function_name}`);
@@ -154,10 +154,10 @@ export {};
             CloudFunctionsRegistry::from_app_dir(app_dir.path()).expect("registry should load"),
         );
         let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-            SandboxCatalogRuntimeServiceRegistry::new(Arc::new(EmptySandboxCatalog)),
+            ServiceInstanceBindingRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
         );
         let executor = CloudFunctionsTriggerExecutor::new(
-            service.clone(),
+            engine.clone(),
             registry,
             1,
             runtime_service_registry,
@@ -173,7 +173,7 @@ export {};
             TriggerInvocationExecution::completed()
         );
 
-        let audit_documents = service
+        let audit_documents = engine
             .query_documents(
                 &tenant_id,
                 &nimbus_core::Query {
@@ -205,16 +205,16 @@ export {};
         }
 
         let service_dir = tempdir().expect("service tempdir should build");
-        let service = Arc::new(Service::new(service_dir.path()).expect("service should build"));
+        let engine = Arc::new(Engine::new(service_dir.path()).expect("engine should build"));
         let tenant_id = TenantId::new("demo").expect("tenant id should build");
-        service
+        engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
 
         let users = TableName::new("users").expect("users table should parse");
         let audit = TableName::new("audit").expect("audit table should parse");
         let user_id = nimbus_core::DocumentId::from_key("alice").expect("user id should parse");
-        service
+        engine
             .insert_document_with_id(
                 &tenant_id,
                 users.clone(),
@@ -243,10 +243,10 @@ export {};
             CloudFunctionsRegistry::from_app_dir(app_dir.path()).expect("registry should load"),
         );
         let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-            SandboxCatalogRuntimeServiceRegistry::new(Arc::new(EmptySandboxCatalog)),
+            ServiceInstanceBindingRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
         );
         let executor = CloudFunctionsTriggerExecutor::new(
-            service.clone(),
+            engine.clone(),
             registry,
             1,
             runtime_service_registry,
@@ -262,7 +262,7 @@ export {};
             TriggerInvocationExecution::completed()
         );
 
-        let audit_documents = service
+        let audit_documents = engine
             .query_documents(
                 &tenant_id,
                 &nimbus_core::Query {
@@ -292,14 +292,14 @@ export {};
         }
 
         let service_dir = tempdir().expect("service tempdir should build");
-        let service = Arc::new(Service::new(service_dir.path()).expect("service should build"));
+        let engine = Arc::new(Engine::new(service_dir.path()).expect("engine should build"));
         let tenant_id = TenantId::new("demo").expect("tenant id should build");
-        service
+        engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
 
         seed_firebase_document(
-            &service,
+            &engine,
             &tenant_id,
             "users/alice",
             serde_json::Map::from_iter([(
@@ -310,7 +310,7 @@ export {};
             )]),
         );
         seed_firebase_document(
-            &service,
+            &engine,
             &tenant_id,
             "trash/alice",
             serde_json::Map::from_iter([("stale".to_string(), json!(true))]),
@@ -336,10 +336,10 @@ export {};
             CloudFunctionsRegistry::from_app_dir(app_dir.path()).expect("registry should load"),
         );
         let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-            SandboxCatalogRuntimeServiceRegistry::new(Arc::new(EmptySandboxCatalog)),
+            ServiceInstanceBindingRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
         );
         let executor = CloudFunctionsTriggerExecutor::new(
-            service.clone(),
+            engine.clone(),
             registry,
             1,
             runtime_service_registry,
@@ -357,7 +357,7 @@ export {};
             TriggerInvocationExecution::completed()
         );
 
-        let audit_document = firebase_document(&service, &tenant_id, "audit/alice")
+        let audit_document = firebase_document(&engine, &tenant_id, "audit/alice")
             .expect("audit read should succeed")
             .expect("audit document should exist");
         assert_eq!(
@@ -366,7 +366,7 @@ export {};
         );
         assert_eq!(audit_document.get_field("recordedAt"), Some(&json!(42)));
 
-        let updated_user = firebase_document(&service, &tenant_id, "users/alice")
+        let updated_user = firebase_document(&engine, &tenant_id, "users/alice")
             .expect("user read should succeed")
             .expect("updated user should exist");
         assert_eq!(updated_user.get_field("processed"), Some(&json!(true)));
@@ -378,7 +378,7 @@ export {};
         );
 
         assert_eq!(
-            firebase_document(&service, &tenant_id, "trash/alice")
+            firebase_document(&engine, &tenant_id, "trash/alice")
                 .expect("trash read should succeed"),
             None
         );
@@ -396,9 +396,9 @@ export {};
         }
 
         let service_dir = tempdir().expect("service tempdir should build");
-        let service = Arc::new(Service::new(service_dir.path()).expect("service should build"));
+        let engine = Arc::new(Engine::new(service_dir.path()).expect("engine should build"));
         let tenant_id = TenantId::new("demo").expect("tenant id should build");
-        service
+        engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
 
@@ -415,14 +415,14 @@ export {};
         let registry = CloudFunctionsRegistry::from_app_dir(app_dir.path())
             .expect("cloud functions registry should load");
         let _server = ServerFixture::start(
-            RouterBuildConfig::core(service.clone())
+            RouterBuildConfig::core(engine.clone())
                 .with_cloud_functions(registry)
                 .build(),
         )
         .await;
 
         seed_firebase_document(
-            &service,
+            &engine,
             &tenant_id,
             "users/alice",
             serde_json::Map::from_iter([(
@@ -438,7 +438,7 @@ export {};
             Duration::from_secs(5),
             Duration::from_millis(20),
             || async {
-                firebase_document(&service, &tenant_id, "audit/alice")
+                firebase_document(&engine, &tenant_id, "audit/alice")
                     .expect("audit read should succeed")
             },
             |document| document.is_some(),
@@ -466,9 +466,9 @@ export {};
         }
 
         let service_dir = tempdir().expect("service tempdir should build");
-        let service = Arc::new(Service::new(service_dir.path()).expect("service should build"));
+        let engine = Arc::new(Engine::new(service_dir.path()).expect("engine should build"));
         let tenant_id = TenantId::new("demo").expect("tenant id should build");
-        service
+        engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
 
@@ -485,14 +485,14 @@ export {};
         let registry = CloudFunctionsRegistry::from_app_dir(app_dir.path())
             .expect("cloud functions registry should load");
         let _server = ServerFixture::start(
-            RouterBuildConfig::core(service.clone())
+            RouterBuildConfig::core(engine.clone())
                 .with_cloud_functions(registry)
                 .build(),
         )
         .await;
 
         seed_firebase_document(
-            &service,
+            &engine,
             &tenant_id,
             "users/alice",
             serde_json::Map::from_iter([(
@@ -508,7 +508,7 @@ export {};
             Duration::from_secs(5),
             Duration::from_millis(20),
             || async {
-                firebase_document(&service, &tenant_id, "audit/alice")
+                firebase_document(&engine, &tenant_id, "audit/alice")
                     .expect("audit read should succeed")
             },
             |document| document.is_some(),
@@ -539,9 +539,9 @@ export {};
         }
 
         let service_dir = tempdir().expect("service tempdir should build");
-        let service = Arc::new(Service::new(service_dir.path()).expect("service should build"));
+        let engine = Arc::new(Engine::new(service_dir.path()).expect("engine should build"));
         let tenant_id = TenantId::new("demo").expect("tenant id should build");
-        service
+        engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
 
@@ -558,14 +558,14 @@ export {};
         let registry = CloudFunctionsRegistry::from_app_dir(app_dir.path())
             .expect("cloud functions registry should load");
         let _server = ServerFixture::start(
-            RouterBuildConfig::core(service.clone())
+            RouterBuildConfig::core(engine.clone())
                 .with_cloud_functions(registry)
                 .build(),
         )
         .await;
 
         seed_firebase_document(
-            &service,
+            &engine,
             &tenant_id,
             "users/alice",
             serde_json::Map::from_iter([(
@@ -576,7 +576,7 @@ export {};
             )]),
         );
         seed_firebase_document(
-            &service,
+            &engine,
             &tenant_id,
             "users/alice",
             serde_json::Map::from_iter([(
@@ -589,7 +589,7 @@ export {};
 
         tokio::time::sleep(Duration::from_millis(250)).await;
         assert_eq!(
-            table_documents(&service, &tenant_id, "audit")
+            table_documents(&engine, &tenant_id, "audit")
                 .expect("audit query should succeed")
                 .len(),
             0,
@@ -597,7 +597,7 @@ export {};
         );
 
         seed_firebase_document(
-            &service,
+            &engine,
             &tenant_id,
             "users/alice",
             serde_json::Map::from_iter([(
@@ -613,7 +613,7 @@ export {};
             Duration::from_secs(5),
             Duration::from_millis(20),
             || async {
-                table_documents(&service, &tenant_id, "audit")
+                table_documents(&engine, &tenant_id, "audit")
                     .expect("audit query should succeed")
                     .len()
             },
@@ -623,7 +623,7 @@ export {};
         tokio::time::sleep(Duration::from_millis(150)).await;
 
         let audit_documents =
-            table_documents(&service, &tenant_id, "audit").expect("audit query should succeed");
+            table_documents(&engine, &tenant_id, "audit").expect("audit query should succeed");
         assert_eq!(audit_documents.len(), 1);
         assert_eq!(
             audit_documents[0].get_field("userId"),
@@ -643,9 +643,9 @@ export {};
         }
 
         let service_dir = tempdir().expect("service tempdir should build");
-        let service = Arc::new(Service::new(service_dir.path()).expect("service should build"));
+        let engine = Arc::new(Engine::new(service_dir.path()).expect("engine should build"));
         let tenant_id = TenantId::new("demo").expect("tenant id should build");
-        service
+        engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
 
@@ -662,14 +662,14 @@ export {};
         let registry = CloudFunctionsRegistry::from_app_dir(app_dir.path())
             .expect("cloud functions registry should load");
         let _server = ServerFixture::start(
-            RouterBuildConfig::core(service.clone())
+            RouterBuildConfig::core(engine.clone())
                 .with_cloud_functions(registry)
                 .build(),
         )
         .await;
 
         let tenant_for_alice = tenant_id.clone();
-        let service_for_alice = service.clone();
+        let service_for_alice = engine.clone();
         let alice = tokio::task::spawn_blocking(move || {
             seed_firebase_document(
                 &service_for_alice,
@@ -679,7 +679,7 @@ export {};
             );
         });
         let tenant_for_bob = tenant_id.clone();
-        let service_for_bob = service.clone();
+        let service_for_bob = engine.clone();
         let bob = tokio::task::spawn_blocking(move || {
             seed_firebase_document(
                 &service_for_bob,
@@ -696,7 +696,7 @@ export {};
             Duration::from_secs(5),
             Duration::from_millis(20),
             || async {
-                table_documents(&service, &tenant_id, "audit")
+                table_documents(&engine, &tenant_id, "audit")
                     .expect("audit query should succeed")
                     .len()
             },
@@ -704,7 +704,7 @@ export {};
         )
         .await;
 
-        let mut seen_user_ids = table_documents(&service, &tenant_id, "audit")
+        let mut seen_user_ids = table_documents(&engine, &tenant_id, "audit")
             .expect("audit query should succeed")
             .into_iter()
             .filter_map(|document| {
@@ -729,9 +729,9 @@ export {};
         }
 
         let service_dir = tempdir().expect("service tempdir should build");
-        let service = Arc::new(Service::new(service_dir.path()).expect("service should build"));
+        let engine = Arc::new(Engine::new(service_dir.path()).expect("engine should build"));
         let tenant_id = TenantId::new("demo").expect("tenant id should build");
-        service
+        engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
 
@@ -748,14 +748,14 @@ export {};
         let registry = CloudFunctionsRegistry::from_app_dir(app_dir.path())
             .expect("cloud functions registry should load");
         let _server = ServerFixture::start(
-            RouterBuildConfig::core(service.clone())
+            RouterBuildConfig::core(engine.clone())
                 .with_cloud_functions(registry)
                 .build(),
         )
         .await;
 
         seed_firebase_document(
-            &service,
+            &engine,
             &tenant_id,
             "chain/step0",
             serde_json::Map::from_iter([("step".to_string(), json!(0))]),
@@ -766,7 +766,7 @@ export {};
             Duration::from_secs(5),
             Duration::from_millis(20),
             || async {
-                table_documents(&service, &tenant_id, "audit")
+                table_documents(&engine, &tenant_id, "audit")
                     .expect("audit query should succeed")
                     .len()
             },
@@ -776,20 +776,20 @@ export {};
         tokio::time::sleep(Duration::from_millis(150)).await;
 
         assert_eq!(
-            table_documents(&service, &tenant_id, "audit")
+            table_documents(&engine, &tenant_id, "audit")
                 .expect("audit query should succeed")
                 .len(),
             9,
             "depth-limited trigger chain should only execute nine handlers (root plus depth 1-8)"
         );
         assert!(
-            firebase_document(&service, &tenant_id, "chain/step9")
+            firebase_document(&engine, &tenant_id, "chain/step9")
                 .expect("chain step9 read should succeed")
                 .is_some(),
             "the last committed child document should still be written before the next over-depth trigger is suppressed"
         );
         assert!(
-            firebase_document(&service, &tenant_id, "chain/step10")
+            firebase_document(&engine, &tenant_id, "chain/step10")
                 .expect("chain step10 read should succeed")
                 .is_none(),
             "no trigger should run beyond the configured chain depth budget"
@@ -799,9 +799,9 @@ export {};
     #[test]
     fn cloud_functions_trigger_executor_reports_missing_runtime_handler() {
         let service_dir = tempdir().expect("service tempdir should build");
-        let service = Arc::new(Service::new(service_dir.path()).expect("service should build"));
+        let engine = Arc::new(Engine::new(service_dir.path()).expect("engine should build"));
         let tenant_id = TenantId::new("demo").expect("tenant id should build");
-        service
+        engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
 
@@ -820,7 +820,7 @@ export {};
                     database: "(default)".to_string(),
                     document: "users/{userId}".to_string(),
                     namespace: None,
-                    execution: CloudFunctionsExecutionBinding::Service,
+                    execution: CloudFunctionsExecutionPrincipal::ServiceAccount,
                 },
             }],
             r#"
@@ -838,10 +838,10 @@ export {};
             CloudFunctionsRegistry::from_app_dir(app_dir.path()).expect("registry should load"),
         );
         let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-            SandboxCatalogRuntimeServiceRegistry::new(Arc::new(EmptySandboxCatalog)),
+            ServiceInstanceBindingRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
         );
         let executor = CloudFunctionsTriggerExecutor::new(
-            service,
+            engine,
             registry,
             1,
             runtime_service_registry,
@@ -863,9 +863,9 @@ export {};
     #[test]
     fn cloud_functions_trigger_executor_fails_closed_when_runtime_bundle_provenance_is_rejected() {
         let service_dir = tempdir().expect("service tempdir should build");
-        let service = Arc::new(Service::new(service_dir.path()).expect("service should build"));
+        let engine = Arc::new(Engine::new(service_dir.path()).expect("engine should build"));
         let tenant_id = TenantId::new("demo").expect("tenant id should build");
-        service
+        engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
 
@@ -885,14 +885,14 @@ export {};
                     database: "(default)".to_string(),
                     document: "users/{userId}".to_string(),
                     namespace: None,
-                    execution: CloudFunctionsExecutionBinding::Service,
+                    execution: CloudFunctionsExecutionPrincipal::ServiceAccount,
                 },
             }],
             r#"
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `trigger:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   await ctx.db.insert("audit", { ran: true });
   return { ok: true };
@@ -912,10 +912,10 @@ export {};
                 .with_runtime_bundle_provenance_verifier(policy, EmptyProvenanceVerifier),
         );
         let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-            SandboxCatalogRuntimeServiceRegistry::new(Arc::new(EmptySandboxCatalog)),
+            ServiceInstanceBindingRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
         );
         let executor = CloudFunctionsTriggerExecutor::new(
-            service.clone(),
+            engine.clone(),
             registry,
             1,
             runtime_service_registry,
@@ -931,12 +931,12 @@ export {};
         match outcome {
             TriggerInvocationExecution::TerminalFailure { error } => {
                 assert!(error.contains("runtime bundle provenance admission failed"));
-                assert!(error.contains("requires provenance predicate"));
+                assert!(error.contains("requires provenance from builder"));
             }
             other => panic!("expected terminal provenance failure, got {other:?}"),
         }
         assert!(
-            table_documents(&service, &tenant_id, audit.as_str())
+            table_documents(&engine, &tenant_id, audit.as_str())
                 .expect("audit query should succeed")
                 .is_empty(),
             "provenance rejection must happen before runtime side effects"
@@ -979,7 +979,7 @@ export {};
                     None,
                 ),
                 TriggerCommitMetadata::new(SequenceNumber(1), Timestamp(1)),
-                TriggerExecutionPrincipal::service(PrincipalContext::system()),
+                TriggerExecutionPrincipal::service_account(PrincipalContext::system()),
             ),
         )
     }
@@ -1080,7 +1080,7 @@ export const syncUser = onDocumentWritten("users/{userId}", async (event) => {
       function_name: "exports.syncUser",
       args: event,
     },
-    sessionId: `trigger:${event.id}`,
+    hostCallSessionId: "mutation:exports.syncUser",
   });
 
   await ctx.db.insert("audit", {
@@ -1215,7 +1215,7 @@ export const syncUser = onDocumentUpdated("users/{userId}", async (event) => {
       function_name: "exports.syncUser",
       args: event,
     },
-    sessionId: `trigger:${event.id}`,
+    hostCallSessionId: "mutation:exports.syncUser",
   });
 
   await ctx.db.insert("audit", {
@@ -1260,7 +1260,7 @@ export const syncUser = onDocumentWritten("users/{userId}", async (event) => {
       function_name: "exports.syncUser",
       args: event,
     },
-    sessionId: `trigger:${event.id}`,
+    hostCallSessionId: "mutation:exports.syncUser",
   });
 
   await ctx.db.insert("audit", {
@@ -1305,7 +1305,7 @@ export const cascade = onDocumentWritten("chain/{docId}", async (event) => {
       function_name: "exports.cascade",
       args: event,
     },
-    sessionId: `trigger:${event.id}`,
+    hostCallSessionId: "mutation:exports.cascade",
   });
   const firestore = getFirestore();
   const step = event.data.after.data().step;
@@ -1378,7 +1378,7 @@ functions.cloudEvent("syncUser", async (event) => {
                         database: "(default)".to_string(),
                         document: "users/{userId}".to_string(),
                         namespace: None,
-                        execution: CloudFunctionsExecutionBinding::Service,
+                        execution: CloudFunctionsExecutionPrincipal::ServiceAccount,
                     },
                 }])
                 .expect("framework targets should validate"),
@@ -1389,7 +1389,7 @@ functions.cloudEvent("syncUser", async (event) => {
     }
 
     fn seed_firebase_document(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         tenant_id: &TenantId,
         document_path: &str,
         fields: serde_json::Map<String, serde_json::Value>,
@@ -1397,7 +1397,7 @@ functions.cloudEvent("syncUser", async (event) => {
         const MAX_ATTEMPTS: usize = 5;
 
         for attempt in 1..=MAX_ATTEMPTS {
-            match seed_firebase_document_once(service, tenant_id, document_path, fields.clone()) {
+            match seed_firebase_document_once(engine, tenant_id, document_path, fields.clone()) {
                 Ok(()) => return,
                 Err(Error::Conflict(_)) if attempt < MAX_ATTEMPTS => {
                     std::thread::sleep(Duration::from_millis(10 * attempt as u64));
@@ -1409,7 +1409,7 @@ functions.cloudEvent("syncUser", async (event) => {
     }
 
     fn seed_firebase_document_once(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         tenant_id: &TenantId,
         document_path: &str,
         fields: serde_json::Map<String, serde_json::Value>,
@@ -1418,7 +1418,7 @@ functions.cloudEvent("syncUser", async (event) => {
             .expect("document path should parse");
         let locator =
             locator_for_document_path(&document_path).expect("firebase locator should resolve");
-        let execution_unit = service
+        let execution_unit = engine
             .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
             .expect("execution unit should start");
         execution_unit.execute_atomic_write_batch(
@@ -1435,14 +1435,14 @@ functions.cloudEvent("syncUser", async (event) => {
     }
 
     fn firebase_document(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         tenant_id: &TenantId,
         document_path: &str,
     ) -> nimbus_core::Result<Option<Document>> {
         let document_path = DocumentPath::from_segments(document_path.split('/'))
             .expect("document path should parse");
         let locator = locator_for_document_path(&document_path)?;
-        match service.get_document(tenant_id, &locator.table, locator.id) {
+        match engine.get_document(tenant_id, &locator.table, locator.id) {
             Ok(document) => Ok(Some(document)),
             Err(Error::DocumentNotFound(_)) => Ok(None),
             Err(error) => Err(error),
@@ -1450,11 +1450,11 @@ functions.cloudEvent("syncUser", async (event) => {
     }
 
     fn table_documents(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         tenant_id: &TenantId,
         table: &str,
     ) -> nimbus_core::Result<Vec<Document>> {
-        service.query_documents(
+        engine.query_documents(
             tenant_id,
             &nimbus_core::Query {
                 table: TableName::new(table).expect("table name should parse"),

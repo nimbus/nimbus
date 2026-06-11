@@ -18,12 +18,13 @@ mod key_directory;
 mod manifest;
 mod master_key_file;
 mod provider;
+mod redb_rotation;
 mod runtime;
 mod subject;
 
 #[cfg(feature = "aws-kms")]
 pub use aws_kms::AwsKmsKeyProvider;
-pub use key::{GeneratedDatabaseKey, WrappedDatabaseKey};
+pub use key::{DataEncryptionKey, GeneratedDatabaseKey, WrappedDatabaseKey};
 pub use key_directory::KeyDirectoryProvider;
 pub use manifest::{
     KeyManifest, KeyManifestHeader, ManifestCipher, ManifestError, ManifestReadError,
@@ -31,6 +32,10 @@ pub use manifest::{
 };
 pub use master_key_file::MasterKeyFileProvider;
 pub use provider::{LocalKeyProvider, LocalKeyProviderError};
+pub use redb_rotation::{
+    commit_staged_redb_dek_rotation, recover_interrupted_redb_dek_rotation,
+    redb_dek_rotation_database_stage_path, redb_dek_rotation_manifest_stage_path,
+};
 pub use runtime::{
     generate_database_manifest, resolve_database_encryption_key, unwrap_database_manifest_key,
 };

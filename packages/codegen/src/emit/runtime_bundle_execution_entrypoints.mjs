@@ -22,7 +22,7 @@ function executePaginatedQueryDefinition(definition, request) {
             builder_id: result.__builderId,
             page_size: request.page_size,
             cursor: request.cursor ?? null,
-            session_id: request.kind + ":" + request.function_name,
+            host_call_session_id: request.kind + ":" + request.function_name,
           });
         }
         return result;
@@ -36,7 +36,7 @@ function executePaginatedQueryDefinition(definition, request) {
     query: plan,
     page_size: request.page_size,
     cursor: request.cursor ?? null,
-    session_id: request.kind + ":" + request.function_name,
+    host_call_session_id: request.kind + ":" + request.function_name,
   });
 }
 

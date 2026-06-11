@@ -101,17 +101,17 @@ where
     Ok(samples)
 }
 
-pub(super) async fn quiesce_service(service: &Arc<Service>, context: &str) -> BenchResult<()> {
+pub(super) async fn quiesce_engine(engine: &Arc<Engine>, context: &str) -> BenchResult<()> {
     match tokio::time::timeout(
         Duration::from_secs(BENCHMARK_QUIESCE_TIMEOUT_SECS),
-        service.quiesce(),
+        engine.quiesce(),
     )
     .await
     {
         Ok(()) => Ok(()),
         Err(_) => {
             eprintln!(
-                "graceful service quiesce timed out during {context}; falling back to drop-based benchmark teardown"
+                "graceful engine quiesce timed out during {context}; falling back to drop-based benchmark teardown"
             );
             Ok(())
         }
@@ -142,10 +142,10 @@ pub(super) fn record_contrast_measurements(
     );
 }
 
-pub(super) fn libsql_replica_service_config(
+pub(super) fn libsql_replica_engine_config(
     control_dir: &Path,
     provider_config: &LibsqlReplicaProviderConfig,
-) -> BenchResult<ServicePersistenceConfig> {
+) -> BenchResult<EnginePersistenceConfig> {
     let local_encryption = match local_cache_encryption_mode() {
         LocalCacheEncryptionMode::Disabled => LocalEncryptionConfig::Disabled,
         LocalCacheEncryptionMode::TempMasterKeyFile => {
@@ -155,7 +155,7 @@ pub(super) fn libsql_replica_service_config(
             ))
         }
     };
-    Ok(ServicePersistenceConfig {
+    Ok(EnginePersistenceConfig {
         tenant_provider: TenantProviderConfig {
             dialect: PersistenceDialect::Sqlite,
             topology: PersistenceTopology::ExternalPrimaryWithReplicas,

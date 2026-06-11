@@ -11,8 +11,9 @@ use aes_gcm_siv::aead::{Aead, KeyInit};
 use aes_gcm_siv::{Aes256GcmSiv, Nonce};
 use rand::RngCore;
 use rand::rngs::OsRng;
+use zeroize::{Zeroize, Zeroizing};
 
-use super::key::{GeneratedDatabaseKey, WrappedDatabaseKey, WrappingCipher};
+use super::key::{DataEncryptionKey, GeneratedDatabaseKey, WrappedDatabaseKey, WrappingCipher};
 use super::manifest::KeyManifestHeader;
 use super::provider::{
     KeyProviderKind, KeyProviderResult, LocalKeyProvider, LocalKeyProviderError,
@@ -31,13 +32,13 @@ use super::subject::LocalKeySubject;
 ///
 /// # File Naming
 ///
-/// Subject key files are named by sanitizing the subject descriptor:
-/// - Replace `:` with `_`
-/// - Replace `/` with `_`
+/// Subject key files are named by hex-encoding the full subject descriptor:
+/// - Every descriptor byte is preserved in the file stem
+/// - Structurally different subjects therefore cannot collide via delimiters
 /// - Append `.key` extension
 ///
 /// For example, `db:sqlite:tenant:demo:demo.sqlite3` becomes
-/// `db_sqlite_tenant_demo_demo.sqlite3.key`.
+/// `64623a73716c6974653a74656e616e743a64656d6f3a64656d6f2e73716c69746533.key`.
 pub struct KeyDirectoryProvider {
     /// Path to the key directory.
     path: PathBuf,
@@ -60,15 +61,18 @@ impl KeyDirectoryProvider {
     /// Returns the key file path for a given subject.
     pub fn key_file_path(&self, subject: &LocalKeySubject) -> PathBuf {
         let descriptor = subject.descriptor();
-        let sanitized = descriptor.replace([':', '/'], "_");
-        self.path.join(format!("{sanitized}.key"))
+        self.path
+            .join(format!("{}.key", encode_descriptor_stem(&descriptor)))
     }
 
     /// Reads the wrapping key for a subject from its key file.
-    fn read_wrapping_key(&self, subject: &LocalKeySubject) -> KeyProviderResult<[u8; 32]> {
+    fn read_wrapping_key(
+        &self,
+        subject: &LocalKeySubject,
+    ) -> KeyProviderResult<Zeroizing<[u8; 32]>> {
         let key_path = self.key_file_path(subject);
 
-        let bytes = fs::read(&key_path).map_err(|source| {
+        let mut bytes = fs::read(&key_path).map_err(|source| {
             if source.kind() == std::io::ErrorKind::NotFound {
                 LocalKeyProviderError::KeyFileNotFound { path: key_path }
             } else {
@@ -80,15 +84,18 @@ impl KeyDirectoryProvider {
         })?;
 
         if bytes.len() != 32 {
+            let actual = bytes.len();
+            bytes.zeroize();
             return Err(LocalKeyProviderError::InvalidKeyFileSize {
                 path: self.key_file_path(subject),
-                actual: bytes.len(),
+                actual,
             });
         }
 
         let mut wrapping_key = [0u8; 32];
         wrapping_key.copy_from_slice(&bytes);
-        Ok(wrapping_key)
+        bytes.zeroize();
+        Ok(Zeroizing::new(wrapping_key))
     }
 
     /// Wraps a DEK using the subject's wrapping key and header AAD.
@@ -99,7 +106,7 @@ impl KeyDirectoryProvider {
         header: &KeyManifestHeader,
     ) -> KeyProviderResult<WrappedDatabaseKey> {
         let wrapping_key = self.read_wrapping_key(subject)?;
-        let cipher = Aes256GcmSiv::new_from_slice(&wrapping_key).map_err(|e| {
+        let cipher = Aes256GcmSiv::new_from_slice(&wrapping_key[..]).map_err(|e| {
             LocalKeyProviderError::WrapError {
                 message: format!("failed to create cipher: {e}"),
             }
@@ -141,7 +148,7 @@ impl KeyDirectoryProvider {
         subject: &LocalKeySubject,
         wrapped: &WrappedDatabaseKey,
         header: &KeyManifestHeader,
-    ) -> KeyProviderResult<[u8; 32]> {
+    ) -> KeyProviderResult<DataEncryptionKey> {
         if wrapped.cipher != WrappingCipher::Aes256GcmSiv {
             return Err(LocalKeyProviderError::UnsupportedCipher {
                 cipher: format!("{:?}", wrapped.cipher),
@@ -160,7 +167,7 @@ impl KeyDirectoryProvider {
         }
 
         let wrapping_key = self.read_wrapping_key(subject)?;
-        let cipher = Aes256GcmSiv::new_from_slice(&wrapping_key).map_err(|e| {
+        let cipher = Aes256GcmSiv::new_from_slice(&wrapping_key[..]).map_err(|e| {
             LocalKeyProviderError::UnwrapError {
                 message: format!("failed to create cipher: {e}"),
             }
@@ -196,8 +203,19 @@ impl KeyDirectoryProvider {
 
         let mut key = [0u8; 32];
         key.copy_from_slice(&plaintext);
-        Ok(key)
+        Ok(DataEncryptionKey::new(key))
     }
+}
+
+fn encode_descriptor_stem(descriptor: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let bytes = descriptor.as_bytes();
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
 }
 
 impl LocalKeyProvider for KeyDirectoryProvider {
@@ -220,7 +238,7 @@ impl LocalKeyProvider for KeyDirectoryProvider {
         subject: &LocalKeySubject,
         wrapped: &WrappedDatabaseKey,
         header: &KeyManifestHeader,
-    ) -> KeyProviderResult<[u8; 32]> {
+    ) -> KeyProviderResult<DataEncryptionKey> {
         self.unwrap_key(subject, wrapped, header)
     }
 
@@ -272,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn key_file_path_sanitizes_descriptor() {
+    fn key_file_path_encodes_full_descriptor_without_delimiters() {
         let dir = tempdir().expect("tempdir should create");
         let provider =
             KeyDirectoryProvider::new(dir.path().to_path_buf()).expect("provider should create");
@@ -282,10 +300,50 @@ mod tests {
 
         let key_path = provider.key_file_path(&subject);
         let filename = key_path.file_name().unwrap().to_str().unwrap();
+        let stem = filename
+            .strip_suffix(".key")
+            .expect("filename should have key suffix");
 
-        // Should not contain colons
         assert!(!filename.contains(':'));
+        assert!(!filename.contains('/'));
+        assert_eq!(stem.len(), subject.descriptor().len() * 2);
+        assert!(stem.chars().all(|ch| ch.is_ascii_hexdigit()));
         assert!(filename.ends_with(".key"));
+    }
+
+    #[test]
+    fn key_file_path_distinguishes_delimiter_colliding_subjects() {
+        let dir = tempdir().expect("tempdir should create");
+        let provider =
+            KeyDirectoryProvider::new(dir.path().to_path_buf()).expect("provider should create");
+
+        let first = LocalKeySubject::sqlite_tenant(
+            TenantId::new("acme").expect("tenant id should build"),
+            "a_b.sqlite3",
+        );
+        let second = LocalKeySubject::sqlite_tenant(
+            TenantId::new("acme_a").expect("tenant id should build"),
+            "b.sqlite3",
+        );
+
+        assert_eq!(
+            first.descriptor().replace([':', '/'], "_"),
+            second.descriptor().replace([':', '/'], "_"),
+            "test subjects must reproduce the old lossy filename collision"
+        );
+        assert_ne!(first.descriptor(), second.descriptor());
+        assert_ne!(
+            provider.key_file_path(&first),
+            provider.key_file_path(&second)
+        );
+
+        write_test_key(dir.path(), &first);
+        let second_header = test_header(&second, &provider);
+        let second_result = provider.generate_database_key(&second, &second_header);
+        assert!(matches!(
+            second_result,
+            Err(LocalKeyProviderError::KeyFileNotFound { .. })
+        ));
     }
 
     #[test]
@@ -335,6 +393,22 @@ mod tests {
     }
 
     #[test]
+    fn read_wrapping_key_returns_zeroizing_owner() {
+        let dir = tempdir().expect("tempdir should create");
+        let tenant_id = TenantId::new("test").expect("tenant id should build");
+        let subject = LocalKeySubject::sqlite_tenant(tenant_id, "test.sqlite3");
+        write_test_key(dir.path(), &subject);
+        let provider =
+            KeyDirectoryProvider::new(dir.path().to_path_buf()).expect("provider should create");
+
+        let wrapping_key: Zeroizing<[u8; 32]> = provider
+            .read_wrapping_key(&subject)
+            .expect("wrapping key should read");
+
+        assert_eq!(&wrapping_key[..], &[0x42u8; 32]);
+    }
+
+    #[test]
     fn provider_generates_and_unwraps_key() {
         let dir = tempdir().expect("tempdir should create");
         let tenant_id = TenantId::new("test").expect("tenant id should build");
@@ -353,7 +427,7 @@ mod tests {
             .unwrap_database_key(&subject, generated.wrapped(), &header)
             .expect("key should unwrap");
 
-        assert_eq!(generated.plaintext(), &unwrapped);
+        assert_eq!(generated.plaintext(), unwrapped.as_bytes());
     }
 
     #[test]
@@ -385,6 +459,35 @@ mod tests {
     }
 
     #[test]
+    fn subject_descriptor_is_authenticated_during_unwrap() {
+        let dir = tempdir().expect("tempdir should create");
+        let first = LocalKeySubject::sqlite_tenant(
+            TenantId::new("acme").expect("tenant id should build"),
+            "a_b.sqlite3",
+        );
+        let second = LocalKeySubject::sqlite_tenant(
+            TenantId::new("acme_a").expect("tenant id should build"),
+            "b.sqlite3",
+        );
+        write_test_key(dir.path(), &first);
+        write_test_key(dir.path(), &second);
+
+        let provider =
+            KeyDirectoryProvider::new(dir.path().to_path_buf()).expect("provider should create");
+        let first_header = test_header(&first, &provider);
+        let second_header = test_header(&second, &provider);
+        let generated = provider
+            .generate_database_key(&first, &first_header)
+            .expect("first subject should generate");
+
+        let result = provider.unwrap_database_key(&second, generated.wrapped(), &second_header);
+        assert!(matches!(
+            result,
+            Err(LocalKeyProviderError::UnwrapError { .. })
+        ));
+    }
+
+    #[test]
     fn rewrap_produces_valid_wrapped_key() {
         let dir = tempdir().expect("tempdir should create");
         let tenant_id = TenantId::new("test").expect("tenant id should build");
@@ -411,7 +514,7 @@ mod tests {
             .unwrap_database_key(&subject, &rewrapped, &header)
             .expect("unwrap should succeed");
 
-        assert_eq!(plaintext, unwrapped);
+        assert_eq!(unwrapped.as_bytes(), &plaintext);
     }
 
     #[test]

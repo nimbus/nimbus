@@ -12,10 +12,13 @@ set) and URL-encoded credentials — so you do not hand-assemble it.
 
 ```ts
 import { MongoClient } from "mongodb";
-import { uri } from "@nimbus/mongodb";
+import { mongoUri } from "@nimbus/mongodb";
 
-// Defaults to mongodb://127.0.0.1:27017/default?directConnection=true
-const client = new MongoClient(uri({ database: "app" }));
+const client = new MongoClient(mongoUri({
+  database: "app",
+  username: "app-user",
+  password: "app-secret",
+}));
 
 await client.connect();
 const docs = await client.db("app").collection("messages").find().toArray();
@@ -25,19 +28,21 @@ With credentials:
 
 ```ts
 const client = new MongoClient(
-  uri({ host: "db.internal", port: 27017, database: "app", username: "svc", password: "p@ss/word" }),
+  mongoUri({ host: "db.internal", port: 27017, database: "app", username: "svc", password: "p@ss/word" }),
 );
 // → mongodb://svc:p%40ss%2Fword@db.internal:27017/app?directConnection=true
 ```
 
 ## API
 
-### `uri(options?)`
+### `mongoUri(options?)`
 
 Returns a `mongodb://…` connection string. Username/password are only included
-when **both** are provided, and are URL-encoded for you.
+when **both** are provided, and are URL-encoded for you. Nimbus MongoDB
+listeners require the explicit SCRAM credentials configured by the embedding
+server.
 
-### `UriOptions`
+### `MongoUriOptions`
 
 | Field | Default | Notes |
 | --- | --- | --- |
@@ -57,7 +62,7 @@ npm run typecheck --workspace @nimbus/mongodb   # type-only selftest pass
 
 ## Related
 
-- [Supported MongoDB drivers](../../docs/adapters/mongodb/drivers.md)
-- [Supported operations](../../docs/adapters/mongodb/operations.md)
-- [Usage examples](../../docs/adapters/mongodb/examples.md)
-- [Tenant isolation](../../docs/adapters/mongodb/tenant-isolation.md)
+- [Supported MongoDB drivers](../../docs/private/adapters/mongodb/drivers.md)
+- [Supported operations](../../docs/private/adapters/mongodb/operations.md)
+- [Usage examples](../../docs/private/adapters/mongodb/examples.md)
+- [Tenant isolation](../../docs/private/adapters/mongodb/tenant-isolation.md)

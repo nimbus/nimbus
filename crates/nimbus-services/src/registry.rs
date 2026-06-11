@@ -11,10 +11,12 @@ use nimbus_runtime::{
 use nimbus_sandbox::{PublishedEndpoint, PublishedEndpointProtocol, SandboxHandle, SandboxStatus};
 use nimbus_tenant::TenantServiceAccessDecision;
 
-use crate::SandboxCatalog;
+use crate::ServiceInstanceCatalog;
 
 pub type RuntimeServiceBindingFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Option<InvocationServiceBinding>, Error>> + Send + 'a>>;
+pub type RuntimeServiceTeardownFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
 
 pub trait RuntimeServiceRegistry: Send + Sync + 'static {
     fn snapshot_for_tenant(&self, tenant_id: &TenantId) -> InvocationServices;
@@ -64,25 +66,28 @@ pub trait RuntimeServiceRegistry: Send + Sync + 'static {
         })
     }
 
-    fn teardown_tenant(&self, _tenant_id: &TenantId) -> Result<(), Error> {
-        Ok(())
+    fn teardown_tenant_async<'a>(
+        &'a self,
+        _tenant_id: &'a TenantId,
+    ) -> RuntimeServiceTeardownFuture<'a> {
+        Box::pin(async move { Ok(()) })
     }
 }
 
-pub struct SandboxCatalogRuntimeServiceRegistry {
-    sandbox_catalog: Arc<dyn SandboxCatalog>,
+pub struct ServiceInstanceBindingRegistry {
+    service_instances: Arc<dyn ServiceInstanceCatalog>,
 }
 
-impl SandboxCatalogRuntimeServiceRegistry {
-    pub fn new(sandbox_catalog: Arc<dyn SandboxCatalog>) -> Self {
-        Self { sandbox_catalog }
+impl ServiceInstanceBindingRegistry {
+    pub fn new(service_instances: Arc<dyn ServiceInstanceCatalog>) -> Self {
+        Self { service_instances }
     }
 }
 
-impl RuntimeServiceRegistry for SandboxCatalogRuntimeServiceRegistry {
+impl RuntimeServiceRegistry for ServiceInstanceBindingRegistry {
     fn snapshot_for_tenant(&self, tenant_id: &TenantId) -> InvocationServices {
-        self.sandbox_catalog
-            .sandboxes_for_tenant(tenant_id)
+        self.service_instances
+            .service_instances_for_tenant(tenant_id)
             .into_iter()
             .filter_map(|(service_name, handle)| {
                 if &handle.tenant_id != tenant_id {
@@ -99,8 +104,8 @@ impl RuntimeServiceRegistry for SandboxCatalogRuntimeServiceRegistry {
         service_name: &str,
     ) -> Result<Option<InvocationServiceBinding>, Error> {
         let Some(handle) = self
-            .sandbox_catalog
-            .sandbox_for_service(tenant_id, service_name)
+            .service_instances
+            .service_instance_for_name(tenant_id, service_name)
         else {
             return Ok(None);
         };
@@ -184,12 +189,15 @@ mod tests {
 
     use super::*;
 
-    struct StubSandboxCatalog {
+    struct StubServiceInstanceCatalog {
         sandboxes: BTreeMap<String, SandboxHandle>,
     }
 
-    impl SandboxCatalog for StubSandboxCatalog {
-        fn sandboxes_for_tenant(&self, _tenant_id: &TenantId) -> BTreeMap<String, SandboxHandle> {
+    impl ServiceInstanceCatalog for StubServiceInstanceCatalog {
+        fn service_instances_for_tenant(
+            &self,
+            _tenant_id: &TenantId,
+        ) -> BTreeMap<String, SandboxHandle> {
             self.sandboxes.clone()
         }
     }
@@ -197,7 +205,7 @@ mod tests {
     #[test]
     fn snapshot_selects_tcp_as_primary_endpoint() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
-        let registry = SandboxCatalogRuntimeServiceRegistry::new(Arc::new(StubSandboxCatalog {
+        let registry = ServiceInstanceBindingRegistry::new(Arc::new(StubServiceInstanceCatalog {
             sandboxes: BTreeMap::from([(
                 "db".to_string(),
                 SandboxHandle::new(
@@ -240,7 +248,7 @@ mod tests {
     #[test]
     fn snapshot_skips_sandboxes_without_ready_endpoints() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
-        let registry = SandboxCatalogRuntimeServiceRegistry::new(Arc::new(StubSandboxCatalog {
+        let registry = ServiceInstanceBindingRegistry::new(Arc::new(StubServiceInstanceCatalog {
             sandboxes: BTreeMap::from([(
                 "db".to_string(),
                 SandboxHandle::new(
@@ -268,7 +276,7 @@ mod tests {
     fn snapshot_skips_sandboxes_for_a_different_tenant() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let other_tenant = TenantId::new("tenant-b").expect("tenant id should be valid");
-        let registry = SandboxCatalogRuntimeServiceRegistry::new(Arc::new(StubSandboxCatalog {
+        let registry = ServiceInstanceBindingRegistry::new(Arc::new(StubServiceInstanceCatalog {
             sandboxes: BTreeMap::from([(
                 "db".to_string(),
                 SandboxHandle::new(
@@ -295,7 +303,7 @@ mod tests {
     #[test]
     fn resolve_service_binding_returns_binding_for_named_service() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
-        let registry = SandboxCatalogRuntimeServiceRegistry::new(Arc::new(StubSandboxCatalog {
+        let registry = ServiceInstanceBindingRegistry::new(Arc::new(StubServiceInstanceCatalog {
             sandboxes: BTreeMap::from([(
                 "db".to_string(),
                 SandboxHandle::new(
@@ -326,7 +334,7 @@ mod tests {
     fn resolve_service_binding_rejects_handle_for_a_different_tenant() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let other_tenant = TenantId::new("tenant-b").expect("tenant id should be valid");
-        let registry = SandboxCatalogRuntimeServiceRegistry::new(Arc::new(StubSandboxCatalog {
+        let registry = ServiceInstanceBindingRegistry::new(Arc::new(StubServiceInstanceCatalog {
             sandboxes: BTreeMap::from([(
                 "db".to_string(),
                 SandboxHandle::new(

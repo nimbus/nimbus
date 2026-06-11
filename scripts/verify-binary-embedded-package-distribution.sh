@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the Binary-Embedded Package
-# Distribution plan (docs/plans/binary-embedded-package-distribution-plan.md).
+# Distribution plan (docs/private/plans/binary-embedded-package-distribution-plan.md).
 #
 # Exits 0 iff every condition in the plan's Completion Gate (1-27) holds.
 # Shipped in BPD0 as a FAILING control gate: conditions already true at baseline
@@ -18,14 +18,15 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN_ACTIVE="docs/plans/binary-embedded-package-distribution-plan.md"
-PLAN_ARCHIVED="docs/plans/archive/binary-embedded-package-distribution-plan.md"
-PROOF_DIR="docs/plans/proof/binary-embedded-package-distribution"
-CONVEX_TMPL="crates/nimbus-bin/templates/convex/package.json.tmpl"
-CF_TMPL="crates/nimbus-bin/templates/cloud-functions/functions/package.json.tmpl"
+PLAN_ACTIVE="docs/private/plans/binary-embedded-package-distribution-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/binary-embedded-package-distribution-plan.md"
+PROOF_DIR="docs/private/plans/proof/binary-embedded-package-distribution"
+CONVEX_TMPL="crates/nimbus-assets/embedded/templates/convex/package.json.tmpl"
+CF_TMPL="crates/nimbus-assets/embedded/templates/cloud-functions/functions/package.json.tmpl"
 CODEGEN_RS="crates/nimbus-bin/src/codegen.rs"
 NODE_RS="crates/nimbus-bin/src/node.rs"
 CARGO_BIN="crates/nimbus-bin/Cargo.toml"
+CARGO_ASSETS="crates/nimbus-assets/Cargo.toml"
 LAUNCH_PLAN="docs/private/managed-service-launch-plan.md"
 
 if [ -f "${PLAN_ACTIVE}" ]; then
@@ -105,10 +106,10 @@ check "4. no npm-publish workflow or publishConfig" c4
 
 # ---- 5: binary embeds packages version-locked (rust-embed + manifest) [BPD1] --
 c5() {
-  has 'rust-embed' "${CARGO_BIN}" &&
-    has 'embedded.?package|EmbeddedPackage|packages/[a-z-]+/dist' crates/nimbus-bin/src
+  has 'rust-embed' "${CARGO_ASSETS}" &&
+    has 'embedded.?package|EmbeddedPackage|packages/[a-z-]+/dist' crates/nimbus-assets/src
 }
-check "5. binary embeds packages version-locked (rust-embed + manifest)" c5
+check "5. binary embeds packages version-locked through nimbus-assets (rust-embed + manifest)" c5
 
 # ---- 6: provisioned manifests dependency-closed (sanitized) [BPD1] ------------
 c6() {
@@ -178,7 +179,7 @@ check "10. no registry range in templates; node.rs fixtures rewritten to file:" 
 # ---- 11: Cloud Functions in-contract offline OR documented fallback [BPD3] ----
 c11() {
   has 'external Node\.js runner|preinstall|developer-supplied|fallback' \
-    docs/adapters/cloud-functions/README.md
+    docs/private/adapters/cloud-functions/README.md
 }
 check "11. Cloud Functions classified (offline-installable or fallback)" c11
 
@@ -190,7 +191,7 @@ c12() {
   # not the generic word "provision" (which appears in machine-config code).
   has 'fn provision_packages|fn provision_app|PackagesProvision|nimbus packages provision' \
     crates/nimbus-bin/src &&
-    has '\.nimbus/' crates/nimbus-bin/templates/convex/gitignore
+    has '\.nimbus/' crates/nimbus-assets/embedded/templates/convex/gitignore
 }
 check "12. provisioning writes .nimbus/packages/* + .version; scaffold gitignores it" c12
 
@@ -257,12 +258,12 @@ c15() {
 check "15. ExternalNode classification is consistent (Convex in-binary/diagnostic-opt-out; CF out-of-contract supported; auth.config in-contract)" c15
 
 # ---- 16: documented codegen is in-binary; no stale npm-style instructions [BPD4]
-# User-facing docs scope: live docs + package READMEs, EXCLUDING docs/plans/**
+# User-facing docs scope: live docs + package READMEs, EXCLUDING docs/private/plans/**
 # (plans/archive legitimately keep historical `npx convex codegen` prose).
-# Scope: live user docs + package READMEs. Excludes docs/plans/**, where
+# Scope: live user docs + package READMEs. Excludes docs/private/plans/**, where
 # historical plans/proofs legitimately keep old command transcripts.
-USER_DOCS=(docs/adapters docs/operating packages/convex/README.md
-  packages/nimbus/README.md packages/codegen/README.md docs/runtimes)
+USER_DOCS=(docs/private/adapters docs/private/operating packages/convex/README.md
+  packages/nimbus/README.md packages/codegen/README.md docs/private/staging/runtimes)
 # Detect a stale POSITIVE codegen instruction (`npx convex codegen`,
 # `convex codegen --app`, `nimbus-codegen --app`) while ALLOWING negative
 # disclaimers ("there is no `npx convex codegen` step"). Markdown wraps such
@@ -294,7 +295,7 @@ c16() {
   # "in-binary" co-occur in either order, tolerating markdown bold and a few
   # words between — e.g. "Codegen runs **in-binary**", "codegen ... in-binary").
   has 'codegen[^.]{0,40}in-binary|in-binary[^.]{0,40}codegen' \
-    docs/operating/cli.md docs/adapters/convex/compatibility.md || return 1
+    docs/private/operating/cli.md docs/private/adapters/convex/compatibility.md || return 1
   # Negative gate: no surviving stale npm-style codegen *instruction* in user
   # docs (negative disclaimers are allowed).
   ! stale_codegen_instruction || return 1
@@ -340,22 +341,22 @@ check "19. adapter SDKs provisioned only when requested/imported" c19
 # ---- 20: no docs/READMEs/demos/launch-plan instruct registry install/publish --
 c20() {
   # User-facing docs must not instruct a registry install of a Nimbus package.
-  # docs/plans/* legitimately describes the migration/defect and is excluded.
+  # docs/private/plans/* legitimately describes the migration/defect and is excluded.
   ! grep -RqE 'npm install @nimbus/|npm install convex' \
-    docs/adapters docs/operating packages/*/README.md demos 2>/dev/null &&
+    docs/private/adapters docs/private/operating packages/*/README.md demos 2>/dev/null &&
     { [ ! -f "${LAUNCH_PLAN}" ] || ! grep -qE '[Pp]ublish .*to npm' "${LAUNCH_PLAN}"; }
 }
 check "20. no Nimbus-package registry-install/publish instructions in docs" c20
 
 # ---- 21: provisioned bytes checksum-verified + tamper negative test [BPD7] ----
 c21() {
-  # The embed-side checksum + tamper mechanism exists now (embedded_packages.rs),
+  # The embed-side checksum + tamper mechanism exists in nimbus-assets,
   # but C21 is about *provisioned* bytes verified end-to-end, proven in BPD7.
   # Require package + tooling checksum verification, provisioned-byte checking,
   # and the BPD7 offline-integrity proof.
-  has 'fn verify_digest' crates/nimbus-bin/src/embedded_packages.rs &&
-    has 'manifest\.tooling' crates/nimbus-bin/src/embedded_packages.rs &&
-    has 'materialize_tooling' crates/nimbus-bin/src/embedded_packages.rs &&
+  has 'fn verify_digest' crates/nimbus-assets/src/js_packages.rs &&
+    has 'manifest\.tooling' crates/nimbus-assets/src/js_packages.rs &&
+    has 'materialize_tooling' crates/nimbus-assets/src/js_packages.rs &&
     has 'verify_package_dirs' crates/nimbus-bin/src/provision.rs &&
     [ -f "${PROOF_DIR}/bpd7-offline-integrity.md" ]
 }

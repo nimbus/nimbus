@@ -1,6 +1,10 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(test)]
+use std::sync::{Arc, Condvar};
+#[cfg(test)]
+use std::time::Instant;
 
 use nimbus_core::{CommitEntry, Document, DocumentId, TableName};
 
@@ -34,6 +38,29 @@ pub(super) struct TenantDocumentCache {
     hits: AtomicUsize,
     misses: AtomicUsize,
     evictions: AtomicUsize,
+    #[cfg(test)]
+    invalidation_pause: Arc<DocumentCacheInvalidationPauseState>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub(crate) struct DocumentCacheInvalidationPauseHandle {
+    state: Arc<DocumentCacheInvalidationPauseState>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct DocumentCacheInvalidationPauseControl {
+    armed: bool,
+    entered: bool,
+    released: bool,
+}
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct DocumentCacheInvalidationPauseState {
+    control: Mutex<DocumentCacheInvalidationPauseControl>,
+    condvar: Condvar,
 }
 
 impl TenantDocumentCacheState {
@@ -92,6 +119,8 @@ impl TenantDocumentCache {
             hits: AtomicUsize::new(0),
             misses: AtomicUsize::new(0),
             evictions: AtomicUsize::new(0),
+            #[cfg(test)]
+            invalidation_pause: Arc::new(DocumentCacheInvalidationPauseState::default()),
         }
     }
 
@@ -145,6 +174,9 @@ impl TenantDocumentCache {
     }
 
     pub(super) fn invalidate_commit(&self, commit: &CommitEntry) {
+        #[cfg(test)]
+        self.invalidation_pause.wait_if_armed();
+
         let mut state = self
             .state
             .lock()
@@ -160,6 +192,9 @@ impl TenantDocumentCache {
         &self,
         commits: impl IntoIterator<Item = &'a CommitEntry>,
     ) {
+        #[cfg(test)]
+        self.invalidation_pause.wait_if_armed();
+
         let mut state = self
             .state
             .lock()
@@ -195,5 +230,86 @@ impl TenantDocumentCache {
             entries,
             evictions: self.evictions.load(Ordering::Relaxed),
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn invalidation_pause_handle(&self) -> DocumentCacheInvalidationPauseHandle {
+        DocumentCacheInvalidationPauseHandle {
+            state: self.invalidation_pause.clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+impl DocumentCacheInvalidationPauseHandle {
+    pub(crate) fn arm(&self) {
+        let mut control = self
+            .state
+            .control
+            .lock()
+            .expect("document cache invalidation pause lock should not be poisoned");
+        *control = DocumentCacheInvalidationPauseControl {
+            armed: true,
+            entered: false,
+            released: false,
+        };
+    }
+
+    pub(crate) fn wait_until_entered(&self, timeout: std::time::Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut control = self
+            .state
+            .control
+            .lock()
+            .expect("document cache invalidation pause lock should not be poisoned");
+        while !control.entered {
+            let now = Instant::now();
+            let Some(remaining) = deadline.checked_duration_since(now) else {
+                return false;
+            };
+            let (next, result) = self
+                .state
+                .condvar
+                .wait_timeout(control, remaining)
+                .expect("document cache invalidation pause wait should not be poisoned");
+            control = next;
+            if result.timed_out() && !control.entered {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub(crate) fn release(&self) {
+        let mut control = self
+            .state
+            .control
+            .lock()
+            .expect("document cache invalidation pause lock should not be poisoned");
+        control.released = true;
+        self.state.condvar.notify_all();
+    }
+}
+
+#[cfg(test)]
+impl DocumentCacheInvalidationPauseState {
+    fn wait_if_armed(&self) {
+        let mut control = self
+            .control
+            .lock()
+            .expect("document cache invalidation pause lock should not be poisoned");
+        if !control.armed {
+            return;
+        }
+        control.armed = false;
+        control.entered = true;
+        self.condvar.notify_all();
+        while !control.released {
+            control = self
+                .condvar
+                .wait(control)
+                .expect("document cache invalidation pause wait should not be poisoned");
+        }
+        *control = DocumentCacheInvalidationPauseControl::default();
     }
 }

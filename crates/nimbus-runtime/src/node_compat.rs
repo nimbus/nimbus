@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -31,7 +32,7 @@ use url::Url;
 
 use crate::backends::v8::embedder::{JsErrorBox, ModuleSpecifier};
 use crate::limits::RuntimeCompatibilityTarget;
-use crate::runtime_capabilities::RuntimePathPolicy;
+use crate::runtime_capabilities::{RuntimePathPolicy, build_module_read_permissions_container};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct ScopedInNpmPackageChecker;
@@ -120,6 +121,7 @@ type LocalCjsTranslator = NodeCodeTranslator<
 struct ScopedNodeRequireLoader {
     path_policy: RuntimePathPolicy,
     package_json_resolver: Arc<LocalPackageJsonResolver>,
+    module_read_permissions: RefCell<PermissionsContainer>,
 }
 
 impl ScopedNodeRequireLoader {
@@ -127,9 +129,25 @@ impl ScopedNodeRequireLoader {
         path_policy: RuntimePathPolicy,
         package_json_resolver: Arc<LocalPackageJsonResolver>,
     ) -> Self {
+        let module_read_permissions = build_module_read_permissions_container(&path_policy)
+            .expect("runtime module-read permission contract should build");
         Self {
             path_policy,
             package_json_resolver,
+            module_read_permissions: RefCell::new(module_read_permissions),
+        }
+    }
+
+    #[cfg(test)]
+    fn new_with_module_read_permissions(
+        path_policy: RuntimePathPolicy,
+        package_json_resolver: Arc<LocalPackageJsonResolver>,
+        module_read_permissions: PermissionsContainer,
+    ) -> Self {
+        Self {
+            path_policy,
+            package_json_resolver,
+            module_read_permissions: RefCell::new(module_read_permissions),
         }
     }
 }
@@ -137,28 +155,23 @@ impl ScopedNodeRequireLoader {
 impl NodeRequireLoader for ScopedNodeRequireLoader {
     fn ensure_read_permission<'a>(
         &self,
-        permissions: &mut PermissionsContainer,
+        _permissions: &mut PermissionsContainer,
         path: Cow<'a, Path>,
     ) -> Result<Cow<'a, Path>, JsErrorBox> {
         let canonical_path = self
             .path_policy
             .ensure_module_read_path(path.as_ref())
             .map_err(|error| JsErrorBox::generic(error.to_string()))?;
-        match permissions.check_open(
-            Cow::Owned(canonical_path.clone()),
-            OpenAccessKind::ReadNoFollow,
-            Some("require()"),
-        ) {
-            Ok(path) => Ok(Cow::Owned(path.to_path_buf())),
-            Err(_) => {
-                // The compat harness stages extra modules and child-process
-                // scratch files beneath approved runtime roots after the Deno
-                // permission snapshot is created. Within those Nimbus-owned
-                // roots, the embedder path policy is the intended source of
-                // truth for CommonJS reads.
-                Ok(Cow::Owned(canonical_path))
-            }
-        }
+        let path = self
+            .module_read_permissions
+            .borrow_mut()
+            .check_open(
+                Cow::Owned(canonical_path),
+                OpenAccessKind::ReadNoFollow,
+                Some("require()"),
+            )
+            .map_err(|error| JsErrorBox::generic(error.to_string()))?;
+        Ok(Cow::Owned(path.to_path_buf()))
     }
 
     fn load_text_file_lossy(&self, path: &Path) -> Result<FastString, JsErrorBox> {
@@ -679,6 +692,9 @@ mod tests {
     use super::*;
     use crate::limits::RuntimeLimits;
     use crate::runtime::RuntimeBundle;
+    use crate::runtime_capabilities::{
+        RuntimeEnvPolicy, build_ambient_denied_permissions_container,
+    };
     use deno_error::JsErrorClass as _;
 
     #[test]
@@ -851,6 +867,41 @@ mod tests {
             loader
                 .is_maybe_cjs_from_require(&specifier)
                 .expect("dependency should classify")
+        );
+    }
+
+    #[test]
+    fn require_loader_propagates_deno_permission_denial_inside_runtime_roots() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let bundle_root = tempdir.path().join("app/.nimbus/convex");
+        std::fs::create_dir_all(&bundle_root).expect("bundle root should build");
+        let bundle_path = bundle_root.join("bundle.cjs");
+        std::fs::write(&bundle_path, "module.exports = 1;\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let limits = RuntimeLimits::application_node22();
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &limits).expect("policy should build");
+        let env = RuntimeEnvPolicy::for_grants(&limits.grants);
+        let denied_module_permissions =
+            build_ambient_denied_permissions_container(&policy, &env, &limits)
+                .expect("ambient-denied permissions should build");
+        let loader = ScopedNodeRequireLoader::new_with_module_read_permissions(
+            policy.clone(),
+            build_package_json_resolver(),
+            denied_module_permissions,
+        );
+        let mut external_permissions = build_module_read_permissions_container(&policy)
+            .expect("external permissions should build");
+
+        let error = loader
+            .ensure_read_permission(
+                &mut external_permissions,
+                std::borrow::Cow::Borrowed(bundle_path.as_path()),
+            )
+            .expect_err("require loader should propagate module-read permission denial");
+
+        assert!(
+            error.to_string().contains("Requires read access"),
+            "unexpected require permission denial: {error}"
         );
     }
 

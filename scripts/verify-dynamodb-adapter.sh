@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the DynamoDB Adapter plan
-# (`docs/plans/archive/dynamodb-adapter-plan.md`).
+# (`docs/private/plans/archive/dynamodb-adapter-plan.md`).
 #
 # Exits 0 iff every condition in the plan's "## Completion Gate" is satisfied.
 # Shipped in D0.0a so /goal is verifiable from day one: it FAILS on every
@@ -22,9 +22,9 @@ cd "${REPO_ROOT}" || exit 2
 
 # -------- expected artifact paths -----------------------------------------
 
-PLAN_ACTIVE="docs/plans/archive/dynamodb-adapter-plan.md"
-PLAN_ARCHIVED="docs/plans/archive/dynamodb-adapter-plan.md"
-START_PROMPT="docs/prompts/dynamodb-adapter-start.md"
+PLAN_ACTIVE="docs/private/plans/archive/dynamodb-adapter-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/dynamodb-adapter-plan.md"
+START_PROMPT="docs/private/prompts/dynamodb-adapter-start.md"
 
 CRATE_DIR="crates/nimbus-dynamodb"
 CRATE_CARGO="${CRATE_DIR}/Cargo.toml"
@@ -33,7 +33,7 @@ SERVER_CARGO="crates/nimbus-server/Cargo.toml"
 SIGV4_DIR="${CRATE_DIR}/src/auth/sigv4"
 NOTICE_FILE="NOTICE"
 
-ADAPTER_DOCS="docs/adapters/dynamodb"
+ADAPTER_DOCS="docs/private/adapters/dynamodb"
 COVERAGE_DOC="${ADAPTER_DOCS}/feature-coverage.md"
 SDK_DOC="${ADAPTER_DOCS}/sdk-compatibility.md"
 DIVERGENCES_DOC="${ADAPTER_DOCS}/divergences.md"
@@ -41,7 +41,7 @@ ENTERPRISE_DOC="${ADAPTER_DOCS}/enterprise-readiness.md"
 
 SDK_PKG_DIR="packages/dynamodb"
 PARITY_DIR="crates/nimbus-server/tests/dynamodb_spec"
-PROOF_DIR="docs/plans/proof/dynamodb-adapter"
+PROOF_DIR="docs/private/plans/proof/dynamodb-adapter"
 
 PASS=0
 FAIL=0

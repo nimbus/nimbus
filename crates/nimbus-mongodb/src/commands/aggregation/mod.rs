@@ -1,19 +1,20 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 use std::sync::Arc;
 
 use nimbus_core::{Document, PrincipalContext, Query, TableName, TenantId};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 
 use super::super::bson_bridge;
 use super::super::connection::ConnectionState;
-use super::super::error::{BAD_VALUE, MongoError};
-use super::crud::apply_projection;
+use super::super::error::{BAD_VALUE, COMMAND_NOT_SUPPORTED, MongoError};
+use super::crud::{apply_projection, translate_filter};
 use super::tenant::{DEFAULT_TENANT, ensure_tenant, resolve_tenant_context};
 
 pub fn aggregate(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
+    principal: &PrincipalContext,
 ) -> Result<bson::Document, MongoError> {
     let collection = body.get_str("aggregate").map_err(|_| MongoError::Command {
         code: BAD_VALUE.code,
@@ -22,7 +23,7 @@ pub fn aggregate(
     })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_context = resolve_tenant_context(db_name, "mongodb aggregate")?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb aggregate", principal)?;
     let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
@@ -44,17 +45,19 @@ pub fn aggregate(
         _ => None,
     };
 
-    ensure_tenant(service, &tenant_context)?;
+    ensure_tenant(engine, &tenant_context)?;
 
     if is_change_stream_pipeline(pipeline) {
-        let resume_token = get_change_stream_options(pipeline)
-            .and_then(super::change_stream::extract_resume_option);
-        return open_change_stream_aggregate(conn, service, collection, db_name, resume_token);
+        return Err(MongoError::Command {
+            code: COMMAND_NOT_SUPPORTED.code,
+            code_name: COMMAND_NOT_SUPPORTED.code_name.into(),
+            message: "MongoDB change streams are not exposed until they are backed by the durable Nimbus CDC cut model".into(),
+        });
     }
 
     let stages = parse_pipeline(pipeline)?;
 
-    let documents = load_initial_documents(service, &tenant_id, &table, &stages)?;
+    let documents = load_initial_documents(engine, &tenant_id, &table, &stages, principal)?;
 
     let mut bson_docs: Vec<bson::Document> = documents
         .into_iter()
@@ -70,7 +73,7 @@ pub fn aggregate(
 
     let (cursor_id, first_batch) =
         conn.cursor_store
-            .create(ns.clone(), bson_docs, effective_batch_size);
+            .create(ns.clone(), bson_docs, effective_batch_size)?;
 
     Ok(bson::doc! {
         "cursor": {
@@ -262,21 +265,53 @@ fn parse_pipeline(pipeline: &[bson::Bson]) -> Result<Vec<Stage>, MongoError> {
 }
 
 fn load_initial_documents(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
-    _stages: &[Stage],
+    stages: &[Stage],
+    principal: &PrincipalContext,
 ) -> Result<Vec<Document>, MongoError> {
-    let principal = PrincipalContext::system();
-    let query = Query {
+    let query = initial_query_for_stages(table, stages);
+    engine
+        .query_documents_with_principal(tenant_id, &query, principal)
+        .map_err(MongoError::from)
+}
+
+fn initial_query_for_stages(table: &TableName, stages: &[Stage]) -> Query {
+    let mut filters = Vec::new();
+    let mut limit = None;
+    for stage in stages {
+        match stage {
+            Stage::Match(filter_doc) if limit.is_none() => {
+                if filter_doc.contains_key("_id") {
+                    return unbounded_initial_query(table);
+                }
+                let Ok(mut translated) = translate_filter(filter_doc) else {
+                    return unbounded_initial_query(table);
+                };
+                filters.append(&mut translated);
+            }
+            Stage::Limit(n) => {
+                limit = Some(limit.map_or(*n, |current: usize| current.min(*n)));
+            }
+            _ => break,
+        }
+    }
+    Query {
         table: table.clone(),
-        filters: vec![],
+        filters,
+        order: None,
+        limit,
+    }
+}
+
+fn unbounded_initial_query(table: &TableName) -> Query {
+    Query {
+        table: table.clone(),
+        filters: Vec::new(),
         order: None,
         limit: None,
-    };
-    service
-        .query_documents_with_principal(tenant_id, &query, &principal)
-        .map_err(MongoError::from)
+    }
 }
 
 fn execute_stage(
@@ -447,24 +482,25 @@ fn execute_group(
     id_expr: &bson::Bson,
     accumulators: &[(String, String, bson::Bson)],
 ) -> Result<Vec<bson::Document>, MongoError> {
-    let mut groups: HashMap<String, (bson::Bson, Vec<bson::Document>)> = HashMap::new();
+    let mut groups: HashMap<bson::Bson, (bson::Bson, Vec<bson::Document>)> = HashMap::new();
     let mut order = Vec::new();
 
     for doc in &docs {
         let group_key = evaluate_group_id(id_expr, doc);
-        let key_str = format!("{group_key:?}");
-        let entry = groups
-            .entry(key_str.clone())
-            .or_insert_with(|| (group_key, Vec::new()));
-        if !order.contains(&key_str) {
-            order.push(key_str);
+        match groups.entry(group_key.clone()) {
+            Entry::Occupied(mut entry) => {
+                entry.get_mut().1.push(doc.clone());
+            }
+            Entry::Vacant(entry) => {
+                order.push(group_key.clone());
+                entry.insert((group_key, vec![doc.clone()]));
+            }
         }
-        entry.1.push(doc.clone());
     }
 
     let mut result = Vec::new();
-    for key_str in &order {
-        let (group_key, group_docs) = groups.remove(key_str).unwrap();
+    for group_key in &order {
+        let (group_key, group_docs) = groups.remove(group_key).unwrap();
         let mut out_doc = bson::doc! { "_id": group_key };
 
         for (field, op, operand) in accumulators {
@@ -649,39 +685,11 @@ fn bson_to_usize(value: &bson::Bson) -> Option<usize> {
     }
 }
 
-fn get_change_stream_options(pipeline: &[bson::Bson]) -> Option<&bson::Document> {
-    let first = pipeline.first()?.as_document()?;
-    let cs_value = first.get("$changeStream")?;
-    cs_value.as_document()
-}
-
 fn is_change_stream_pipeline(pipeline: &[bson::Bson]) -> bool {
     pipeline
         .first()
         .and_then(|s| s.as_document())
         .is_some_and(|doc| doc.contains_key("$changeStream"))
-}
-
-fn open_change_stream_aggregate(
-    conn: &mut ConnectionState,
-    service: &Arc<Service>,
-    collection: &str,
-    db_name: &str,
-    resume_token: Option<super::change_stream::ResumeToken>,
-) -> Result<bson::Document, MongoError> {
-    let ns = format!("{}.{}", db_name, collection);
-    let (cursor_id, cursor) =
-        super::change_stream::open_change_stream(collection, db_name, service, resume_token)?;
-    conn.change_stream_store.insert(cursor_id, cursor);
-
-    Ok(bson::doc! {
-        "cursor": {
-            "firstBatch": Vec::<bson::Bson>::new(),
-            "id": cursor_id,
-            "ns": &ns,
-        },
-        "ok": 1.0,
-    })
 }
 
 #[cfg(test)]

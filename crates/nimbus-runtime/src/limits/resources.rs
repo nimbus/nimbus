@@ -28,6 +28,7 @@ pub struct RuntimeLimits {
     pub language: RuntimeLanguage,
     pub preset: RuntimePreset,
     pub grants: RuntimeGrants,
+    pub service_capability_enabled: bool,
     pub runtime_pool_kind: RuntimePoolKind,
     pub memory_enforcement: RuntimeMemoryEnforcement,
     pub routing_affinity: RuntimeRoutingAffinity,
@@ -289,6 +290,11 @@ impl RuntimeLimits {
 
     pub fn normalized(&self) -> Self {
         validate_backend_policy_axes(self);
+        if self.service_capability_enabled && !matches!(self.backend_kind, RuntimeBackendKind::V8) {
+            panic!(
+                "service_capability_enabled is currently supported only by the V8 runtime backend"
+            );
+        }
 
         if matches!(self.preset, RuntimePreset::Tooling) && !self.compatibility_target.is_node() {
             panic!(
@@ -378,6 +384,7 @@ impl RuntimeLimits {
             language: self.language,
             preset: self.preset,
             grants,
+            service_capability_enabled: self.service_capability_enabled,
             runtime_pool_kind: self.runtime_pool_kind,
             memory_enforcement: self.memory_enforcement,
             routing_affinity: self.routing_affinity,
@@ -445,6 +452,7 @@ impl Default for RuntimeLimits {
             language: RuntimeLanguage::JavaScript,
             preset: RuntimePreset::Application,
             grants: RuntimeGrants::application_web_standard(),
+            service_capability_enabled: false,
             runtime_pool_kind: RuntimePoolKind::WarmPool,
             memory_enforcement: RuntimeMemoryEnforcement::V8IsolateHeapLimit,
             routing_affinity: RuntimeRoutingAffinity::Tenant,

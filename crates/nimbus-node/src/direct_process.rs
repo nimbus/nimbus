@@ -185,7 +185,6 @@ pub struct DirectProcessEvidence {
     unit_name: String,
     executable: String,
     args: Vec<String>,
-    dependencies: HostPlatformDependencies,
 }
 
 impl DirectProcessEvidence {
@@ -196,7 +195,6 @@ impl DirectProcessEvidence {
             unit_name: plan.unit_name().as_str().to_string(),
             executable: plan.executable().as_str().to_string(),
             args: plan.args().to_vec(),
-            dependencies: HostPlatformDependencies::none(),
         }
     }
 
@@ -219,72 +217,6 @@ impl DirectProcessEvidence {
     pub fn args(&self) -> &[String] {
         &self.args
     }
-
-    pub fn dependencies(&self) -> HostPlatformDependencies {
-        self.dependencies
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct HostPlatformDependencies {
-    requires_pid1: bool,
-    requires_dbus: bool,
-    requires_podman: bool,
-    requires_conmon: bool,
-    requires_kvm: bool,
-}
-
-impl HostPlatformDependencies {
-    pub fn none() -> Self {
-        Self {
-            requires_pid1: false,
-            requires_dbus: false,
-            requires_podman: false,
-            requires_conmon: false,
-            requires_kvm: false,
-        }
-    }
-
-    pub fn requires_pid1(self) -> bool {
-        self.requires_pid1
-    }
-
-    pub fn requires_dbus(self) -> bool {
-        self.requires_dbus
-    }
-
-    pub fn requires_podman(self) -> bool {
-        self.requires_podman
-    }
-
-    pub fn requires_conmon(self) -> bool {
-        self.requires_conmon
-    }
-
-    pub fn requires_kvm(self) -> bool {
-        self.requires_kvm
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct DirectProcessStatusSnapshot {
-    status: HostLifecycleStatus,
-    evidence: DirectProcessEvidence,
-    logs: Vec<String>,
-}
-
-impl DirectProcessStatusSnapshot {
-    pub fn status(&self) -> &HostLifecycleStatus {
-        &self.status
-    }
-
-    pub fn evidence(&self) -> &DirectProcessEvidence {
-        &self.evidence
-    }
-
-    pub fn logs(&self) -> &[String] {
-        &self.logs
-    }
 }
 
 #[cfg(test)]
@@ -300,7 +232,7 @@ mod tests {
     use nimbus_tenant::{
         RuntimeIsolationTier, TenantIsolationContext, TenantIsolationDecision, TenantIsolationMode,
         TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision,
-        TenantWorkloadIdentity, TenantWorkloadLocation,
+        WorkloadAttributes, WorkloadLocation,
     };
 
     fn admitted_decision() -> TenantIsolationDecision {
@@ -317,9 +249,9 @@ mod tests {
             "direct.process",
         )
         .with_deployment_generation(11)
-        .with_workload_location(TenantWorkloadLocation::new().with_node_id("node-a"));
+        .with_workload_location(WorkloadLocation::new().with_node_id("node-a"));
         let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
-        let workload = TenantWorkloadIdentity::runtime_function(
+        let workload = WorkloadAttributes::runtime_function(
             "smoke:run",
             RuntimeIsolationTier::InProcessUntrusted,
         )
@@ -416,12 +348,6 @@ mod tests {
             evidence.args(),
             &["--mode".to_string(), "smoke".to_string()]
         );
-        let dependencies = evidence.dependencies();
-        assert!(!dependencies.requires_pid1());
-        assert!(!dependencies.requires_dbus());
-        assert!(!dependencies.requires_podman());
-        assert!(!dependencies.requires_conmon());
-        assert!(!dependencies.requires_kvm());
 
         let logs = backend.logs(&workload_id).expect("logs should be recorded");
         assert_eq!(

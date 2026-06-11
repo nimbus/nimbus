@@ -5,7 +5,7 @@ use super::*;
 pub struct ConvexRuntimeQueryPayload {
     pub query: ConvexExecutableQuery,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -16,7 +16,7 @@ pub struct ConvexRuntimePaginatedQueryPayload {
     #[serde(default)]
     pub cursor: Option<String>,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -24,7 +24,7 @@ pub struct ConvexRuntimePaginatedQueryPayload {
 pub struct ConvexRuntimeMutationPayload {
     pub mutation: ConvexExecutableMutation,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -32,7 +32,7 @@ pub struct ConvexRuntimeMutationPayload {
 pub struct ConvexRuntimeActionPayload {
     pub action: ConvexExecutableAction,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -44,7 +44,7 @@ pub struct ConvexRuntimeFunctionCallPayload {
     #[serde(default = "empty_args")]
     pub args: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
     #[serde(default)]
     pub auth: Option<InvocationAuth>,
 }
@@ -54,5 +54,5 @@ pub struct ConvexRuntimeFunctionCallPayload {
 pub struct ConvexRuntimeServiceLookupPayload {
     pub service_name: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }

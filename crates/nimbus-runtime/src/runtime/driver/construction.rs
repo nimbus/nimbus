@@ -138,7 +138,7 @@ impl NimbusRuntime {
             self.policy.limits().compatibility_target,
             &path_policy,
             loader_hook_registry.clone(),
-            &self.policy.limits().node_conditions,
+            self.policy.limits(),
         );
         extensions.push(worker_threads_state_extension(worker_bootstrap_state));
         let startup_snapshot_bytes = startup_snapshot.map(V8StartupSnapshot::as_startup_snapshot);

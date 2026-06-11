@@ -20,7 +20,7 @@ use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::{TenantIsolationContext, TenantIsolationMode};
 
 pub(in crate::adapters::convex::subscriptions) struct RuntimeTransformContext<'a> {
-    pub(in crate::adapters::convex::subscriptions) service: &'a Arc<nimbus_engine::Service>,
+    pub(in crate::adapters::convex::subscriptions) engine: &'a Arc<nimbus_engine::Engine>,
     pub(in crate::adapters::convex::subscriptions) registry: &'a Arc<ConvexRegistry>,
     pub(in crate::adapters::convex::subscriptions) runtime_service_registry:
         &'a Arc<dyn RuntimeServiceRegistry>,
@@ -35,7 +35,7 @@ pub(in crate::adapters::convex::subscriptions) struct RuntimeTransformContext<'a
 impl<'a> RuntimeTransformContext<'a> {
     fn runtime_invocation_context(&self) -> RuntimeInvocationContext<'_> {
         RuntimeInvocationContext::new(
-            self.service,
+            self.engine,
             self.registry,
             self.runtime_service_registry,
             self.tenant_context.reauthorize_application(
@@ -186,7 +186,7 @@ fn should_skip_runtime_transform(
     if let Some(commit) = context.event.commit
         && let Some(read_set) = read_set
         && !commit_intersects_runtime_read_set(
-            context.service,
+            context.engine,
             context.tenant_context.tenant_id(),
             commit,
             read_set,

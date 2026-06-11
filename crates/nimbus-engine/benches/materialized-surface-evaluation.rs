@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nimbus_core::{Filter, FilterOp, OrderBy, OrderDirection, Query, Result, TableName, TenantId};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use serde_json::json;
 
 const TABLE_COUNT: usize = 3;
@@ -21,9 +21,9 @@ fn main() -> Result<()> {
         ))
     })?;
 
-    let service = Service::new(&data_dir)?;
+    let engine = Engine::new(&data_dir)?;
     let tenant_id = TenantId::new("demo".to_string())?;
-    service.create_tenant(tenant_id.clone())?;
+    engine.create_tenant(tenant_id.clone())?;
     let payload = "x".repeat(PAYLOAD_BYTES);
     let tables = (0..TABLE_COUNT)
         .map(|index| TableName::new(format!("tasks_{index}")))
@@ -35,7 +35,7 @@ fn main() -> Result<()> {
             } else {
                 "skip"
             };
-            service.insert_document(
+            engine.insert_document(
                 &tenant_id,
                 table.clone(),
                 serde_json::Map::from_iter([
@@ -51,7 +51,7 @@ fn main() -> Result<()> {
     let expected_count = (0..ROW_COUNT).filter(|rank| rank % KEEP_EVERY == 0).count();
     let cold_started_at = Instant::now();
     for table in &tables {
-        let result = service.query_documents(&tenant_id, &full_scan_query(table.clone()))?;
+        let result = engine.query_documents(&tenant_id, &full_scan_query(table.clone()))?;
         if result.len() != expected_count {
             return Err(nimbus_core::Error::Internal(format!(
                 "expected {expected_count} selective rows for table {table}, got {}",
@@ -64,7 +64,7 @@ fn main() -> Result<()> {
 
     let warm_started_at = Instant::now();
     for table in &tables {
-        let result = service.query_documents(&tenant_id, &full_scan_query(table.clone()))?;
+        let result = engine.query_documents(&tenant_id, &full_scan_query(table.clone()))?;
         if result.len() != expected_count {
             return Err(nimbus_core::Error::Internal(format!(
                 "expected {expected_count} selective rows for warm table {table}, got {}",
@@ -75,13 +75,13 @@ fn main() -> Result<()> {
     }
     let warm_duration = warm_started_at.elapsed();
 
-    eprintln!("service_full_scan_cold total={cold_duration:?}");
-    eprintln!("service_full_scan_materialized_surface total={warm_duration:?}");
+    eprintln!("engine_full_scan_cold total={cold_duration:?}");
+    eprintln!("engine_full_scan_materialized_surface total={warm_duration:?}");
     println!(
         "dataset tables={TABLE_COUNT} rows_per_table={ROW_COUNT} payload_bytes={PAYLOAD_BYTES} keep_every={KEEP_EVERY}"
     );
     println!(
-        "cold full-scan service query:   {:?} avg (baseline)",
+        "cold full-scan engine query:   {:?} avg (baseline)",
         average_duration(cold_duration)
     );
     println!(

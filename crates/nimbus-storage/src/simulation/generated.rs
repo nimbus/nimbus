@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use nimbus_core::{
-    Cursor, Filter, FilterOp, OrderBy, OrderDirection, PaginatedQuery, Query, TableName,
+    Cursor, Error, Filter, FilterOp, OrderBy, OrderDirection, PaginatedQuery, Query, Result,
+    TableName,
 };
 use serde_json::{Map, Value, json};
 
@@ -16,6 +17,23 @@ pub struct GeneratedTaskRecord {
 }
 
 impl GeneratedTaskRecord {
+    fn datadriven(status: &str, rank: &str, title: &str, line_number: usize) -> Result<Self> {
+        let rank = match rank.parse::<i64>() {
+            Ok(rank) => rank,
+            Err(_) => {
+                return Err(Error::InvalidInput(format!(
+                    "generated history line {} rank `{}` is not a signed integer",
+                    line_number, rank
+                )));
+            }
+        };
+        Ok(Self {
+            title: title.to_string(),
+            status: status.to_string(),
+            rank,
+        })
+    }
+
     pub(crate) fn generated(seed: u64, slot: u32, step: usize, draw: u64) -> Self {
         let status = match draw % 3 {
             0 => "todo",
@@ -57,6 +75,16 @@ impl GeneratedTaskRecord {
                 .and_then(Value::as_i64)
                 .expect("generated task rank should be present"),
         }
+    }
+}
+
+fn parse_generated_slot(slot: &str, line_number: usize) -> Result<u32> {
+    match slot.parse::<u32>() {
+        Ok(slot) => Ok(slot),
+        Err(_) => Err(Error::InvalidInput(format!(
+            "generated history line {} slot `{}` is not an unsigned integer",
+            line_number, slot
+        ))),
     }
 }
 
@@ -171,6 +199,73 @@ pub struct GeneratedTaskHistory {
 }
 
 impl GeneratedTaskHistory {
+    pub fn datadriven(name: impl Into<String>, script: &str) -> Result<Self> {
+        let mut steps = Vec::new();
+        let mut live_slots = BTreeMap::new();
+
+        for (line_index, raw_line) in script.lines().enumerate() {
+            let line = raw_line
+                .split_once('#')
+                .map(|(content, _)| content)
+                .unwrap_or(raw_line)
+                .trim();
+            if line.is_empty() {
+                continue;
+            }
+            let parts = line.split_whitespace().collect::<Vec<_>>();
+            let line_number = line_index.saturating_add(1);
+            match parts.as_slice() {
+                ["insert", slot, status, rank, title] => {
+                    let slot = parse_generated_slot(slot, line_number)?;
+                    if live_slots.insert(slot, ()).is_some() {
+                        return Err(Error::InvalidInput(format!(
+                            "generated history line {line_number} inserts duplicate live slot {slot}"
+                        )));
+                    }
+                    steps.push(GeneratedTaskHistoryStep::Insert {
+                        slot,
+                        record: GeneratedTaskRecord::datadriven(status, rank, title, line_number)?,
+                    });
+                }
+                ["update", slot, status, rank, title] => {
+                    let slot = parse_generated_slot(slot, line_number)?;
+                    if !live_slots.contains_key(&slot) {
+                        return Err(Error::InvalidInput(format!(
+                            "generated history line {line_number} updates missing slot {slot}"
+                        )));
+                    }
+                    steps.push(GeneratedTaskHistoryStep::Update {
+                        slot,
+                        record: GeneratedTaskRecord::datadriven(status, rank, title, line_number)?,
+                    });
+                }
+                ["delete", slot] => {
+                    let slot = parse_generated_slot(slot, line_number)?;
+                    if live_slots.remove(&slot).is_none() {
+                        return Err(Error::InvalidInput(format!(
+                            "generated history line {line_number} deletes missing slot {slot}"
+                        )));
+                    }
+                    steps.push(GeneratedTaskHistoryStep::Delete { slot });
+                }
+                _ => {
+                    return Err(Error::InvalidInput(format!(
+                        "generated history line {line_number} must be `insert <slot> <status> <rank> <title>`, `update <slot> <status> <rank> <title>`, or `delete <slot>`; got `{line}`"
+                    )));
+                }
+            }
+        }
+
+        let query_status = dominant_generated_task_status(&steps);
+        Ok(Self {
+            metadata: ScenarioMetadata::new(name, 0),
+            steps,
+            table: "tasks".to_string(),
+            query_status,
+            page_size: 2,
+        })
+    }
+
     pub fn seeded(name: impl Into<String>, seed: u64, step_count: usize) -> Self {
         let mut live_slots = Vec::new();
         let mut next_slot = 0_u32;

@@ -6,14 +6,14 @@ pub(crate) async fn benchmark_subscription_bootstrap_catchup_latency(
     report: &mut BenchmarkReport,
 ) -> BenchResult<()> {
     run_workload(WorkloadKind::SubscriptionBootstrapCatchupLatency, async {
-        let sqlite_fixture = create_tenant_service(
+        let sqlite_fixture = create_tenant_engine(
             "subscription-bootstrap-steady",
             "subscription-bootstrap",
             MeasuredBackend::Sqlite,
             environment,
         )
         .await?;
-        let postgres_fixture = create_tenant_service(
+        let postgres_fixture = create_tenant_engine(
             "subscription-bootstrap-steady",
             "subscription-bootstrap",
             MeasuredBackend::PostgresLoopback,
@@ -35,7 +35,7 @@ pub(crate) async fn benchmark_subscription_bootstrap_catchup_latency(
                     };
                     let started = Instant::now();
                     exercise_subscription_bootstrap_catchup_sample(
-                        &fixture.service,
+                        &fixture.engine,
                         &fixture.tenant_id,
                     )
                     .await?;
@@ -47,14 +47,14 @@ pub(crate) async fn benchmark_subscription_bootstrap_catchup_latency(
         sqlite_fixture
             .resource
             .cleanup(
-                sqlite_fixture.service.clone(),
+                sqlite_fixture.engine.clone(),
                 "subscription bootstrap steady-state sqlite teardown",
             )
             .await?;
         postgres_fixture
             .resource
             .cleanup(
-                postgres_fixture.service.clone(),
+                postgres_fixture.engine.clone(),
                 "subscription bootstrap steady-state postgres teardown",
             )
             .await?;
@@ -64,7 +64,7 @@ pub(crate) async fn benchmark_subscription_bootstrap_catchup_latency(
             BenchmarkLane::ColdStart,
             [MeasuredBackend::Sqlite, MeasuredBackend::PostgresLoopback],
             |backend| async move {
-                let fixture = create_tenant_service(
+                let fixture = create_tenant_engine(
                     "subscription-bootstrap-cold",
                     "subscription-bootstrap",
                     backend,
@@ -72,16 +72,13 @@ pub(crate) async fn benchmark_subscription_bootstrap_catchup_latency(
                 )
                 .await?;
                 let started = Instant::now();
-                exercise_subscription_bootstrap_catchup_sample(
-                    &fixture.service,
-                    &fixture.tenant_id,
-                )
-                .await?;
+                exercise_subscription_bootstrap_catchup_sample(&fixture.engine, &fixture.tenant_id)
+                    .await?;
                 let elapsed = started.elapsed();
                 fixture
                     .resource
                     .cleanup(
-                        fixture.service.clone(),
+                        fixture.engine.clone(),
                         "subscription bootstrap cold-start teardown",
                     )
                     .await?;
@@ -90,14 +87,14 @@ pub(crate) async fn benchmark_subscription_bootstrap_catchup_latency(
         )
         .await?;
 
-        let loopback_fixture = create_tenant_service(
+        let loopback_fixture = create_tenant_engine(
             "subscription-bootstrap-rtt",
             "subscription-bootstrap-rtt",
             MeasuredBackend::PostgresLoopback,
             environment,
         )
         .await?;
-        let rtt_fixture = create_tenant_service(
+        let rtt_fixture = create_tenant_engine(
             "subscription-bootstrap-rtt",
             "subscription-bootstrap-rtt",
             MeasuredBackend::PostgresInjectedRtt,
@@ -122,7 +119,7 @@ pub(crate) async fn benchmark_subscription_bootstrap_catchup_latency(
                     };
                     let started = Instant::now();
                     exercise_subscription_bootstrap_catchup_sample(
-                        &fixture.service,
+                        &fixture.engine,
                         &fixture.tenant_id,
                     )
                     .await?;
@@ -134,14 +131,14 @@ pub(crate) async fn benchmark_subscription_bootstrap_catchup_latency(
         loopback_fixture
             .resource
             .cleanup(
-                loopback_fixture.service.clone(),
+                loopback_fixture.engine.clone(),
                 "subscription bootstrap RTT loopback teardown",
             )
             .await?;
         rtt_fixture
             .resource
             .cleanup(
-                rtt_fixture.service.clone(),
+                rtt_fixture.engine.clone(),
                 "subscription bootstrap RTT injected teardown",
             )
             .await?;
@@ -212,11 +209,11 @@ pub(crate) async fn benchmark_subscription_fanout_latency(
                         MeasuredBackend::PostgresInjectedRtt => unreachable!(),
                     };
                     let mut fixture = fixture.lock().await;
-                    let service = fixture.tenant.service.clone();
+                    let engine = fixture.tenant.engine.clone();
                     let tenant_id = fixture.tenant.tenant_id.clone();
                     let started = Instant::now();
                     exercise_subscription_fanout_sample(
-                        &service,
+                        &engine,
                         &tenant_id,
                         &mut fixture.receivers,
                     )
@@ -233,7 +230,7 @@ pub(crate) async fn benchmark_subscription_fanout_latency(
                 .tenant
                 .resource
                 .cleanup(
-                    fixture.tenant.service.clone(),
+                    fixture.tenant.engine.clone(),
                     "subscription fanout steady-state sqlite teardown",
                 )
                 .await?;
@@ -245,7 +242,7 @@ pub(crate) async fn benchmark_subscription_fanout_latency(
                 .tenant
                 .resource
                 .cleanup(
-                    fixture.tenant.service.clone(),
+                    fixture.tenant.engine.clone(),
                     "subscription fanout steady-state postgres teardown",
                 )
                 .await?;
@@ -267,7 +264,7 @@ pub(crate) async fn benchmark_subscription_fanout_latency(
                 let registrations = fixture.registrations;
                 let started = Instant::now();
                 exercise_subscription_fanout_sample(
-                    &fixture.tenant.service,
+                    &fixture.tenant.engine,
                     &fixture.tenant.tenant_id,
                     &mut receivers,
                 )
@@ -278,7 +275,7 @@ pub(crate) async fn benchmark_subscription_fanout_latency(
                     .tenant
                     .resource
                     .cleanup(
-                        fixture.tenant.service.clone(),
+                        fixture.tenant.engine.clone(),
                         "subscription fanout cold-start teardown",
                     )
                     .await?;
@@ -322,11 +319,11 @@ pub(crate) async fn benchmark_subscription_fanout_latency(
                         MeasuredBackend::Sqlite => unreachable!(),
                     };
                     let mut fixture = fixture.lock().await;
-                    let service = fixture.tenant.service.clone();
+                    let engine = fixture.tenant.engine.clone();
                     let tenant_id = fixture.tenant.tenant_id.clone();
                     let started = Instant::now();
                     exercise_subscription_fanout_sample(
-                        &service,
+                        &engine,
                         &tenant_id,
                         &mut fixture.receivers,
                     )
@@ -343,7 +340,7 @@ pub(crate) async fn benchmark_subscription_fanout_latency(
                 .tenant
                 .resource
                 .cleanup(
-                    fixture.tenant.service.clone(),
+                    fixture.tenant.engine.clone(),
                     "subscription fanout RTT loopback teardown",
                 )
                 .await?;
@@ -355,7 +352,7 @@ pub(crate) async fn benchmark_subscription_fanout_latency(
                 .tenant
                 .resource
                 .cleanup(
-                    fixture.tenant.service.clone(),
+                    fixture.tenant.engine.clone(),
                     "subscription fanout RTT injected teardown",
                 )
                 .await?;

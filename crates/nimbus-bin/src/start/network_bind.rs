@@ -3,13 +3,15 @@ use std::fmt;
 use std::net::IpAddr;
 
 use nimbus_server::LocalAdminTokenRecord;
+use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 
-/// Maximum age of a `rotated_at` timestamp before the non-loopback bind
-/// tripwire refuses to expose the local admin token publicly. Operators
-/// must run `nimbus auth rotate-admin` within this window to keep a
-/// `--allow-network` bind active.
-pub(super) const ADMIN_TOKEN_FRESHNESS_WINDOW: Duration = Duration::days(30);
+/// Age of a `rotated_at` timestamp past which a non-loopback bind logs a
+/// rotation-hygiene warning naming `nimbus auth rotate-admin`. Advisory
+/// only: a long-running public server must always be able to restart.
+/// The hard requirement is that an explicit rotation happened at least
+/// once — the auto-minted first-boot token is never exposed publicly.
+pub(super) const ADMIN_TOKEN_ROTATION_WARNING_WINDOW: Duration = Duration::days(30);
 
 /// Stage 1: refuse non-loopback hosts unless the operator passed
 /// `--allow-network`. Loopback hosts always pass. Called before any
@@ -27,23 +29,40 @@ pub(super) fn ensure_host_opt_in(host: &str, allow_network: bool) -> Result<(), 
     Ok(())
 }
 
-/// Stage 2: refuse non-loopback hosts whose admin token has not been
-/// rotated within [`ADMIN_TOKEN_FRESHNESS_WINDOW`]. Loopback hosts always
-/// pass. Called after the admin token is loaded from disk.
-pub(super) fn ensure_admin_token_fresh_for_public_bind(
+/// Stage 2: refuse non-loopback hosts whose admin token has never been
+/// explicitly rotated (`rotated_at` absent or unparseable — the
+/// auto-minted first-boot token). A token rotated longer ago than
+/// [`ADMIN_TOKEN_ROTATION_WARNING_WINDOW`] binds successfully and returns
+/// a [`StaleRotationWarning`] for the caller to log; restarts of a
+/// long-running public server must not be refused on age alone. Loopback
+/// hosts always pass. Called after the admin token is loaded from disk.
+pub(super) fn ensure_admin_token_rotated_for_public_bind(
     host: &str,
     admin_token: &LocalAdminTokenRecord,
     now: OffsetDateTime,
-) -> Result<(), NetworkBindError> {
+) -> Result<Option<StaleRotationWarning>, NetworkBindError> {
     if host_is_loopback(host) {
-        return Ok(());
+        return Ok(None);
     }
-    if !admin_token.rotation_is_fresh(now, ADMIN_TOKEN_FRESHNESS_WINDOW) {
-        return Err(NetworkBindError::StaleAdminTokenRotation {
+    let Some(rotated_at) = admin_token.rotated_at.as_deref() else {
+        return Err(NetworkBindError::NeverRotatedAdminToken {
             host: host.to_string(),
         });
+    };
+    let Ok(rotated) = OffsetDateTime::parse(rotated_at, &Rfc3339) else {
+        // Fail closed: an unreadable rotation stamp proves nothing, so it
+        // gets the same treatment as no rotation at all.
+        return Err(NetworkBindError::NeverRotatedAdminToken {
+            host: host.to_string(),
+        });
+    };
+    let age = now - rotated;
+    if age >= ADMIN_TOKEN_ROTATION_WARNING_WINDOW {
+        return Ok(Some(StaleRotationWarning {
+            age_days: age.whole_days(),
+        }));
     }
-    Ok(())
+    Ok(None)
 }
 
 fn host_is_loopback(host: &str) -> bool {
@@ -56,10 +75,29 @@ fn host_is_loopback(host: &str) -> bool {
     }
 }
 
+/// Advisory rotation-hygiene notice returned when a public bind proceeds
+/// on a token whose last explicit rotation is older than the warning
+/// window. The caller logs it; it never blocks startup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct StaleRotationWarning {
+    pub(super) age_days: i64,
+}
+
+impl fmt::Display for StaleRotationWarning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "local admin token was last rotated {} days ago; rotate it with \
+             `nimbus auth rotate-admin`",
+            self.age_days
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum NetworkBindError {
     NonLoopbackRequiresOptIn { host: String },
-    StaleAdminTokenRotation { host: String },
+    NeverRotatedAdminToken { host: String },
 }
 
 impl fmt::Display for NetworkBindError {
@@ -73,13 +111,13 @@ impl fmt::Display for NetworkBindError {
                  public interface is opt-in. Re-run with `--allow-network` to acknowledge\n\
                  the exposure, or bind on a loopback address (127.0.0.1, ::1, or localhost)."
             ),
-            NetworkBindError::StaleAdminTokenRotation { host } => write!(
+            NetworkBindError::NeverRotatedAdminToken { host } => write!(
                 f,
-                "refusing to bind on non-loopback host `{host}` with a stale local admin token.\n\
+                "refusing to bind on non-loopback host `{host}` with a never-rotated local\n\
+                 admin token.\n\
                  \n\
-                 The local admin token has not been rotated within the last 30 days (or has\n\
-                 never been rotated since first boot). Rotate it before exposing the server\n\
-                 publicly:\n\
+                 The auto-minted first-boot token must be explicitly rotated once before the\n\
+                 server is exposed on a public interface:\n\
                  \n\
                      nimbus auth rotate-admin\n\
                  \n\
@@ -151,27 +189,29 @@ mod tests {
             .expect("--allow-network should let non-loopback through stage 1");
     }
 
-    // Stage 2 — `ensure_admin_token_fresh_for_public_bind` (post-token-load check).
+    // Stage 2 — `ensure_admin_token_rotated_for_public_bind`
+    // (post-token-load check).
 
     #[test]
-    fn ensure_admin_token_fresh_passes_loopback_regardless_of_rotation() {
+    fn public_bind_passes_loopback_regardless_of_rotation() {
         let token = admin_token(None);
         let now = fixed_now();
         for host in ["127.0.0.1", "::1", "localhost"] {
-            ensure_admin_token_fresh_for_public_bind(host, &token, now)
+            let outcome = ensure_admin_token_rotated_for_public_bind(host, &token, now)
                 .unwrap_or_else(|error| panic!("loopback host {host} should pass: {error}"));
+            assert_eq!(outcome, None, "loopback binds never warn");
         }
     }
 
     #[test]
-    fn ensure_admin_token_fresh_trips_on_never_rotated_token() {
+    fn public_bind_requires_explicit_rotation() {
         let token = admin_token(None);
         let now = fixed_now();
-        let error = ensure_admin_token_fresh_for_public_bind("0.0.0.0", &token, now)
-            .expect_err("never-rotated admin token must trip the rotation gate");
+        let error = ensure_admin_token_rotated_for_public_bind("0.0.0.0", &token, now)
+            .expect_err("never-rotated admin token must refuse a public bind");
         match &error {
-            NetworkBindError::StaleAdminTokenRotation { host } => assert_eq!(host, "0.0.0.0"),
-            other => panic!("expected StaleAdminTokenRotation, got {other:?}"),
+            NetworkBindError::NeverRotatedAdminToken { host } => assert_eq!(host, "0.0.0.0"),
+            other => panic!("expected NeverRotatedAdminToken, got {other:?}"),
         }
         let message = error.to_string();
         assert!(
@@ -181,35 +221,45 @@ mod tests {
     }
 
     #[test]
-    fn ensure_admin_token_fresh_trips_on_stale_rotation() {
+    fn public_bind_restart_does_not_retrip_freshness() {
+        // Rotated 139 days before `now` — far past the warning window. A
+        // restart of a long-running public server must bind successfully
+        // and surface only an advisory warning.
         let token = admin_token(Some("2026-01-01T00:00:00Z"));
         let now = fixed_now();
-        let error = ensure_admin_token_fresh_for_public_bind("203.0.113.5", &token, now)
-            .expect_err("stale rotation must trip the gate");
-        assert!(matches!(
-            error,
-            NetworkBindError::StaleAdminTokenRotation { .. }
-        ));
-        assert!(error.to_string().contains("nimbus auth rotate-admin"));
+        let warning = ensure_admin_token_rotated_for_public_bind("203.0.113.5", &token, now)
+            .expect("an old-but-explicit rotation must not refuse the bind")
+            .expect("an old rotation should produce an advisory warning");
+        assert_eq!(warning.age_days, 139);
+        let message = warning.to_string();
+        assert!(
+            message.contains("nimbus auth rotate-admin"),
+            "warning must point at the rotate-admin command, got: {message}"
+        );
+        assert!(
+            message.contains("139 days"),
+            "warning must state the rotation age, got: {message}"
+        );
     }
 
     #[test]
-    fn ensure_admin_token_fresh_passes_on_fresh_rotation() {
+    fn public_bind_passes_fresh_rotation_without_warning() {
         let token = admin_token(Some("2026-05-15T00:00:00Z"));
         let now = fixed_now();
-        ensure_admin_token_fresh_for_public_bind("0.0.0.0", &token, now)
+        let outcome = ensure_admin_token_rotated_for_public_bind("0.0.0.0", &token, now)
             .expect("fresh rotation should pass stage 2");
+        assert_eq!(outcome, None, "fresh rotations must not warn");
     }
 
     #[test]
-    fn ensure_admin_token_fresh_treats_unparseable_rotated_at_as_stale() {
+    fn public_bind_treats_unparseable_rotated_at_as_never_rotated() {
         let token = admin_token(Some("not-an-rfc3339-string"));
         let now = fixed_now();
-        let error = ensure_admin_token_fresh_for_public_bind("0.0.0.0", &token, now)
-            .expect_err("unparseable rotated_at must be treated as stale");
+        let error = ensure_admin_token_rotated_for_public_bind("0.0.0.0", &token, now)
+            .expect_err("unparseable rotated_at must fail closed");
         assert!(matches!(
             error,
-            NetworkBindError::StaleAdminTokenRotation { .. }
+            NetworkBindError::NeverRotatedAdminToken { .. }
         ));
     }
 }

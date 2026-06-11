@@ -1,6 +1,7 @@
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
+    mpsc,
 };
 use std::thread;
 use std::time::Duration;
@@ -46,7 +47,7 @@ const INVALID_EGRESS_POLICY: &str = r#"
 schema_version: 1
 tenant: tenant-a
 workloads:
-  - kind: sandbox_service
+  - kind: service
     name: "worker"
     sandbox:
       sandbox_id: "worker-1"
@@ -63,7 +64,7 @@ const EGRESS_DIFF_FROM: &str = r#"
 schema_version: 1
 tenant: tenant-a
 workloads:
-  - kind: sandbox_service
+  - kind: service
     name: "worker"
     sandbox:
       sandbox_id: "worker-1"
@@ -84,7 +85,7 @@ const EGRESS_DIFF_TO: &str = r#"
 schema_version: 1
 tenant: tenant-a
 workloads:
-  - kind: sandbox_service
+  - kind: service
     name: "worker"
     sandbox:
       sandbox_id: "worker-1"
@@ -263,6 +264,10 @@ fn parse_policy(body: &str) -> OperatorPolicyDocument {
     serde_yaml::from_str(body).expect("policy fixture should parse")
 }
 
+fn valid_policy_with_network_endpoint_host(host: &str) -> OperatorPolicyDocument {
+    parse_policy(&VALID_POLICY.replace("host: 127.0.0.1", &format!("host: {host:?}")))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FakeExternalPolicyResponse {
     Allow,
@@ -271,7 +276,6 @@ enum FakeExternalPolicyResponse {
     DenySensitiveReason,
     MalformedOutput,
     Timeout,
-    SleepPastEngineTimeout,
     Unavailable,
     UnavailableSensitiveReason,
 }
@@ -365,14 +369,6 @@ impl OperatorExternalPolicyBackend for FakeExternalPolicyBackend {
             FakeExternalPolicyResponse::Timeout => Err(
                 OperatorExternalPolicyBackendError::timeout("fixture policy deadline exceeded"),
             ),
-            FakeExternalPolicyResponse::SleepPastEngineTimeout => {
-                thread::sleep(Duration::from_millis(200));
-                Ok(OperatorExternalPolicyDecision::allow(
-                    self.name,
-                    self.version,
-                    "fixture policy allowed too late",
-                ))
-            }
             FakeExternalPolicyResponse::Unavailable => {
                 Err(OperatorExternalPolicyBackendError::unavailable(
                     "fixture policy backend unavailable",
@@ -384,6 +380,70 @@ impl OperatorExternalPolicyBackend for FakeExternalPolicyBackend {
                 ))
             }
         }
+    }
+}
+
+struct BlockingExternalPolicyBackend {
+    calls: AtomicUsize,
+    entered: Mutex<mpsc::SyncSender<()>>,
+    release: Mutex<mpsc::Receiver<()>>,
+    finished: Mutex<mpsc::SyncSender<()>>,
+}
+
+impl BlockingExternalPolicyBackend {
+    fn new() -> (
+        Arc<Self>,
+        mpsc::Receiver<()>,
+        mpsc::SyncSender<()>,
+        mpsc::Receiver<()>,
+    ) {
+        let (entered_sender, entered_receiver) = mpsc::sync_channel(1);
+        let (release_sender, release_receiver) = mpsc::sync_channel(1);
+        let (finished_sender, finished_receiver) = mpsc::sync_channel(1);
+        (
+            Arc::new(Self {
+                calls: AtomicUsize::new(0),
+                entered: Mutex::new(entered_sender),
+                release: Mutex::new(release_receiver),
+                finished: Mutex::new(finished_sender),
+            }),
+            entered_receiver,
+            release_sender,
+            finished_receiver,
+        )
+    }
+
+    fn call_count(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl OperatorExternalPolicyBackend for BlockingExternalPolicyBackend {
+    fn evaluate(
+        &self,
+        _request: &OperatorExternalPolicyRequest,
+    ) -> OperatorExternalPolicyBackendResult<OperatorExternalPolicyDecision> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.entered
+            .lock()
+            .expect("entered lock should not be poisoned")
+            .send(())
+            .expect("test should be waiting for backend entry");
+        self.release
+            .lock()
+            .expect("release lock should not be poisoned")
+            .recv()
+            .expect("test should release blocked backend");
+        self.finished
+            .lock()
+            .expect("finished lock should not be poisoned")
+            .send(())
+            .expect("test should observe blocked backend completion");
+        Ok(OperatorExternalPolicyDecision::allow(
+            "blocking-policy",
+            "v0-test",
+            "fixture policy eventually allowed",
+        ))
     }
 }
 
@@ -421,7 +481,7 @@ fn valid_policy_fixture_compiles_to_tenant_isolation_decision() {
         decision
             .decision
             .to_audit_record()
-            .workload_stable_id
+            .workload_subject
             .contains("messages%3Asend"),
         "compiled decision should produce normal tenant-isolation audit evidence"
     );
@@ -592,22 +652,41 @@ fn external_policy_backend_errors_fail_closed() {
 #[test]
 fn external_policy_engine_timeout_fails_closed_without_waiting_for_backend() {
     let policy = parse_policy(VALID_POLICY);
-    let backend = Arc::new(FakeExternalPolicyBackend::fake_opa(
-        FakeExternalPolicyResponse::SleepPastEngineTimeout,
-    ));
+    let (backend, entered, release, finished) = BlockingExternalPolicyBackend::new();
     let engine = OperatorExternalPolicyEngine::from_arc(backend.clone())
         .with_timeout(Duration::from_millis(25))
         .expect("timeout should be valid");
 
-    let started = std::time::Instant::now();
-    let error = policy
-        .evaluate_with_external_policy(Some(&engine))
-        .expect_err("engine timeout should fail closed");
+    let (result_sender, result_receiver) = mpsc::sync_channel(1);
+    let evaluation_thread = thread::spawn(move || {
+        let result = policy.evaluate_with_external_policy(Some(&engine));
+        let _ = result_sender.send(result);
+    });
+
+    entered
+        .recv_timeout(Duration::from_secs(5))
+        .expect("blocked backend should enter before engine timeout is asserted");
+    let error = match result_receiver.recv_timeout(Duration::from_secs(5)) {
+        Ok(result) => result.expect_err("engine timeout should fail closed"),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            release
+                .send(())
+                .expect("test should release the blocked backend after timeout failure");
+            finished
+                .recv_timeout(Duration::from_secs(5))
+                .expect("blocked backend should finish after release");
+            let _ = evaluation_thread.join();
+            panic!("engine timeout should return before the backend is released");
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("external policy evaluation thread exited without a result")
+        }
+    };
 
     assert_eq!(backend.call_count(), 1);
     assert!(
-        started.elapsed() < Duration::from_millis(500),
-        "engine timeout should bound admission latency"
+        matches!(finished.try_recv(), Err(mpsc::TryRecvError::Empty)),
+        "backend must still be blocked when the engine returns its timeout"
     );
     assert!(
         error.to_string().contains("failed closed")
@@ -615,6 +694,79 @@ fn external_policy_engine_timeout_fails_closed_without_waiting_for_backend() {
             && error.to_string().contains("25ms"),
         "timeout error should be fail-closed and actionable: {error}"
     );
+
+    release
+        .send(())
+        .expect("test should release the blocked backend");
+    finished
+        .recv_timeout(Duration::from_secs(5))
+        .expect("blocked backend should finish after release");
+    evaluation_thread
+        .join()
+        .expect("external policy evaluation thread should not panic");
+}
+
+#[test]
+fn external_policy_engine_rejects_zero_worker_limit() {
+    let backend = FakeExternalPolicyBackend::fake_opa(FakeExternalPolicyResponse::Allow);
+    let error = OperatorExternalPolicyEngine::new(backend)
+        .with_max_concurrent_evaluations(0)
+        .expect_err("zero external policy worker limit should be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("max concurrent evaluations must be greater than 0"),
+        "zero worker limit error should identify the invalid setting: {error}"
+    );
+}
+
+#[test]
+fn external_policy_engine_caps_workers_while_backend_is_hung() {
+    let policy = parse_policy(VALID_POLICY);
+    let (backend, entered, release, finished) = BlockingExternalPolicyBackend::new();
+    let engine = OperatorExternalPolicyEngine::from_arc(backend.clone())
+        .with_timeout(Duration::from_millis(25))
+        .expect("timeout should be valid")
+        .with_max_concurrent_evaluations(1)
+        .expect("worker cap should be valid");
+
+    let first_error = policy
+        .evaluate_with_external_policy(Some(&engine))
+        .expect_err("hung external policy backend should time out fail-closed");
+    entered
+        .recv_timeout(Duration::from_secs(1))
+        .expect("blocked backend should enter its evaluation worker");
+
+    assert_eq!(backend.call_count(), 1);
+    assert!(
+        first_error.to_string().contains("timeout") && first_error.to_string().contains("25ms"),
+        "first hung evaluation should report the engine timeout: {first_error}"
+    );
+
+    let second_error = policy
+        .evaluate_with_external_policy(Some(&engine))
+        .expect_err("occupied worker cap should fail closed");
+
+    assert_eq!(
+        backend.call_count(),
+        1,
+        "worker cap must reject the second admission before spawning another backend call"
+    );
+    assert!(
+        second_error.to_string().contains("unavailable")
+            && second_error
+                .to_string()
+                .contains("external policy worker limit reached (1 in flight)"),
+        "worker cap error should be fail-closed and actionable: {second_error}"
+    );
+
+    release
+        .send(())
+        .expect("test should release the blocked backend");
+    finished
+        .recv_timeout(Duration::from_secs(1))
+        .expect("blocked backend should finish after release");
 }
 
 #[test]
@@ -647,7 +799,7 @@ fn denied_egress_draft_proposes_minimal_rule_without_mutating_policy() {
     let policy = parse_policy(EGRESS_DIFF_FROM);
     let event = OperatorDeniedEgressEvent {
         tenant_id: "tenant-a".to_string(),
-        workload_kind: "sandbox_service".to_string(),
+        workload_kind: "service".to_string(),
         workload_name: "worker".to_string(),
         protocol: PublishedEndpointProtocol::Https,
         host: "API.GitHub.com".to_string(),
@@ -665,7 +817,7 @@ fn denied_egress_draft_proposes_minimal_rule_without_mutating_policy() {
     assert_eq!(draft.status, OperatorPolicyDraftStatus::ReviewRequired);
     assert!(draft.requires_explicit_approval);
     assert!(!draft.auto_apply);
-    assert_eq!(draft.workload_key, "sandbox_service/worker");
+    assert_eq!(draft.workload_key, "service/worker");
     assert_eq!(draft.suggested_egress_rule.name, "api-github-com-https-443");
     assert_eq!(draft.suggested_egress_rule.host, "api.github.com");
     assert_eq!(draft.suggested_egress_rule.port, 443);
@@ -693,7 +845,7 @@ fn denied_egress_draft_requires_approval_before_apply() {
     let draft = policy
         .draft_from_denied_egress(OperatorDeniedEgressEvent {
             tenant_id: "tenant-a".to_string(),
-            workload_kind: "sandbox_service".to_string(),
+            workload_kind: "service".to_string(),
             workload_name: "worker".to_string(),
             protocol: PublishedEndpointProtocol::Https,
             host: "api.github.com".to_string(),
@@ -741,7 +893,7 @@ fn denied_egress_draft_rejects_mismatched_tenant_and_unknown_workload() {
     let policy = parse_policy(EGRESS_DIFF_FROM);
     let mismatched_tenant = OperatorDeniedEgressEvent {
         tenant_id: "tenant-b".to_string(),
-        workload_kind: "sandbox_service".to_string(),
+        workload_kind: "service".to_string(),
         workload_name: "worker".to_string(),
         protocol: PublishedEndpointProtocol::Https,
         host: "api.github.com".to_string(),
@@ -760,7 +912,7 @@ fn denied_egress_draft_rejects_mismatched_tenant_and_unknown_workload() {
 
     let unknown_workload = OperatorDeniedEgressEvent {
         tenant_id: "tenant-a".to_string(),
-        workload_kind: "sandbox_service".to_string(),
+        workload_kind: "service".to_string(),
         workload_name: "missing".to_string(),
         protocol: PublishedEndpointProtocol::Https,
         host: "api.github.com".to_string(),
@@ -938,6 +1090,37 @@ fn policy_fixture_rejects_wildcard_hosts_and_unsafe_image_defaults() {
         error.to_string().contains("wildcard"),
         "error should name the unsafe wildcard: {error}"
     );
+}
+
+#[test]
+fn policy_accepts_bare_network_endpoint_hosts() {
+    for host in ["api.internal.example", "127.0.0.1", "2001:db8::1"] {
+        valid_policy_with_network_endpoint_host(host)
+            .evaluate()
+            .unwrap_or_else(|error| panic!("bare host {host:?} should evaluate: {error}"));
+    }
+}
+
+#[test]
+fn policy_rejects_malformed_network_endpoint_hosts() {
+    for (host, expected) in [
+        ("example.com:8080", "must not include a port"),
+        ("https://example.com", "not a URL or authority"),
+        ("user:pass@example.com", "not a URL or authority"),
+        ("example.com/path", "not a URL or authority"),
+        ("[2001:db8::1]", "not a URL or authority"),
+        ("api example.com", "must not contain whitespace"),
+        ("*.example.com", "wildcard"),
+        ("bad_host", "valid DNS hostname"),
+    ] {
+        let error = valid_policy_with_network_endpoint_host(host)
+            .evaluate()
+            .expect_err("malformed network endpoint host should fail closed");
+        assert!(
+            error.to_string().contains(expected),
+            "error for host {host:?} should contain `{expected}`: {error}"
+        );
+    }
 }
 
 #[test]

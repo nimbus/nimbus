@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use super::{
     RuntimeIsolationTier, TenantAuditRedactionPolicy, TenantIsolationDecision,
-    TenantIsolationDecisionId, TenantWorkloadKind,
+    TenantIsolationDecisionId, WorkloadKind,
     evidence::{canonical_evidence_reason_code, tenant_isolation_event_name},
 };
 #[cfg(test)]
@@ -115,9 +115,9 @@ pub struct TenantIsolationEvent {
     tenant_id: String,
     surface: String,
     principal_class: String,
-    workload_stable_id: Option<String>,
-    workload_audit_projection_id: Option<String>,
-    workload_kind: Option<TenantWorkloadKind>,
+    workload_subject: Option<String>,
+    workload_audit_projection: Option<String>,
+    workload_kind: Option<WorkloadKind>,
     workload_name: Option<String>,
     runtime_tier: Option<RuntimeIsolationTier>,
     sandbox_id: Option<String>,
@@ -196,10 +196,8 @@ impl TenantIsolationEvent {
             tenant_id: decision.tenant_id.as_str().to_owned(),
             surface: decision.surface.to_owned(),
             principal_class: decision.authority.class().to_owned(),
-            workload_stable_id: Some(decision.workload_stable_identity().stable_id()),
-            workload_audit_projection_id: Some(
-                decision.workload_stable_identity().audit_projection_id(),
-            ),
+            workload_subject: Some(decision.workload_identity().subject()),
+            workload_audit_projection: Some(decision.workload_identity().audit_projection()),
             workload_kind: Some(decision.workload.kind()),
             workload_name: Some(decision.workload.name().to_owned()),
             runtime_tier: decision.workload.runtime_tier(),
@@ -235,8 +233,8 @@ impl TenantIsolationEvent {
             tenant_id: tenant_id.into(),
             surface: surface.into(),
             principal_class: principal_class.into(),
-            workload_stable_id: None,
-            workload_audit_projection_id: None,
+            workload_subject: None,
+            workload_audit_projection: None,
             workload_kind: None,
             workload_name: None,
             runtime_tier: None,
@@ -460,13 +458,13 @@ impl TenantIsolationEvent {
         insert_optional_string(&mut attributes, "nimbus.decision_id", &self.decision_id);
         insert_optional_string(
             &mut attributes,
-            "nimbus.workload_stable_id",
-            &self.workload_stable_id,
+            "nimbus.workload_subject",
+            &self.workload_subject,
         );
         insert_optional_string(
             &mut attributes,
-            "nimbus.workload_audit_projection_id",
-            &self.workload_audit_projection_id,
+            "nimbus.workload_audit_projection",
+            &self.workload_audit_projection,
         );
         insert_optional_string(&mut attributes, "nimbus.workload_name", &self.workload_name);
         insert_optional_string(&mut attributes, "nimbus.sandbox_id", &self.sandbox_id);
@@ -670,7 +668,7 @@ mod tests {
         TenantIsolationMode, TenantIsolationPolicyInput, TenantNetworkEndpointDecision,
         TenantNetworkPolicyDecision, TenantQuotaPolicyDecision, TenantRuntimePolicyAdmission,
         TenantSecretPolicyDecision, TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision,
-        TenantVolumePolicyDecision, TenantWorkloadIdentity,
+        TenantVolumePolicyDecision, WorkloadAttributes,
     };
     use super::*;
 
@@ -687,7 +685,7 @@ mod tests {
         let context = test_application_context();
         let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
         let input = TenantIsolationPolicyInput::new(
-            TenantWorkloadIdentity::runtime_function(
+            WorkloadAttributes::runtime_function(
                 "messages:send",
                 RuntimeIsolationTier::InProcessUntrusted,
             )
@@ -792,7 +790,7 @@ mod tests {
             );
             assert!(
                 serialized.contains("messages%3Asend"),
-                "event should carry stable workload identity: {serialized}"
+                "event should carry workload subject: {serialized}"
             );
             assert!(
                 serialized.contains("\"runtime_tier\":\"in_process_untrusted\""),
@@ -933,7 +931,7 @@ mod tests {
             ocsf.unmapped.get("nimbus.service_name"),
             Some(&TenantIsolationEventValue::String("db".to_owned()))
         );
-        match ocsf.unmapped.get("nimbus.workload_stable_id") {
+        match ocsf.unmapped.get("nimbus.workload_subject") {
             Some(TenantIsolationEventValue::String(value)) => {
                 assert!(value.contains("messages%3Asend"), "{value}");
                 assert!(
@@ -941,14 +939,14 @@ mod tests {
                     "stable subject must not include per-invocation fields: {value}"
                 );
             }
-            other => panic!("expected workload stable id, got {other:?}"),
+            other => panic!("expected workload subject, got {other:?}"),
         }
-        match ocsf.unmapped.get("nimbus.workload_audit_projection_id") {
+        match ocsf.unmapped.get("nimbus.workload_audit_projection") {
             Some(TenantIsolationEventValue::String(value)) => {
                 assert!(value.contains("messages%3Asend"), "{value}");
                 assert!(value.contains("/invocation/invoke-1"), "{value}");
             }
-            other => panic!("expected workload audit projection id, got {other:?}"),
+            other => panic!("expected workload audit projection, got {other:?}"),
         }
         serde_json::to_string(&ocsf).expect("OCSF event should serialize");
 

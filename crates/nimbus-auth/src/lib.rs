@@ -66,7 +66,14 @@ impl ResolvedApplicationAuth {
     }
 }
 
-pub fn emulator_principal_from_bearer(token: &str) -> Option<PrincipalContext> {
+/// Parses a Firebase Auth emulator `mockUserToken` bearer into a principal.
+///
+/// This accepts the Firebase emulator's unsigned JSON object token shape and
+/// intentionally performs no signature verification. Callers must invoke this
+/// only after the active deployment has explicitly enabled emulator
+/// mock-user-token auth; signed production bearer paths must use an
+/// `ApplicationAuthVerifier` instead.
+pub fn firebase_emulator_mock_user_principal_from_bearer(token: &str) -> Option<PrincipalContext> {
     let Value::Object(mut claims) = serde_json::from_str::<Value>(token).ok()? else {
         return None;
     };
@@ -201,7 +208,7 @@ mod tests {
 
     #[test]
     fn emulator_principal_normalizes_subject_aliases() {
-        let principal = emulator_principal_from_bearer(r#"{"uid":"user-123"}"#)
+        let principal = firebase_emulator_mock_user_principal_from_bearer(r#"{"uid":"user-123"}"#)
             .expect("emulator bearer should parse");
 
         assert!(principal.authenticated);

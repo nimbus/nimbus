@@ -6,7 +6,7 @@ use nimbus_core::{
     TenantId, Timestamp, TransactionSession, TransactionSessionMode, TransactionSessionToken,
     WriteKey,
 };
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 
 use super::batch_get_request;
@@ -34,7 +34,7 @@ pub fn resolve_write_key(
 }
 
 pub fn commit_batch_for_database(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     isolation: &TenantIsolationContext,
     database: &resource_names::FirestoreDatabaseName,
     principal: &PrincipalContext,
@@ -46,21 +46,16 @@ pub fn commit_batch_for_database(
     match transaction {
         Some(transaction_bytes) => {
             let transaction_token = decode_transaction_token(transaction_bytes)?;
-            service.commit_transaction_session(
-                tenant_id,
-                &transaction_token,
-                principal,
-                Some(batch),
-            )
+            engine.commit_transaction_session(tenant_id, &transaction_token, principal, Some(batch))
         }
-        None => service
+        None => engine
             .begin_mutation_execution_unit(tenant_id.clone(), principal.clone())
             .and_then(|execution_unit| execution_unit.execute_atomic_write_batch(batch)),
     }
 }
 
 pub fn begin_transaction_session_for_database(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     isolation: &TenantIsolationContext,
     database: &resource_names::FirestoreDatabaseName,
     principal: &PrincipalContext,
@@ -68,11 +63,11 @@ pub fn begin_transaction_session_for_database(
 ) -> Result<TransactionSession> {
     let tenant_id =
         tenant_id_for_context_database(isolation, database, "Firestore transaction database")?;
-    service.begin_transaction_session(tenant_id.clone(), principal.clone(), mode)
+    engine.begin_transaction_session(tenant_id.clone(), principal.clone(), mode)
 }
 
 pub fn rollback_transaction_session_for_database(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     isolation: &TenantIsolationContext,
     database: &resource_names::FirestoreDatabaseName,
     principal: &PrincipalContext,
@@ -81,7 +76,7 @@ pub fn rollback_transaction_session_for_database(
     let tenant_id =
         tenant_id_for_context_database(isolation, database, "Firestore rollback database")?;
     let token = decode_transaction_token(transaction)?;
-    service.rollback_transaction_session(tenant_id, &token, principal)
+    engine.rollback_transaction_session(tenant_id, &token, principal)
 }
 
 pub fn tenant_id_for_database(
@@ -100,7 +95,7 @@ pub fn tenant_context_for_database(
         principal.clone(),
         surface,
     );
-    context.ensure_application_principal_tenant_access("Firestore database tenant")?;
+    context.admit_if_principal_claim_absent_or_matching("Firestore database tenant")?;
     Ok(context)
 }
 
@@ -124,7 +119,7 @@ pub fn decode_transaction_token(bytes: &[u8]) -> Result<TransactionSessionToken>
 }
 
 pub fn batch_get_documents_for_database(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     isolation: &TenantIsolationContext,
     database: &resource_names::FirestoreDatabaseName,
     principal: &PrincipalContext,
@@ -143,7 +138,7 @@ pub fn batch_get_documents_for_database(
         .iter()
         .map(|requested_document| {
             let document = read_batch_get_document(
-                service,
+                engine,
                 tenant_id,
                 principal,
                 transaction_token.as_ref(),
@@ -159,7 +154,7 @@ pub fn batch_get_documents_for_database(
 }
 
 pub fn batch_write_for_database(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     isolation: &TenantIsolationContext,
     database: &resource_names::FirestoreDatabaseName,
     principal: &PrincipalContext,
@@ -170,7 +165,7 @@ pub fn batch_write_for_database(
     let mut entries = Vec::with_capacity(writes.len());
 
     for write in writes {
-        let outcome = service
+        let outcome = engine
             .begin_mutation_execution_unit(tenant_id.clone(), principal.clone())
             .and_then(|execution_unit| {
                 execution_unit.execute_atomic_write_batch(
@@ -194,7 +189,7 @@ pub fn batch_write_for_database(
 }
 
 pub fn list_collection_ids_for_database(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     isolation: &TenantIsolationContext,
     database: &resource_names::FirestoreDatabaseName,
     parent_document_path: Option<&DocumentPath>,
@@ -202,7 +197,7 @@ pub fn list_collection_ids_for_database(
 ) -> Result<list_collection_ids_request::PaginatedCollectionIds> {
     let tenant_id =
         tenant_id_for_context_database(isolation, database, "Firestore list-collections database")?;
-    let collection_ids = service
+    let collection_ids = engine
         .list_collection_ids_for_parent(tenant_id, parent_document_path)?
         .into_iter()
         .map(|collection_id| collection_id.to_string())
@@ -212,7 +207,7 @@ pub fn list_collection_ids_for_database(
 }
 
 pub fn get_document_for_database(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     isolation: &TenantIsolationContext,
     database: &resource_names::FirestoreDatabaseName,
     principal: &PrincipalContext,
@@ -222,7 +217,7 @@ pub fn get_document_for_database(
     let tenant_id = tenant_id_for_context_database(isolation, database, "Firestore get database")?;
     let transaction_token = transaction.map(decode_transaction_token).transpose()?;
     read_batch_get_document(
-        service,
+        engine,
         tenant_id,
         principal,
         transaction_token.as_ref(),
@@ -255,7 +250,7 @@ fn resolve_run_query_collection_target(
 }
 
 fn read_batch_get_document(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     principal: &PrincipalContext,
     transaction_token: Option<&TransactionSessionToken>,
@@ -263,14 +258,14 @@ fn read_batch_get_document(
 ) -> Result<Option<Document>> {
     let locator = locator_for_document_path(document_path)?;
     match transaction_token {
-        Some(transaction_token) => service.get_document_in_transaction(
+        Some(transaction_token) => engine.get_document_in_transaction(
             tenant_id,
             transaction_token,
             principal,
             &locator.table,
             locator.id,
         ),
-        None => match service.get_document_with_principal(
+        None => match engine.get_document_with_principal(
             tenant_id,
             &locator.table,
             locator.id,
@@ -284,7 +279,7 @@ fn read_batch_get_document(
 }
 
 pub fn run_query_documents_for_database(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     isolation: &TenantIsolationContext,
     database: &resource_names::FirestoreDatabaseName,
     principal: &PrincipalContext,
@@ -305,7 +300,7 @@ pub fn run_query_documents_for_database(
     structured_query.from.clear();
     let documents = if is_collection_group {
         match transaction_token.as_ref() {
-            Some(transaction_token) => service
+            Some(transaction_token) => engine
                 .query_collection_group_documents_structured_in_transaction(
                     tenant_id,
                     transaction_token,
@@ -314,15 +309,14 @@ pub fn run_query_documents_for_database(
                     parent_document_path,
                     &structured_query,
                 )?,
-            None => service
-                .query_collection_group_documents_structured_with_principal_cancellable(
-                    tenant_id,
-                    &collection_target.collection_group,
-                    parent_document_path,
-                    &structured_query,
-                    principal,
-                    &mut || Ok(()),
-                )?,
+            None => engine.query_collection_group_documents_structured_with_principal_cancellable(
+                tenant_id,
+                &collection_target.collection_group,
+                parent_document_path,
+                &structured_query,
+                principal,
+                &mut || Ok(()),
+            )?,
         }
         .into_iter()
         .map(|(document_path, document)| RunQueryDocument {
@@ -334,14 +328,14 @@ pub fn run_query_documents_for_database(
         let collection_path = collection_target.collection_path.clone();
         let table = storage_table_for_collection_path(&collection_path)?;
         match transaction_token.as_ref() {
-            Some(transaction_token) => service.query_documents_structured_in_transaction(
+            Some(transaction_token) => engine.query_documents_structured_in_transaction(
                 tenant_id,
                 transaction_token,
                 principal,
                 &table,
                 &structured_query,
             )?,
-            None => service.query_documents_structured_with_principal(
+            None => engine.query_documents_structured_with_principal(
                 tenant_id,
                 &table,
                 &structured_query,
@@ -363,7 +357,7 @@ pub fn run_query_documents_for_database(
 }
 
 pub fn run_aggregation_query_for_database(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     isolation: &TenantIsolationContext,
     database: &resource_names::FirestoreDatabaseName,
     principal: &PrincipalContext,
@@ -384,7 +378,7 @@ pub fn run_aggregation_query_for_database(
         .is_some_and(nimbus_core::CollectionSelector::is_collection_group);
     aggregation_query.structured_query.from.clear();
     let result = if is_collection_group {
-        service.aggregate_collection_group_documents_structured_with_principal_cancellable(
+        engine.aggregate_collection_group_documents_structured_with_principal_cancellable(
             tenant_id,
             &collection_target.collection_group,
             parent_document_path,
@@ -394,7 +388,7 @@ pub fn run_aggregation_query_for_database(
         )?
     } else {
         let table = storage_table_for_collection_path(&collection_target.collection_path)?;
-        service.aggregate_documents_structured_with_principal_cancellable(
+        engine.aggregate_documents_structured_with_principal_cancellable(
             tenant_id,
             &table,
             &aggregation_query,

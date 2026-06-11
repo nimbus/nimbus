@@ -106,6 +106,63 @@ async fn cooperative_execution_model_resumes_parked_invocations_after_host_compl
 }
 
 #[tokio::test]
+async fn cooperative_execution_model_cancels_parked_invocations_on_shutdown() {
+    let _test_lock = runtime_executor_test_lock().lock().await;
+    let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
+    let policy = Arc::new(RuntimePolicy::new(limits));
+    let executor = RuntimeExecutor::new(policy.clone());
+    let host = Arc::new(ControlledAsyncGetHost::default());
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let request = test_request("slow-shutdown");
+    let parked_task = tokio::spawn({
+        let executor = executor.clone();
+        let bundle = bundle.clone();
+        let host = host.clone();
+        let policy = policy.clone();
+        let context = test_context_for_tenant(&request, "tenant-a", "req-cooperative-shutdown");
+        async move {
+            executor
+                .invoke_on_worker(
+                    NimbusRuntime::with_policy(host, policy),
+                    bundle,
+                    request,
+                    context,
+                    None,
+                )
+                .await
+        }
+    });
+
+    host.wait_until_started("slow-shutdown").await;
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if policy.metrics_snapshot().active_runtime_instances == 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("cooperative invocation should release its active isolate while parked");
+
+    executor.inner.shutdown.cancel();
+    executor.inner.router.close();
+
+    let result = tokio::time::timeout(Duration::from_secs(1), parked_task)
+        .await
+        .expect("shutdown should complete the parked invocation")
+        .expect("parked invocation task should join");
+    assert!(matches!(result, Err(NimbusRuntimeError::Cancelled)));
+
+    let metrics = policy.metrics_snapshot();
+    assert_eq!(metrics.in_flight_canceled_invocations, 1);
+    assert_eq!(metrics.active_runtime_instances, 0);
+}
+
+#[tokio::test]
 async fn cooperative_execution_model_startup_snapshot_handles_multiple_parked_runtimes() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_function_named_get_bundle();

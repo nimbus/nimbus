@@ -61,8 +61,6 @@ pub struct LicenseEntitlements {
     #[serde(default)]
     pub audit_logs: bool,
     #[serde(default)]
-    pub backup_api: bool,
-    #[serde(default)]
     pub multi_node: bool,
 }
 

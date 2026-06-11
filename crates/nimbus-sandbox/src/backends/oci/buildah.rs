@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use super::command::CommandSpec;
 use crate::error::{Result, SandboxError};
-use crate::spec::{SandboxFilesystemSpec, SandboxImageProcessOverrides, SandboxProcessSpec};
+use crate::spec::{SandboxProcessSpec, SandboxRootfsSpec};
 
 mod cli;
 mod defaults;

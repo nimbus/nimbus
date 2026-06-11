@@ -6,16 +6,14 @@ use nimbus_runtime::HostCallCancellation;
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_tenant::{
     TenantImagePolicyDecision, TenantIsolationContext, TenantIsolationDecision,
-    TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantWorkloadIdentity,
+    TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, WorkloadAttributes,
 };
 use tokio::time::sleep;
 
-use crate::registry::service_binding_from_handle;
-
-use super::SandboxServiceManager;
+use super::ServiceManager;
 use super::types::{ActivationClaim, TenantServiceKey, sandbox_backend_error};
 
-impl SandboxServiceManager {
+impl ServiceManager {
     pub(super) async fn claim_activation(&self, key: &TenantServiceKey) -> ActivationClaim {
         loop {
             let notified = self.activation_notify.notified();
@@ -57,9 +55,7 @@ impl SandboxServiceManager {
             let Some(handle) = self.refresh_handle_async(key).await? else {
                 return Ok(None);
             };
-            if handle.status == SandboxStatus::Ready
-                || service_binding_from_handle(&handle).is_some()
-            {
+            if handle.status == SandboxStatus::Ready {
                 return Ok(Some(handle));
             }
             if matches!(
@@ -70,7 +66,7 @@ impl SandboxServiceManager {
             }
             if Instant::now() >= deadline {
                 return Err(Error::ResourceExhausted(format!(
-                    "sandbox service {} for tenant {} did not become ready within {:?}",
+                    "sandbox-backed service {} for tenant {} did not become ready within {:?}",
                     key.service_name, key.tenant_id, self.activation_timeout
                 )));
             }
@@ -99,7 +95,7 @@ impl SandboxServiceManager {
         service_name: &str,
         cancellation: HostCallCancellation,
     ) -> Result<Option<SandboxHandle>, Error> {
-        let decision = service_activation_decision(isolation, service_name)?;
+        let decision = service_lifecycle_decision(isolation, service_name)?;
         self.start_service_for_decision_async(&decision, service_name, cancellation)
             .await
     }
@@ -128,14 +124,18 @@ impl SandboxServiceManager {
                 self.wait_for_ready_handle_async(&key, &cancellation).await
             }
             ActivationClaim::Claimed => {
-                let Some(launch) = self
-                    .service_catalog
-                    .sandbox_service_for_tenant(tenant_id, service_name)
-                else {
+                let Some(launch) = self.service_launch_for_tenant(tenant_id, service_name) else {
                     self.release_activation(&key);
                     return Ok(None);
                 };
-                let start_result = self.start_launch_async(&key, decision, launch).await;
+                let start_result = self
+                    .start_sandbox_service_async(
+                        &key,
+                        decision,
+                        launch.backend,
+                        &launch.volume_policy,
+                    )
+                    .await;
                 self.release_activation(&key);
                 start_result?;
                 self.wait_for_ready_handle_async(&key, &cancellation).await
@@ -148,7 +148,19 @@ impl SandboxServiceManager {
         isolation: &TenantIsolationContext,
         service_name: &str,
     ) -> Result<Option<SandboxHandle>, Error> {
-        let tenant_id = isolation.tenant_id();
+        let decision = service_lifecycle_decision(isolation, service_name)?;
+        self.stop_service_for_decision_async(&decision, service_name)
+            .await
+    }
+
+    pub async fn stop_service_for_decision_async(
+        &self,
+        decision: &TenantIsolationDecision,
+        service_name: &str,
+    ) -> Result<Option<SandboxHandle>, Error> {
+        let tenant_id = decision.tenant_id();
+        let binding = LocalEnforcementBinding::from_decision(decision)?;
+        binding.service_access(service_name)?;
         let key = TenantServiceKey::new(tenant_id, service_name);
         let previous_handle = self.current_handle(&key);
         let refreshed_handle = self.refresh_handle_async(&key).await?;
@@ -193,9 +205,20 @@ impl SandboxServiceManager {
         service_name: &str,
         cancellation: HostCallCancellation,
     ) -> Result<Option<SandboxHandle>, Error> {
-        self.stop_service_for_context_async(isolation, service_name)
+        let decision = service_lifecycle_decision(isolation, service_name)?;
+        self.restart_service_for_decision_async(&decision, service_name, cancellation)
+            .await
+    }
+
+    pub async fn restart_service_for_decision_async(
+        &self,
+        decision: &TenantIsolationDecision,
+        service_name: &str,
+        cancellation: HostCallCancellation,
+    ) -> Result<Option<SandboxHandle>, Error> {
+        self.stop_service_for_decision_async(decision, service_name)
             .await?;
-        self.start_service_for_context_async(isolation, service_name, cancellation)
+        self.start_service_for_decision_async(decision, service_name, cancellation)
             .await
     }
 
@@ -216,7 +239,7 @@ impl SandboxServiceManager {
         let binding = LocalEnforcementBinding::from_decision(decision)?;
         binding
             .service_access(service_name)?
-            .ensure_tenant_matches(tenant_id, "sandbox service egress reload")?;
+            .ensure_tenant_matches(tenant_id, "sandbox-backed service egress reload")?;
         binding.authorize_egress_reload(&TenantEgressReloadRequest::for_spec(binding.spec()))?;
         let Some(handle) = self.refresh_handle_async(&key).await? else {
             return Ok(None);
@@ -231,16 +254,13 @@ impl SandboxServiceManager {
     }
 }
 
-pub(super) fn service_activation_decision(
+pub(super) fn service_lifecycle_decision(
     isolation: &TenantIsolationContext,
     service_name: &str,
 ) -> Result<TenantIsolationDecision, Error> {
     isolation.admit_decision(
-        TenantIsolationPolicyInput::new(TenantWorkloadIdentity::sandbox_service(
-            service_name,
-            "activation",
-        ))
-        .with_services(TenantServiceGrantPolicyDecision::new([service_name]))
-        .with_image(TenantImagePolicyDecision::default().allow_local_build()),
+        TenantIsolationPolicyInput::new(WorkloadAttributes::service(service_name))
+            .with_services(TenantServiceGrantPolicyDecision::new([service_name]))
+            .with_image(TenantImagePolicyDecision::default().allow_local_build()),
     )
 }

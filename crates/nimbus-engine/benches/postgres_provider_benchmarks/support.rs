@@ -216,17 +216,17 @@ where
     Ok((first, second))
 }
 
-pub(super) async fn quiesce_service(service: &Arc<Service>, context: &str) -> BenchResult<()> {
+pub(super) async fn quiesce_engine(engine: &Arc<Engine>, context: &str) -> BenchResult<()> {
     match tokio::time::timeout(
         Duration::from_secs(BENCHMARK_QUIESCE_TIMEOUT_SECS),
-        service.quiesce(),
+        engine.quiesce(),
     )
     .await
     {
         Ok(()) => Ok(()),
         Err(_) => {
             eprintln!(
-                "graceful service quiesce timed out during {context}; falling back to drop-based benchmark teardown"
+                "graceful engine quiesce timed out during {context}; falling back to drop-based benchmark teardown"
             );
             Ok(())
         }
@@ -349,11 +349,11 @@ pub(super) async fn cleanup_registered_postgres_providers() {
     }
 }
 
-pub(super) fn postgres_service_config(
+pub(super) fn postgres_engine_config(
     control_dir: &Path,
     provider_config: &PostgresProviderConfig,
-) -> ServicePersistenceConfig {
-    ServicePersistenceConfig {
+) -> EnginePersistenceConfig {
+    EnginePersistenceConfig {
         tenant_provider: TenantProviderConfig {
             dialect: PersistenceDialect::Postgres,
             topology: PersistenceTopology::ExternalPrimary,

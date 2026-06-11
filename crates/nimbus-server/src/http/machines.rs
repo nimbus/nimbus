@@ -194,7 +194,7 @@ pub(crate) async fn delete_machine(
     let name = parse_machine_name(name)?;
     let manager = machine_lifecycle_manager(&state)?;
     let snapshot = manager.delete_machine(&name).await?;
-    crate::system_tenant::delete_machine_state_async(&state.service, &snapshot.config.name)
+    crate::system_tenant::delete_machine_state_async(&state.engine, &snapshot.config.name)
         .await
         .map_err(AppError::from)?;
     record_machine_delete_event(&state, &snapshot.config, &snapshot.state).await?;
@@ -244,7 +244,7 @@ async fn record_machine_snapshot(
     config: &MachineConfigRecord,
     snapshot: &MachineStateRecord,
 ) -> Result<(), AppError> {
-    crate::system_tenant::record_machine_state_async(&state.service, config, snapshot)
+    crate::system_tenant::record_machine_state_async(&state.engine, config, snapshot)
         .await
         .map_err(AppError::from)
 }
@@ -263,7 +263,7 @@ async fn record_machine_event(
     );
     let correlation_id = format!("machine:{}:{action}", config.name);
     crate::system_tenant::record_system_event_async(
-        &state.service,
+        &state.engine,
         "machine",
         "info",
         "machine.lifecycle",
@@ -293,7 +293,7 @@ async fn record_machine_delete_event(
     );
     let correlation_id = format!("machine:{}:delete", config.name);
     crate::system_tenant::record_system_event_async(
-        &state.service,
+        &state.engine,
         "machine",
         "info",
         "machine.lifecycle",
@@ -338,7 +338,7 @@ fn parse_machine_name(value: String) -> Result<String, AppError> {
 fn describe_image_source(source: &MachineImageSource) -> String {
     match source {
         MachineImageSource::OciReference { reference } => reference.clone(),
-        MachineImageSource::HttpUrl { url } => url.clone(),
+        MachineImageSource::HttpUrl { url, sha256 } => format!("{url}#sha256={sha256}"),
         MachineImageSource::LocalDisk { path } => path.display().to_string(),
     }
 }

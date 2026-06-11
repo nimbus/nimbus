@@ -16,7 +16,7 @@ impl ConvexHostBridge {
         }
 
         execute_query_result_async(
-            self.service(),
+            self.engine(),
             self.tenant_id(),
             query,
             auth,
@@ -41,7 +41,7 @@ impl ConvexHostBridge {
 
         let mut check_cancel = || check_host_cancellation(cancellation);
         execute_query_result_cancellable_with_auth(
-            self.service(),
+            self.engine(),
             self.tenant_id(),
             query,
             auth,
@@ -68,7 +68,7 @@ impl ConvexHostBridge {
         }
 
         let check_cancellation = cancellation.clone();
-        self.service()
+        self.engine()
             .paginate_documents_async_cancellable_with_principal(
                 self.tenant_id().clone(),
                 PaginatedQuery {
@@ -102,17 +102,16 @@ impl ConvexHostBridge {
         }
 
         let mut check_cancel = || check_host_cancellation(cancellation);
-        self.service()
-            .paginate_documents_with_principal_cancellable(
-                self.tenant_id(),
-                &PaginatedQuery {
-                    query,
-                    page_size,
-                    after,
-                },
-                principal,
-                &mut check_cancel,
-            )
+        self.engine().paginate_documents_with_principal_cancellable(
+            self.tenant_id(),
+            &PaginatedQuery {
+                query,
+                page_size,
+                after,
+            },
+            principal,
+            &mut check_cancel,
+        )
     }
 
     pub(in crate::adapters::convex) async fn dispatch_convex_mutation_with_execution_context_async_cancellable(
@@ -145,7 +144,7 @@ impl ConvexHostBridge {
         }
 
         dispatch_convex_mutation_async(
-            self.service(),
+            self.engine(),
             self.registry(),
             self.tenant_id(),
             mutation,
@@ -176,7 +175,7 @@ impl ConvexHostBridge {
         }
 
         dispatch_convex_mutation_cancellable_with_auth(
-            self.service(),
+            self.engine(),
             self.registry(),
             self.tenant_id(),
             mutation,

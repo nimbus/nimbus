@@ -9,7 +9,7 @@ pub(crate) async fn health() -> Json<HealthResponse> {
 pub(crate) async fn license_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<crate::license::LicenseSnapshot>, AppError> {
-    let service = state.service.clone();
+    let service = state.engine.clone();
     let usage = service.current_monthly_active_users_async().await?;
     Ok(Json(state.license_state.snapshot_with_usage(Some(
         crate::license::LicenseUsageInput {
@@ -121,7 +121,7 @@ pub(crate) async fn tenant_engine_diagnostics(
 ) -> Result<Json<TenantEngineDiagnosticsResponse>, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.metadata.engine")?;
     let diagnostics = state
-        .service
+        .engine
         .clone()
         .tenant_engine_diagnostics_async(tenant.tenant_id().clone())
         .await?;
@@ -138,7 +138,7 @@ pub(crate) async fn tenant_consistency_report(
 ) -> Result<Json<nimbus_engine::ConsistencyVerificationReport>, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.metadata.consistency")?;
     let report = state
-        .service
+        .engine
         .clone()
         .verify_consistency_async(tenant.tenant_id().clone())
         .await?;
@@ -155,7 +155,7 @@ pub(crate) async fn encryption_status(
     State(state): State<Arc<AppState>>,
 ) -> Json<nimbus_engine::EncryptionStatus> {
     let status = state
-        .service
+        .engine
         .encryption_status()
         .cloned()
         .unwrap_or_else(|| nimbus_engine::EncryptionStatus {

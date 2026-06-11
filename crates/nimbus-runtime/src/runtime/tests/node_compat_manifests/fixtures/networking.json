@@ -19,8 +19,8 @@
       "subset_test": "runtime::tests::node_compat::node24_default_lane_networking_watchpoint"
     }
   ],
-  "manifest_doc": "docs/architecture/runtime/node-lts-compat/manifests/networking.md",
-  "failure_doc": "docs/architecture/runtime/node-lts-compat/failures/networking.md",
+  "manifest_doc": "tests/runtime/node/compat/node-lts-compat/manifests/networking.md",
+  "failure_doc": "tests/runtime/node/compat/node-lts-compat/failures/networking.md",
   "fixture_seeds": [
     {
       "id": "test/parallel/test-dns-get-server.js",

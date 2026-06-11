@@ -1,6 +1,79 @@
+use super::document_versions::{
+    prune_document_versions_before_remote, record_document_versions_for_events_remote,
+};
+use super::index_versions::{
+    prune_index_versions_before_remote, record_index_versions_for_events_remote,
+};
 use super::*;
 
 impl LibsqlReplicaTenantStore {
+    pub fn retention_gc_watermarks(
+        &self,
+        config: crate::RetentionGcConfig,
+    ) -> Result<crate::RetentionGcWatermarks> {
+        Ok(self
+            .retention_floor
+            .gc_watermarks(self.journal_progress()?.applied_head, config))
+    }
+
+    pub fn compact_retained_versions(
+        &self,
+        config: crate::RetentionGcConfig,
+    ) -> Result<crate::RetentionGcSummary> {
+        let watermarks = self.retention_gc_watermarks(config)?;
+        let document_prune_before = watermarks.document_versions.safe_prune_before;
+        let index_prune_before = watermarks.index_versions.safe_prune_before;
+        let committed = self.execute_write(move |transaction| {
+            transaction.prune_retained_versions(document_prune_before, index_prune_before)
+        })?;
+        debug_assert!(committed.commit.is_none());
+        Ok(crate::RetentionGcSummary {
+            watermarks,
+            document_versions_pruned: committed.value.0,
+            index_versions_pruned: committed.value.1,
+        })
+    }
+
+    pub fn export_point_in_time_restore_archive(
+        &self,
+        target: PointInTimeRestoreTarget,
+        retention_config: crate::RetentionGcConfig,
+    ) -> Result<PointInTimeRestoreArchive> {
+        let records = self.read_durable_journal_from(SequenceNumber(1))?;
+        let progress = self.journal_progress()?;
+        let watermarks = self.retention_gc_watermarks(retention_config)?;
+        crate::store::build_point_in_time_restore_archive(
+            target,
+            records,
+            progress.durable_head,
+            watermarks.document_versions.safe_prune_before,
+        )
+    }
+
+    pub fn import_point_in_time_restore_archive(
+        &self,
+        archive: &PointInTimeRestoreArchive,
+    ) -> Result<JournalProgress> {
+        crate::store::validate_point_in_time_archive_for_journal_replay_import(archive)?;
+        let current = self.export_materialized_journal_snapshot()?;
+        crate::store::validate_materialized_journal_replay_base_is_empty(&current)?;
+        self.append_durable_records_batch(&archive.journal_tail)?;
+        let progress = self.recover_durable_journal()?;
+        let restored_fingerprint = self
+            .export_materialized_journal_snapshot()?
+            .canonical_fingerprint()?;
+        if restored_fingerprint != archive.target_fingerprint {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Corruption,
+                format!(
+                    "point-in-time restore fingerprint mismatch: restored {} expected {}",
+                    restored_fingerprint, archive.target_fingerprint
+                ),
+            ));
+        }
+        Ok(progress)
+    }
+
     pub fn replace_table_schema(&self, table_schema: &TableSchema) -> Result<()> {
         let table_schema = table_schema.clone();
         self.execute_write(move |transaction| transaction.replace_table_schema(&table_schema))?;
@@ -42,9 +115,9 @@ impl LibsqlReplicaTenantStore {
         Ok(())
     }
 
-    pub fn claim_due_jobs(&self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
+    pub fn claim_due_jobs(&self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
         Ok(self
-            .execute_write(move |transaction| transaction.claim_due_jobs(now))?
+            .execute_write(move |transaction| transaction.claim_due_jobs(now, max_jobs))?
             .value)
     }
 
@@ -283,7 +356,7 @@ impl LibsqlReplicaTenantStore {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
     ) -> Result<Option<CommitEntry>> {
-        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None)
+        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None, None)
     }
 
     pub fn apply_execution_unit_batch_with_origin(
@@ -291,6 +364,7 @@ impl LibsqlReplicaTenantStore {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
         trigger_write_origin: Option<&TriggerWriteOrigin>,
+        commit_timestamp: Option<Timestamp>,
     ) -> Result<Option<CommitEntry>> {
         if writes.is_empty() && schedule_ops.is_empty() {
             return Err(Error::Internal(
@@ -302,6 +376,7 @@ impl LibsqlReplicaTenantStore {
         let trigger_write_origin = trigger_write_origin.cloned();
         let committed = self.execute_write(move |transaction| {
             transaction.set_trigger_write_origin(trigger_write_origin.clone());
+            transaction.set_commit_timestamp(commit_timestamp);
             for write in &writes {
                 transaction.apply_resolved_write(write)?;
             }
@@ -388,8 +463,25 @@ impl LibsqlReplicaWriteTransaction {
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
             trigger_write_origin: None,
+            commit_timestamp: None,
             check_cancel: Box::new(check_cancel),
             refresh_cache_after_commit: false,
+        })
+    }
+
+    pub fn prune_retained_versions(
+        &mut self,
+        document_prune_before: SequenceNumber,
+        index_prune_before: SequenceNumber,
+    ) -> Result<(u64, u64)> {
+        self.check_cancel()?;
+        self.store.block_on(async {
+            let document_versions_pruned =
+                prune_document_versions_before_remote(self.session()?, document_prune_before)
+                    .await?;
+            let index_versions_pruned =
+                prune_index_versions_before_remote(self.session()?, index_prune_before).await?;
+            Ok((document_versions_pruned, index_versions_pruned))
         })
     }
 
@@ -626,8 +718,12 @@ impl LibsqlReplicaWriteTransaction {
         self.store.block_on(async {
             self.session()?
                 .execute(
-                    "INSERT INTO scheduled_jobs (id, data_json) VALUES (?1, ?2)",
-                    libsql::params![job.id.to_string(), data_json],
+                    "INSERT INTO scheduled_jobs (id, run_at, data_json) VALUES (?1, ?2, ?3)",
+                    libsql::params![
+                        job.id.to_string(),
+                        scheduled_run_at_key(job.run_at),
+                        data_json
+                    ],
                 )
                 .await
                 .map_err(map_libsql_error)?;
@@ -635,15 +731,34 @@ impl LibsqlReplicaWriteTransaction {
         })
     }
 
-    pub fn claim_due_jobs(&mut self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
+    pub fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
         self.check_cancel()?;
-        let due = self
-            .store
-            .block_on(self.store.load_remote_scheduled_jobs("scheduled_jobs"))?;
-        let due = due
-            .into_iter()
-            .filter(|job| job.run_at.0 <= now.0)
-            .collect::<Vec<_>>();
+        let due = if max_jobs == 0 {
+            Vec::new()
+        } else {
+            let run_at_upper = scheduled_run_at_key(now);
+            let max_jobs = i64::try_from(max_jobs).unwrap_or(i64::MAX);
+            self.store.block_on(async {
+                let mut rows = self
+                    .session()?
+                    .query(
+                        "SELECT data_json FROM scheduled_jobs
+                         WHERE run_at <= ?1
+                         ORDER BY run_at, id
+                         LIMIT ?2",
+                        libsql::params![run_at_upper, max_jobs],
+                    )
+                    .await
+                    .map_err(map_libsql_error)?;
+                let mut due = Vec::new();
+                while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
+                    due.push(deserialize_json::<ScheduledJob>(
+                        row.get::<String>(0).map_err(map_libsql_error)?.as_str(),
+                    )?);
+                }
+                Ok(due)
+            })?
+        };
         for job in &due {
             self.check_cancel()?;
             let data_json = serialize_json(job)?;
@@ -756,8 +871,12 @@ impl LibsqlReplicaWriteTransaction {
             self.store.block_on(async {
                 self.session()?
                     .execute(
-                        "INSERT INTO scheduled_jobs (id, data_json) VALUES (?1, ?2)",
-                        libsql::params![job.id.to_string(), data_json],
+                        "INSERT INTO scheduled_jobs (id, run_at, data_json) VALUES (?1, ?2, ?3)",
+                        libsql::params![
+                            job.id.to_string(),
+                            scheduled_run_at_key(job.run_at),
+                            data_json
+                        ],
                     )
                     .await
                     .map_err(map_libsql_error)?;
@@ -982,6 +1101,10 @@ impl LibsqlReplicaWriteTransaction {
         self.trigger_write_origin = trigger_write_origin;
     }
 
+    fn set_commit_timestamp(&mut self, commit_timestamp: Option<Timestamp>) {
+        self.commit_timestamp = commit_timestamp;
+    }
+
     fn record_commit_write(&mut self, mut write: WriteOp) {
         if write.trigger_write_origin.is_none() {
             write.trigger_write_origin = self.trigger_write_origin.clone();
@@ -1010,7 +1133,9 @@ impl LibsqlReplicaWriteTransaction {
             self.store
                 .block_on(load_next_sequence_from_session(self.session()?))?,
         );
-        let timestamp = self.store.provider.clock.now();
+        let timestamp = self
+            .commit_timestamp
+            .unwrap_or_else(|| self.store.provider.clock.now());
         let record = TenantEventRecord::from_events(sequence, timestamp, events)?;
         let entry = CommitEntry {
             sequence,
@@ -1018,7 +1143,23 @@ impl LibsqlReplicaWriteTransaction {
             writes,
         };
         let payload = serialize_tenant_event_record(&record)?;
+        let record_sequence = record.sequence;
+        let record_timestamp = record.timestamp;
+        let record_events = record.events.clone();
         self.store.block_on(async {
+            record_document_versions_for_events_remote(
+                self.session()?,
+                record_sequence,
+                record_timestamp,
+                &record_events,
+            )
+            .await?;
+            record_index_versions_for_events_remote(
+                self.session()?,
+                record_sequence,
+                &record_events,
+            )
+            .await?;
             self.session()?
                 .execute(
                     "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",

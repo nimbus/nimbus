@@ -34,6 +34,38 @@ struct SharedInvocationPermitState {
     timeout_controller: Option<RuntimeInvocationTimeoutController>,
 }
 
+struct QueuedInvocationMetricGuard {
+    policy: Arc<RuntimePolicy>,
+    active: bool,
+}
+
+impl QueuedInvocationMetricGuard {
+    fn enter(policy: Arc<RuntimePolicy>) -> Self {
+        policy.metrics().increment_queued_invocations();
+        Self {
+            policy,
+            active: true,
+        }
+    }
+
+    fn finish(mut self) {
+        self.decrement_once();
+    }
+
+    fn decrement_once(&mut self) {
+        if self.active {
+            self.policy.metrics().decrement_queued_invocations();
+            self.active = false;
+        }
+    }
+}
+
+impl Drop for QueuedInvocationMetricGuard {
+    fn drop(&mut self) {
+        self.decrement_once();
+    }
+}
+
 impl SharedInvocationPermit {
     pub(crate) fn new(
         policy: Arc<RuntimePolicy>,
@@ -95,7 +127,7 @@ impl SharedInvocationPermit {
             return Ok(());
         }
 
-        policy.metrics().increment_queued_invocations();
+        let queued_metric = QueuedInvocationMetricGuard::enter(policy.clone());
         let active_permit = match dispatch_handle.clone() {
             Some(dispatch_handle) => {
                 let permit = dispatch_handle.acquire_active_permit().await?;
@@ -104,7 +136,6 @@ impl SharedInvocationPermit {
                     .is_some_and(HostCallCancellation::is_cancelled)
                 {
                     drop(permit);
-                    policy.metrics().decrement_queued_invocations();
                     return Err(NimbusRuntimeError::Cancelled);
                 }
                 Some(permit)
@@ -121,7 +152,7 @@ impl SharedInvocationPermit {
                     "runtime instance semaphore unexpectedly closed".to_string(),
                 )
             })?;
-        policy.metrics().decrement_queued_invocations();
+        queued_metric.finish();
 
         if let Some(dispatch_handle) = &dispatch_handle {
             dispatch_handle.mark_active_entered();
@@ -208,7 +239,7 @@ impl SharedInvocationPermit {
             timeout_controller.pause().await;
         }
 
-        policy.metrics().increment_queued_invocations();
+        let queued_metric = QueuedInvocationMetricGuard::enter(policy.clone());
         let active_permit = match dispatch_handle.clone() {
             Some(dispatch_handle) => {
                 let permit = dispatch_handle.acquire_active_permit().await?;
@@ -217,7 +248,6 @@ impl SharedInvocationPermit {
                     .is_some_and(HostCallCancellation::is_cancelled)
                 {
                     drop(permit);
-                    policy.metrics().decrement_queued_invocations();
                     return Ok(());
                 }
                 Some(permit)
@@ -233,7 +263,7 @@ impl SharedInvocationPermit {
                     "runtime instance semaphore unexpectedly closed".to_string(),
                 )
             })?;
-        policy.metrics().decrement_queued_invocations();
+        queued_metric.finish();
 
         if let Some(dispatch_handle) = &dispatch_handle {
             dispatch_handle.mark_active_entered();
@@ -305,5 +335,159 @@ impl SharedInvocationPermit {
                 .record_invocation_completed_for_tenant(tenant_label.as_deref());
         }
         ready_jobs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    use tokio::sync::Semaphore;
+
+    use super::super::RuntimeExecutorAdmission;
+    use super::super::dispatch::RuntimeInvocationDispatchHandle;
+    use super::*;
+    use crate::limits::{RuntimeLimits, RuntimePolicy};
+
+    fn test_policy() -> Arc<RuntimePolicy> {
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22()))
+    }
+
+    fn closed_dispatch_handle(policy: Arc<RuntimePolicy>) -> RuntimeInvocationDispatchHandle {
+        let active_semaphore = Arc::new(Semaphore::new(0));
+        active_semaphore.close();
+        RuntimeInvocationDispatchHandle {
+            admission: Arc::new(RuntimeExecutorAdmission::new(policy)),
+            tenant_label: "tenant-a".to_string(),
+            active_semaphore,
+        }
+    }
+
+    fn open_dispatch_handle(
+        policy: Arc<RuntimePolicy>,
+    ) -> (RuntimeInvocationDispatchHandle, Arc<Semaphore>) {
+        let active_semaphore = Arc::new(Semaphore::new(1));
+        (
+            RuntimeInvocationDispatchHandle {
+                admission: Arc::new(RuntimeExecutorAdmission::new(policy)),
+                tenant_label: "tenant-a".to_string(),
+                active_semaphore: active_semaphore.clone(),
+            },
+            active_semaphore,
+        )
+    }
+
+    fn assert_no_queued_invocations(policy: &RuntimePolicy) {
+        assert_eq!(
+            policy.metrics_snapshot().queued_invocations,
+            0,
+            "queued invocation metric should not leak on acquire error"
+        );
+    }
+
+    #[tokio::test]
+    async fn acquire_initial_decrements_queue_when_active_permit_is_closed() {
+        let policy = test_policy();
+        let dispatch_handle = closed_dispatch_handle(policy.clone());
+        let mut permit = SharedInvocationPermit::new(
+            policy.clone(),
+            Some("tenant-a".to_string()),
+            Some(dispatch_handle),
+            false,
+            None,
+        );
+
+        let error = permit
+            .acquire_initial(Instant::now())
+            .await
+            .expect_err("closed active semaphore should reject initial acquire");
+
+        assert!(
+            error
+                .to_string()
+                .contains("runtime tenant active semaphore unexpectedly closed"),
+            "unexpected error: {error}"
+        );
+        assert_no_queued_invocations(&policy);
+    }
+
+    #[tokio::test]
+    async fn acquire_initial_decrements_queue_when_runtime_semaphore_is_closed() {
+        let policy = test_policy();
+        policy.runtime_instance_semaphore().close();
+        let mut permit = SharedInvocationPermit::new(policy.clone(), None, None, false, None);
+
+        let error = permit
+            .acquire_initial(Instant::now())
+            .await
+            .expect_err("closed runtime semaphore should reject initial acquire");
+
+        assert!(
+            error
+                .to_string()
+                .contains("runtime instance semaphore unexpectedly closed"),
+            "unexpected error: {error}"
+        );
+        assert_no_queued_invocations(&policy);
+    }
+
+    #[tokio::test]
+    async fn complete_async_host_call_decrements_queue_when_active_permit_is_closed() {
+        let policy = test_policy();
+        let (dispatch_handle, active_semaphore) = open_dispatch_handle(policy.clone());
+        let permit = SharedInvocationPermit::new(
+            policy.clone(),
+            Some("tenant-a".to_string()),
+            Some(dispatch_handle),
+            false,
+            None,
+        );
+        let mut acquired = permit.clone();
+        acquired
+            .acquire_initial(Instant::now())
+            .await
+            .expect("initial acquire should succeed");
+        permit.begin_async_host_call();
+        active_semaphore.close();
+
+        let error = permit
+            .complete_async_host_call()
+            .await
+            .expect_err("closed active semaphore should reject async-host resume");
+
+        assert!(
+            error
+                .to_string()
+                .contains("runtime tenant active semaphore unexpectedly closed"),
+            "unexpected error: {error}"
+        );
+        assert_no_queued_invocations(&policy);
+    }
+
+    #[tokio::test]
+    async fn complete_async_host_call_decrements_queue_when_runtime_semaphore_is_closed() {
+        let policy = test_policy();
+        let permit = SharedInvocationPermit::new(policy.clone(), None, None, false, None);
+        let mut acquired = permit.clone();
+        acquired
+            .acquire_initial(Instant::now())
+            .await
+            .expect("initial acquire should succeed");
+        permit.begin_async_host_call();
+        policy.runtime_instance_semaphore().close();
+
+        let error = permit
+            .complete_async_host_call()
+            .await
+            .expect_err("closed runtime semaphore should reject async-host resume");
+
+        assert!(
+            error
+                .to_string()
+                .contains("runtime instance semaphore unexpectedly closed"),
+            "unexpected error: {error}"
+        );
+        assert_no_queued_invocations(&policy);
     }
 }

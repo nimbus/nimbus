@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn license_status_route_returns_trial_license_details() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let license_state = LicenseState::from_document(
         LicenseDocument {
             schema_version: 1,
@@ -26,7 +26,7 @@ async fn license_status_route_returns_trial_license_details() {
             path: Some("/tmp/license.json".to_string()),
         },
     );
-    let server = ServerFixture::start(router_for_license(fixture.service(), license_state)).await;
+    let server = ServerFixture::start(router_for_license(fixture.engine(), license_state)).await;
     let api = HttpApiFixture::new(&server);
 
     let response = api.license_status().await;

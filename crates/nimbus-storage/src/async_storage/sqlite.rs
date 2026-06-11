@@ -12,8 +12,8 @@ use crate::sqlite::{SqliteTenantStore, SqliteWriteTransaction};
 use crate::{Clock, FaultInjector, TenantWriteCommit};
 
 use super::EmbeddedProviderKind;
-use super::helpers::map_join_error;
 use super::read::{BlockingReadExecutor, default_tenant_read_parallelism};
+use super::task_error::map_join_error;
 use super::traits::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
 use super::write::BlockingWriteExecutor;
 

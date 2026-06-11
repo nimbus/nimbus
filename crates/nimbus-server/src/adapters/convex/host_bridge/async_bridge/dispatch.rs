@@ -8,7 +8,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let envelope = HostCallEnvelope::try_from(request)?;
-        self.validate_session(envelope.payload.session_id())?;
+        self.validate_host_call_session(envelope.payload.host_call_session_id())?;
         match envelope.payload {
             payload @ (HostCallPayload::HttpRoute(_)
             | HostCallPayload::CtxQuery(_)
@@ -64,7 +64,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let envelope = HostCallEnvelope::try_from(request)?;
-        self.validate_session(envelope.payload.session_id())?;
+        self.validate_host_call_session(envelope.payload.host_call_session_id())?;
         match envelope.payload {
             payload @ (HostCallPayload::HttpRoute(_)
             | HostCallPayload::CtxQuery(_)
@@ -113,7 +113,7 @@ impl ConvexHostBridge {
         request: HostCallRequest,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let envelope = HostCallEnvelope::try_from(request)?;
-        self.validate_session(envelope.payload.session_id())?;
+        self.validate_host_call_session(envelope.payload.host_call_session_id())?;
         match envelope.payload {
             payload @ (HostCallPayload::HttpRoute(_)
             | HostCallPayload::CtxQuery(_)

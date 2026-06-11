@@ -18,7 +18,7 @@ use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, DocumentId, DocumentLocator, PrincipalContext, TableName,
     WriteKey, WritePrecondition, WriteSetMode,
 };
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 
 use crate::attribute_value::{fields_to_item, item_to_fields, validate_item};
@@ -44,46 +44,50 @@ fn has_condition(condition: Option<&str>) -> bool {
 /// conditional writes (F9). Returns the raw core error so the caller can map a
 /// lost existence-precondition race to `ConditionalCheckFailedException`.
 pub(crate) fn atomic_overwrite(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table: TableName,
     id: DocumentId,
     fields: serde_json::Map<String, serde_json::Value>,
     precondition: WritePrecondition,
 ) -> Result<(), nimbus_core::Error> {
-    let batch = AtomicWriteBatch::new(vec![AtomicWrite::Set {
-        key: WriteKey::from(DocumentLocator::new(table, id)),
-        document: fields,
-        mode: WriteSetMode::Overwrite,
+    let batch = AtomicWriteBatch::new(vec![overwrite_atomic_write(
+        table,
+        id,
+        fields,
         precondition,
-        transforms: Vec::new(),
-    }])?;
-    service
+    )])?;
+    engine
         .begin_mutation_execution_unit(context.tenant_id().clone(), PrincipalContext::system())?
         .execute_atomic_write_batch(batch)?;
     Ok(())
 }
 
-/// Atomically delete `id` (a no-op success if already absent — DeleteItem
-/// semantics). `precondition` closes the conditional-delete TOCTOU (F9): a
-/// concurrent existence flip between the condition check and the commit fails
-/// the precondition. Returns the raw core error for conditional remapping.
-fn atomic_delete(
-    service: &Arc<Service>,
-    context: &TenantIsolationContext,
+pub(crate) fn overwrite_atomic_write(
+    table: TableName,
+    id: DocumentId,
+    fields: serde_json::Map<String, serde_json::Value>,
+    precondition: WritePrecondition,
+) -> AtomicWrite {
+    AtomicWrite::Set {
+        key: WriteKey::from(DocumentLocator::new(table, id)),
+        document: fields,
+        mode: WriteSetMode::Overwrite,
+        precondition,
+        transforms: Vec::new(),
+    }
+}
+
+pub(crate) fn delete_atomic_write(
     table: TableName,
     id: DocumentId,
     precondition: WritePrecondition,
-) -> Result<(), nimbus_core::Error> {
-    let batch = AtomicWriteBatch::new(vec![AtomicWrite::Delete {
+) -> AtomicWrite {
+    AtomicWrite::Delete {
         key: WriteKey::from(DocumentLocator::new(table, id)),
         precondition,
         missing_ok: true,
-    }])?;
-    service
-        .begin_mutation_execution_unit(context.tenant_id().clone(), PrincipalContext::system())?
-        .execute_atomic_write_batch(batch)?;
-    Ok(())
+    }
 }
 
 /// Map a single-item **conditional** write failure. A lost existence
@@ -124,17 +128,17 @@ fn write_precondition(conditional: bool, existed: bool) -> WritePrecondition {
 /// for an invalid item or missing key; `ConditionalCheckFailedException` if the
 /// condition fails; a mapped engine error otherwise.
 pub fn put_item(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: PutItemInput,
 ) -> Result<PutItemOutput, DynamoDbError> {
     validate_item(&input.item)?;
-    let key_schema = control_plane::load_key_schema(service, context, &input.table_name)?;
+    let key_schema = control_plane::load_key_schema(engine, context, &input.table_name)?;
     let id = primary_key_id(&input.item, &key_schema)?;
     let table = TableName::new(&input.table_name).map_err(map_core_error)?;
 
     // The existing item backs both the condition gate and ReturnValues=ALL_OLD.
-    let existing = read_item(service, context, &table, id.clone())?;
+    let existing = read_item(engine, context, &table, id.clone())?;
 
     let limits = default_limits();
     let gate_item = existing.clone().unwrap_or_default();
@@ -152,13 +156,6 @@ pub fn put_item(
     let fields = item_to_fields(&input.item)?;
     let conditional = has_condition(input.condition_expression.as_deref());
     let precondition = write_precondition(conditional, existing.is_some());
-    atomic_overwrite(service, context, table, id, fields, precondition).map_err(|error| {
-        if conditional {
-            map_conditional_write_error(error)
-        } else {
-            map_core_error(error)
-        }
-    })?;
 
     // Capture a stream event (no-op unless the table has a stream enabled).
     let event_name = if existing.is_some() {
@@ -167,16 +164,25 @@ pub fn put_item(
         StreamEventName::Insert
     };
     let keys = extract_key(&input.item, &key_schema);
-    stream::capture_event(
-        service,
+    let change = stream::StreamChange::new(
+        input.table_name.clone(),
+        event_name,
+        keys,
+        existing.clone(),
+        Some(input.item.clone()),
+        None,
+    );
+    stream::execute_atomic_write_batch_with_streams(
+        engine,
         context,
-        &input.table_name,
-        stream::ChangeEvent {
-            event_name,
-            keys: &keys,
-            old_image: existing.as_ref(),
-            new_image: Some(&input.item),
-            user_identity: None,
+        vec![overwrite_atomic_write(table, id, fields, precondition)],
+        &[change],
+        |error| {
+            if conditional {
+                map_conditional_write_error(error)
+            } else {
+                map_core_error(error)
+            }
         },
     )?;
 
@@ -199,15 +205,15 @@ pub fn put_item(
 /// `ResourceNotFoundException` if the table is absent; `ValidationException`
 /// for a missing key or malformed projection.
 pub fn get_item(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: GetItemInput,
 ) -> Result<GetItemOutput, DynamoDbError> {
-    let key_schema = control_plane::load_key_schema(service, context, &input.table_name)?;
+    let key_schema = control_plane::load_key_schema(engine, context, &input.table_name)?;
     let id = primary_key_id(&input.key, &key_schema)?;
     let table = TableName::new(&input.table_name).map_err(map_core_error)?;
 
-    let item = match read_item(service, context, &table, id)? {
+    let item = match read_item(engine, context, &table, id)? {
         Some(item) => Some(project_get(&input, item)?),
         None => None,
     };
@@ -250,15 +256,15 @@ fn project_get(input: &GetItemInput, item: Item) -> Result<Item, DynamoDbError> 
 /// `ResourceNotFoundException` if the table is absent; `ValidationException`
 /// for a missing key; `ConditionalCheckFailedException` if the condition fails.
 pub fn delete_item(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: DeleteItemInput,
 ) -> Result<DeleteItemOutput, DynamoDbError> {
-    let key_schema = control_plane::load_key_schema(service, context, &input.table_name)?;
+    let key_schema = control_plane::load_key_schema(engine, context, &input.table_name)?;
     let id = primary_key_id(&input.key, &key_schema)?;
     let table = TableName::new(&input.table_name).map_err(map_core_error)?;
 
-    let existing = read_item(service, context, &table, id.clone())?;
+    let existing = read_item(engine, context, &table, id.clone())?;
 
     let limits = default_limits();
     let gate_item = existing.clone().unwrap_or_default();
@@ -276,25 +282,27 @@ pub fn delete_item(
         // no precondition (last-writer-wins).
         let conditional = has_condition(input.condition_expression.as_deref());
         let precondition = write_precondition(conditional, true);
-        atomic_delete(service, context, table, id, precondition).map_err(|error| {
-            if conditional {
-                map_conditional_write_error(error)
-            } else {
-                map_core_error(error)
-            }
-        })?;
         // Capture a REMOVE stream event (no-op unless a stream is enabled).
         let keys = extract_key(&input.key, &key_schema);
-        stream::capture_event(
-            service,
+        let change = stream::StreamChange::new(
+            input.table_name.clone(),
+            StreamEventName::Remove,
+            keys,
+            existing.clone(),
+            None,
+            None,
+        );
+        stream::execute_atomic_write_batch_with_streams(
+            engine,
             context,
-            &input.table_name,
-            stream::ChangeEvent {
-                event_name: StreamEventName::Remove,
-                keys: &keys,
-                old_image: existing.as_ref(),
-                new_image: None,
-                user_identity: None,
+            vec![delete_atomic_write(table, id, precondition)],
+            &[change],
+            |error| {
+                if conditional {
+                    map_conditional_write_error(error)
+                } else {
+                    map_core_error(error)
+                }
             },
         )?;
     }
@@ -324,11 +332,11 @@ pub fn delete_item(
 /// for a missing key, empty/malformed expression, or a key-attribute update;
 /// `ConditionalCheckFailedException` if the condition fails.
 pub fn update_item(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: UpdateItemInput,
 ) -> Result<UpdateItemOutput, DynamoDbError> {
-    let key_schema = control_plane::load_key_schema(service, context, &input.table_name)?;
+    let key_schema = control_plane::load_key_schema(engine, context, &input.table_name)?;
     let id = primary_key_id(&input.key, &key_schema)?;
     let table = TableName::new(&input.table_name).map_err(map_core_error)?;
     let limits = default_limits();
@@ -343,7 +351,7 @@ pub fn update_item(
     );
     reject_key_updates(&actions, &key_schema, &maps)?;
 
-    let old_item = read_item(service, context, &table, id.clone())?;
+    let old_item = read_item(engine, context, &table, id.clone())?;
 
     let gate_item = old_item.clone().unwrap_or_default();
     check_condition(
@@ -364,13 +372,6 @@ pub fn update_item(
     let fields = item_to_fields(&new_item)?;
     let conditional = has_condition(input.condition_expression.as_deref());
     let precondition = write_precondition(conditional, old_item.is_some());
-    atomic_overwrite(service, context, table, id, fields, precondition).map_err(|error| {
-        if conditional {
-            map_conditional_write_error(error)
-        } else {
-            map_core_error(error)
-        }
-    })?;
 
     // Capture a stream event (no-op unless the table has a stream enabled).
     let event_name = if old_item.is_some() {
@@ -379,16 +380,25 @@ pub fn update_item(
         StreamEventName::Insert
     };
     let keys = extract_key(&new_item, &key_schema);
-    stream::capture_event(
-        service,
+    let change = stream::StreamChange::new(
+        input.table_name.clone(),
+        event_name,
+        keys,
+        old_item.clone(),
+        Some(new_item.clone()),
+        None,
+    );
+    stream::execute_atomic_write_batch_with_streams(
+        engine,
         context,
-        &input.table_name,
-        stream::ChangeEvent {
-            event_name,
-            keys: &keys,
-            old_image: old_item.as_ref(),
-            new_image: Some(&new_item),
-            user_identity: None,
+        vec![overwrite_atomic_write(table, id, fields, precondition)],
+        &[change],
+        |error| {
+            if conditional {
+                map_conditional_write_error(error)
+            } else {
+                map_core_error(error)
+            }
         },
     )?;
 
@@ -411,26 +421,26 @@ pub fn update_item(
 }
 
 /// Store `item` under its primary key (full replace, no condition/ReturnValues).
-/// Shared by BatchWriteItem (D3.2) and TransactWriteItems (D3.4).
 ///
 /// # Errors
 /// `ResourceNotFoundException` if the table is absent; `ValidationException`
 /// for an invalid item or missing key.
+#[cfg(test)]
 pub(crate) fn store_item(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
     item: &Item,
 ) -> Result<(), DynamoDbError> {
     validate_item(item)?;
-    let key_schema = control_plane::load_key_schema(service, context, table_name)?;
+    let key_schema = control_plane::load_key_schema(engine, context, table_name)?;
     let id = primary_key_id(item, &key_schema)?;
     let table = TableName::new(table_name).map_err(map_core_error)?;
     // Unconditional create-or-replace in a single atomic transaction (no read
     // needed — Overwrite handles both create and replace).
     let fields = item_to_fields(item)?;
     atomic_overwrite(
-        service,
+        engine,
         context,
         table,
         id,
@@ -441,37 +451,14 @@ pub(crate) fn store_item(
     Ok(())
 }
 
-/// Delete the item at `key` (no condition). A no-op if the key is absent.
-/// Shared by BatchWriteItem (D3.2) and TransactWriteItems (D3.4).
-///
-/// # Errors
-/// `ResourceNotFoundException` if the table is absent; `ValidationException`
-/// for a missing key.
-pub(crate) fn remove_item(
-    service: &Arc<Service>,
-    context: &TenantIsolationContext,
-    table_name: &str,
-    key: &Item,
-) -> Result<(), DynamoDbError> {
-    let key_schema = control_plane::load_key_schema(service, context, table_name)?;
-    let id = primary_key_id(key, &key_schema)?;
-    let table = TableName::new(table_name).map_err(map_core_error)?;
-    if read_item(service, context, &table, id.clone())?.is_some() {
-        service
-            .delete_document(context.tenant_id(), table, id)
-            .map_err(map_core_error)?;
-    }
-    Ok(())
-}
-
 /// Read a stored item by id, mapping a missing document to `None`.
 pub(crate) fn read_item(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table: &TableName,
     id: DocumentId,
 ) -> Result<Option<Item>, DynamoDbError> {
-    match service.get_document(context.tenant_id(), table, id) {
+    match engine.get_document(context.tenant_id(), table, id) {
         Ok(document) => Ok(Some(fields_to_item(&document.fields)?)),
         Err(nimbus_core::Error::DocumentNotFound(_)) => Ok(None),
         Err(error) => Err(map_core_error(error)),
@@ -526,49 +513,49 @@ mod tests {
     use nimbus_core::TenantId;
     use serde_json::json;
 
-    fn fixture() -> (Arc<Service>, TenantIsolationContext, tempfile::TempDir) {
+    fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
-        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
         let context = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
-        crate::tenant::ensure_tenant(&service, &context).expect("tenant");
-        (service, context, temp)
+        crate::tenant::ensure_tenant(&engine, &context).expect("tenant");
+        (engine, context, temp)
     }
 
     /// Create table "Orders" with a single `pk` (String) partition key.
-    fn create_orders(service: &Arc<Service>, context: &TenantIsolationContext) {
+    fn create_orders(engine: &Arc<Engine>, context: &TenantIsolationContext) {
         let input: CreateTableInput = serde_json::from_value(json!({
             "TableName": "Orders",
             "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
             "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
         }))
         .unwrap();
-        control_plane::create_table(service, context, input).expect("create table");
+        control_plane::create_table(engine, context, input).expect("create table");
     }
 
     fn put(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         input: serde_json::Value,
     ) -> Result<PutItemOutput, DynamoDbError> {
-        put_item(service, context, serde_json::from_value(input).unwrap())
+        put_item(engine, context, serde_json::from_value(input).unwrap())
     }
 
     /// Read the stored item for a given `pk` value.
-    fn stored(service: &Arc<Service>, context: &TenantIsolationContext, pk: &str) -> Option<Item> {
+    fn stored(engine: &Arc<Engine>, context: &TenantIsolationContext, pk: &str) -> Option<Item> {
         let key: Item = [("pk".to_string(), AttributeValue::S(pk.into()))]
             .into_iter()
             .collect();
-        let schema = control_plane::load_key_schema(service, context, "Orders").unwrap();
+        let schema = control_plane::load_key_schema(engine, context, "Orders").unwrap();
         let id = primary_key_id(&key, &schema).unwrap();
-        read_item(service, context, &TableName::new("Orders").unwrap(), id).unwrap()
+        read_item(engine, context, &TableName::new("Orders").unwrap(), id).unwrap()
     }
 
     #[test]
     fn put_then_read_stores_the_item_losslessly() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -576,7 +563,7 @@ mod tests {
             }),
         )
         .expect("put");
-        let item = stored(&service, &ctx, "o1").expect("item present");
+        let item = stored(&engine, &ctx, "o1").expect("item present");
         assert_eq!(item.get("qty"), Some(&AttributeValue::N("42".into())));
         assert_eq!(
             item.get("tags"),
@@ -588,32 +575,32 @@ mod tests {
 
     #[test]
     fn put_overwrite_fully_replaces_not_merges() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"}, "x": {"N": "1"} } }),
         )
         .expect("first put");
         put(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"}, "y": {"N": "2"} } }),
         )
         .expect("second put");
-        let item = stored(&service, &ctx, "o1").expect("item present");
+        let item = stored(&engine, &ctx, "o1").expect("item present");
         assert!(!item.contains_key("x"), "PutItem replaces, so x is gone");
         assert_eq!(item.get("y"), Some(&AttributeValue::N("2".into())));
     }
 
     #[test]
     fn put_all_old_returns_the_previous_item() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         // No previous item → ALL_OLD returns nothing.
         let first = put(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -625,7 +612,7 @@ mod tests {
         assert!(first.attributes.is_none(), "no previous item to return");
         // Overwrite → ALL_OLD returns the previous item.
         let second = put(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -640,17 +627,17 @@ mod tests {
 
     #[test]
     fn put_with_failing_condition_is_conditional_check_failed() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"} } }),
         )
         .expect("first put");
         // attribute_not_exists(pk) must fail now that the item exists.
         let err = put(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -664,16 +651,16 @@ mod tests {
             DynamoDbError::ConditionalCheckFailedException(_, _)
         ));
         // The original item is unchanged (no v attribute written).
-        let item = stored(&service, &ctx, "o1").expect("item present");
+        let item = stored(&engine, &ctx, "o1").expect("item present");
         assert!(!item.contains_key("v"));
     }
 
     #[test]
     fn put_create_if_absent_succeeds_when_absent() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -682,15 +669,15 @@ mod tests {
             }),
         )
         .expect("create-if-absent should succeed for a new key");
-        assert!(stored(&service, &ctx, "fresh").is_some());
+        assert!(stored(&engine, &ctx, "fresh").is_some());
     }
 
     /// Build the `Orders` document id for a `pk` value (mirrors `stored`).
-    fn orders_id(service: &Arc<Service>, context: &TenantIsolationContext, pk: &str) -> DocumentId {
+    fn orders_id(engine: &Arc<Engine>, context: &TenantIsolationContext, pk: &str) -> DocumentId {
         let key: Item = [("pk".to_string(), AttributeValue::S(pk.into()))]
             .into_iter()
             .collect();
-        let schema = control_plane::load_key_schema(service, context, "Orders").unwrap();
+        let schema = control_plane::load_key_schema(engine, context, "Orders").unwrap();
         primary_key_id(&key, &schema).unwrap()
     }
 
@@ -710,10 +697,10 @@ mod tests {
     /// ResourceNotFound.
     #[test]
     fn atomic_overwrite_enforces_existence_precondition() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Item": { "pk": {"S": "live"} } }),
         )
@@ -722,10 +709,10 @@ mod tests {
         let table = TableName::new("Orders").unwrap();
         // Snapshot claimed absence, but "live" exists → exists(false) rejected.
         let stale_create = atomic_overwrite(
-            &service,
+            &engine,
             &ctx,
             table.clone(),
-            orders_id(&service, &ctx, "live"),
+            orders_id(&engine, &ctx, "live"),
             pk_fields("live"),
             WritePrecondition::exists(false),
         )
@@ -738,10 +725,10 @@ mod tests {
 
         // Snapshot claimed presence, but "ghost" is absent → exists(true) rejected.
         let stale_update = atomic_overwrite(
-            &service,
+            &engine,
             &ctx,
             table,
-            orders_id(&service, &ctx, "ghost"),
+            orders_id(&engine, &ctx, "ghost"),
             pk_fields("ghost"),
             WritePrecondition::exists(true),
         )
@@ -753,8 +740,8 @@ mod tests {
         ));
 
         // Neither rejected write mutated the store.
-        assert!(stored(&service, &ctx, "live").is_some());
-        assert!(stored(&service, &ctx, "ghost").is_none());
+        assert!(stored(&engine, &ctx, "live").is_some());
+        assert!(stored(&engine, &ctx, "ghost").is_none());
     }
 
     /// F2: `store_item` (the BatchWriteItem / TransactWriteItems put path)
@@ -763,30 +750,30 @@ mod tests {
     /// replaced wholesale.
     #[test]
     fn store_item_overwrites_atomically() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         let first: Item =
             serde_json::from_value(json!({ "pk": {"S": "o1"}, "x": {"N": "1"} })).unwrap();
-        store_item(&service, &ctx, "Orders", &first).expect("create");
+        store_item(&engine, &ctx, "Orders", &first).expect("create");
         assert_eq!(
-            stored(&service, &ctx, "o1").unwrap().get("x"),
+            stored(&engine, &ctx, "o1").unwrap().get("x"),
             Some(&AttributeValue::N("1".into()))
         );
 
         let second: Item =
             serde_json::from_value(json!({ "pk": {"S": "o1"}, "y": {"N": "2"} })).unwrap();
-        store_item(&service, &ctx, "Orders", &second).expect("replace");
-        let item = stored(&service, &ctx, "o1").unwrap();
+        store_item(&engine, &ctx, "Orders", &second).expect("replace");
+        let item = stored(&engine, &ctx, "o1").unwrap();
         assert!(!item.contains_key("x"), "store_item replaces wholesale");
         assert_eq!(item.get("y"), Some(&AttributeValue::N("2".into())));
     }
 
     #[test]
     fn put_missing_partition_key_is_validation_error() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         let err = put(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Item": { "other": {"S": "x"} } }),
         )
@@ -796,9 +783,9 @@ mod tests {
 
     #[test]
     fn put_to_missing_table_is_resource_not_found() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         let err = put(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Ghost", "Item": { "pk": {"S": "o1"} } }),
         )
@@ -809,25 +796,25 @@ mod tests {
     // ---- D1.6: GetItem ----
 
     fn get(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         input: serde_json::Value,
     ) -> GetItemOutput {
-        get_item(service, context, serde_json::from_value(input).unwrap()).expect("get")
+        get_item(engine, context, serde_json::from_value(input).unwrap()).expect("get")
     }
 
     #[test]
     fn get_returns_the_stored_item() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"}, "qty": {"N": "5"} } }),
         )
         .expect("put");
         let out = get(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Key": { "pk": {"S": "o1"} } }),
         );
@@ -838,10 +825,10 @@ mod tests {
 
     #[test]
     fn get_missing_item_returns_none() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         let out = get(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Key": { "pk": {"S": "absent"} } }),
         );
@@ -850,10 +837,10 @@ mod tests {
 
     #[test]
     fn get_with_projection_selects_subset() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -862,7 +849,7 @@ mod tests {
         )
         .expect("put");
         let out = get(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -878,10 +865,10 @@ mod tests {
 
     #[test]
     fn get_with_consistent_read_is_accepted_and_ignored() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"} } }),
         )
@@ -889,7 +876,7 @@ mod tests {
         // ConsistentRead=true must not change the result (single store is
         // already strongly consistent).
         let out = get(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Key": { "pk": {"S": "o1"} }, "ConsistentRead": true }),
         );
@@ -899,44 +886,44 @@ mod tests {
     // ---- D1.7: DeleteItem ----
 
     fn delete(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         input: serde_json::Value,
     ) -> Result<DeleteItemOutput, DynamoDbError> {
-        delete_item(service, context, serde_json::from_value(input).unwrap())
+        delete_item(engine, context, serde_json::from_value(input).unwrap())
     }
 
     #[test]
     fn delete_removes_the_item() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"} } }),
         )
         .expect("put");
         delete(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Key": { "pk": {"S": "o1"} } }),
         )
         .expect("delete");
-        assert!(stored(&service, &ctx, "o1").is_none(), "item is gone");
+        assert!(stored(&engine, &ctx, "o1").is_none(), "item is gone");
     }
 
     #[test]
     fn delete_all_old_returns_the_deleted_item() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"}, "v": {"N": "7"} } }),
         )
         .expect("put");
         let out = delete(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -951,10 +938,10 @@ mod tests {
 
     #[test]
     fn delete_absent_key_is_a_noop_success() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         let out = delete(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -968,17 +955,17 @@ mod tests {
 
     #[test]
     fn delete_with_failing_condition_is_conditional_check_failed() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"} } }),
         )
         .expect("put");
         // attribute_not_exists(pk) must fail since the item exists.
         let err = delete(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -991,31 +978,31 @@ mod tests {
             err,
             DynamoDbError::ConditionalCheckFailedException(_, _)
         ));
-        assert!(stored(&service, &ctx, "o1").is_some(), "item not deleted");
+        assert!(stored(&engine, &ctx, "o1").is_some(), "item not deleted");
     }
 
     // ---- D1.8: UpdateItem ----
 
     fn update(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         input: serde_json::Value,
     ) -> Result<UpdateItemOutput, DynamoDbError> {
-        update_item(service, context, serde_json::from_value(input).unwrap())
+        update_item(engine, context, serde_json::from_value(input).unwrap())
     }
 
     #[test]
     fn update_set_modifies_and_all_new_returns_full_item() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"}, "v": {"N": "1"} } }),
         )
         .expect("put");
         let out = update(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -1034,10 +1021,10 @@ mod tests {
 
     #[test]
     fn update_upsert_creates_when_absent() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         update(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -1047,39 +1034,39 @@ mod tests {
             }),
         )
         .expect("upsert update");
-        let item = stored(&service, &ctx, "new").expect("item created");
+        let item = stored(&engine, &ctx, "new").expect("item created");
         assert_eq!(item.get("pk"), Some(&AttributeValue::S("new".into())));
         assert_eq!(item.get("v"), Some(&AttributeValue::N("5".into())));
     }
 
     #[test]
     fn update_no_op_upsert_creates_key_only_item() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         // No UpdateExpression on an absent key creates a key-only item.
         update(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Key": { "pk": {"S": "bare"} } }),
         )
         .expect("no-op upsert");
-        let item = stored(&service, &ctx, "bare").expect("key-only item created");
+        let item = stored(&engine, &ctx, "bare").expect("key-only item created");
         assert_eq!(item.len(), 1);
         assert_eq!(item.get("pk"), Some(&AttributeValue::S("bare".into())));
     }
 
     #[test]
     fn update_updated_new_returns_only_changed_attributes() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"}, "a": {"N": "1"}, "b": {"N": "2"} } }),
         )
         .expect("put");
         let out = update(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -1097,17 +1084,17 @@ mod tests {
 
     #[test]
     fn update_updated_old_omits_attributes_when_empty() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"} } }),
         )
         .expect("put");
         // SET a brand-new attribute: UPDATED_OLD has no prior value → Attributes omitted.
         let out = update(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -1126,10 +1113,10 @@ mod tests {
 
     #[test]
     fn update_nested_path_updated_new_leaf_wraps() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -1138,7 +1125,7 @@ mod tests {
         )
         .expect("put");
         let out = update(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -1158,10 +1145,10 @@ mod tests {
 
     #[test]
     fn update_rejects_key_attribute_mutation() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         let err = update(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -1176,10 +1163,10 @@ mod tests {
 
     #[test]
     fn update_empty_expression_string_errors() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         let err = update(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -1193,16 +1180,16 @@ mod tests {
 
     #[test]
     fn update_condition_gate_blocks_mutation() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         put(
-            &service,
+            &engine,
             &ctx,
             json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"}, "v": {"N": "1"} } }),
         )
         .expect("put");
         let err = update(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "TableName": "Orders",
@@ -1219,7 +1206,7 @@ mod tests {
         ));
         // The item is unchanged.
         assert_eq!(
-            stored(&service, &ctx, "o1").unwrap().get("v"),
+            stored(&engine, &ctx, "o1").unwrap().get("v"),
             Some(&AttributeValue::N("1".into()))
         );
     }

@@ -49,8 +49,8 @@ __pycache__
 .nimbus
 **/.nimbus
 
-# Staged JS package payloads embedded into the nimbus binary (build output; BPD)
-crates/nimbus-bin/embedded-packages/
+# Staged JS package payloads embedded by nimbus-assets (build output; BPD)
+crates/nimbus-assets/embedded/packages/
 
 # playwright-cli snapshots/screenshots/traces (per-session artifacts)
 **/.playwright-cli/*
@@ -67,5 +67,9 @@ demos/convex/vendor/browser.bundle.js
 # Local runtime and machine state
 data/
 
-# Private docs (pricing, strategy, competitive research)
-docs/private
+# The entire docs/private tree is private working state and business
+# context (plans, proofs, decisions, strategy). It stays on local disks
+# for agents but is never tracked — user directive 2026-06-11.
+# Pipeline-owned runtime-compat inputs that builds and CI depend on live
+# under tests/runtime/node/ instead, never here.
+docs/private/

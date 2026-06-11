@@ -1,8 +1,51 @@
 //! Key types for local encryption.
 
 use std::fmt;
+use std::ops::Deref;
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
+
+/// A plaintext 256-bit data-encryption key.
+///
+/// This type intentionally does NOT implement `Clone` or `Copy`; callers can
+/// borrow the bytes for storage-engine handoff, and the bytes are zeroized when
+/// the value is dropped.
+#[derive(PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+pub struct DataEncryptionKey {
+    bytes: [u8; 32],
+}
+
+impl DataEncryptionKey {
+    pub fn new(bytes: [u8; 32]) -> Self {
+        Self { bytes }
+    }
+
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.bytes
+    }
+}
+
+impl AsRef<[u8; 32]> for DataEncryptionKey {
+    fn as_ref(&self) -> &[u8; 32] {
+        self.as_bytes()
+    }
+}
+
+impl Deref for DataEncryptionKey {
+    type Target = [u8; 32];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_bytes()
+    }
+}
+
+impl fmt::Debug for DataEncryptionKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("DataEncryptionKey")
+            .field(&"[REDACTED]")
+            .finish()
+    }
+}
 
 /// A freshly generated database encryption key with its wrapped form.
 ///
@@ -16,47 +59,59 @@ pub struct GeneratedDatabaseKey {
     /// The plaintext 256-bit data-encryption key.
     ///
     /// This is only held in memory and never persisted directly.
-    #[zeroize(drop)]
-    plaintext: [u8; 32],
+    plaintext: Option<DataEncryptionKey>,
 
     /// The wrapped (encrypted) form of the DEK, suitable for storage.
     #[zeroize(skip)]
-    wrapped: WrappedDatabaseKey,
+    wrapped: Option<WrappedDatabaseKey>,
 }
 
 impl GeneratedDatabaseKey {
     /// Creates a new generated key from plaintext and wrapped forms.
     pub fn new(plaintext: [u8; 32], wrapped: WrappedDatabaseKey) -> Self {
-        Self { plaintext, wrapped }
+        Self {
+            plaintext: Some(DataEncryptionKey::new(plaintext)),
+            wrapped: Some(wrapped),
+        }
     }
 
     /// Returns the plaintext DEK for use with storage engines.
     ///
     /// This key must never be persisted or logged.
     pub fn plaintext(&self) -> &[u8; 32] {
-        &self.plaintext
+        self.plaintext
+            .as_ref()
+            .expect("generated database key must retain plaintext until consumed")
+            .as_bytes()
     }
 
     /// Returns the wrapped DEK for storage in a sidecar manifest.
     pub fn wrapped(&self) -> &WrappedDatabaseKey {
-        &self.wrapped
+        self.wrapped
+            .as_ref()
+            .expect("generated database key must retain wrapped form until consumed")
     }
 
     /// Consumes the generated key and returns the wrapped form.
     ///
-    /// The plaintext is zeroed as part of the drop.
-    pub fn into_wrapped(self) -> WrappedDatabaseKey {
-        // ZeroizeOnDrop handles zeroing `self.plaintext` when self is dropped.
-        // We need to extract wrapped before drop runs. Use a small trick:
-        // read wrapped out, then let the rest of self drop (which zeros plaintext).
-        //
-        // Safety: We read wrapped via ptr::read, then forget self to prevent
-        // double-drop, then manually zero plaintext.
-        let wrapped = unsafe { std::ptr::read(&self.wrapped) };
-        let mut plaintext_copy = self.plaintext;
-        std::mem::forget(self);
-        plaintext_copy.zeroize();
-        wrapped
+    /// The stored plaintext field is zeroed before the wrapped key is returned.
+    pub fn into_wrapped(mut self) -> WrappedDatabaseKey {
+        self.zeroize_plaintext_and_take_wrapped()
+    }
+
+    pub fn into_plaintext(mut self) -> DataEncryptionKey {
+        self.plaintext
+            .take()
+            .expect("generated database key must retain plaintext until consumed")
+    }
+
+    fn zeroize_plaintext_and_take_wrapped(&mut self) -> WrappedDatabaseKey {
+        if let Some(plaintext) = self.plaintext.as_mut() {
+            plaintext.zeroize();
+        }
+        self.wrapped
+            .take()
+            .expect("generated database key must retain wrapped form until consumed")
     }
 }
 
@@ -154,6 +209,16 @@ mod tests {
     }
 
     #[test]
+    fn data_encryption_key_debug_redacts_plaintext() {
+        let key = DataEncryptionKey::new([0xABu8; 32]);
+
+        let debug = format!("{key:?}");
+
+        assert!(debug.contains("REDACTED"));
+        assert!(!debug.contains("171")); // 0xAB = 171, should not appear
+    }
+
+    #[test]
     fn wrapped_key_expected_length_matches_cipher() {
         assert_eq!(
             WrappedDatabaseKey::expected_ciphertext_len(WrappingCipher::Aes256GcmSiv),
@@ -177,5 +242,35 @@ mod tests {
 
         let recovered = key.into_wrapped();
         assert_eq!(recovered, expected_wrapped);
+    }
+
+    #[test]
+    fn taking_wrapped_key_zeroizes_stored_plaintext() {
+        let plaintext = [0x42u8; 32];
+        let expected_wrapped = WrappedDatabaseKey::new(WrappingCipher::Aes256GcmSiv, vec![1, 2, 3]);
+        let mut key = GeneratedDatabaseKey::new(plaintext, expected_wrapped.clone());
+
+        let recovered = key.zeroize_plaintext_and_take_wrapped();
+
+        assert_eq!(recovered, expected_wrapped);
+        assert_eq!(
+            key.plaintext
+                .as_ref()
+                .expect("plaintext should remain until key drops")
+                .as_bytes(),
+            &[0u8; 32]
+        );
+        assert!(key.wrapped.is_none());
+    }
+
+    #[test]
+    fn generated_key_can_move_plaintext_without_copyable_array_escape() {
+        let plaintext = [0x42u8; 32];
+        let wrapped = WrappedDatabaseKey::new(WrappingCipher::Aes256GcmSiv, vec![1, 2, 3]);
+        let key = GeneratedDatabaseKey::new(plaintext, wrapped);
+
+        let moved_plaintext = key.into_plaintext();
+
+        assert_eq!(moved_plaintext.as_bytes(), &plaintext);
     }
 }

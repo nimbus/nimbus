@@ -1,0 +1,41 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+  "vcs": { "enabled": false, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    "ignoreUnknown": true,
+    "includes": [
+      "packages/convex/src/**/*.ts",
+      "packages/firebase/src/**/*.ts",
+      "packages/mongodb/src/**/*.ts",
+      "packages/dynamodb/src/**/*.ts"
+    ]
+  },
+  "formatter": {
+    "enabled": false
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": false,
+      "style": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "nimbus/rest": "Use adapter-shaped APIs in compat packages. The legacy low-level REST transport is not a compat-source dependency."
+            },
+            "patterns": [
+              {
+                "group": [
+                  "@nimbus/nimbus/transports",
+                  "@nimbus/nimbus/transports/**"
+                ],
+                "message": "Use adapter-shaped APIs in compat packages. Low-level Nimbus transports are operator/client authority, not adapter source."
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

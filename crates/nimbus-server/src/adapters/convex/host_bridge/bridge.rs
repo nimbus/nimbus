@@ -1,5 +1,5 @@
 use super::*;
-use nimbus_bridge::capabilities::RuntimeCapabilityHost;
+use nimbus_bridge::capabilities::{GrantedRuntimeServiceCapabilities, RuntimeCapabilityHost};
 use nimbus_bridge::state::RuntimeHostState;
 use nimbus_bridge::{
     RuntimeHostBootstrapRequest, build_runtime_host_bootstrap,
@@ -11,7 +11,7 @@ use nimbus_tenant::{TenantIsolationDecision, TenantStorageAccessDecision};
 
 #[derive(Clone)]
 pub(crate) struct ConvexHostBridgeScope {
-    service: Arc<nimbus_engine::Service>,
+    engine: Arc<nimbus_engine::Engine>,
     registry: Arc<ConvexRegistry>,
     decision: TenantIsolationDecision,
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
@@ -19,13 +19,13 @@ pub(crate) struct ConvexHostBridgeScope {
 
 impl ConvexHostBridgeScope {
     pub(crate) fn new(
-        service: Arc<nimbus_engine::Service>,
+        engine: Arc<nimbus_engine::Engine>,
         registry: Arc<ConvexRegistry>,
         decision: TenantIsolationDecision,
         runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     ) -> Self {
         Self {
-            service,
+            engine,
             registry,
             decision,
             runtime_service_registry,
@@ -40,6 +40,7 @@ pub(crate) struct ConvexHostBridgeInvocation {
     principal: nimbus_core::PrincipalContext,
     server_request_id: Option<String>,
     invocation_kind: InvocationKind,
+    function_name: String,
     trigger_write_origin: Option<nimbus_core::TriggerWriteOrigin>,
 }
 
@@ -50,6 +51,7 @@ impl ConvexHostBridgeInvocation {
         principal: nimbus_core::PrincipalContext,
         server_request_id: Option<String>,
         invocation_kind: InvocationKind,
+        function_name: impl Into<String>,
     ) -> Self {
         Self {
             auth,
@@ -57,6 +59,7 @@ impl ConvexHostBridgeInvocation {
             principal,
             server_request_id,
             invocation_kind,
+            function_name: function_name.into(),
             trigger_write_origin: None,
         }
     }
@@ -64,7 +67,7 @@ impl ConvexHostBridgeInvocation {
 
 #[derive(Clone)]
 pub(crate) struct ConvexHostBridge {
-    service: Arc<nimbus_engine::Service>,
+    engine: Arc<nimbus_engine::Engine>,
     registry: Arc<ConvexRegistry>,
     tenant_id: TenantId,
     decision: TenantIsolationDecision,
@@ -94,21 +97,21 @@ impl ConvexHostBridge {
     ) -> Result<Self, Error> {
         let local_enforcement = LocalEnforcementBinding::from_decision(&scope.decision)?;
         let bootstrap = build_runtime_host_bootstrap(RuntimeHostBootstrapRequest {
-            service: &scope.service,
+            engine: &scope.engine,
             tenant_id: scope.decision.tenant_id(),
             principal: invocation.principal,
             server_request_id: invocation.server_request_id,
             invocation_kind: invocation.invocation_kind,
+            function_name: &invocation.function_name,
             trigger_write_origin: invocation.trigger_write_origin,
             max_nested_runtime_invocations: scope
                 .registry
                 .runtime_policy()
                 .limits()
                 .max_nested_runtime_invocations,
-            session_prefix: "convex-runtime-session",
         })?;
         Ok(Self {
-            service: scope.service,
+            engine: scope.engine,
             registry: scope.registry,
             tenant_id: scope.decision.tenant_id().clone(),
             storage_access: local_enforcement.storage_access().clone(),
@@ -128,8 +131,8 @@ impl ConvexHostBridge {
         self.state.server_request_id()
     }
 
-    pub(crate) fn session_id(&self) -> &str {
-        self.state.session_id()
+    pub(crate) fn host_call_session_id(&self) -> &str {
+        self.state.host_call_session_id()
     }
 
     pub(crate) fn snapshot_read_set(&self) -> RuntimeReadSet {
@@ -142,8 +145,8 @@ impl ConvexHostBridge {
         self.execution_unit.as_ref()
     }
 
-    pub(crate) fn service(&self) -> &Arc<nimbus_engine::Service> {
-        &self.service
+    pub(crate) fn engine(&self) -> &Arc<nimbus_engine::Engine> {
+        &self.engine
     }
 
     pub(crate) fn tenant_id(&self) -> &TenantId {
@@ -152,10 +155,6 @@ impl ConvexHostBridge {
 
     pub(in crate::adapters::convex) fn decision(&self) -> &TenantIsolationDecision {
         &self.decision
-    }
-
-    pub(in crate::adapters::convex) fn local_enforcement(&self) -> &LocalEnforcementBinding {
-        &self.local_enforcement
     }
 
     pub(crate) fn storage_access(&self) -> &TenantStorageAccessDecision {
@@ -182,6 +181,12 @@ impl ConvexHostBridge {
         &self.runtime_service_registry
     }
 
+    pub(in crate::adapters::convex) fn service_capabilities(
+        &self,
+    ) -> Option<GrantedRuntimeServiceCapabilities<'_>> {
+        GrantedRuntimeServiceCapabilities::from_local_enforcement(&self.local_enforcement)
+    }
+
     pub(crate) fn host_state(&self) -> &Arc<RuntimeHostState> {
         &self.state
     }
@@ -196,11 +201,12 @@ impl ConvexHostBridge {
         commit_runtime_mutation_execution_unit(self.execution_unit.as_ref())
     }
 
-    pub(crate) fn validate_session(
+    pub(crate) fn validate_host_call_session(
         &self,
-        session_id: Option<&str>,
+        host_call_session_id: Option<&str>,
     ) -> std::result::Result<(), NimbusRuntimeError> {
-        self.state.validate_session(&self.tenant_id, session_id)
+        self.state
+            .validate_host_call_session(&self.tenant_id, host_call_session_id)
     }
 
     pub(crate) fn consume_nested_runtime_invocation_budget(&self) -> Result<(), Error> {
@@ -211,19 +217,19 @@ impl ConvexHostBridge {
 }
 
 impl RuntimeCapabilityHost for ConvexHostBridge {
-    fn validate_session(
+    fn validate_host_call_session(
         &self,
-        session_id: Option<&str>,
+        host_call_session_id: Option<&str>,
     ) -> std::result::Result<(), NimbusRuntimeError> {
-        ConvexHostBridge::validate_session(self, session_id)
+        ConvexHostBridge::validate_host_call_session(self, host_call_session_id)
     }
 
     fn mutation_execution_unit(&self) -> Option<&Arc<nimbus_engine::MutationExecutionUnit>> {
         ConvexHostBridge::mutation_execution_unit(self)
     }
 
-    fn service(&self) -> &Arc<nimbus_engine::Service> {
-        ConvexHostBridge::service(self)
+    fn engine(&self) -> &Arc<nimbus_engine::Engine> {
+        ConvexHostBridge::engine(self)
     }
 
     fn storage_access(&self) -> &TenantStorageAccessDecision {

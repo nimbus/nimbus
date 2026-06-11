@@ -34,6 +34,7 @@ impl ContainerSandboxStateView {
         let mut summaries = self
             .read_all_records()?
             .into_iter()
+            .filter(ContainerPersistedSandboxRecord::is_service_owned)
             .map(ContainerPersistedSandboxRecord::into_summary)
             .collect::<Vec<_>>();
         summaries.sort_by(compare_summary_order);
@@ -63,8 +64,9 @@ impl ContainerSandboxStateView {
         else {
             return Ok(None);
         };
-        self.read_record(&manifest_path)
-            .map(|record| record.map(ContainerPersistedSandboxRecord::into_details))
+        self.read_record(&manifest_path).map(|record| {
+            record.and_then(|record| record.is_service_owned().then(|| record.into_details()))
+        })
     }
 
     pub fn inspect_service(
@@ -77,7 +79,7 @@ impl ContainerSandboxStateView {
             .into_iter()
             .filter(|record| {
                 record.manifest.spec.tenant_id == *tenant_id
-                    && record.manifest.spec.name == service_name
+                    && record.manifest.spec.service_name() == Some(service_name)
             })
             .max_by(compare_service_identity_preference);
 
@@ -175,27 +177,40 @@ struct ContainerPersistedSandboxRecord {
 }
 
 impl ContainerPersistedSandboxRecord {
+    fn is_service_owned(&self) -> bool {
+        self.manifest.spec.service_name().is_some()
+    }
+
+    fn service_name(&self) -> &str {
+        self.manifest
+            .spec
+            .service_name()
+            .expect("service sandbox state records require service owner metadata")
+    }
+
     fn into_summary(self) -> ContainerSandboxSummary {
+        let service_name = self.service_name().to_owned();
         ContainerSandboxSummary {
             sandbox_id: self.manifest.handle.id,
             tenant_id: self.manifest.spec.tenant_id,
-            service_name: self.manifest.spec.name,
+            service_name,
             status: self.manifest.status,
             published_endpoints: self.manifest.handle.published_endpoints,
-            restart_count: 0,
+            restart_count: self.manifest.restart_count,
             last_exit_code: self.manifest.last_exit_code,
             shutdown_requested: self.manifest.shutdown_requested,
         }
     }
 
     fn into_details(self) -> ContainerSandboxDetails {
+        let service_name = self.service_name().to_owned();
         let summary = ContainerSandboxSummary {
             sandbox_id: self.manifest.handle.id,
             tenant_id: self.manifest.spec.tenant_id.clone(),
-            service_name: self.manifest.spec.name.clone(),
+            service_name,
             status: self.manifest.status,
             published_endpoints: self.manifest.handle.published_endpoints.clone(),
-            restart_count: 0,
+            restart_count: self.manifest.restart_count,
             last_exit_code: self.manifest.last_exit_code,
             shutdown_requested: self.manifest.shutdown_requested,
         };
@@ -221,6 +236,8 @@ struct ContainerPersistedManifest {
     spec: SandboxSpec,
     conmon_layout: ContainerPersistedConmonLayout,
     last_exit_code: Option<i32>,
+    #[serde(default)]
+    restart_count: u32,
     shutdown_requested: bool,
     status: SandboxStatus,
 }
@@ -285,13 +302,14 @@ mod tests {
     #[test]
     fn state_view_lists_manifest_backed_summaries_and_skips_missing_manifest_dirs() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
-        write_manifest(
+        write_manifest_with_restart_count(
             temp_dir.path(),
             "db-01aaa",
             "svc-demo",
             "db",
             SandboxStatus::Ready,
             Some(137),
+            2,
         );
         write_manifest(
             temp_dir.path(),
@@ -328,7 +346,63 @@ mod tests {
         assert_eq!(summaries[0].status, SandboxStatus::Stopped);
         assert_eq!(summaries[1].status, SandboxStatus::Ready);
         assert_eq!(summaries[1].last_exit_code, Some(137));
-        assert_eq!(summaries[1].restart_count, 0);
+        assert_eq!(summaries[1].restart_count, 2);
+    }
+
+    #[test]
+    fn state_view_excludes_standalone_sandboxes_from_service_projection() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        write_manifest(
+            temp_dir.path(),
+            "db-01aaa",
+            "svc-demo",
+            "db",
+            SandboxStatus::Ready,
+            None,
+        );
+        write_standalone_manifest(
+            temp_dir.path(),
+            "scratch-01aaa",
+            "svc-demo",
+            "scratch",
+            SandboxStatus::Ready,
+        );
+
+        let view = ContainerSandboxStateView::new(temp_dir.path());
+        let tenant_id = TenantId::new("svc-demo").expect("tenant id should be valid");
+
+        let summaries = view.list().expect("manifest list should load");
+        assert_eq!(
+            summaries
+                .iter()
+                .map(|summary| summary.service_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["db"]
+        );
+        assert_eq!(
+            view.list_for_tenant(&tenant_id)
+                .expect("tenant manifest list should load")
+                .len(),
+            1
+        );
+        assert!(
+            view.inspect(&SandboxId::new("scratch-01aaa"))
+                .expect("inspect should succeed")
+                .is_none(),
+            "standalone sandboxes must not project as service sandbox details"
+        );
+        assert!(
+            view.log_paths(&SandboxId::new("scratch-01aaa"))
+                .expect("log path lookup should succeed")
+                .is_none(),
+            "standalone sandboxes must not expose service log paths"
+        );
+        assert!(
+            view.inspect_service(&tenant_id, "scratch")
+                .expect("service inspect should succeed")
+                .is_none(),
+            "standalone display names must not resolve as service names"
+        );
     }
 
     #[test]
@@ -442,10 +516,79 @@ mod tests {
         status: SandboxStatus,
         last_exit_code: Option<i32>,
     ) {
-        let tenant_id = TenantId::new(tenant_id).expect("tenant id should parse");
-        let sandbox_id = SandboxId::new(sandbox_id);
+        write_manifest_with_restart_count(
+            state_root,
+            sandbox_id,
+            tenant_id,
+            service_name,
+            status,
+            last_exit_code,
+            0,
+        );
+    }
+
+    fn write_manifest_with_restart_count(
+        state_root: &Path,
+        sandbox_id: &str,
+        tenant_id: &str,
+        service_name: &str,
+        status: SandboxStatus,
+        last_exit_code: Option<i32>,
+        restart_count: u32,
+    ) {
+        write_manifest_with_owner(ManifestFixture {
+            state_root,
+            sandbox_id,
+            tenant_id,
+            handle_name: service_name,
+            owner: json!({
+                "kind": "service",
+                "name": service_name
+            }),
+            status,
+            last_exit_code,
+            restart_count,
+        });
+    }
+
+    fn write_standalone_manifest(
+        state_root: &Path,
+        sandbox_id: &str,
+        tenant_id: &str,
+        display_name: &str,
+        status: SandboxStatus,
+    ) {
+        write_manifest_with_owner(ManifestFixture {
+            state_root,
+            sandbox_id,
+            tenant_id,
+            handle_name: display_name,
+            owner: json!({
+                "kind": "standalone",
+                "display_name": display_name
+            }),
+            status,
+            last_exit_code: None,
+            restart_count: 0,
+        });
+    }
+
+    struct ManifestFixture<'a> {
+        state_root: &'a Path,
+        sandbox_id: &'a str,
+        tenant_id: &'a str,
+        handle_name: &'a str,
+        owner: serde_json::Value,
+        status: SandboxStatus,
+        last_exit_code: Option<i32>,
+        restart_count: u32,
+    }
+
+    fn write_manifest_with_owner(fixture: ManifestFixture<'_>) {
+        let tenant_id = TenantId::new(fixture.tenant_id).expect("tenant id should parse");
+        let sandbox_id = SandboxId::new(fixture.sandbox_id);
         let manifest_path =
-            crate::artifact_paths::manifest_path(state_root, &tenant_id, &sandbox_id);
+            crate::artifact_paths::manifest_path(fixture.state_root, &tenant_id, &sandbox_id);
         let container_dir = manifest_path
             .parent()
             .expect("manifest path should have a parent directory");
@@ -454,9 +597,9 @@ mod tests {
         let handle = SandboxHandle::new(
             tenant_id.clone(),
             sandbox_id,
-            service_name,
+            fixture.handle_name,
             crate::backend::SandboxBackendKind::Container,
-            status,
+            fixture.status,
             vec![PublishedEndpoint::new(
                 "http",
                 PublishedEndpointProtocol::Tcp,
@@ -467,9 +610,10 @@ mod tests {
             "handle": handle,
             "spec": {
                 "tenant_id": tenant_id,
-                "name": service_name,
+                "owner": fixture.owner,
                 "backend": "container",
-                "filesystem": {
+                "root": {
+                    "kind": "rootfs",
                     "rootfs": "/tmp/rootfs",
                     "readonly": true
                 },
@@ -490,9 +634,10 @@ mod tests {
                 "ctr_log": container_dir.join("ctr.log"),
                 "oci_log": container_dir.join("oci.log")
             },
-            "last_exit_code": last_exit_code,
-            "shutdown_requested": matches!(status, SandboxStatus::Stopped),
-            "status": status
+            "last_exit_code": fixture.last_exit_code,
+            "restart_count": fixture.restart_count,
+            "shutdown_requested": matches!(fixture.status, SandboxStatus::Stopped),
+            "status": fixture.status
         });
 
         fs::write(

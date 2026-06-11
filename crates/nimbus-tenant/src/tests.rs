@@ -1,8 +1,8 @@
 use nimbus_core::{PrincipalContext, TenantId};
 use nimbus_runtime::{RuntimeBundle, RuntimeLimits, RuntimePolicy};
 use nimbus_sandbox::{
-    PublishedEndpointProtocol, SandboxBackendKind, SandboxFilesystemSpec, SandboxProcessSpec,
-    SandboxResourceCharge, SandboxSpec,
+    PublishedEndpointProtocol, SandboxBackendKind, SandboxOwnerSpec, SandboxProcessSpec,
+    SandboxResourceCharge, SandboxRootSpec, SandboxSpec,
 };
 
 use super::*;
@@ -10,9 +10,9 @@ use super::*;
 fn sparse_spec(tenant: &str, name: &str, backend: SandboxBackendKind) -> SandboxSpec {
     SandboxSpec::new(
         TenantId::new(tenant).expect("tenant id should parse"),
-        name,
+        SandboxOwnerSpec::service(name),
         backend,
-        SandboxFilesystemSpec::new(""),
+        SandboxRootSpec::rootfs(""),
         SandboxProcessSpec::new(Vec::<String>::new()),
     )
 }
@@ -39,7 +39,7 @@ fn tenant_decision_input(
     policy: &RuntimePolicy,
 ) -> TenantIsolationPolicyInput {
     TenantIsolationPolicyInput::new(
-            TenantWorkloadIdentity::runtime_function(
+            WorkloadAttributes::runtime_function(
                 "messages:send",
                 RuntimeIsolationTier::InProcessUntrusted,
             )
@@ -107,7 +107,7 @@ fn production_untrusted_route(policy: &RuntimePolicy) -> RuntimeIsolationRoute {
 }
 
 #[test]
-fn tenant_isolation_decision_has_stable_id_and_audit_safe_redaction() {
+fn tenant_isolation_decision_has_stable_decision_id_and_audit_safe_redaction() {
     let principal = PrincipalContext {
         authenticated: true,
         claims: serde_json::Map::from_iter([
@@ -186,7 +186,7 @@ fn tenant_isolation_decision_has_stable_id_and_audit_safe_redaction() {
     );
 
     let changed_workload = TenantIsolationPolicyInput::new(
-        TenantWorkloadIdentity::runtime_function(
+        WorkloadAttributes::runtime_function(
             "messages:list",
             RuntimeIsolationTier::InProcessUntrusted,
         )
@@ -204,12 +204,12 @@ fn tenant_isolation_decision_has_stable_id_and_audit_safe_redaction() {
     assert_ne!(
         decision.id(),
         changed_decision.id(),
-        "decision ID must change when workload identity changes"
+        "decision ID must change when workload attributes change"
     );
 }
 
 #[test]
-fn tenant_workload_stable_identity_splits_subject_from_audit_projection() {
+fn workload_identity_splits_subject_from_audit_projection() {
     let principal = principal_with_tenant_claim("tenant_id", "tenant-a");
     let context = TenantIsolationContext::application(
         TenantId::new("tenant-a").expect("tenant id should parse"),
@@ -218,7 +218,7 @@ fn tenant_workload_stable_identity_splits_subject_from_audit_projection() {
     )
     .with_deployment_generation(7)
     .with_workload_location(
-        TenantWorkloadLocation::new()
+        WorkloadLocation::new()
             .with_node_id("node-a")
             .with_machine_id("default"),
     );
@@ -227,18 +227,18 @@ fn tenant_workload_stable_identity_splits_subject_from_audit_projection() {
         .admit_decision(tenant_decision_input(&context, &policy))
         .expect("decision should admit matching tenant authority");
 
-    let identity = decision.workload_stable_identity();
+    let identity = decision.workload_identity();
 
     assert_eq!(identity.tenant_id(), "tenant-a");
     assert_eq!(identity.deployment_generation(), Some(7));
     assert_eq!(identity.node_id(), Some("node-a"));
     assert_eq!(identity.machine_id(), Some("default"));
     assert_eq!(
-        identity.stable_id(),
+        identity.subject(),
         "nimbus-workload:v1/tenant/tenant-a/deployment/7/surface/convex.runtime/kind/runtime_function/name/messages%3Asend/runtime-tier/in_process_untrusted/runtime-backend/v8/sandbox-backend/none"
     );
     assert_eq!(
-        identity.audit_projection_id(),
+        identity.audit_projection(),
         "nimbus-workload-audit:v1/tenant/tenant-a/deployment/7/surface/convex.runtime/kind/runtime_function/name/messages%3Asend/runtime-tier/in_process_untrusted/runtime-backend/v8/sandbox-backend/none/node/node-a/machine/default/sandbox/none/invocation/invoke-1"
     );
     assert_eq!(
@@ -259,11 +259,11 @@ fn tenant_workload_stable_identity_splits_subject_from_audit_projection() {
     let audit_json =
         serde_json::to_string(&decision.to_audit_record()).expect("audit record should serialize");
     assert!(
-        audit_json.contains("\"workload_stable_id\""),
+        audit_json.contains("\"workload_subject\""),
         "audit record should expose the canonical workload identity: {audit_json}"
     );
     assert!(
-        audit_json.contains("\"workload_audit_projection_id\""),
+        audit_json.contains("\"workload_audit_projection\""),
         "audit record should expose the full placement/invocation projection: {audit_json}"
     );
     assert!(
@@ -273,24 +273,25 @@ fn tenant_workload_stable_identity_splits_subject_from_audit_projection() {
 }
 
 #[test]
-fn tenant_workload_stable_identity_distinguishes_sandbox_backend_and_location() {
+fn workload_identity_distinguishes_sandbox_backend_and_location() {
     let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
     let context_a = test_application_context()
         .with_deployment_generation(9)
         .with_workload_location(
-            TenantWorkloadLocation::new()
+            WorkloadLocation::new()
                 .with_node_id("node-a")
                 .with_machine_id("machine-a"),
         );
     let context_b = test_application_context()
         .with_deployment_generation(9)
         .with_workload_location(
-            TenantWorkloadLocation::new()
+            WorkloadLocation::new()
                 .with_node_id("node-b")
                 .with_machine_id("machine-b"),
         );
     let input = TenantIsolationPolicyInput::new(
-        TenantWorkloadIdentity::sandbox_service("db:primary", "sandbox-1")
+        WorkloadAttributes::service("db:primary")
+            .with_sandbox_id("sandbox-1")
             .with_sandbox_backend(SandboxBackendKind::Krun),
     )
     .with_runtime_policy(
@@ -313,28 +314,28 @@ fn tenant_workload_stable_identity_distinguishes_sandbox_backend_and_location() 
         "location must participate in the immutable decision fingerprint"
     );
     assert_eq!(
-        decision_a.workload_stable_identity().stable_id(),
-        "nimbus-workload:v1/tenant/tenant-a/deployment/9/surface/test/kind/sandbox_service/name/db%3Aprimary/runtime-tier/none/runtime-backend/none/sandbox-backend/krun"
+        decision_a.workload_identity().subject(),
+        "nimbus-workload:v1/tenant/tenant-a/deployment/9/surface/test/kind/service/name/db%3Aprimary/runtime-tier/none/runtime-backend/none/sandbox-backend/krun"
     );
     assert_eq!(
-        decision_b.workload_stable_identity().stable_id(),
-        "nimbus-workload:v1/tenant/tenant-a/deployment/9/surface/test/kind/sandbox_service/name/db%3Aprimary/runtime-tier/none/runtime-backend/none/sandbox-backend/krun"
+        decision_b.workload_identity().subject(),
+        "nimbus-workload:v1/tenant/tenant-a/deployment/9/surface/test/kind/service/name/db%3Aprimary/runtime-tier/none/runtime-backend/none/sandbox-backend/krun"
     );
     assert_ne!(
-        decision_a.workload_stable_identity().audit_projection_id(),
-        decision_b.workload_stable_identity().audit_projection_id(),
+        decision_a.workload_identity().audit_projection(),
+        decision_b.workload_identity().audit_projection(),
         "audit projection must retain placement for evidence correlation"
     );
 }
 
 #[test]
-fn tenant_workload_stable_identity_rejects_invalid_spiffe_trust_domains() {
+fn workload_identity_rejects_invalid_spiffe_trust_domains() {
     let context = test_application_context();
     let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
     let decision = context
         .admit_decision(tenant_decision_input(&context, &policy))
         .expect("decision should admit");
-    let identity = decision.workload_stable_identity();
+    let identity = decision.workload_identity();
 
     for trust_domain in [
         "",
@@ -512,7 +513,7 @@ fn tenant_isolation_decision_rejects_mismatched_sandbox_launch() {
         .admit_decision(tenant_decision_input(&context, &policy))
         .expect("decision should admit");
     let service = decision
-        .service_access("db", "sandbox service launch")
+        .service_access("db", "sandbox-backed service launch")
         .expect("db service should be admitted");
     let spec = sparse_spec("tenant-b", "db", SandboxBackendKind::Krun);
 
@@ -559,7 +560,7 @@ fn tenant_isolation_decision_rejects_mismatched_service_before_launch() {
         .admit_decision(tenant_decision_input(&context, &policy))
         .expect("decision should admit");
     let service = decision
-        .service_access("db", "sandbox service launch")
+        .service_access("db", "sandbox-backed service launch")
         .expect("db service should be admitted");
     let spec = sparse_spec("tenant-a", "cache", SandboxBackendKind::Krun); // 002-auth-caching-policy: service fixture name, not auth cache
 
@@ -580,7 +581,7 @@ fn tenant_isolation_decision_rejects_mismatched_backend_before_launch() {
         .admit_decision(tenant_decision_input(&context, &policy))
         .expect("decision should admit");
     let service = decision
-        .service_access("db", "sandbox service launch")
+        .service_access("db", "sandbox-backed service launch")
         .expect("db service should be admitted");
     let spec = sparse_spec("tenant-a", "db", SandboxBackendKind::Container);
 
@@ -624,7 +625,7 @@ fn application_context_rejects_mismatched_principal_tenant_claim() {
     );
 
     let error = context
-        .ensure_application_principal_tenant_access("convex route tenant")
+        .admit_if_principal_claim_absent_or_matching("convex route tenant")
         .expect_err("mismatched application tenant claim must be rejected");
     assert!(
         error.to_string().contains("permission denied"),
@@ -654,8 +655,36 @@ fn application_context_allows_matching_verified_principal_tenant_claim() {
     );
 
     context
-        .ensure_application_principal_tenant_access("convex route tenant")
+        .admit_if_principal_claim_absent_or_matching("convex route tenant")
         .expect("verified tenant claim should take precedence and authorize access");
+}
+
+#[test]
+fn application_context_can_require_tenant_claim_for_control_plane_routes() {
+    let context = TenantIsolationContext::application(
+        TenantId::new("tenant-a").expect("tenant id should parse"),
+        PrincipalContext {
+            authenticated: true,
+            claims: serde_json::Map::new(),
+            verified_claims: serde_json::Map::new(),
+        },
+        "test",
+    );
+
+    context
+        .admit_if_principal_claim_absent_or_matching("convex route tenant")
+        .expect("generic adapter routes may accept principals without tenant claims");
+    let error = context
+        .require_matching_principal_claim("service lifecycle route")
+        .expect_err("service control routes must require a tenant claim");
+    assert!(
+        error.to_string().contains("has no tenant claim"),
+        "error should explain the missing tenant claim: {error}"
+    );
+    assert!(
+        error.to_string().contains("targeted tenant `tenant-a`"),
+        "error should name the targeted tenant: {error}"
+    );
 }
 
 #[test]
@@ -693,7 +722,7 @@ fn reauthorized_application_context_preserves_tenant_and_deployment_generation()
     )
     .with_deployment_generation(42)
     .with_workload_location(
-        TenantWorkloadLocation::new()
+        WorkloadLocation::new()
             .with_node_id("node-source")
             .with_machine_id("machine-source"),
     );
@@ -724,7 +753,7 @@ fn reauthorized_application_context_preserves_tenant_and_deployment_generation()
     let decision = derived
         .admit_decision(tenant_decision_input(&derived, &policy))
         .expect("derived context should still admit matching tenant");
-    let identity = decision.workload_stable_identity();
+    let identity = decision.workload_identity();
     assert_eq!(identity.node_id(), Some("node-source"));
     assert_eq!(identity.machine_id(), Some("machine-source"));
 }

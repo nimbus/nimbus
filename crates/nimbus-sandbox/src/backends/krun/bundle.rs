@@ -277,6 +277,13 @@ pub(crate) fn build_bundle_config(
     let mut mounts = default_linux_mounts();
     mounts.extend(options.additional_mounts.iter().map(bundle_mount_json));
 
+    let rootfs = spec.rootfs().ok_or_else(|| SandboxError::InvalidSpec {
+        message: format!(
+            "krun sandbox {} must be resolved to a rootfs before writing an OCI bundle",
+            spec.display_name()
+        ),
+    })?;
+
     Ok(json!({
         "ociVersion": "1.0.2",
         "process": {
@@ -292,8 +299,8 @@ pub(crate) fn build_bundle_config(
             "cwd": process_cwd(&spec.process),
         },
         "root": {
-            "path": spec.filesystem.rootfs.to_string_lossy(),
-            "readonly": spec.filesystem.readonly,
+            "path": rootfs.rootfs.to_string_lossy(),
+            "readonly": rootfs.readonly,
         },
         "hostname": hostname,
         "mounts": mounts,
@@ -562,8 +569,8 @@ mod tests {
     };
     use crate::endpoint::PublishedEndpointProtocol;
     use crate::spec::{
-        SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
-        SandboxSpec,
+        SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
+        SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
     };
 
     fn egress_enforcement_from_config(config: &serde_json::Value) -> SandboxEgressEnforcementPlan {
@@ -991,9 +998,9 @@ mod tests {
     fn sample_spec_with_rootfs(rootfs: &Path) -> SandboxSpec {
         SandboxSpec::new(
             TenantId::new("tenant").expect("tenant id should be valid"),
-            "db",
+            SandboxOwnerSpec::service("db"),
             SandboxBackendKind::Krun,
-            SandboxFilesystemSpec::new(rootfs),
+            SandboxRootSpec::Rootfs(SandboxRootfsSpec::new(rootfs)),
             SandboxProcessSpec::new(["/usr/bin/postgres", "-D", "/var/lib/postgresql/data"])
                 .with_env(["PATH=/usr/bin", "PGDATA=/var/lib/postgresql/data"]),
         )

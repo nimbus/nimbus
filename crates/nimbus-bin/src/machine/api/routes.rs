@@ -92,9 +92,10 @@ async fn machine_api_start_image_service_sandbox(
     State(state): State<MachineApiState>,
     Json(request): Json<MachineApiServiceSandboxImageStartRequest>,
 ) -> Result<Json<MachineApiServiceSandboxStartResponse>, MachineApiHttpError> {
+    require_image_start_root(&request.spec)?;
     let backend = require_service_backend(&state)?;
     let handle = backend
-        .start_from_image(request.launch)
+        .start(request.spec)
         .await
         .map_err(sandbox_error_to_http_error)?;
     Ok(Json(MachineApiServiceSandboxStartResponse { handle }))
@@ -104,9 +105,10 @@ async fn machine_api_start_build_service_sandbox(
     State(state): State<MachineApiState>,
     Json(request): Json<MachineApiServiceSandboxBuildStartRequest>,
 ) -> Result<Json<MachineApiServiceSandboxStartResponse>, MachineApiHttpError> {
+    require_build_start_root(&request.spec)?;
     let backend = require_service_backend(&state)?;
     let handle = backend
-        .start_from_build(request.launch)
+        .start(request.spec)
         .await
         .map_err(sandbox_error_to_http_error)?;
     Ok(Json(MachineApiServiceSandboxStartResponse { handle }))
@@ -284,6 +286,16 @@ async fn machine_api_stop_service_sandbox(
 ) -> Result<Json<MachineApiServiceSandboxStopResponse>, MachineApiHttpError> {
     let backend = require_service_backend(&state)?;
     let sandbox_id = nimbus::SandboxId::new(sandbox_id);
+    let Some(_) = backend
+        .inspect(&sandbox_id)
+        .await
+        .map_err(sandbox_error_to_http_error)?
+    else {
+        return Err(MachineApiHttpError {
+            status: StatusCode::NOT_FOUND,
+            message: format!("sandbox instance was not found: {sandbox_id}"),
+        });
+    };
     backend
         .stop(&sandbox_id)
         .await

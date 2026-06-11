@@ -10,10 +10,11 @@ use mysql_async::{
 };
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, FieldType, Filter,
-    FilterOp, IndexDefinition, IndexLifecycleEvent, ResourcePathBinding, Result, ScheduledJob,
-    ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId,
-    TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord,
-    TenantId, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
+    HistoricalIndexCursor, HistoricalIndexTuple, HistoricalReadShape, IndexDefinition,
+    IndexLifecycleEvent, ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema,
+    SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName,
+    TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp,
+    TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -21,29 +22,38 @@ use tokio::runtime::Handle as TokioRuntimeHandle;
 use tokio::sync::Semaphore;
 
 use crate::RetentionFloor;
-use crate::async_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
+use crate::async_storage::{
+    TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, map_executor_join_error,
+    map_executor_permit_error,
+};
 use crate::commit_log::{
     deserialize_durable_record, serialize_durable_record, serialize_tenant_event_record,
 };
 use crate::runtime_bridge::bridge_tokio_runtime;
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{
-    DurableJournalBootstrap, DurableJournalPage, JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT,
-    MaterializedJournalSnapshot, TenantWriteCommit,
+    DurableJournalBootstrap, DurableJournalPage, JournalProgress, MaterializedJournalSnapshot,
+    PointInTimeRestoreArchive, PointInTimeRestoreTarget, TenantWriteCommit,
 };
 use crate::{ResolvedScheduleOp, ResolvedWrite};
 
 mod backend;
+mod document_versions;
+mod index_versions;
 mod provider;
+mod query_helpers;
 mod read;
 mod resource_paths;
 mod storage;
+mod table_catalog;
 mod table_lifecycle;
 mod trigger_delivery;
 mod trigger_invocations;
 mod write;
 
 use self::backend::*;
+use self::query_helpers::*;
+use self::table_catalog::*;
 
 const MYSQL_IDENTIFIER_LIMIT: usize = 64;
 const TARGET_TENANT_HASH_HEX_LEN: usize = 40;
@@ -115,6 +125,7 @@ pub struct MySqlTenantStore {
 pub struct MySqlReadSnapshot {
     schema: Schema,
     progress: JournalProgress,
+    journal_cursor_floor: SequenceNumber,
     table_identities: Vec<crate::TableIdentitySnapshotEntry>,
     documents: Vec<Document>,
     resource_path_bindings: Vec<ResourcePathBinding>,
@@ -137,6 +148,7 @@ pub struct MySqlWriteTransaction {
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
+    commit_timestamp: Option<Timestamp>,
     schema_cache_changed: bool,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
 }
@@ -177,6 +189,10 @@ impl MySqlTenantStore {
 
     pub fn now(&self) -> Timestamp {
         self.provider.clock.now()
+    }
+
+    pub fn check_fault(&self, point: FaultPoint) -> Result<()> {
+        self.provider.fault_injector.check(point)
     }
 
     pub fn block_on<F, T>(&self, future: F) -> Result<T>
@@ -237,4 +253,51 @@ fn tenant_database_name(prefix: &str, tenant_id: &TenantId) -> Result<String> {
         let _ = write!(&mut hash, "{byte:02x}");
     }
     Ok(format!("{prefix}{hash}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FailingFaultInjector;
+
+    impl FaultInjector for FailingFaultInjector {
+        fn check(&self, point: FaultPoint) -> Result<()> {
+            Err(Error::Internal(format!("fault point {}", point.as_str())))
+        }
+    }
+
+    #[test]
+    fn mysql_tenant_store_check_fault_delegates_to_provider_injector() {
+        let runtime = tokio::runtime::Runtime::new().expect("test runtime should build");
+        let provider = MySqlProvider {
+            pool: build_pool(&MySqlProviderConfig::new(
+                "mysql://root:password@127.0.0.1:1/nimbus",
+            ))
+            .expect("mysql pool should build without opening a connection"),
+            metadata_database: "nimbus_provider".to_string(),
+            tenant_database_prefix: "tenant_".to_string(),
+            runtime_handle: runtime.handle().clone(),
+            clock: Arc::new(SystemClock),
+            fault_injector: Arc::new(FailingFaultInjector),
+            tenant_read_parallelism: MIN_MYSQL_READ_PARALLELISM,
+        };
+        let store = MySqlTenantStore::new(
+            provider,
+            MySqlTenantRegistration {
+                tenant_id: TenantId::new("demo").expect("tenant id should be valid"),
+                database_name: "tenant_demo".to_string(),
+            },
+        );
+
+        let error = store
+            .check_fault(FaultPoint::StorageCommitBeforeVisibility)
+            .expect_err("mysql store should delegate to the configured fault injector");
+        assert!(
+            error
+                .to_string()
+                .contains(FaultPoint::StorageCommitBeforeVisibility.as_str()),
+            "delegated fault error should identify the fault point: {error}"
+        );
+    }
 }

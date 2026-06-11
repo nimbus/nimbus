@@ -56,7 +56,7 @@ pub(crate) async fn http_handler(
                 &body,
             )?;
             execute_http_target(ServerCloudFunctionsHttpInvocation {
-                service: state.service.clone(),
+                engine: state.engine.clone(),
                 runtime_service_registry: state.runtime_service_registry(),
                 tenant_isolation_mode: state.tenant_isolation_mode,
                 registry,
@@ -98,11 +98,11 @@ mod tests {
     use axum::http::header;
     use futures::future::BoxFuture;
     use nimbus_core::{Query, TableName, TenantId};
-    use nimbus_engine::Service;
+    use nimbus_engine::Engine;
     use nimbus_runtime::{
         InvocationAuth, RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
     };
-    use nimbus_testing::{ServerFixture, ServiceFixture};
+    use nimbus_testing::{EngineFixture, ServerFixture};
     use reqwest::StatusCode;
     use serde_json::Value;
     use tempfile::tempdir;
@@ -111,9 +111,9 @@ mod tests {
     use crate::adapters::cloud_functions::{
         CLOUD_FUNCTIONS_ARTIFACT_MANIFEST_FILE, CLOUD_FUNCTIONS_INTERNAL_ARTIFACT_DIR,
         CLOUD_FUNCTIONS_TARGETS_MANIFEST_FILE, CloudFunctionsArtifactManifest,
-        CloudFunctionsAuthoringSurface, CloudFunctionsExecutionBinding, CloudFunctionsHttpExposure,
-        CloudFunctionsSignatureType, CloudFunctionsTargetBinding, CloudFunctionsTargetDefinition,
-        CloudFunctionsTargetsManifest,
+        CloudFunctionsAuthoringSurface, CloudFunctionsExecutionPrincipal,
+        CloudFunctionsHttpExposure, CloudFunctionsSignatureType, CloudFunctionsTargetBinding,
+        CloudFunctionsTargetDefinition, CloudFunctionsTargetsManifest,
     };
 
     struct TenantClaimApplicationAuthVerifier;
@@ -206,8 +206,8 @@ mod tests {
 
     #[tokio::test]
     async fn cloud_functions_http_handler_dispatches_exact_path_and_commits_writes() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
-        let service = fixture.service();
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let service = fixture.engine();
         service
             .create_tenant(TenantId::new("demo").expect("tenant id should parse"))
             .expect("tenant should create");
@@ -222,7 +222,7 @@ mod tests {
                 binding: CloudFunctionsTargetBinding::Https {
                     exposure: CloudFunctionsHttpExposure::Http,
                     path: "/hello".to_string(),
-                    execution: CloudFunctionsExecutionBinding::Request,
+                    execution: CloudFunctionsExecutionPrincipal::RequestPrincipal,
                 },
             }],
             r#"
@@ -232,7 +232,7 @@ globalThis.__nimbusInvoke = async function (request) {
   }
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `http:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   await ctx.db.insert("audit", {
     path: request.args.path,
@@ -337,8 +337,8 @@ export {};
 
     #[tokio::test]
     async fn cloud_functions_http_handler_rejects_ambiguous_multi_tenant_binding() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
-        let service = fixture.service();
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let service = fixture.engine();
         service
             .create_tenant(TenantId::new("alpha").expect("tenant id should parse"))
             .expect("first tenant should create");
@@ -356,7 +356,7 @@ export {};
                 binding: CloudFunctionsTargetBinding::Https {
                     exposure: CloudFunctionsHttpExposure::Http,
                     path: "/hello".to_string(),
-                    execution: CloudFunctionsExecutionBinding::Request,
+                    execution: CloudFunctionsExecutionPrincipal::RequestPrincipal,
                 },
             }],
             r#"
@@ -395,8 +395,8 @@ export {};
 
     #[tokio::test]
     async fn cloud_functions_callable_handler_supports_preflight_and_json_envelope() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
-        let service = fixture.service();
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let service = fixture.engine();
         service
             .create_tenant(TenantId::new("demo").expect("tenant id should parse"))
             .expect("tenant should create");
@@ -411,7 +411,7 @@ export {};
                 binding: CloudFunctionsTargetBinding::Https {
                     exposure: CloudFunctionsHttpExposure::Callable,
                     path: "/hello".to_string(),
-                    execution: CloudFunctionsExecutionBinding::Request,
+                    execution: CloudFunctionsExecutionPrincipal::RequestPrincipal,
                 },
             }],
             r#"
@@ -539,8 +539,8 @@ export {};
 
     #[tokio::test]
     async fn cloud_functions_callable_handler_rejects_invalid_input_and_app_check_headers() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
-        let service = fixture.service();
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let service = fixture.engine();
         service
             .create_tenant(TenantId::new("demo").expect("tenant id should parse"))
             .expect("tenant should create");
@@ -555,7 +555,7 @@ export {};
                 binding: CloudFunctionsTargetBinding::Https {
                     exposure: CloudFunctionsHttpExposure::Callable,
                     path: "/hello".to_string(),
-                    execution: CloudFunctionsExecutionBinding::Request,
+                    execution: CloudFunctionsExecutionPrincipal::RequestPrincipal,
                 },
             }],
             r#"
@@ -642,8 +642,8 @@ export {};
 
     #[tokio::test]
     async fn cloud_functions_callable_handler_fails_closed_when_bearer_auth_cannot_be_verified() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
-        let service = fixture.service();
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let service = fixture.engine();
         service
             .create_tenant(TenantId::new("demo").expect("tenant id should parse"))
             .expect("tenant should create");
@@ -658,7 +658,7 @@ export {};
                 binding: CloudFunctionsTargetBinding::Https {
                     exposure: CloudFunctionsHttpExposure::Callable,
                     path: "/hello".to_string(),
-                    execution: CloudFunctionsExecutionBinding::Request,
+                    execution: CloudFunctionsExecutionPrincipal::RequestPrincipal,
                 },
             }],
             r#"
@@ -721,8 +721,8 @@ export {};
 
     #[tokio::test]
     async fn cloud_functions_callable_rejects_application_bearer_for_different_tenant() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
-        let service = fixture.service();
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let service = fixture.engine();
         service
             .create_tenant(TenantId::new("tenant-a").expect("tenant id should parse"))
             .expect("tenant should create");
@@ -737,7 +737,7 @@ export {};
                 binding: CloudFunctionsTargetBinding::Https {
                     exposure: CloudFunctionsHttpExposure::Callable,
                     path: "/hello".to_string(),
-                    execution: CloudFunctionsExecutionBinding::Request,
+                    execution: CloudFunctionsExecutionPrincipal::RequestPrincipal,
                 },
             }],
             r#"
@@ -830,8 +830,8 @@ export {};
             return;
         }
 
-        let fixture = ServiceFixture::new(|path| Service::new(path));
-        let service = fixture.service();
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let service = fixture.engine();
         service
             .create_tenant(TenantId::new("demo").expect("tenant id should parse"))
             .expect("tenant should create");
@@ -901,8 +901,8 @@ export {};
             return;
         }
 
-        let fixture = ServiceFixture::new(|path| Service::new(path));
-        let service = fixture.service();
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let service = fixture.engine();
         service
             .create_tenant(TenantId::new("demo").expect("tenant id should parse"))
             .expect("tenant should create");
@@ -973,8 +973,8 @@ export {};
             return;
         }
 
-        let fixture = ServiceFixture::new(|path| Service::new(path));
-        let service = fixture.service();
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let service = fixture.engine();
         service
             .create_tenant(TenantId::new("demo").expect("tenant id should parse"))
             .expect("tenant should create");
@@ -1172,7 +1172,7 @@ functions.http("helloWorld", async (req, res) => {
                     binding: CloudFunctionsTargetBinding::Https {
                         exposure: CloudFunctionsHttpExposure::Http,
                         path: "/hello".to_string(),
-                        execution: CloudFunctionsExecutionBinding::Request,
+                        execution: CloudFunctionsExecutionPrincipal::RequestPrincipal,
                     },
                 }])
                 .expect("framework targets should validate"),

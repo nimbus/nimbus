@@ -1,0 +1,106 @@
+/**
+ * Nimbus docs theme — Industrial Precision, in reading form.
+ *
+ * Token source of truth: DESIGN.md §Visual Language (Product Palette, Blue;
+ * §Brand Palette Two-Tier Bridge; §Typography; §Spacing And Shape).
+ * The doc body is product-tier: OKLCH Blue-palette neutrals, --brand as the
+ * Starlight accent family, no gradients. The splash hero is the single
+ * brand-tier moment on the site (see the hero rules at the bottom).
+ *
+ * Starlight inverts gray semantics per theme: in dark mode --sl-color-white
+ * is the text color and --sl-color-black the page background; light mode
+ * flips them. Values below map DESIGN.md tokens onto that scale.
+ */
+
+/* Dark mode (Starlight default :root) — DESIGN.md Blue dark column. */
+:root {
+  /* Accent family ← --brand oklch(72% 0.17 248) (#60A5FA); high ← --link dark. */
+  --sl-color-accent-low: oklch(35% 0.1 252);
+  --sl-color-accent: oklch(72% 0.17 248);
+  --sl-color-accent-high: oklch(82% 0.11 247);
+
+  /* Neutrals ← --text / --muted / --border / --surface / --bg (dark). */
+  --sl-color-white: oklch(91% 0.014 252);
+  --sl-color-gray-1: oklch(85% 0.02 250);
+  --sl-color-gray-2: oklch(75% 0.024 249);
+  --sl-color-gray-3: oklch(67% 0.026 248);
+  --sl-color-gray-4: oklch(48% 0.028 255);
+  --sl-color-gray-5: oklch(32% 0.03 258);
+  --sl-color-gray-6: oklch(19% 0.03 258);
+  --sl-color-black: oklch(13% 0.026 263);
+
+  /* DESIGN.md §Typography. */
+  --sl-font:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial,
+    sans-serif;
+  --sl-font-mono:
+    'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, SFMono-Regular,
+    Menlo, Consolas, monospace;
+}
+
+/* Light mode — DESIGN.md Blue light column (gray semantics inverted). */
+:root[data-theme='light'] {
+  /* Accent family ← --brand oklch(62% 0.20 258) (#3B82F6); high ← --link light. */
+  --sl-color-accent-low: oklch(94% 0.03 250);
+  --sl-color-accent: oklch(62% 0.2 258);
+  --sl-color-accent-high: oklch(54% 0.22 264);
+
+  --sl-color-white: oklch(20% 0.035 263);
+  --sl-color-gray-1: oklch(27% 0.032 260);
+  --sl-color-gray-2: oklch(36% 0.03 258);
+  --sl-color-gray-3: oklch(48% 0.028 255);
+  --sl-color-gray-4: oklch(62% 0.024 252);
+  --sl-color-gray-5: oklch(82% 0.02 250);
+  --sl-color-gray-6: oklch(96% 0.008 248);
+  --sl-color-gray-7: oklch(98% 0.005 248);
+  --sl-color-black: oklch(100% 0 0);
+}
+
+/* Monospace cadence: DESIGN.md requires -0.01em so JetBrains Mono reads at
+ * body rhythm inline; IDs/digests/ports/code are always monospace. */
+code,
+kbd,
+pre,
+samp {
+  letter-spacing: -0.01em;
+}
+
+/* Hard requirement from DESIGN.md: numeric columns must not jitter. */
+table {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Shape: 6px default radius, 8px max for cards/panels (DESIGN.md §Spacing). */
+:root {
+  --sl-border-radius-medium: 6px;
+}
+.card,
+.sl-link-card,
+starlight-tabs {
+  border-radius: 8px;
+}
+
+/*
+ * Splash hero — the single brand-tier moment on the site.
+ *
+ * Dark mode uses the canonical brand "Interactive Elements" gradient
+ * (#67E8F9 → #06B6D4). That gradient has no light-mode-safe form (cyan-300
+ * fails contrast on white), so light mode composes the two tier-bridge
+ * solids instead: accent #06B6D4 → brand #3B82F6. Both rules are recorded
+ * in DESIGN.md §Documentation site; do not use gradients anywhere else.
+ */
+[data-has-hero] .hero h1 {
+  background-image: linear-gradient(135deg, #67e8f9, #06b6d4);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+:root[data-theme='light'] [data-has-hero] .hero h1 {
+  background-image: linear-gradient(135deg, #06b6d4, #3b82f6);
+}
+
+/* Identity colors appear as small marks, never section fills (DESIGN.md). */
+[data-has-hero] .hero .tagline {
+  max-width: 46rem;
+}

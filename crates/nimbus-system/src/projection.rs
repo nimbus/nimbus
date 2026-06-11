@@ -2,7 +2,7 @@ use std::sync::{Arc, Weak};
 
 use nimbus_core::{TableName, TenantId};
 use nimbus_engine::{
-    CommittedMutationEvent, CommittedMutationObserver, Service, TableSchemaChangeEvent,
+    CommittedMutationEvent, CommittedMutationObserver, Engine, TableSchemaChangeEvent,
     TableSchemaChangeObserver,
 };
 use tracing::warn;
@@ -12,7 +12,7 @@ use super::{is_reserved_tenant_id, record_table_state_async};
 const TABLE_PROJECTION_OBSERVER: &str = "nimbus-system-table-projection";
 
 struct TableProjectionObserver {
-    service: Weak<Service>,
+    engine: Weak<Engine>,
     projection_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -44,7 +44,7 @@ impl TableSchemaChangeObserver for TableProjectionObserver {
 
 impl TableProjectionObserver {
     fn project_tables(&self, tenant_id: TenantId, mut tables: Vec<TableName>) {
-        let Some(service) = self.service.upgrade() else {
+        let Some(engine) = self.engine.upgrade() else {
             return;
         };
         let projection_lock = self.projection_lock.clone();
@@ -59,7 +59,7 @@ impl TableProjectionObserver {
         handle.spawn(async move {
             let _projection_guard = projection_lock.lock().await;
             for table in tables {
-                if let Err(error) = record_table_state_async(&service, &tenant_id, &table).await {
+                if let Err(error) = record_table_state_async(&engine, &tenant_id, &table).await {
                     warn!(
                         tenant_id = %tenant_id,
                         table = %table,
@@ -72,11 +72,11 @@ impl TableProjectionObserver {
     }
 }
 
-pub fn install_table_projection_observer(service: &Arc<Service>) {
+pub fn install_table_projection_observer(engine: &Arc<Engine>) {
     let observer = Arc::new(TableProjectionObserver {
-        service: Arc::downgrade(service),
+        engine: Arc::downgrade(engine),
         projection_lock: Arc::new(tokio::sync::Mutex::new(())),
     });
-    service.install_committed_mutation_observer(TABLE_PROJECTION_OBSERVER, observer.clone());
-    service.install_table_schema_change_observer(TABLE_PROJECTION_OBSERVER, observer);
+    engine.install_committed_mutation_observer(TABLE_PROJECTION_OBSERVER, observer.clone());
+    engine.install_table_schema_change_observer(TABLE_PROJECTION_OBSERVER, observer);
 }

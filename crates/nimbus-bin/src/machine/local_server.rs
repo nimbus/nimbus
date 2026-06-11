@@ -226,7 +226,7 @@ mod tests {
     use std::net::Ipv4Addr;
     use std::sync::{Arc, Mutex};
 
-    use nimbus::Service;
+    use nimbus::Engine;
     use nimbus_server::{
         LocalServerSecurityState, MachineCreateRequest, MachineLifecycleFuture,
         MachineLifecycleManager, MachineLifecycleSnapshot, MachineUpdateRequest, ServeOptions,
@@ -356,14 +356,14 @@ mod tests {
         let local_paths = sample_paths(temp.path());
         let token =
             load_or_create_local_admin_token(&local_paths).expect("local admin token should exist");
-        let roots = MachineRootLayout::new(
+        let roots = MachineRootLayout::test_sibling_roots(
             temp.path().join("machine-config"),
             temp.path().join("machine-state"),
             temp.path().join("run"),
         );
         let manager = StubMachineLifecycleManager::new(roots.clone());
         let service =
-            Arc::new(Service::new(temp.path().join("data")).expect("service should create"));
+            Arc::new(Engine::new(temp.path().join("data")).expect("service should create"));
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("listener should bind");
@@ -411,7 +411,7 @@ mod tests {
     async fn lifecycle_command_falls_back_when_no_server_is_running() {
         let temp = tempdir().expect("tempdir should build");
         let local_paths = sample_paths(temp.path());
-        let roots = MachineRootLayout::new(
+        let roots = MachineRootLayout::test_sibling_roots(
             temp.path().join("machine-config"),
             temp.path().join("machine-state"),
             temp.path().join("run"),

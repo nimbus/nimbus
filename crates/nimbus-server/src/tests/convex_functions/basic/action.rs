@@ -2,12 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn convex_action_can_execute_query_and_paginated_query_shapes() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(
-        fixture.service(),
-        ConvexRegistry::empty(),
-    ))
-    .await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server =
+        ServerFixture::start(router_for_convex(fixture.engine(), ConvexRegistry::empty())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

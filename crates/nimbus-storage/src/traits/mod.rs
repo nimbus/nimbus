@@ -17,14 +17,16 @@ use crate::async_storage::{
     EmbeddedPersistenceProvider, EmbeddedRedbProvider, EmbeddedSqliteProvider,
     OpenedEmbeddedRedbTenant, OpenedEmbeddedSqliteTenant, UsageStorage,
 };
+use crate::changefeed::{ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage};
 use crate::encryption::LocalKeyProvider;
 use crate::libsql::OpenedLibsqlReplicaTenant;
 use crate::mysql::OpenedMySqlTenant;
 use crate::postgres::OpenedPostgresTenant;
 use crate::store::{DurableJournalBootstrap, DurableJournalPage, JournalProgress};
 use crate::{
-    LibsqlReplicaProvider, LibsqlReplicaTenantStore, MySqlProvider, MySqlTenantStore,
-    PostgresProvider, PostgresTenantStore, RedbUsageStorage, SqliteTenantStore, TenantStore,
+    IndexRangeBound, LibsqlReplicaProvider, LibsqlReplicaTenantStore, MySqlProvider,
+    MySqlTenantStore, PostgresProvider, PostgresTenantStore, RedbUsageStorage, SqliteTenantStore,
+    TenantStore,
 };
 
 /// Tenant lifecycle and discovery for provider families that can own tenants.
@@ -82,6 +84,21 @@ pub trait TenantRangeScan {
     where
         F: FnMut(&Document) -> Result<bool>;
 
+    fn scan_table_id_prefix_cancellable(
+        &self,
+        table: &TableName,
+        id_prefix: &str,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>>;
+
+    fn scan_table_id_starting_at_cancellable(
+        &self,
+        table: &TableName,
+        start_id: &str,
+        limit: usize,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>>;
+
     fn index_scan_eq_cancellable(
         &self,
         table: &TableName,
@@ -98,28 +115,22 @@ pub trait TenantRangeScan {
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>>;
 
-    #[allow(clippy::too_many_arguments)]
     fn index_scan_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>>;
 
-    #[allow(clippy::too_many_arguments)]
     fn index_scan_composite_range_cancellable(
         &self,
         table: &TableName,
         index_name: &str,
         exact_prefix: &[Value],
-        start: Option<&Value>,
-        end: Option<&Value>,
-        start_inclusive: bool,
-        end_inclusive: bool,
+        start: IndexRangeBound<'_>,
+        end: IndexRangeBound<'_>,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>>;
 }
@@ -137,6 +148,18 @@ pub trait DurableJournal {
         limit: usize,
     ) -> Result<DurableJournalPage>;
     fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap>;
+
+    fn export_changefeed_bootstrap(&self) -> Result<ChangefeedBootstrap> {
+        ChangefeedBootstrap::from_durable_bootstrap(self.export_durable_journal_bootstrap()?)
+    }
+
+    fn stream_changefeed(&self, cursor: &ChangefeedCursor, limit: usize) -> Result<ChangefeedPage> {
+        cursor.rotate_handle(cursor.handle.clone())?;
+        let page = self
+            .stream_durable_journal(cursor.after, limit)
+            .map_err(crate::changefeed::map_changefeed_journal_error)?;
+        ChangefeedPage::from_durable_page(cursor.handle.clone(), page)
+    }
 }
 
 /// Scheduler inspection capability for stores that own scheduled work.
@@ -336,6 +359,31 @@ macro_rules! impl_range_scan {
                     )
                 }
 
+                fn scan_table_id_prefix_cancellable(
+                    &self,
+                    table: &TableName,
+                    id_prefix: &str,
+                    check_cancel: &mut dyn FnMut() -> Result<()>,
+                ) -> Result<Vec<Document>> {
+                    <$ty>::scan_table_id_prefix_cancellable(self, table, id_prefix, check_cancel)
+                }
+
+                fn scan_table_id_starting_at_cancellable(
+                    &self,
+                    table: &TableName,
+                    start_id: &str,
+                    limit: usize,
+                    check_cancel: &mut dyn FnMut() -> Result<()>,
+                ) -> Result<Vec<Document>> {
+                    <$ty>::scan_table_id_starting_at_cancellable(
+                        self,
+                        table,
+                        start_id,
+                        limit,
+                        check_cancel,
+                    )
+                }
+
                 fn index_scan_eq_cancellable(
                     &self,
                     table: &TableName,
@@ -366,10 +414,8 @@ macro_rules! impl_range_scan {
                     &self,
                     table: &TableName,
                     index_name: &str,
-                    start: Option<&Value>,
-                    end: Option<&Value>,
-                    start_inclusive: bool,
-                    end_inclusive: bool,
+                    start: IndexRangeBound<'_>,
+                    end: IndexRangeBound<'_>,
                     check_cancel: &mut dyn FnMut() -> Result<()>,
                 ) -> Result<Vec<Document>> {
                     <$ty>::index_scan_range_cancellable(
@@ -378,8 +424,6 @@ macro_rules! impl_range_scan {
                         index_name,
                         start,
                         end,
-                        start_inclusive,
-                        end_inclusive,
                         check_cancel,
                     )
                 }
@@ -389,10 +433,8 @@ macro_rules! impl_range_scan {
                     table: &TableName,
                     index_name: &str,
                     exact_prefix: &[Value],
-                    start: Option<&Value>,
-                    end: Option<&Value>,
-                    start_inclusive: bool,
-                    end_inclusive: bool,
+                    start: IndexRangeBound<'_>,
+                    end: IndexRangeBound<'_>,
                     check_cancel: &mut dyn FnMut() -> Result<()>,
                 ) -> Result<Vec<Document>> {
                     <$ty>::index_scan_composite_range_cancellable(
@@ -402,8 +444,6 @@ macro_rules! impl_range_scan {
                         exact_prefix,
                         start,
                         end,
-                        start_inclusive,
-                        end_inclusive,
                         check_cancel,
                     )
                 }

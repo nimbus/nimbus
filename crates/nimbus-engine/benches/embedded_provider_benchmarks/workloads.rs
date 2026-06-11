@@ -15,10 +15,11 @@ use super::scenarios::{
 };
 use super::support::{
     BenchDir, build_backend_pair_async, capture_sqlite_query_plan, clone_seeded_data_dir,
-    emit_cold_open_breakdown, measure_backend_pair_async, open_embedded_service, quiesce_service,
+    emit_cold_open_breakdown, measure_backend_pair_async, open_embedded_engine, quiesce_engine,
     tenant_store_path, warm_sqlite_index_id_only,
 };
 use super::*;
+use std::ops::Bound;
 
 pub(super) async fn benchmark_crud_throughput() -> BenchResult<WorkloadOutcome> {
     let steady_fixtures = build_backend_pair_async(|backend| async move {
@@ -32,19 +33,19 @@ pub(super) async fn benchmark_crud_throughput() -> BenchResult<WorkloadOutcome> 
             let fixture = steady_fixtures.get(backend).clone();
             async move {
                 let started = Instant::now();
-                exercise_crud_sample(&fixture.service, &fixture.tenant_id).await?;
+                exercise_crud_sample(&fixture.engine, &fixture.tenant_id).await?;
                 Ok(started.elapsed())
             }
         },
     )
     .await?;
-    quiesce_service(
-        &steady_fixtures.redb.service,
+    quiesce_engine(
+        &steady_fixtures.redb.engine,
         "CRUD steady-state redb teardown",
     )
     .await?;
-    quiesce_service(
-        &steady_fixtures.sqlite.service,
+    quiesce_engine(
+        &steady_fixtures.sqlite.engine,
         "CRUD steady-state sqlite teardown",
     )
     .await?;
@@ -57,20 +58,20 @@ pub(super) async fn benchmark_crud_throughput() -> BenchResult<WorkloadOutcome> 
             let data_dir = bench_dir.path().to_path_buf();
             let tenant_id = super::common::benchmark_tenant_id("crud")?;
             let started = Instant::now();
-            let service = open_embedded_service(&data_dir, backend).await?;
-            let service_bootstrap = started.elapsed();
+            let engine = open_embedded_engine(&data_dir, backend).await?;
+            let engine_bootstrap = started.elapsed();
             let first_operation_started = Instant::now();
-            service.create_tenant_async(tenant_id.clone()).await?;
-            exercise_crud_sample(&service, &tenant_id).await?;
+            engine.create_tenant_async(tenant_id.clone()).await?;
+            exercise_crud_sample(&engine, &tenant_id).await?;
             let first_operation = first_operation_started.elapsed();
             emit_cold_open_breakdown(
                 WorkloadKind::CrudThroughput,
                 backend,
-                service_bootstrap,
+                engine_bootstrap,
                 first_operation,
             );
             let elapsed = started.elapsed();
-            quiesce_service(&service, "CRUD cold-start sample teardown").await?;
+            quiesce_engine(&engine, "CRUD cold-start sample teardown").await?;
             drop(bench_dir);
             Ok(elapsed)
         },
@@ -106,20 +107,20 @@ pub(super) async fn benchmark_point_read_latency() -> BenchResult<WorkloadOutcom
             let fixture = steady_fixtures.get(backend).clone();
             async move {
                 let started = Instant::now();
-                exercise_point_read_sample(&fixture.service, &fixture.tenant_id, &fixture.ids)
+                exercise_point_read_sample(&fixture.engine, &fixture.tenant_id, &fixture.ids)
                     .await?;
                 Ok(started.elapsed())
             }
         },
     )
     .await?;
-    quiesce_service(
-        &steady_fixtures.redb.service,
+    quiesce_engine(
+        &steady_fixtures.redb.engine,
         "point-read steady-state redb teardown",
     )
     .await?;
-    quiesce_service(
-        &steady_fixtures.sqlite.service,
+    quiesce_engine(
+        &steady_fixtures.sqlite.engine,
         "point-read steady-state sqlite teardown",
     )
     .await?;
@@ -141,19 +142,19 @@ pub(super) async fn benchmark_point_read_latency() -> BenchResult<WorkloadOutcom
                 let sample_dir =
                     clone_seeded_data_dir(&seed.data_dir, "point-read-cold-sample", backend)?;
                 let started = Instant::now();
-                let reopened = open_embedded_service(sample_dir.path(), backend).await?;
-                let service_bootstrap = started.elapsed();
+                let reopened = open_embedded_engine(sample_dir.path(), backend).await?;
+                let engine_bootstrap = started.elapsed();
                 let first_operation_started = Instant::now();
                 exercise_point_read_sample(&reopened, &seed.tenant_id, &seed.ids).await?;
                 let first_operation = first_operation_started.elapsed();
                 emit_cold_open_breakdown(
                     WorkloadKind::PointReadLatency,
                     backend,
-                    service_bootstrap,
+                    engine_bootstrap,
                     first_operation,
                 );
                 let elapsed = started.elapsed();
-                quiesce_service(&reopened, "point-read cold-start reopened teardown").await?;
+                quiesce_engine(&reopened, "point-read cold-start reopened teardown").await?;
                 drop(sample_dir);
                 Ok(elapsed)
             }
@@ -203,7 +204,7 @@ pub(super) async fn benchmark_indexed_query_latency() -> BenchResult<WorkloadOut
             async move {
                 let started = Instant::now();
                 exercise_query_sample(
-                    &fixture.service,
+                    &fixture.engine,
                     &fixture.tenant_id,
                     &fixture.query,
                     INDEXED_QUERY_BATCH_SIZE,
@@ -214,13 +215,13 @@ pub(super) async fn benchmark_indexed_query_latency() -> BenchResult<WorkloadOut
         },
     )
     .await?;
-    quiesce_service(
-        &steady_fixtures.redb.service,
+    quiesce_engine(
+        &steady_fixtures.redb.engine,
         "indexed-query steady-state redb teardown",
     )
     .await?;
-    quiesce_service(
-        &steady_fixtures.sqlite.service,
+    quiesce_engine(
+        &steady_fixtures.sqlite.engine,
         "indexed-query steady-state sqlite teardown",
     )
     .await?;
@@ -243,7 +244,7 @@ pub(super) async fn benchmark_indexed_query_latency() -> BenchResult<WorkloadOut
                 let sample_dir =
                     clone_seeded_data_dir(&seed.data_dir, "indexed-query-cold-sample", backend)?;
                 let started = Instant::now();
-                let reopened = open_embedded_service(sample_dir.path(), backend).await?;
+                let reopened = open_embedded_engine(sample_dir.path(), backend).await?;
                 let tenant_path = tenant_store_path(sample_dir.path(), backend, &seed.tenant_id);
                 maybe_warmup_sqlite_indexed_query(
                     &reopened,
@@ -253,7 +254,7 @@ pub(super) async fn benchmark_indexed_query_latency() -> BenchResult<WorkloadOut
                     backend,
                 )
                 .await?;
-                let service_bootstrap = started.elapsed();
+                let engine_bootstrap = started.elapsed();
                 let first_operation_started = Instant::now();
                 exercise_query_sample(
                     &reopened,
@@ -266,11 +267,11 @@ pub(super) async fn benchmark_indexed_query_latency() -> BenchResult<WorkloadOut
                 emit_cold_open_breakdown(
                     WorkloadKind::IndexedQueryLatency,
                     backend,
-                    service_bootstrap,
+                    engine_bootstrap,
                     first_operation,
                 );
                 let elapsed = started.elapsed();
-                quiesce_service(&reopened, "indexed-query cold-start reopened teardown").await?;
+                quiesce_engine(&reopened, "indexed-query cold-start reopened teardown").await?;
                 drop(sample_dir);
                 Ok(elapsed)
             }
@@ -327,7 +328,7 @@ impl SqliteIndexedQueryWarmupMode {
 }
 
 async fn maybe_warmup_sqlite_indexed_query(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_path: &Path,
     tenant_id: &TenantId,
     query: &Query,
@@ -348,7 +349,7 @@ async fn maybe_warmup_sqlite_indexed_query(
             }
 
             let started = Instant::now();
-            let documents = service
+            let documents = engine
                 .query_documents_async(tenant_id.clone(), warmup_query)
                 .await?;
             black_box(documents);
@@ -384,10 +385,8 @@ pub(super) async fn benchmark_composite_indexed_query_latency() -> BenchResult<W
     let sqlite_statement = sqlite_index_scan_composite_range_query_sql(
         &["team", "status", "rank"],
         2,
-        true,
-        true,
-        true,
-        false,
+        Bound::Included(()),
+        Bound::Excluded(()),
     )
     .expect("composite indexed query SQL should build");
     let sqlite_plan = SqliteQueryPlan {
@@ -408,7 +407,7 @@ pub(super) async fn benchmark_composite_indexed_query_latency() -> BenchResult<W
             async move {
                 let started = Instant::now();
                 exercise_query_sample(
-                    &fixture.service,
+                    &fixture.engine,
                     &fixture.tenant_id,
                     &fixture.query,
                     INDEXED_QUERY_BATCH_SIZE,
@@ -419,13 +418,13 @@ pub(super) async fn benchmark_composite_indexed_query_latency() -> BenchResult<W
         },
     )
     .await?;
-    quiesce_service(
-        &steady_fixtures.redb.service,
+    quiesce_engine(
+        &steady_fixtures.redb.engine,
         "composite indexed-query steady-state redb teardown",
     )
     .await?;
-    quiesce_service(
-        &steady_fixtures.sqlite.service,
+    quiesce_engine(
+        &steady_fixtures.sqlite.engine,
         "composite indexed-query steady-state sqlite teardown",
     )
     .await?;
@@ -448,8 +447,8 @@ pub(super) async fn benchmark_composite_indexed_query_latency() -> BenchResult<W
                 let sample_dir =
                     clone_seeded_data_dir(&seed.data_dir, "composite-query-cold-sample", backend)?;
                 let started = Instant::now();
-                let reopened = open_embedded_service(sample_dir.path(), backend).await?;
-                let service_bootstrap = started.elapsed();
+                let reopened = open_embedded_engine(sample_dir.path(), backend).await?;
+                let engine_bootstrap = started.elapsed();
                 let first_operation_started = Instant::now();
                 exercise_query_sample(
                     &reopened,
@@ -462,11 +461,11 @@ pub(super) async fn benchmark_composite_indexed_query_latency() -> BenchResult<W
                 emit_cold_open_breakdown(
                     WorkloadKind::CompositeIndexedQueryLatency,
                     backend,
-                    service_bootstrap,
+                    engine_bootstrap,
                     first_operation,
                 );
                 let elapsed = started.elapsed();
-                quiesce_service(
+                quiesce_engine(
                     &reopened,
                     "composite indexed-query cold-start reopened teardown",
                 )
@@ -508,19 +507,19 @@ pub(super) async fn benchmark_durable_journal_stream_latency() -> BenchResult<Wo
             let fixture = steady_fixtures.get(backend).clone();
             async move {
                 let started = Instant::now();
-                exercise_journal_stream_sample(&fixture.service, &fixture.tenant_id).await?;
+                exercise_journal_stream_sample(&fixture.engine, &fixture.tenant_id).await?;
                 Ok(started.elapsed())
             }
         },
     )
     .await?;
-    quiesce_service(
-        &steady_fixtures.redb.service,
+    quiesce_engine(
+        &steady_fixtures.redb.engine,
         "journal-stream steady-state redb teardown",
     )
     .await?;
-    quiesce_service(
-        &steady_fixtures.sqlite.service,
+    quiesce_engine(
+        &steady_fixtures.sqlite.engine,
         "journal-stream steady-state sqlite teardown",
     )
     .await?;
@@ -542,19 +541,19 @@ pub(super) async fn benchmark_durable_journal_stream_latency() -> BenchResult<Wo
                 let sample_dir =
                     clone_seeded_data_dir(&seed.data_dir, "journal-stream-cold-sample", backend)?;
                 let started = Instant::now();
-                let reopened = open_embedded_service(sample_dir.path(), backend).await?;
-                let service_bootstrap = started.elapsed();
+                let reopened = open_embedded_engine(sample_dir.path(), backend).await?;
+                let engine_bootstrap = started.elapsed();
                 let first_operation_started = Instant::now();
                 exercise_journal_stream_sample(&reopened, &seed.tenant_id).await?;
                 let first_operation = first_operation_started.elapsed();
                 emit_cold_open_breakdown(
                     WorkloadKind::DurableJournalStreamLatency,
                     backend,
-                    service_bootstrap,
+                    engine_bootstrap,
                     first_operation,
                 );
                 let elapsed = started.elapsed();
-                quiesce_service(&reopened, "journal-stream cold-start reopened teardown").await?;
+                quiesce_engine(&reopened, "journal-stream cold-start reopened teardown").await?;
                 drop(sample_dir);
                 Ok(elapsed)
             }
@@ -590,19 +589,19 @@ pub(super) async fn benchmark_durable_journal_bootstrap_latency() -> BenchResult
             let fixture = steady_fixtures.get(backend).clone();
             async move {
                 let started = Instant::now();
-                exercise_journal_bootstrap_sample(&fixture.service, &fixture.tenant_id).await?;
+                exercise_journal_bootstrap_sample(&fixture.engine, &fixture.tenant_id).await?;
                 Ok(started.elapsed())
             }
         },
     )
     .await?;
-    quiesce_service(
-        &steady_fixtures.redb.service,
+    quiesce_engine(
+        &steady_fixtures.redb.engine,
         "journal-bootstrap steady-state redb teardown",
     )
     .await?;
-    quiesce_service(
-        &steady_fixtures.sqlite.service,
+    quiesce_engine(
+        &steady_fixtures.sqlite.engine,
         "journal-bootstrap steady-state sqlite teardown",
     )
     .await?;
@@ -628,20 +627,19 @@ pub(super) async fn benchmark_durable_journal_bootstrap_latency() -> BenchResult
                     backend,
                 )?;
                 let started = Instant::now();
-                let reopened = open_embedded_service(sample_dir.path(), backend).await?;
-                let service_bootstrap = started.elapsed();
+                let reopened = open_embedded_engine(sample_dir.path(), backend).await?;
+                let engine_bootstrap = started.elapsed();
                 let first_operation_started = Instant::now();
                 exercise_journal_bootstrap_sample(&reopened, &seed.tenant_id).await?;
                 let first_operation = first_operation_started.elapsed();
                 emit_cold_open_breakdown(
                     WorkloadKind::DurableJournalBootstrapLatency,
                     backend,
-                    service_bootstrap,
+                    engine_bootstrap,
                     first_operation,
                 );
                 let elapsed = started.elapsed();
-                quiesce_service(&reopened, "journal-bootstrap cold-start reopened teardown")
-                    .await?;
+                quiesce_engine(&reopened, "journal-bootstrap cold-start reopened teardown").await?;
                 drop(sample_dir);
                 Ok(elapsed)
             }
@@ -684,10 +682,10 @@ pub(super) async fn benchmark_subscription_fanout_latency() -> BenchResult<Workl
             let fixture = steady_fixtures.get(backend).clone();
             async move {
                 let mut fixture = fixture.lock().await;
-                let service = fixture.service.clone();
+                let engine = fixture.engine.clone();
                 let tenant_id = fixture.tenant_id.clone();
                 let started = Instant::now();
-                exercise_subscription_fanout_sample(&service, &tenant_id, &mut fixture.receivers)
+                exercise_subscription_fanout_sample(&engine, &tenant_id, &mut fixture.receivers)
                     .await?;
                 Ok(started.elapsed())
             }
@@ -699,18 +697,14 @@ pub(super) async fn benchmark_subscription_fanout_latency() -> BenchResult<Workl
         black_box(fixture.registrations.len());
         black_box(fixture.data_dir.as_os_str());
         black_box(fixture.bench_dir.path());
-        quiesce_service(&fixture.service, "subscription steady-state redb teardown").await?;
+        quiesce_engine(&fixture.engine, "subscription steady-state redb teardown").await?;
     }
     {
         let fixture = steady_fixtures.sqlite.lock().await;
         black_box(fixture.registrations.len());
         black_box(fixture.data_dir.as_os_str());
         black_box(fixture.bench_dir.path());
-        quiesce_service(
-            &fixture.service,
-            "subscription steady-state sqlite teardown",
-        )
-        .await?;
+        quiesce_engine(&fixture.engine, "subscription steady-state sqlite teardown").await?;
     }
 
     let cold_samples = measure_backend_pair_async(
@@ -721,24 +715,24 @@ pub(super) async fn benchmark_subscription_fanout_latency() -> BenchResult<Workl
             let data_dir = bench_dir.path().to_path_buf();
             let tenant_id = super::common::benchmark_tenant_id("subscription-fanout")?;
             let started = Instant::now();
-            let service = open_embedded_service(&data_dir, backend).await?;
-            let service_bootstrap = started.elapsed();
+            let engine = open_embedded_engine(&data_dir, backend).await?;
+            let engine_bootstrap = started.elapsed();
             let first_operation_started = Instant::now();
-            service.create_tenant_async(tenant_id.clone()).await?;
-            seed_subscription_fixture(&service, &tenant_id).await?;
+            engine.create_tenant_async(tenant_id.clone()).await?;
+            seed_subscription_fixture(&engine, &tenant_id).await?;
             let (registrations, mut receivers) =
-                register_subscription_receivers(&service, &tenant_id).await?;
-            exercise_subscription_fanout_sample(&service, &tenant_id, &mut receivers).await?;
+                register_subscription_receivers(&engine, &tenant_id).await?;
+            exercise_subscription_fanout_sample(&engine, &tenant_id, &mut receivers).await?;
             let first_operation = first_operation_started.elapsed();
             emit_cold_open_breakdown(
                 WorkloadKind::SubscriptionFanoutLatency,
                 backend,
-                service_bootstrap,
+                engine_bootstrap,
                 first_operation,
             );
             let elapsed = started.elapsed();
             drop(registrations);
-            quiesce_service(&service, "subscription cold-start teardown").await?;
+            quiesce_engine(&engine, "subscription cold-start teardown").await?;
             drop(bench_dir);
             Ok(elapsed)
         },
@@ -774,19 +768,19 @@ pub(super) async fn benchmark_mixed_multi_tenant_load() -> BenchResult<WorkloadO
             let fixture = steady_fixtures.get(backend).clone();
             async move {
                 let started = Instant::now();
-                exercise_mixed_load_sample(&fixture.service, &fixture.tenant_states).await?;
+                exercise_mixed_load_sample(&fixture.engine, &fixture.tenant_states).await?;
                 Ok(started.elapsed())
             }
         },
     )
     .await?;
-    quiesce_service(
-        &steady_fixtures.redb.service,
+    quiesce_engine(
+        &steady_fixtures.redb.engine,
         "mixed-load steady-state redb teardown",
     )
     .await?;
-    quiesce_service(
-        &steady_fixtures.sqlite.service,
+    quiesce_engine(
+        &steady_fixtures.sqlite.engine,
         "mixed-load steady-state sqlite teardown",
     )
     .await?;
@@ -808,19 +802,19 @@ pub(super) async fn benchmark_mixed_multi_tenant_load() -> BenchResult<WorkloadO
                 let sample_dir =
                     clone_seeded_data_dir(&seed.data_dir, "mixed-load-cold-sample", backend)?;
                 let started = Instant::now();
-                let reopened = open_embedded_service(sample_dir.path(), backend).await?;
-                let service_bootstrap = started.elapsed();
+                let reopened = open_embedded_engine(sample_dir.path(), backend).await?;
+                let engine_bootstrap = started.elapsed();
                 let first_operation_started = Instant::now();
                 exercise_mixed_load_sample(&reopened, &seed.tenant_states).await?;
                 let first_operation = first_operation_started.elapsed();
                 emit_cold_open_breakdown(
                     WorkloadKind::MixedMultiTenantLoad,
                     backend,
-                    service_bootstrap,
+                    engine_bootstrap,
                     first_operation,
                 );
                 let elapsed = started.elapsed();
-                quiesce_service(&reopened, "mixed-load cold-start reopened teardown").await?;
+                quiesce_engine(&reopened, "mixed-load cold-start reopened teardown").await?;
                 drop(sample_dir);
                 Ok(elapsed)
             }

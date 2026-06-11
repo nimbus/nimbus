@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
-use nimbus_core::{IndexDefinition, TableName, TableSchema, TenantId};
-use nimbus_engine::Service;
+use nimbus_core::{IndexDefinition, PrincipalContext, TableName, TableSchema, TenantId};
+use nimbus_engine::Engine;
 
 use super::super::error::{BAD_VALUE, MongoError};
 use super::tenant::{DEFAULT_TENANT, ensure_tenant, resolve_tenant_context};
 
 pub fn create_indexes(
     body: &bson::Document,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
+    principal: &PrincipalContext,
 ) -> Result<bson::Document, MongoError> {
     let collection = body
         .get_str("createIndexes")
@@ -19,7 +20,7 @@ pub fn create_indexes(
         })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_context = resolve_tenant_context(db_name, "mongodb create indexes")?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb create indexes", principal)?;
     let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
@@ -29,9 +30,9 @@ pub fn create_indexes(
         message: "missing indexes array in createIndexes command".into(),
     })?;
 
-    ensure_tenant(service, &tenant_context)?;
+    ensure_tenant(engine, &tenant_context)?;
 
-    let mut table_schema = get_or_create_schema(service, &tenant_id, &table)?;
+    let mut table_schema = get_or_create_schema(engine, &tenant_id, &table)?;
     let num_before = table_schema.indexes.len();
 
     for idx_bson in indexes {
@@ -74,7 +75,7 @@ pub fn create_indexes(
 
     let num_after = table_schema.indexes.len();
 
-    service
+    engine
         .set_table_schema(&tenant_id, table_schema)
         .map_err(MongoError::from)?;
 
@@ -87,7 +88,8 @@ pub fn create_indexes(
 
 pub fn drop_indexes(
     body: &bson::Document,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
+    principal: &PrincipalContext,
 ) -> Result<bson::Document, MongoError> {
     let collection = body
         .get_str("dropIndexes")
@@ -98,13 +100,13 @@ pub fn drop_indexes(
         })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_context = resolve_tenant_context(db_name, "mongodb drop indexes")?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb drop indexes", principal)?;
     let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
-    ensure_tenant(service, &tenant_context)?;
+    ensure_tenant(engine, &tenant_context)?;
 
-    let mut table_schema = match service.get_table_schema(&tenant_id, &table) {
+    let mut table_schema = match engine.get_table_schema(&tenant_id, &table) {
         Ok(schema) => schema,
         Err(nimbus_core::Error::SchemaNotFound(_)) => {
             return Err(MongoError::Command {
@@ -146,7 +148,7 @@ pub fn drop_indexes(
         }
     }
 
-    service
+    engine
         .set_table_schema(&tenant_id, table_schema)
         .map_err(MongoError::from)?;
 
@@ -155,7 +157,8 @@ pub fn drop_indexes(
 
 pub fn list_indexes(
     body: &bson::Document,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
+    principal: &PrincipalContext,
 ) -> Result<bson::Document, MongoError> {
     let collection = body
         .get_str("listIndexes")
@@ -166,13 +169,13 @@ pub fn list_indexes(
         })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_context = resolve_tenant_context(db_name, "mongodb list indexes")?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb list indexes", principal)?;
     let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
-    ensure_tenant(service, &tenant_context)?;
+    ensure_tenant(engine, &tenant_context)?;
 
-    let table_schema = match service.get_table_schema(&tenant_id, &table) {
+    let table_schema = match engine.get_table_schema(&tenant_id, &table) {
         Ok(schema) => schema,
         Err(nimbus_core::Error::SchemaNotFound(_)) => {
             return Err(MongoError::Command {
@@ -216,11 +219,11 @@ pub fn list_indexes(
 }
 
 fn get_or_create_schema(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
 ) -> Result<TableSchema, MongoError> {
-    match service.get_table_schema(tenant_id, table) {
+    match engine.get_table_schema(tenant_id, table) {
         Ok(schema) => Ok(schema),
         Err(nimbus_core::Error::SchemaNotFound(_)) => Ok(TableSchema {
             table: table.clone(),
@@ -235,11 +238,15 @@ fn get_or_create_schema(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nimbus_testing::ServiceFixture;
+    use nimbus_testing::EngineFixture;
 
-    fn create_schema_with_fields(fixture: &ServiceFixture<Service>, collection: &str) {
+    fn test_principal() -> PrincipalContext {
+        PrincipalContext::system()
+    }
+
+    fn create_schema_with_fields(fixture: &EngineFixture<Engine>, collection: &str) {
         let tenant_id = TenantId::new("testdb").unwrap();
-        let _ = fixture.service().create_tenant(tenant_id.clone());
+        let _ = fixture.engine().create_tenant(tenant_id.clone());
         let table = TableName::new(collection).unwrap();
         let schema = TableSchema {
             table,
@@ -259,14 +266,14 @@ mod tests {
             access_policy: None,
         };
         fixture
-            .service()
+            .engine()
             .set_table_schema(&tenant_id, schema)
             .unwrap();
     }
 
     #[test]
     fn create_indexes_adds_index() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         create_schema_with_fields(&fixture, "indexed");
 
         let body = bson::doc! {
@@ -277,7 +284,7 @@ mod tests {
                 "name": "name_1",
             }],
         };
-        let result = create_indexes(&body, &fixture.service()).unwrap();
+        let result = create_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
         assert_eq!(result.get_i32("numIndexesBefore").unwrap(), 0);
         assert_eq!(result.get_i32("numIndexesAfter").unwrap(), 1);
@@ -285,7 +292,7 @@ mod tests {
 
     #[test]
     fn create_indexes_duplicate_is_noop() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         create_schema_with_fields(&fixture, "idx_dup");
 
         let body = bson::doc! {
@@ -296,15 +303,15 @@ mod tests {
                 "name": "name_1",
             }],
         };
-        create_indexes(&body, &fixture.service()).unwrap();
-        let result = create_indexes(&body, &fixture.service()).unwrap();
+        create_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
+        let result = create_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_i32("numIndexesBefore").unwrap(), 1);
         assert_eq!(result.get_i32("numIndexesAfter").unwrap(), 1);
     }
 
     #[test]
     fn create_indexes_auto_generates_name() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         create_schema_with_fields(&fixture, "autoname");
 
         let body = bson::doc! {
@@ -314,13 +321,13 @@ mod tests {
                 "key": { "name": 1 },
             }],
         };
-        let result = create_indexes(&body, &fixture.service()).unwrap();
+        let result = create_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_i32("numIndexesAfter").unwrap(), 1);
     }
 
     #[test]
     fn drop_indexes_by_name() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         create_schema_with_fields(&fixture, "dropme");
 
         let create_body = bson::doc! {
@@ -331,20 +338,20 @@ mod tests {
                 "name": "name_1",
             }],
         };
-        create_indexes(&create_body, &fixture.service()).unwrap();
+        create_indexes(&create_body, &fixture.engine(), &test_principal()).unwrap();
 
         let body = bson::doc! {
             "dropIndexes": "dropme",
             "$db": "testdb",
             "index": "name_1",
         };
-        let result = drop_indexes(&body, &fixture.service()).unwrap();
+        let result = drop_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
     }
 
     #[test]
     fn drop_indexes_star_drops_all() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         create_schema_with_fields(&fixture, "dropall");
 
         let create_body = bson::doc! {
@@ -355,18 +362,18 @@ mod tests {
                 { "key": { "age": 1 }, "name": "age_1" },
             ],
         };
-        create_indexes(&create_body, &fixture.service()).unwrap();
+        create_indexes(&create_body, &fixture.engine(), &test_principal()).unwrap();
 
         let body = bson::doc! {
             "dropIndexes": "dropall",
             "$db": "testdb",
             "index": "*",
         };
-        let result = drop_indexes(&body, &fixture.service()).unwrap();
+        let result = drop_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
 
         let list_body = bson::doc! { "listIndexes": "dropall", "$db": "testdb" };
-        let list_result = list_indexes(&list_body, &fixture.service()).unwrap();
+        let list_result = list_indexes(&list_body, &fixture.engine(), &test_principal()).unwrap();
         let cursor = list_result.get_document("cursor").unwrap();
         let batch = cursor.get_array("firstBatch").unwrap();
         assert_eq!(batch.len(), 1);
@@ -374,7 +381,7 @@ mod tests {
 
     #[test]
     fn drop_nonexistent_index_returns_error() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         create_schema_with_fields(&fixture, "noindex");
 
         let body = bson::doc! {
@@ -382,7 +389,7 @@ mod tests {
             "$db": "testdb",
             "index": "nonexistent",
         };
-        let err = drop_indexes(&body, &fixture.service()).unwrap_err();
+        let err = drop_indexes(&body, &fixture.engine(), &test_principal()).unwrap_err();
         match err {
             MongoError::Command { code, .. } => assert_eq!(code, 27),
             other => panic!("expected Command, got {:?}", other),
@@ -391,11 +398,11 @@ mod tests {
 
     #[test]
     fn list_indexes_includes_id_index() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         create_schema_with_fields(&fixture, "listed");
 
         let body = bson::doc! { "listIndexes": "listed", "$db": "testdb" };
-        let result = list_indexes(&body, &fixture.service()).unwrap();
+        let result = list_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
         let cursor = result.get_document("cursor").unwrap();
         let batch = cursor.get_array("firstBatch").unwrap();
@@ -406,7 +413,7 @@ mod tests {
 
     #[test]
     fn list_indexes_includes_user_indexes() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         create_schema_with_fields(&fixture, "withidx");
 
         let create_body = bson::doc! {
@@ -417,10 +424,10 @@ mod tests {
                 "name": "name_1",
             }],
         };
-        create_indexes(&create_body, &fixture.service()).unwrap();
+        create_indexes(&create_body, &fixture.engine(), &test_principal()).unwrap();
 
         let body = bson::doc! { "listIndexes": "withidx", "$db": "testdb" };
-        let result = list_indexes(&body, &fixture.service()).unwrap();
+        let result = list_indexes(&body, &fixture.engine(), &test_principal()).unwrap();
         let cursor = result.get_document("cursor").unwrap();
         let batch = cursor.get_array("firstBatch").unwrap();
         assert_eq!(batch.len(), 2);
@@ -428,12 +435,12 @@ mod tests {
 
     #[test]
     fn list_indexes_nonexistent_collection_returns_error() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let tenant_id = TenantId::new("testdb").unwrap();
-        let _ = fixture.service().create_tenant(tenant_id);
+        let _ = fixture.engine().create_tenant(tenant_id);
 
         let body = bson::doc! { "listIndexes": "nosuch", "$db": "testdb" };
-        let err = list_indexes(&body, &fixture.service()).unwrap_err();
+        let err = list_indexes(&body, &fixture.engine(), &test_principal()).unwrap_err();
         match err {
             MongoError::Command { code, .. } => assert_eq!(code, 26),
             other => panic!("expected Command, got {:?}", other),
@@ -442,9 +449,9 @@ mod tests {
 
     #[test]
     fn create_indexes_missing_collection_returns_error() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let body = bson::doc! { "indexes": [] };
-        let err = create_indexes(&body, &fixture.service()).unwrap_err();
+        let err = create_indexes(&body, &fixture.engine(), &test_principal()).unwrap_err();
         match err {
             MongoError::Command { code, .. } => assert_eq!(code, BAD_VALUE.code),
             other => panic!("expected Command, got {:?}", other),

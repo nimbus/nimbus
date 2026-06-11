@@ -3,14 +3,14 @@ use super::fixtures::{PeerCatchUpFixture, TenantState};
 use super::*;
 
 pub(super) async fn exercise_crud_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     document_count: usize,
 ) -> BenchResult<()> {
     let mut ids = Vec::with_capacity(document_count);
     for rank in 0..document_count {
         ids.push(
-            service
+            engine
                 .insert_document_async(
                     tenant_id.clone(),
                     tasks_table(),
@@ -24,7 +24,7 @@ pub(super) async fn exercise_crud_sample(
         );
     }
     for (rank, id) in ids.iter().cloned().enumerate() {
-        let _ = service
+        let _ = engine
             .update_document_async(
                 tenant_id.clone(),
                 tasks_table(),
@@ -34,7 +34,7 @@ pub(super) async fn exercise_crud_sample(
             .await?;
     }
     for id in ids {
-        service
+        engine
             .delete_document_async(tenant_id.clone(), tasks_table(), id)
             .await?;
     }
@@ -42,14 +42,14 @@ pub(super) async fn exercise_crud_sample(
 }
 
 pub(super) async fn exercise_point_read_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     ids: &[DocumentId],
     batch_size: usize,
 ) -> BenchResult<()> {
     for step in 0..batch_size {
         let id = ids[(step * 17) % ids.len()].clone();
-        let document = service
+        let document = engine
             .get_document_async(tenant_id.clone(), tasks_table(), id)
             .await?;
         black_box(document);
@@ -58,13 +58,13 @@ pub(super) async fn exercise_point_read_sample(
 }
 
 pub(super) async fn exercise_query_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     query: &Query,
     batch_size: usize,
 ) -> BenchResult<()> {
     for _ in 0..batch_size {
-        let documents = service
+        let documents = engine
             .query_documents_async(tenant_id.clone(), query.clone())
             .await?;
         black_box(documents);
@@ -73,7 +73,7 @@ pub(super) async fn exercise_query_sample(
 }
 
 pub(super) async fn exercise_mixed_load_sample(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_states: &[TenantState],
     tenant_limit: usize,
     ops_per_tenant: usize,
@@ -85,7 +85,7 @@ pub(super) async fn exercise_mixed_load_sample(
         .collect::<Vec<_>>();
     let mut handles = Vec::with_capacity(selected.len());
     for (task_index, state) in selected.into_iter().enumerate() {
-        let service = service.clone();
+        let engine = engine.clone();
         handles.push(tokio::spawn(async move {
             let query = Query {
                 table: tasks_table(),
@@ -99,7 +99,7 @@ pub(super) async fn exercise_mixed_load_sample(
                     0 => {
                         let document = tokio::time::timeout(
                             Duration::from_secs(MIXED_LOAD_OPERATION_TIMEOUT_SECS),
-                            service.get_document_async(state.tenant_id.clone(), tasks_table(), id),
+                            engine.get_document_async(state.tenant_id.clone(), tasks_table(), id),
                         )
                         .await
                         .map_err(|_| {
@@ -113,7 +113,7 @@ pub(super) async fn exercise_mixed_load_sample(
                     1 => {
                         let documents = tokio::time::timeout(
                             Duration::from_secs(MIXED_LOAD_OPERATION_TIMEOUT_SECS),
-                            service.query_documents_async(state.tenant_id.clone(), query.clone()),
+                            engine.query_documents_async(state.tenant_id.clone(), query.clone()),
                         )
                         .await
                         .map_err(|_| {
@@ -127,7 +127,7 @@ pub(super) async fn exercise_mixed_load_sample(
                     2 => {
                         let _ = tokio::time::timeout(
                             Duration::from_secs(MIXED_LOAD_OPERATION_TIMEOUT_SECS),
-                            service.insert_document_async(
+                            engine.insert_document_async(
                                 state.tenant_id.clone(),
                                 tasks_table(),
                                 serde_json::Map::from_iter([
@@ -154,7 +154,7 @@ pub(super) async fn exercise_mixed_load_sample(
                     _ => {
                         let _ = tokio::time::timeout(
                             Duration::from_secs(MIXED_LOAD_OPERATION_TIMEOUT_SECS),
-                            service.update_document_async(
+                            engine.update_document_async(
                                 state.tenant_id.clone(),
                                 tasks_table(),
                                 id,
@@ -198,7 +198,7 @@ pub(super) async fn exercise_peer_catch_up_sample(
     fixture: &PeerCatchUpFixture,
 ) -> BenchResult<Duration> {
     let inserted_id = fixture
-        .creator_service
+        .creator_engine
         .insert_document_async(
             fixture.tenant_id.clone(),
             tasks_table(),
@@ -217,7 +217,7 @@ pub(super) async fn exercise_peer_catch_up_sample(
     let started = Instant::now();
     loop {
         match fixture
-            .opener_service
+            .opener_engine
             .get_document_async(
                 fixture.tenant_id.clone(),
                 tasks_table(),

@@ -37,7 +37,7 @@ pub(super) struct ServiceProcessRow {
     pub(super) command: String,
 }
 
-pub(super) fn resolve_service_process_snapshot_for_selection(
+pub(super) fn resolve_service_sandbox_process_snapshot_for_selection(
     command: &ComposeTopCommand,
     selection: &ResolvedComposeSelection,
     control_data_dir: &Path,
@@ -57,7 +57,7 @@ pub(super) fn resolve_service_process_snapshot_for_selection(
         machine_api_client,
     )? {
         super::ServiceExecutionSurface::Krun { .. } => {
-            resolve_krun_service_process_snapshot(&context, &tenant, &command.service)
+            resolve_krun_service_sandbox_process_snapshot(&context, &tenant, &command.service)
         }
         super::ServiceExecutionSurface::ForwardedContainer { client, .. } => {
             validate_forwarded_machine_api_operations(
@@ -81,7 +81,7 @@ pub(super) fn resolve_service_process_snapshot_for_selection(
                 )
             })?;
             let snapshot = client
-                .service_process_snapshot(&details.summary.sandbox_id)
+                .service_sandbox_process_snapshot(&details.summary.sandbox_id)
                 .map_err(|error| {
                     machine_api_operation_error(
                         "resolve persisted service processes",
@@ -113,7 +113,7 @@ pub(super) fn resolve_service_process_snapshot_for_selection(
     }
 }
 
-fn resolve_krun_service_process_snapshot(
+fn resolve_krun_service_sandbox_process_snapshot(
     context: &ComposeProjectContext,
     tenant: &TenantId,
     service_name: &str,

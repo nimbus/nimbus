@@ -6,9 +6,9 @@ use super::*;
 #[test]
 fn execute_convex_action_cancellable_short_circuits_before_mutation_dispatch() {
     let tempdir = tempdir().expect("runtime action tempdir should build");
-    let service = Service::new(tempdir.path()).expect("service should build");
+    let engine = Engine::new(tempdir.path()).expect("engine should build");
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should be created");
     let registry = ConvexRegistry::empty();
@@ -16,7 +16,7 @@ fn execute_convex_action_cancellable_short_circuits_before_mutation_dispatch() {
     cancellation.cancel();
 
     let result = execute_convex_action_cancellable(
-        &service,
+        &engine,
         &registry,
         &tenant_id,
         ConvexExecutableAction::Action(ConvexAction::Mutation {
@@ -30,7 +30,7 @@ fn execute_convex_action_cancellable_short_circuits_before_mutation_dispatch() {
     );
 
     assert!(matches!(result, Err(Error::Cancelled)));
-    let documents = service
+    let documents = engine
         .query_documents(
             &tenant_id,
             &Query {
@@ -46,8 +46,8 @@ fn execute_convex_action_cancellable_short_circuits_before_mutation_dispatch() {
 
 #[test]
 fn runtime_cancellable_db_get_short_circuits_before_dispatch() {
-    let (_tempdir, service, tenant_id, bridge) = host_bridge_fixture();
-    let document_id = service
+    let (_tempdir, engine, tenant_id, bridge) = host_bridge_fixture();
+    let document_id = engine
         .insert_document(
             &tenant_id,
             TableName::new("messages").expect("table should build"),
@@ -69,11 +69,19 @@ fn runtime_cancellable_db_get_short_circuits_before_dispatch() {
     );
 
     assert!(matches!(result, Err(NimbusRuntimeError::Cancelled)));
+    let dependencies = bridge.snapshot_read_set().dependency_set();
+    assert!(dependencies.tables.is_empty());
+    assert!(dependencies.missing_tables.is_empty());
+    assert!(dependencies.missing_predicates.is_empty());
+    assert!(dependencies.documents.is_empty());
+    assert!(dependencies.index_ranges.is_empty());
+    assert!(dependencies.predicates.is_empty());
+    assert!(dependencies.paginated_windows.is_empty());
 }
 
 #[test]
 fn runtime_cancellable_http_route_short_circuits_before_mutation_dispatch() {
-    let (_tempdir, service, tenant_id, bridge) = host_bridge_fixture();
+    let (_tempdir, engine, tenant_id, bridge) = host_bridge_fixture();
     let cancellation = HostCallCancellation::default();
     cancellation.cancel();
 
@@ -123,7 +131,7 @@ fn runtime_cancellable_http_route_short_circuits_before_mutation_dispatch() {
     );
 
     assert!(matches!(result, Err(NimbusRuntimeError::Cancelled)));
-    let documents = service
+    let documents = engine
         .query_documents(
             &tenant_id,
             &Query {

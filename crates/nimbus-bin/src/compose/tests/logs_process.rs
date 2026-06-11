@@ -184,9 +184,12 @@ fn render_compose_top_can_omit_process_table_headings() {
         }],
     };
 
-    let rendered =
-        render_service_process_snapshot_view(&snapshot, ComposeTopOutputFormat::Table, true)
-            .expect("table output without headings should render");
+    let rendered = render_service_sandbox_process_snapshot_view(
+        &snapshot,
+        ComposeTopOutputFormat::Table,
+        true,
+    )
+    .expect("table output without headings should render");
 
     assert!(rendered.contains("Compose top snapshot for db"));
     assert!(!rendered.contains("PID"));

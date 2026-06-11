@@ -1,0 +1,147 @@
+---
+title: Nimbus
+description: The single-binary backend for apps and AI agents. Drop-in compatible with Convex, Firestore, MongoDB, and DynamoDB.
+template: splash
+hero:
+  title: Your whole backend in one binary
+  tagline: The single-binary backend for apps and AI agents. Drop-in compatible with Convex, Firestore, MongoDB, and DynamoDB.
+  image:
+    light: ../../../../docs/brand/logo/nimbus-cool-blue.svg
+    dark: ../../../../docs/brand/logo/nimbus-night-blue.svg
+    alt: Nimbus — BaaS in a binary
+  actions:
+    - text: Get started
+      link: /get-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/nimbus/nimbus
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/components';
+
+## One binary, your choice of client
+
+<Tabs>
+  <TabItem label="TypeScript" icon="seti:typescript">
+    ```typescript
+    // convex/messages.ts — server-side functions with reactive queries
+    import { query, mutation } from "./_generated/server";
+    import { v } from "convex/values";
+
+    export const list = query({
+      args: {},
+      handler: async (ctx) => await ctx.db.query("messages").take(50),
+    });
+
+    export const send = mutation({
+      args: { author: v.string(), body: v.string() },
+      handler: async (ctx, { author, body }) =>
+        await ctx.db.insert("messages", { author, body }),
+    });
+    ```
+  </TabItem>
+  <TabItem label="MongoDB">
+    ```javascript
+    // Official MongoDB driver against Nimbus's wire-protocol endpoint
+    import { MongoClient } from "mongodb";
+
+    const client = new MongoClient(
+      "mongodb://app-user:app-secret@127.0.0.1:27017/myapp?directConnection=true",
+    );
+    await client.connect();
+
+    const messages = client.db("myapp").collection("messages");
+    await messages.insertOne({ author: "Ada", body: "Hello from Nimbus" });
+    const docs = await messages.find({ author: "Ada" }).toArray();
+    ```
+    See [the MongoDB guide](/developers/mongodb/) for enabling the endpoint.
+  </TabItem>
+  <TabItem label="DynamoDB">
+    ```javascript
+    // AWS SDK v3 pointed at Nimbus's DynamoDB endpoint
+    import { DynamoDBClient, PutItemCommand, GetItemCommand } from "@aws-sdk/client-dynamodb";
+
+    const client = new DynamoDBClient({
+      endpoint: "http://127.0.0.1:8000",
+      region: "us-east-1",
+      credentials: { accessKeyId: "AKIAACME", secretAccessKey: "acme-secret" },
+    });
+
+    await client.send(new PutItemCommand({
+      TableName: "orders",
+      Item: { pk: { S: "order-1" }, total: { N: "42" } },
+    }));
+    const { Item } = await client.send(new GetItemCommand({
+      TableName: "orders",
+      Key: { pk: { S: "order-1" } },
+    }));
+    ```
+    See [the DynamoDB guide](/developers/dynamodb/) for enabling the endpoint.
+  </TabItem>
+  <TabItem label="curl" icon="seti:shell">
+    ```bash
+    # The same engine over plain HTTP — no codegen required
+    nimbus start --port 8080 --data-dir ./data
+    # grab the local admin token — see the self-host quickstart
+
+    curl -s -X POST http://localhost:8080/api/tenants \
+      -H "Authorization: Bearer $NIMBUS_TOKEN" \
+      -H "Content-Type: application/json" -d '{"id": "demo"}'
+
+    curl -s -X POST http://localhost:8080/api/tenants/demo/documents \
+      -H "Authorization: Bearer $NIMBUS_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{"table": "messages", "fields": {"text": "hello world"}}'
+    ```
+    Full walkthrough in the [self-host quickstart](/get-started/self-host/).
+  </TabItem>
+</Tabs>
+
+Nimbus speaks the Convex, Firestore, Cloud Functions, MongoDB, and DynamoDB
+surfaces from one engine — see [Developers](/developers/) for every adapter
+and how each is enabled.
+
+<CardGrid stagger>
+  <Card title="One binary" icon="rocket">
+    Storage, compute, networking, realtime, and scheduling in a single
+    self-hostable Rust binary.
+  </Card>
+  <Card title="Drop-in compatible" icon="puzzle">
+    Speaks Convex, Firestore, Cloud Functions, MongoDB, and DynamoDB wire
+    protocols — bring your existing clients.
+  </Card>
+  <Card title="Built for agents" icon="seti:powershell">
+    A backend AI agents can run, inspect, and build against — with llms.txt
+    and an agent-readable surface.
+  </Card>
+  <Card title="No lock-in" icon="setting">
+    Self-hosted, source-available, and protocol-portable by design.
+  </Card>
+</CardGrid>
+
+## Find your path
+
+<CardGrid>
+  <LinkCard
+    title="Developer quickstart"
+    description="Scaffold an app, write TypeScript functions, get reactive queries — about 5 minutes."
+    href="/get-started/quickstart/"
+  />
+  <LinkCard
+    title="Self-host quickstart"
+    description="Run the server and make your first requests with curl — about 2 minutes."
+    href="/get-started/self-host/"
+  />
+  <LinkCard
+    title="Coming from Convex"
+    description="What works today, what differs, and how to point an existing project at Nimbus."
+    href="/get-started/from-convex/"
+  />
+  <LinkCard
+    title="Concepts & architecture"
+    description="How the engine, data model, tenancy, and adapters fit together."
+    href="/concepts/"
+  />
+</CardGrid>

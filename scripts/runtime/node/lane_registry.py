@@ -16,9 +16,10 @@ from schema import default_schema_path, load_json, validate_payload_against_sche
 REPO_ROOT = Path(__file__).resolve().parents[3]
 REGISTRY_PATH = (
     REPO_ROOT
-    / "docs"
-    / "architecture"
+    / "tests"
     / "runtime"
+    / "node"
+    / "compat"
     / "node-lts-compat"
     / "node-lts-lanes.json"
 )

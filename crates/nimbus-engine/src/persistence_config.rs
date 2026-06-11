@@ -5,7 +5,7 @@ use nimbus_storage::EmbeddedProviderKind;
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ServicePersistenceConfig {
+pub struct EnginePersistenceConfig {
     pub tenant_provider: TenantProviderConfig,
     pub control_plane: ControlPlaneConfig,
     pub local_encryption: LocalEncryptionConfig,
@@ -209,8 +209,8 @@ impl LocalPersistenceFamily {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ServiceBootstrapPlan {
-    pub(crate) service_data_dir: PathBuf,
+pub(crate) struct EngineBootstrapPlan {
+    pub(crate) engine_data_dir: PathBuf,
     pub(crate) control_plane: ControlPlaneBootstrapPlan,
     pub(crate) tenant_provider: TenantProviderBootstrapPlan,
 }
@@ -261,7 +261,7 @@ pub(crate) struct MySqlTenantBootstrapPlan {
     pub(crate) pool: PoolConfig,
 }
 
-impl ServicePersistenceConfig {
+impl EnginePersistenceConfig {
     pub fn embedded_default(data_dir: impl Into<PathBuf>) -> Self {
         Self::embedded(data_dir, EmbeddedProviderKind::default())
     }
@@ -330,7 +330,7 @@ impl ServicePersistenceConfig {
         self
     }
 
-    pub(crate) fn bootstrap_plan(&self) -> nimbus_core::Result<ServiceBootstrapPlan> {
+    pub(crate) fn bootstrap_plan(&self) -> nimbus_core::Result<EngineBootstrapPlan> {
         match (
             &self.tenant_provider.dialect,
             &self.tenant_provider.topology,
@@ -344,8 +344,8 @@ impl ServicePersistenceConfig {
                 ControlPlaneConfig::EmbeddedRedb {
                     data_dir: control_data_dir,
                 },
-            ) => Ok(ServiceBootstrapPlan {
-                service_data_dir: data_dir.clone(),
+            ) => Ok(EngineBootstrapPlan {
+                engine_data_dir: data_dir.clone(),
                 control_plane: ControlPlaneBootstrapPlan::EmbeddedRedb {
                     data_dir: control_data_dir.clone(),
                 },
@@ -363,8 +363,8 @@ impl ServicePersistenceConfig {
                 ControlPlaneConfig::EmbeddedRedb {
                     data_dir: control_data_dir,
                 },
-            ) => Ok(ServiceBootstrapPlan {
-                service_data_dir: data_dir.clone(),
+            ) => Ok(EngineBootstrapPlan {
+                engine_data_dir: data_dir.clone(),
                 control_plane: ControlPlaneBootstrapPlan::EmbeddedRedb {
                     data_dir: control_data_dir.clone(),
                 },
@@ -393,8 +393,8 @@ impl ServicePersistenceConfig {
                         "Postgres tenant persistence requires a connection string".to_string(),
                     ));
                 };
-                Ok(ServiceBootstrapPlan {
-                    service_data_dir: control_data_dir.clone(),
+                Ok(EngineBootstrapPlan {
+                    engine_data_dir: control_data_dir.clone(),
                     control_plane: ControlPlaneBootstrapPlan::EmbeddedRedb {
                         data_dir: control_data_dir.clone(),
                     },
@@ -431,8 +431,8 @@ impl ServicePersistenceConfig {
                         "Replica-connected SQLite tenant persistence requires a primary URL, optional primary auth token, and admin API configuration".to_string(),
                     ));
                 };
-                Ok(ServiceBootstrapPlan {
-                    service_data_dir: control_data_dir.clone(),
+                Ok(EngineBootstrapPlan {
+                    engine_data_dir: control_data_dir.clone(),
                     control_plane: ControlPlaneBootstrapPlan::EmbeddedRedb {
                         data_dir: control_data_dir.clone(),
                     },
@@ -467,8 +467,8 @@ impl ServicePersistenceConfig {
                         "MySQL tenant persistence requires a connection string".to_string(),
                     ));
                 };
-                Ok(ServiceBootstrapPlan {
-                    service_data_dir: control_data_dir.clone(),
+                Ok(EngineBootstrapPlan {
+                    engine_data_dir: control_data_dir.clone(),
                     control_plane: ControlPlaneBootstrapPlan::EmbeddedRedb {
                         data_dir: control_data_dir.clone(),
                     },
@@ -733,7 +733,7 @@ mod tests {
 
     #[test]
     fn embedded_bootstrap_plan_preserves_tenant_and_control_plane_dirs() {
-        let config = ServicePersistenceConfig {
+        let config = EnginePersistenceConfig {
             tenant_provider: TenantProviderConfig::embedded(
                 PathBuf::from("./tenant-data"),
                 EmbeddedProviderKind::Sqlite,
@@ -745,7 +745,7 @@ mod tests {
         let plan = config
             .bootstrap_plan()
             .expect("embedded config should map to a bootstrap plan");
-        assert_eq!(plan.service_data_dir, PathBuf::from("./tenant-data"));
+        assert_eq!(plan.engine_data_dir, PathBuf::from("./tenant-data"));
         assert_eq!(
             plan.control_plane,
             ControlPlaneBootstrapPlan::EmbeddedRedb {
@@ -763,7 +763,7 @@ mod tests {
 
     #[test]
     fn libsql_replica_bootstrap_plan_captures_routing_and_control_plane() {
-        let config = ServicePersistenceConfig {
+        let config = EnginePersistenceConfig {
             tenant_provider: TenantProviderConfig {
                 dialect: PersistenceDialect::Sqlite,
                 topology: PersistenceTopology::ExternalPrimaryWithReplicas,
@@ -787,7 +787,7 @@ mod tests {
         let plan = config
             .bootstrap_plan()
             .expect("libsql replica config should map to a bootstrap plan");
-        assert_eq!(plan.service_data_dir, PathBuf::from("./control-data"));
+        assert_eq!(plan.engine_data_dir, PathBuf::from("./control-data"));
         assert_eq!(
             plan.control_plane,
             ControlPlaneBootstrapPlan::EmbeddedRedb {

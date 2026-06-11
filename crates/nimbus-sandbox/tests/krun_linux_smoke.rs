@@ -15,9 +15,9 @@ use nimbus_sandbox::backends::krun::{
     KrunLaunchMode, KrunSandboxBackend, KrunSandboxBackendConfig,
 };
 use nimbus_sandbox::{
-    PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxFilesystemSpec,
-    SandboxImageLaunchSpec, SandboxImageProcessOverrides, SandboxPortBinding, SandboxProcessSpec,
-    SandboxResourceLimits, SandboxRestartPolicy, SandboxSpec, SandboxStatus,
+    PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxOwnerSpec,
+    SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxRestartPolicy,
+    SandboxRootSpec, SandboxSpec, SandboxStatus,
 };
 
 #[path = "krun_linux_smoke/cleanup.rs"]

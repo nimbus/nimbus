@@ -1,6 +1,79 @@
+use super::document_versions::{
+    prune_document_versions_before_in_session, record_document_versions_for_events_in_session,
+};
+use super::index_versions::{
+    prune_index_versions_before_in_session, record_index_versions_for_events_in_session,
+};
 use super::*;
 
 impl MySqlTenantStore {
+    pub fn retention_gc_watermarks(
+        &self,
+        config: crate::RetentionGcConfig,
+    ) -> Result<crate::RetentionGcWatermarks> {
+        Ok(self
+            .retention_floor
+            .gc_watermarks(self.journal_progress()?.applied_head, config))
+    }
+
+    pub fn compact_retained_versions(
+        &self,
+        config: crate::RetentionGcConfig,
+    ) -> Result<crate::RetentionGcSummary> {
+        let watermarks = self.retention_gc_watermarks(config)?;
+        let document_prune_before = watermarks.document_versions.safe_prune_before;
+        let index_prune_before = watermarks.index_versions.safe_prune_before;
+        let committed = self.execute_write(|transaction| {
+            transaction.prune_retained_versions(document_prune_before, index_prune_before)
+        })?;
+        debug_assert!(committed.commit.is_none());
+        Ok(crate::RetentionGcSummary {
+            watermarks,
+            document_versions_pruned: committed.value.0,
+            index_versions_pruned: committed.value.1,
+        })
+    }
+
+    pub fn export_point_in_time_restore_archive(
+        &self,
+        target: PointInTimeRestoreTarget,
+        retention_config: crate::RetentionGcConfig,
+    ) -> Result<PointInTimeRestoreArchive> {
+        let records = self.read_durable_journal_from(SequenceNumber(1))?;
+        let progress = self.journal_progress()?;
+        let watermarks = self.retention_gc_watermarks(retention_config)?;
+        crate::store::build_point_in_time_restore_archive(
+            target,
+            records,
+            progress.durable_head,
+            watermarks.document_versions.safe_prune_before,
+        )
+    }
+
+    pub fn import_point_in_time_restore_archive(
+        &self,
+        archive: &PointInTimeRestoreArchive,
+    ) -> Result<JournalProgress> {
+        crate::store::validate_point_in_time_archive_for_journal_replay_import(archive)?;
+        let current = self.export_materialized_journal_snapshot()?;
+        crate::store::validate_materialized_journal_replay_base_is_empty(&current)?;
+        self.append_durable_records_batch(&archive.journal_tail)?;
+        let progress = self.recover_durable_journal()?;
+        let restored_fingerprint = self
+            .export_materialized_journal_snapshot()?
+            .canonical_fingerprint()?;
+        if restored_fingerprint != archive.target_fingerprint {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Corruption,
+                format!(
+                    "point-in-time restore fingerprint mismatch: restored {} expected {}",
+                    restored_fingerprint, archive.target_fingerprint
+                ),
+            ));
+        }
+        Ok(progress)
+    }
+
     pub fn begin_write_transaction(&self) -> Result<MySqlWriteTransaction> {
         self.begin_write_transaction_cancellable(|| Ok(()))
     }
@@ -73,9 +146,9 @@ impl MySqlTenantStore {
         Ok(())
     }
 
-    pub fn claim_due_jobs(&self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
+    pub fn claim_due_jobs(&self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
         Ok(self
-            .execute_write(move |transaction| transaction.claim_due_jobs(now))?
+            .execute_write(move |transaction| transaction.claim_due_jobs(now, max_jobs))?
             .value)
     }
 
@@ -120,7 +193,7 @@ impl MySqlTenantStore {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
     ) -> Result<Option<CommitEntry>> {
-        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None)
+        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None, None)
     }
 
     pub fn apply_execution_unit_batch_with_origin(
@@ -128,6 +201,7 @@ impl MySqlTenantStore {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
         trigger_write_origin: Option<&TriggerWriteOrigin>,
+        commit_timestamp: Option<Timestamp>,
     ) -> Result<Option<CommitEntry>> {
         if writes.is_empty() && schedule_ops.is_empty() {
             return Err(Error::Internal(
@@ -139,6 +213,7 @@ impl MySqlTenantStore {
         let schedule_ops = schedule_ops.to_vec();
         let committed = self.execute_write(move |transaction| {
             transaction.set_trigger_write_origin(trigger_write_origin.cloned());
+            transaction.set_commit_timestamp(commit_timestamp);
             for write in &writes {
                 transaction.apply_resolved_write(write)?;
             }
@@ -380,6 +455,29 @@ impl MySqlWriteTransaction {
         }
     }
 
+    pub fn prune_retained_versions(
+        &mut self,
+        document_prune_before: SequenceNumber,
+        index_prune_before: SequenceNumber,
+    ) -> Result<(u64, u64)> {
+        self.check_cancel()?;
+        let runtime_handle = self.provider.runtime_handle.clone();
+        let database_name = self.database_name.clone();
+        let conn = self.session()?;
+        Self::block_on(&runtime_handle, async move {
+            let document_versions_pruned = prune_document_versions_before_in_session(
+                conn,
+                &database_name,
+                document_prune_before,
+            )
+            .await?;
+            let index_versions_pruned =
+                prune_index_versions_before_in_session(conn, &database_name, index_prune_before)
+                    .await?;
+            Ok((document_versions_pruned, index_versions_pruned))
+        })
+    }
+
     fn begin_once(
         store: MySqlTenantStore,
         check_cancel: Box<dyn Fn() -> Result<()> + Send>,
@@ -399,6 +497,7 @@ impl MySqlWriteTransaction {
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
             trigger_write_origin: None,
+            commit_timestamp: None,
             schema_cache_changed: false,
             check_cancel,
         };
@@ -640,19 +739,23 @@ impl MySqlWriteTransaction {
         })
     }
 
-    pub fn claim_due_jobs(&mut self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
+    pub fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
         self.check_cancel()?;
+        if max_jobs == 0 {
+            return Ok(Vec::new());
+        }
         let runtime_handle = self.provider.runtime_handle.clone();
         let database_name = self.database_name.clone();
+        let max_jobs = u64::try_from(max_jobs).unwrap_or(u64::MAX);
         let due: Vec<ScheduledJob> = {
             let conn = self.session()?;
             Self::block_on(&runtime_handle, async move {
                 let query = format!(
-                    "SELECT data_json FROM {} WHERE run_at <= ? ORDER BY run_at, id FOR UPDATE",
+                    "SELECT data_json FROM {} WHERE run_at <= ? ORDER BY run_at, id LIMIT ? FOR UPDATE",
                     qualified_table(&database_name, "scheduled_jobs")
                 );
                 let rows: Vec<Row> = conn
-                    .exec(query, (claim_due_jobs_upper_bound(now),))
+                    .exec(query, (claim_due_jobs_upper_bound(now), max_jobs))
                     .await
                     .map_err(map_mysql_error)?;
                 rows.into_iter()
@@ -1156,7 +1259,9 @@ impl MySqlWriteTransaction {
         events: Vec<TenantEventKind>,
     ) -> Result<CommitEntry> {
         let sequence = SequenceNumber(self.latest_sequence()?.0.saturating_add(1));
-        let timestamp = self.provider.clock.now();
+        let timestamp = self
+            .commit_timestamp
+            .unwrap_or_else(|| self.provider.clock.now());
         let record = TenantEventRecord::from_events(sequence, timestamp, events)?;
         let entry = CommitEntry {
             sequence,
@@ -1169,8 +1274,27 @@ impl MySqlWriteTransaction {
             qualified_table(&self.database_name, "commit_log")
         );
         let runtime_handle = self.provider.runtime_handle.clone();
+        let database_name = self.database_name.clone();
+        let record_sequence = record.sequence;
+        let record_timestamp = record.timestamp;
+        let record_events = record.events.clone();
         let conn = self.session()?;
         Self::block_on(&runtime_handle, async move {
+            record_document_versions_for_events_in_session(
+                conn,
+                &database_name,
+                record_sequence,
+                record_timestamp,
+                &record_events,
+            )
+            .await?;
+            record_index_versions_for_events_in_session(
+                conn,
+                &database_name,
+                record_sequence,
+                &record_events,
+            )
+            .await?;
             conn.exec_drop(query, (entry.sequence.0, payload))
                 .await
                 .map_err(map_mysql_error)
@@ -1313,6 +1437,10 @@ impl MySqlWriteTransaction {
 
     fn set_trigger_write_origin(&mut self, trigger_write_origin: Option<TriggerWriteOrigin>) {
         self.trigger_write_origin = trigger_write_origin;
+    }
+
+    fn set_commit_timestamp(&mut self, commit_timestamp: Option<Timestamp>) {
+        self.commit_timestamp = commit_timestamp;
     }
 
     fn record_commit_write(&mut self, mut write: WriteOp) {

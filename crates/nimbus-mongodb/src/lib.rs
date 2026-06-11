@@ -54,9 +54,3 @@ impl AuthConfig {
         })
     }
 }
-
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self::new("admin".into(), "admin".into())
-    }
-}

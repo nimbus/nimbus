@@ -1,8 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use nimbus::{
-    Error, SandboxBuildLaunchSpec, SandboxHandle, SandboxId, SandboxImageLaunchSpec, TenantId,
-};
+use nimbus::{Error, SandboxHandle, SandboxId, SandboxSpec, TenantId};
 
 use super::protocol::{
     MachineApiCapabilityResponse, MachineApiHealthResponse, MachineApiServiceProcessSnapshot,
@@ -43,14 +41,14 @@ impl MachineApiClient {
 
     pub(crate) fn start_service_sandbox_from_image(
         &self,
-        _launch: SandboxImageLaunchSpec,
+        _spec: SandboxSpec,
     ) -> Result<SandboxHandle, Error> {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
 
     pub(crate) fn start_service_sandbox_from_build(
         &self,
-        _launch: SandboxBuildLaunchSpec,
+        _spec: SandboxSpec,
     ) -> Result<SandboxHandle, Error> {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
@@ -89,7 +87,7 @@ impl MachineApiClient {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
 
-    pub(crate) fn service_process_snapshot(
+    pub(crate) fn service_sandbox_process_snapshot(
         &self,
         _sandbox_id: &SandboxId,
     ) -> Result<MachineApiServiceProcessSnapshot, Error> {

@@ -45,8 +45,8 @@ async fn convex_named_get_subscription_returns_single_document_and_null_on_delet
             }
         }
     ]));
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());
@@ -119,9 +119,12 @@ async fn convex_runtime_get_subscription_skips_unrelated_writes() {
         ]),
         Some(
             r#"
-globalThis.__nimbusInvoke = async function(request) {
-  const ctx = globalThis.__nimbusCreateContext();
-  const value = await ctx.db.get("messages", request.args.id);
+	globalThis.__nimbusInvoke = async function(request) {
+	  const ctx = globalThis.__nimbusCreateContext({
+	    hostCallSessionId: `${request.kind}:${request.function_name}`,
+	    request,
+	  });
+	  const value = await ctx.db.get("messages", request.args.id);
   return {
     status: "ok",
     value: {
@@ -135,8 +138,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());

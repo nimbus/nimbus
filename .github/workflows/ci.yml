@@ -68,9 +68,9 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       # `make clippy` triggers the UI dependency graph (codegen + SPA build)
-      # before invoking cargo, so nimbus-server's `include_str!`s of the
-      # gitignored `.nimbus/convex/` outputs resolve. Node is therefore a
-      # build prerequisite for any Rust target that touches nimbus-server.
+      # before invoking cargo, so nimbus-convex's generated registry includes
+      # and nimbus-assets' SPA embed inputs resolve. Node is therefore a build
+      # prerequisite for any Rust target that touches nimbus-server.
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
@@ -594,6 +594,13 @@ jobs:
             --features systemd-dbus,systemd-dbus-integration-tests \
             --test zbus_systemd_live --no-fail-fast 2>&1 | tee /tmp/ndb-live.log
 
+      - name: Run live node-run reconciler test (LR12)
+        run: |
+          set -o pipefail
+          cargo test -p nimbus-bin \
+            --features node-run-integration-tests \
+            node_run_converges_transient_unit --no-fail-fast 2>&1 | tee -a /tmp/ndb-live.log
+
       - name: Summarize per-test results
         if: always()
         run: |
@@ -710,8 +717,8 @@ jobs:
         run: make build-ui
 
       - name: Stage embedded JS package payloads
-        # The embedded-packages tree is gitignored and required at compile time
-        # by nimbus-bin's rust-embed. Stage it here so warm-sccache (which has no
+        # The embedded package tree is gitignored and required at compile time
+        # by nimbus-assets' rust-embed. Stage it here so warm-sccache (which has no
         # Node toolchain) can consume it as an artifact, mirroring coverage.yml.
         run: make build-packages
 
@@ -729,7 +736,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: embedded-packages
-          path: crates/nimbus-bin/embedded-packages
+          path: crates/nimbus-assets/embedded/packages
           if-no-files-found: error
           retention-days: 1
 
@@ -738,7 +745,7 @@ jobs:
     # (libsql external-provider shard shows 0% sccache (Rust) on CW5 while
     # storage harness shows 77%), so retiring warm-sccache would expose
     # the consistently-cold lanes to full cold-compile cost on every PR.
-    # See docs/plans/proof/ci-pr-wall-sub-15/pw4c-warm-sccache-retained.md
+    # See docs/private/plans/proof/ci-pr-wall-sub-15/pw4c-warm-sccache-retained.md
     # for the measurement and the deferred cache-invalidation investigation.
     # CC5: warm the per-rustc-call sccache before downstream parallel Rust
     # jobs fan out. `cargo check --workspace` rustc's every workspace
@@ -750,9 +757,9 @@ jobs:
     # adding minutes to the wall-pole warm pass. Test-bin compile is now
     # paid inline in the downstream test jobs (harness shards, coverage
     # shards), which were already sharded by CW1 and CA3 respectively.
-    # The job consumes ui-artifacts because nimbus-server's include_str!s
-    # of the convex codegen output and rust-embed of the SPA dist must be
-    # present for the workspace to type-check.
+    # The job consumes ui-artifacts because nimbus-convex's generated registry
+    # includes and nimbus-assets' SPA embed inputs must be present for the
+    # workspace to type-check.
     name: Warm sccache
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -782,10 +789,10 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: embedded-packages
-          path: crates/nimbus-bin/embedded-packages
+          path: crates/nimbus-assets/embedded/packages
 
       - name: Refresh embedded package payload mtimes
-        run: find crates/nimbus-bin/embedded-packages -exec touch {} +
+        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       - name: Warm sccache via workspace check
         run: cargo check --workspace
@@ -938,6 +945,12 @@ jobs:
       - name: Build
         run: npm run build --workspaces --if-present
 
+      - name: Stage embedded packages
+        run: node scripts/stage-embedded-packages.mjs
+
+      - name: Capability boundary lint
+        run: npm run lint:capability-boundary
+
       - name: Test
         run: npm run test --workspaces --if-present
 
@@ -1014,6 +1027,12 @@ jobs:
 
       - name: Verify Linux package helper
         run: bash scripts/verify-build-linux-release-packages-helper.sh
+
+      - name: Verify shipped systemd unit
+        run: |
+          sudo install -m 0755 /bin/true /usr/bin/nimbus
+          systemd-analyze verify packaging/systemd/nimbus.service
+          sudo rm -f /usr/bin/nimbus
 
       - name: Verify install script helper
         run: bash scripts/verify-install-helper.sh

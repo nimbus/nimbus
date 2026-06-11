@@ -1,12 +1,11 @@
-use nimbus_core::{Error, Result};
+use nimbus_core::Result;
 use nimbus_runtime::{RuntimeCompatibilityTarget, RuntimeLimits};
 use nimbus_sandbox::{PublishedEndpointProtocol, SandboxBackendKind, SandboxResourceCharge};
 use serde::{Deserialize, Serialize};
 
 use super::{
     RuntimeIsolationTier, TenantImagePolicyDecision, TenantIsolationMode,
-    TenantNetworkEndpointDecision, TenantNetworkPolicyDecision, TenantWorkloadIdentity,
-    TenantWorkloadKind,
+    TenantNetworkEndpointDecision, TenantNetworkPolicyDecision, WorkloadAttributes, WorkloadKind,
 };
 
 mod diff;
@@ -97,7 +96,7 @@ impl Default for OperatorPolicyDefaults {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperatorPolicyWorkload {
-    pub kind: TenantWorkloadKind,
+    pub kind: WorkloadKind,
     pub name: String,
     #[serde(default)]
     pub runtime: OperatorRuntimePolicy,
@@ -126,33 +125,35 @@ impl OperatorPolicyWorkload {
         format!("{}/{}", self.kind.label(), self.name)
     }
 
-    fn identity(&self) -> Result<TenantWorkloadIdentity> {
+    fn attributes(&self) -> Result<WorkloadAttributes> {
         if self.name.trim().is_empty() {
             return invalid_policy("workload.name cannot be empty");
         }
         match self.kind {
-            TenantWorkloadKind::RuntimeFunction => Ok(TenantWorkloadIdentity::runtime_function(
+            WorkloadKind::RuntimeFunction => Ok(WorkloadAttributes::runtime_function(
                 self.name.clone(),
                 self.runtime.tier,
             )),
-            TenantWorkloadKind::SandboxService => {
-                let sandbox_id = self.sandbox.sandbox_id.as_deref().ok_or_else(|| {
-                    Error::InvalidInput(format!(
-                        "operator policy workload `{}` is a sandbox_service and must set sandbox.sandbox_id",
-                        self.key()
-                    ))
-                })?;
-                let mut identity = TenantWorkloadIdentity::sandbox_service(
-                    self.name.clone(),
-                    sandbox_id.to_string(),
-                );
-                if let Some(backend) = self.sandbox.backend {
-                    identity = identity.with_sandbox_backend(backend);
+            WorkloadKind::Service | WorkloadKind::Sandbox => {
+                let mut attributes = match self.kind {
+                    WorkloadKind::Service => WorkloadAttributes::service(self.name.clone()),
+                    WorkloadKind::Sandbox => WorkloadAttributes::sandbox(self.name.clone()),
+                    WorkloadKind::RuntimeFunction
+                    | WorkloadKind::HttpRequest
+                    | WorkloadKind::SystemTask => {
+                        unreachable!("covered by outer match")
+                    }
+                };
+                if let Some(sandbox_id) = &self.sandbox.sandbox_id {
+                    attributes = attributes.with_sandbox_id(sandbox_id.clone());
                 }
-                Ok(identity)
+                if let Some(backend) = self.sandbox.backend {
+                    attributes = attributes.with_sandbox_backend(backend);
+                }
+                Ok(attributes)
             }
-            TenantWorkloadKind::HttpRequest | TenantWorkloadKind::SystemTask => {
-                Ok(TenantWorkloadIdentity::new(self.kind, self.name.clone()))
+            WorkloadKind::HttpRequest | WorkloadKind::SystemTask => {
+                Ok(WorkloadAttributes::new(self.kind, self.name.clone()))
             }
         }
     }

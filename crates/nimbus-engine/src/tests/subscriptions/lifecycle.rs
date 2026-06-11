@@ -1,10 +1,10 @@
 use super::*;
 
 #[tokio::test]
-async fn service_delete_tenant_tears_down_active_subscriptions() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+async fn engine_delete_tenant_tears_down_active_subscriptions() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
     let (tx, mut rx) = subscription_channel();
     let query = Query {
@@ -14,13 +14,13 @@ async fn service_delete_tenant_tears_down_active_subscriptions() {
         limit: None,
     };
 
-    let subscription = service
+    let subscription = engine
         .subscribe(&tenant_id, query, "req-delete".to_string(), tx)
         .expect("subscribe should succeed");
     let subscription_id = subscription.id();
     let _ = rx.recv().await.expect("initial update should arrive");
 
-    service
+    engine
         .delete_tenant(&tenant_id)
         .expect("tenant delete should succeed");
 
@@ -41,10 +41,10 @@ async fn service_delete_tenant_tears_down_active_subscriptions() {
 
 #[tokio::test]
 async fn delete_tenant_async_waits_for_in_flight_operations_and_rejects_new_work() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
-    service
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -55,11 +55,11 @@ async fn delete_tenant_async_waits_for_in_flight_operations_and_rejects_new_work
 
     let read_task: tokio::task::JoinHandle<nimbus_core::Result<Vec<nimbus_core::Document>>> =
         tokio::spawn({
-            let service = service.clone();
+            let engine = engine.clone();
             let tenant_id = tenant_id.clone();
             let probe = probe.clone();
             async move {
-                service
+                engine
                     .list_documents_async_cancellable(
                         tenant_id,
                         tasks_table(),
@@ -75,9 +75,9 @@ async fn delete_tenant_async_waits_for_in_flight_operations_and_rejects_new_work
         .expect("read operation should enter its first cancellation check");
 
     let mut delete_task = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
-        async move { service.delete_tenant_async(tenant_id).await }
+        async move { engine.delete_tenant_async(tenant_id).await }
     });
     assert!(
         timeout(Duration::from_millis(100), &mut delete_task)
@@ -87,9 +87,9 @@ async fn delete_tenant_async_waits_for_in_flight_operations_and_rejects_new_work
     );
 
     let mut ensure_task = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
-        async move { service.ensure_tenant_exists_async(tenant_id).await }
+        async move { engine.ensure_tenant_exists_async(tenant_id).await }
     });
     assert!(
         timeout(Duration::from_millis(100), &mut ensure_task)
@@ -121,6 +121,89 @@ async fn delete_tenant_async_waits_for_in_flight_operations_and_rejects_new_work
             .await
             .expect("ensure task should join")
             .expect_err("new work should fail after deletion begins")
+    })
+    .await
+    .expect("ensure task should resolve after deletion completes");
+    assert!(matches!(error, Error::TenantNotFound(_)));
+}
+
+#[tokio::test]
+async fn delete_tenant_waits_for_in_flight_sync_operation_and_rejects_new_work() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("sync blocker"))]),
+        )
+        .expect("seed insert should succeed");
+    let probe = BlockingCancellationProbe::new();
+    let query = query_for(tasks_table().as_str());
+
+    let read_task: tokio::task::JoinHandle<nimbus_core::Result<Vec<nimbus_core::Document>>> =
+        tokio::task::spawn_blocking({
+            let engine = engine.clone();
+            let tenant_id = tenant_id.clone();
+            let probe = probe.clone();
+            move || {
+                let mut check_cancel = probe.check();
+                engine.query_documents_cancellable(&tenant_id, &query, &mut check_cancel)
+            }
+        });
+
+    timeout(Duration::from_secs(1), probe.wait_for_first_check())
+        .await
+        .expect("sync read operation should enter its first cancellation check");
+
+    let mut delete_task = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move || engine.delete_tenant(&tenant_id)
+    });
+    assert!(
+        timeout(Duration::from_millis(100), &mut delete_task)
+            .await
+            .is_err(),
+        "sync tenant deletion should wait for the in-flight operation"
+    );
+
+    let mut ensure_task = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move || engine.ensure_tenant_exists(&tenant_id)
+    });
+    assert!(
+        timeout(Duration::from_millis(100), &mut ensure_task)
+            .await
+            .is_err(),
+        "new sync work should remain blocked behind tenant deletion"
+    );
+
+    probe.release();
+
+    timeout(Duration::from_secs(1), async {
+        read_task
+            .await
+            .expect("sync read task should join")
+            .expect("sync read task should succeed");
+    })
+    .await
+    .expect("sync read task should finish after release");
+    timeout(Duration::from_secs(1), async {
+        delete_task
+            .await
+            .expect("delete task should join")
+            .expect("tenant delete should succeed");
+    })
+    .await
+    .expect("delete task should finish after the in-flight sync read completes");
+    let error = timeout(Duration::from_secs(1), async {
+        ensure_task
+            .await
+            .expect("ensure task should join")
+            .expect_err("new sync work should fail after deletion begins")
     })
     .await
     .expect("ensure task should resolve after deletion completes");

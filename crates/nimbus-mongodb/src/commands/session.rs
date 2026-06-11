@@ -1,27 +1,25 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use nimbus_core::{
-    AtomicWrite, AtomicWriteBatch, PrincipalContext, TransactionSessionMode,
-    TransactionSessionToken,
-};
-use nimbus_engine::Service;
+use nimbus_core::{PrincipalContext, TransactionSessionMode, TransactionSessionToken};
+use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 
 use super::super::connection::ConnectionState;
-use super::super::error::{BAD_VALUE, MongoError, WRITE_CONFLICT};
+use super::super::error::{BAD_VALUE, MongoError, TOO_MANY_LOGICAL_SESSIONS, WRITE_CONFLICT};
 use super::tenant::{default_tenant_context, resolve_tenant_context};
 
 const NO_SUCH_TRANSACTION: i32 = 251;
 const NO_SUCH_TRANSACTION_NAME: &str = "NoSuchTransaction";
 const TRANSACTION_COMMITTED: i32 = 256;
+pub(crate) const MAX_SESSIONS_PER_CONNECTION: usize = 128;
 
 pub fn start_session(
     body: &bson::Document,
     conn: &mut ConnectionState,
 ) -> Result<bson::Document, MongoError> {
     let _ = body;
-    let lsid = conn.session_store.create_session();
+    let lsid = conn.session_store.create_session()?;
     Ok(bson::doc! {
         "id": lsid,
         "ok": 1.0,
@@ -31,7 +29,8 @@ pub fn start_session(
 pub fn end_sessions(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
+    principal: &PrincipalContext,
 ) -> Result<bson::Document, MongoError> {
     let ids = body
         .get_array("endSessions")
@@ -45,7 +44,7 @@ pub fn end_sessions(
         if let Some(doc) = id_bson.as_document()
             && let Some(uuid) = extract_session_uuid(doc)
         {
-            conn.session_store.end_session(&uuid, service);
+            conn.session_store.end_session(&uuid, engine, principal);
         }
     }
 
@@ -71,7 +70,8 @@ pub fn refresh_sessions(
 pub fn commit_transaction(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
+    principal: &PrincipalContext,
 ) -> Result<bson::Document, MongoError> {
     let lsid = SessionStore::extract_lsid(body).ok_or_else(|| MongoError::Command {
         code: BAD_VALUE.code,
@@ -92,24 +92,18 @@ pub fn commit_transaction(
     let tenant_context = session
         .tenant_context
         .clone()
-        .unwrap_or_else(|| default_tenant_context("mongodb transaction commit"));
+        .unwrap_or_else(|| default_tenant_context("mongodb transaction commit", principal));
     let tenant_id = tenant_context.tenant_id().clone();
-    let buffered = std::mem::take(&mut session.buffered_writes);
-
-    let batch = if buffered.is_empty() {
-        None
-    } else {
-        Some(AtomicWriteBatch { writes: buffered })
-    };
-
-    service
-        .commit_transaction_session(&tenant_id, &token, &PrincipalContext::system(), batch)
+    engine
+        .commit_transaction_session(&tenant_id, &token, principal, None)
         .map_err(|e| match e {
-            nimbus_core::Error::Conflict(_) => MongoError::Command {
-                code: WRITE_CONFLICT.code,
-                code_name: WRITE_CONFLICT.code_name.into(),
-                message: e.to_string(),
-            },
+            nimbus_core::Error::Conflict(_) | nimbus_core::Error::PreconditionFailed(_) => {
+                MongoError::Command {
+                    code: WRITE_CONFLICT.code,
+                    code_name: WRITE_CONFLICT.code_name.into(),
+                    message: e.to_string(),
+                }
+            }
             _ => MongoError::from(e),
         })?;
 
@@ -119,7 +113,8 @@ pub fn commit_transaction(
 pub fn abort_transaction(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
+    principal: &PrincipalContext,
 ) -> Result<bson::Document, MongoError> {
     let lsid = SessionStore::extract_lsid(body).ok_or_else(|| MongoError::Command {
         code: BAD_VALUE.code,
@@ -137,14 +132,13 @@ pub fn abort_transaction(
         .take()
         .ok_or_else(no_such_transaction)?;
     session.transaction_started = false;
-    session.buffered_writes.clear();
     let tenant_context = session
         .tenant_context
         .clone()
-        .unwrap_or_else(|| default_tenant_context("mongodb transaction abort"));
+        .unwrap_or_else(|| default_tenant_context("mongodb transaction abort", principal));
     let tenant_id = tenant_context.tenant_id().clone();
 
-    let _ = service.rollback_transaction_session(&tenant_id, &token, &PrincipalContext::system());
+    let _ = engine.rollback_transaction_session(&tenant_id, &token, principal);
 
     Ok(bson::doc! { "ok": 1.0 })
 }
@@ -152,7 +146,8 @@ pub fn abort_transaction(
 pub fn handle_start_transaction(
     body: &bson::Document,
     conn: &mut ConnectionState,
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
+    principal: &PrincipalContext,
 ) -> Result<(), MongoError> {
     if !body.get_bool("startTransaction").unwrap_or(false) {
         return Ok(());
@@ -165,7 +160,7 @@ pub fn handle_start_transaction(
     })?;
 
     let db_name = body.get_str("$db").unwrap_or("default");
-    let tenant_context = resolve_tenant_context(db_name, "mongodb transaction start")?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb transaction start", principal)?;
     let tenant_id = tenant_context.tenant_id().clone();
 
     let session = conn
@@ -181,9 +176,9 @@ pub fn handle_start_transaction(
         });
     }
 
-    let txn_session = service.begin_transaction_session(
+    let txn_session = engine.begin_transaction_session(
         tenant_id.clone(),
-        PrincipalContext::system(),
+        principal.clone(),
         TransactionSessionMode::ReadWrite,
     )?;
 
@@ -218,11 +213,19 @@ pub struct SessionState {
     pub transaction_token: Option<TransactionSessionToken>,
     pub transaction_started: bool,
     pub tenant_context: Option<TenantIsolationContext>,
-    pub buffered_writes: Vec<AtomicWrite>,
 }
 
 impl SessionStore {
-    pub fn create_session(&mut self) -> bson::Document {
+    pub fn create_session(&mut self) -> Result<bson::Document, MongoError> {
+        if self.sessions.len() >= MAX_SESSIONS_PER_CONNECTION {
+            return Err(MongoError::Command {
+                code: TOO_MANY_LOGICAL_SESSIONS.code,
+                code_name: TOO_MANY_LOGICAL_SESSIONS.code_name.into(),
+                message: format!(
+                    "too many logical sessions on this MongoDB connection; limit is {MAX_SESSIONS_PER_CONNECTION}"
+                ),
+            });
+        }
         let uuid_bytes = generate_uuid_v4();
         self.sessions.insert(
             uuid_bytes.clone(),
@@ -230,34 +233,29 @@ impl SessionStore {
                 transaction_token: None,
                 transaction_started: false,
                 tenant_context: None,
-                buffered_writes: Vec::new(),
             },
         );
-        bson::doc! {
+        Ok(bson::doc! {
             "id": bson::Binary {
                 subtype: bson::spec::BinarySubtype::Uuid,
                 bytes: uuid_bytes,
             }
-        }
+        })
     }
 
     pub fn get_session_mut(&mut self, uuid: &[u8]) -> Option<&mut SessionState> {
         self.sessions.get_mut(uuid)
     }
 
-    pub fn end_session(&mut self, uuid: &[u8], service: &Arc<Service>) {
+    pub fn end_session(&mut self, uuid: &[u8], engine: &Arc<Engine>, principal: &PrincipalContext) {
         if let Some(session) = self.sessions.remove(uuid)
             && let Some(token) = session.transaction_token
         {
-            let tenant_context = session
-                .tenant_context
-                .unwrap_or_else(|| default_tenant_context("mongodb end session rollback"));
+            let tenant_context = session.tenant_context.unwrap_or_else(|| {
+                default_tenant_context("mongodb end session rollback", principal)
+            });
             let tenant_id = tenant_context.tenant_id().clone();
-            let _ = service.rollback_transaction_session(
-                &tenant_id,
-                &token,
-                &PrincipalContext::system(),
-            );
+            let _ = engine.rollback_transaction_session(&tenant_id, &token, principal);
         }
     }
 
@@ -266,16 +264,14 @@ impl SessionStore {
         extract_session_uuid(lsid_doc)
     }
 
-    pub fn buffer_writes_if_in_transaction(
-        &mut self,
+    pub fn active_transaction_token(
+        &self,
         body: &bson::Document,
-        writes: Vec<AtomicWrite>,
-    ) -> Option<()> {
+    ) -> Option<TransactionSessionToken> {
         let lsid = Self::extract_lsid(body)?;
-        let session = self.sessions.get_mut(&lsid)?;
+        let session = self.sessions.get(&lsid)?;
         if session.transaction_started && session.transaction_token.is_some() {
-            session.buffered_writes.extend(writes);
-            Some(())
+            session.transaction_token.clone()
         } else {
             None
         }
@@ -305,6 +301,10 @@ mod tests {
 
     fn test_conn() -> ConnectionState {
         ConnectionState::new(([127, 0, 0, 1], 12345).into())
+    }
+
+    fn test_principal() -> PrincipalContext {
+        PrincipalContext::system()
     }
 
     fn extract_uuid_bytes(lsid_doc: &bson::Document) -> &[u8] {
@@ -340,6 +340,35 @@ mod tests {
     }
 
     #[test]
+    fn start_session_rejects_new_session_at_connection_cap() {
+        let mut conn = test_conn();
+        let body = bson::doc! { "startSession": 1, "$db": "admin" };
+        for _ in 0..MAX_SESSIONS_PER_CONNECTION {
+            start_session(&body, &mut conn).expect("session under cap should start");
+        }
+
+        let error =
+            start_session(&body, &mut conn).expect_err("session over cap should be rejected");
+
+        match error {
+            MongoError::Command {
+                code,
+                code_name,
+                message,
+            } => {
+                assert_eq!(code, TOO_MANY_LOGICAL_SESSIONS.code);
+                assert_eq!(code_name, TOO_MANY_LOGICAL_SESSIONS.code_name);
+                assert!(message.contains("too many logical sessions"));
+            }
+            other => panic!("expected Command, got {other:?}"),
+        }
+        assert_eq!(
+            conn.session_store.session_count(),
+            MAX_SESSIONS_PER_CONNECTION
+        );
+    }
+
+    #[test]
     fn end_sessions_removes_sessions() {
         let mut conn = test_conn();
         let body = bson::doc! { "startSession": 1, "$db": "admin" };
@@ -348,8 +377,9 @@ mod tests {
 
         let lsid = r.get_document("id").unwrap().clone();
         let end_body = bson::doc! { "endSessions": [lsid], "$db": "admin" };
-        let fixture = nimbus_testing::ServiceFixture::new(|path| Service::new(path));
-        let result = end_sessions(&end_body, &mut conn, &fixture.service()).unwrap();
+        let fixture = nimbus_testing::EngineFixture::new(|path| Engine::new(path));
+        let result =
+            end_sessions(&end_body, &mut conn, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
         assert_eq!(conn.session_store.session_count(), 0);
     }
@@ -364,8 +394,9 @@ mod tests {
             }
         };
         let end_body = bson::doc! { "endSessions": [fake_lsid], "$db": "admin" };
-        let fixture = nimbus_testing::ServiceFixture::new(|path| Service::new(path));
-        let result = end_sessions(&end_body, &mut conn, &fixture.service()).unwrap();
+        let fixture = nimbus_testing::EngineFixture::new(|path| Engine::new(path));
+        let result =
+            end_sessions(&end_body, &mut conn, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
     }
 
@@ -421,7 +452,7 @@ mod tests {
         assert!(!session.transaction_started);
     }
 
-    use nimbus_testing::ServiceFixture;
+    use nimbus_testing::EngineFixture;
 
     fn create_session_lsid(conn: &mut ConnectionState) -> bson::Document {
         let body = bson::doc! { "startSession": 1, "$db": "admin" };
@@ -433,14 +464,14 @@ mod tests {
         bson::Bson::Document(lsid.clone())
     }
 
-    fn setup_tenant(fixture: &ServiceFixture<Service>) {
+    fn setup_tenant(fixture: &EngineFixture<Engine>) {
         let tenant_id = TenantId::new("testdb").expect("tenant id should be valid");
-        fixture.service().create_tenant(tenant_id).unwrap_or(());
+        fixture.engine().create_tenant(tenant_id).unwrap_or(());
     }
 
     #[test]
     fn start_transaction_begins_engine_session() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         setup_tenant(&fixture);
         let mut conn = test_conn();
         let lsid = create_session_lsid(&mut conn);
@@ -452,7 +483,7 @@ mod tests {
             "lsid": lsid_field(&lsid),
             "documents": [],
         };
-        handle_start_transaction(&body, &mut conn, &fixture.service()).unwrap();
+        handle_start_transaction(&body, &mut conn, &fixture.engine(), &test_principal()).unwrap();
 
         let uuid = extract_uuid_bytes(&lsid).to_vec();
         let session = conn.session_store.get_session_mut(&uuid).unwrap();
@@ -462,7 +493,7 @@ mod tests {
 
     #[test]
     fn commit_transaction_succeeds() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         setup_tenant(&fixture);
         let mut conn = test_conn();
         let lsid = create_session_lsid(&mut conn);
@@ -474,14 +505,21 @@ mod tests {
             "lsid": lsid_field(&lsid),
             "documents": [],
         };
-        handle_start_transaction(&start_body, &mut conn, &fixture.service()).unwrap();
+        handle_start_transaction(&start_body, &mut conn, &fixture.engine(), &test_principal())
+            .unwrap();
 
         let commit_body = bson::doc! {
             "commitTransaction": 1,
             "$db": "admin",
             "lsid": lsid_field(&lsid),
         };
-        let result = commit_transaction(&commit_body, &mut conn, &fixture.service()).unwrap();
+        let result = commit_transaction(
+            &commit_body,
+            &mut conn,
+            &fixture.engine(),
+            &test_principal(),
+        )
+        .unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
 
         let uuid = extract_uuid_bytes(&lsid).to_vec();
@@ -492,7 +530,7 @@ mod tests {
 
     #[test]
     fn abort_transaction_succeeds() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         setup_tenant(&fixture);
         let mut conn = test_conn();
         let lsid = create_session_lsid(&mut conn);
@@ -504,14 +542,17 @@ mod tests {
             "lsid": lsid_field(&lsid),
             "documents": [],
         };
-        handle_start_transaction(&start_body, &mut conn, &fixture.service()).unwrap();
+        handle_start_transaction(&start_body, &mut conn, &fixture.engine(), &test_principal())
+            .unwrap();
 
         let abort_body = bson::doc! {
             "abortTransaction": 1,
             "$db": "admin",
             "lsid": lsid_field(&lsid),
         };
-        let result = abort_transaction(&abort_body, &mut conn, &fixture.service()).unwrap();
+        let result =
+            abort_transaction(&abort_body, &mut conn, &fixture.engine(), &test_principal())
+                .unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
 
         let uuid = extract_uuid_bytes(&lsid).to_vec();
@@ -522,7 +563,7 @@ mod tests {
 
     #[test]
     fn commit_without_transaction_returns_error() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let mut conn = test_conn();
         let lsid = create_session_lsid(&mut conn);
 
@@ -531,7 +572,8 @@ mod tests {
             "$db": "admin",
             "lsid": lsid_field(&lsid),
         };
-        let err = commit_transaction(&body, &mut conn, &fixture.service()).unwrap_err();
+        let err =
+            commit_transaction(&body, &mut conn, &fixture.engine(), &test_principal()).unwrap_err();
         match err {
             MongoError::Command { code, .. } => assert_eq!(code, NO_SUCH_TRANSACTION),
             other => panic!("expected Command, got {:?}", other),
@@ -540,7 +582,7 @@ mod tests {
 
     #[test]
     fn abort_without_transaction_returns_error() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let mut conn = test_conn();
         let lsid = create_session_lsid(&mut conn);
 
@@ -549,7 +591,8 @@ mod tests {
             "$db": "admin",
             "lsid": lsid_field(&lsid),
         };
-        let err = abort_transaction(&body, &mut conn, &fixture.service()).unwrap_err();
+        let err =
+            abort_transaction(&body, &mut conn, &fixture.engine(), &test_principal()).unwrap_err();
         match err {
             MongoError::Command { code, .. } => assert_eq!(code, NO_SUCH_TRANSACTION),
             other => panic!("expected Command, got {:?}", other),
@@ -558,10 +601,11 @@ mod tests {
 
     #[test]
     fn commit_missing_lsid_returns_error() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let mut conn = test_conn();
         let body = bson::doc! { "commitTransaction": 1, "$db": "admin" };
-        let err = commit_transaction(&body, &mut conn, &fixture.service()).unwrap_err();
+        let err =
+            commit_transaction(&body, &mut conn, &fixture.engine(), &test_principal()).unwrap_err();
         match err {
             MongoError::Command { code, .. } => assert_eq!(code, BAD_VALUE.code),
             other => panic!("expected Command, got {:?}", other),
@@ -570,14 +614,15 @@ mod tests {
 
     #[test]
     fn start_transaction_without_lsid_returns_error() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let mut conn = test_conn();
         let body = bson::doc! {
             "insert": "users",
             "$db": "testdb",
             "startTransaction": true,
         };
-        let err = handle_start_transaction(&body, &mut conn, &fixture.service()).unwrap_err();
+        let err = handle_start_transaction(&body, &mut conn, &fixture.engine(), &test_principal())
+            .unwrap_err();
         match err {
             MongoError::Command { code, .. } => assert_eq!(code, BAD_VALUE.code),
             other => panic!("expected Command, got {:?}", other),
@@ -586,7 +631,7 @@ mod tests {
 
     #[test]
     fn start_transaction_without_flag_is_noop() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let mut conn = test_conn();
         let lsid = create_session_lsid(&mut conn);
 
@@ -596,7 +641,7 @@ mod tests {
             "lsid": lsid_field(&lsid),
             "documents": [],
         };
-        handle_start_transaction(&body, &mut conn, &fixture.service()).unwrap();
+        handle_start_transaction(&body, &mut conn, &fixture.engine(), &test_principal()).unwrap();
 
         let uuid = extract_uuid_bytes(&lsid).to_vec();
         let session = conn.session_store.get_session_mut(&uuid).unwrap();
@@ -604,10 +649,10 @@ mod tests {
     }
 
     #[test]
-    fn transaction_buffers_writes_and_flushes_on_commit() {
+    fn transaction_stages_writes_in_engine_session_and_flushes_on_commit() {
         use crate::commands::crud;
 
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         setup_tenant(&fixture);
         let mut conn = test_conn();
 
@@ -616,7 +661,7 @@ mod tests {
             "$db": "testdb",
             "documents": [{ "_id": "seed", "val": 0 }],
         };
-        crud::insert(&seed_body, &mut conn, &fixture.service()).unwrap();
+        crud::insert(&seed_body, &mut conn, &fixture.engine(), &test_principal()).unwrap();
 
         let lsid = create_session_lsid(&mut conn);
 
@@ -627,7 +672,8 @@ mod tests {
             "lsid": lsid_field(&lsid),
             "documents": [],
         };
-        handle_start_transaction(&start_body, &mut conn, &fixture.service()).unwrap();
+        handle_start_transaction(&start_body, &mut conn, &fixture.engine(), &test_principal())
+            .unwrap();
 
         let insert_body = bson::doc! {
             "insert": "txitems",
@@ -635,35 +681,89 @@ mod tests {
             "lsid": lsid_field(&lsid),
             "documents": [{ "_id": "tx1", "val": 42 }],
         };
-        let result = crud::insert(&insert_body, &mut conn, &fixture.service()).unwrap();
+        let result = crud::insert(
+            &insert_body,
+            &mut conn,
+            &fixture.engine(),
+            &test_principal(),
+        )
+        .unwrap();
         assert_eq!(result.get_i32("n").unwrap(), 1);
 
-        let uuid = extract_uuid_bytes(&lsid).to_vec();
-        let session = conn.session_store.get_session_mut(&uuid).unwrap();
-        assert_eq!(session.buffered_writes.len(), 1);
+        let transaction_find_body =
+            bson::doc! { "find": "txitems", "$db": "testdb", "lsid": lsid_field(&lsid) };
+        let transaction_found = crud::find(
+            &transaction_find_body,
+            &mut conn,
+            &fixture.engine(),
+            &test_principal(),
+        )
+        .unwrap();
+        let transaction_batch = transaction_found
+            .get_document("cursor")
+            .unwrap()
+            .get_array("firstBatch")
+            .unwrap();
+        assert_eq!(
+            transaction_batch.len(),
+            2,
+            "transaction reads should include staged writes"
+        );
+
+        let outside_find_body = bson::doc! { "find": "txitems", "$db": "testdb" };
+        let outside_before_commit = crud::find(
+            &outside_find_body,
+            &mut conn,
+            &fixture.engine(),
+            &test_principal(),
+        )
+        .unwrap();
+        let outside_before_batch = outside_before_commit
+            .get_document("cursor")
+            .unwrap()
+            .get_array("firstBatch")
+            .unwrap();
+        assert_eq!(
+            outside_before_batch.len(),
+            1,
+            "outside reads must not see uncommitted transaction writes"
+        );
 
         let commit_body = bson::doc! {
             "commitTransaction": 1,
             "$db": "admin",
             "lsid": lsid_field(&lsid),
         };
-        commit_transaction(&commit_body, &mut conn, &fixture.service()).unwrap();
+        commit_transaction(
+            &commit_body,
+            &mut conn,
+            &fixture.engine(),
+            &test_principal(),
+        )
+        .unwrap();
 
+        let uuid = extract_uuid_bytes(&lsid).to_vec();
         let session = conn.session_store.get_session_mut(&uuid).unwrap();
-        assert!(session.buffered_writes.is_empty());
+        assert!(!session.transaction_started);
+        assert!(session.transaction_token.is_none());
 
-        let find_body = bson::doc! { "find": "txitems", "$db": "testdb" };
-        let found = crud::find(&find_body, &mut conn, &fixture.service()).unwrap();
+        let found = crud::find(
+            &outside_find_body,
+            &mut conn,
+            &fixture.engine(),
+            &test_principal(),
+        )
+        .unwrap();
         let cursor = found.get_document("cursor").unwrap();
         let batch = cursor.get_array("firstBatch").unwrap();
         assert_eq!(batch.len(), 2);
     }
 
     #[test]
-    fn transaction_abort_discards_buffered_writes() {
+    fn transaction_abort_discards_engine_staged_writes() {
         use crate::commands::crud;
 
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         setup_tenant(&fixture);
         let mut conn = test_conn();
 
@@ -672,7 +772,7 @@ mod tests {
             "$db": "testdb",
             "documents": [{ "_id": "seed", "val": 0 }],
         };
-        crud::insert(&seed_body, &mut conn, &fixture.service()).unwrap();
+        crud::insert(&seed_body, &mut conn, &fixture.engine(), &test_principal()).unwrap();
 
         let lsid = create_session_lsid(&mut conn);
 
@@ -683,7 +783,8 @@ mod tests {
             "lsid": lsid_field(&lsid),
             "documents": [],
         };
-        handle_start_transaction(&start_body, &mut conn, &fixture.service()).unwrap();
+        handle_start_transaction(&start_body, &mut conn, &fixture.engine(), &test_principal())
+            .unwrap();
 
         let insert_body = bson::doc! {
             "insert": "abortitems",
@@ -691,26 +792,80 @@ mod tests {
             "lsid": lsid_field(&lsid),
             "documents": [{ "_id": "a1", "val": 99 }],
         };
-        crud::insert(&insert_body, &mut conn, &fixture.service()).unwrap();
+        crud::insert(
+            &insert_body,
+            &mut conn,
+            &fixture.engine(),
+            &test_principal(),
+        )
+        .unwrap();
 
-        let uuid = extract_uuid_bytes(&lsid).to_vec();
-        let session = conn.session_store.get_session_mut(&uuid).unwrap();
-        assert_eq!(session.buffered_writes.len(), 1);
+        let transaction_find_body =
+            bson::doc! { "find": "abortitems", "$db": "testdb", "lsid": lsid_field(&lsid) };
+        let transaction_found = crud::find(
+            &transaction_find_body,
+            &mut conn,
+            &fixture.engine(),
+            &test_principal(),
+        )
+        .unwrap();
+        let transaction_batch = transaction_found
+            .get_document("cursor")
+            .unwrap()
+            .get_array("firstBatch")
+            .unwrap();
+        assert_eq!(transaction_batch.len(), 2);
+
+        let outside_find_body = bson::doc! { "find": "abortitems", "$db": "testdb" };
+        let outside_before_abort = crud::find(
+            &outside_find_body,
+            &mut conn,
+            &fixture.engine(),
+            &test_principal(),
+        )
+        .unwrap();
+        assert_eq!(
+            outside_before_abort
+                .get_document("cursor")
+                .unwrap()
+                .get_array("firstBatch")
+                .unwrap()
+                .len(),
+            1
+        );
 
         let abort_body = bson::doc! {
             "abortTransaction": 1,
             "$db": "admin",
             "lsid": lsid_field(&lsid),
         };
-        abort_transaction(&abort_body, &mut conn, &fixture.service()).unwrap();
+        abort_transaction(&abort_body, &mut conn, &fixture.engine(), &test_principal()).unwrap();
 
+        let uuid = extract_uuid_bytes(&lsid).to_vec();
         let session = conn.session_store.get_session_mut(&uuid).unwrap();
-        assert!(session.buffered_writes.is_empty());
+        assert!(!session.transaction_started);
+        assert!(session.transaction_token.is_none());
+        let outside_after_abort = crud::find(
+            &outside_find_body,
+            &mut conn,
+            &fixture.engine(),
+            &test_principal(),
+        )
+        .unwrap();
+        assert_eq!(
+            outside_after_abort
+                .get_document("cursor")
+                .unwrap()
+                .get_array("firstBatch")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
     fn end_session_aborts_active_transaction() {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         setup_tenant(&fixture);
         let mut conn = test_conn();
         let lsid = create_session_lsid(&mut conn);
@@ -722,10 +877,11 @@ mod tests {
             "lsid": lsid_field(&lsid),
             "documents": [],
         };
-        handle_start_transaction(&start_body, &mut conn, &fixture.service()).unwrap();
+        handle_start_transaction(&start_body, &mut conn, &fixture.engine(), &test_principal())
+            .unwrap();
 
         let end_body = bson::doc! { "endSessions": [lsid], "$db": "admin" };
-        end_sessions(&end_body, &mut conn, &fixture.service()).unwrap();
+        end_sessions(&end_body, &mut conn, &fixture.engine(), &test_principal()).unwrap();
         assert_eq!(conn.session_store.session_count(), 0);
     }
 }

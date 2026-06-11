@@ -1,6 +1,7 @@
 //! Storage layer for Nimbus persistence providers.
 
 pub mod async_storage;
+pub mod changefeed;
 pub mod commit_log;
 pub mod diagnostics;
 pub mod document_codec;
@@ -14,6 +15,7 @@ pub mod materializer;
 pub mod mysql;
 pub mod postgres;
 pub mod query_read;
+mod range_bound;
 pub mod retention;
 mod runtime_bridge;
 pub mod scheduler;
@@ -30,7 +32,17 @@ pub use async_storage::{
     EmbeddedRedbProvider, EmbeddedSqliteProvider, RedbTenantStorage, RedbUsageStorage,
     SqliteTenantStorage, TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, UsageStorage,
 };
-pub use diagnostics::{StorageCapabilities, StorageHealthDiagnostic};
+pub use changefeed::{
+    ChangefeedBootstrap, ChangefeedCursor, ChangefeedEvent, ChangefeedHandle, ChangefeedPage,
+};
+pub use diagnostics::{
+    AdapterSupportDiagnostic, BackendParityDiagnostic, BackendParityState,
+    DocumentVersionStorageDiagnostic, HistoricalQueryAdmissionDiagnostic,
+    HistoricalQueryAdmissionRequest, HistoricalQueryAdmissionState, IndexVersionStorageDiagnostic,
+    MvccOperatorDiagnostic, MvccVersionCountsDiagnostic, StorageCapabilities, StorageFeature,
+    StorageFeatureSupport, StorageFeatureSupportState, StorageHealthDiagnostic,
+    StorageOperatorState, StoragePressureDiagnostic, StoragePressureState,
+};
 pub use encrypted_redb::{
     ENCRYPTED_FORMAT_VERSION, EncryptedFileBackend, EncryptedMemoryBackend, LOGICAL_PAGE_SIZE,
     PHYSICAL_PAGE_SIZE,
@@ -41,12 +53,18 @@ pub use encryption::{
     GeneratedDatabaseKey, KeyDirectoryProvider, KeyManifest, KeyManifestHeader, LocalArtifactRole,
     LocalDatabaseRole, LocalKeyProvider, LocalKeyProviderError, LocalKeySubject,
     LocalKeySubjectKind, ManifestCipher, ManifestError, ManifestReadError, ManifestWriteError,
-    MasterKeyFileProvider, WrappedDatabaseKey, generate_database_manifest,
+    MasterKeyFileProvider, WrappedDatabaseKey, commit_staged_redb_dek_rotation,
+    generate_database_manifest, recover_interrupted_redb_dek_rotation,
+    redb_dek_rotation_database_stage_path, redb_dek_rotation_manifest_stage_path,
     resolve_database_encryption_key, unwrap_database_manifest_key,
 };
 pub use format::{
-    CURRENT_STORAGE_FORMAT_VERSION, StorageFormatVersion, storage_format_version,
-    validate_storage_format_version,
+    CURRENT_DOCUMENT_VERSION_STORAGE_FORMAT, CURRENT_INDEX_VERSION_STORAGE_FORMAT,
+    CURRENT_STORAGE_FORMAT_VERSION, DOCUMENT_VERSION_STORAGE_FORMAT_METADATA_KEY,
+    INDEX_VERSION_STORAGE_FORMAT_METADATA_KEY, StorageFormatVersion, storage_format_version,
+    storage_format_version_from_u64, validate_document_version_storage_format,
+    validate_document_version_storage_format_state, validate_index_version_storage_format,
+    validate_index_version_storage_format_state, validate_storage_format_version,
 };
 pub use libsql::{
     LibsqlReplicaBarrierPath, LibsqlReplicaFreshnessStats, LibsqlReplicaProvider,
@@ -65,8 +83,11 @@ pub use postgres::{
     PostgresTenantStorage, PostgresTenantStore, PostgresWriteTransaction,
 };
 pub use query_read::QueryReadStore;
+pub use range_bound::IndexRangeBound;
 pub use retention::{
-    HardDeleteDecision, RetentionFloor, RetentionParticipant, RetentionPin, RetentionPinGuard,
+    HardDeleteDecision, RetentionFloor, RetentionGcConfig, RetentionGcResource, RetentionGcSummary,
+    RetentionGcWatermark, RetentionGcWatermarks, RetentionParticipant, RetentionPin,
+    RetentionPinGuard,
 };
 pub use simulation::{
     Clock, DeterministicHarness, FaultInjector, FaultOccurrence, FaultPoint, GeneratedTaskHistory,
@@ -91,7 +112,8 @@ pub use sqlite::{
 };
 pub use store::{
     DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DurableJournalBootstrap, DurableJournalPage,
-    JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT, MaterializedJournalSnapshot,
+    HistoricalIndexDocumentPage, JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT,
+    MaterializedJournalSnapshot, PointInTimeRestoreArchive, PointInTimeRestoreTarget,
     ResolvedScheduleOp, ResolvedWrite, TenantReadSnapshot, TenantStore, TenantWriteCommit,
     TenantWriteTransaction,
 };

@@ -4,7 +4,7 @@ use std::pin::Pin;
 use nimbus_core::{Error, TenantId};
 use nimbus_sandbox::SandboxHandle;
 
-use super::SandboxServiceManager;
+use super::ServiceManager;
 use super::types::TenantServiceKey;
 
 pub type ServiceEvidenceFuture<'a> = Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
@@ -30,7 +30,7 @@ impl ServiceEvidenceWriter for NoopServiceEvidenceWriter {
     }
 }
 
-impl SandboxServiceManager {
+impl ServiceManager {
     pub(super) async fn record_service_handle(
         &self,
         key: &TenantServiceKey,

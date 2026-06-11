@@ -6,7 +6,7 @@ impl ConvexHostBridge {
         table: &TableName,
         index_name: &str,
     ) -> Result<Option<String>, Error> {
-        let schema = self.service().get_table_schema(self.tenant_id(), table)?;
+        let schema = self.engine().get_table_schema(self.tenant_id(), table)?;
         Ok(schema
             .queryable_indexes()
             .find(|index| index.name == index_name)
@@ -19,7 +19,7 @@ impl ConvexHostBridge {
         preferred_index_name: Option<&str>,
     ) -> Option<RuntimeIndexRangeRead> {
         let table_schema = self
-            .service()
+            .engine()
             .get_table_schema(self.tenant_id(), &query.table)
             .ok()?;
         let index = if let Some(index_name) = preferred_index_name {
@@ -101,7 +101,7 @@ impl ConvexHostBridge {
         Some(RuntimeIndexRangeRead {
             table: query.table.clone(),
             table_id: self
-                .service()
+                .engine()
                 .table_id(self.tenant_id(), &query.table)
                 .ok()
                 .flatten(),

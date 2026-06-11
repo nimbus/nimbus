@@ -1,0 +1,110 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/get-started/**"
+      - "docs/developers/**"
+      - "docs/operators/**"
+      - "docs/concepts/**"
+      - "docs/reference/**"
+      - "docs/brand/**"
+      - "website/**"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/get-started/**"
+      - "docs/developers/**"
+      - "docs/operators/**"
+      - "docs/concepts/**"
+      - "docs/reference/**"
+      - "docs/brand/**"
+      - "website/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  docs:
+    name: Build and Deploy Docs Site
+    runs-on: ubuntu-24.04
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install
+        working-directory: website
+        run: npm ci
+
+      - name: Build
+        working-directory: website
+        run: npm run build
+
+      - name: Check docs
+        run: |
+          if [ -f scripts/check-docs.sh ]; then
+            bash scripts/check-docs.sh
+          else
+            echo "scripts/check-docs.sh not present yet (lands in DOC8); skipping"
+          fi
+
+      - name: Upload PR preview version
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        id: preview
+        working-directory: website
+        run: |
+          set -o pipefail
+          npx wrangler versions upload 2>&1 | tee preview.log
+          url="$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev[^ ]*' preview.log | tail -1)"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+
+      - name: Comment preview URL
+        if: github.event_name == 'pull_request' && steps.preview.outputs.url != ''
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const url = `${{ steps.preview.outputs.url }}`;
+            const marker = '<!-- nimbus-docs-preview -->';
+            const body = `${marker}\n📘 Docs preview for this PR: ${url}`;
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Deploy production
+        if: github.event_name != 'pull_request'
+        working-directory: website
+        run: npx wrangler deploy

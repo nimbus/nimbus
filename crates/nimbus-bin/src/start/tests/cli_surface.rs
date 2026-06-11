@@ -11,7 +11,93 @@ fn cli_defaults_to_embedded_sqlite() {
     .expect("default sqlite config should build");
     assert_eq!(
         config,
-        nimbus::ServicePersistenceConfig::embedded("./data", nimbus::EmbeddedProviderKind::Sqlite)
+        nimbus::EnginePersistenceConfig::embedded("./data", nimbus::EmbeddedProviderKind::Sqlite)
+    );
+}
+
+#[test]
+fn cors_allow_origin_flag_repeats_and_normalizes() {
+    let command = parse_start([
+        "nimbus",
+        "start",
+        "--cors-allow-origin",
+        "https://App.Example.com/",
+        "--cors-allow-origin",
+        "http://app.example.com:8080",
+    ]);
+    assert_eq!(
+        command.cors_allow_origin,
+        vec![
+            "https://app.example.com".to_string(),
+            "http://app.example.com:8080".to_string(),
+        ],
+        "flag values should be normalized at parse time"
+    );
+    assert!(
+        StartCommand::default().cors_allow_origin.is_empty(),
+        "no extra CORS origins by default"
+    );
+}
+
+#[test]
+fn cors_allow_origin_flag_rejects_wildcards_and_bare_hosts() {
+    for bad in ["*", "https://*.example.com", "app.example.com"] {
+        let error = Cli::try_parse_from(["nimbus", "start", "--cors-allow-origin", bad])
+            .expect_err(&format!("origin `{bad}` should be rejected at parse time"));
+        assert_eq!(error.kind(), ErrorKind::ValueValidation);
+    }
+}
+
+#[test]
+fn cors_env_fallback_applies_only_without_flags() {
+    // Flag wins: the env var is not consulted when flags are present.
+    let with_flag = parse_start([
+        "nimbus",
+        "start",
+        "--cors-allow-origin",
+        "https://app.example.com",
+    ]);
+    assert_eq!(
+        super::boot::resolve_cors_allowed_origins(&with_flag)
+            .expect("flag-provided origins should resolve"),
+        vec!["https://app.example.com".to_string()],
+    );
+    // Without flag or env, no extra origins. (Env-set behavior is covered
+    // by normalization tests; mutating process env in tests races other
+    // threads, so the env path is exercised through the pure normalizer.)
+    let without_flag = parse_start(["nimbus", "start"]);
+    if std::env::var_os("NIMBUS_CORS_ALLOW_ORIGINS").is_none() {
+        assert_eq!(
+            super::boot::resolve_cors_allowed_origins(&without_flag)
+                .expect("empty configuration should resolve"),
+            Vec::<String>::new(),
+        );
+    }
+}
+
+#[test]
+fn tls_flags_are_both_or_neither() {
+    let command = parse_start([
+        "nimbus",
+        "start",
+        "--tls-cert",
+        "/etc/nimbus/cert.pem",
+        "--tls-key",
+        "/etc/nimbus/key.pem",
+    ]);
+    assert!(command.tls_cert.is_some() && command.tls_key.is_some());
+
+    for partial in [
+        vec!["nimbus", "start", "--tls-cert", "/etc/nimbus/cert.pem"],
+        vec!["nimbus", "start", "--tls-key", "/etc/nimbus/key.pem"],
+    ] {
+        let error = Cli::try_parse_from(partial)
+            .expect_err("a lone TLS flag must be rejected at parse time");
+        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
+    }
+    assert!(
+        StartCommand::default().tls_cert.is_none(),
+        "TLS stays off by default"
     );
 }
 
@@ -42,7 +128,7 @@ fn production_start_compose_manager_rejects_tag_only_image_before_backend_setup(
         .expect("compose fixture should write");
     let selection = crate::compose::discovery::ResolvedComposeSelection::explicit(compose);
 
-    let error = match super::boot::load_sandbox_service_manager(
+    let error = match super::boot::load_service_manager(
         Some(&selection),
         &tempdir.path().join("control"),
         nimbus_server::TenantIsolationMode::Production,

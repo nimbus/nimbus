@@ -65,6 +65,6 @@ npm run typecheck --workspace @nimbus/dynamodb   # type-only selftest pass
 
 ## Related
 
-- [DynamoDB SDK compatibility](../../docs/adapters/dynamodb/sdk-compatibility.md)
-- [DynamoDB feature coverage](../../docs/adapters/dynamodb/feature-coverage.md)
-- [Known divergences](../../docs/adapters/dynamodb/divergences.md)
+- [DynamoDB SDK compatibility](../../docs/private/adapters/dynamodb/sdk-compatibility.md)
+- [DynamoDB feature coverage](../../docs/private/adapters/dynamodb/feature-coverage.md)
+- [Known divergences](../../docs/private/adapters/dynamodb/divergences.md)

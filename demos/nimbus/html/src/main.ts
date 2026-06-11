@@ -2,7 +2,8 @@ import {
   NimbusRestClient,
   NimbusSubscriptionClient,
   type SubscribeQuery,
-} from "nimbus/rest";
+  type TableSchema,
+} from "@nimbus/nimbus/transports/rest";
 import "./app.css";
 
 const $ = <T extends HTMLElement>(id: string) =>
@@ -80,7 +81,7 @@ function refreshClients() {
   elements.serverOrigin.textContent = baseUrl;
 }
 
-function defaultDemoSchema(tableName: string) {
+function defaultDemoSchema(tableName: string): TableSchema {
   return {
     table: tableName,
     fields: [
@@ -89,8 +90,8 @@ function defaultDemoSchema(tableName: string) {
       { name: "priority", field_type: "number", required: false },
     ],
     indexes: [
-      { name: "by_status", field: "status" },
-      { name: "by_priority", field: "priority" },
+      { name: "by_status", fields: ["status"] },
+      { name: "by_priority", fields: ["priority"] },
     ],
   };
 }

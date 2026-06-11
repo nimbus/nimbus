@@ -1,4 +1,4 @@
-use nimbus_core::Result;
+use nimbus_core::{Result, order_preserving_number_bits};
 use serde_json::Value;
 
 /// Encodes a scalar JSON value to bytes that preserve lexicographic order.
@@ -11,14 +11,7 @@ pub fn encode_index_value(value: &Value) -> Result<Vec<u8>> {
             let float = number.as_f64().ok_or_else(|| {
                 nimbus_core::Error::InvalidInput("unsupported numeric index value".to_string())
             })?;
-            let mut bytes = float.to_bits().to_be_bytes();
-            if float.is_sign_positive() || float == 0.0 {
-                bytes[0] ^= 0x80;
-            } else {
-                for byte in &mut bytes {
-                    *byte = !*byte;
-                }
-            }
+            let bytes = order_preserving_number_bits(float).to_be_bytes();
             let mut encoded = vec![0x02];
             encoded.extend_from_slice(&bytes);
             Ok(encoded)

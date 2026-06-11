@@ -6,25 +6,26 @@ use std::sync::Arc;
 #[cfg(unix)]
 use std::{env, process};
 
-use nimbus::{ConvexRegistry, Error, LicenseState, Service, TenantId, run_scheduler};
+use nimbus::{ConvexRegistry, Engine, Error, LicenseState, TenantId, run_scheduler};
 use nimbus_server::{
     CloudFunctionsRegistry, LocalServerPaths, LocalServerSecurityState, ServeOptions,
     ServerDiscoveryLease, load_or_create_local_admin_token, serve,
 };
 
 use super::StartCommand;
+use super::adapters::resolve_adapter_enablement;
 use super::config::{
     control_data_dir_from_persistence_config, persistence_config_from_start_command,
 };
 use super::first_boot::{is_first_boot, spawn_first_boot_announce};
-use super::network_bind::{ensure_admin_token_fresh_for_public_bind, ensure_host_opt_in};
+use super::network_bind::{ensure_admin_token_rotated_for_public_bind, ensure_host_opt_in};
 use super::runtime_limits::runtime_limits_from_command;
 use crate::cli_ux;
 use crate::codegen::{CodegenOptions, run_codegen_for_app_dir_with_options};
 use crate::compose::discovery::{
     ResolvedComposeSelection, compose_selection_summary, resolve_compose_selection,
 };
-use crate::compose::load_host_backed_sandbox_service_manager_for_selection_with_isolation_mode;
+use crate::compose::load_host_backed_service_manager_for_selection_with_isolation_mode;
 use crate::deploy::resolve_deploy_app_dir;
 use crate::dirs;
 
@@ -52,12 +53,19 @@ pub(crate) async fn run_start_command(
     if !command.systemd_socket_activation {
         ensure_host_opt_in(&command.host, command.allow_network)?;
     }
+    let cors_allowed_origins = resolve_cors_allowed_origins(&command)?;
+    let adapter_enablement = resolve_adapter_enablement(&command)?;
+    let tls_config = match (&command.tls_cert, &command.tls_key) {
+        (Some(cert), Some(key)) => Some(nimbus_server::TlsConfig::new(cert, key)),
+        _ => None,
+    };
+    let tls_enabled = tls_config.is_some();
     let persistence_config = persistence_config_from_start_command(&command)?;
     let compose_control_data_dir =
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
-    // Snapshot first-boot before `Service::new_with_persistence_config`
+    // Snapshot first-boot before `Engine::new_with_persistence_config`
     // touches the data dir; otherwise the marker landscape we observe
-    // would always say "second boot" because Service initialization
+    // would always say "second boot" because Engine initialization
     // would have already populated the dir. The H5 banner is fired
     // after the listener is up and the discovery lease is held so the
     // launch ticket can mint against the live server.
@@ -75,7 +83,7 @@ pub(crate) async fn run_start_command(
     let cloud_functions_registry =
         load_cloud_functions_registry(&command, resolved_app_dir.as_ref(), &runtime_limits)?;
     let compose_selection = resolve_optional_compose_selection(&command)?;
-    let sandbox_service_manager = load_sandbox_service_manager(
+    let service_manager = load_service_manager(
         compose_selection.as_ref(),
         &compose_control_data_dir,
         command.tenant_isolation_mode,
@@ -84,21 +92,23 @@ pub(crate) async fn run_start_command(
     let local_server_paths = LocalServerPaths::resolve_for_current_platform()?;
     let local_admin_token = load_or_create_local_admin_token(&local_server_paths)?;
     if !command.systemd_socket_activation {
-        ensure_admin_token_fresh_for_public_bind(
+        let rotation_warning = ensure_admin_token_rotated_for_public_bind(
             &command.host,
             &local_admin_token,
             time::OffsetDateTime::now_utc(),
         )?;
+        emit_rotation_warning(rotation_warning);
     }
     let activated_listener = if command.systemd_socket_activation {
         let listener = start_listener(&command).await?;
         let activated_host = listener.local_addr()?.ip().to_string();
         ensure_host_opt_in(&activated_host, command.allow_network)?;
-        ensure_admin_token_fresh_for_public_bind(
+        let rotation_warning = ensure_admin_token_rotated_for_public_bind(
             &activated_host,
             &local_admin_token,
             time::OffsetDateTime::now_utc(),
         )?;
+        emit_rotation_warning(rotation_warning);
         Some(listener)
     } else {
         None
@@ -107,16 +117,16 @@ pub(crate) async fn run_start_command(
         local_server_paths.clone(),
         local_admin_token,
     ));
-    let service = Arc::new(Service::new_with_persistence_config(persistence_config).await?);
-    let shutdown_service = service.clone();
-    service.recover_scheduled_work_on_startup_async().await?;
+    let engine = Arc::new(Engine::new_with_persistence_config(persistence_config).await?);
+    let shutdown_engine = engine.clone();
+    engine.recover_scheduled_work_on_startup_async().await?;
     if let Some(tenant_name) = &command.auto_tenant {
-        ensure_auto_tenant(&service, tenant_name)?;
+        ensure_auto_tenant(&engine, tenant_name)?;
     }
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let scheduler_service = service.clone();
+    let scheduler_engine = engine.clone();
     let scheduler_handle = tokio::spawn(async move {
-        run_scheduler(scheduler_service, shutdown_rx).await;
+        run_scheduler(scheduler_engine, shutdown_rx).await;
     });
     let listener = match activated_listener {
         Some(listener) => listener,
@@ -132,7 +142,8 @@ pub(crate) async fn run_start_command(
         deploy_admin_enabled,
     );
     let first_boot_handle = if is_first_boot_run {
-        let console_url = operator_console_url_from_base(&local_listen_url(listener.local_addr()?));
+        let console_url =
+            operator_console_url_from_base(&local_listen_url(listener.local_addr()?, tls_enabled));
         Some(spawn_first_boot_announce(
             console_url,
             local_server_paths.clone(),
@@ -153,15 +164,15 @@ pub(crate) async fn run_start_command(
     }
 
     tracing::info!("nimbus listening on {}", listener.local_addr()?);
-    let mut serve_options = ServeOptions::new(service.clone()).with_license(license_state);
+    let mut serve_options = ServeOptions::new(engine.clone()).with_license(license_state);
     if let Some(registry) = convex_registry {
         serve_options = serve_options.with_convex_registry(registry);
     }
     if let Some(registry) = cloud_functions_registry {
         serve_options = serve_options.with_cloud_functions_registry(registry);
     }
-    if let Some(manager) = sandbox_service_manager {
-        serve_options = serve_options.with_sandbox_service_manager(manager);
+    if let Some(manager) = service_manager {
+        serve_options = serve_options.with_service_manager(manager);
     }
     serve_options = serve_options.with_machine_lifecycle_manager(machine_lifecycle_manager);
     if let Some(token) = command.deploy_admin_token {
@@ -169,6 +180,19 @@ pub(crate) async fn run_start_command(
     }
     serve_options = serve_options.with_local_server_security(local_server_security);
     serve_options = serve_options.with_tenant_isolation_mode(command.tenant_isolation_mode);
+    serve_options = serve_options.with_cors_allowed_origins(cors_allowed_origins);
+    if let Some(firebase_config) = adapter_enablement.firebase {
+        serve_options = serve_options.with_firebase_config(firebase_config);
+    }
+    if let Some(mongodb_config) = adapter_enablement.mongodb {
+        serve_options = serve_options.with_mongodb(mongodb_config);
+    }
+    if let Some(dynamodb_config) = adapter_enablement.dynamodb {
+        serve_options = serve_options.with_dynamodb(dynamodb_config);
+    }
+    if let Some(tls_config) = tls_config {
+        serve_options = serve_options.with_tls(tls_config);
+    }
 
     let server_result = serve(listener, serve_options).await;
     drop(discovery_lease);
@@ -178,7 +202,7 @@ pub(crate) async fn run_start_command(
         handle.abort();
         let _ = handle.await;
     }
-    shutdown_service.quiesce().await;
+    shutdown_engine.quiesce().await;
     server_result?;
     Ok(())
 }
@@ -254,14 +278,14 @@ pub(crate) fn resolve_optional_compose_selection(
         .map_err(|error| Error::InvalidInput(error.to_string()))
 }
 
-pub(super) fn load_sandbox_service_manager(
+pub(super) fn load_service_manager(
     compose_selection: Option<&ResolvedComposeSelection>,
     compose_control_data_dir: &std::path::Path,
     tenant_isolation_mode: nimbus_server::TenantIsolationMode,
-) -> Result<Option<Arc<nimbus::SandboxServiceManager>>, Error> {
+) -> Result<Option<Arc<nimbus::ServiceManager>>, Error> {
     compose_selection
         .map(|selection| {
-            load_host_backed_sandbox_service_manager_for_selection_with_isolation_mode(
+            load_host_backed_service_manager_for_selection_with_isolation_mode(
                 selection,
                 compose_control_data_dir,
                 tenant_isolation_mode,
@@ -275,6 +299,36 @@ fn emit_start_info(message: impl AsRef<str>) {
     if cli_ux::info_output_enabled() {
         let _ = cli_ux::write_stderr_prefixed_line("info:", message.as_ref());
     }
+}
+
+/// Surface the advisory stale-rotation notice on both operator channels.
+/// Unlike `emit_start_info`, warnings are not gated on info output.
+fn emit_rotation_warning(warning: Option<super::network_bind::StaleRotationWarning>) {
+    if let Some(warning) = warning {
+        tracing::warn!(age_days = warning.age_days, "{warning}");
+        let _ = cli_ux::write_stderr_prefixed_line("warning:", &warning.to_string());
+    }
+}
+
+/// `--cors-allow-origin` flags win; otherwise the comma-separated
+/// NIMBUS_CORS_ALLOW_ORIGINS env var applies. Every value is normalized
+/// or rejected — never silently dropped.
+pub(super) fn resolve_cors_allowed_origins(command: &StartCommand) -> Result<Vec<String>, Error> {
+    if !command.cors_allow_origin.is_empty() {
+        return Ok(command.cors_allow_origin.clone());
+    }
+    let Ok(raw) = std::env::var("NIMBUS_CORS_ALLOW_ORIGINS") else {
+        return Ok(Vec::new());
+    };
+    raw.split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            nimbus_server::normalize_cors_origin(value).map_err(|reason| {
+                Error::InvalidInput(format!("NIMBUS_CORS_ALLOW_ORIGINS: {reason}"))
+            })
+        })
+        .collect()
 }
 
 fn emit_start_startup_summary(
@@ -302,7 +356,10 @@ pub(super) fn start_startup_summary_lines(
     listen_addr: SocketAddr,
     deploy_admin_enabled: bool,
 ) -> Vec<String> {
-    let base_url = local_listen_url(listen_addr);
+    let base_url = local_listen_url(
+        listen_addr,
+        command.tls_cert.is_some() && command.tls_key.is_some(),
+    );
     let mut lines = vec![
         format!("Nimbus server listening at {base_url}"),
         format!(
@@ -367,7 +424,7 @@ pub(super) fn resolve_start_app_dir(
     Ok(Some(ResolvedStartAppDir::Explicit(resolved)))
 }
 
-fn local_listen_url(addr: SocketAddr) -> String {
+fn local_listen_url(addr: SocketAddr, tls_enabled: bool) -> String {
     let host = if addr.ip().is_unspecified() {
         "localhost".to_string()
     } else if addr.ip().is_ipv6() {
@@ -375,7 +432,8 @@ fn local_listen_url(addr: SocketAddr) -> String {
     } else {
         addr.ip().to_string()
     };
-    format!("http://{host}:{}/", addr.port())
+    let scheme = if tls_enabled { "https" } else { "http" };
+    format!("{scheme}://{host}:{}/", addr.port())
 }
 
 async fn start_listener(command: &StartCommand) -> std::io::Result<tokio::net::TcpListener> {
@@ -546,11 +604,11 @@ fn package_declares_functions_framework(package_json_path: &Path) -> bool {
 }
 
 fn ensure_auto_tenant(
-    service: &Service,
+    engine: &Engine,
     tenant_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tenant_id = TenantId::new(tenant_name)?;
-    match service.create_tenant(tenant_id) {
+    match engine.create_tenant(tenant_id) {
         Ok(()) => {
             emit_start_info(format!("auto-created tenant \"{tenant_name}\""));
         }

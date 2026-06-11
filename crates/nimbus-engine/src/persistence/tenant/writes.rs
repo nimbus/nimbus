@@ -6,9 +6,15 @@ impl TenantPersistence {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
         trigger_write_origin: Option<&nimbus_core::TriggerWriteOrigin>,
+        commit_timestamp: Option<Timestamp>,
     ) -> Result<Option<CommitEntry>> {
         match_tenant_persistence!(self, |store| {
-            store.apply_execution_unit_batch_with_origin(writes, schedule_ops, trigger_write_origin)
+            store.apply_execution_unit_batch_with_origin(
+                writes,
+                schedule_ops,
+                trigger_write_origin,
+                commit_timestamp,
+            )
         })
     }
 

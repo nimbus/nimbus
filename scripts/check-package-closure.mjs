@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const EMBED_DIR = path.join(REPO_ROOT, "crates", "nimbus-bin", "embedded-packages");
+const EMBED_DIR = path.join(REPO_ROOT, "crates", "nimbus-assets", "embedded", "packages");
 const MANIFEST = path.join(EMBED_DIR, "manifest.json");
 
 // Out-of-contract, developer-supplied peers documented in the plan's Offline
@@ -26,7 +26,7 @@ const MANIFEST = path.join(EMBED_DIR, "manifest.json");
 const ALLOWED_PEERS = new Set(["react", "react-dom", "@aws-sdk/client-dynamodb"]);
 
 // Every Nimbus package whose dist must be provisioned.
-const REQUIRED_PROVISIONED = ["convex", "nimbus", "@nimbus/firebase", "@nimbus/mongodb", "@nimbus/dynamodb"];
+const REQUIRED_PROVISIONED = ["convex", "@nimbus/nimbus", "@nimbus/firebase", "@nimbus/mongodb", "@nimbus/dynamodb"];
 
 const errors = [];
 
@@ -42,7 +42,7 @@ const embeddedNames = new Set(manifest.packages.map((p) => p.name));
 function manifestPathFor(pkg) {
   return pkg.thirdParty
     ? path.join(EMBED_DIR, pkg.dir, "package.json")
-    : path.join(REPO_ROOT, "packages", pkg.dir, "dist", "package.json");
+    : path.join(REPO_ROOT, "packages", pkg.sourceDir ?? pkg.dir, "dist", "package.json");
 }
 
 for (const pkg of manifest.packages) {

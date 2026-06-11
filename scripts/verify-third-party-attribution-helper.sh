@@ -5,7 +5,7 @@
 # THIRD_PARTY.md, listed-file-missing, missing provenance header,
 # success path with valid headers.
 #
-# See docs/plans/nimbus-sandbox-plan.md "Fork-Health Guardrails" §G4.
+# See docs/private/plans/nimbus-sandbox-plan.md "Fork-Health Guardrails" §G4.
 
 set -euo pipefail
 

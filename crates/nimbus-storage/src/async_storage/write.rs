@@ -9,8 +9,8 @@ use tokio::sync::Semaphore;
 use crate::sqlite::{SqliteTenantStore, SqliteWriteTransaction};
 use crate::{TenantStore, TenantWriteCommit, TenantWriteTransaction};
 
-use super::helpers::{map_join_error, map_permit_error};
 use super::read::RedbTenantStorage;
+use super::task_error::{map_join_error, map_permit_error};
 use super::traits::{TenantWriteOutcome, TenantWriteStorage};
 
 const TENANT_WRITE_PARALLELISM: usize = 1;

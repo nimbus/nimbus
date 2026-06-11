@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn machine_status_marks_missing_machine_api_socket_as_unreachable() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -29,7 +29,7 @@ fn machine_status_renders_release_asset_guest_binary_contract() {
     let _env_guard = GuestBinaryOverrideEnvGuard::clear();
 
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -107,7 +107,7 @@ fn machine_status_renders_explicit_override_guest_binary_contract() {
     let _env_lock = lock_machine_guest_binary_override_env();
 
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -181,7 +181,7 @@ fn machine_status_renders_explicit_override_guest_binary_contract() {
 #[test]
 fn machine_status_detects_reachable_machine_api_socket() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -293,7 +293,7 @@ fn machine_status_detects_reachable_machine_api_socket() {
 #[test]
 fn machine_status_reports_forwarding_contract_when_machine_identity_exists() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),

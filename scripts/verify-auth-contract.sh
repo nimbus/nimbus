@@ -2,7 +2,7 @@
 # Agent auth contract regression gate.
 #
 # Locks in the doc-only contract introduced by DA10 of
-# `docs/plans/desktop-auth-dx-plan.md` so that the agent auth shape stays
+# `docs/private/plans/desktop-auth-dx-plan.md` so that the agent auth shape stays
 # committed before the `nimbus agent` implementation lands. Without this
 # gate, the contract is easy to drift past unnoticed.
 #
@@ -15,7 +15,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
-target="docs/architecture/server/auth-runtime-trust.md"
+target="docs/private/architecture/server/auth-runtime-trust.md"
 fail=0
 
 check_present() {

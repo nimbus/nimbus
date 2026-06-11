@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 
+mod adapters;
 mod boot;
 mod config;
 mod first_boot;
@@ -44,14 +45,69 @@ pub(crate) struct StartCommand {
     /// Opt-in to binding on a non-loopback interface. Without this flag,
     /// `nimbus start` refuses any `--host` that resolves outside the
     /// loopback range. With the flag set, the daemon additionally
-    /// requires that the local admin token has been rotated within
-    /// the staleness window (see `nimbus auth rotate-admin`).
+    /// requires that the local admin token has been explicitly rotated
+    /// at least once (`nimbus auth rotate-admin`); a rotation older than
+    /// 30 days logs a warning but never blocks startup.
     #[arg(long, default_value_t = false)]
     pub(crate) allow_network: bool,
 
     /// Inherit a TCP listener from systemd socket activation.
     #[arg(long, default_value_t = false)]
     pub(crate) systemd_socket_activation: bool,
+
+    /// Additional allowed browser origin for CORS (repeatable), e.g.
+    /// `https://app.example.com`. Loopback origins are always allowed;
+    /// wildcards are not supported. Defaults to NIMBUS_CORS_ALLOW_ORIGINS
+    /// (comma-separated) when the flag is absent.
+    #[arg(long = "cors-allow-origin", value_name = "ORIGIN", value_parser = parse_cors_origin)]
+    pub(crate) cors_allow_origin: Vec<String>,
+
+    /// PEM certificate chain for TLS termination on the main HTTP
+    /// listener. Requires --tls-key; HTTPS and wss:// replace plain HTTP.
+    #[arg(long, requires = "tls_key", value_name = "CERT_PEM")]
+    pub(crate) tls_cert: Option<PathBuf>,
+
+    /// PEM private key for TLS termination. Requires --tls-cert.
+    #[arg(long, requires = "tls_cert", value_name = "KEY_PEM")]
+    pub(crate) tls_key: Option<PathBuf>,
+
+    /// Mount the Firestore-compatible routes on the main HTTP listener.
+    #[arg(long, default_value_t = false)]
+    pub(crate) firestore: bool,
+
+    /// Enable the MongoDB wire-protocol listener on this port. Requires
+    /// SCRAM credentials: --mongodb-username (or NIMBUS_MONGODB_USERNAME)
+    /// plus the NIMBUS_MONGODB_PASSWORD environment variable.
+    #[arg(long)]
+    pub(crate) mongodb_port: Option<u16>,
+
+    /// Host interface for the MongoDB listener. Non-loopback hosts
+    /// require --allow-network.
+    #[arg(long, default_value = "127.0.0.1")]
+    pub(crate) mongodb_host: String,
+
+    /// SCRAM username for the MongoDB listener. Defaults to
+    /// NIMBUS_MONGODB_USERNAME. The password is env-only
+    /// (NIMBUS_MONGODB_PASSWORD) so it never appears in process listings.
+    #[arg(long)]
+    pub(crate) mongodb_username: Option<String>,
+
+    /// Enable the DynamoDB HTTP listener on this port (DynamoDB Local
+    /// convention is 8000).
+    #[arg(long)]
+    pub(crate) dynamodb_port: Option<u16>,
+
+    /// Host interface for the DynamoDB listener. Non-loopback hosts
+    /// require --allow-network.
+    #[arg(long, default_value = "127.0.0.1")]
+    pub(crate) dynamodb_host: String,
+
+    /// DynamoDB access-key binding as ACCESS_KEY_ID:SECRET:TENANT
+    /// (repeatable). Defaults to NIMBUS_DYNAMODB_ACCESS_KEYS
+    /// (comma-separated). Every request authenticates through these
+    /// bindings; with none configured the listener rejects all requests.
+    #[arg(long = "dynamodb-access-key", value_name = "KEY_ID:SECRET:TENANT")]
+    pub(crate) dynamodb_access_key: Vec<String>,
 
     /// Local data directory used for embedded tenant databases and, by default,
     /// the local redb control plane.
@@ -154,10 +210,10 @@ pub(crate) struct StartCommand {
     #[arg(long, default_value_t = false)]
     pub(crate) debug_node_apis: bool,
 
-    /// Optional ordered Compose file list that declares sandbox-backed
-    /// services for `ctx.services.*` activation. Repeat `--compose-file` to
-    /// merge overlays. When omitted, Nimbus uses `COMPOSE_FILE` when set, then
-    /// discovers from the current directory and parent directories.
+    /// Optional ordered Compose file list that declares sandbox-backed services.
+    /// Repeat `--compose-file` to merge overlays. When omitted, Nimbus uses
+    /// `COMPOSE_FILE` when set, then discovers from the current directory and
+    /// parent directories.
     #[arg(long)]
     pub(crate) compose_file: Vec<PathBuf>,
 
@@ -247,6 +303,13 @@ pub(crate) struct StartCommand {
     pub(crate) tenant_isolation_mode: nimbus_server::TenantIsolationMode,
 }
 
+/// clap value parser for `--cors-allow-origin`: normalize-or-reject at
+/// parse time so a bad origin fails the command instead of being silently
+/// ignored at the CORS layer.
+fn parse_cors_origin(value: &str) -> Result<String, String> {
+    nimbus_server::normalize_cors_origin(value)
+}
+
 impl Default for StartCommand {
     fn default() -> Self {
         Self {
@@ -255,6 +318,16 @@ impl Default for StartCommand {
             host: "127.0.0.1".to_string(),
             allow_network: false,
             systemd_socket_activation: false,
+            cors_allow_origin: Vec::new(),
+            tls_cert: None,
+            tls_key: None,
+            firestore: false,
+            mongodb_port: None,
+            mongodb_host: "127.0.0.1".to_string(),
+            mongodb_username: None,
+            dynamodb_port: None,
+            dynamodb_host: "127.0.0.1".to_string(),
+            dynamodb_access_key: Vec::new(),
             data_dir: None,
             control_data_dir: None,
             tenant_provider: None,

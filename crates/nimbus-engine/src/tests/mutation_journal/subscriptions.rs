@@ -1,12 +1,12 @@
-use super::support::new_faulted_service;
+use super::support::new_faulted_engine;
 use super::*;
 
 #[tokio::test]
 async fn subscription_updates_publish_only_after_journal_apply() {
-    let (_data_dir, service, tenant_id, faults) = new_faulted_service(50_000);
+    let (_data_dir, engine, tenant_id, faults) = new_faulted_engine(50_000);
 
     let (tx, mut rx) = subscription_channel();
-    let subscription = service
+    let subscription = engine
         .subscribe(
             &tenant_id,
             query_for("tasks"),
@@ -35,10 +35,10 @@ async fn subscription_updates_publish_only_after_journal_apply() {
     }
 
     let mut insert_handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -96,21 +96,21 @@ async fn subscription_updates_publish_only_after_journal_apply() {
 
 #[tokio::test]
 async fn async_subscription_bootstrap_catches_up_writes_committed_before_activation() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    let pause = service
+    let pause = engine
         .subscription_bootstrap_pause_handle_for_testing(&tenant_id)
         .expect("bootstrap pause handle should load");
     pause.arm();
 
     let (tx, mut rx) = subscription_channel();
     let subscribe_task = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .subscribe_async(
                     tenant_id,
                     query_for("tasks"),
@@ -143,7 +143,7 @@ async fn async_subscription_bootstrap_catches_up_writes_committed_before_activat
         "subscription bootstrap should pause before activation"
     );
 
-    service
+    engine
         .insert_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -188,11 +188,11 @@ async fn async_subscription_bootstrap_catches_up_writes_committed_before_activat
 
 #[tokio::test]
 async fn async_subscription_bootstrap_cancellation_before_activation_returns_cancelled() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    let pause = service
+    let pause = engine
         .subscription_bootstrap_pause_handle_for_testing(&tenant_id)
         .expect("bootstrap pause handle should load");
     pause.arm();
@@ -201,12 +201,12 @@ async fn async_subscription_bootstrap_cancellation_before_activation_returns_can
     let cancel_notify = Arc::new(Notify::new());
     let (tx, mut rx) = subscription_channel();
     let subscribe_task = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         let cancelled = cancelled.clone();
         let cancel_notify = cancel_notify.clone();
         async move {
-            service
+            engine
                 .subscribe_async_cancellable(
                     tenant_id,
                     query_for("tasks"),
@@ -261,7 +261,7 @@ async fn async_subscription_bootstrap_cancellation_before_activation_returns_can
     assert!(matches!(error, Error::Cancelled));
 
     assert_eq!(
-        service
+        engine
             .active_subscription_count(&tenant_id)
             .expect("subscription count should load"),
         0,
@@ -277,26 +277,26 @@ async fn async_subscription_bootstrap_cancellation_before_activation_returns_can
 
 #[tokio::test]
 async fn sync_subscription_bootstrap_does_not_miss_lagged_applied_commit() {
-    let data_dir = tempdir().expect("service tempdir should build");
+    let data_dir = tempdir().expect("engine tempdir should build");
     let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
-    let service = Arc::new(
-        Service::new_with_simulation(
+    let engine = Arc::new(
+        Engine::new_with_simulation(
             data_dir.path(),
             Arc::new(ManualClock::new(Timestamp(60_000))),
             faults.clone(),
         )
-        .expect("service should create"),
+        .expect("engine should create"),
     );
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
     let mut insert_task = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -317,7 +317,7 @@ async fn sync_subscription_bootstrap_does_not_miss_lagged_applied_commit() {
     );
 
     let (tx, mut rx) = subscription_channel();
-    let _subscription = service
+    let _subscription = engine
         .subscribe(
             &tenant_id,
             query_for("tasks"),

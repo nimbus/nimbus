@@ -19,8 +19,8 @@
       "subset_test": "runtime::tests::node_compat::node24_default_lane_executes_process_and_timing_subset"
     }
   ],
-  "manifest_doc": "docs/architecture/runtime/node-lts-compat/manifests/process-and-timing.md",
-  "failure_doc": "docs/architecture/runtime/node-lts-compat/failures/process-and-timing.md",
+  "manifest_doc": "tests/runtime/node/compat/node-lts-compat/manifests/process-and-timing.md",
+  "failure_doc": "tests/runtime/node/compat/node-lts-compat/failures/process-and-timing.md",
   "fixture_seeds": [
     {
       "id": "test/parallel/test-process-default.js",

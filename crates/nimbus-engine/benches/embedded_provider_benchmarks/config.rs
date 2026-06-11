@@ -150,7 +150,7 @@ impl WorkloadKind {
     pub(super) fn notes(self) -> &'static str {
         match self {
             Self::CrudThroughput => {
-                "async insert + update + delete through the Service mutation path"
+                "async insert + update + delete through the Engine mutation path"
             }
             Self::PointReadLatency => "batched async `get_document_async` over preseeded documents",
             Self::IndexedQueryLatency => {
@@ -192,10 +192,10 @@ impl BenchmarkLane {
     pub(super) fn notes(self) -> &'static str {
         match self {
             Self::SteadyState => {
-                "reuses preseeded services and alternates backend order on every round so both backends are measured under the same warmed process"
+                "reuses preseeded engines and alternates backend order on every round so both backends are measured under the same warmed process"
             }
             Self::ColdStart => {
-                "measures a fresh service/runtime plus the first representative workload execution; read-heavy lanes seed their dataset first and then time a reopen plus the first execution so startup cost is visible without letting seed writes dominate the result"
+                "measures a fresh engine/runtime plus the first representative workload execution; read-heavy lanes seed their dataset first and then time a reopen plus the first execution so startup cost is visible without letting seed writes dominate the result"
             }
         }
     }

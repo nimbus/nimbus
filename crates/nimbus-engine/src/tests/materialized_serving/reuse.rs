@@ -2,12 +2,12 @@ use super::*;
 
 #[test]
 fn full_scan_queries_warm_materialized_surface_and_warm_table_gets_reuse_it() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let table = messages_table("messages_materialized_reads");
 
-    let keep_id = service
+    let keep_id = engine
         .insert_document(
             &tenant_id,
             table.clone(),
@@ -17,7 +17,7 @@ fn full_scan_queries_warm_materialized_surface_and_warm_table_gets_reuse_it() {
             ]),
         )
         .expect("first insert should succeed");
-    let warm_only_id = service
+    let warm_only_id = engine
         .insert_document(
             &tenant_id,
             table.clone(),
@@ -27,7 +27,7 @@ fn full_scan_queries_warm_materialized_surface_and_warm_table_gets_reuse_it() {
             ]),
         )
         .expect("second insert should succeed");
-    let _ = service
+    let _ = engine
         .insert_document(
             &tenant_id,
             table.clone(),
@@ -48,13 +48,13 @@ fn full_scan_queries_warm_materialized_surface_and_warm_table_gets_reuse_it() {
         limit: None,
     };
 
-    let first = service
+    let first = engine
         .query_documents(&tenant_id, &query)
         .expect("first full-scan query should succeed");
     assert_eq!(document_bodies(&first), vec!["Ada", "Beta"]);
     assert_eq!(first[0].id, keep_id);
 
-    let stats = service
+    let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(stats.loaded_table_count, 1);
@@ -63,24 +63,24 @@ fn full_scan_queries_warm_materialized_surface_and_warm_table_gets_reuse_it() {
     assert_eq!(stats.paginated_count, 0);
     assert_eq!(stats.get_hit_count, 0);
 
-    let second = service
+    let second = engine
         .query_documents(&tenant_id, &query)
         .expect("second full-scan query should succeed");
     assert_eq!(document_bodies(&second), vec!["Ada", "Beta"]);
 
-    let stats = service
+    let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(stats.loaded_table_count, 1);
     assert_eq!(stats.table_load_count, 1);
     assert_eq!(stats.evaluation_count, 2);
 
-    let warm_only = service
+    let warm_only = engine
         .get_document(&tenant_id, &table, warm_only_id)
         .expect("warm-table get should succeed from the materialized surface");
     assert_eq!(warm_only.get_field("body"), Some(&json!("Hidden")));
 
-    let stats = service
+    let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(stats.table_load_count, 1);
@@ -89,12 +89,12 @@ fn full_scan_queries_warm_materialized_surface_and_warm_table_gets_reuse_it() {
 
 #[test]
 fn warmed_materialized_tables_track_global_applied_coverage_without_reloading() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let table = messages_table("messages_materialized_coverage");
 
-    let _document_id = service
+    let _document_id = engine
         .insert_document(
             &tenant_id,
             table.clone(),
@@ -115,12 +115,12 @@ fn warmed_materialized_tables_track_global_applied_coverage_without_reloading() 
         limit: None,
     };
 
-    let warmed = service
+    let warmed = engine
         .query_documents(&tenant_id, &query)
         .expect("warming query should succeed");
     assert_eq!(document_bodies(&warmed), vec!["Ada"]);
 
-    let publication = service
+    let publication = engine
         .materialized_table_publication_stats_for_testing(&tenant_id, &table)
         .expect("materialized publication should load")
         .expect("warmed table should publish");
@@ -128,7 +128,7 @@ fn warmed_materialized_tables_track_global_applied_coverage_without_reloading() 
     let initial_generation = publication.generation;
     assert_eq!(publication.document_count, 1);
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -136,7 +136,7 @@ fn warmed_materialized_tables_track_global_applied_coverage_without_reloading() 
         )
         .expect("unrelated insert should succeed");
 
-    let publication = service
+    let publication = engine
         .materialized_table_publication_stats_for_testing(&tenant_id, &table)
         .expect("materialized publication should load")
         .expect("warmed table should stay published");
@@ -150,12 +150,12 @@ fn warmed_materialized_tables_track_global_applied_coverage_without_reloading() 
     );
     assert_eq!(publication.document_count, 1);
 
-    let refreshed = service
+    let refreshed = engine
         .query_documents(&tenant_id, &query)
         .expect("refreshed query should reuse the warmed publication");
     assert_eq!(document_bodies(&refreshed), vec!["Ada"]);
 
-    let stats = service
+    let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(stats.loaded_table_count, 1);
@@ -169,14 +169,14 @@ fn warmed_materialized_tables_track_global_applied_coverage_without_reloading() 
 
 #[test]
 fn warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let alpha = messages_table("messages_materialized_alpha_reuse");
     let beta = messages_table("messages_materialized_beta_reuse");
 
     for (table, body) in [(alpha.clone(), "Alpha"), (beta.clone(), "Beta")] {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 table,
@@ -200,7 +200,7 @@ fn warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots() {
 
     assert_eq!(
         document_bodies(
-            &service
+            &engine
                 .query_documents(&tenant_id, &query_for(alpha.clone()))
                 .expect("alpha warm query should succeed"),
         ),
@@ -208,14 +208,14 @@ fn warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots() {
     );
     assert_eq!(
         document_bodies(
-            &service
+            &engine
                 .query_documents(&tenant_id, &query_for(beta.clone()))
                 .expect("beta warm query should succeed"),
         ),
         vec!["Beta"]
     );
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             tasks_table(),
@@ -223,12 +223,12 @@ fn warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots() {
         )
         .expect("unrelated insert should succeed");
 
-    let beta_again = service
+    let beta_again = engine
         .query_documents(&tenant_id, &query_for(beta.clone()))
         .expect("beta query should reuse the warmed serving snapshot");
     assert_eq!(document_bodies(&beta_again), vec!["Beta"]);
 
-    let stats = service
+    let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(stats.loaded_table_count, 2);
@@ -237,7 +237,7 @@ fn warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots() {
     assert_eq!(stats.retained_version_count, 0);
     assert_eq!(stats.retained_estimated_bytes, 0);
 
-    let beta_publication = service
+    let beta_publication = engine
         .materialized_table_publication_stats_for_testing(&tenant_id, &beta)
         .expect("beta publication stats should load")
         .expect("beta table should stay published");
@@ -249,13 +249,13 @@ fn warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots() {
 
 #[tokio::test]
 async fn async_paginated_full_scans_reuse_and_refresh_materialized_surface_after_async_writes() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let table = messages_table("messages_materialized_paginated");
 
     for body in ["Beta", "Delta", "Gamma"] {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 table.clone(),
@@ -281,21 +281,21 @@ async fn async_paginated_full_scans_reuse_and_refresh_materialized_surface_after
         after: None,
     };
 
-    let first_page = service
+    let first_page = engine
         .paginate_documents_async(tenant_id.clone(), query.clone())
         .await
         .expect("first paginated full-scan query should succeed");
     assert_eq!(subscription_bodies(&first_page.data), vec!["Beta", "Delta"]);
     assert!(first_page.has_more);
 
-    let stats = service
+    let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(stats.loaded_table_count, 1);
     assert_eq!(stats.table_load_count, 1);
     assert_eq!(stats.paginated_count, 1);
 
-    service
+    engine
         .insert_document_async(
             tenant_id.clone(),
             table.clone(),
@@ -307,7 +307,7 @@ async fn async_paginated_full_scans_reuse_and_refresh_materialized_surface_after
         .await
         .expect("async insert after warmup should succeed");
 
-    let refreshed_page = service
+    let refreshed_page = engine
         .paginate_documents_async(tenant_id.clone(), query)
         .await
         .expect("refreshed paginated full-scan query should succeed");
@@ -317,7 +317,7 @@ async fn async_paginated_full_scans_reuse_and_refresh_materialized_surface_after
     );
     assert!(refreshed_page.has_more);
 
-    let stats = service
+    let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(stats.loaded_table_count, 1);

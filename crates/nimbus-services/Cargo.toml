@@ -20,6 +20,8 @@ nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 tokio.workspace = true
+ulid.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

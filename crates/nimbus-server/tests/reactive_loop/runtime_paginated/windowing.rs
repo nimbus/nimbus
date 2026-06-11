@@ -15,7 +15,7 @@ async fn convex_runtime_paginated_subscription_ignores_out_of_window_ordered_wri
             r#"
 globalThis.__nimbusInvoke = async function(request) {
   const ctx = globalThis.__nimbusCreateContext({
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   const builder = ctx.db
     .query("messages")
@@ -41,8 +41,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());

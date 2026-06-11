@@ -1,10 +1,20 @@
-use nimbus_engine::Service;
-use nimbus_testing::{DeterministicTestCase, ServiceFixture};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use hmac::{Hmac, Mac};
+use nimbus_engine::Engine;
+use nimbus_mongodb::AuthConfig;
+use nimbus_testing::{DeterministicTestCase, EngineFixture};
+use sha2::Sha256;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::adapters::mongodb::listener::run_listener;
 use crate::adapters::mongodb::wire::OP_MSG;
+
+type HmacSha256 = Hmac<Sha256>;
+
+const MONGODB_TEST_USER: &str = "wire-user";
+const MONGODB_TEST_PASSWORD: &str = "wire-password";
 
 pub(crate) const MONGODB_WIRE_CRUD_ROUNDTRIP_CASE: DeterministicTestCase =
     DeterministicTestCase::new(
@@ -49,14 +59,127 @@ async fn send_command(stream: &mut TcpStream, doc: &bson::Document) -> bson::Doc
     bson::deserialize_from_slice(&body[5..]).expect("deserialize")
 }
 
+async fn authenticate(stream: &mut TcpStream, username: &str, password: &str) {
+    let client_nonce = "clientnonce123";
+    let client_first_bare = format!("n={username},r={client_nonce}");
+    let client_first = format!("n,,{client_first_bare}");
+    let step1 = send_command(
+        stream,
+        &bson::doc! {
+            "saslStart": 1,
+            "mechanism": "SCRAM-SHA-256",
+            "payload": bson::Binary {
+                subtype: bson::spec::BinarySubtype::Generic,
+                bytes: client_first.as_bytes().to_vec(),
+            },
+            "$db": "admin",
+        },
+    )
+    .await;
+    assert_eq!(
+        step1.get_f64("ok").unwrap(),
+        1.0,
+        "saslStart failed: {step1:?}"
+    );
+
+    let server_first_payload = step1.get_binary_generic("payload").unwrap();
+    let server_first = std::str::from_utf8(server_first_payload.as_slice()).unwrap();
+    let mut server_nonce = String::new();
+    let mut salt_b64 = String::new();
+    let mut iterations = 0_u32;
+    for part in server_first.split(',') {
+        if let Some(value) = part.strip_prefix("r=") {
+            server_nonce = value.to_string();
+        } else if let Some(value) = part.strip_prefix("s=") {
+            salt_b64 = value.to_string();
+        } else if let Some(value) = part.strip_prefix("i=") {
+            iterations = value.parse().unwrap();
+        }
+    }
+
+    let salt = BASE64.decode(salt_b64).unwrap();
+    let salted_password = derive_salted_password(password, &salt, iterations);
+    let client_key = compute_hmac(&salted_password, b"Client Key");
+    let stored_key = sha256_hash(&client_key);
+    let channel_binding = BASE64.encode(b"n,,");
+    let client_final_without_proof = format!("c={channel_binding},r={server_nonce}");
+    let auth_message = format!("{client_first_bare},{server_first},{client_final_without_proof}");
+    let client_signature = compute_hmac(&stored_key, auth_message.as_bytes());
+    let mut proof = client_key;
+    for (i, byte) in client_signature.iter().enumerate() {
+        proof[i] ^= byte;
+    }
+    let client_final = format!("{client_final_without_proof},p={}", BASE64.encode(proof));
+
+    let step2 = send_command(
+        stream,
+        &bson::doc! {
+            "saslContinue": 1,
+            "conversationId": step1.get_i32("conversationId").unwrap(),
+            "payload": bson::Binary {
+                subtype: bson::spec::BinarySubtype::Generic,
+                bytes: client_final.as_bytes().to_vec(),
+            },
+            "$db": "admin",
+        },
+    )
+    .await;
+    assert_eq!(
+        step2.get_f64("ok").unwrap(),
+        1.0,
+        "saslContinue failed: {step2:?}"
+    );
+    assert!(step2.get_bool("done").unwrap());
+}
+
+fn derive_salted_password(password: &str, salt: &[u8], iterations: u32) -> Vec<u8> {
+    let mut salted = vec![0_u8; 32];
+    pbkdf2::pbkdf2_hmac::<Sha256>(password.as_bytes(), salt, iterations, &mut salted);
+    salted
+}
+
+fn compute_hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key size");
+    mac.update(data);
+    mac.finalize().into_bytes().to_vec()
+}
+
+fn sha256_hash(data: &[u8]) -> Vec<u8> {
+    use sha2::Digest;
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hasher.finalize().to_vec()
+}
+
 pub(crate) async fn mongodb_wire_crud_roundtrip_inner() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
-    let service = fixture.service();
-    tokio::spawn(run_listener(listener, service));
+    let service = fixture.engine();
+    tokio::spawn(run_listener(
+        listener,
+        service,
+        Arc::new(AuthConfig::new(
+            MONGODB_TEST_USER.into(),
+            MONGODB_TEST_PASSWORD.into(),
+        )),
+    ));
 
     let mut stream = TcpStream::connect(addr).await.expect("connect");
+
+    let unauthenticated = send_command(
+        &mut stream,
+        &bson::doc! {
+            "insert": "test_col",
+            "$db": "testdb",
+            "documents": [{ "_id": "blocked" }],
+        },
+    )
+    .await;
+    assert_eq!(unauthenticated.get_f64("ok").unwrap(), 0.0);
+    assert_eq!(unauthenticated.get_str("codeName").unwrap(), "Unauthorized");
+
+    authenticate(&mut stream, MONGODB_TEST_USER, MONGODB_TEST_PASSWORD).await;
 
     let resp = send_command(
         &mut stream,
@@ -88,11 +211,18 @@ pub(crate) async fn mongodb_wire_crud_roundtrip_inner() {
 }
 
 pub(crate) async fn mongodb_wire_handshake_inner() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
-    let service = fixture.service();
-    tokio::spawn(run_listener(listener, service));
+    let service = fixture.engine();
+    tokio::spawn(run_listener(
+        listener,
+        service,
+        Arc::new(AuthConfig::new(
+            MONGODB_TEST_USER.into(),
+            MONGODB_TEST_PASSWORD.into(),
+        )),
+    ));
 
     let mut stream = TcpStream::connect(addr).await.expect("connect");
 

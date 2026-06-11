@@ -1,9 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use nimbus::{
-    Error, SandboxBackend, SandboxServiceCatalog, SandboxServiceManager, ServicePersistenceConfig,
-};
+use nimbus::{EnginePersistenceConfig, Error, ServiceManager};
 #[cfg(test)]
 use nimbus::{SandboxHandle, TenantId};
 #[cfg(test)]
@@ -33,8 +30,8 @@ use self::commands::{
 use self::commands::{ComposeInspectOutputFormat, ComposePsOutputFormat, ComposeTopOutputFormat};
 use self::execution::{
     ServiceExecutionSurface, ServiceHostPlatform,
-    load_host_backed_sandbox_service_manager_for_platform_selection_with_admission,
-    load_sandbox_service_catalog_for_execution_platform, lookup_current_remote_service_details,
+    load_host_backed_service_manager_for_platform_selection_with_admission,
+    load_service_definition_catalog_for_execution_platform, lookup_current_remote_service_details,
     machine_api_operation_error, missing_persisted_service_error, render_state_lookup_error,
     requested_service_names, require_krun_backend_for_service_operation,
     resolve_remote_service_down_targets, resolve_service_down_targets,
@@ -56,14 +53,14 @@ use self::quadlet_export::run_compose_export_quadlet;
 use self::render::{
     ServiceSandboxSummaryView, render_service_inspect_view,
     render_service_lifecycle_action_summary, render_service_list_view,
-    render_service_process_snapshot_view,
+    render_service_sandbox_process_snapshot_view,
 };
 use crate::compose::discovery::{ResolvedComposeSelection, resolve_compose_selection};
 pub(crate) use project::ComposeProjectContext;
 
 pub(crate) async fn run_compose_command(
     command: ComposeCommand,
-    persistence_config: &ServicePersistenceConfig,
+    persistence_config: &EnginePersistenceConfig,
 ) -> Result<(), Error> {
     let control_data_dir = control_data_dir_from_persistence_config(persistence_config);
     match command.command {
@@ -76,46 +73,6 @@ pub(crate) async fn run_compose_command(
         ComposeSubcommand::Top(top) => run_compose_top(top, control_data_dir),
         ComposeSubcommand::Export(export) => run_compose_export(export),
     }
-}
-
-#[allow(dead_code)]
-pub(crate) fn load_sandbox_service_catalog(
-    file: &std::path::Path,
-) -> Result<Arc<dyn SandboxServiceCatalog>, Error> {
-    load_sandbox_service_catalog_for_selection(&ResolvedComposeSelection::explicit(
-        file.to_path_buf(),
-    ))
-}
-
-#[allow(dead_code)]
-pub(crate) fn load_sandbox_service_catalog_for_selection(
-    selection: &ResolvedComposeSelection,
-) -> Result<Arc<dyn SandboxServiceCatalog>, Error> {
-    Ok(Arc::new(
-        file::ComposeProjectPlan::load_selection(selection)?.into_service_catalog()?,
-    ))
-}
-
-#[allow(dead_code)]
-pub(crate) fn load_sandbox_service_manager(
-    file: &std::path::Path,
-    sandbox_backend: Arc<dyn SandboxBackend>,
-) -> Result<SandboxServiceManager, Error> {
-    load_sandbox_service_manager_for_selection(
-        &ResolvedComposeSelection::explicit(file.to_path_buf()),
-        sandbox_backend,
-    )
-}
-
-#[allow(dead_code)]
-pub(crate) fn load_sandbox_service_manager_for_selection(
-    selection: &ResolvedComposeSelection,
-    sandbox_backend: Arc<dyn SandboxBackend>,
-) -> Result<SandboxServiceManager, Error> {
-    Ok(SandboxServiceManager::new(
-        load_sandbox_service_catalog_for_selection(selection)?,
-        sandbox_backend,
-    ))
 }
 
 #[cfg(test)]
@@ -136,39 +93,12 @@ pub(crate) fn load_compose_project_context_for_selection(
     ComposeProjectContext::load_selection(selection, control_data_dir)
 }
 
-#[allow(dead_code)]
-pub(crate) fn load_host_backed_sandbox_service_manager_for_selection(
-    selection: &ResolvedComposeSelection,
-    control_data_dir: &std::path::Path,
-) -> Result<SandboxServiceManager, Error> {
-    load_host_backed_sandbox_service_manager_for_selection_with_admission(
-        selection,
-        control_data_dir,
-        file::ComposeAdmissionMode::LocalDevelopment,
-    )
-}
-
-#[allow(dead_code)]
-pub(crate) fn load_host_backed_sandbox_service_manager_for_selection_with_admission(
-    selection: &ResolvedComposeSelection,
-    control_data_dir: &std::path::Path,
-    admission_mode: file::ComposeAdmissionMode,
-) -> Result<SandboxServiceManager, Error> {
-    load_host_backed_sandbox_service_manager_for_platform_selection_with_admission(
-        selection,
-        control_data_dir,
-        ServiceHostPlatform::current(),
-        None,
-        admission_mode,
-    )
-}
-
-pub(crate) fn load_host_backed_sandbox_service_manager_for_selection_with_isolation_mode(
+pub(crate) fn load_host_backed_service_manager_for_selection_with_isolation_mode(
     selection: &ResolvedComposeSelection,
     control_data_dir: &std::path::Path,
     tenant_isolation_mode: nimbus_server::TenantIsolationMode,
-) -> Result<SandboxServiceManager, Error> {
-    load_host_backed_sandbox_service_manager_for_platform_selection_with_admission(
+) -> Result<ServiceManager, Error> {
+    load_host_backed_service_manager_for_platform_selection_with_admission(
         selection,
         control_data_dir,
         ServiceHostPlatform::current(),
@@ -589,14 +519,14 @@ fn render_compose_top_for_platform(
     machine_api_client: Option<MachineApiClient>,
 ) -> Result<String, Error> {
     let selection = resolve_required_compose_selection(command.file.as_slice())?;
-    let snapshot = self::process::resolve_service_process_snapshot_for_selection(
+    let snapshot = self::process::resolve_service_sandbox_process_snapshot_for_selection(
         command,
         &selection,
         control_data_dir,
         host_platform,
         machine_api_client,
     )?;
-    render_service_process_snapshot_view(&snapshot, command.format, command.no_heading)
+    render_service_sandbox_process_snapshot_view(&snapshot, command.format, command.no_heading)
 }
 
 #[cfg(test)]
@@ -629,7 +559,7 @@ async fn service_down_outcomes(
     .await
 }
 
-fn control_data_dir_from_persistence_config(config: &ServicePersistenceConfig) -> &Path {
+fn control_data_dir_from_persistence_config(config: &EnginePersistenceConfig) -> &Path {
     match &config.control_plane {
         nimbus::ControlPlaneConfig::EmbeddedRedb { data_dir } => data_dir.as_path(),
     }

@@ -62,9 +62,9 @@ async fn local_admin_and_origin_failures_are_audited_without_secret_material() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, token) = local_server_security(temp.path());
     let audit_log_path = local_server_security.paths().audit_log_path.clone();
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -148,9 +148,9 @@ async fn session_creation_and_rotation_are_audited_without_secret_material() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, token) = local_server_security(temp.path());
     let audit_log_path = local_server_security.paths().audit_log_path.clone();
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -225,9 +225,9 @@ async fn firebase_origin_failures_are_audited_with_transport_specific_route_fami
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, _token) = local_server_security(temp.path());
     let audit_log_path = local_server_security.paths().audit_log_path.clone();
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -352,9 +352,9 @@ async fn tenant_application_auth_audit_keeps_application_scope() {
             ]
         })),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
                 &registry,
             ))

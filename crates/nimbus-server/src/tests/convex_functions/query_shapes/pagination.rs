@@ -27,8 +27,8 @@ async fn convex_named_paginated_query_and_action_resolve_from_manifest() {
             }
         }
     ]));
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -84,14 +84,14 @@ async fn convex_named_paginated_query_can_use_runtime_only_handler() {
             r#"
 globalThis.__nimbusInvoke = async function(request) {
   const ctx = globalThis.__nimbusCreateContext({
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   const normalizedAuthor = request.args.author?.trim();
   const builder = normalizedAuthor
     ? ctx.db.query("messages").filter((q) => q.eq(q.field("author"), normalizedAuthor))
     : ctx.db.query("messages");
   const value = await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_query_paginate", {
-    session_id: `${request.kind}:${request.function_name}`,
+    host_call_session_id: `${request.kind}:${request.function_name}`,
     builder_id: builder.__builderId,
     page_size: request.page_size,
     cursor: request.cursor ?? null,
@@ -106,8 +106,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -162,11 +162,11 @@ async fn convex_runtime_only_full_scan_paginated_query_reuses_materialized_servi
             r#"
 globalThis.__nimbusInvoke = async function(request) {
   const ctx = globalThis.__nimbusCreateContext({
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   const builder = ctx.db.query("messages");
   const value = await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_query_paginate", {
-    session_id: `${request.kind}:${request.function_name}`,
+    host_call_session_id: `${request.kind}:${request.function_name}`,
     builder_id: builder.__builderId,
     page_size: request.page_size,
     cursor: request.cursor ?? null,
@@ -181,8 +181,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     let server = ServerFixture::start(router_for_convex(service.clone(), registry)).await;
     let api = HttpApiFixture::new(&server);
     let tenant_id = TenantId::new("demo").expect("tenant id should build");

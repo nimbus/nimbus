@@ -177,14 +177,26 @@ impl CooperativeLockerRuntimeSlot {
         self,
         result: Result<Value>,
     ) -> (Result<Value>, Option<ReusableV8Runtime>) {
-        let mut slot = self;
-        let Some((driver, _)) = slot.completed.take() else {
-            return (
-                Err(runtime_js_error(
-                    "cooperative runtime slot result requested before completion",
-                )),
-                None,
-            );
+        let CooperativeLockerRuntimeSlot {
+            driver,
+            resolve,
+            wake_flag: _,
+            completed,
+        } = self;
+        drop(resolve);
+        let driver = match completed {
+            Some((driver, _)) => driver,
+            None => match driver {
+                Some(driver) => driver,
+                None => {
+                    return (
+                        Err(runtime_js_error(
+                            "cooperative runtime slot result requested after completion",
+                        )),
+                        None,
+                    );
+                }
+            },
         };
         driver.finalize_with_runtime(result).await
     }

@@ -3,6 +3,7 @@ members = [
     "crates/nimbus",
     "crates/nimbus-adapters",
     "crates/nimbus-artifacts",
+    "crates/nimbus-assets",
     "crates/nimbus-auth",
     "crates/nimbus-bin",
     "crates/nimbus-bridge",
@@ -156,7 +157,7 @@ zbus = { version = "5.15", default-features = false, features = ["tokio"] }
 # Pinned exact: zbus_systemd's version tracks the systemd interface revision it
 # was generated against (0.26000.x == systemd 260). Bump deliberately on an LTS
 # systemd, an upstream patch, or an advisory. See deny.toml and
-# docs/plans/research/systemd-dbus-binding-rust-2026.md.
+# docs/private/plans/research/systemd-dbus-binding-rust-2026.md.
 zbus_systemd = { version = "=0.26000.0", default-features = false, features = ["systemd1", "zbus-async-tokio"] }
 zeroize = { version = "1", features = ["derive"] }
 

@@ -1,4 +1,38 @@
 use super::*;
+use crate::machine::manager::image::is_loopback_registry;
+use sha2::{Digest, Sha256};
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+#[test]
+fn loopback_registry_detection_requires_exact_loopback_host() {
+    for reference in [
+        "docker://localhost:5000/nimbus/machine-os:test",
+        "docker://LOCALHOST:5000/nimbus/machine-os:test",
+        "docker://127.0.0.1:5000/nimbus/machine-os:test",
+        "docker://127.42.0.9:5000/nimbus/machine-os:test",
+        "docker://[::1]:5000/nimbus/machine-os:test",
+    ] {
+        assert!(
+            is_loopback_registry(reference),
+            "{reference} should use local plaintext registry transport"
+        );
+    }
+
+    for reference in [
+        "docker://localhost.evil.com/nimbus/machine-os:test",
+        "docker://127.0.0.1.attacker.tld/nimbus/machine-os:test",
+        "docker://[::1].attacker.tld/nimbus/machine-os:test",
+        "docker://example.com/nimbus/machine-os:test",
+    ] {
+        assert!(
+            !is_loopback_registry(reference),
+            "{reference} must not use local plaintext registry transport"
+        );
+    }
+}
 
 #[test]
 fn converge_machine_image_contract_rebuilds_boot_artifacts_when_recorded_image_drifted() {
@@ -227,7 +261,7 @@ fn build_virtio_vsock_listen_arg_matches_podman_listen_mode() {
 #[test]
 fn registry_image_reference_materializes_raw_disk_from_oci_registry() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -259,7 +293,7 @@ fn registry_image_reference_materializes_raw_disk_from_oci_registry() {
 fn registry_image_reference_reuses_materialized_disk_when_present() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -316,18 +350,22 @@ fn registry_image_reference_reuses_materialized_disk_when_present() {
 #[test]
 fn http_image_source_materializes_raw_disk_into_reserved_path() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
     );
     let paths = layout.paths("default");
     let payload = b"raw-disk-bytes".to_vec();
+    let sha256 = sha256_hex(&payload);
     let url = serve_single_http_response(payload.clone(), None);
 
     let materialized = resolve_bootable_image_path(
         &paths,
-        &MachineImageSource::HttpUrl { url: url.clone() },
+        &MachineImageSource::HttpUrl {
+            url: url.clone(),
+            sha256,
+        },
         MachineProvider::Krunkit,
     )
     .expect("http source should materialize");
@@ -336,6 +374,66 @@ fn http_image_source_materializes_raw_disk_into_reserved_path() {
     assert_eq!(
         fs::read(&paths.materialized_image_path).expect("materialized image should read"),
         payload
+    );
+}
+
+#[test]
+fn http_image_source_rejects_sha256_mismatch_before_persisting_disk() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let layout = MachineRootLayout::test_sibling_roots(
+        temp_dir.path().join("config"),
+        temp_dir.path().join("state"),
+        temp_dir.path().join("runtime"),
+    );
+    let paths = layout.paths("default");
+    let payload = b"raw-disk-bytes".to_vec();
+    let url = serve_single_http_response(payload, None);
+
+    let error = resolve_bootable_image_path(
+        &paths,
+        &MachineImageSource::HttpUrl {
+            url,
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000".to_owned(),
+        },
+        MachineProvider::Krunkit,
+    )
+    .expect_err("sha256 mismatch should reject http image");
+
+    assert!(error.to_string().contains("has sha256"));
+    assert!(
+        !paths.materialized_image_path.exists(),
+        "mismatched HTTP image must not be persisted as a boot disk"
+    );
+}
+
+#[test]
+fn http_image_source_rejects_plaintext_non_loopback_before_download() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let layout = MachineRootLayout::test_sibling_roots(
+        temp_dir.path().join("config"),
+        temp_dir.path().join("state"),
+        temp_dir.path().join("runtime"),
+    );
+    let paths = layout.paths("default");
+
+    let error = resolve_bootable_image_path(
+        &paths,
+        &MachineImageSource::HttpUrl {
+            url: "http://example.com/disk.raw".to_owned(),
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000".to_owned(),
+        },
+        MachineProvider::Krunkit,
+    )
+    .expect_err("plaintext remote http image should fail before download");
+
+    assert!(
+        error
+            .to_string()
+            .contains("plaintext HTTP machine image sources are only allowed for loopback hosts")
+    );
+    assert!(
+        !paths.materialized_image_path.exists(),
+        "rejected plaintext HTTP image must not be persisted as a boot disk"
     );
 }
 
@@ -361,7 +459,7 @@ fn cached_zstd_machine_image_materializes_into_reserved_path() {
 #[test]
 fn http_gzip_image_source_materializes_decompressed_disk_into_reserved_path() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -373,11 +471,15 @@ fn http_gzip_image_source_materializes_decompressed_disk_into_reserved_path() {
         .write_all(&payload)
         .expect("gzip payload should write");
     let gzip_payload = encoder.finish().expect("gzip payload should finish");
+    let sha256 = sha256_hex(&payload);
     let url = serve_single_http_response(gzip_payload, Some("/disk.raw.gz"));
 
     let materialized = resolve_bootable_image_path(
         &paths,
-        &MachineImageSource::HttpUrl { url: url.clone() },
+        &MachineImageSource::HttpUrl {
+            url: url.clone(),
+            sha256,
+        },
         MachineProvider::Krunkit,
     )
     .expect("gzip http source should materialize");

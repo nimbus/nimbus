@@ -196,9 +196,9 @@ pub enum CloudFunctionsSignatureType {
 /// Execution identity semantics captured at deploy time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CloudFunctionsExecutionBinding {
-    Service,
-    Request,
+pub enum CloudFunctionsExecutionPrincipal {
+    ServiceAccount,
+    RequestPrincipal,
 }
 
 /// HTTP-facing target shape reserved for later T3 runtime routing.
@@ -375,12 +375,12 @@ pub enum CloudFunctionsTargetBinding {
         document: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         namespace: Option<String>,
-        execution: CloudFunctionsExecutionBinding,
+        execution: CloudFunctionsExecutionPrincipal,
     },
     Https {
         exposure: CloudFunctionsHttpExposure,
         path: String,
-        execution: CloudFunctionsExecutionBinding,
+        execution: CloudFunctionsExecutionPrincipal,
     },
 }
 
@@ -417,7 +417,7 @@ impl CloudFunctionsTargetBinding {
                     )));
                 }
                 validate_trigger_pattern(target, document)?;
-                if !matches!(execution, CloudFunctionsExecutionBinding::Service) {
+                if !matches!(execution, CloudFunctionsExecutionPrincipal::ServiceAccount) {
                     return Err(Error::InvalidInput(format!(
                         "cloud functions target `{}` must run Firestore document triggers as a trusted service principal",
                         target.name
@@ -446,7 +446,10 @@ impl CloudFunctionsTargetBinding {
                         target.name
                     )));
                 }
-                if !matches!(execution, CloudFunctionsExecutionBinding::Request) {
+                if !matches!(
+                    execution,
+                    CloudFunctionsExecutionPrincipal::RequestPrincipal
+                ) {
                     return Err(Error::InvalidInput(format!(
                         "cloud functions target `{}` must use request-scoped execution for HTTP exposure",
                         target.name
@@ -581,7 +584,7 @@ mod tests {
         CLOUD_FUNCTIONS_RUNTIME_BUNDLE_FILE, CLOUD_FUNCTIONS_RUNTIME_BUNDLE_SHA256_FILE,
         CLOUD_FUNCTIONS_TARGETS_MANIFEST_FILE, CloudFunctionsArtifactManifest,
         CloudFunctionsAuthoringSurface, CloudFunctionsDefaultSurface,
-        CloudFunctionsDocumentTriggerDefaults, CloudFunctionsExecutionBinding,
+        CloudFunctionsDocumentTriggerDefaults, CloudFunctionsExecutionPrincipal,
         CloudFunctionsGlobalDefaults, CloudFunctionsGlobalOptionField, CloudFunctionsHttpExposure,
         CloudFunctionsImportResolutionStrategy, CloudFunctionsRootApi, CloudFunctionsSignatureType,
         CloudFunctionsTargetBinding, CloudFunctionsTargetDefinition, CloudFunctionsTargetsManifest,
@@ -652,7 +655,7 @@ mod tests {
                     database: "(default)".to_string(),
                     document: "users/{userId}".to_string(),
                     namespace: None,
-                    execution: CloudFunctionsExecutionBinding::Service,
+                    execution: CloudFunctionsExecutionPrincipal::ServiceAccount,
                 },
             },
             CloudFunctionsTargetDefinition {
@@ -663,7 +666,7 @@ mod tests {
                 binding: CloudFunctionsTargetBinding::Https {
                     exposure: CloudFunctionsHttpExposure::Http,
                     path: "/hello".to_string(),
-                    execution: CloudFunctionsExecutionBinding::Request,
+                    execution: CloudFunctionsExecutionPrincipal::RequestPrincipal,
                 },
             },
         ])
@@ -685,7 +688,7 @@ mod tests {
                 database: "(default)".to_string(),
                 document: "users/{userId}".to_string(),
                 namespace: None,
-                execution: CloudFunctionsExecutionBinding::Service,
+                execution: CloudFunctionsExecutionPrincipal::ServiceAccount,
             },
         }])
         .expect_err("manifest should reject mismatched signature");
@@ -710,7 +713,7 @@ mod tests {
                     database: "(default)".to_string(),
                     document: "users/{userId}".to_string(),
                     namespace: None,
-                    execution: CloudFunctionsExecutionBinding::Service,
+                    execution: CloudFunctionsExecutionPrincipal::ServiceAccount,
                 },
             }])
             .expect_err("legacy event signature should be rejected");
@@ -730,7 +733,7 @@ mod tests {
                 database: "(default)".to_string(),
                 document: "users/{userId}".to_string(),
                 namespace: Some("tenant-a".to_string()),
-                execution: CloudFunctionsExecutionBinding::Service,
+                execution: CloudFunctionsExecutionPrincipal::ServiceAccount,
             },
         }])
         .expect_err("namespace should be rejected");
@@ -754,7 +757,7 @@ mod tests {
                     database: "(default)".to_string(),
                     document: "users/{userId}/messages".to_string(),
                     namespace: None,
-                    execution: CloudFunctionsExecutionBinding::Service,
+                    execution: CloudFunctionsExecutionPrincipal::ServiceAccount,
                 },
             }])
             .expect_err("collection-terminal patterns should be rejected");
@@ -775,7 +778,7 @@ mod tests {
                     database: "(default)".to_string(),
                     document: "users/{userId}".to_string(),
                     namespace: None,
-                    execution: CloudFunctionsExecutionBinding::Service,
+                    execution: CloudFunctionsExecutionPrincipal::ServiceAccount,
                 },
             },
             CloudFunctionsTargetDefinition {
@@ -786,7 +789,7 @@ mod tests {
                 binding: CloudFunctionsTargetBinding::Https {
                     exposure: CloudFunctionsHttpExposure::Http,
                     path: "/dup".to_string(),
-                    execution: CloudFunctionsExecutionBinding::Request,
+                    execution: CloudFunctionsExecutionPrincipal::RequestPrincipal,
                 },
             },
         ])
@@ -806,7 +809,7 @@ mod tests {
                 binding: CloudFunctionsTargetBinding::Https {
                     exposure: CloudFunctionsHttpExposure::Callable,
                     path: "/call".to_string(),
-                    execution: CloudFunctionsExecutionBinding::Service,
+                    execution: CloudFunctionsExecutionPrincipal::ServiceAccount,
                 },
             }])
             .expect_err("http bindings must remain request-scoped");
@@ -825,7 +828,7 @@ mod tests {
                 binding: CloudFunctionsTargetBinding::Https {
                     exposure: CloudFunctionsHttpExposure::Http,
                     path: "/hello".to_string(),
-                    execution: CloudFunctionsExecutionBinding::Request,
+                    execution: CloudFunctionsExecutionPrincipal::RequestPrincipal,
                 },
             },
             CloudFunctionsTargetDefinition {
@@ -836,7 +839,7 @@ mod tests {
                 binding: CloudFunctionsTargetBinding::Https {
                     exposure: CloudFunctionsHttpExposure::Http,
                     path: "/hello".to_string(),
-                    execution: CloudFunctionsExecutionBinding::Request,
+                    execution: CloudFunctionsExecutionPrincipal::RequestPrincipal,
                 },
             },
         ])
@@ -856,7 +859,7 @@ mod tests {
                 binding: CloudFunctionsTargetBinding::Https {
                     exposure: CloudFunctionsHttpExposure::Http,
                     path: "/api/admin/deploy".to_string(),
-                    execution: CloudFunctionsExecutionBinding::Request,
+                    execution: CloudFunctionsExecutionPrincipal::RequestPrincipal,
                 },
             }])
             .expect_err("reserved server paths should be rejected");

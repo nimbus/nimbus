@@ -6,9 +6,11 @@ use nimbus_core::{
     TableName, TableSchema, Timestamp, TriggerDeliveryCursor, TriggerInvocationRecord,
 };
 use nimbus_storage::{
-    DurableJournalBootstrap, DurableJournalPage, FaultPoint, JournalProgress,
-    LibsqlReplicaFreshnessStats, LibsqlReplicaTenantStore, MySqlTenantStore, PostgresTenantStore,
-    ResolvedScheduleOp, ResolvedWrite, SqliteTenantStore, TenantStore as RedbTenantStore,
+    ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage, DurableJournalBootstrap,
+    DurableJournalPage, FaultPoint, JournalProgress, LibsqlReplicaFreshnessStats,
+    LibsqlReplicaTenantStore, MySqlTenantStore, PointInTimeRestoreArchive,
+    PointInTimeRestoreTarget, PostgresTenantStore, ResolvedScheduleOp, ResolvedWrite,
+    RetentionGcConfig, SqliteTenantStore, TenantStore as RedbTenantStore,
 };
 
 use super::{PersistenceProvider, TenantPersistenceExecutor, TenantPersistenceSnapshot};

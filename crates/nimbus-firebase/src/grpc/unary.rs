@@ -11,7 +11,7 @@ use nimbus_core::{
 use serde_json::Number;
 use std::sync::Arc;
 
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use tonic::{Response, Status};
 
 use super::generated::google::firestore::v1::batch_get_documents_request::ConsistencySelector as BatchGetConsistencySelector;
@@ -59,7 +59,7 @@ use crate::{
 type FirestoreGrpcLoweringResult<T> = Result<T, Box<Status>>;
 
 pub async fn handle_commit(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: CommitRequest,
 ) -> Result<Response<CommitResponse>, Status> {
@@ -68,7 +68,7 @@ pub async fn handle_commit(
         .map_err(firebase_grpc_status)?;
     let batch = lower_write_batch(&request.writes, &database)?;
     let outcome = commit_batch_for_database(
-        service,
+        engine,
         &tenant_context,
         &database,
         principal,
@@ -88,7 +88,7 @@ pub async fn handle_commit(
 }
 
 pub async fn handle_get_document(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: GetDocumentRequest,
 ) -> Result<Response<proto::Document>, Status> {
@@ -114,7 +114,7 @@ pub async fn handle_get_document(
         }
     };
     let document = get_document_for_database(
-        service,
+        engine,
         &tenant_context,
         &parsed_document.database,
         principal,
@@ -130,7 +130,7 @@ pub async fn handle_get_document(
 }
 
 pub async fn handle_batch_get_documents(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: BatchGetDocumentsRequest,
 ) -> Result<Response<tonic::codegen::BoxStream<BatchGetDocumentsResponse>>, Status> {
@@ -139,7 +139,7 @@ pub async fn handle_batch_get_documents(
         tenant_context_for_database(&database, principal, "firestore.grpc.batch_get")
             .map_err(firebase_grpc_status)?;
     let outcome =
-        batch_get_documents_for_database(service, &tenant_context, &database, principal, &request)
+        batch_get_documents_for_database(engine, &tenant_context, &database, principal, &request)
             .map_err(firebase_grpc_status)?;
     let read_time = Some(prost_timestamp_from_core(outcome.read_time)?);
     let mut responses = Vec::with_capacity(outcome.entries.len());
@@ -166,7 +166,7 @@ pub async fn handle_batch_get_documents(
 }
 
 pub async fn handle_batch_write(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: BatchWriteRequest,
 ) -> Result<Response<BatchWriteResponse>, Status> {
@@ -179,7 +179,7 @@ pub async fn handle_batch_write(
         .map_err(batch_write_request_error_to_core)
         .map_err(firebase_grpc_status)?;
     let outcome =
-        batch_write_for_database(service, &tenant_context, &database, principal, batch.writes)
+        batch_write_for_database(engine, &tenant_context, &database, principal, batch.writes)
             .map_err(firebase_grpc_status)?;
 
     let mut write_results = Vec::with_capacity(outcome.entries.len());
@@ -209,7 +209,7 @@ pub async fn handle_batch_write(
 }
 
 pub async fn handle_list_documents(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: ListDocumentsRequest,
 ) -> Result<Response<proto::ListDocumentsResponse>, Status> {
@@ -260,7 +260,7 @@ pub async fn handle_list_documents(
             .map_err(firebase_grpc_status)?;
     let response_mask = lower_optional_document_mask(request.mask).map_err(|status| *status)?;
     let outcome = run_query_documents_for_database(
-        service,
+        engine,
         &tenant_context,
         &parent.database,
         principal,
@@ -300,7 +300,7 @@ pub async fn handle_list_documents(
 }
 
 pub async fn handle_list_collection_ids(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: ListCollectionIdsRequest,
 ) -> Result<Response<proto::ListCollectionIdsResponse>, Status> {
@@ -340,7 +340,7 @@ pub async fn handle_list_collection_ids(
     )
     .map_err(firebase_grpc_status)?;
     let page = list_collection_ids_for_database(
-        service,
+        engine,
         &tenant_context,
         &parent.database,
         parent.parent_document_path.as_ref(),
@@ -363,7 +363,7 @@ fn rpc_status_from_error(error: nimbus_core::Error) -> RpcStatus {
 }
 
 pub async fn handle_create_document(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: CreateDocumentRequest,
 ) -> Result<Response<proto::Document>, Status> {
@@ -411,7 +411,7 @@ pub async fn handle_create_document(
         &parent.database,
     )?;
     commit_batch_for_database(
-        service,
+        engine,
         &tenant_context,
         &parent.database,
         principal,
@@ -420,7 +420,7 @@ pub async fn handle_create_document(
     )
     .map_err(firebase_grpc_status)?;
     let created = get_document_for_database(
-        service,
+        engine,
         &tenant_context,
         &parent.database,
         principal,
@@ -437,7 +437,7 @@ pub async fn handle_create_document(
 }
 
 pub async fn handle_begin_transaction(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: BeginTransactionRequest,
 ) -> Result<Response<BeginTransactionResponse>, Status> {
@@ -446,14 +446,9 @@ pub async fn handle_begin_transaction(
         tenant_context_for_database(&database, principal, "firestore.grpc.begin_transaction")
             .map_err(firebase_grpc_status)?;
     let mode = lower_transaction_mode(request.options).map_err(|status| *status)?;
-    let session = begin_transaction_session_for_database(
-        service,
-        &tenant_context,
-        &database,
-        principal,
-        mode,
-    )
-    .map_err(firebase_grpc_status)?;
+    let session =
+        begin_transaction_session_for_database(engine, &tenant_context, &database, principal, mode)
+            .map_err(firebase_grpc_status)?;
 
     Ok(Response::new(BeginTransactionResponse {
         transaction: session.token.as_str().as_bytes().to_vec(),
@@ -461,7 +456,7 @@ pub async fn handle_begin_transaction(
 }
 
 pub async fn handle_rollback(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: RollbackRequest,
 ) -> Result<Response<()>, Status> {
@@ -470,7 +465,7 @@ pub async fn handle_rollback(
         tenant_context_for_database(&database, principal, "firestore.grpc.rollback")
             .map_err(firebase_grpc_status)?;
     rollback_transaction_session_for_database(
-        service,
+        engine,
         &tenant_context,
         &database,
         principal,
@@ -481,7 +476,7 @@ pub async fn handle_rollback(
 }
 
 pub async fn handle_update_document(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: UpdateDocumentRequest,
 ) -> Result<Response<proto::Document>, Status> {
@@ -510,7 +505,7 @@ pub async fn handle_update_document(
         &parsed_document.database,
     )?;
     commit_batch_for_database(
-        service,
+        engine,
         &tenant_context,
         &parsed_document.database,
         principal,
@@ -519,7 +514,7 @@ pub async fn handle_update_document(
     )
     .map_err(firebase_grpc_status)?;
     let updated = get_document_for_database(
-        service,
+        engine,
         &tenant_context,
         &parsed_document.database,
         principal,
@@ -536,7 +531,7 @@ pub async fn handle_update_document(
 }
 
 pub async fn handle_delete_document(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: DeleteDocumentRequest,
 ) -> Result<Response<()>, Status> {
@@ -559,7 +554,7 @@ pub async fn handle_delete_document(
         &parsed_document.database,
     )?;
     commit_batch_for_database(
-        service,
+        engine,
         &tenant_context,
         &parsed_document.database,
         principal,
@@ -571,7 +566,7 @@ pub async fn handle_delete_document(
 }
 
 pub async fn handle_run_query(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: RunQueryRequest,
 ) -> Result<Response<tonic::codegen::BoxStream<RunQueryResponse>>, Status> {
@@ -580,7 +575,7 @@ pub async fn handle_run_query(
         tenant_context_for_database(&request.database, principal, "firestore.grpc.run_query")
             .map_err(firebase_grpc_status)?;
     let outcome = run_query_documents_for_database(
-        service,
+        engine,
         &tenant_context,
         &request.database,
         principal,
@@ -629,7 +624,7 @@ pub async fn handle_run_query(
 }
 
 pub async fn handle_run_aggregation_query(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: RunAggregationQueryRequest,
 ) -> Result<Response<tonic::codegen::BoxStream<RunAggregationQueryResponse>>, Status> {
@@ -641,7 +636,7 @@ pub async fn handle_run_aggregation_query(
     )
     .map_err(firebase_grpc_status)?;
     let outcome = run_aggregation_query_for_database(
-        service,
+        engine,
         &tenant_context,
         &request.database,
         principal,
@@ -717,11 +712,11 @@ fn lower_batch_get_request(
         let parsed_document = resource_names::parse_document_name(&document_name)
             .map_err(resource_name_error_to_core)
             .map_err(firebase_grpc_status)?;
-        ensure_database_match(
-            &database,
-            &parsed_document.database,
-            "requested document belongs to a different database",
-        )?;
+        resource_names::ensure_database_match(&database, &parsed_document.database)
+            .map_err(|_| {
+                Status::invalid_argument("requested document belongs to a different database")
+            })
+            .map_err(Box::new)?;
         let canonical_name = firestore_document_name(&database, &parsed_document.document_path);
         if seen_documents.insert(canonical_name.clone()) {
             documents.push(ParsedBatchGetDocument {
@@ -1320,14 +1315,78 @@ fn proto_document(
     })
 }
 
-fn ensure_database_match(
-    expected: &FirestoreDatabaseName,
-    actual: &FirestoreDatabaseName,
-    context: &str,
-) -> FirestoreGrpcLoweringResult<()> {
-    if expected == actual {
-        Ok(())
-    } else {
-        Err(Status::invalid_argument(context.to_string()).into())
+#[cfg(test)]
+mod tests {
+    use nimbus_core::{StructuredAggregationResult, Timestamp};
+    use serde_json::{Map, Value, json};
+
+    use super::*;
+
+    fn grpc_value_as_proto_json(value: &proto::Value) -> Value {
+        match value.value_type.as_ref().expect("gRPC value should be set") {
+            proto::value::ValueType::NullValue(_) => json!({ "nullValue": null }),
+            proto::value::ValueType::BooleanValue(value) => json!({ "booleanValue": value }),
+            proto::value::ValueType::IntegerValue(value) => {
+                json!({ "integerValue": value.to_string() })
+            }
+            proto::value::ValueType::DoubleValue(value) => json!({ "doubleValue": value }),
+            proto::value::ValueType::StringValue(value) => json!({ "stringValue": value }),
+            proto::value::ValueType::ArrayValue(array) => json!({
+                "arrayValue": {
+                    "values": array
+                        .values
+                        .iter()
+                        .map(grpc_value_as_proto_json)
+                        .collect::<Vec<_>>()
+                }
+            }),
+            proto::value::ValueType::MapValue(map) => {
+                let fields = map
+                    .fields
+                    .iter()
+                    .map(|(field, value)| (field.clone(), grpc_value_as_proto_json(value)))
+                    .collect::<Map<_, _>>();
+                json!({ "mapValue": { "fields": fields } })
+            }
+            other => panic!("unexpected aggregate test value type: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn aggregation_result_grpc_and_rest_encoders_preserve_representative_values() {
+        let aggregate_fields = Map::from_iter([
+            ("count".to_string(), json!(42)),
+            ("ratio".to_string(), json!(1.5)),
+            ("label".to_string(), json!("ready")),
+            (
+                "shape".to_string(),
+                json!({
+                    "active": true,
+                    "values": [1, "two", null]
+                }),
+            ),
+        ]);
+        let result = StructuredAggregationResult { aggregate_fields };
+
+        let grpc_result = proto_aggregation_result(&result).expect("gRPC result should encode");
+        let rest_entries = crate::run_aggregation_query_response_entries(&result, Timestamp(0))
+            .expect("REST result should encode");
+        let rest_fields = rest_entries[0]
+            .pointer("/result/aggregateFields")
+            .expect("REST aggregate fields should be present")
+            .as_object()
+            .expect("REST aggregate fields should be an object");
+
+        assert_eq!(grpc_result.aggregate_fields.len(), rest_fields.len());
+        for (alias, grpc_value) in grpc_result.aggregate_fields {
+            assert_eq!(
+                grpc_value_as_proto_json(&grpc_value),
+                rest_fields
+                    .get(&alias)
+                    .unwrap_or_else(|| panic!("REST aggregate field `{alias}` should exist"))
+                    .clone(),
+                "aggregate field `{alias}` should have equivalent gRPC and REST proto encodings"
+            );
+        }
     }
 }

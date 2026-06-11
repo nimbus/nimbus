@@ -90,7 +90,6 @@ extension!(
         op_nimbus_ctx_scheduler_run_after,
         op_nimbus_ctx_scheduler_run_at,
         op_nimbus_ctx_scheduler_cancel,
-        op_nimbus_ctx_service_lookup,
         op_nimbus_ctx_runtime_enter_nested_call,
         op_nimbus_ctx_run_query,
         op_nimbus_ctx_run_mutation,
@@ -157,6 +156,12 @@ extension!(
 
 pub(crate) fn runtime_extension() -> Extension {
     nimbus_runtime_ext::init()
+}
+
+extension!(nimbus_service_ext, ops = [op_nimbus_ctx_service_lookup],);
+
+pub(crate) fn service_extension() -> Extension {
+    nimbus_service_ext::init()
 }
 
 #[cfg(test)]

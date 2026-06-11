@@ -74,7 +74,7 @@ fn launch_plan_reassigns_recorded_ssh_port_when_it_is_busy() {
 #[test]
 fn release_machine_ssh_port_removes_reserved_port() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let roots = MachineRootLayout::new(
+    let roots = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),
@@ -96,7 +96,7 @@ fn release_machine_ssh_port_removes_reserved_port() {
 #[test]
 fn refresh_machine_state_marks_missing_pids_as_stale() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::new(
+    let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
         temp_dir.path().join("state"),
         temp_dir.path().join("runtime"),

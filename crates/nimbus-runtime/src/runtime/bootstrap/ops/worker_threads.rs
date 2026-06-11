@@ -20,7 +20,7 @@ use crate::backends::v8::V8RuntimeConstructionMode;
 use crate::backends::v8::embedder::{Extension, JsErrorBox, OpState, op2};
 use crate::runtime::bootstrap::state::{
     InstalledRuntimeCapabilityPolicy, InstalledRuntimeContract, InstalledRuntimeOwner,
-    InstalledRuntimeWorkerBootstrapState, RuntimeWorkerBootstrapDescriptor,
+    InstalledRuntimeWorkerBootstrapState, RuntimeSharedWorkerEnv, RuntimeWorkerBootstrapDescriptor,
     install_missing_deno_extension_state,
 };
 use crate::runtime::{NimbusRuntime, RuntimeBundle};
@@ -135,10 +135,7 @@ pub(super) fn op_nimbus_worker_parent_post_message_raw(
 ) -> Result<(), MessagePortError> {
     let port = worker_parent_port(state)?;
     let detached = DetachedBuffer::from_v8slice(data.into_parts());
-    if let Some(tx) = &*port.tx.borrow() {
-        tx.send((detached, vec![])).ok();
-    }
-    Ok(())
+    send_raw_message_to_port(port.as_ref(), detached, "worker parent")
 }
 
 #[op2]
@@ -199,6 +196,7 @@ pub(super) fn op_create_worker(
         .paths
         .cwd()
         .to_path_buf();
+    let shared_env = state.borrow::<RuntimeSharedWorkerEnv>().clone();
     let (tempdir, bundle, module_specifier) = prepare_worker_bundle(&args, &worker_cwd)?;
     let (parent_port, child_port) = create_entangled_message_port();
     let parent_port = Rc::new(parent_port);
@@ -218,6 +216,7 @@ pub(super) fn op_create_worker(
         bundle,
         tempdir,
         worker_bootstrap_descriptor,
+        shared_env,
         child_port,
         cpu_thread_handle: cpu_thread_handle.clone(),
         ctrl_sender,
@@ -342,10 +341,7 @@ pub(super) fn op_host_post_message_raw(
         }
     };
     let detached = DetachedBuffer::from_v8slice(data.into_parts());
-    if let Some(tx) = &*port.tx.borrow() {
-        tx.send((detached, vec![])).ok();
-    }
-    Ok(())
+    send_raw_message_to_port(port.as_ref(), detached, "host worker")
 }
 
 #[op2(fast)]
@@ -354,7 +350,14 @@ pub(super) fn op_host_get_worker_cpu_usage(
     #[smi] id: u32,
     #[buffer] out: &mut [f64],
 ) {
-    if let Some(entry) = state.borrow::<WorkersTable>().get(&id) {
+    write_worker_cpu_usage(state.borrow::<WorkersTable>(), id, out);
+}
+
+fn write_worker_cpu_usage(workers: &WorkersTable, id: u32, out: &mut [f64]) {
+    if out.len() < 2 {
+        return;
+    }
+    if let Some(entry) = workers.get(&id) {
         let handle = entry.cpu_thread_handle.load(Ordering::Acquire);
         if handle != 0 {
             let (user, system) = get_thread_cpu_usage_by_handle(handle);
@@ -369,6 +372,13 @@ pub(super) fn op_host_get_worker_cpu_usage(
 
 #[op2(fast)]
 pub(super) fn op_current_thread_cpu_usage(#[buffer] out: &mut [f64]) {
+    write_current_thread_cpu_usage(out);
+}
+
+fn write_current_thread_cpu_usage(out: &mut [f64]) {
+    if out.len() < 2 {
+        return;
+    }
     let handle = capture_current_thread_handle();
     let (user, system) = get_thread_cpu_usage_by_handle(handle);
     out[0] = user;
@@ -384,6 +394,30 @@ fn worker_parent_port(state: &OpState) -> Result<Rc<MessagePort>, MessagePortErr
         })
 }
 
+fn send_raw_message_to_port(
+    port: &MessagePort,
+    detached: DetachedBuffer,
+    channel_label: &'static str,
+) -> Result<(), MessagePortError> {
+    let Some(tx) = &*port.tx.borrow() else {
+        return Ok(());
+    };
+    map_raw_send_result(tx.send((detached, vec![])), channel_label)
+}
+
+fn map_raw_send_result<T>(
+    result: Result<(), tokio::sync::mpsc::error::SendError<T>>,
+    channel_label: &'static str,
+) -> Result<(), MessagePortError> {
+    result.map_err(|_| closed_raw_receiver_error(channel_label))
+}
+
+fn closed_raw_receiver_error(channel_label: &'static str) -> MessagePortError {
+    MessagePortError::Generic(JsErrorBox::generic(format!(
+        "{channel_label} raw message receiver is closed"
+    )))
+}
+
 pub(crate) fn worker_threads_state_extension(
     bootstrap_state: InstalledRuntimeWorkerBootstrapState,
 ) -> Extension {
@@ -392,6 +426,7 @@ pub(crate) fn worker_threads_state_extension(
         op_state_fn: Some(Box::new(move |state| {
             install_missing_deno_extension_state(state);
             state.put(WorkersTable::default());
+            state.put(bootstrap_state.shared_env.clone());
             state.put(bootstrap_state);
         })),
         ..Default::default()
@@ -551,6 +586,7 @@ struct WorkerThreadSpawnRequest {
     bundle: RuntimeBundle,
     tempdir: TempDir,
     worker_bootstrap_descriptor: RuntimeWorkerBootstrapDescriptor,
+    shared_env: RuntimeSharedWorkerEnv,
     child_port: MessagePort,
     cpu_thread_handle: Arc<AtomicU64>,
     ctrl_sender: UnboundedSender<WorkerControlEvent>,
@@ -564,6 +600,7 @@ fn spawn_worker_thread(request: WorkerThreadSpawnRequest) -> Result<(), JsErrorB
         bundle,
         tempdir,
         worker_bootstrap_descriptor,
+        shared_env,
         child_port,
         cpu_thread_handle,
         ctrl_sender,
@@ -587,6 +624,7 @@ fn spawn_worker_thread(request: WorkerThreadSpawnRequest) -> Result<(), JsErrorB
                     let bootstrap_state = InstalledRuntimeWorkerBootstrapState {
                         descriptor: worker_bootstrap_descriptor,
                         parent_port: Some(child_port),
+                        shared_env,
                     };
                     let mut js_runtime = runtime_owner
                         .create_unsnapshotted_runtime_with_worker_bootstrap(
@@ -635,14 +673,21 @@ fn io_error(error: std::io::Error) -> JsErrorBox {
 
 #[cfg(target_os = "macos")]
 fn capture_current_thread_handle() -> u64 {
+    // SAFETY: `mach_thread_self` takes no arguments and returns the send right for
+    // the current thread according to the macOS Mach ABI declaration below.
     unsafe { mach_thread_self() as u64 }
 }
 
 #[cfg(target_os = "macos")]
 fn get_thread_cpu_usage_by_handle(handle: u64) -> (f64, f64) {
     let thread_port = handle as u32;
+    // SAFETY: `ThreadBasicInfo` is a repr(C) aggregate of integer fields; all-zero
+    // bytes are a valid initial value before `thread_info` fills the structure.
     let mut info: ThreadBasicInfo = unsafe { std::mem::zeroed() };
     let mut count: u32 = THREAD_BASIC_INFO_COUNT;
+    // SAFETY: `thread_port` comes from `mach_thread_self` or a stored Mach thread
+    // port; `info` is live and sized for `THREAD_BASIC_INFO_COUNT` integer slots,
+    // and `count` points to writable storage for the kernel's returned length.
     let kr = unsafe {
         thread_info(
             thread_port,
@@ -680,6 +725,8 @@ struct ThreadBasicInfo {
 }
 
 #[cfg(target_os = "macos")]
+// SAFETY: These declarations match the macOS Mach ABI used for querying
+// per-thread basic accounting information.
 unsafe extern "C" {
     fn mach_thread_self() -> u32;
     fn thread_info(
@@ -692,6 +739,8 @@ unsafe extern "C" {
 
 #[cfg(target_os = "linux")]
 fn capture_current_thread_handle() -> u64 {
+    // SAFETY: `SYS_gettid` takes no additional arguments on Linux and returns the
+    // caller's kernel thread id without writing through any pointers.
     unsafe { libc::syscall(libc::SYS_gettid) as u64 }
 }
 
@@ -705,6 +754,9 @@ fn get_thread_cpu_usage_by_handle(handle: u64) -> (f64, f64) {
         let rest = &contents[position + 2..];
         let fields: Vec<&str> = rest.split_whitespace().collect();
         if fields.len() > 12 {
+            // SAFETY: `_SC_CLK_TCK` is a pure libc query that takes no pointers
+            // and returns the process clock-tick rate for converting `/proc` CPU
+            // counters.
             let ticks_per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
             let utime = fields[11].parse::<f64>().unwrap_or(0.0);
             let stime = fields[12].parse::<f64>().unwrap_or(0.0);
@@ -721,6 +773,8 @@ fn get_thread_cpu_usage_by_handle(handle: u64) -> (f64, f64) {
 fn capture_current_thread_handle() -> u64 {
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 
+    // SAFETY: `GetCurrentThreadId` takes no arguments and returns the caller's
+    // thread id without requiring any borrowed memory or handle ownership.
     unsafe { GetCurrentThreadId() as u64 }
 }
 
@@ -732,6 +786,9 @@ fn get_thread_cpu_usage_by_handle(handle: u64) -> (f64, f64) {
     };
 
     let thread_id = handle as u32;
+    // SAFETY: `OpenThread` is called with a thread id captured from Windows and
+    // requests query-only access. A null handle is handled immediately below, and
+    // a non-null handle is closed exactly once after `GetThreadTimes`.
     let thread_handle = unsafe { OpenThread(THREAD_QUERY_INFORMATION, FALSE, thread_id) };
     if thread_handle.is_null() {
         return (0.0, 0.0);
@@ -741,6 +798,9 @@ fn get_thread_cpu_usage_by_handle(handle: u64) -> (f64, f64) {
     let mut exit_time = std::mem::MaybeUninit::<FILETIME>::uninit();
     let mut kernel_time = std::mem::MaybeUninit::<FILETIME>::uninit();
     let mut user_time = std::mem::MaybeUninit::<FILETIME>::uninit();
+    // SAFETY: `thread_handle` is a non-null handle returned by `OpenThread`, and
+    // each output pointer references live `MaybeUninit<FILETIME>` storage that
+    // `GetThreadTimes` initializes on success.
     let ret = unsafe {
         GetThreadTimes(
             thread_handle,
@@ -750,11 +810,16 @@ fn get_thread_cpu_usage_by_handle(handle: u64) -> (f64, f64) {
             user_time.as_mut_ptr(),
         )
     };
+    // SAFETY: `thread_handle` is owned by this function and is closed exactly once
+    // after the only API call that needs it.
     unsafe { CloseHandle(thread_handle) };
     if ret == FALSE {
         return (0.0, 0.0);
     }
+    // SAFETY: a non-FALSE return from `GetThreadTimes` means all supplied
+    // `FILETIME` out-parameters, including user and kernel time, were initialized.
     let user_time = unsafe { user_time.assume_init() };
+    // SAFETY: see the successful `GetThreadTimes` check above.
     let kernel_time = unsafe { kernel_time.assume_init() };
     (
         (((user_time.dwHighDateTime as u64) << 32) | user_time.dwLowDateTime as u64) as f64 / 10.0,
@@ -771,4 +836,51 @@ fn capture_current_thread_handle() -> u64 {
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn get_thread_cpu_usage_by_handle(_handle: u64) -> (f64, f64) {
     (0.0, 0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn current_thread_cpu_usage_ignores_short_output_buffers() {
+        let mut one_slot = [42.0_f64];
+        write_current_thread_cpu_usage(&mut one_slot);
+        assert_eq!(one_slot, [42.0]);
+
+        let mut two_slots = [-1.0_f64, -1.0_f64];
+        write_current_thread_cpu_usage(&mut two_slots);
+        assert!(two_slots[0].is_finite());
+        assert!(two_slots[1].is_finite());
+        assert!(two_slots[0] >= 0.0);
+        assert!(two_slots[1] >= 0.0);
+    }
+
+    #[test]
+    fn host_worker_cpu_usage_ignores_short_output_buffers() {
+        let workers = WorkersTable::default();
+
+        let mut one_slot = [42.0_f64];
+        write_worker_cpu_usage(&workers, u32::MAX, &mut one_slot);
+        assert_eq!(one_slot, [42.0]);
+
+        let mut two_slots = [-1.0_f64, -1.0_f64];
+        write_worker_cpu_usage(&workers, u32::MAX, &mut two_slots);
+        assert_eq!(two_slots, [0.0, 0.0]);
+    }
+
+    #[test]
+    fn raw_message_send_reports_closed_receiver() {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<()>();
+        drop(receiver);
+
+        let error = map_raw_send_result(sender.send(()), "host worker")
+            .expect_err("closed raw message receiver should be reported");
+        assert!(
+            error
+                .to_string()
+                .contains("host worker raw message receiver is closed"),
+            "unexpected raw-send error: {error}"
+        );
+    }
 }

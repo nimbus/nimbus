@@ -16,7 +16,7 @@
 //! order-preserving); Query sort conditions evaluate the order-preserving `_sk`
 //! projection — see D0.3's sortable-key follow-up and D2.1.
 //!
-//! **Divergence (recorded in `docs/adapters/dynamodb/divergences.md`):** DynamoDB
+//! **Divergence (recorded in `docs/private/adapters/dynamodb/divergences.md`):** DynamoDB
 //! allows pk ≤2,048 B + sk ≤1,024 B; base64url inflation puts the encoded id over
 //! Nimbus's hard 1,500-byte `DocumentId` cap, so the combined raw key is bounded
 //! to ~1,100 B and oversize keys are rejected with `ValidationException`.

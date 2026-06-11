@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -92,7 +92,7 @@ const fn default_host_call_abi_version() -> u16 {
 pub struct RuntimeAsyncQueryPayload {
     pub query: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -102,7 +102,7 @@ pub struct RuntimeAsyncPaginatedQueryPayload {
     #[serde(default)]
     pub cursor: Option<String>,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -110,21 +110,21 @@ pub struct RuntimeAsyncDbGetPayload {
     pub table: String,
     pub id: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeAsyncMutationPayload {
     pub mutation: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeAsyncActionPayload {
     pub action: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -138,7 +138,7 @@ pub struct RuntimeAsyncDbInsertPayload {
     pub table: String,
     pub fields: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -147,7 +147,7 @@ pub struct RuntimeAsyncDbPatchPayload {
     pub id: String,
     pub patch: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -155,7 +155,7 @@ pub struct RuntimeAsyncDbDeletePayload {
     pub table: String,
     pub id: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -170,7 +170,7 @@ pub struct RuntimeAsyncExtensionPayload {
 pub struct RuntimeSyncQueryStartPayload {
     pub table: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -180,7 +180,7 @@ pub struct RuntimeSyncQueryWithIndexPayload {
     #[serde(default)]
     pub filters: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -189,7 +189,7 @@ pub struct RuntimeSyncQueryFilterPayload {
     #[serde(default)]
     pub filters: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -197,7 +197,7 @@ pub struct RuntimeSyncQueryOrderPayload {
     pub builder_id: String,
     pub direction: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -208,7 +208,7 @@ pub struct RuntimeAsyncSchedulerRunAfterPayload {
     #[serde(default)]
     pub args: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -219,21 +219,21 @@ pub struct RuntimeAsyncSchedulerRunAtPayload {
     #[serde(default)]
     pub args: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeAsyncSchedulerCancelPayload {
     pub job_id: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeAsyncServiceLookupPayload {
     pub service_name: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -243,7 +243,7 @@ pub struct RuntimeAsyncFunctionCallPayload {
     #[serde(default)]
     pub args: Value,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<InvocationAuth>,
 }
@@ -253,14 +253,14 @@ pub struct RuntimeSyncNestedCallPayload {
     pub name: String,
     pub visibility: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeAsyncQueryTerminalPayload {
     pub builder_id: String,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -268,7 +268,7 @@ pub struct RuntimeAsyncQueryTakePayload {
     pub builder_id: String,
     pub limit: usize,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -278,7 +278,7 @@ pub struct RuntimeAsyncQueryPaginatePayload {
     #[serde(default)]
     pub cursor: Option<String>,
     #[serde(default)]
-    pub session_id: Option<String>,
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -346,34 +346,34 @@ impl HostCallPayload {
         }
     }
 
-    pub fn session_id(&self) -> Option<&str> {
+    pub fn host_call_session_id(&self) -> Option<&str> {
         match self {
             Self::HttpRoute(_) | Self::RuntimeExtensionCall(_) => None,
-            Self::CtxQuery(payload) => payload.session_id.as_deref(),
-            Self::CtxPaginatedQuery(payload) => payload.session_id.as_deref(),
-            Self::CtxMutation(payload) => payload.session_id.as_deref(),
-            Self::CtxAction(payload) => payload.session_id.as_deref(),
-            Self::CtxRunQuery(payload) => payload.session_id.as_deref(),
-            Self::CtxRunMutation(payload) => payload.session_id.as_deref(),
-            Self::CtxRunAction(payload) => payload.session_id.as_deref(),
-            Self::DocumentGet(payload) => payload.session_id.as_deref(),
-            Self::QueryBuilderStart(payload) => payload.session_id.as_deref(),
-            Self::QueryBuilderWithIndex(payload) => payload.session_id.as_deref(),
-            Self::QueryBuilderFilter(payload) => payload.session_id.as_deref(),
-            Self::QueryBuilderOrder(payload) => payload.session_id.as_deref(),
-            Self::QueryReadCollect(payload) => payload.session_id.as_deref(),
-            Self::QueryReadTake(payload) => payload.session_id.as_deref(),
-            Self::QueryReadPaginate(payload) => payload.session_id.as_deref(),
-            Self::QueryReadFirst(payload) => payload.session_id.as_deref(),
-            Self::QueryReadUnique(payload) => payload.session_id.as_deref(),
-            Self::DocumentInsert(payload) => payload.session_id.as_deref(),
-            Self::DocumentPatch(payload) => payload.session_id.as_deref(),
-            Self::DocumentDelete(payload) => payload.session_id.as_deref(),
-            Self::CtxSchedulerRunAfter(payload) => payload.session_id.as_deref(),
-            Self::CtxSchedulerRunAt(payload) => payload.session_id.as_deref(),
-            Self::CtxSchedulerCancel(payload) => payload.session_id.as_deref(),
-            Self::CtxServiceLookup(payload) => payload.session_id.as_deref(),
-            Self::CtxRuntimeEnterNestedCall(payload) => payload.session_id.as_deref(),
+            Self::CtxQuery(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxPaginatedQuery(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxMutation(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxAction(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxRunQuery(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxRunMutation(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxRunAction(payload) => payload.host_call_session_id.as_deref(),
+            Self::DocumentGet(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryBuilderStart(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryBuilderWithIndex(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryBuilderFilter(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryBuilderOrder(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryReadCollect(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryReadTake(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryReadPaginate(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryReadFirst(payload) => payload.host_call_session_id.as_deref(),
+            Self::QueryReadUnique(payload) => payload.host_call_session_id.as_deref(),
+            Self::DocumentInsert(payload) => payload.host_call_session_id.as_deref(),
+            Self::DocumentPatch(payload) => payload.host_call_session_id.as_deref(),
+            Self::DocumentDelete(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxSchedulerRunAfter(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxSchedulerRunAt(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxSchedulerCancel(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxServiceLookup(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxRuntimeEnterNestedCall(payload) => payload.host_call_session_id.as_deref(),
         }
     }
 
@@ -513,11 +513,14 @@ impl TryFrom<HostCallRequest> for HostCallEnvelope {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use serde_json::json;
 
     use super::{
-        HOST_CALL_ABI_VERSION, HostCallEnvelope, HostCallOperation, HostCallRequest,
-        RuntimeAsyncDbGetPayload,
+        HOST_CALL_ABI_VERSION, HostCallCancellation, HostCallCancellationCause, HostCallEnvelope,
+        HostCallOperation, HostCallRequest, RuntimeAsyncDbGetPayload,
     };
 
     #[test]
@@ -585,9 +588,54 @@ mod tests {
             super::HostCallPayload::DocumentGet(RuntimeAsyncDbGetPayload {
                 table: "messages".to_string(),
                 id: "doc-1".to_string(),
-                session_id: None,
+                host_call_session_id: None,
             })
         );
+    }
+
+    #[test]
+    fn host_call_cancellation_notifies_listeners_once_and_immediate_after_cancel() {
+        let cancellation = HostCallCancellation::default();
+        let fired = Arc::new(AtomicUsize::new(0));
+        for _ in 0..2 {
+            let fired = fired.clone();
+            cancellation.notify_on_cancel(move || {
+                fired.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+
+        cancellation.cancel();
+        cancellation.cancel_due_to_disconnect();
+        assert_eq!(fired.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            cancellation.cause(),
+            Some(HostCallCancellationCause::Explicit)
+        );
+
+        let fired_after_cancel = fired.clone();
+        cancellation.notify_on_cancel(move || {
+            fired_after_cancel.fetch_add(1, Ordering::SeqCst);
+        });
+        assert_eq!(fired.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn host_call_cancellation_waiter_completes_after_cancel() {
+        let cancellation = HostCallCancellation::default();
+        let waiter_cancellation = cancellation.clone();
+        let waiter = tokio::spawn(async move {
+            waiter_cancellation.cancelled().await;
+            waiter_cancellation.cause()
+        });
+
+        tokio::task::yield_now().await;
+        cancellation.cancel_due_to_disconnect();
+
+        let cause = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+            .await
+            .expect("cancellation waiter should complete after notification")
+            .expect("waiter task should not panic");
+        assert_eq!(cause, Some(HostCallCancellationCause::Disconnect));
     }
 }
 
@@ -605,11 +653,26 @@ pub struct HostCallCancellation {
     inner: Arc<HostCallCancellationState>,
 }
 
-#[derive(Debug, Default)]
+type HostCallCancellationListener = Box<dyn FnOnce() + Send + 'static>;
+
+#[derive(Default)]
 struct HostCallCancellationState {
     canceled: AtomicBool,
     cause: AtomicU8,
     notify: Notify,
+    listeners: Mutex<Vec<HostCallCancellationListener>>,
+}
+
+impl std::fmt::Debug for HostCallCancellationState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostCallCancellationState")
+            .field("canceled", &self.canceled.load(Ordering::SeqCst))
+            .field(
+                "cause",
+                &HostCallCancellationCause::from_u8(self.cause.load(Ordering::SeqCst)),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl HostCallCancellation {
@@ -630,8 +693,22 @@ impl HostCallCancellation {
             self.inner
                 .cause
                 .compare_exchange(0, cause.as_u8(), Ordering::SeqCst, Ordering::SeqCst);
-        self.inner.canceled.store(true, Ordering::SeqCst);
+        let first_cancel = !self.inner.canceled.swap(true, Ordering::SeqCst);
+        let listeners = if first_cancel {
+            std::mem::take(
+                &mut *self
+                    .inner
+                    .listeners
+                    .lock()
+                    .expect("host cancellation listener lock should not be poisoned"),
+            )
+        } else {
+            Vec::new()
+        };
         self.inner.notify.notify_waiters();
+        for listener in listeners {
+            listener();
+        }
     }
 
     pub fn is_cancelled(&self) -> bool {
@@ -639,10 +716,34 @@ impl HostCallCancellation {
     }
 
     pub async fn cancelled(&self) {
+        let notified = self.inner.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         if self.is_cancelled() {
             return;
         }
-        self.inner.notify.notified().await;
+        notified.await;
+    }
+
+    pub(crate) fn notify_on_cancel<F>(&self, listener: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let mut listener = Some(Box::new(listener) as HostCallCancellationListener);
+        {
+            let mut listeners = self
+                .inner
+                .listeners
+                .lock()
+                .expect("host cancellation listener lock should not be poisoned");
+            if !self.is_cancelled() {
+                listeners.push(listener.take().expect("listener should be available"));
+                return;
+            }
+        }
+        if let Some(listener) = listener {
+            listener();
+        }
     }
 }
 

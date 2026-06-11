@@ -66,7 +66,7 @@ services:
     let client = MachineApiClient::new(socket_path.clone());
 
     wait_for_machine_api_health(&client);
-    let _manager = load_host_backed_sandbox_service_manager_for_platform(
+    let _manager = load_host_backed_service_manager_for_platform(
         &compose_path,
         &control_data_dir,
         ServiceHostPlatform::Macos,

@@ -1,4 +1,7 @@
 //! Local and deploy operator security model.
+//!
+//! Here "operator" means the administrator operating this host's server, not a
+//! Kubernetes-style controller or reconciler.
 
 mod access;
 mod access_policy;

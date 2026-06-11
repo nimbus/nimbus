@@ -1,4 +1,3 @@
-mod rebuild;
 mod transaction;
 mod writes;
 

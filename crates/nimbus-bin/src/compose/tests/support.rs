@@ -1,4 +1,5 @@
 use super::*;
+use nimbus::SandboxBackend;
 
 #[derive(Debug, Parser)]
 pub(super) struct RootCli {
@@ -105,9 +106,13 @@ pub(super) fn write_container_machine_manifest(
         "handle": handle,
         "spec": {
             "tenant_id": tenant_id,
-            "name": service_name,
+            "owner": {
+                "kind": "service",
+                "name": service_name
+            },
             "backend": "container",
-            "filesystem": {
+            "root": {
+                "kind": "rootfs",
                 "rootfs": "/tmp/rootfs",
                 "readonly": true
             },
@@ -215,9 +220,13 @@ pub(super) fn write_manifest(
         "handle": handle,
         "spec": {
             "tenant_id": tenant_id,
-            "name": service_name,
+            "owner": {
+                "kind": "service",
+                "name": service_name
+            },
             "backend": "krun",
-            "filesystem": {
+            "root": {
+                "kind": "rootfs",
                 "rootfs": "/tmp/rootfs",
                 "readonly": true
             },
@@ -253,9 +262,9 @@ pub(super) fn write_manifest(
 pub(super) fn sample_spec(tenant: &TenantId, service_name: &str) -> SandboxSpec {
     SandboxSpec::new(
         tenant.clone(),
-        service_name,
+        SandboxOwnerSpec::service(service_name),
         SandboxBackendKind::Krun,
-        SandboxFilesystemSpec::new("/tmp/rootfs"),
+        SandboxRootSpec::rootfs("/tmp/rootfs"),
         SandboxProcessSpec::new(["/bin/server"]),
     )
 }
@@ -305,23 +314,16 @@ impl SandboxBackend for StubMachineApiSandboxBackend {
     }
 
     fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
+        let service_name = spec.display_name().to_owned();
         let handle = SandboxHandle::new(
             spec.tenant_id.clone(),
-            SandboxId::new(format!("{}-01stub", spec.name)),
-            &spec.name,
+            SandboxId::new(format!("{service_name}-01stub")),
+            service_name,
             SandboxBackendKind::Container,
             SandboxStatus::Ready,
             Vec::new(),
         );
         Box::pin(async move { Ok(handle) })
-    }
-
-    fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        self.start(launch.spec)
-    }
-
-    fn start_from_build(&self, launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        self.start(launch.spec)
     }
 
     fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
@@ -339,32 +341,21 @@ impl SandboxBackend for StubBackend {
     }
 
     fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
+        let service_name = spec.display_name().to_owned();
         let handle = stub_handle(
-            &SandboxId::new(format!("{}-01stub", spec.name)),
-            &spec.name,
+            &SandboxId::new(format!("{service_name}-01stub")),
+            &service_name,
             SandboxStatus::Starting,
         );
+        self.started_services
+            .lock()
+            .expect("started services lock should hold")
+            .push(service_name);
         self.handles
             .lock()
             .expect("handles lock should hold")
             .insert(handle.id.as_str().to_owned(), handle.clone());
         Box::pin(async move { Ok(handle) })
-    }
-
-    fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        self.started_services
-            .lock()
-            .expect("started services lock should hold")
-            .push(launch.spec.name.clone());
-        self.start(launch.spec)
-    }
-
-    fn start_from_build(&self, launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        self.started_services
-            .lock()
-            .expect("started services lock should hold")
-            .push(launch.spec.name.clone());
-        self.start(launch.spec)
     }
 
     fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {

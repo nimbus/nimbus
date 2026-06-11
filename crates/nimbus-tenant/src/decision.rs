@@ -9,7 +9,7 @@ use super::{
     TenantIsolationContext, TenantIsolationPolicyInput, TenantNetworkPolicyDecision,
     TenantQuotaPolicyDecision, TenantRuntimePolicyDecision, TenantSecretPolicyDecision,
     TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision, TenantVolumePolicyDecision,
-    TenantWorkloadIdentity, TenantWorkloadLocation, TenantWorkloadStableIdentity,
+    WorkloadAttributes, WorkloadIdentity, WorkloadLocation,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -34,8 +34,8 @@ struct TenantIsolationDecisionFingerprint<'a> {
     surface: &'a str,
     authority: &'a TenantIsolationAuthorityDecision,
     deployment_generation: Option<u64>,
-    location: &'a TenantWorkloadLocation,
-    workload: &'a TenantWorkloadIdentity,
+    location: &'a WorkloadLocation,
+    workload: &'a WorkloadAttributes,
     runtime: &'a TenantRuntimePolicyDecision,
     services: &'a TenantServiceGrantPolicyDecision,
     network: &'a TenantNetworkPolicyDecision,
@@ -54,8 +54,8 @@ pub struct TenantIsolationDecision {
     pub(super) surface: &'static str,
     pub(super) authority: TenantIsolationAuthorityDecision,
     pub(super) deployment_generation: Option<u64>,
-    pub(super) location: TenantWorkloadLocation,
-    pub(super) workload: TenantWorkloadIdentity,
+    pub(super) location: WorkloadLocation,
+    pub(super) workload: WorkloadAttributes,
     pub(super) runtime: TenantRuntimePolicyDecision,
     pub(super) services: TenantServiceGrantPolicyDecision,
     pub(super) network: TenantNetworkPolicyDecision,
@@ -72,7 +72,7 @@ impl TenantIsolationDecision {
         context: &TenantIsolationContext,
         input: TenantIsolationPolicyInput,
     ) -> Result<Self> {
-        context.ensure_application_principal_tenant_access("tenant isolation decision")?;
+        context.admit_if_principal_claim_absent_or_matching("tenant isolation decision")?;
         let authority = TenantIsolationAuthorityDecision::from_context(context)?;
         let fingerprint = TenantIsolationDecisionFingerprint {
             tenant_id: context.tenant_id.as_str(),
@@ -128,12 +128,12 @@ impl TenantIsolationDecision {
         self.authority.class()
     }
 
-    pub fn workload(&self) -> &TenantWorkloadIdentity {
+    pub fn workload(&self) -> &WorkloadAttributes {
         &self.workload
     }
 
-    pub fn workload_stable_identity(&self) -> TenantWorkloadStableIdentity {
-        TenantWorkloadStableIdentity::from_decision(self)
+    pub fn workload_identity(&self) -> WorkloadIdentity {
+        WorkloadIdentity::from_decision(self)
     }
 
     pub fn runtime(&self) -> &TenantRuntimePolicyDecision {
@@ -200,6 +200,23 @@ impl TenantIsolationDecision {
         )))
     }
 
+    pub fn ensure_sandbox_spec_matches(
+        &self,
+        spec: &SandboxSpec,
+        actual_backend: SandboxBackendKind,
+        context: &str,
+    ) -> Result<()> {
+        if spec.backend != actual_backend {
+            return Err(Error::InvalidInput(format!(
+                "tenant isolation decision {} for {context} requested sandbox backend {:?}, but the configured manager backend is {:?}",
+                self.id.as_str(),
+                spec.backend,
+                actual_backend
+            )));
+        }
+        self.ensure_tenant_matches(&spec.tenant_id, context)
+    }
+
     pub fn ensure_tenant_matches(&self, actual: &TenantId, context: &str) -> Result<()> {
         if actual == &self.tenant_id {
             return Ok(());
@@ -250,8 +267,8 @@ impl TenantIsolationDecision {
             surface: self.surface.to_string(),
             authority_class: self.authority.class().to_string(),
             deployment_generation: self.deployment_generation,
-            workload_stable_id: self.workload_stable_identity().stable_id(),
-            workload_audit_projection_id: self.workload_stable_identity().audit_projection_id(),
+            workload_subject: self.workload_identity().subject(),
+            workload_audit_projection: self.workload_identity().audit_projection(),
             workload: self.workload.clone(),
             runtime: self.runtime.clone(),
             services: self.services.clone(),
@@ -345,15 +362,15 @@ impl TenantServiceAccessDecision {
                 actual_backend
             )));
         }
-        if spec.name != self.service_name {
+        if spec.service_name() != Some(self.service_name.as_str()) {
             return Err(Error::InvalidInput(format!(
-                "tenant service access decision {} authorized service {}, but sandbox service catalog returned launch spec name {}",
+                "tenant service access decision {} authorized service {}, but service definition catalog returned sandbox owner {:?}",
                 self.decision_id.as_str(),
                 self.service_name,
-                spec.name
+                spec.owner
             )));
         }
-        self.ensure_tenant_matches(&spec.tenant_id, "sandbox service launch spec")
+        self.ensure_tenant_matches(&spec.tenant_id, "sandbox-backed service sandbox spec")
     }
 }
 
@@ -364,9 +381,9 @@ pub struct TenantIsolationAuditRecord {
     pub(super) surface: String,
     pub(super) authority_class: String,
     pub(super) deployment_generation: Option<u64>,
-    pub(super) workload_stable_id: String,
-    pub(super) workload_audit_projection_id: String,
-    pub(super) workload: TenantWorkloadIdentity,
+    pub(super) workload_subject: String,
+    pub(super) workload_audit_projection: String,
+    pub(super) workload: WorkloadAttributes,
     pub(super) runtime: TenantRuntimePolicyDecision,
     pub(super) services: TenantServiceGrantPolicyDecision,
     pub(super) network: TenantNetworkPolicyDecision,

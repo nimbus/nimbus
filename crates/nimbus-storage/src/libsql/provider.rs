@@ -284,11 +284,11 @@ impl LibsqlReplicaProvider {
                     replica_dir.as_path(),
                     path_for_publish.as_path(),
                     snapshot,
-                    encryption_dek.as_ref(),
+                    encryption_dek.as_ref().map(|key| key.as_bytes()),
                 )
             })
             .await
-            .map_err(map_join_error)??;
+            .map_err(|error| map_executor_join_error(LIBSQL_REPLICA_EXECUTOR_CONTEXT, error))??;
         Ok(replica_path)
     }
 
@@ -356,7 +356,7 @@ impl LibsqlReplicaProvider {
                 }
             })
             .await
-            .map_err(map_join_error)??;
+            .map_err(|error| map_executor_join_error(LIBSQL_REPLICA_EXECUTOR_CONTEXT, error))??;
         let store = Arc::new(LibsqlReplicaTenantStore::new(
             self.clone(),
             registration.tenant_id.clone(),

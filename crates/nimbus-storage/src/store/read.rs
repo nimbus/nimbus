@@ -6,7 +6,7 @@ use redb::{ReadableTable, TableError};
 use std::time::{Duration, Instant};
 
 use crate::document_codec::decode_document_msgpack;
-use crate::keys::{document_key, prefix_end, table_prefix};
+use crate::keys::{document_id_prefix_key, document_key, prefix_end, table_prefix};
 use crate::{TableBackendLayout, TableIdentityDiagnostic};
 
 use super::journal::decode_u64;
@@ -43,6 +43,31 @@ impl TenantStore {
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         self.scan_table_matching_cancellable(table, check_cancel, |_document| Ok(true))
+    }
+
+    pub fn scan_table_id_prefix_cancellable(
+        &self,
+        table: &TableName,
+        id_prefix: &str,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        self.read_snapshot()?
+            .scan_table_id_prefix_cancellable(table, id_prefix, check_cancel)
+    }
+
+    pub fn scan_table_id_starting_at_cancellable(
+        &self,
+        table: &TableName,
+        start_id: &str,
+        limit: usize,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        self.read_snapshot()?.scan_table_id_starting_at_cancellable(
+            table,
+            start_id,
+            limit,
+            check_cancel,
+        )
     }
 
     pub fn scan_table_matching_cancellable<F>(
@@ -220,6 +245,105 @@ impl TenantReadSnapshot {
             check_cancel,
             include_document,
         )
+    }
+
+    pub fn scan_table_id_prefix_cancellable(
+        &self,
+        table: &TableName,
+        id_prefix: &str,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        let Some(table_id) = resolve_table_id_in_read_txn(&self.read_txn, table)? else {
+            return Ok(Vec::new());
+        };
+        let table_handle = match self.read_txn.open_table(DOCUMENTS) {
+            Ok(table_handle) => table_handle,
+            Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(error) => return Err(map_redb_error(error)),
+        };
+
+        let start = document_id_prefix_key(&table_id, id_prefix);
+        let mut documents = Vec::new();
+        match prefix_end(&start) {
+            Some(end) => {
+                let iter = table_handle
+                    .range(start.as_slice()..end.as_slice())
+                    .map_err(map_redb_error)?;
+                for item in iter {
+                    check_cancel()?;
+                    let (_, value) = item.map_err(map_redb_error)?;
+                    self.scan_metrics.record_scanned_row();
+                    self.scan_metrics.record_decoded_row();
+                    documents.push(
+                        decode_document_msgpack(value.value())
+                            .map_err(|error| Error::Serialization(error.to_string()))?,
+                    );
+                }
+            }
+            None => {
+                let iter = table_handle
+                    .range(start.as_slice()..)
+                    .map_err(map_redb_error)?;
+                for item in iter {
+                    check_cancel()?;
+                    let (key, value) = item.map_err(map_redb_error)?;
+                    if !key.value().starts_with(&start) {
+                        break;
+                    }
+                    self.scan_metrics.record_scanned_row();
+                    self.scan_metrics.record_decoded_row();
+                    documents.push(
+                        decode_document_msgpack(value.value())
+                            .map_err(|error| Error::Serialization(error.to_string()))?,
+                    );
+                }
+            }
+        }
+        Ok(documents)
+    }
+
+    pub fn scan_table_id_starting_at_cancellable(
+        &self,
+        table: &TableName,
+        start_id: &str,
+        limit: usize,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let Some(table_id) = resolve_table_id_in_read_txn(&self.read_txn, table)? else {
+            return Ok(Vec::new());
+        };
+        let table_handle = match self.read_txn.open_table(DOCUMENTS) {
+            Ok(table_handle) => table_handle,
+            Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(error) => return Err(map_redb_error(error)),
+        };
+
+        let table_start = table_prefix(&table_id);
+        let start = document_id_prefix_key(&table_id, start_id);
+        let iter = table_handle
+            .range(start.as_slice()..)
+            .map_err(map_redb_error)?;
+        let mut documents = Vec::new();
+        for item in iter {
+            if documents.len() >= limit {
+                break;
+            }
+            check_cancel()?;
+            let (key, value) = item.map_err(map_redb_error)?;
+            if !key.value().starts_with(&table_start) {
+                break;
+            }
+            self.scan_metrics.record_scanned_row();
+            self.scan_metrics.record_decoded_row();
+            documents.push(
+                decode_document_msgpack(value.value())
+                    .map_err(|error| Error::Serialization(error.to_string()))?,
+            );
+        }
+        Ok(documents)
     }
 
     pub fn scan_table_matching_with_filters_cancellable<F>(

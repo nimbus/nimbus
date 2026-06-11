@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use futures::{Stream, StreamExt, stream};
@@ -12,7 +12,7 @@ use nimbus_core::{
     diff_subscription_snapshots,
 };
 use nimbus_engine::{
-    DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, Service, SubscriptionCleanupHandle, SubscriptionUpdate,
+    DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, Engine, SubscriptionCleanupHandle, SubscriptionUpdate,
 };
 use tokio::sync::mpsc;
 use tonic::Status;
@@ -74,10 +74,7 @@ impl RetainedListenRegistry {
         snapshot: &SubscriptionResultSnapshot,
         read_time: Timestamp,
     ) {
-        let mut targets = self
-            .targets
-            .lock()
-            .expect("listen target registry lock should not be poisoned");
+        let mut targets = self.targets();
         prune_expired_retained_targets(&mut targets);
         if !targets.contains_key(&key) && targets.len() >= MAX_RETAINED_LISTEN_TARGETS {
             evict_oldest_retained_target(&mut targets);
@@ -93,10 +90,7 @@ impl RetainedListenRegistry {
     }
 
     fn clear(&self, key: &RetainedListenTargetKey) {
-        self.targets
-            .lock()
-            .expect("listen target registry lock should not be poisoned")
-            .remove(key);
+        self.targets().remove(key);
     }
 
     fn resolve_resume(
@@ -104,10 +98,7 @@ impl RetainedListenRegistry {
         key: &RetainedListenTargetKey,
         selector: &ResumeSelector,
     ) -> ResumeDecision {
-        let mut targets = self
-            .targets
-            .lock()
-            .expect("listen target registry lock should not be poisoned");
+        let mut targets = self.targets();
         prune_expired_retained_targets(&mut targets);
         let Some(retained) = targets.get(key).cloned() else {
             return match selector {
@@ -126,6 +117,14 @@ impl RetainedListenRegistry {
             }
             ResumeSelector::Token(_) | ResumeSelector::ReadTime(_) => ResumeDecision::Reset,
         }
+    }
+
+    fn targets(
+        &self,
+    ) -> MutexGuard<'_, HashMap<RetainedListenTargetKey, RetainedListenTargetState>> {
+        self.targets
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -381,7 +380,7 @@ impl ActiveListenTarget {
 }
 
 struct ActiveListenRequestStream {
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     retained_targets: Arc<RetainedListenRegistry>,
     requests: Pin<Box<dyn Stream<Item = Result<ListenRequest, Status>> + Send>>,
     principal: PrincipalContext,
@@ -411,7 +410,7 @@ enum TargetedListenUpdate {
 
 impl ActiveListenRequestStream {
     fn new(
-        service: Arc<Service>,
+        engine: Arc<Engine>,
         retained_targets: Arc<RetainedListenRegistry>,
         requests: Pin<Box<dyn Stream<Item = Result<ListenRequest, Status>> + Send>>,
         principal: PrincipalContext,
@@ -420,7 +419,7 @@ impl ActiveListenRequestStream {
             mpsc::channel(LISTEN_TARGET_UPDATE_QUEUE_CAPACITY);
         let (target_overflow_tx, target_overflow_rx) = mpsc::unbounded_channel();
         Self {
-            service,
+            engine,
             retained_targets,
             requests,
             principal,
@@ -518,7 +517,7 @@ impl ActiveListenRequestStream {
                 .map_err(firebase_grpc_status)?;
         let (sender, receiver) = mpsc::channel(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
         let registration = self
-            .service
+            .engine
             .clone()
             .subscribe_async_with_principal(
                 tenant_context.tenant_id().clone(),
@@ -674,7 +673,7 @@ struct DiffResponseContext<'a> {
 }
 
 pub fn listen_response_stream<S>(
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     retained_targets: Arc<RetainedListenRegistry>,
     requests: S,
     principal: PrincipalContext,
@@ -683,7 +682,7 @@ where
     S: Stream<Item = Result<ListenRequest, Status>> + Send + 'static,
 {
     let session =
-        ActiveListenRequestStream::new(service, retained_targets, Box::pin(requests), principal);
+        ActiveListenRequestStream::new(engine, retained_targets, Box::pin(requests), principal);
     Ok(Box::pin(stream::unfold(
         session,
         |mut session| async move { session.next_response().await.map(|item| (item, session)) },
@@ -1152,4 +1151,37 @@ fn decode_resume_token(token: &[u8]) -> Result<SequenceNumber, Status> {
 
 fn encode_resume_token(sequence: SequenceNumber) -> Vec<u8> {
     sequence.0.to_be_bytes().to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nimbus_core::{CollectionName, TableName};
+
+    #[test]
+    fn retained_listen_registry_recovers_after_poisoned_lock() {
+        let registry = RetainedListenRegistry::new();
+        let key = RetainedListenTargetKey {
+            project_id: "demo".to_string(),
+            collection_path: CollectionPath::root(
+                CollectionName::new("cities").expect("collection name should parse"),
+            ),
+            query: Query {
+                table: TableName::new("firebase_collection_test").expect("table name should parse"),
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+        };
+
+        let poison = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = registry.targets.lock().expect("lock should start clean");
+            panic!("poison retained listen registry");
+        }));
+        assert!(poison.is_err());
+
+        let resume = registry.resolve_resume(&key, &ResumeSelector::None);
+
+        assert!(matches!(resume, ResumeDecision::ColdStart));
+    }
 }

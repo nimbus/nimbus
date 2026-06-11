@@ -473,3 +473,95 @@ fn image_backed_plan_uses_direct_conmon_launch_for_materialized_rootfs() {
         "materialized rootfs launches should not be wrapped in buildah unshare"
     );
 }
+
+#[test]
+fn image_backed_plan_merges_image_env_with_process_overrides() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let backend = sample_plan_only_backend(temp_dir.path());
+    let rootfs_path = temp_dir.path().join("materialized-rootfs");
+    let mut defaults = sample_launch_defaults(rootfs_path.clone());
+    defaults.process = SandboxProcessSpec::new(["/bin/app"]).with_env([
+        "PATH=/image/bin",
+        "IMAGE_ONLY=yes",
+        "OVERRIDE_ME=image",
+    ]);
+    let mut spec = sample_spec();
+    spec.process = SandboxProcessSpec::new(Vec::<String>::new())
+        .with_env(["OVERRIDE_ME=compose", "APP_ENV=dev"]);
+
+    let plan = backend
+        .plan_start_with_id(
+            &spec,
+            &sandbox_id(),
+            Some(&defaults),
+            Some(sample_rootfs_artifact(rootfs_path)),
+        )
+        .expect("image-backed plan should lower with merged process env");
+
+    assert_eq!(
+        plan.manifest.spec.process.env,
+        vec![
+            "PATH=/image/bin".to_owned(),
+            "IMAGE_ONLY=yes".to_owned(),
+            "OVERRIDE_ME=compose".to_owned(),
+            "APP_ENV=dev".to_owned(),
+        ],
+        "container image env should survive while process env keeps override precedence"
+    );
+
+    let config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&plan.manifest.bundle_layout.config_path).unwrap())
+            .expect("bundle config should parse");
+    let env = config["process"]["env"]
+        .as_array()
+        .expect("env should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("env entries should be strings"))
+        .collect::<Vec<_>>();
+    for expected in [
+        "PATH=/image/bin",
+        "IMAGE_ONLY=yes",
+        "OVERRIDE_ME=compose",
+        "APP_ENV=dev",
+    ] {
+        assert!(
+            env.contains(&expected),
+            "bundle env should include merged entry {expected:?}: {env:?}"
+        );
+    }
+    assert!(
+        !env.contains(&"OVERRIDE_ME=image"),
+        "bundle env should replace image env with process override: {env:?}"
+    );
+}
+
+#[test]
+fn rootfs_plan_resolves_entrypoint_command_and_user_without_image_defaults() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let backend = sample_plan_only_backend(temp_dir.path());
+    let mut spec = sample_spec();
+    spec.process = SandboxProcessSpec::new(Vec::<String>::new())
+        .with_entrypoint(["/bin/sh", "-lc"])
+        .with_command(["exec app"])
+        .with_user("1001:1002");
+
+    let plan = backend
+        .plan_start_with_id(&spec, &sandbox_id(), None, None)
+        .expect("rootfs plan should lower entrypoint/command without image defaults");
+
+    assert_eq!(
+        plan.manifest.spec.process.args,
+        vec!["/bin/sh", "-lc", "exec app"],
+        "rootfs entrypoint and command must become runtime process args"
+    );
+
+    let config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&plan.manifest.bundle_layout.config_path).unwrap())
+            .expect("bundle config should parse");
+    assert_eq!(
+        config["process"]["args"],
+        serde_json::json!(["/bin/sh", "-lc", "exec app"])
+    );
+    assert_eq!(config["process"]["user"]["uid"], serde_json::json!(1001));
+    assert_eq!(config["process"]["user"]["gid"], serde_json::json!(1002));
+}

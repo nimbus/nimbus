@@ -49,9 +49,9 @@ fn extract_cookie(response: &reqwest::Response) -> String {
 async fn ui_redirects_to_auth_without_session_cookie() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, _token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -81,9 +81,9 @@ async fn ui_redirects_to_auth_without_session_cookie() {
 async fn ui_auth_get_never_sets_a_session_cookie_and_sets_csp() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, _token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -110,9 +110,9 @@ async fn ui_auth_get_never_sets_a_session_cookie_and_sets_csp() {
 async fn valid_token_post_creates_session_cookie_and_cookie_auth_unlocks_ui_and_ws() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -238,9 +238,9 @@ async fn valid_token_post_creates_session_cookie_and_cookie_auth_unlocks_ui_and_
 async fn ui_shell_serves_index_html_for_deep_routes_with_session_cookie() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -286,9 +286,9 @@ async fn ui_shell_serves_index_html_for_deep_routes_with_session_cookie() {
 async fn ui_root_response_carries_expected_csp() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -328,9 +328,9 @@ async fn ui_root_response_carries_expected_csp() {
 async fn ui_asset_shaped_request_for_missing_file_returns_not_found() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -359,9 +359,9 @@ async fn ui_asset_shaped_request_for_missing_file_returns_not_found() {
 async fn invalid_token_post_fails_and_rotated_cookie_is_revoked() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -429,9 +429,9 @@ async fn invalid_token_post_fails_and_rotated_cookie_is_revoked() {
 async fn ui_auth_page_renders_brand_and_cli_hint_for_unauthenticated_visitors() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, _token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -646,9 +646,9 @@ async fn ui_auth_page_renders_brand_and_cli_hint_for_unauthenticated_visitors() 
 async fn mint_ui_launch_ticket_requires_admin_bearer_and_returns_consume_url() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -691,9 +691,9 @@ async fn mint_ui_launch_ticket_requires_admin_bearer_and_returns_consume_url() {
 async fn consume_ui_launch_ticket_sets_session_cookie_and_redirects_to_ui_root() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -760,9 +760,9 @@ async fn consume_ui_launch_ticket_sets_session_cookie_and_redirects_to_ui_root()
 async fn consume_ui_launch_ticket_rejects_missing_or_unknown_tickets() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, _token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -798,9 +798,9 @@ async fn consume_ui_launch_ticket_rejects_missing_or_unknown_tickets() {
 async fn invalid_token_form_post_rerenders_auth_with_error_state() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, _token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -858,9 +858,9 @@ async fn invalid_token_form_post_rerenders_auth_with_error_state() {
 async fn invalid_token_json_post_returns_structured_unauthorized() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, _token) = local_server_security(temp.path());
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
-        RouterBuildConfig::core(fixture.service())
+        RouterBuildConfig::core(fixture.engine())
             .with_local_server_security(local_server_security)
             .build(),
     )

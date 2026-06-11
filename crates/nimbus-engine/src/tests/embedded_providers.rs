@@ -4,11 +4,11 @@ use crate::{ControlPlaneConfig, LocalEncryptionConfig, TenantProviderConfig};
 #[test]
 fn redb_provider_constructor_preserves_existing_tenant_filename() {
     let data_dir = tempdir().expect("temporary data dir should create");
-    let service = Service::new_with_embedded_provider(data_dir.path(), EmbeddedProviderKind::Redb)
-        .expect("redb-backed service should create");
+    let engine = Engine::new_with_embedded_provider(data_dir.path(), EmbeddedProviderKind::Redb)
+        .expect("redb-backed engine should create");
     let tenant_id = TenantId::new("demo".to_string()).expect("tenant id should build");
 
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
@@ -19,12 +19,12 @@ fn redb_provider_constructor_preserves_existing_tenant_filename() {
 }
 
 #[tokio::test]
-async fn default_service_constructor_uses_sqlite_tenant_files_and_roundtrips_service_paths() {
+async fn default_engine_constructor_uses_sqlite_tenant_files_and_roundtrips_engine_paths() {
     let data_dir = tempdir().expect("temporary data dir should create");
-    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
     let tenant_id = TenantId::new("demo".to_string()).expect("tenant id should build");
 
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
@@ -33,7 +33,7 @@ async fn default_service_constructor_uses_sqlite_tenant_files_and_roundtrips_ser
         "the default embedded provider should persist tenant data under the sqlite3 extension"
     );
 
-    let document_id = service
+    let document_id = engine
         .insert_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -41,10 +41,10 @@ async fn default_service_constructor_uses_sqlite_tenant_files_and_roundtrips_ser
         )
         .await
         .expect("sqlite-backed insert should succeed");
-    service.quiesce().await;
-    drop(service);
+    engine.quiesce().await;
+    drop(engine);
 
-    let reopened = Arc::new(Service::new(data_dir.path()).expect("service should reopen"));
+    let reopened = Arc::new(Engine::new(data_dir.path()).expect("engine should reopen"));
     let document = reopened
         .get_document_async(tenant_id.clone(), tasks_table(), document_id)
         .await
@@ -64,14 +64,14 @@ async fn default_service_constructor_uses_sqlite_tenant_files_and_roundtrips_ser
 }
 
 #[tokio::test]
-async fn default_embedded_provider_works_with_service_fixture_harness() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("fixture", |service, tenant_id| {
-        service.create_tenant(tenant_id)
+async fn default_embedded_provider_works_with_engine_fixture_harness() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("fixture", |engine, tenant_id| {
+        engine.create_tenant(tenant_id)
     });
 
-    let document_id = service
+    let document_id = engine
         .insert_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -79,7 +79,7 @@ async fn default_embedded_provider_works_with_service_fixture_harness() {
         )
         .await
         .expect("fixture-backed sqlite insert should succeed");
-    let document = service
+    let document = engine
         .get_document_async(tenant_id, tasks_table(), document_id)
         .await
         .expect("fixture-backed default read should succeed");
@@ -89,16 +89,16 @@ async fn default_embedded_provider_works_with_service_fixture_harness() {
 #[tokio::test]
 async fn typed_persistence_config_constructor_preserves_default_sqlite_behavior() {
     let data_dir = tempdir().expect("temporary data dir should create");
-    let service = Arc::new(
-        Service::new_with_persistence_config(ServicePersistenceConfig::embedded_default(
+    let engine = Arc::new(
+        Engine::new_with_persistence_config(EnginePersistenceConfig::embedded_default(
             data_dir.path(),
         ))
         .await
-        .expect("typed embedded sqlite service should create"),
+        .expect("typed embedded sqlite engine should create"),
     );
     let tenant_id = TenantId::new("typed-sqlite".to_string()).expect("tenant id should build");
 
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
     assert!(
@@ -106,7 +106,7 @@ async fn typed_persistence_config_constructor_preserves_default_sqlite_behavior(
         "typed embedded sqlite config should preserve the sqlite tenant extension"
     );
     assert_eq!(
-        service
+        engine
             .list_tenants_async()
             .await
             .expect("async tenant list should load"),
@@ -117,17 +117,17 @@ async fn typed_persistence_config_constructor_preserves_default_sqlite_behavior(
 #[tokio::test]
 async fn typed_persistence_config_constructor_supports_explicit_redb_embedded_provider() {
     let data_dir = tempdir().expect("temporary data dir should create");
-    let service = Arc::new(
-        Service::new_with_persistence_config(ServicePersistenceConfig::embedded(
+    let engine = Arc::new(
+        Engine::new_with_persistence_config(EnginePersistenceConfig::embedded(
             data_dir.path(),
             EmbeddedProviderKind::Redb,
         ))
         .await
-        .expect("typed embedded redb service should create"),
+        .expect("typed embedded redb engine should create"),
     );
     let tenant_id = TenantId::new("typed-redb".to_string()).expect("tenant id should build");
 
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
     assert!(
@@ -135,7 +135,7 @@ async fn typed_persistence_config_constructor_supports_explicit_redb_embedded_pr
         "typed embedded redb config should preserve the redb tenant extension"
     );
     assert_eq!(
-        service
+        engine
             .list_tenants_async()
             .await
             .expect("async tenant list should load"),
@@ -147,7 +147,7 @@ async fn typed_persistence_config_constructor_supports_explicit_redb_embedded_pr
 async fn typed_persistence_config_supports_separate_embedded_control_plane_directory() {
     let tenant_dir = tempdir().expect("tenant data dir should create");
     let control_dir = tempdir().expect("control data dir should create");
-    let config = ServicePersistenceConfig {
+    let config = EnginePersistenceConfig {
         tenant_provider: TenantProviderConfig::embedded(
             tenant_dir.path(),
             EmbeddedProviderKind::Sqlite,
@@ -155,15 +155,15 @@ async fn typed_persistence_config_supports_separate_embedded_control_plane_direc
         control_plane: ControlPlaneConfig::embedded_redb(control_dir.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
     };
-    let service = Arc::new(
-        Service::new_with_persistence_config(config.clone())
+    let engine = Arc::new(
+        Engine::new_with_persistence_config(config.clone())
             .await
-            .expect("typed embedded sqlite service with split control plane should create"),
+            .expect("typed embedded sqlite engine with split control plane should create"),
     );
     let tenant_id =
         TenantId::new("split-control-plane".to_string()).expect("tenant id should build");
 
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
     assert!(
@@ -174,7 +174,7 @@ async fn typed_persistence_config_supports_separate_embedded_control_plane_direc
         "tenant data should remain in the configured sqlite tenant directory"
     );
 
-    service
+    engine
         .record_monthly_active_user("alice")
         .expect("usage write should succeed");
     assert!(
@@ -185,20 +185,20 @@ async fn typed_persistence_config_supports_separate_embedded_control_plane_direc
         "the control-plane database should be created in the configured control directory once usage state is touched"
     );
     assert_eq!(
-        service
+        engine
             .current_monthly_active_users()
             .expect("usage snapshot should load")
             .monthly_active_users,
         1
     );
 
-    service.quiesce().await;
-    drop(service);
+    engine.quiesce().await;
+    drop(engine);
 
     let reopened = Arc::new(
-        Service::new_with_persistence_config(config)
+        Engine::new_with_persistence_config(config)
             .await
-            .expect("service should reopen with split control-plane config"),
+            .expect("engine should reopen with split control-plane config"),
     );
     assert_eq!(
         reopened

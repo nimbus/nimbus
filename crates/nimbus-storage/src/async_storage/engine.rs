@@ -9,8 +9,8 @@ use crate::encryption::{
 };
 use crate::{Clock, FaultInjector, TenantStore};
 
-use super::helpers::map_join_error;
 use super::read::{RedbTenantStorage, default_tenant_read_parallelism};
+use super::task_error::map_join_error;
 use super::traits::EmbeddedPersistenceProvider;
 
 /// Selects the retained embedded persistence provider from the composition root.

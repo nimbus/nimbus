@@ -14,7 +14,7 @@ async fn snapshot_seeded_runtime_driver_cycles_survive_repeated_async_host_invoc
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   return await ctx.db.get("messages", "doc-1");
 };
@@ -54,7 +54,7 @@ export {};
         "payload": {
             "table": "messages",
             "id": "doc-1",
-            "session_id": "query:messages:get",
+            "host_call_session_id": "query:messages:get",
         }
     });
     let cycles = usize_env_or("NIMBUS_SNAPSHOT_DRIVER_CYCLES", 32);
@@ -131,7 +131,7 @@ async fn snapshot_seeded_runtime_driver_cycles_survive_with_fresh_runtime_owner_
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   return await ctx.db.get("messages", "doc-1");
 };
@@ -172,7 +172,7 @@ export {};
         "payload": {
             "table": "messages",
             "id": "doc-1",
-            "session_id": "query:messages:get",
+            "host_call_session_id": "query:messages:get",
         }
     });
     let cycles = usize_env_or("NIMBUS_SNAPSHOT_DRIVER_FRESH_OWNER_CYCLES", 32);
@@ -261,7 +261,7 @@ fn snapshot_seeded_runtime_driver_cycles_survive_on_current_thread_runtime_with_
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   return await ctx.db.get("messages", "doc-1");
 };
@@ -301,7 +301,7 @@ export {};
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
-                    "session_id": "query:messages:get",
+                    "host_call_session_id": "query:messages:get",
                 }
             });
             let cycles = usize_env_or("NIMBUS_SNAPSHOT_DRIVER_CURRENT_THREAD_CYCLES", 32);

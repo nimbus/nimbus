@@ -1,12 +1,11 @@
 use nimbus_core::Error;
+use nimbus_sandbox::{SandboxRootSpec, SandboxSpec};
 use nimbus_tenant::{
     TenantImageAdmissionSource, TenantImageVerificationEvidence, TenantImageVerificationProvider,
     TenantImageVerificationRequest, TenantIsolationDecision,
 };
 
-use crate::SandboxServiceLaunch;
-
-use super::SandboxServiceManager;
+use super::ServiceManager;
 
 #[derive(Debug, Default)]
 pub(super) struct DefaultTenantImageVerificationProvider;
@@ -20,19 +19,24 @@ impl TenantImageVerificationProvider for DefaultTenantImageVerificationProvider 
     }
 }
 
-impl SandboxServiceManager {
-    pub(super) fn admit_launch_image(
+impl ServiceManager {
+    pub(super) fn admit_sandbox_root(
         &self,
         decision: &TenantIsolationDecision,
-        launch: &SandboxServiceLaunch,
+        spec: &SandboxSpec,
     ) -> Result<(), Error> {
-        let source = match launch {
-            SandboxServiceLaunch::Image(launch) => {
-                TenantImageAdmissionSource::registry(launch.image_reference.as_str())
-            }
-            SandboxServiceLaunch::Build(launch) => {
-                TenantImageAdmissionSource::local_build(launch.image_name.as_str())
-            }
+        let Some(source) = (match &spec.root {
+            SandboxRootSpec::Rootfs(_) => None,
+            SandboxRootSpec::OciImage(image) => match &image.source {
+                nimbus_sandbox::SandboxOciImageSource::Reference(reference) => Some(
+                    TenantImageAdmissionSource::registry(reference.reference.as_str()),
+                ),
+                nimbus_sandbox::SandboxOciImageSource::Build(build) => Some(
+                    TenantImageAdmissionSource::local_build(build.image_name.as_str()),
+                ),
+            },
+        }) else {
+            return Ok(());
         };
         decision
             .image()

@@ -50,26 +50,20 @@ fn krun_backend_m3_guest_user_switch_applies_image_user_inside_guest() {
          echo NIMBUS_GID=$(id -g) >&2; \
          exec /bin/busybox httpd -f -p {guest_port}"
     );
-    let spec = empty_image_spec("m3-guest-user-switch")
-        .with_port_binding(http_binding(host_port, guest_port));
-
-    let overrides = SandboxImageProcessOverrides {
-        cmd: Some(vec![
-            "/bin/busybox".into(),
-            "sh".into(),
-            "-c".into(),
-            guest_script,
-        ]),
-        ..Default::default()
-    };
-
-    let handle = block_on(
-        backend.start_from_image(
-            SandboxImageLaunchSpec::new(spec, "localhost/nimbus-m3-user-fixture:latest")
-                .with_process_overrides(overrides),
-        ),
+    let mut spec = image_spec(
+        "m3-guest-user-switch",
+        "localhost/nimbus-m3-user-fixture:latest",
     )
-    .expect("guest-user-switch image-backed start should succeed");
+    .with_port_binding(http_binding(host_port, guest_port));
+    spec.process = SandboxProcessSpec::new([
+        "/bin/busybox".to_owned(),
+        "sh".to_owned(),
+        "-c".to_owned(),
+        guest_script,
+    ]);
+
+    let handle =
+        block_on(backend.start(spec)).expect("guest-user-switch image-backed start should succeed");
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));

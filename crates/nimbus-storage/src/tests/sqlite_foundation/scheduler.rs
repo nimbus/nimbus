@@ -124,6 +124,34 @@ fn sqlite_execution_unit_batch_commits_documents_and_schedule_ops_together() {
 }
 
 #[test]
+fn sqlite_claim_due_jobs_respects_batch_limit_and_due_order() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let later = scheduled_insert_job(Timestamp(2_000), "later");
+    let first_due = scheduled_insert_job(Timestamp(1_000), "first due");
+    let second_due = scheduled_insert_job(Timestamp(1_000), "second due");
+    for job in [&later, &first_due, &second_due] {
+        store
+            .insert_scheduled_job(job)
+            .expect("scheduled insert should succeed");
+    }
+    let mut expected_due = [first_due.clone(), second_due.clone()];
+    expected_due.sort_by(|left, right| left.run_at.cmp(&right.run_at).then(left.id.cmp(&right.id)));
+
+    let claimed = store
+        .claim_due_jobs(Timestamp(2_000), 2)
+        .expect("claim should succeed");
+    assert_eq!(claimed, expected_due.to_vec());
+    assert_eq!(
+        store
+            .list_scheduled_jobs()
+            .expect("pending jobs should read"),
+        vec![later]
+    );
+}
+
+#[test]
 fn sqlite_scheduler_state_round_trips_results_crons_and_recovery() {
     let dir = tempdir().expect("temporary directory should create");
     let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
@@ -146,7 +174,7 @@ fn sqlite_scheduler_state_round_trips_results_crons_and_recovery() {
     );
 
     let claimed = store
-        .claim_due_jobs(Timestamp(1_000))
+        .claim_due_jobs(Timestamp(1_000), usize::MAX)
         .expect("claim should succeed");
     assert_eq!(claimed, vec![job.clone()]);
     assert!(
@@ -167,7 +195,7 @@ fn sqlite_scheduler_state_round_trips_results_crons_and_recovery() {
     assert_eq!(recovered[0].run_at, Timestamp(2_000));
 
     let claimed = store
-        .claim_due_jobs(Timestamp(2_000))
+        .claim_due_jobs(Timestamp(2_000), usize::MAX)
         .expect("second claim should succeed");
     assert_eq!(claimed.len(), 1);
     let result = ScheduledJobResult {
@@ -243,7 +271,7 @@ fn sqlite_claim_due_jobs_includes_u64_max_boundary() {
         .expect("scheduled insert should succeed");
 
     let claimed = store
-        .claim_due_jobs(Timestamp(u64::MAX))
+        .claim_due_jobs(Timestamp(u64::MAX), usize::MAX)
         .expect("claim should succeed");
     assert_eq!(claimed, vec![job]);
 }

@@ -9,6 +9,13 @@ fn run_to_completion_policy_with_service_grant(service_name: &str) -> Arc<Runtim
     Arc::new(RuntimePolicy::new(limits))
 }
 
+fn run_to_completion_policy_with_native_service_grant(service_name: &str) -> Arc<RuntimePolicy> {
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.service_capability_enabled = true;
+    limits.grants.service = vec![service_name.to_string()];
+    Arc::new(RuntimePolicy::new(limits))
+}
+
 fn run_to_completion_policy_with_secret_and_identity_grants() -> Arc<RuntimePolicy> {
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.grants.secret = vec!["stripe/live".to_string()];
@@ -241,7 +248,7 @@ export {};
 }
 
 #[tokio::test]
-async fn runtime_exposes_service_bindings_from_invocation_request() {
+async fn adapter_context_omits_services_and_request_services() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -250,9 +257,10 @@ async fn runtime_exposes_service_bindings_from_invocation_request() {
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({ request });
   return {
-    db: ctx.services.db,
-    metrics: ctx.services.metrics,
-    names: Object.keys(ctx.services).sort(),
+    ctxServicesType: typeof ctx.services,
+    hasCtxServices: Object.prototype.hasOwnProperty.call(ctx, "services"),
+    requestServicesType: typeof request.services,
+    requestKeys: Object.keys(request).sort(),
   };
 };
 
@@ -280,318 +288,29 @@ export {};
                         "host": "127.0.0.1",
                         "port": 15432,
                         "protocol": "tcp",
-                        "endpoints": {
-                            "postgres": {
-                                "host": "127.0.0.1",
-                                "port": 15432,
-                                "protocol": "tcp"
-                            },
-                            "health": {
-                                "host": "127.0.0.1",
-                                "port": 18080,
-                                "protocol": "http"
-                            }
-                        }
-                    },
-                    "metrics": {
-                        "host": "127.0.0.1",
-                        "port": 19090,
-                        "protocol": "http"
+                        "endpoints": {}
                     }
                 }))
                 .expect("service bindings should deserialize"),
             },
         )
         .await
-        .expect("runtime should expose request service bindings");
+        .expect("runtime should execute adapter context without service shortcuts");
 
     assert_eq!(
         result,
         serde_json::json!({
-            "db": {
-                "host": "127.0.0.1",
-                "port": 15432,
-                "protocol": "tcp",
-                "endpoints": {
-                    "health": {
-                        "host": "127.0.0.1",
-                        "port": 18080,
-                        "protocol": "http"
-                    },
-                    "postgres": {
-                        "host": "127.0.0.1",
-                        "port": 15432,
-                        "protocol": "tcp"
-                    }
-                }
-            },
-            "metrics": {
-                "host": "127.0.0.1",
-                "port": 19090,
-                "protocol": "http",
-                "endpoints": {}
-            },
-            "names": ["db", "metrics"],
-        })
+            "ctxServicesType": "undefined",
+            "hasCtxServices": false,
+            "requestServicesType": "undefined",
+            "requestKeys": ["args", "function_name", "kind"],
+        }),
+        "adapter ctx.services absent contract should omit both ctx.services and request.services"
     );
 }
 
 #[tokio::test]
-async fn runtime_service_property_lookup_stays_snapshot_only_for_missing_binding() {
-    #[derive(Default)]
-    struct ServiceLookupHost {
-        sync_calls: std::sync::Mutex<Vec<HostCallRequest>>,
-        async_calls: std::sync::Mutex<Vec<HostCallRequest>>,
-    }
-
-    impl HostBridge for ServiceLookupHost {
-        fn call(&self, request: HostCallRequest) -> Result<Value> {
-            self.sync_calls
-                .lock()
-                .expect("service lookup sync host lock should not be poisoned")
-                .push(request.clone());
-            Err(NimbusRuntimeError::Contract(format!(
-                "unexpected sync host op during snapshot-only service lookup test: {}",
-                request.operation
-            )))
-        }
-
-        fn call_async(
-            &self,
-            request: HostCallRequest,
-            _cancellation: HostCallCancellation,
-        ) -> HostBridgeFuture {
-            self.async_calls
-                .lock()
-                .expect("service lookup async host lock should not be poisoned")
-                .push(request);
-            Box::pin(async move {
-                Ok(serde_json::json!({
-                    "status": "ok",
-                    "value": {
-                        "host": "127.0.0.1",
-                        "port": 15432,
-                        "protocol": "tcp",
-                        "endpoints": {
-                            "postgres": {
-                                "host": "127.0.0.1",
-                                "port": 15432,
-                                "protocol": "tcp"
-                            }
-                        }
-                    },
-                }))
-            })
-        }
-    }
-
-    let tempdir = tempdir().expect("tempdir should build");
-    let bundle_path = tempdir.path().join("bundle.mjs");
-    std::fs::write(
-        &bundle_path,
-        r#"
-globalThis.__nimbusInvoke = async function (request) {
-  const ctx = globalThis.__nimbusCreateContext({ request });
-  return {
-    hasGet: typeof ctx.services.get === "function",
-    namesBefore: Object.keys(ctx.services).sort(),
-    missing: ctx.services.db ?? null,
-    namesAfter: Object.keys(ctx.services).sort(),
-  };
-};
-
-export {};
-"#,
-    )
-    .expect("bundle should write");
-
-    let host = Arc::new(ServiceLookupHost::default());
-    let runtime = NimbusRuntime::with_policy(
-        host.clone(),
-        run_to_completion_policy_with_service_grant("db"),
-    );
-    let result = runtime
-        .invoke_bundle(
-            &RuntimeBundle::new(&bundle_path),
-            &InvocationRequest {
-                kind: InvocationKind::Query,
-                function_name: "services:lazy".to_string(),
-                args: Value::Null,
-                page_size: None,
-                cursor: None,
-                auth: None,
-                services: Default::default(),
-            },
-        )
-        .await
-        .expect("runtime should lazily resolve missing service bindings");
-
-    assert_eq!(
-        result,
-        serde_json::json!({
-            "hasGet": true,
-            "namesBefore": [],
-            "missing": null,
-            "namesAfter": [],
-        })
-    );
-
-    assert!(
-        host.sync_calls
-            .lock()
-            .expect("service lookup sync host lock should not be poisoned")
-            .is_empty(),
-        "snapshot-only property reads should not use the sync host path"
-    );
-    assert!(
-        host.async_calls
-            .lock()
-            .expect("service lookup async host lock should not be poisoned")
-            .is_empty(),
-        "snapshot-only property reads should not trigger async activation"
-    );
-}
-
-#[tokio::test]
-async fn runtime_services_get_uses_async_host_bridge_and_caches_binding() {
-    #[derive(Default)]
-    struct ServiceLookupHost {
-        sync_calls: std::sync::Mutex<Vec<HostCallRequest>>,
-        async_calls: std::sync::Mutex<Vec<HostCallRequest>>,
-    }
-
-    impl HostBridge for ServiceLookupHost {
-        fn call(&self, request: HostCallRequest) -> Result<Value> {
-            self.sync_calls
-                .lock()
-                .expect("service lookup sync host lock should not be poisoned")
-                .push(request.clone());
-            Err(NimbusRuntimeError::Contract(format!(
-                "unexpected sync host op during async service lookup test: {}",
-                request.operation
-            )))
-        }
-
-        fn call_async(
-            &self,
-            request: HostCallRequest,
-            _cancellation: HostCallCancellation,
-        ) -> HostBridgeFuture {
-            self.async_calls
-                .lock()
-                .expect("service lookup async host lock should not be poisoned")
-                .push(request.clone());
-            Box::pin(async move {
-                Ok(serde_json::json!({
-                    "status": "ok",
-                    "value": {
-                        "host": "127.0.0.1",
-                        "port": 15432,
-                        "protocol": "tcp",
-                        "endpoints": {
-                            "postgres": {
-                                "host": "127.0.0.1",
-                                "port": 15432,
-                                "protocol": "tcp"
-                            }
-                        }
-                    },
-                }))
-            })
-        }
-    }
-
-    let tempdir = tempdir().expect("tempdir should build");
-    let bundle_path = tempdir.path().join("bundle.mjs");
-    std::fs::write(
-        &bundle_path,
-        r#"
-globalThis.__nimbusInvoke = async function (request) {
-  const ctx = globalThis.__nimbusCreateContext({ request });
-  const namesBefore = Object.keys(ctx.services).sort();
-  const first = await ctx.services.get("db");
-  const second = ctx.services.db;
-  const third = await ctx.services.get("db");
-  return {
-    namesBefore,
-    namesAfter: Object.keys(ctx.services).sort(),
-    sameReference: first === second && second === third,
-    db: third,
-  };
-};
-
-export {};
-"#,
-    )
-    .expect("bundle should write");
-
-    let host = Arc::new(ServiceLookupHost::default());
-    let runtime = NimbusRuntime::with_policy(
-        host.clone(),
-        run_to_completion_policy_with_service_grant("db"),
-    );
-    let result = runtime
-        .invoke_bundle(
-            &RuntimeBundle::new(&bundle_path),
-            &InvocationRequest {
-                kind: InvocationKind::Query,
-                function_name: "services:get".to_string(),
-                args: Value::Null,
-                page_size: None,
-                cursor: None,
-                auth: None,
-                services: Default::default(),
-            },
-        )
-        .await
-        .expect("runtime should resolve service bindings through ctx.services.get");
-
-    assert_eq!(
-        result,
-        serde_json::json!({
-            "namesBefore": [],
-            "namesAfter": ["db"],
-            "sameReference": true,
-            "db": {
-                "host": "127.0.0.1",
-                "port": 15432,
-                "protocol": "tcp",
-                "endpoints": {
-                    "postgres": {
-                        "host": "127.0.0.1",
-                        "port": 15432,
-                        "protocol": "tcp"
-                    }
-                }
-            }
-        })
-    );
-
-    assert!(
-        host.sync_calls
-            .lock()
-            .expect("service lookup sync host lock should not be poisoned")
-            .is_empty(),
-        "ctx.services.get should not use the sync host path"
-    );
-    let calls = host
-        .async_calls
-        .lock()
-        .expect("service lookup async host lock should not be poisoned")
-        .clone();
-    assert_eq!(calls.len(), 1, "missing service should be resolved once");
-    assert_eq!(calls[0].operation, HostCallOperation::CtxServiceLookup);
-    assert_eq!(
-        calls[0].payload,
-        serde_json::json!({
-            "service_name": "db",
-            "session_id": "session-1",
-        })
-    );
-}
-
-#[tokio::test]
-async fn runtime_services_get_requires_matching_service_grant() {
+async fn adapter_context_with_service_grant_still_has_no_raw_service_op() {
     #[derive(Default)]
     struct ServiceLookupHost {
         async_calls: std::sync::Mutex<Vec<HostCallRequest>>,
@@ -600,7 +319,7 @@ async fn runtime_services_get_requires_matching_service_grant() {
     impl HostBridge for ServiceLookupHost {
         fn call(&self, request: HostCallRequest) -> Result<Value> {
             Err(NimbusRuntimeError::Contract(format!(
-                "unexpected sync host op during service grant denial test: {}",
+                "unexpected sync host op during adapter service-op absence test: {}",
                 request.operation
             )))
         }
@@ -623,9 +342,11 @@ async fn runtime_services_get_requires_matching_service_grant() {
     std::fs::write(
         &bundle_path,
         r#"
-globalThis.__nimbusInvoke = async function (request) {
-  const ctx = globalThis.__nimbusCreateContext({ request });
-  await ctx.services.get("db");
+globalThis.__nimbusInvoke = async function () {
+  await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_service_lookup", {
+    service_name: "db",
+    host_call_session_id: "host-call-session-1",
+  });
 };
 
 export {};
@@ -636,7 +357,7 @@ export {};
     let host = Arc::new(ServiceLookupHost::default());
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
-        run_to_completion_snapshot_runtime_test_policy(),
+        run_to_completion_policy_with_service_grant("db"),
     );
     let error = runtime
         .invoke_bundle(
@@ -652,13 +373,220 @@ export {};
             },
         )
         .await
-        .expect_err("runtime should deny service lookup without a matching grant");
+        .expect_err("adapter-created runtime must not register the service lookup op");
 
     assert!(
         error
             .to_string()
-            .contains("runtime service grant denied for `db`"),
-        "unexpected service grant denial: {error}",
+            .contains("Nimbus runtime async host op not found: op_nimbus_ctx_service_lookup"),
+        "unexpected adapter service-op denial: {error}",
+    );
+    assert!(
+        host.async_calls
+            .lock()
+            .expect("service lookup async host lock should not be poisoned")
+            .is_empty(),
+        "adapter service-op denial should not reach the host bridge",
+    );
+}
+
+#[tokio::test]
+async fn nimbus_native_service_op_uses_async_host_bridge_and_exact_grants() {
+    #[derive(Default)]
+    struct ServiceLookupHost {
+        sync_calls: std::sync::Mutex<Vec<HostCallRequest>>,
+        async_calls: std::sync::Mutex<Vec<HostCallRequest>>,
+    }
+
+    impl HostBridge for ServiceLookupHost {
+        fn call(&self, request: HostCallRequest) -> Result<Value> {
+            self.sync_calls
+                .lock()
+                .expect("service lookup sync host lock should not be poisoned")
+                .push(request.clone());
+            Err(NimbusRuntimeError::Contract(format!(
+                "unexpected sync host op during native service lookup test: {}",
+                request.operation
+            )))
+        }
+
+        fn call_async(
+            &self,
+            request: HostCallRequest,
+            _cancellation: HostCallCancellation,
+        ) -> HostBridgeFuture {
+            self.async_calls
+                .lock()
+                .expect("service lookup async host lock should not be poisoned")
+                .push(request.clone());
+            Box::pin(async move {
+                Ok(serde_json::json!({
+                    "status": "ok",
+                    "value": {
+                        "host": "127.0.0.1",
+                        "port": 15432,
+                        "protocol": "tcp",
+                        "endpoints": {
+                            "postgres": {
+                                "host": "127.0.0.1",
+                                "port": 15432,
+                                "protocol": "tcp"
+                            }
+                        }
+                    },
+                }))
+            })
+        }
+    }
+
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function () {
+  return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_service_lookup", {
+    service_name: "db",
+    host_call_session_id: "host-call-session-1",
+  });
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let host = Arc::new(ServiceLookupHost::default());
+    let runtime = NimbusRuntime::with_policy(
+        host.clone(),
+        run_to_completion_policy_with_native_service_grant("db"),
+    );
+    let result = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "services:get".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect("native runtime should resolve service binding through the raw service op");
+
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "host": "127.0.0.1",
+            "port": 15432,
+            "protocol": "tcp",
+            "endpoints": {
+                "postgres": {
+                    "host": "127.0.0.1",
+                    "port": 15432,
+                    "protocol": "tcp"
+                }
+            }
+        })
+    );
+
+    assert!(
+        host.sync_calls
+            .lock()
+            .expect("service lookup sync host lock should not be poisoned")
+            .is_empty(),
+        "native service op should not use the sync host path"
+    );
+    let calls = host
+        .async_calls
+        .lock()
+        .expect("service lookup async host lock should not be poisoned")
+        .clone();
+    assert_eq!(calls.len(), 1, "missing service should be resolved once");
+    assert_eq!(calls[0].operation, HostCallOperation::CtxServiceLookup);
+    assert_eq!(
+        calls[0].payload,
+        serde_json::json!({
+            "service_name": "db",
+            "host_call_session_id": "host-call-session-1",
+        })
+    );
+}
+
+#[tokio::test]
+async fn nimbus_native_service_op_requires_exact_service_grant() {
+    #[derive(Default)]
+    struct ServiceLookupHost {
+        async_calls: std::sync::Mutex<Vec<HostCallRequest>>,
+    }
+
+    impl HostBridge for ServiceLookupHost {
+        fn call(&self, request: HostCallRequest) -> Result<Value> {
+            Err(NimbusRuntimeError::Contract(format!(
+                "unexpected sync host op during native service grant denial test: {}",
+                request.operation
+            )))
+        }
+
+        fn call_async(
+            &self,
+            request: HostCallRequest,
+            _cancellation: HostCallCancellation,
+        ) -> HostBridgeFuture {
+            self.async_calls
+                .lock()
+                .expect("service lookup async host lock should not be poisoned")
+                .push(request);
+            Box::pin(async { Ok(serde_json::json!({ "status": "ok", "value": null })) })
+        }
+    }
+
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function () {
+  await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_service_lookup", {
+    service_name: "cache",
+    host_call_session_id: "host-call-session-1",
+  });
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let host = Arc::new(ServiceLookupHost::default());
+    let runtime = NimbusRuntime::with_policy(
+        host.clone(),
+        run_to_completion_policy_with_native_service_grant("db"),
+    );
+    let error = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "services:denied".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect_err("native runtime should require an exact service grant");
+
+    assert!(
+        error
+            .to_string()
+            .contains("runtime service grant denied for `cache`"),
+        "unexpected native service grant denial: {error}",
     );
     assert!(
         host.async_calls
@@ -792,7 +720,7 @@ export {};
                 "payload": {
                     "table": "messages",
                     "fields": { "body": "hello" },
-                    "session_id": "session-1",
+                    "host_call_session_id": "host-call-session-1",
                 }
             },
             "patch": {
@@ -801,7 +729,7 @@ export {};
                     "table": "messages",
                     "id": "doc-1",
                     "patch": { "body": "updated" },
-                    "session_id": "session-1",
+                    "host_call_session_id": "host-call-session-1",
                 }
             },
             "deletion": {
@@ -809,7 +737,7 @@ export {};
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
-                    "session_id": "session-1",
+                    "host_call_session_id": "host-call-session-1",
                 }
             },
             "runAfter": {
@@ -819,7 +747,7 @@ export {};
                     "name": "messages:storeInternal",
                     "visibility": "internal",
                     "args": { "body": "scheduled" },
-                    "session_id": "session-1",
+                    "host_call_session_id": "host-call-session-1",
                 }
             },
             "runAt": {
@@ -829,14 +757,14 @@ export {};
                     "name": "messages:storeInternal",
                     "visibility": "internal",
                     "args": { "body": "scheduled-at" },
-                    "session_id": "session-1",
+                    "host_call_session_id": "host-call-session-1",
                 }
             },
             "cancel": {
                 "operation": "ctx_scheduler_cancel",
                 "payload": {
                     "job_id": "job-1",
-                    "session_id": "session-1",
+                    "host_call_session_id": "host-call-session-1",
                 }
             }
         })
@@ -981,7 +909,7 @@ export {};
             "builder_id": "builder-1",
             "page_size": 2,
             "cursor": Value::Null,
-            "session_id": "session-1",
+            "host_call_session_id": "host-call-session-1",
         })
     );
 }
@@ -1100,7 +1028,7 @@ export {};
         serde_json::json!({
             "name": "messages:list",
             "visibility": "public",
-            "session_id": "session-1",
+            "host_call_session_id": "host-call-session-1",
         })
     );
 }
@@ -1163,7 +1091,7 @@ export {};
                     "name": "messages:list",
                     "visibility": "public",
                     "args": { "author": "Ada" },
-                    "session_id": "session-1",
+                    "host_call_session_id": "host-call-session-1",
                 }
             },
             "mutation": {
@@ -1172,7 +1100,7 @@ export {};
                     "name": "messages:storeInternal",
                     "visibility": "internal",
                     "args": { "body": "hello" },
-                    "session_id": "session-1",
+                    "host_call_session_id": "host-call-session-1",
                 }
             },
             "action": {
@@ -1181,7 +1109,7 @@ export {};
                     "name": "messages:sendViaAction",
                     "visibility": "public",
                     "args": { "body": "wave" },
-                    "session_id": "session-1",
+                    "host_call_session_id": "host-call-session-1",
                 }
             }
         })

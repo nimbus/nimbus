@@ -2,18 +2,18 @@ use super::*;
 
 #[test]
 fn materialized_surface_evicts_least_recently_used_tables_under_byte_budget() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let alpha = messages_table("messages_materialized_alpha");
     let beta = messages_table("messages_materialized_beta");
 
-    service
+    engine
         .set_materialized_read_surface_limits_for_testing(&tenant_id, 8, 1)
         .expect("materialized surface limits should be configurable for tests");
 
     for table in [alpha.clone(), beta.clone()] {
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 table,
@@ -35,17 +35,17 @@ fn materialized_surface_evicts_least_recently_used_tables_under_byte_budget() {
         limit: None,
     };
 
-    let alpha_docs = service
+    let alpha_docs = engine
         .query_documents(&tenant_id, &query_for_table(alpha.clone()))
         .expect("alpha warm query should succeed");
     assert_eq!(alpha_docs.len(), 1);
 
-    let beta_docs = service
+    let beta_docs = engine
         .query_documents(&tenant_id, &query_for_table(beta.clone()))
         .expect("beta warm query should succeed");
     assert_eq!(beta_docs.len(), 1);
 
-    let stats = service
+    let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(stats.loaded_table_count, 1);
@@ -54,14 +54,14 @@ fn materialized_surface_evicts_least_recently_used_tables_under_byte_budget() {
     assert_eq!(stats.resident_document_count, 1);
     assert_eq!(stats.byte_capacity, 1);
     assert!(
-        service
+        engine
             .materialized_table_publication_stats_for_testing(&tenant_id, &alpha)
             .expect("alpha publication should load")
             .is_none(),
         "older table should be evicted under the byte budget"
     );
     assert!(
-        service
+        engine
             .materialized_table_publication_stats_for_testing(&tenant_id, &beta)
             .expect("beta publication should load")
             .is_some(),
@@ -71,17 +71,17 @@ fn materialized_surface_evicts_least_recently_used_tables_under_byte_budget() {
 
 #[tokio::test]
 async fn materialized_surface_rewarms_evicted_tables_and_publishes_fresh_frontiers_after_writes() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let alpha = messages_table("messages_materialized_rewarm_alpha");
     let beta = messages_table("messages_materialized_rewarm_beta");
 
-    service
+    engine
         .set_materialized_read_surface_limits_for_testing(&tenant_id, 1, usize::MAX)
         .expect("materialized surface limits should be configurable for tests");
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             alpha.clone(),
@@ -91,7 +91,7 @@ async fn materialized_surface_rewarms_evicted_tables_and_publishes_fresh_frontie
             ]),
         )
         .expect("alpha seed insert should succeed");
-    service
+    engine
         .insert_document(
             &tenant_id,
             beta.clone(),
@@ -121,17 +121,17 @@ async fn materialized_surface_rewarms_evicted_tables_and_publishes_fresh_frontie
         limit: None,
     };
 
-    let warmed_alpha = service
+    let warmed_alpha = engine
         .query_documents(&tenant_id, &alpha_query)
         .expect("warming alpha should succeed");
     assert_eq!(document_bodies(&warmed_alpha), vec!["Ada"]);
 
-    let alpha_publication = service
+    let alpha_publication = engine
         .materialized_table_publication_stats_for_testing(&tenant_id, &alpha)
         .expect("alpha publication should load")
         .expect("alpha should publish after the first warm load");
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             alpha.clone(),
@@ -141,7 +141,7 @@ async fn materialized_surface_rewarms_evicted_tables_and_publishes_fresh_frontie
             ]),
         )
         .expect("resident alpha insert should succeed");
-    let alpha_after_resident_insert = service
+    let alpha_after_resident_insert = engine
         .materialized_table_publication_stats_for_testing(&tenant_id, &alpha)
         .expect("alpha publication should load")
         .expect("resident alpha table should stay published");
@@ -152,19 +152,19 @@ async fn materialized_surface_rewarms_evicted_tables_and_publishes_fresh_frontie
     assert!(alpha_after_resident_insert.covered_sequence.0 > alpha_publication.covered_sequence.0);
     assert_eq!(alpha_after_resident_insert.document_count, 2);
 
-    let warmed_beta = service
+    let warmed_beta = engine
         .query_documents(&tenant_id, &beta_query)
         .expect("warming beta should succeed");
     assert_eq!(document_bodies(&warmed_beta), vec!["Gamma"]);
     assert!(
-        service
+        engine
             .materialized_table_publication_stats_for_testing(&tenant_id, &alpha)
             .expect("alpha publication should load")
             .is_none(),
         "warming beta under a one-table budget should evict alpha"
     );
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             alpha.clone(),
@@ -174,7 +174,7 @@ async fn materialized_surface_rewarms_evicted_tables_and_publishes_fresh_frontie
             ]),
         )
         .expect("evicted alpha insert should succeed");
-    let rewarmed_alpha = service
+    let rewarmed_alpha = engine
         .query_documents(&tenant_id, &alpha_query)
         .expect("rewarming alpha should succeed");
     assert_eq!(
@@ -182,7 +182,7 @@ async fn materialized_surface_rewarms_evicted_tables_and_publishes_fresh_frontie
         vec!["Ada", "Beta", "Delta"]
     );
 
-    let republished_alpha = service
+    let republished_alpha = engine
         .materialized_table_publication_stats_for_testing(&tenant_id, &alpha)
         .expect("alpha publication should load")
         .expect("rewarmed alpha should publish again");
@@ -196,7 +196,7 @@ async fn materialized_surface_rewarms_evicted_tables_and_publishes_fresh_frontie
         "rewarmed tables should publish a newer frontier than their last resident publication"
     );
 
-    let stats = service
+    let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(stats.loaded_table_count, 1);

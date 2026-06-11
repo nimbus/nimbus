@@ -19,6 +19,7 @@ import {
   collectNodeApiDiagnostics,
   formatNodeApiDiagnostics,
 } from "./node_api_diagnostics.mjs";
+import { assertTenantBundleAdmission } from "./module_specifiers.mjs";
 import {
   createNodeExternalPackageReport,
   stageNodeExternalPackages,
@@ -47,6 +48,9 @@ async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = fal
 
   for (const filePath of moduleFiles) {
     const moduleInfo = await parseModule(sourceDir, filePath, schema, { debugNodeApis });
+    assertTenantBundleAdmission(moduleInfo.source, {
+      file: path.relative(sourceDir, filePath).replaceAll(path.sep, "/"),
+    });
     modules.push(moduleInfo);
     for (const fn of moduleInfo.functions) {
       if (fn.kind === "http_action") {

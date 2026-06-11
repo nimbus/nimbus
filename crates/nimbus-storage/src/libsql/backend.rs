@@ -1,4 +1,10 @@
 use super::*;
+use crate::libsql::document_versions::{
+    record_document_versions_for_events_remote, record_document_versions_for_writes_remote,
+};
+use crate::libsql::index_versions::{
+    record_index_versions_for_events_remote, record_index_versions_for_writes_remote,
+};
 use crate::table_identity::{
     DEFAULT_TABLE_NAMESPACE, deleting_table_namespace, hidden_table_namespace,
 };
@@ -369,9 +375,25 @@ pub(super) async fn apply_durable_record_in_remote_conn(
         if let Some(execution_id) = record.scheduled_execution_id.as_deref() {
             let _ = begin_scheduled_execution_remote(conn, Some(execution_id)).await?;
         }
+        record_document_versions_for_writes_remote(
+            conn,
+            record.sequence,
+            record.timestamp,
+            &record.writes,
+        )
+        .await?;
+        record_index_versions_for_writes_remote(conn, record.sequence, &record.writes).await?;
         return apply_document_writes_in_remote_conn(conn, &record.writes).await;
     }
 
+    record_document_versions_for_events_remote(
+        conn,
+        record.sequence,
+        record.timestamp,
+        &record.events,
+    )
+    .await?;
+    record_index_versions_for_events_remote(conn, record.sequence, &record.events).await?;
     for event in &record.events {
         apply_tenant_event_in_remote_conn(conn, event).await?;
     }
@@ -782,13 +804,7 @@ pub(super) fn map_local_sqlite_error(error: rusqlite::Error) -> Error {
     }
 }
 
-pub(super) fn map_permit_error(_error: tokio::sync::AcquireError) -> Error {
-    Error::Internal("libsql replica executor unexpectedly closed".to_string())
-}
-
-pub(super) fn map_join_error(error: tokio::task::JoinError) -> Error {
-    Error::Internal(format!("libsql replica read task failed: {error}"))
-}
+pub(super) const LIBSQL_REPLICA_EXECUTOR_CONTEXT: &str = "libsql replica executor";
 
 pub(super) fn storage_io_error(error: impl std::fmt::Display) -> Error {
     Error::storage(StorageErrorKind::Io, error.to_string())

@@ -396,12 +396,13 @@ pub struct Timestamp(pub u64);
 impl Timestamp {
     /// Returns the current wall-clock timestamp in milliseconds since epoch.
     pub fn now() -> Self {
-        use std::time::{SystemTime, UNIX_EPOCH};
+        Self::from_system_time(std::time::SystemTime::now())
+    }
 
-        let duration = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time should be after unix epoch");
-        Self(duration.as_millis() as u64)
+    fn from_system_time(time: std::time::SystemTime) -> Self {
+        time.duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| Self(duration.as_millis() as u64))
+            .unwrap_or_default()
     }
 }
 
@@ -455,4 +456,27 @@ pub(crate) fn validate_document_key(value: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    use super::*;
+
+    #[test]
+    fn timestamp_from_system_time_saturates_pre_epoch_to_zero() {
+        assert_eq!(
+            Timestamp::from_system_time(UNIX_EPOCH - Duration::from_millis(1)),
+            Timestamp(0)
+        );
+    }
+
+    #[test]
+    fn timestamp_from_system_time_preserves_epoch_millis() {
+        assert_eq!(
+            Timestamp::from_system_time(UNIX_EPOCH + Duration::from_millis(1_234)),
+            Timestamp(1_234)
+        );
+    }
 }

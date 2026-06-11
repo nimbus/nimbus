@@ -7,24 +7,24 @@ export
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
 # === UI build dependency graph =============================================
-# nimbus-server `include_str!`s artifacts produced by the nimbus-ui JS
+# nimbus-assets embeds artifacts produced by the nimbus-ui JS
 # toolchain (`npm run codegen` + `npm run build`). These variables and
 # recipes make the dependency explicit so a fresh clone running
 # `make check` / `make test` / `make verify-desktop-ui` / `make ci-required`
 # walks the graph and builds UI prerequisites on demand.
-# See docs/plans/archive/local-dev-canonicalization-plan.md for the design.
+# See docs/private/plans/archive/local-dev-canonicalization-plan.md for the design.
 
 UI_PKG := packages/nimbus-ui
 
-# Files whose change should trigger `convex codegen` re-run.
+# Files whose change should trigger the UI codegen re-run.
 UI_CODEGEN_SOURCES := \
   $(shell find $(UI_PKG)/convex -type f -name '*.ts' -not -path '*/_generated/*' 2>/dev/null) \
   $(UI_PKG)/scripts/generate-routes.mjs \
   $(UI_PKG)/scripts/route-ignore-pattern.mjs \
   $(UI_PKG)/package.json
 
-# Files produced by `npm run codegen` (consumed by nimbus-server via
-# include_str!). Documented for clarity; the Make target is the stamp below.
+# Files produced by `npm run codegen`. Documented for clarity; the Make target
+# is the stamp below.
 UI_CODEGEN_OUTPUTS := \
   $(UI_PKG)/.nimbus/convex/auth.config.json \
   $(UI_PKG)/.nimbus/convex/bundle.mjs \
@@ -34,7 +34,7 @@ UI_CODEGEN_OUTPUTS := \
   $(UI_PKG)/.nimbus/convex/node_external_packages.json \
   $(UI_PKG)/.nimbus/convex/schema.json
 
-# Track codegen freshness via bundle.sha256 — `convex codegen` writes it
+# Track codegen freshness via bundle.sha256 — `npm run codegen` writes it
 # at the end of its bundle step, so its mtime is a faithful sentinel for
 # the whole UI_CODEGEN_OUTPUTS set. (Edge case: if you manually delete
 # one of the other six outputs but leave bundle.sha256, Make won't notice
@@ -52,8 +52,8 @@ UI_SPA_SOURCES := \
   $(UI_PKG)/tsconfig.json \
   $(UI_PKG)/package.json
 
-# Sentinel for the whole dist tree — consumed by nimbus-server's rust-embed
-# at compile time via `#[folder = "$CARGO_MANIFEST_DIR/../../packages/nimbus-ui/dist/"]`.
+# Sentinel for the whole dist tree — consumed by nimbus-assets' rust-embed at
+# compile time via `#[folder = "$CARGO_MANIFEST_DIR/../../packages/nimbus-ui/dist/"]`.
 UI_DIST_INDEX := $(UI_PKG)/dist/index.html
 
 $(UI_DIST_INDEX): $(UI_CODEGEN_SENTINEL) $(UI_SPA_SOURCES)
@@ -61,12 +61,12 @@ $(UI_DIST_INDEX): $(UI_CODEGEN_SENTINEL) $(UI_SPA_SOURCES)
 # ===========================================================================
 
 # === Embedded JS package payload dependency graph =========================
-# nimbus-bin embeds the dependency-closed package payloads via rust-embed
-# (#[folder = "$CARGO_MANIFEST_DIR/embedded-packages/"]). These recipes build
+# nimbus-assets embeds the dependency-closed package payloads via rust-embed
+# (#[folder = "$CARGO_MANIFEST_DIR/embedded/packages/"]). These recipes build
 # each provisioned package's dist and stage them + a checksummed manifest, so a
 # fresh clone running `make build` / `check` / `test` walks the graph and
 # produces the payload before cargo compiles nimbus-bin.
-# See docs/plans/archive/binary-embedded-package-distribution-plan.md (BPD1).
+# See docs/private/plans/archive/binary-embedded-package-distribution-plan.md (BPD1).
 
 # Provisioned (app-facing) package dirs. `codegen` is build-time tooling
 # (prebundled + embedded as a tooling run target), tracked here for sources.
@@ -84,7 +84,7 @@ EMBEDDED_PKG_SOURCES := \
 
 # Sentinel for the staged payload — stage-embedded-packages.mjs writes
 # manifest.json last, so its mtime is a faithful stamp for the whole tree.
-EMBEDDED_PKG_MANIFEST := crates/nimbus-bin/embedded-packages/manifest.json
+EMBEDDED_PKG_MANIFEST := crates/nimbus-assets/embedded/packages/manifest.json
 
 $(EMBEDDED_PKG_MANIFEST): $(EMBEDDED_PKG_SOURCES)
 	npm run build:embedded-packages
@@ -278,9 +278,9 @@ verify-release-oci-image-live-helper:
 
 # Desktop UI browser-smoke harness. Builds the nimbus binary the
 # disposable-server fixture spawns, then runs the deterministic walk.
-# `$(UI_DIST_INDEX)` brings in both the convex codegen outputs (consumed
-# by nimbus-server via include_str!) and the SPA dist (consumed via
-# rust-embed); see the UI build dependency graph at the top of this file.
+# `$(UI_DIST_INDEX)` brings in both the convex registry outputs consumed by
+# nimbus-convex and the SPA dist consumed by nimbus-assets; see the UI build
+# dependency graph at the top of this file.
 verify-desktop-ui: $(UI_DIST_INDEX)
 	cargo build -p nimbus-bin
 	npm run test:e2e:smoke -w packages/nimbus-ui

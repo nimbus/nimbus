@@ -12,7 +12,7 @@ use extenddb_core::types::{
     ListTagsOfResourceInput, ListTagsOfResourceOutput, Tag, TagResourceInput, UntagResourceInput,
 };
 use nimbus_core::{DocumentId, TableName};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 use serde_json::{Map, Value};
 
@@ -37,11 +37,11 @@ fn tags_id(table_name: &str) -> Result<DocumentId, DynamoDbError> {
 /// Drop `table_name`'s tag entries when the table is deleted, so a table
 /// recreated under the same name does not inherit stale tags (F4).
 pub(crate) fn reclaim_for_table(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<(), DynamoDbError> {
-    match service.delete_document(context.tenant_id(), tags_table()?, tags_id(table_name)?) {
+    match engine.delete_document(context.tenant_id(), tags_table()?, tags_id(table_name)?) {
         Ok(()) | Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
             Ok(())
         }
@@ -60,11 +60,11 @@ fn table_name_from_arn(arn: &str) -> Result<&str, DynamoDbError> {
 
 /// Load the persisted tags for a table (empty when none were ever set).
 fn load_tags(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<Vec<Tag>, DynamoDbError> {
-    match service.get_document(context.tenant_id(), &tags_table()?, tags_id(table_name)?) {
+    match engine.get_document(context.tenant_id(), &tags_table()?, tags_id(table_name)?) {
         Ok(document) => {
             let raw = document.fields.get("tags").cloned().unwrap_or(Value::Null);
             if raw.is_null() {
@@ -83,7 +83,7 @@ fn load_tags(
 
 /// Persist a table's tag set (upsert).
 fn store_tags(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
     tags: &[Tag],
@@ -97,14 +97,14 @@ fn store_tags(
             DynamoDbError::InternalServerError(format!("failed to serialize tags: {error}"))
         })?,
     );
-    match service.get_document(context.tenant_id(), &table, id.clone()) {
+    match engine.get_document(context.tenant_id(), &table, id.clone()) {
         Ok(_) => {
-            service
+            engine
                 .update_document(context.tenant_id(), table, id, fields)
                 .map_err(map_core_error)?;
         }
         Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
-            service
+            engine
                 .insert_document_with_id(context.tenant_id(), table, id, fields)
                 .map_err(map_core_error)?;
         }
@@ -115,13 +115,13 @@ fn store_tags(
 
 /// Resolve the table named by `resource_arn`, erroring if it does not exist.
 fn resolve_resource<'a>(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     resource_arn: &'a str,
 ) -> Result<&'a str, DynamoDbError> {
     let table_name = table_name_from_arn(resource_arn)?;
     // A tag op on a non-existent table is a 404 (matches DynamoDB).
-    control_plane::load_table_description(service, context, table_name)?;
+    control_plane::load_table_description(engine, context, table_name)?;
     Ok(table_name)
 }
 
@@ -151,15 +151,15 @@ fn validate_tag(tag: &Tag) -> Result<(), DynamoDbError> {
 /// `ResourceNotFoundException` for an unknown table; `ValidationException` for a
 /// malformed ARN, an invalid tag, or exceeding the 50-tag cap.
 pub fn tag_resource(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: TagResourceInput,
 ) -> Result<Value, DynamoDbError> {
-    let table_name = resolve_resource(service, context, &input.resource_arn)?;
+    let table_name = resolve_resource(engine, context, &input.resource_arn)?;
     for tag in &input.tags {
         validate_tag(tag)?;
     }
-    let mut tags = load_tags(service, context, table_name)?;
+    let mut tags = load_tags(engine, context, table_name)?;
     for incoming in input.tags {
         match tags.iter_mut().find(|tag| tag.key == incoming.key) {
             Some(existing) => existing.value = incoming.value,
@@ -171,7 +171,7 @@ pub fn tag_resource(
             "A resource can have at most {MAX_TAGS_PER_RESOURCE} tags"
         )));
     }
-    store_tags(service, context, table_name, &tags)?;
+    store_tags(engine, context, table_name, &tags)?;
     Ok(Value::Object(Map::new()))
 }
 
@@ -182,14 +182,14 @@ pub fn tag_resource(
 /// `ResourceNotFoundException` for an unknown table; `ValidationException` for a
 /// malformed ARN.
 pub fn untag_resource(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: UntagResourceInput,
 ) -> Result<Value, DynamoDbError> {
-    let table_name = resolve_resource(service, context, &input.resource_arn)?;
-    let mut tags = load_tags(service, context, table_name)?;
+    let table_name = resolve_resource(engine, context, &input.resource_arn)?;
+    let mut tags = load_tags(engine, context, table_name)?;
     tags.retain(|tag| !input.tag_keys.contains(&tag.key));
-    store_tags(service, context, table_name, &tags)?;
+    store_tags(engine, context, table_name, &tags)?;
     Ok(Value::Object(Map::new()))
 }
 
@@ -200,12 +200,12 @@ pub fn untag_resource(
 /// `ResourceNotFoundException` for an unknown table; `ValidationException` for a
 /// malformed ARN.
 pub fn list_tags_of_resource(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: ListTagsOfResourceInput,
 ) -> Result<ListTagsOfResourceOutput, DynamoDbError> {
-    let table_name = resolve_resource(service, context, &input.resource_arn)?;
-    let tags = load_tags(service, context, table_name)?;
+    let table_name = resolve_resource(engine, context, &input.resource_arn)?;
+    let tags = load_tags(engine, context, table_name)?;
     Ok(ListTagsOfResourceOutput {
         tags,
         next_token: None,
@@ -219,27 +219,23 @@ mod tests {
     use nimbus_core::TenantId;
     use serde_json::json;
 
-    fn fixture() -> (Arc<Service>, TenantIsolationContext, tempfile::TempDir) {
+    fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
-        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
         let context = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
-        crate::tenant::ensure_tenant(&service, &context).expect("tenant");
-        (service, context, temp)
+        crate::tenant::ensure_tenant(&engine, &context).expect("tenant");
+        (engine, context, temp)
     }
 
     /// Create table `name` and return its ARN.
-    fn create_table(
-        service: &Arc<Service>,
-        context: &TenantIsolationContext,
-        name: &str,
-    ) -> String {
+    fn create_table(engine: &Arc<Engine>, context: &TenantIsolationContext, name: &str) -> String {
         let input: CreateTableInput = serde_json::from_value(json!({
             "TableName": name,
             "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
             "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
         }))
         .unwrap();
-        control_plane::create_table(service, context, input)
+        control_plane::create_table(engine, context, input)
             .expect("create")
             .table_description
             .table_arn
@@ -252,9 +248,9 @@ mod tests {
         }
     }
 
-    fn list(service: &Arc<Service>, context: &TenantIsolationContext, arn: &str) -> Vec<Tag> {
+    fn list(engine: &Arc<Engine>, context: &TenantIsolationContext, arn: &str) -> Vec<Tag> {
         list_tags_of_resource(
-            service,
+            engine,
             context,
             ListTagsOfResourceInput {
                 resource_arn: arn.to_owned(),
@@ -267,12 +263,12 @@ mod tests {
 
     #[test]
     fn tag_list_untag_roundtrip() {
-        let (service, ctx, _t) = fixture();
-        let arn = create_table(&service, &ctx, "Orders");
-        assert!(list(&service, &ctx, &arn).is_empty(), "no tags initially");
+        let (engine, ctx, _t) = fixture();
+        let arn = create_table(&engine, &ctx, "Orders");
+        assert!(list(&engine, &ctx, &arn).is_empty(), "no tags initially");
 
         tag_resource(
-            &service,
+            &engine,
             &ctx,
             TagResourceInput {
                 resource_arn: arn.clone(),
@@ -280,13 +276,13 @@ mod tests {
             },
         )
         .expect("tag");
-        let mut tags = list(&service, &ctx, &arn);
+        let mut tags = list(&engine, &ctx, &arn);
         tags.sort_by(|a, b| a.key.cmp(&b.key));
         assert_eq!(tags, vec![tag("env", "prod"), tag("team", "payments")]);
 
         // Untag one key; the other survives.
         untag_resource(
-            &service,
+            &engine,
             &ctx,
             UntagResourceInput {
                 resource_arn: arn.clone(),
@@ -294,15 +290,15 @@ mod tests {
             },
         )
         .expect("untag");
-        assert_eq!(list(&service, &ctx, &arn), vec![tag("team", "payments")]);
+        assert_eq!(list(&engine, &ctx, &arn), vec![tag("team", "payments")]);
     }
 
     #[test]
     fn tag_resource_overwrites_existing_key() {
-        let (service, ctx, _t) = fixture();
-        let arn = create_table(&service, &ctx, "Orders");
+        let (engine, ctx, _t) = fixture();
+        let arn = create_table(&engine, &ctx, "Orders");
         tag_resource(
-            &service,
+            &engine,
             &ctx,
             TagResourceInput {
                 resource_arn: arn.clone(),
@@ -311,7 +307,7 @@ mod tests {
         )
         .expect("tag");
         tag_resource(
-            &service,
+            &engine,
             &ctx,
             TagResourceInput {
                 resource_arn: arn.clone(),
@@ -320,7 +316,7 @@ mod tests {
         )
         .expect("retag");
         assert_eq!(
-            list(&service, &ctx, &arn),
+            list(&engine, &ctx, &arn),
             vec![tag("env", "prod")],
             "same key is updated, not duplicated"
         );
@@ -328,10 +324,10 @@ mod tests {
 
     #[test]
     fn untag_unknown_key_is_a_noop() {
-        let (service, ctx, _t) = fixture();
-        let arn = create_table(&service, &ctx, "Orders");
+        let (engine, ctx, _t) = fixture();
+        let arn = create_table(&engine, &ctx, "Orders");
         tag_resource(
-            &service,
+            &engine,
             &ctx,
             TagResourceInput {
                 resource_arn: arn.clone(),
@@ -340,7 +336,7 @@ mod tests {
         )
         .expect("tag");
         untag_resource(
-            &service,
+            &engine,
             &ctx,
             UntagResourceInput {
                 resource_arn: arn.clone(),
@@ -348,15 +344,15 @@ mod tests {
             },
         )
         .expect("untag noop");
-        assert_eq!(list(&service, &ctx, &arn), vec![tag("env", "prod")]);
+        assert_eq!(list(&engine, &ctx, &arn), vec![tag("env", "prod")]);
     }
 
     #[test]
     fn reserved_aws_prefix_is_rejected() {
-        let (service, ctx, _t) = fixture();
-        let arn = create_table(&service, &ctx, "Orders");
+        let (engine, ctx, _t) = fixture();
+        let arn = create_table(&engine, &ctx, "Orders");
         let err = tag_resource(
-            &service,
+            &engine,
             &ctx,
             TagResourceInput {
                 resource_arn: arn,
@@ -369,9 +365,9 @@ mod tests {
 
     #[test]
     fn tag_on_missing_table_is_resource_not_found() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         let err = tag_resource(
-            &service,
+            &engine,
             &ctx,
             TagResourceInput {
                 resource_arn: "arn:aws:dynamodb:ddblocal:000000000000:table/Ghost".to_owned(),
@@ -384,9 +380,9 @@ mod tests {
 
     #[test]
     fn malformed_arn_is_validation_error() {
-        let (service, ctx, _t) = fixture();
+        let (engine, ctx, _t) = fixture();
         let err = list_tags_of_resource(
-            &service,
+            &engine,
             &ctx,
             ListTagsOfResourceInput {
                 resource_arn: "not-an-arn".to_owned(),
@@ -399,16 +395,16 @@ mod tests {
 
     #[test]
     fn tags_are_tenant_isolated() {
-        let (service, _ctx, _t) = fixture();
+        let (engine, _ctx, _t) = fixture();
         let acme = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
         let globex = crate::tenant::tenant_context(TenantId::new("globex").unwrap(), "test");
-        crate::tenant::ensure_tenant(&service, &acme).expect("acme");
-        crate::tenant::ensure_tenant(&service, &globex).expect("globex");
-        let acme_arn = create_table(&service, &acme, "Orders");
-        let globex_arn = create_table(&service, &globex, "Orders");
+        crate::tenant::ensure_tenant(&engine, &acme).expect("acme");
+        crate::tenant::ensure_tenant(&engine, &globex).expect("globex");
+        let acme_arn = create_table(&engine, &acme, "Orders");
+        let globex_arn = create_table(&engine, &globex, "Orders");
 
         tag_resource(
-            &service,
+            &engine,
             &acme,
             TagResourceInput {
                 resource_arn: acme_arn.clone(),
@@ -416,9 +412,9 @@ mod tests {
             },
         )
         .expect("acme tag");
-        assert_eq!(list(&service, &acme, &acme_arn), vec![tag("env", "prod")]);
+        assert_eq!(list(&engine, &acme, &acme_arn), vec![tag("env", "prod")]);
         assert!(
-            list(&service, &globex, &globex_arn).is_empty(),
+            list(&engine, &globex, &globex_arn).is_empty(),
             "another tenant's identically-named table has its own tags"
         );
     }

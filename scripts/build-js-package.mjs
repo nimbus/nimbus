@@ -17,6 +17,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { assertNimbusRootSdkArtifactText } from "./nimbus-root-sdk-artifact-policy.mjs";
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TSC = path.join(REPO_ROOT, "node_modules", ".bin", "tsc");
 
@@ -28,17 +30,17 @@ const TSC = path.join(REPO_ROOT, "node_modules", ".bin", "tsc");
 //     and that are co-provisioned (e.g. cross-package Nimbus deps).
 // Anything not listed defaults to dropped, so the closure is explicit.
 const SANITIZE = {
-  // Helper-only surface: shipped `uri()` imports nothing; the official mongodb
+  // Helper-only surface: shipped `mongoUri()` imports nothing; the official mongodb
   // driver is developer-supplied (Offline contract boundaries).
   "@nimbus/mongodb": { dropDependencies: ["mongodb"], keepDependencies: [] },
   // Helper-only config surface; AWS SDK stays an optional peer (kept).
   "@nimbus/dynamodb": { dropDependencies: [], keepDependencies: [] },
   // Pure-TS client SDK; react/react-dom remain peers (kept).
-  nimbus: { dropDependencies: [], keepDependencies: [] },
-  // Convex compat surface re-exports `nimbus` (co-provisioned, kept). Drops the
+  "@nimbus/nimbus": { dropDependencies: [], keepDependencies: [] },
+  // Convex compat surface re-exports `@nimbus/nimbus` (co-provisioned, kept). Drops the
   // codegen-time deps: `@nimbus/codegen` (codegen runs in-binary) and `esbuild`
   // (only used by the dev/test scripts, never the shipped surface).
-  convex: { dropDependencies: ["@nimbus/codegen", "esbuild"], keepDependencies: ["nimbus"] },
+  convex: { dropDependencies: ["@nimbus/codegen", "esbuild"], keepDependencies: ["@nimbus/nimbus"] },
   // Firebase client. Its three runtime deps are zero-dep pure ESM used only by
   // internal transport/generated protos (the public surface does not expose
   // their types), so they are co-provisioned as additional binary-owned roots
@@ -161,5 +163,24 @@ if (manifest.peerDependenciesMeta) provisioned.peerDependenciesMeta = manifest.p
 
 fs.writeFileSync(path.join(distDir, "package.json"), `${JSON.stringify(provisioned, null, 2)}\n`);
 
+if (manifest.name === "@nimbus/nimbus") {
+  verifyNimbusRootSdkArtifact(path.join(distDir, "index.js"), true);
+  verifyNimbusRootSdkArtifact(path.join(distDir, "index.d.ts"), false);
+}
+
 const emitted = fs.readdirSync(distDir).sort().join(", ");
 console.log(`${manifest.name}: wrote dist/ (${emitted})`);
+
+function verifyNimbusRootSdkArtifact(filePath, runtime) {
+  const artifact = fs.readFileSync(filePath, "utf8");
+  try {
+    assertNimbusRootSdkArtifactText(path.relative(REPO_ROOT, filePath), artifact, {
+      runtime,
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      fail(error.message);
+    }
+    throw error;
+  }
+}

@@ -1,7 +1,7 @@
 <!-- convex-ai-start -->
 This project implements a [Convex](https://convex.dev)-compatible backend server.
 
-When working on Convex-compatible code (`packages/convex/`, `demos/convex/`, or any Convex API surface), **always read `docs/adapters/convex/ai-guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
+When working on Convex-compatible code (`packages/convex/`, `demos/convex/`, or any Convex API surface), **always read `docs/private/adapters/convex/ai-guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
 <!-- convex-ai-end -->
 
 # Nimbus
@@ -32,7 +32,7 @@ If you find yourself writing compatibility code, stop and make the breaking chan
 ## Working Set
 
 - Start with `README.md`, `ARCHITECTURE.md`, `docs/README.md`, and
-  `docs/plans/README.md`.
+  `docs/private/plans/README.md`.
 - Use the active plan owner for the slice you are touching. Prefer active
   plans over archived history.
 - Treat the current git worktree plus the owning active plan as progress
@@ -44,23 +44,51 @@ If you find yourself writing compatibility code, stop and make the breaking chan
 
 ### Routing By Work Type
 
+- Public docs site (nimbusdocs.com), the five public `docs/` groups,
+  `website/`, llms.txt artifacts, or README/repo front-door messaging:
+  `.agents/skills/docs/SKILL.md` (IA, Diátaxis rules, `docs/private/`
+  fence, messaging canon, verification gates), with
+  `docs/private/plans/archive/nimbus-docs-site-plan.md` (the completed
+  `nimbus-docs-site` baseline, DOC0..DOC13, closed 2026-06-10) as prior
+  context, gated on `bash scripts/verify-nimbus-docs-site.sh` and
+  `bash scripts/check-docs.sh`. Promote a new active plan before
+  another docs-site wave.
+- Launch-readiness gap closure (deploy admin handshake, `X-Nimbus-Api-Key`
+  decision, admin-token rotation gate, configurable CORS, CLI wiring for
+  Firestore/MongoDB/DynamoDB, `rest.ts` parity, TLS termination, backup
+  command, systemd unit, apt channel, `nimbus node run` reconciler
+  caller): `docs/private/plans/archive/launch-readiness-plan.md` is the
+  completed baseline (LR0..LR13, closed 2026-06-11), gated on
+  `bash scripts/verify-launch-readiness.sh` (14 conditions). Promote a
+  new active plan before another launch-readiness wave. Note:
+  `docs/private/` is local-only (untracked by owner directive) — these
+  plan references resolve on agent machines, not in the public repo.
 - Generic maintainability, refactor, modularity, reliability hardening, or
   canonical naming:
-  `docs/architecture/testing/reliability-posture.md`,
-  `docs/architecture/testing/ci-failure-investigation.md`,
-  `docs/plans/archive/architecture-seam-cleanliness-plan.md`,
-  `docs/plans/archive/deployment-auth-runtime-boundary-plan.md`,
-  `docs/plans/archive/repo-architecture-and-seam-hardening-plan.md`
+  `docs/private/architecture/testing/reliability-posture.md`,
+  `docs/private/architecture/testing/ci-failure-investigation.md`,
+  `docs/private/plans/archive/architecture-seam-cleanliness-plan.md`,
+  `docs/private/plans/archive/deployment-auth-runtime-boundary-plan.md`,
+  `docs/private/plans/archive/repo-architecture-and-seam-hardening-plan.md`
 - Adapter/runtime/auth/trust cleanup:
-  `docs/architecture/server/adapter-expectations.md`,
-  `docs/architecture/runtime/adapter-boundary.md`,
-  `docs/architecture/server/auth-runtime-trust.md`,
-  `docs/plans/archive/deployment-auth-runtime-boundary-plan.md`
-  Use the completed baselines in `docs/plans/archive/server-runtime-canonicalization-plan.md`,
-  `docs/plans/archive/adapter-runtime-trust-hardening-plan.md`,
-  `docs/plans/archive/runtime-capability-adapter-boundary-plan.md`, and
-  `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as prior
+  `docs/private/architecture/server/adapter-expectations.md`,
+  `docs/private/architecture/runtime/adapter-boundary.md`,
+  `docs/private/architecture/server/auth-runtime-trust.md`,
+  `docs/private/plans/archive/deployment-auth-runtime-boundary-plan.md`
+  Use the completed baselines in `docs/private/plans/archive/server-runtime-canonicalization-plan.md`,
+  `docs/private/plans/archive/adapter-runtime-trust-hardening-plan.md`,
+  `docs/private/plans/archive/runtime-capability-adapter-boundary-plan.md`, and
+  `docs/private/plans/archive/multi-adapter-boundary-hardening-plan.md` only as prior
   wave references.
+- Runtime capability segregation, exact service grants, adapter context service
+  shortcut removal, private Nimbus-managed isolate host-transport gating,
+  Bun/JSC service-capability fail-closed parity, principal-class service route
+  policy, engine `Service` -> `Engine` naming, or JS SDK authority boundaries:
+  `docs/private/architecture/server/auth-runtime-trust.md`,
+  `docs/private/architecture/runtime/adapter-boundary.md`,
+  `docs/private/architecture/sandbox/service-sandbox-session-model.md`,
+  `docs/private/plans/nimbus-capability-segregation-plan.md`, gated on
+  `bash scripts/verify-nimbus-capability-segregation.sh` once CB0 creates it.
 - Cross-cutting multi-backend / multi-adapter hardening (storage trait
   segregation, adapter/backend registration seam decision,
   `RuntimeHooks` for backend-coupled workers, dual-target tests per
@@ -68,52 +96,59 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   latency budgets, trait object-safety audit, stable logical table identity +
   backend-owned physical-layout decision, typed-column key storage,
   read-consistency routing, hybrid event-capture pattern, cross-cutting
-  `docs/technical-debt.md`):
-  `docs/plans/archive/multi-backend-adapter-hardening-plan.md` (MBA0..MBA14,
+  `docs/private/technical-debt.md`):
+  `docs/private/plans/archive/multi-backend-adapter-hardening-plan.md` (MBA0..MBA14,
   completed baseline, closed 2026-05-27). Inspiration source is ExtendDB
   (Apache-2.0 DynamoDB adapter on PostgreSQL) at
   `~/src/github.com/ExtendDB/extenddb`. Independent
-  of `docs/plans/archive/dynamodb-adapter-plan.md`; applies across every
+  of `docs/private/plans/archive/dynamodb-adapter-plan.md`; applies across every
   existing backend and adapter, not only the DynamoDB lane. `/goal`
   control plane gated on
   `bash scripts/verify-multi-backend-adapter-hardening.sh` (fifteen
-  conditions). Use `docs/operating/multi-backend-adapter-hardening.md`
+  conditions). Use `docs/private/operating/multi-backend-adapter-hardening.md`
   for the current contract.
 - Convex-informed storage trust gaps (table lifecycle after stable
   `table_catalog`, table-aware Convex document identity validation,
   `TableId`-based dependency tracking, stable index identity/lifecycle,
   history/repeatable-read posture, table identity diagnostics, and
   cross-backend conformance after comparing against Convex internals):
-  `docs/plans/archive/convex-storage-trust-hardening-plan.md` is the
+  `docs/private/plans/archive/convex-storage-trust-hardening-plan.md` is the
   completed baseline, closed 2026-05-27. Use local Convex source at
   `~/src/github.com/get-convex/convex-backend` and the baseline proof at
-  `docs/plans/proof/convex-storage-trust-hardening/cst0-convex-storage-comparison.md`
+  `docs/private/plans/proof/convex-storage-trust-hardening/cst0-convex-storage-comparison.md`
   for historical context. Promote a new active plan before another
   Convex-informed storage trust wave.
 - Sandbox, machine lifecycle, or CLI UX:
-  `docs/architecture/sandbox/microvm-service-baseline.md`,
-  `docs/architecture/sandbox/macos-machine-flow.md` when relevant,
-  `docs/operating/cli.md`, and the active platform plan from
-  `docs/plans/README.md`
+  `docs/private/architecture/sandbox/service-sandbox-session-model.md`,
+  `docs/private/architecture/sandbox/microvm-service-baseline.md`,
+  `docs/private/architecture/sandbox/macos-machine-flow.md` when relevant,
+  `docs/private/operating/cli.md`, and the active platform plan from
+  `docs/private/plans/README.md`
+- SDK services/sandboxes/sessions resource model, built-in/external/sandbox-backed
+  service implementations, dynamic services, sandbox APIs, runtime-isolate
+  non-resource semantics, future `profile: "isolate"` sandbox semantics, or
+  session target semantics:
+  `docs/private/architecture/sandbox/service-sandbox-session-model.md` and
+  `docs/private/plans/nimbus-sdk-resource-model-plan.md`
 - Sandbox backend / snapshot / desktop / GPU (unified-lift roadmap on
-  `nimbus-libkrun`): `docs/plans/nimbus-sandbox-plan.md` is the single
+  `nimbus-libkrun`): `docs/private/plans/nimbus-sandbox-plan.md` is the single
   active execution plan. Bands route as **B** (backend / capability
   profiles / nimbus-guest), **S** (Linux-KVM snapshot + fork, S0..S5),
   **D** (desktop profile / computer use, D1..D10), **G** (GPU profile,
   G1..G13). Decision baseline D1-D12 in
-  `docs/plans/research/vmm-landscape-2026.md`. Subject research:
-  `docs/plans/research/libkrun-session-sandbox.md` (backend),
-  `docs/plans/research/gpu-sandbox-backends.md` (GPU mediation),
-  `docs/plans/research/computer-use-capabilities-audit.md` (desktop
-  capability gaps), `docs/plans/research/nimbus-libkrun-fork-inventory.md`
+  `docs/private/plans/research/vmm-landscape-2026.md`. Subject research:
+  `docs/private/plans/research/libkrun-session-sandbox.md` (backend),
+  `docs/private/plans/research/gpu-sandbox-backends.md` (GPU mediation),
+  `docs/private/plans/research/computer-use-capabilities-audit.md` (desktop
+  capability gaps), `docs/private/plans/research/nimbus-libkrun-fork-inventory.md`
   (fork delta + muvm lift map),
-  `docs/plans/research/macos-host-vs-guest-control-plane-rationale.md`
-  (per-host topology), `docs/architecture/sandbox/macos-machine-flow.md`
+  `docs/private/plans/research/macos-host-vs-guest-control-plane-rationale.md`
+  (per-host topology), `docs/private/architecture/sandbox/macos-machine-flow.md`
   (macOS outer-VM flow). Archived predecessors:
-  `docs/plans/archive/computer-use-sandbox-plan.md` (→ Band D),
-  `docs/plans/archive/gpu-accelerated-sandbox-plan.md` (→ Band G),
-  `docs/plans/archive/nimbus-libkrun-snapshot-port-plan.md` (→ Band S),
-  `docs/plans/archive/firecracker-snapshot-invocation-backend-plan.md`
+  `docs/private/plans/archive/computer-use-sandbox-plan.md` (→ Band D),
+  `docs/private/plans/archive/gpu-accelerated-sandbox-plan.md` (→ Band G),
+  `docs/private/plans/archive/nimbus-libkrun-snapshot-port-plan.md` (→ Band S),
+  `docs/private/plans/archive/firecracker-snapshot-invocation-backend-plan.md`
   (Firecracker-as-separate-VMM dropped per D2). Macros: Linux production
   runs direct libkrun-on-KVM microVMs per service; macOS dev runs ONE
   outer machine-os Linux VM and per-workload sandboxes inside it are
@@ -121,15 +156,15 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   Snapshot/fork S0..S5 is Linux-KVM-only by construction.
 - Node-side systemd D-Bus binding (`SystemdDbusClient` /
   `SystemdTransientUnitBackend` / `NodeWorkloadReconciler`):
-  `docs/plans/archive/node-dbus-client-binding-plan.md` is the
+  `docs/private/plans/archive/node-dbus-client-binding-plan.md` is the
   completed baseline (NDB0..NDB7, closed 2026-05-29 via PR #3). Lifted
   the TSB7 deferral recorded in
-  `docs/plans/proof/tenant-domain-and-node-enforcement-boundary/tsb7-systemd-transient.md`
+  `docs/private/plans/proof/tenant-domain-and-node-enforcement-boundary/tsb7-systemd-transient.md`
   by attaching `lucab/zbus_systemd` (pin `=0.26000.0`, features
   `systemd1` + `zbus-async-tokio`) and direct `zbus` to the existing
   trait at `crates/nimbus-node/src/systemd_transient.rs:15-32`.
   Decision rationale and option matrix in
-  `docs/plans/research/systemd-dbus-binding-rust-2026.md`.
+  `docs/private/plans/research/systemd-dbus-binding-rust-2026.md`.
   Signal-correlated job completion (call systemd `Manager.Subscribe`,
   establish the `JobRemoved` stream *before* calling
   `StartTransientUnit`/`StopUnit`, complete only on matching signal
@@ -142,23 +177,23 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   plane gated on `bash scripts/verify-node-dbus-binding.sh` (10
   conditions). Plan does NOT wire a production caller for
   `NodeWorkloadReconciler` — TSB14's deferral of that work
-  (`docs/plans/proof/tenant-domain-and-node-enforcement-boundary/tsb14-node-extraction-decision.md:28-37`)
+  (`docs/private/plans/proof/tenant-domain-and-node-enforcement-boundary/tsb14-node-extraction-decision.md:28-37`)
   needs its own follow-up plan.
 - CLI daemon canonicalization, walk-up boundaries, or banner shape:
-  `docs/plans/archive/cli-daemon-canonicalization-plan.md` (completed
-  baseline, closed 2026-05-19), `docs/operating/cli.md`,
-  `docs/plans/archive/cli-command-surface-plan.md` (prior wave),
-  `docs/plans/archive/compose-discovery-plan.md` (compose precedent).
+  `docs/private/plans/archive/cli-daemon-canonicalization-plan.md` (completed
+  baseline, closed 2026-05-19), `docs/private/operating/cli.md`,
+  `docs/private/plans/archive/cli-command-surface-plan.md` (prior wave),
+  `docs/private/plans/archive/compose-discovery-plan.md` (compose precedent).
   Promote a new active plan before another CLI-canonicalization wave.
 - Localhost/server security:
-  `docs/plans/archive/localhost-server-security-plan.md`
+  `docs/private/plans/archive/localhost-server-security-plan.md`
 - Install script work:
-  `docs/plans/archive/install-script-plan.md` as the completed baseline and
-  `docs/plans/distribution-plan.md` as parent context; promote a new active
+  `docs/private/plans/archive/install-script-plan.md` as the completed baseline and
+  `docs/private/plans/distribution-plan.md` as parent context; promote a new active
   plan before another install-script wave
 - Local-dev / build-contract / Make-vs-Cargo orchestration:
-  `docs/operating/local-dev.md` for the user-facing contract, then
-  `docs/plans/archive/local-dev-canonicalization-plan.md` as the
+  `docs/private/operating/local-dev.md` for the user-facing contract, then
+  `docs/private/plans/archive/local-dev-canonicalization-plan.md` as the
   completed baseline (LD0-LD7, closed 2026-05-21). The Makefile UI
   dependency graph at the top of `Makefile` (`UI_PKG`, `UI_DIST_INDEX`,
   etc.) is the source of truth for cross-toolchain prerequisites;
@@ -166,8 +201,8 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   and errors actionably otherwise. Promote a new active plan before
   another local-dev / build-graph wave.
 - CI caching / sccache / Swatinem orchestration:
-  `docs/operating/ci-caching.md` for the canonical caching contract,
-  then `docs/plans/archive/ci-caching-canonicalization-plan.md` as the
+  `docs/private/operating/ci-caching.md` for the canonical caching contract,
+  then `docs/private/plans/archive/ci-caching-canonicalization-plan.md` as the
   completed baseline (CC0-CC9, closed 2026-05-22). The baseline
   covers sccache rollout across every Rust job in
   `.github/workflows/*.yml`, Swatinem `shared-key` rotation v1→v2,
@@ -181,8 +216,8 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   sccache / Swatinem wave.
 - CI infrastructure modernization (composite actions, SHA pinning,
   runner determinism, job summaries, SAST):
-  `docs/operating/ci-modernization.md` for the canonical contract,
-  then `docs/plans/archive/ci-modernization-plan.md` as the completed
+  `docs/private/operating/ci-modernization.md` for the canonical contract,
+  then `docs/private/plans/archive/ci-modernization-plan.md` as the completed
   baseline (CM0..CM8, closed 2026-05-22). The baseline covers the
   cross-workflow Rust + sccache + Swatinem composite action
   extraction at `.github/actions/setup-rust-cached/`, SHA-pinning
@@ -198,9 +233,9 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   composite-action wave.
 - Coverage / release-pipeline acceleration (mold linker, coverage
   parallelism + sharding, release.yml composite adoption, Windows
-  release-build investigation): `docs/operating/ci-modernization.md`
+  release-build investigation): `docs/private/operating/ci-modernization.md`
   for the canonical contract (see "Coverage and release acceleration"
-  section), then `docs/plans/archive/coverage-acceleration-plan.md`
+  section), then `docs/private/plans/archive/coverage-acceleration-plan.md`
   as the completed baseline (CA0..CA5, closed 2026-05-22). The
   baseline installs `mold` in the `setup-rust-cached` composite via
   `CARGO_TARGET_*_RUSTFLAGS=-C link-arg=-fuse-ld=mold` (NOT
@@ -220,9 +255,9 @@ If you find yourself writing compatibility code, stop and make the breaking chan
 - PR CI wall acceleration (verification-harness sharding, workspace-
   tests sharding via cargo-nextest --partition, external-provider
   matrix split by provider, warm-sccache shrink):
-  `docs/operating/ci-modernization.md` for the canonical contract
+  `docs/private/operating/ci-modernization.md` for the canonical contract
   ("PR critical-path acceleration" section), then
-  `docs/plans/archive/ci-wall-acceleration-plan.md` as the completed
+  `docs/private/plans/archive/ci-wall-acceleration-plan.md` as the completed
   baseline (CW0..CW5, closed 2026-05-23). The baseline attacks the
   post-CA wall poles on `main` (23.6m on `32951ee7`): Server
   Verification Harness (12.7m → ~3.5m via 4-shard server harness),
@@ -242,8 +277,8 @@ If you find yourself writing compatibility code, stop and make the breaking chan
 - CI PR-wall sub-15 (post-CW pole attack — libsql image pin +
   docker-image cache, coverage extraction to its own workflow,
   branch-conditional concurrency cap, warm-sccache retain-or-retire
-  decision): `docs/operating/ci-pr-wall.md` for the canonical
-  contract, then `docs/plans/archive/ci-pr-wall-sub-15-plan.md` as
+  decision): `docs/private/operating/ci-pr-wall.md` for the canonical
+  contract, then `docs/private/plans/archive/ci-pr-wall-sub-15-plan.md` as
   the completed baseline (PW0..PW6, closed 2026-05-23). The
   baseline pins
   `ghcr.io/tursodatabase/libsql-server` to a `vX.Y.Z` tag chosen
@@ -268,34 +303,34 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   ci.yml). Promote a new active plan before another PR-wall
   acceleration wave.
 - Firebase/Firestore compatibility:
-  `docs/adapters/firebase/compatibility.md`,
-  `docs/adapters/firebase/migration.md`,
-  `docs/adapters/firebase/auth-contract.md`,
-  `docs/architecture/runtime/adapter-boundary.md`,
-  `docs/architecture/server/auth-runtime-trust.md`
+  `docs/private/adapters/firebase/compatibility.md`,
+  `docs/private/adapters/firebase/migration.md`,
+  `docs/private/adapters/firebase/auth-contract.md`,
+  `docs/private/architecture/runtime/adapter-boundary.md`,
+  `docs/private/architecture/server/auth-runtime-trust.md`
 - Cloud Functions compatibility:
-  `docs/adapters/cloud-functions/compatibility.md`,
-  `docs/adapters/cloud-functions/migration.md`,
-  `docs/architecture/runtime/adapter-boundary.md`,
-  `docs/architecture/server/auth-runtime-trust.md`
+  `docs/private/adapters/cloud-functions/compatibility.md`,
+  `docs/private/adapters/cloud-functions/migration.md`,
+  `docs/private/architecture/runtime/adapter-boundary.md`,
+  `docs/private/architecture/server/auth-runtime-trust.md`
 - Convex or Nimbus CLI/codegen workflow:
-  `docs/adapters/convex/ai-guidelines.md`,
-  `docs/operating/cli.md`,
-  `docs/adapters/convex/compatibility.md`,
-  `docs/plans/archive/nimbus-init-plan.md`
+  `docs/private/adapters/convex/ai-guidelines.md`,
+  `docs/private/operating/cli.md`,
+  `docs/private/adapters/convex/compatibility.md`,
+  `docs/private/plans/archive/nimbus-init-plan.md`
 - Node-compatible runtime / `deno_core` / `rusty_v8` / embedded-codegen:
-  `docs/architecture/runtime/adapter-boundary.md` and
-  `docs/architecture/server/auth-runtime-trust.md` after the top-level docs.
+  `docs/private/architecture/runtime/adapter-boundary.md` and
+  `docs/private/architecture/server/auth-runtime-trust.md` after the top-level docs.
   Current default-quality work lives in
-  `docs/plans/node-default-runtime-support-hardening-plan.md` (NDS0..NDS10):
+  `docs/private/plans/node-default-runtime-support-hardening-plan.md` (NDS0..NDS10):
   raise Node24 from bounded FaaS-compatible default to a well-supported default,
   expand Node22/Node24 official fixture and package evidence, give Node26 real
   Current-line fixture evidence, and subsume
-  `docs/plans/archive/node-compat-cron-greening-plan.md`.
-  Use `docs/plans/archive/node-compatible-runtime-plan.md`,
-  `docs/plans/archive/node-lts-compatibility-plan.md`,
-  `docs/plans/archive/node-compat-test-infrastructure-plan.md`, and
-  `docs/plans/archive/node-compat-future-lanes-and-correctness-plan.md` as completed
+  `docs/private/plans/archive/node-compat-cron-greening-plan.md`.
+  Use `docs/private/plans/archive/node-compatible-runtime-plan.md`,
+  `docs/private/plans/archive/node-lts-compatibility-plan.md`,
+  `docs/private/plans/archive/node-compat-test-infrastructure-plan.md`, and
+  `docs/private/plans/archive/node-compat-future-lanes-and-correctness-plan.md` as completed
   baselines. If new Node-compat roadmap work is needed beyond those completed
   plans, create or adopt a fresh active plan before starting a new wave.
   `~/src/github.com/nimbus/deno` as the canonical Deno-family fork,
@@ -449,7 +484,7 @@ A table without a schema accepts any document. Setting a schema adds constraints
 - **JS build:** `npm run build`
 - **All at once:** `make ci`
 
-See `docs/operating/local-dev.md` for the build contract; Node is a dev
+See `docs/private/operating/local-dev.md` for the build contract; Node is a dev
 build dependency for any Rust target that touches `nimbus-server`.
 
 Prefer the `make` entrypoints above for long-running workspace-wide verification:

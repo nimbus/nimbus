@@ -11,7 +11,7 @@
 #   curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh -s -- --dry-run
 #   curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh -s -- --uninstall
 #
-# See docs/plans/install-script-plan.md for the full contract.
+# See docs/private/plans/install-script-plan.md for the full contract.
 
 set -eu
 

@@ -17,7 +17,7 @@ use std::{fs, io};
 use clap::{Args, Subcommand};
 use serde::Deserialize;
 
-use crate::embedded_packages;
+use nimbus_assets::js_packages;
 
 const PACKAGES_REL: &str = ".nimbus/packages";
 const STAMP_REL: &str = ".nimbus/packages/.version";
@@ -80,7 +80,7 @@ pub(crate) async fn run_packages_command(
             let where_ = args.app_dir.join(PACKAGES_REL);
             // First confirm the binary's own embedded payload is intact, then
             // confirm the app's provisioned bytes match it.
-            embedded_packages::verify_integrity().map_err(io::Error::other)?;
+            js_packages::verify_manifest_integrity().map_err(io::Error::other)?;
             match verify_provisioned(&args.app_dir) {
                 Ok(count) => {
                     crate::cli_ux::write_stderr_line(&format!(
@@ -130,7 +130,7 @@ struct PkgDeps {
 /// `dependencies` names declared by an embedded package (read from its embedded
 /// `package.json`). Used to resolve the provisioning closure.
 fn embedded_deps(dir: &str) -> BTreeSet<String> {
-    match embedded_packages::file_bytes(dir, "package.json") {
+    match js_packages::file_bytes(dir, "package.json") {
         Some(bytes) => serde_json::from_slice::<PkgDeps>(&bytes)
             .map(|p| p.dependencies.into_keys().collect())
             .unwrap_or_default(),
@@ -142,17 +142,27 @@ fn embedded_deps(dir: &str) -> BTreeSet<String> {
 /// adapter, this pulls in every embedded root it (transitively) depends on
 /// (e.g. `firebase` pulls the three co-provisioned third-party roots).
 fn closure(selection: &Selection) -> Vec<String> {
-    let manifest = embedded_packages::manifest();
+    let manifest = js_packages::manifest();
     match selection {
         Selection::All => manifest.packages.iter().map(|p| p.dir.clone()).collect(),
         Selection::Adapter(start) => {
+            let start_dir = manifest
+                .packages
+                .iter()
+                .find(|p| {
+                    p.dir == *start
+                        || p.name == *start
+                        || p.source_dir.as_deref() == Some(start.as_str())
+                })
+                .map(|p| p.dir.clone())
+                .unwrap_or_else(|| start.clone());
             let name_to_dir: BTreeMap<String, String> = manifest
                 .packages
                 .iter()
                 .map(|p| (p.name.clone(), p.dir.clone()))
                 .collect();
             let mut seen: BTreeSet<String> = BTreeSet::new();
-            let mut queue: VecDeque<String> = VecDeque::from([start.clone()]);
+            let mut queue: VecDeque<String> = VecDeque::from([start_dir]);
             while let Some(dir) = queue.pop_front() {
                 if !seen.insert(dir.clone()) {
                     continue;
@@ -189,33 +199,16 @@ fn remove_stamp_if_present(app_dir: &Path) -> io::Result<()> {
 /// Write one embedded package's files into `<app>/.nimbus/packages/<dir>/`,
 /// cleaning any prior copy first so a partial/corrupt copy is fully rewritten.
 fn write_package(app_dir: &Path, dir: &str) -> io::Result<()> {
-    let manifest = embedded_packages::manifest();
-    let pkg = manifest
-        .packages
-        .iter()
-        .find(|p| p.dir == dir)
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("no embedded package {dir}"),
-            )
-        })?;
     let dest_root = app_dir.join(PACKAGES_REL).join(dir);
     if dest_root.exists() {
         fs::remove_dir_all(&dest_root)?;
     }
-    for file in &pkg.files {
-        let bytes = embedded_packages::file_bytes(dir, &file.path).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("missing embedded {dir}/{}", file.path),
-            )
-        })?;
+    for file in js_packages::package_files(dir).map_err(io::Error::other)? {
         let dest = dest_root.join(&file.path);
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&dest, bytes)?;
+        fs::write(&dest, file.bytes)?;
     }
     Ok(())
 }
@@ -230,7 +223,7 @@ pub(crate) fn provision_packages(
     selection: &Selection,
 ) -> io::Result<ProvisionOutcome> {
     let dirs = closure(selection);
-    let want_stamp = embedded_packages::manifest_digest();
+    let want_stamp = js_packages::manifest_digest();
     let stamp_matches = read_stamp(app_dir).as_deref() == Some(want_stamp.as_str());
 
     if stamp_matches && verify_package_dirs(app_dir, &dirs).is_ok() {
@@ -293,7 +286,7 @@ fn selection_for_app_dir(app_dir: &Path) -> Option<Selection> {
 /// refreshes them from the freshly re-provisioned `.nimbus/packages/` — no stale
 /// node_modules after a binary upgrade (BPD5, cond 26).
 fn force_node_reinstall(app_dir: &Path) -> io::Result<()> {
-    let manifest = embedded_packages::manifest();
+    let manifest = js_packages::manifest();
     let node_modules = app_dir.join("node_modules");
     for pkg in &manifest.packages {
         let installed = node_modules.join(&pkg.name);
@@ -308,10 +301,10 @@ fn force_node_reinstall(app_dir: &Path) -> io::Result<()> {
 /// binary's embedded manifest checksum. Returns the number of files verified, or
 /// an error naming the first missing or tampered file. This proves the bytes on
 /// disk are exactly the binary-owned bytes (BPD7, cond 21) — independent of the
-/// embedded-side `embedded_packages::verify_integrity`, which checks the bytes
+/// embedded-side `js_packages::verify_manifest_integrity`, which checks the bytes
 /// compiled into the binary rather than what was written into the app.
 pub(crate) fn verify_provisioned(app_dir: &Path) -> Result<usize, String> {
-    let manifest = embedded_packages::manifest();
+    let manifest = js_packages::manifest();
     let root = app_dir.join(PACKAGES_REL);
     if !root.is_dir() {
         return Err(format!(
@@ -332,7 +325,7 @@ pub(crate) fn verify_provisioned(app_dir: &Path) -> Result<usize, String> {
 }
 
 fn verify_package_dirs(app_dir: &Path, dirs: &[String]) -> Result<usize, String> {
-    let manifest = embedded_packages::manifest();
+    let manifest = js_packages::manifest();
     let root = app_dir.join(PACKAGES_REL);
     if dirs.is_empty() {
         return Err(format!(
@@ -355,7 +348,7 @@ fn verify_package_dirs(app_dir: &Path, dirs: &[String]) -> Result<usize, String>
             let path = package_root.join(&file.path);
             let bytes = fs::read(&path)
                 .map_err(|e| format!("missing provisioned file {}/{}: {e}", pkg.dir, file.path))?;
-            let digest = embedded_packages::sha256_hex(&bytes);
+            let digest = nimbus_assets::integrity::sha256_hex(&bytes);
             if digest != file.sha256 {
                 return Err(format!(
                     "checksum mismatch for provisioned {}/{}: expected {}, got {}",
@@ -383,7 +376,7 @@ mod tests {
         let app = tempfile::tempdir().unwrap();
         let outcome = provision_packages(app.path(), &Selection::All).unwrap();
         assert!(outcome.changed);
-        for pkg in embedded_packages::manifest().packages {
+        for pkg in js_packages::manifest().packages {
             assert!(
                 app.path()
                     .join(PACKAGES_REL)
@@ -396,7 +389,7 @@ mod tests {
         }
         assert_eq!(
             read_stamp(app.path()).as_deref(),
-            Some(embedded_packages::manifest_digest().as_str())
+            Some(js_packages::manifest_digest().as_str())
         );
     }
 
@@ -417,7 +410,7 @@ mod tests {
         provision_packages(app.path(), &Selection::Adapter("firebase".into())).unwrap();
         let root = app.path().join(PACKAGES_REL);
         for dir in [
-            "firebase",
+            "@nimbus/firebase",
             "@bufbuild/protobuf",
             "@connectrpc/connect",
             "@connectrpc/connect-web",
@@ -428,11 +421,11 @@ mod tests {
             );
         }
         assert!(
-            !root.join("mongodb").exists(),
+            !root.join("@nimbus/mongodb").exists(),
             "unrelated adapter must not be provisioned"
         );
         assert!(
-            !root.join("dynamodb").exists(),
+            !root.join("@nimbus/dynamodb").exists(),
             "unrelated adapter must not be provisioned"
         );
     }
@@ -445,7 +438,7 @@ mod tests {
         let victim = app
             .path()
             .join(PACKAGES_REL)
-            .join("mongodb")
+            .join("@nimbus/mongodb")
             .join("package.json");
         fs::remove_file(&victim).unwrap();
         // With the file missing, all_present is false → provision rewrites.
@@ -458,7 +451,11 @@ mod tests {
     fn corrupt_non_manifest_file_is_rewritten_even_when_stamp_matches() {
         let app = tempfile::tempdir().unwrap();
         provision_packages(app.path(), &Selection::All).unwrap();
-        let victim = app.path().join(PACKAGES_REL).join("mongodb").join("uri.js");
+        let victim = app
+            .path()
+            .join(PACKAGES_REL)
+            .join("@nimbus/mongodb")
+            .join("uri.js");
         let mut bytes = fs::read(&victim).unwrap();
         bytes.push(b'X');
         fs::write(&victim, bytes).unwrap();
@@ -470,7 +467,7 @@ mod tests {
             "checksum drift with a matching stamp must trigger a rewrite"
         );
         let restored = fs::read(&victim).unwrap();
-        let expected = embedded_packages::file_bytes("mongodb", "uri.js").unwrap();
+        let expected = js_packages::file_bytes("@nimbus/mongodb", "uri.js").unwrap();
         assert_eq!(restored, expected, "rewrite must restore original bytes");
     }
 
@@ -486,7 +483,7 @@ mod tests {
         );
         assert_eq!(
             read_stamp(app.path()).as_deref(),
-            Some(embedded_packages::manifest_digest().as_str())
+            Some(js_packages::manifest_digest().as_str())
         );
         assert!(
             !ensure(app.path(), &Selection::All).unwrap(),
@@ -541,11 +538,19 @@ mod tests {
         );
         assert!(app.path().join(PACKAGES_REL).join("convex").is_dir());
         assert!(
-            app.path().join(PACKAGES_REL).join("nimbus").is_dir(),
+            app.path()
+                .join(PACKAGES_REL)
+                .join("@nimbus/nimbus")
+                .is_dir(),
             "closure is provisioned"
         );
         // The convex closure does not pull unrelated adapters.
-        assert!(!app.path().join(PACKAGES_REL).join("firebase").exists());
+        assert!(
+            !app.path()
+                .join(PACKAGES_REL)
+                .join("@nimbus/firebase")
+                .exists()
+        );
         // A second ensure with the matching stamp is a no-op.
         assert!(!ensure(app.path(), &Selection::Adapter("convex".into())).unwrap());
     }
@@ -556,7 +561,7 @@ mod tests {
         provision_packages(app.path(), &Selection::Adapter("firebase".into())).unwrap();
         assert_eq!(
             read_stamp(app.path()).as_deref(),
-            Some(embedded_packages::manifest_digest().as_str())
+            Some(js_packages::manifest_digest().as_str())
         );
         assert!(
             !app.path().join(PACKAGES_REL).join("convex").exists(),
@@ -568,7 +573,12 @@ mod tests {
             "matching global stamp is not enough; missing requested closure must provision"
         );
         assert!(app.path().join(PACKAGES_REL).join("convex").is_dir());
-        assert!(app.path().join(PACKAGES_REL).join("nimbus").is_dir());
+        assert!(
+            app.path()
+                .join(PACKAGES_REL)
+                .join("@nimbus/nimbus")
+                .is_dir()
+        );
     }
 
     #[test]
@@ -580,14 +590,18 @@ mod tests {
             verify_provisioned(app.path()).expect("provisioned bytes match embedded checksums");
         assert!(verified > 0, "must verify at least one provisioned file");
         // Negative: tampering with a provisioned file on disk is detected and named.
-        let victim = app.path().join(PACKAGES_REL).join("mongodb").join("uri.js");
+        let victim = app
+            .path()
+            .join(PACKAGES_REL)
+            .join("@nimbus/mongodb")
+            .join("uri.js");
         let mut bytes = fs::read(&victim).unwrap();
         bytes.push(b'X');
         fs::write(&victim, &bytes).unwrap();
         let err = verify_provisioned(app.path())
             .expect_err("tampered provisioned bytes must be rejected");
         assert!(
-            err.contains("mongodb/uri.js"),
+            err.contains("@nimbus/mongodb/uri.js"),
             "error must name the tampered file: {err}"
         );
     }

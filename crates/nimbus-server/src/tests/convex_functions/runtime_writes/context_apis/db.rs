@@ -24,9 +24,12 @@ async fn convex_named_query_can_use_bootstrapped_ctx_db_api() {
         json!([]),
         Some(
             r#"
-globalThis.__nimbusInvoke = async function(request) {
-  const ctx = globalThis.__nimbusCreateContext();
-  const value = await ctx.db
+	globalThis.__nimbusInvoke = async function(request) {
+	  const ctx = globalThis.__nimbusCreateContext({
+	    hostCallSessionId: `${request.kind}:${request.function_name}`,
+	    request,
+	  });
+	  const value = await ctx.db
     .query("messages")
     .filter((q) => q.eq(q.field("author"), request.args.author))
     .collect();
@@ -43,8 +46,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry.clone())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

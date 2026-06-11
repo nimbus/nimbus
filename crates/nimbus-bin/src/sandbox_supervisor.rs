@@ -27,7 +27,6 @@ struct SandboxSupervisorContractReport {
     mode: SandboxEgressEnforcementMode,
     reload_policy: SandboxEgressReloadPolicy,
     rule_count: usize,
-    packet_enforcement_active: bool,
 }
 
 pub(crate) async fn run_sandbox_supervisor_command(
@@ -57,17 +56,11 @@ fn load_enforcement_plan(
             "sandbox supervisor requires {SANDBOX_EGRESS_ENFORCEMENT_ENV}"
         ))
     })?;
-    let plan: SandboxEgressEnforcementPlan = serde_json::from_str(&raw).map_err(|error| {
+    serde_json::from_str(&raw).map_err(|error| {
         nimbus::Error::InvalidInput(format!(
             "failed to parse sandbox supervisor enforcement contract from {SANDBOX_EGRESS_ENFORCEMENT_ENV}: {error}"
         ))
-    })?;
-    plan.validate().map_err(|message| {
-        nimbus::Error::InvalidInput(format!(
-            "invalid sandbox supervisor enforcement contract from {SANDBOX_EGRESS_ENFORCEMENT_ENV}: {message}"
-        ))
-    })?;
-    Ok(plan)
+    })
 }
 
 impl SandboxSupervisorContractReport {
@@ -83,19 +76,17 @@ impl SandboxSupervisorContractReport {
             mode: plan.mode,
             reload_policy: plan.reload_policy,
             rule_count: plan.policy().rules().len(),
-            packet_enforcement_active: false,
         })
     }
 
     fn render_text(&self) -> String {
         format!(
-            "Sandbox supervisor contract: {status}\nschema_version: {schema_version}\nmode: {mode}\nreload_policy: {reload_policy}\nrules: {rule_count}\npacket_enforcement_active: {packet_enforcement_active}\n",
+            "Sandbox supervisor contract: {status}\nschema_version: {schema_version}\nmode: {mode}\nreload_policy: {reload_policy}\nrules: {rule_count}\n",
             status = self.status,
             schema_version = self.schema_version,
             mode = egress_mode_label(self.mode),
             reload_policy = reload_policy_label(self.reload_policy),
             rule_count = self.rule_count,
-            packet_enforcement_active = self.packet_enforcement_active,
         )
     }
 }
@@ -181,7 +172,7 @@ mod tests {
     }
 
     #[test]
-    fn load_enforcement_plan_rejects_invalid_contract_policy() {
+    fn supervisor_command_rejects_invalid_contract_policy() {
         let contract = serde_json::json!({
             "schema_version": SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
             "mode": "launch_metadata",
@@ -189,8 +180,11 @@ mod tests {
             "policy": {}
         })
         .to_string();
+        let command = SandboxSupervisorCommand {
+            format: SandboxSupervisorOutputFormat::Json,
+        };
 
-        let error = load_enforcement_plan(|key| {
+        let error = evaluate_sandbox_supervisor_command(&command, |key| {
             (key == SANDBOX_EGRESS_ENFORCEMENT_ENV).then_some(contract)
         })
         .expect_err("false live reload claim should fail closed");
@@ -229,7 +223,6 @@ mod tests {
         assert_eq!(report.status, "valid");
         assert_eq!(report.rule_count, 1);
         assert_eq!(report.mode, SandboxEgressEnforcementMode::SupervisorProxy);
-        assert!(!report.packet_enforcement_active);
     }
 
     #[test]
@@ -246,11 +239,6 @@ mod tests {
 
         assert_eq!(report.status, "valid");
         assert_eq!(report.mode, SandboxEgressEnforcementMode::SupervisorProxy);
-        assert!(!report.packet_enforcement_active);
-        assert!(
-            report
-                .render_text()
-                .contains("packet_enforcement_active: false")
-        );
+        assert!(report.render_text().contains("mode: supervisor_proxy"));
     }
 }

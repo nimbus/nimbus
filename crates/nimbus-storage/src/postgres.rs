@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::fmt::Write as _;
 use std::future::Future;
 use std::str::FromStr;
@@ -11,10 +10,11 @@ use deadpool_postgres::{
 };
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, FieldType, Filter,
-    FilterOp, IndexDefinition, IndexLifecycleEvent, ResourcePathBinding, Result, ScheduledJob,
-    ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId,
-    TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord,
-    TenantId, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
+    HistoricalIndexCursor, HistoricalIndexTuple, HistoricalReadShape, IndexDefinition,
+    IndexLifecycleEvent, ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema,
+    SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName,
+    TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp,
+    TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,21 +27,28 @@ use tokio_postgres::types::ToSql;
 use tokio_postgres::{AsyncMessage, Config as PostgresConfig, IsolationLevel, NoTls};
 
 use crate::RetentionFloor;
-use crate::async_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
+use crate::async_storage::{
+    TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, map_executor_join_error,
+    map_executor_permit_error,
+};
 use crate::commit_log::{
     deserialize_durable_record, serialize_durable_record, serialize_tenant_event_record,
 };
 use crate::runtime_bridge::bridge_tokio_runtime;
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{
-    DurableJournalBootstrap, DurableJournalPage, JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT,
-    MaterializedJournalSnapshot, ResolvedScheduleOp, ResolvedWrite, TenantWriteCommit,
+    DurableJournalBootstrap, DurableJournalPage, JournalProgress, MaterializedJournalSnapshot,
+    PointInTimeRestoreArchive, PointInTimeRestoreTarget, ResolvedScheduleOp, ResolvedWrite,
+    TenantWriteCommit,
 };
 
 mod backend;
 mod config;
+mod document_versions;
+mod index_versions;
 mod notifications;
 mod provider;
+mod query_helpers;
 mod read;
 mod resource_paths;
 mod storage;
@@ -49,6 +56,7 @@ mod table_lifecycle;
 mod trigger_delivery;
 mod trigger_invocations;
 mod write;
+mod write_schema_events;
 
 use self::backend::*;
 pub use self::config::PostgresProviderConfig;
@@ -61,6 +69,7 @@ use self::notifications::{
     PendingPostgresNotification, PostgresProviderNotificationPayload, parse_postgres_notification,
 };
 pub use self::notifications::{PostgresNotificationListener, PostgresProviderNotification};
+use self::query_helpers::*;
 
 const POSTGRES_IDENTIFIER_LIMIT: usize = 63;
 const TARGET_TENANT_HASH_HEX_LEN: usize = 40;
@@ -135,6 +144,7 @@ pub struct PostgresWriteTransaction {
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
+    commit_timestamp: Option<Timestamp>,
     notification: PendingPostgresNotification,
     schema_cache_changed: bool,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,

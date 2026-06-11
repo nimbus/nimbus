@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use nimbus::{Error, SandboxBackend, SandboxHandle, SandboxServiceLaunch, SandboxStatus, TenantId};
+use nimbus::{Error, SandboxBackend, SandboxHandle, SandboxStatus, ServiceBackend, TenantId};
 use nimbus_sandbox::backends::krun::KrunSandboxStateView;
 use serde::Serialize;
 
@@ -8,7 +8,7 @@ use crate::compose::discovery::ResolvedComposeSelection;
 use crate::machine::MachineApiClient;
 
 use super::{
-    ComposeDownCommand, ComposeUpCommand, load_sandbox_service_catalog_for_execution_platform,
+    ComposeDownCommand, ComposeUpCommand, load_service_definition_catalog_for_execution_platform,
     lookup_current_remote_service_details, requested_service_names,
     resolve_remote_service_down_targets, resolve_service_down_targets,
     resolve_service_execution_surface, validate_forwarded_machine_api_backend,
@@ -112,7 +112,7 @@ pub(super) async fn service_up_outcomes_for_selection(
         .unwrap_or_else(|| context.control_plane.local_tenant_id.clone());
     let service_names = requested_service_names(&context, command.service.as_deref())?;
     let service_catalog =
-        load_sandbox_service_catalog_for_execution_platform(selection, host_platform)?;
+        load_service_definition_catalog_for_execution_platform(selection, host_platform)?;
 
     match resolve_service_execution_surface(
         &context,
@@ -145,7 +145,7 @@ pub(super) async fn service_up_outcomes_for_selection(
                 }
 
                 let launch = service_catalog
-                    .sandbox_service_for_tenant(&tenant, &service_name)
+                    .service_backend_for_tenant(&tenant, &service_name)
                     .ok_or_else(|| {
                         Error::InvalidInput(format!(
                             "service {} is not declared in compose project {}",
@@ -186,7 +186,7 @@ pub(super) async fn service_up_outcomes_for_selection(
                 }
 
                 let launch = service_catalog
-                    .sandbox_service_for_tenant(&tenant, &service_name)
+                    .service_backend_for_tenant(&tenant, &service_name)
                     .ok_or_else(|| {
                         Error::InvalidInput(format!(
                             "service {} is not declared in compose project {}",
@@ -299,42 +299,40 @@ pub(super) async fn start_service_launch(
     backend: &dyn SandboxBackend,
     tenant: &TenantId,
     service_name: &str,
-    launch: SandboxServiceLaunch,
+    service_backend: ServiceBackend,
 ) -> Result<SandboxHandle, Error> {
-    if launch.spec().name != service_name {
+    let backend_kind = service_backend.kind();
+    let Some(spec) = service_backend.into_sandbox_spec() else {
         return Err(Error::InvalidInput(format!(
-            "sandbox service catalog returned launch spec name {} for requested service {}",
-            launch.spec().name,
-            service_name
+            "compose service {service_name} for tenant {tenant} lowered to a {backend_kind} backend, but compose lifecycle can only start sandbox-backed services"
+        )));
+    };
+    if spec.service_name() != Some(service_name) {
+        return Err(Error::InvalidInput(format!(
+            "service definition catalog returned sandbox owner {:?} for requested service {}",
+            spec.owner, service_name
         )));
     }
-    if &launch.spec().tenant_id != tenant {
+    if &spec.tenant_id != tenant {
         return Err(Error::InvalidInput(format!(
-            "sandbox service catalog returned tenant {} for requested tenant {}",
-            launch.spec().tenant_id,
-            tenant
+            "service definition catalog returned tenant {} for requested tenant {}",
+            spec.tenant_id, tenant
         )));
     }
-    if launch.spec().backend != backend.kind() {
+    if spec.backend != backend.kind() {
         return Err(Error::InvalidInput(format!(
-            "sandbox service {} for tenant {} requested backend {:?}, but the configured backend is {:?}",
+            "sandbox-backed service {} for tenant {} requested backend {:?}, but the configured backend is {:?}",
             service_name,
             tenant,
-            launch.spec().backend,
+            spec.backend,
             backend.kind()
         )));
     }
 
-    match launch {
-        SandboxServiceLaunch::Image(launch) => backend
-            .start_from_image(launch)
-            .await
-            .map_err(|error| backend_operation_error("start", tenant, service_name, error)),
-        SandboxServiceLaunch::Build(launch) => backend
-            .start_from_build(launch)
-            .await
-            .map_err(|error| backend_operation_error("start", tenant, service_name, error)),
-    }
+    backend
+        .start(spec)
+        .await
+        .map_err(|error| backend_operation_error("start", tenant, service_name, error))
 }
 
 pub(super) async fn stop_service_target(

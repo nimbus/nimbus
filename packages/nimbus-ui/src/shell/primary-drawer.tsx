@@ -1,6 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { ChevronsLeft, ChevronsRight } from "lucide-react";
-import { useQuery } from "nimbus/react";
+import { useQuery } from "@nimbus/nimbus/react";
 import { cn } from "../lib/cn";
 import { useUiStore } from "../store/ui-store";
 import {

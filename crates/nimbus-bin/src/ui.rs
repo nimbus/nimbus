@@ -179,7 +179,7 @@ fn build_ui_url(record: &ServerDiscoveryRecord) -> Result<String, UiError> {
 mod tests {
     use std::sync::Arc;
 
-    use nimbus::Service;
+    use nimbus::Engine;
     use nimbus_server::{
         LocalServerPaths, LocalServerSecurityState, ServeOptions, load_or_create_local_admin_token,
         serve,
@@ -245,7 +245,7 @@ mod tests {
             load_or_create_local_admin_token(&paths).expect("local admin token should initialize");
         let local_server_security = Arc::new(LocalServerSecurityState::new(paths.clone(), token));
         let service =
-            Arc::new(Service::new(temp.path().join("data")).expect("service should initialize"));
+            Arc::new(Engine::new(temp.path().join("data")).expect("service should initialize"));
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("listener should bind");

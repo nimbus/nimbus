@@ -25,7 +25,7 @@ use nimbus_tenant::{
 use super::super::super::runtime_error_to_core;
 
 pub(in crate::adapters::convex) struct RuntimeInvocationContext<'a> {
-    service: &'a Arc<nimbus_engine::Service>,
+    engine: &'a Arc<nimbus_engine::Engine>,
     registry: &'a Arc<ConvexRegistry>,
     runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
     isolation: TenantIsolationContext,
@@ -34,14 +34,14 @@ pub(in crate::adapters::convex) struct RuntimeInvocationContext<'a> {
 
 impl<'a> RuntimeInvocationContext<'a> {
     pub(in crate::adapters::convex) fn new(
-        service: &'a Arc<nimbus_engine::Service>,
+        engine: &'a Arc<nimbus_engine::Engine>,
         registry: &'a Arc<ConvexRegistry>,
         runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
         isolation: TenantIsolationContext,
         tenant_isolation_mode: TenantIsolationMode,
     ) -> Self {
         Self {
-            service,
+            engine,
             registry,
             runtime_service_registry,
             isolation,
@@ -96,7 +96,7 @@ impl<'a> RuntimeInvocationContext<'a> {
             .ensure_in_process_available("convex runtime invocation")?;
         let bridge = Arc::new(ConvexHostBridge::build(
             ConvexHostBridgeScope::new(
-                self.service.clone(),
+                self.engine.clone(),
                 self.registry.clone(),
                 decision.clone(),
                 self.runtime_service_registry.clone(),
@@ -107,6 +107,7 @@ impl<'a> RuntimeInvocationContext<'a> {
                 normalize_principal_context(request.auth.as_ref()),
                 server_request_id.clone(),
                 invocation_kind.clone(),
+                request.function_name.clone(),
             ),
         )?);
         let (response, read_set) = invoke_runtime_bundle_on_worker_with_host_state(
@@ -120,7 +121,9 @@ impl<'a> RuntimeInvocationContext<'a> {
                 server_request_id.as_deref(),
                 Some(cancellation),
             )
-            .with_runtime_bundle_provenance_gate(self.registry.runtime_bundle_provenance()),
+            .with_optional_runtime_bundle_provenance_gate(
+                self.registry.runtime_bundle_provenance(),
+            ),
             |bridge| bridge.snapshot_read_set(),
         )
         .await

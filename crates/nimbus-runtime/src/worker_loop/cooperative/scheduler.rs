@@ -80,6 +80,20 @@ impl<T> CooperativeScheduler<T> {
         self.slots.remove(&slot_id);
     }
 
+    pub(super) fn drain_retained_slots(&mut self) -> Vec<CooperativeRunnableSlot<T>> {
+        let slots = std::mem::take(&mut self.slots);
+        self.run_queue.clear();
+        self.parked.clear();
+        slots
+            .into_iter()
+            .filter_map(|(slot_id, mut slot)| {
+                slot.payload
+                    .take()
+                    .map(|payload| CooperativeRunnableSlot { slot_id, payload })
+            })
+            .collect()
+    }
+
     pub(super) fn is_idle(&self) -> bool {
         self.run_queue.is_empty() && self.parked.is_empty() && self.slots.is_empty()
     }
@@ -191,6 +205,30 @@ mod tests {
         let resumed = scheduler.pop_runnable().expect("resumed slot should rerun");
         assert_eq!(resumed.payload, "first");
         scheduler.finish(resumed.slot_id);
+        assert!(scheduler.is_idle());
+    }
+
+    #[test]
+    fn scheduler_drains_retained_runnable_and_parked_slots() {
+        let mut scheduler = CooperativeScheduler::new();
+        let first = scheduler.admit_runnable("first");
+        let second = scheduler.admit_runnable("second");
+        let third = scheduler.admit_runnable("third");
+
+        let parked = scheduler.pop_runnable().expect("first runnable slot");
+        assert_eq!(parked.slot_id, first);
+        scheduler.park(parked);
+        let in_flight = scheduler.pop_runnable().expect("second runnable slot");
+        assert_eq!(in_flight.slot_id, second);
+
+        let drained = scheduler.drain_retained_slots();
+
+        assert_eq!(in_flight.payload, "second");
+        assert_eq!(drained.len(), 2);
+        assert_eq!(drained[0].slot_id, first);
+        assert_eq!(drained[0].payload, "first");
+        assert_eq!(drained[1].slot_id, third);
+        assert_eq!(drained[1].payload, "third");
         assert!(scheduler.is_idle());
     }
 }

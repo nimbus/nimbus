@@ -1152,3 +1152,28 @@ jobs:
               --silent
           fi
         continue-on-error: true
+
+  # The release above is created with the workflow's GITHUB_TOKEN, and
+  # events raised by that token do not trigger other workflows' `release:`
+  # triggers — which left linux-distribution-release.yml never running.
+  # workflow_dispatch is exempt from that restriction, so dispatch it
+  # explicitly.
+  trigger-linux-distribution:
+    name: Trigger Linux distribution release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    needs: [release]
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch linux-distribution-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run linux-distribution-release.yml \
+            --repo "${{ github.repository }}" \
+            --ref "${{ github.ref_name }}" \
+            -f release_tag="${{ github.ref_name }}" \
+            -f publish_apt_repo=true \
+            -f submit_to_copr=false \
+            -f include_bun_jsc_adapter=false

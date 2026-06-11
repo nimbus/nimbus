@@ -3,7 +3,7 @@ use super::support::*;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial_test::serial(postgres_provider)]
 async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_direct_crud() {
-    with_postgres_service_config(|service_config, _provider_config| async move {
+    with_postgres_engine_config(|engine_config, _provider_config| async move {
         // This lane validates correctness, not a tight performance SLO. Keep
         // the bounded watchdog scoped to the direct CRUD contract rather than
         // Docker/Testcontainers fixture provisioning. Under the full workspace
@@ -17,13 +17,13 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
             Duration::from_secs(360),
             async {
                 let tenant_id = TenantId::new("pg-repeated-crud").expect("tenant id should build");
-                let service = Arc::new(
-                    Service::new_with_persistence_config(service_config)
+                let engine = Arc::new(
+                    Engine::new_with_persistence_config(engine_config)
                         .await
-                        .expect("postgres-backed service should create"),
+                        .expect("postgres-backed engine should create"),
                 );
 
-                service
+                engine
                     .create_tenant_async(tenant_id.clone())
                     .await
                     .expect("tenant should create");
@@ -34,7 +34,7 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
                 // headroom for Docker-backed local Postgres fixtures.
                 const CRUD_ROUNDS: usize = 12;
                 for round in 0..CRUD_ROUNDS {
-                    let document_id = service
+                    let document_id = engine
                         .insert_document_async(
                             tenant_id.clone(),
                             tasks_table(),
@@ -45,7 +45,7 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
                         )
                         .await
                         .expect("insert should succeed");
-                    service
+                    engine
                         .update_document_async(
                             tenant_id.clone(),
                             tasks_table(),
@@ -57,7 +57,7 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
                         )
                         .await
                         .expect("update should succeed");
-                    service
+                    engine
                         .delete_document_async(
                             tenant_id.clone(),
                             tasks_table(),
@@ -68,14 +68,14 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
                 }
 
                 assert_eq!(
-                    service
+                    engine
                         .latest_sequence_async(tenant_id.clone())
                         .await
                         .expect("latest sequence should track every direct mutation"),
                     SequenceNumber((CRUD_ROUNDS * 3) as u64)
                 );
                 assert!(
-                    service
+                    engine
                         .query_documents_async(tenant_id.clone(), query_for("tasks"))
                         .await
                         .expect("query should succeed after repeated CRUD")
@@ -83,10 +83,10 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
                     "repeated direct CRUD should leave no remaining documents"
                 );
 
-                tokio::time::timeout(Duration::from_secs(2), service.quiesce())
+                tokio::time::timeout(Duration::from_secs(2), engine.quiesce())
                     .await
-                    .expect("service should quiesce before Postgres fixture cleanup");
-                drop(service);
+                    .expect("engine should quiesce before Postgres fixture cleanup");
+                drop(engine);
             },
         )
         .await;
@@ -97,24 +97,24 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
 async fn postgres_transient_pool_backend_termination_recovers_subsequent_mixed_ops() {
-    with_postgres_service_config(|service_config, provider_config| async move {
+    with_postgres_engine_config(|engine_config, provider_config| async move {
         let tenant_id = TenantId::new("pg-pool-recover").expect("tenant id should build");
-        let service = Arc::new(
-            Service::new_with_persistence_config(service_config)
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config)
                 .await
-                .expect("postgres-backed service should create"),
+                .expect("postgres-backed engine should create"),
         );
 
-        service
+        engine
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
-        service
+        engine
             .set_table_schema_async(tenant_id.clone(), tasks_schema())
             .await
             .expect("schema write should succeed");
         for index in 0..8 {
-            service
+            engine
                 .insert_document_async(
                     tenant_id.clone(),
                     tasks_table(),
@@ -174,11 +174,11 @@ async fn postgres_transient_pool_backend_termination_recovers_subsequent_mixed_o
             Duration::from_secs(4),
             Duration::from_millis(50),
             || {
-                let service = service.clone();
+                let engine = engine.clone();
                 let tenant_id = tenant_id.clone();
                 let recovered_title = recovered_title.clone();
                 async move {
-                    let existing = service
+                    let existing = engine
                         .query_documents_async(tenant_id.clone(), query_for("tasks"))
                         .await;
                     if let Ok(documents) = existing
@@ -193,7 +193,7 @@ async fn postgres_transient_pool_backend_termination_recovers_subsequent_mixed_o
                         return true;
                     }
 
-                    let insert = service
+                    let insert = engine
                         .insert_document_async(
                             tenant_id.clone(),
                             tasks_table(),
@@ -203,10 +203,10 @@ async fn postgres_transient_pool_backend_termination_recovers_subsequent_mixed_o
                             )]),
                         )
                         .await;
-                    let bootstrap = service
+                    let bootstrap = engine
                         .export_durable_journal_bootstrap_async(tenant_id.clone())
                         .await;
-                    let query = service
+                    let query = engine
                         .query_documents_async(tenant_id.clone(), query_for("tasks"))
                         .await;
                     match (insert, bootstrap, query) {
@@ -228,9 +228,9 @@ async fn postgres_transient_pool_backend_termination_recovers_subsequent_mixed_o
         )
         .await;
 
-        tokio::time::timeout(Duration::from_secs(2), service.quiesce())
+        tokio::time::timeout(Duration::from_secs(2), engine.quiesce())
             .await
-            .expect("service should quiesce after pooled-backend recovery test");
+            .expect("engine should quiesce after pooled-backend recovery test");
     })
     .await;
 }

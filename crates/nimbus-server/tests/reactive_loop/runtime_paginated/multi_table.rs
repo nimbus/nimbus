@@ -15,7 +15,7 @@ async fn convex_runtime_multi_table_paginated_subscription_tracks_secondary_tabl
             r#"
 globalThis.__nimbusInvoke = async function(request) {
   const ctx = globalThis.__nimbusCreateContext({
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   const matchingProfiles = await ctx.db
     .query("profiles")
@@ -44,8 +44,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());

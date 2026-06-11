@@ -1,12 +1,12 @@
 use super::*;
 
 fn published_sequence(
-    service: &Service,
+    engine: &Engine,
     tenant_id: &TenantId,
     table: &TableName,
     context: &str,
 ) -> SequenceNumber {
-    service
+    engine
         .materialized_table_publication_stats_for_testing(tenant_id, table)
         .expect("materialized publication stats should load")
         .unwrap_or_else(|| panic!("{context}"))

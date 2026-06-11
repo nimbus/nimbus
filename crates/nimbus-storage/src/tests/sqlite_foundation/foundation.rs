@@ -39,6 +39,7 @@ fn sqlite_store_enforces_direct_read_connection_limit() {
     let first_snapshot = store
         .read_snapshot()
         .expect("first direct sqlite read snapshot should acquire the only connection");
+    let exhausted_wait_started = std::time::Instant::now();
     let error = match store.read_snapshot() {
         Ok(_) => {
             panic!("second direct sqlite read snapshot should exhaust the explicit pool limit")
@@ -46,8 +47,12 @@ fn sqlite_store_enforces_direct_read_connection_limit() {
         Err(error) => error,
     };
     assert!(
-        matches!(error, Error::ResourceExhausted(message) if message.contains("sqlite read connection pool exhausted")),
-        "direct callers should get an explicit resource-exhausted error once the store-level pool limit is hit"
+        exhausted_wait_started.elapsed() >= std::time::Duration::from_millis(1_500),
+        "exhaustion must fail closed only after the bounded wait for a freed connection"
+    );
+    assert!(
+        matches!(&error, Error::ResourceExhausted(message) if message.contains("sqlite read connection pool exhausted") && message.contains("waited")),
+        "direct callers should get an explicit waited-then-exhausted error once the store-level pool limit is hit, got: {error:?}"
     );
 
     drop(first_snapshot);

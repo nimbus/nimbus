@@ -1,6 +1,8 @@
+use std::ops::Bound;
+
 use nimbus_core::{
     Document, DocumentId, FieldSchema, FieldType, IndexDefinition, IndexState, TableName,
-    TableSchema,
+    TableSchema, order_preserving_number_bits,
 };
 use serde_json::json;
 
@@ -260,6 +262,12 @@ fn update_with_indexes_validated_maintains_entries() {
 
 #[test]
 fn index_key_encoding_preserves_number_sort_order() {
+    fn expected_number_encoding(value: f64) -> Vec<u8> {
+        let mut encoded = vec![0x02];
+        encoded.extend_from_slice(&order_preserving_number_bits(value).to_be_bytes());
+        encoded
+    }
+
     let mut encoded = [
         encode_index_value(&json!(-1.5)).expect("value should encode"),
         encode_index_value(&json!(0)).expect("value should encode"),
@@ -283,6 +291,18 @@ fn index_key_encoding_preserves_number_sort_order() {
     assert_eq!(
         encoded[3],
         encode_index_value(&json!(100)).expect("value should encode")
+    );
+    assert_eq!(
+        encode_index_value(&json!(-1.5)).expect("value should encode"),
+        expected_number_encoding(-1.5)
+    );
+    assert_eq!(
+        encode_index_value(&json!(0)).expect("value should encode"),
+        expected_number_encoding(0.0)
+    );
+    assert_eq!(
+        encode_index_value(&json!(100)).expect("value should encode"),
+        expected_number_encoding(100.0)
     );
 }
 
@@ -470,7 +490,12 @@ fn index_scan_range_on_numbers() {
     }
 
     let over_25 = store
-        .index_scan_range(&table, "by_age", Some(&json!(25)), None, false, true)
+        .index_scan_range(
+            &table,
+            "by_age",
+            Bound::Excluded(&json!(25)),
+            Bound::Unbounded,
+        )
         .expect("range scan should succeed");
     assert_eq!(over_25.len(), 3);
 
@@ -478,14 +503,134 @@ fn index_scan_range_on_numbers() {
         .index_scan_range(
             &table,
             "by_age",
-            Some(&json!(25)),
-            Some(&json!(35)),
-            true,
-            true,
+            Bound::Included(&json!(25)),
+            Bound::Included(&json!(35)),
         )
         .expect("range scan should succeed");
     assert_eq!(between.len(), 1);
     assert_eq!(between[0].fields.get("age"), Some(&json!(30)));
+}
+
+#[test]
+fn index_scan_open_ended_range_excludes_other_json_types() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("users").expect("table name should be valid");
+    let index = IndexDefinition {
+        id: nimbus_core::IndexId::new(),
+        state: nimbus_core::IndexState::Enabled,
+        name: "by_age".to_string(),
+        fields: vec!["age".to_string()],
+    };
+    save_schema_for_indexes(&store, &table, std::slice::from_ref(&index));
+
+    for (label, age) in [
+        ("number-low", json!(20)),
+        ("number-high", json!(30)),
+        ("string", json!("zzz")),
+        ("bool", json!(true)),
+        ("null", json!(null)),
+    ] {
+        let document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("label".to_string(), json!(label)),
+                ("age".to_string(), age),
+            ]),
+        );
+        store
+            .insert_with_indexes(&document, std::slice::from_ref(&index))
+            .expect("insert should succeed");
+    }
+
+    let labels_for = |documents: Vec<Document>| {
+        documents
+            .iter()
+            .map(|document| {
+                document
+                    .fields
+                    .get("label")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("label should be present")
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let at_least_25 = store
+        .index_scan_range(
+            &table,
+            "by_age",
+            Bound::Included(&json!(25)),
+            Bound::Unbounded,
+        )
+        .expect("range scan should succeed");
+    assert_eq!(labels_for(at_least_25), vec!["number-high".to_owned()]);
+
+    let at_most_25 = store
+        .index_scan_range(
+            &table,
+            "by_age",
+            Bound::Unbounded,
+            Bound::Included(&json!(25)),
+        )
+        .expect("range scan should succeed");
+    assert_eq!(labels_for(at_most_25), vec!["number-low".to_owned()]);
+}
+
+#[test]
+fn index_scan_range_orders_negative_and_positive_numbers() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("scores").expect("table name should be valid");
+    let index = IndexDefinition {
+        id: nimbus_core::IndexId::new(),
+        state: nimbus_core::IndexState::Enabled,
+        name: "by_score".to_string(),
+        fields: vec!["score".to_string()],
+    };
+    save_schema_for_indexes(&store, &table, std::slice::from_ref(&index));
+
+    for score in [-10, -1, 0, 1, 10] {
+        let document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([("score".to_string(), json!(score))]),
+        );
+        store
+            .insert_with_indexes(&document, std::slice::from_ref(&index))
+            .expect("insert should succeed");
+    }
+
+    let scores_for = |documents: Vec<Document>| {
+        documents
+            .iter()
+            .map(|document| {
+                document
+                    .fields
+                    .get("score")
+                    .and_then(serde_json::Value::as_i64)
+                    .expect("score should be present")
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let spanning_zero = store
+        .index_scan_range(
+            &table,
+            "by_score",
+            Bound::Included(&json!(-2)),
+            Bound::Included(&json!(2)),
+        )
+        .expect("range scan should succeed");
+    assert_eq!(scores_for(spanning_zero), vec![-1, 0, 1]);
+
+    let greater_than_minimum = store
+        .index_scan_range(
+            &table,
+            "by_score",
+            Bound::Excluded(&json!(-10)),
+            Bound::Unbounded,
+        )
+        .expect("range scan should succeed");
+    assert_eq!(scores_for(greater_than_minimum), vec![-1, 0, 1, 10]);
 }
 
 #[test]
@@ -672,15 +817,82 @@ fn composite_index_range_scan_respects_exact_prefix_on_leading_fields() {
             &table,
             "by_status_rank",
             &[json!("open")],
-            Some(&json!(2)),
-            Some(&json!(4)),
-            true,
-            false,
+            Bound::Included(&json!(2)),
+            Bound::Excluded(&json!(4)),
         )
         .expect("composite range scan should succeed");
     assert_eq!(indexed.len(), 1);
     assert_eq!(indexed[0].fields.get("status"), Some(&json!("open")));
     assert_eq!(indexed[0].fields.get("rank"), Some(&json!(2)));
+}
+
+#[test]
+fn composite_index_range_scan_excludes_other_json_types_on_range_field() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("tasks").expect("table name should be valid");
+    let index = IndexDefinition {
+        id: nimbus_core::IndexId::new(),
+        state: nimbus_core::IndexState::Enabled,
+        name: "by_status_rank".to_string(),
+        fields: vec!["status".to_string(), "rank".to_string()],
+    };
+    save_schema_for_indexes(&store, &table, std::slice::from_ref(&index));
+
+    for (label, rank) in [
+        ("number-low", json!(1)),
+        ("number-high", json!(3)),
+        ("string", json!("zzz")),
+        ("bool", json!(true)),
+        ("null", json!(null)),
+    ] {
+        let document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("open")),
+                ("label".to_string(), json!(label)),
+                ("rank".to_string(), rank),
+            ]),
+        );
+        store
+            .insert_with_indexes(&document, std::slice::from_ref(&index))
+            .expect("insert should succeed");
+    }
+
+    let labels_for = |documents: Vec<Document>| {
+        documents
+            .iter()
+            .map(|document| {
+                document
+                    .fields
+                    .get("label")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("label should be present")
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let at_least_two = store
+        .index_scan_composite_range(
+            &table,
+            "by_status_rank",
+            &[json!("open")],
+            Bound::Included(&json!(2)),
+            Bound::Unbounded,
+        )
+        .expect("composite range scan should succeed");
+    assert_eq!(labels_for(at_least_two), vec!["number-high".to_owned()]);
+
+    let at_most_two = store
+        .index_scan_composite_range(
+            &table,
+            "by_status_rank",
+            &[json!("open")],
+            Bound::Unbounded,
+            Bound::Included(&json!(2)),
+        )
+        .expect("composite range scan should succeed");
+    assert_eq!(labels_for(at_most_two), vec!["number-low".to_owned()]);
 }
 
 #[test]
@@ -729,10 +941,8 @@ fn composite_index_three_field_range_scan_respects_two_field_prefix() {
             &table,
             "by_team_status_rank",
             &[json!("alpha"), json!("open")],
-            Some(&json!(2)),
-            Some(&json!(4)),
-            true,
-            false,
+            Bound::Included(&json!(2)),
+            Bound::Excluded(&json!(4)),
         )
         .expect("three-field composite range scan should succeed");
     assert_eq!(ranged.len(), 2);

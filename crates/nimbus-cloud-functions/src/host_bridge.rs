@@ -9,6 +9,7 @@ use nimbus_runtime::{
 use serde_json::Value;
 
 use crate::runtime_api;
+use nimbus_bridge::capabilities::RuntimeServiceCapabilityHost;
 use nimbus_bridge::host_calls::{
     RuntimeAsyncHostCallTrace, execute_async_host_call, execute_host_call,
     execute_host_call_cancellable,
@@ -24,8 +25,7 @@ pub struct CloudFunctionsHostBridge {
 impl CloudFunctionsHostBridge {
     pub fn build(scope: RuntimeHostScope, invocation: RuntimeHostInvocation) -> Result<Self> {
         let runtime_policy = scope.runtime_policy().clone();
-        let context =
-            RuntimeHostContext::build(scope, invocation, "cloud-functions-runtime-session")?;
+        let context = RuntimeHostContext::build(scope, invocation)?;
         Ok(Self {
             context,
             runtime_policy,
@@ -34,6 +34,10 @@ impl CloudFunctionsHostBridge {
 
     pub fn commit_mutation_execution_unit(&self) -> Result<()> {
         self.context.commit_mutation_execution_unit()
+    }
+
+    pub fn service_capabilities(&self) -> Option<&dyn RuntimeServiceCapabilityHost> {
+        None
     }
 
     async fn dispatch_host_call_async(
@@ -151,7 +155,7 @@ impl HostBridge for CloudFunctionsHostBridge {
                 "cloud_functions_runtime_async_host_call",
                 tenant = %bridge.context.tenant_id(),
                 server_request_id = ?bridge.context.server_request_id(),
-                session_id = %bridge.context.session_id(),
+                host_call_session_id = %bridge.context.host_call_session_id(),
                 operation = %request.operation.as_str(),
                 host_call_id = NEXT_ASYNC_HOST_CALL_ID.fetch_add(1, Ordering::Relaxed),
             ),
@@ -179,4 +183,22 @@ fn unsupported_cloud_functions_host_operation(
     Err(NimbusRuntimeError::Contract(format!(
         "cloud functions runtime host does not support operation `{operation}`"
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unsupported_cloud_functions_host_operation;
+
+    #[test]
+    fn cloud_functions_service_lookup_stays_refusal_only() {
+        let error = unsupported_cloud_functions_host_operation("ctx_service_lookup")
+            .expect_err("cloud functions must refuse injected service lookup capability");
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not support operation `ctx_service_lookup`"),
+            "service lookup refusal should name the unsupported operation: {error}"
+        );
+    }
 }

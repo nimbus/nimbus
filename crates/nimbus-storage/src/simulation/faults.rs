@@ -16,6 +16,9 @@ pub enum FaultPoint {
     CheckpointPublishBeforeManifestUpdate = 5,
     CompactionStartBeforePublish = 6,
     JournalDurableAppendBeforeApply = 7,
+    TriggerInvocationMaterializeBeforeCommit = 8,
+    ScheduledJobRecordResultBeforeWrite = 9,
+    ScheduledJobCompleteBeforeWrite = 10,
 }
 
 impl FaultPoint {
@@ -32,6 +35,11 @@ impl FaultPoint {
             }
             Self::CompactionStartBeforePublish => "compaction_start_before_publish",
             Self::JournalDurableAppendBeforeApply => "journal_durable_append_before_apply",
+            Self::TriggerInvocationMaterializeBeforeCommit => {
+                "trigger_invocation_materialize_before_commit"
+            }
+            Self::ScheduledJobRecordResultBeforeWrite => "scheduled_job_record_result_before_write",
+            Self::ScheduledJobCompleteBeforeWrite => "scheduled_job_complete_before_write",
         }
     }
 }

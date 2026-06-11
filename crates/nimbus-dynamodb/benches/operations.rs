@@ -5,7 +5,7 @@
 //! in-process, tempdir-backed `Service` and reports p50/p95/p99 latency. This is
 //! an in-process protocol+engine baseline (no network), so the numbers isolate
 //! adapter + engine cost. Initial non-regression thresholds are documented in
-//! `docs/plans/proof/dynamodb-adapter/performance-baseline.md`.
+//! `docs/private/plans/proof/dynamodb-adapter/performance-baseline.md`.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -13,7 +13,7 @@ use std::time::Instant;
 use http::{HeaderMap, HeaderValue};
 use nimbus_core::TenantId;
 use nimbus_dynamodb::{AccessKeyRegistry, AuthMode, DispatchContext, dispatch};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use serde_json::{Value, json};
 
 const KEY: &str = "AKIATEST";
@@ -50,14 +50,14 @@ fn percentiles(mut samples: Vec<u128>) -> (u128, u128, u128) {
 
 fn main() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let service = Arc::new(Service::new(temp.path()).expect("service"));
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
     // Synthetic headers (no real SigV4 signature), so the bench drives the
     // lookup escape hatch rather than strict verification.
     let registry = AccessKeyRegistry::new()
         .bind(KEY, TenantId::new("acme").expect("tenant"))
         .with_mode(AuthMode::LookupOnly);
     let ctx = DispatchContext {
-        service: &service,
+        engine: &engine,
         access_keys: &registry,
     };
     let call = |op: &str, body: &Value| -> (u16, Value) {

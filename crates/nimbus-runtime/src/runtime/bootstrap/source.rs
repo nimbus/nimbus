@@ -127,7 +127,7 @@ function __nimbusCollectConstraintFilters(builderFn, label) {
   return [...builder.__filters];
 }
 
-function __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, sessionId) {
+function __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, hostCallSessionId) {
   return Object.freeze({
     __builderId: builderId,
     withIndex(indexName, builderFn) {
@@ -136,21 +136,21 @@ function __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, se
         index_name: indexName,
         filters: __nimbusCollectConstraintFilters(builderFn, "withIndex"),
       });
-      return __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, sessionId);
+      return __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, hostCallSessionId);
     },
     filter(builderFn) {
       syncHostValue("op_nimbus_ctx_query_filter", {
         builder_id: builderId,
         filters: __nimbusCollectConstraintFilters(builderFn, "filter"),
       });
-      return __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, sessionId);
+      return __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, hostCallSessionId);
     },
     order(direction) {
       syncHostValue("op_nimbus_ctx_query_order", {
         builder_id: builderId,
         direction,
       });
-      return __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, sessionId);
+      return __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, hostCallSessionId);
     },
     collect() {
       return asyncHostValue("op_nimbus_ctx_query_collect", {
@@ -223,7 +223,7 @@ function __nimbusNormalizeFunctionReference(functionRef, label) {
 async function __nimbusRunNamedFunction(
   syncHostValue,
   asyncOpName,
-  sessionId,
+  hostCallSessionId,
   authContext,
   kind,
   label,
@@ -242,190 +242,27 @@ async function __nimbusRunNamedFunction(
     syncHostValue("op_nimbus_ctx_runtime_enter_nested_call", {
       name: normalized.name,
       visibility: normalized.visibility,
-      session_id: sessionId,
+      host_call_session_id: hostCallSessionId,
     });
     return await localInvoker({
       kind,
       function_name: normalized.name,
       args,
       visibility: normalized.visibility,
+      hostCallSessionId,
       ...(nestedAuthContext ? { auth: nestedAuthContext } : {}),
     });
   }
   return globalThis.__nimbusAsyncHostValue(asyncOpName, {
     ...normalized,
     args,
-    session_id: sessionId,
+    host_call_session_id: hostCallSessionId,
     ...(nestedAuthContext ? { auth: nestedAuthContext } : {}),
   });
 }
 
-let __nimbusNextSessionId = 1;
+let __nimbusNextHostCallSessionId = 1;
 let __nimbusInvocationGeneration = 0;
-
-function __nimbusCloneServiceEndpoint(endpoint) {
-  if (endpoint === null || typeof endpoint !== "object") {
-    return null;
-  }
-  if (typeof endpoint.host !== "string" || endpoint.host.length === 0) {
-    return null;
-  }
-  if (!Number.isInteger(endpoint.port)) {
-    return null;
-  }
-  const protocol =
-    typeof endpoint.protocol === "string" && endpoint.protocol.length > 0
-      ? endpoint.protocol
-      : "tcp";
-  return Object.freeze({
-    host: endpoint.host,
-    port: endpoint.port,
-    protocol,
-  });
-}
-
-function __nimbusCloneServiceBinding(binding) {
-  if (binding === null || typeof binding !== "object") {
-    return null;
-  }
-  if (typeof binding.host !== "string" || binding.host.length === 0) {
-    return null;
-  }
-  if (!Number.isInteger(binding.port)) {
-    return null;
-  }
-  const endpoints = Object.create(null);
-  if (binding.endpoints !== null && typeof binding.endpoints === "object") {
-    for (const [endpointName, endpoint] of Object.entries(binding.endpoints)) {
-      const clonedEndpoint = __nimbusCloneServiceEndpoint(endpoint);
-      if (clonedEndpoint !== null) {
-        endpoints[endpointName] = clonedEndpoint;
-      }
-    }
-  }
-  const protocol =
-    typeof binding.protocol === "string" && binding.protocol.length > 0
-      ? binding.protocol
-      : "tcp";
-  return Object.freeze({
-    host: binding.host,
-    port: binding.port,
-    protocol,
-    endpoints: Object.freeze(endpoints),
-  });
-}
-
-function __nimbusCreateServiceBindings(services) {
-  const clonedServices = Object.create(null);
-  if (services === null || typeof services !== "object") {
-    return clonedServices;
-  }
-  for (const [serviceName, binding] of Object.entries(services)) {
-    const clonedBinding = __nimbusCloneServiceBinding(binding);
-    if (clonedBinding !== null) {
-      clonedServices[serviceName] = clonedBinding;
-    }
-  }
-  return clonedServices;
-}
-
-function __nimbusCreateServiceRegistry(guardStale, asyncHostValue, services) {
-  const cache = __nimbusCreateServiceBindings(services);
-  const hasOwn = (property) =>
-    Object.prototype.hasOwnProperty.call(cache, property);
-  const target = Object.create(null);
-
-  Object.defineProperty(target, "get", {
-    enumerable: false,
-    configurable: false,
-    writable: false,
-    value: async (serviceName) => {
-      guardStale();
-      if (typeof serviceName !== "string" || serviceName.length === 0) {
-        return undefined;
-      }
-      if (hasOwn(serviceName)) {
-        return cache[serviceName];
-      }
-      const lookedUpBinding = __nimbusCloneServiceBinding(
-        await asyncHostValue("op_nimbus_ctx_service_lookup", {
-          service_name: serviceName,
-        }),
-      );
-      if (lookedUpBinding !== null) {
-        cache[serviceName] = lookedUpBinding;
-        return lookedUpBinding;
-      }
-      return undefined;
-    },
-  });
-
-  return new Proxy(target, {
-    get(target, property) {
-      guardStale();
-      if (property === "get") {
-        return target.get;
-      }
-      if (typeof property !== "string") {
-        return undefined;
-      }
-      if (hasOwn(property)) {
-        return cache[property];
-      }
-      return undefined;
-    },
-    has(target, property) {
-      guardStale();
-      if (property === "get") {
-        return true;
-      }
-      if (typeof property !== "string") {
-        return false;
-      }
-      return hasOwn(property);
-    },
-    ownKeys() {
-      guardStale();
-      return [...Reflect.ownKeys(target), ...Reflect.ownKeys(cache)];
-    },
-    getOwnPropertyDescriptor(target, property) {
-      guardStale();
-      if (property === "get") {
-        return Reflect.getOwnPropertyDescriptor(target, property);
-      }
-      if (typeof property !== "string" || !hasOwn(property)) {
-        return undefined;
-      }
-      return {
-        value: cache[property],
-        enumerable: true,
-        configurable: true,
-        writable: false,
-      };
-    },
-    set() {
-      return false;
-    },
-    defineProperty() {
-      return false;
-    },
-    deleteProperty() {
-      return false;
-    },
-    getPrototypeOf() {
-      return null;
-    },
-    setPrototypeOf() {
-      return false;
-    },
-    isExtensible() {
-      return true;
-    },
-    preventExtensions() {
-      return false;
-    },
-  });
-}
 
 globalThis.__nimbusCreateContext = function(options = {}) {
   const myGeneration = __nimbusInvocationGeneration;
@@ -437,10 +274,10 @@ globalThis.__nimbusCreateContext = function(options = {}) {
       );
     }
   };
-  const sessionId =
-    typeof options.sessionId === "string" && options.sessionId.length > 0
-      ? options.sessionId
-      : `session-${__nimbusNextSessionId++}`;
+  const hostCallSessionId =
+    typeof options.hostCallSessionId === "string" && options.hostCallSessionId.length > 0
+      ? options.hostCallSessionId
+      : `host-call-session-${__nimbusNextHostCallSessionId++}`;
   const requestAuth =
     options.request !== null &&
     typeof options.request === "object" &&
@@ -461,18 +298,10 @@ globalThis.__nimbusCreateContext = function(options = {}) {
       ? requestAuth.verified_identity
       : null;
   const throwOnMissingIdentity = requestAuth?.throw_on_missing_identity === true;
-  const services =
-    options.request !== null &&
-    typeof options.request === "object" &&
-    options.request.services !== null &&
-    typeof options.request.services === "object"
-      ? options.request.services
-      : null;
-
   const syncHostValue = (opName, payload) => {
     guardStale();
     return globalThis.__nimbusSyncHostValue(opName, {
-      session_id: sessionId,
+      host_call_session_id: hostCallSessionId,
       ...(payload ?? {}),
     });
   };
@@ -480,7 +309,7 @@ globalThis.__nimbusCreateContext = function(options = {}) {
   const asyncHostValue = (opName, payload) => {
     guardStale();
     return globalThis.__nimbusAsyncHostValue(opName, {
-      session_id: sessionId,
+      host_call_session_id: hostCallSessionId,
       ...(payload ?? {}),
     });
   };
@@ -508,7 +337,6 @@ globalThis.__nimbusCreateContext = function(options = {}) {
         return cloneAuthIdentityOrThrow(verifiedAuthIdentity);
       },
     }),
-    services: __nimbusCreateServiceRegistry(guardStale, asyncHostValue, services),
     db: {
       async get(tableOrId, maybeId) {
         guardStale();
@@ -522,7 +350,7 @@ globalThis.__nimbusCreateContext = function(options = {}) {
             return globalThis.__nimbusAsyncHostValue("op_nimbus_document_get", {
               table: tableOrId.table,
               id: tableOrId.id,
-              session_id: sessionId,
+              host_call_session_id: hostCallSessionId,
             });
           }
           throw new Error(
@@ -532,12 +360,12 @@ globalThis.__nimbusCreateContext = function(options = {}) {
         return globalThis.__nimbusAsyncHostValue("op_nimbus_document_get", {
           table: tableOrId,
           id: maybeId,
-          session_id: sessionId,
+          host_call_session_id: hostCallSessionId,
         });
       },
       query(table) {
         const builderId = syncHostValue("op_nimbus_ctx_query_start", { table });
-        return __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, sessionId);
+        return __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, hostCallSessionId);
       },
       insert(table, fields) {
         return asyncHostValue("op_nimbus_document_insert", {
@@ -587,7 +415,7 @@ globalThis.__nimbusCreateContext = function(options = {}) {
         return __nimbusRunNamedFunction(
           syncHostValue,
           "op_nimbus_ctx_run_query",
-          sessionId,
+          hostCallSessionId,
           requestAuth,
           "query",
         "runQuery",
@@ -600,7 +428,7 @@ globalThis.__nimbusCreateContext = function(options = {}) {
         return __nimbusRunNamedFunction(
           syncHostValue,
           "op_nimbus_ctx_run_mutation",
-          sessionId,
+          hostCallSessionId,
           requestAuth,
           "mutation",
         "runMutation",
@@ -613,7 +441,7 @@ globalThis.__nimbusCreateContext = function(options = {}) {
         return __nimbusRunNamedFunction(
           syncHostValue,
           "op_nimbus_ctx_run_action",
-          sessionId,
+          hostCallSessionId,
           requestAuth,
           "action",
         "runAction",
@@ -1185,8 +1013,24 @@ if (Promise.reject.__nimbusDomainAware !== true) {
 }
 "#;
 
-const RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE: &str =
-    "__nimbusNextSessionId = 1; __nimbusInvocationGeneration++;";
+const RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE: &str = r#"
+__nimbusNextHostCallSessionId = 1;
+__nimbusInvocationGeneration++;
+{
+  const __nimbusRuntimeExecPath = __nimbusCoreOps.op_nimbus_runtime_exec_path();
+  if (
+    globalThis.process &&
+    typeof globalThis.process === "object" &&
+    typeof __nimbusRuntimeExecPath === "string" &&
+    __nimbusRuntimeExecPath.length > 0
+  ) {
+    globalThis.process.execPath = __nimbusRuntimeExecPath;
+    if (Array.isArray(globalThis.process.argv) && globalThis.process.argv.length > 0) {
+      globalThis.process.argv[0] = __nimbusRuntimeExecPath;
+    }
+  }
+}
+"#;
 
 pub(crate) fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
     runtime

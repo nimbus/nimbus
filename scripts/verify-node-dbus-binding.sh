@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the Node D-Bus Binding plan
-# (`docs/plans/node-dbus-client-binding-plan.md`).
+# (`docs/private/plans/node-dbus-client-binding-plan.md`).
 #
 # Exits 0 iff every condition in the plan's Completion Gate is satisfied.
 # Ships in NDB0 so /goal is verifiable from day one; NDB1-NDB6 progressively
@@ -13,13 +13,13 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN_ACTIVE="docs/plans/node-dbus-client-binding-plan.md"
-PLAN_ARCHIVED="docs/plans/archive/node-dbus-client-binding-plan.md"
+PLAN_ACTIVE="docs/private/plans/node-dbus-client-binding-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/node-dbus-client-binding-plan.md"
 AGENTS_MD="CLAUDE.md"
-PLANS_README="docs/plans/README.md"
-PROOF_DIR="docs/plans/proof/node-dbus-client-binding"
+PLANS_README="docs/private/plans/README.md"
+PROOF_DIR="docs/private/plans/proof/node-dbus-client-binding"
 PROOF_NDB0="${PROOF_DIR}/ndb0-baseline.md"
-RESEARCH_NOTE="docs/plans/research/systemd-dbus-binding-rust-2026.md"
+RESEARCH_NOTE="docs/private/plans/research/systemd-dbus-binding-rust-2026.md"
 
 ROOT_CARGO="Cargo.toml"
 NODE_CARGO="crates/nimbus-node/Cargo.toml"
@@ -30,7 +30,7 @@ ZBUS_ERROR="crates/nimbus-node/src/systemd_transient/zbus_client/error.rs"
 CORE_ERROR="crates/nimbus-core/src/error.rs"
 INTEGRATION_TEST="crates/nimbus-node/tests/zbus_systemd_live.rs"
 CI_WF=".github/workflows/ci.yml"
-OPERATOR_DOC="docs/operating/node-dbus-binding.md"
+OPERATOR_DOC="docs/private/operating/node-dbus-binding.md"
 
 PASS=0
 FAIL=0
@@ -102,7 +102,7 @@ else
   fail "Plan missing" "Neither ${PLAN_ACTIVE} nor ${PLAN_ARCHIVED} exists"
 fi
 
-# 2. Routing entries exist in CLAUDE.md (= AGENTS.md) and docs/plans/README.md.
+# 2. Routing entries exist in CLAUDE.md (= AGENTS.md) and docs/private/plans/README.md.
 step 2 "Routing entries exist"
 has_agents_route=0
 has_plans_route=0

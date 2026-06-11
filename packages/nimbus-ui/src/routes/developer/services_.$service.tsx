@@ -256,7 +256,7 @@ function OverviewTab({ service }: { service: ServiceDoc }) {
       <div className="rounded border border-app bg-surface-2 px-3 py-3 text-xs text-muted">
         Logs, environment variables, ports, and code-ref details are not yet
         surfaced by the system tenant for the services index. A follow-up plan
-        will wire these dimensions through the SandboxServiceManager and
+        will wire these dimensions through the ServiceManager and
         compose.yaml metadata.
       </div>
     </div>

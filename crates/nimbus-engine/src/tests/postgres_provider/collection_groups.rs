@@ -9,14 +9,14 @@ use nimbus_core::{
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
 async fn typed_postgres_config_collection_group_queries_use_path_binding_metadata() {
-    with_postgres_service_config(|service_config, _provider_config| async move {
+    with_postgres_engine_config(|engine_config, _provider_config| async move {
         let tenant_id = TenantId::new("pg-collection-group").expect("tenant id should build");
-        let service = Arc::new(
-            Service::new_with_persistence_config(service_config)
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config)
                 .await
-                .expect("postgres-backed service should create"),
+                .expect("postgres-backed engine should create"),
         );
-        service
+        engine
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
@@ -25,7 +25,7 @@ async fn typed_postgres_config_collection_group_queries_use_path_binding_metadat
         let nested_table = TableName::new("landmarks_nested").expect("table name should build");
         let other_table = TableName::new("landmarks_other").expect("table name should build");
         for table in [&direct_table, &nested_table, &other_table] {
-            service
+            engine
                 .set_table_schema_async(
                     tenant_id.clone(),
                     TableSchema {
@@ -47,7 +47,7 @@ async fn typed_postgres_config_collection_group_queries_use_path_binding_metadat
         }
 
         seed_bound_collection_group_document(
-            &service,
+            &engine,
             &tenant_id,
             direct_table.clone(),
             "aa-top",
@@ -55,7 +55,7 @@ async fn typed_postgres_config_collection_group_queries_use_path_binding_metadat
             [("rank", json!(1))],
         );
         seed_bound_collection_group_document(
-            &service,
+            &engine,
             &tenant_id,
             direct_table,
             "bb-top",
@@ -63,7 +63,7 @@ async fn typed_postgres_config_collection_group_queries_use_path_binding_metadat
             [("rank", json!(2))],
         );
         seed_bound_collection_group_document(
-            &service,
+            &engine,
             &tenant_id,
             nested_table,
             "zz-top",
@@ -71,7 +71,7 @@ async fn typed_postgres_config_collection_group_queries_use_path_binding_metadat
             [("rank", json!(3))],
         );
         seed_bound_collection_group_document(
-            &service,
+            &engine,
             &tenant_id,
             other_table,
             "cc-top",
@@ -79,7 +79,7 @@ async fn typed_postgres_config_collection_group_queries_use_path_binding_metadat
             [("rank", json!(4))],
         );
 
-        let rows = service
+        let rows = engine
             .query_collection_group_documents_structured_with_principal_cancellable(
                 &tenant_id,
                 &CollectionName::new("landmarks").expect("collection group should parse"),
@@ -114,13 +114,13 @@ async fn typed_postgres_config_collection_group_queries_use_path_binding_metadat
             "postgres collection-group queries should use the persisted path bindings and full document-path cursors"
         );
 
-        service.quiesce().await;
+        engine.quiesce().await;
     })
     .await;
 }
 
 fn seed_bound_collection_group_document(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: TableName,
     document_id: &str,
@@ -145,7 +145,7 @@ fn seed_bound_collection_group_document(
         transforms: Vec::new(),
     }])
     .expect("seed write batch should build");
-    service
+    engine
         .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
         .expect("seed execution unit should begin")
         .execute_atomic_write_batch(batch)

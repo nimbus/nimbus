@@ -190,7 +190,7 @@ fn enforce_host_call_grants(
     let service_name = payload
         .get("service_name")
         .and_then(Value::as_str)
-        .ok_or_else(|| JsErrorBox::generic("ctx.services lookup is missing service_name"))?;
+        .ok_or_else(|| JsErrorBox::generic("runtime service lookup is missing service_name"))?;
     if contract
         .limits
         .grants

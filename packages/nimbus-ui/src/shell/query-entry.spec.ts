@@ -4,7 +4,7 @@ import {
   type QueryEntry,
   type QueryReference,
   queryEntry,
-} from "nimbus/browser";
+} from "@nimbus/nimbus/browser";
 
 import { api } from "../../convex/_generated/api";
 

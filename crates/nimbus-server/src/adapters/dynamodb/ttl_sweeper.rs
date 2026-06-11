@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use nimbus_dynamodb::AccessKeyRegistry;
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{info, warn};
 
@@ -25,7 +25,7 @@ fn now_epoch_seconds() -> i64 {
 /// Sweep expired items on `period` until the task is aborted. Per-tenant errors
 /// are logged and never stop the schedule.
 pub async fn run_ttl_sweeper(
-    service: Arc<Service>,
+    engine: Arc<Engine>,
     access_keys: Arc<AccessKeyRegistry>,
     period: Duration,
 ) {
@@ -36,7 +36,7 @@ pub async fn run_ttl_sweeper(
     loop {
         ticker.tick().await;
         let now = now_epoch_seconds();
-        let (swept, errors) = nimbus_dynamodb::sweep_all_tenants(&service, &access_keys, now);
+        let (swept, errors) = nimbus_dynamodb::sweep_all_tenants(&engine, &access_keys, now);
         if swept > 0 {
             info!("DynamoDB TTL sweep reclaimed {swept} expired item(s)");
         }

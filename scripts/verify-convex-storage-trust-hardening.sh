@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for
-# docs/plans/archive/convex-storage-trust-hardening-plan.md.
+# docs/private/plans/archive/convex-storage-trust-hardening-plan.md.
 #
 # Keep this gate tied to behavior-bearing code and tests, not only narrative
 # proof files.
@@ -10,9 +10,9 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/plans/archive/convex-storage-trust-hardening-plan.md"
-PROOF_DIR="docs/plans/proof/convex-storage-trust-hardening"
-DEBT_DOC="docs/technical-debt.md"
+PLAN="docs/private/plans/archive/convex-storage-trust-hardening-plan.md"
+PROOF_DIR="docs/private/plans/proof/convex-storage-trust-hardening"
+DEBT_DOC="docs/private/technical-debt.md"
 
 PASS=0
 FAIL=0
@@ -65,10 +65,10 @@ else
 fi
 
 step 2 "Archived routing entries exist"
-if grep -q "${PLAN}" AGENTS.md && grep -q "Completed plans are stored in \`docs/plans/archive/\`" docs/plans/README.md; then
+if grep -q "${PLAN}" AGENTS.md && grep -q "Completed plans are stored in \`docs/private/plans/archive/\`" docs/private/plans/README.md; then
   pass "Archived plan is routed from AGENTS.md and archive policy is documented"
 else
-  fail "Archived routing entries missing" "Expected ${PLAN} in AGENTS.md and archive policy in docs/plans/README.md"
+  fail "Archived routing entries missing" "Expected ${PLAN} in AGENTS.md and archive policy in docs/private/plans/README.md"
 fi
 
 step 3 "Debt ledger closes stale TableId rows and CST1 proof exists"

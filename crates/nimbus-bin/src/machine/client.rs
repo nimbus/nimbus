@@ -4,9 +4,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use nimbus::{
-    Error, SandboxBuildLaunchSpec, SandboxHandle, SandboxId, SandboxImageLaunchSpec, TenantId,
-};
+use nimbus::{Error, SandboxHandle, SandboxId, SandboxRootSpec, SandboxSpec, TenantId};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -111,23 +109,23 @@ impl MachineApiClient {
 
     pub(crate) fn start_service_sandbox_from_image(
         &self,
-        launch: SandboxImageLaunchSpec,
+        spec: SandboxSpec,
     ) -> Result<SandboxHandle, Error> {
         self.post_json(
             IMAGE_START_PATH,
-            &MachineApiServiceSandboxImageStartRequest { launch },
+            &MachineApiServiceSandboxImageStartRequest { spec },
         )
         .map(|response: MachineApiServiceSandboxStartResponse| response.handle)
     }
 
     pub(crate) fn start_service_sandbox_from_build(
         &self,
-        launch: SandboxBuildLaunchSpec,
+        spec: SandboxSpec,
     ) -> Result<SandboxHandle, Error> {
-        let launch = normalize_guest_visible_build_launch(launch);
+        let spec = normalize_guest_visible_build_spec(spec);
         self.post_json(
             BUILD_START_PATH,
-            &MachineApiServiceSandboxBuildStartRequest { launch },
+            &MachineApiServiceSandboxBuildStartRequest { spec },
         )
         .map(|response: MachineApiServiceSandboxStartResponse| response.handle)
     }
@@ -163,7 +161,9 @@ impl MachineApiClient {
         tenant_id: Option<&TenantId>,
     ) -> Result<Vec<MachineApiServiceSandboxSummary>, Error> {
         let path = tenant_id
-            .map(|tenant_id| format!("{LIST_PATH}?tenant_id={tenant_id}"))
+            .map(|tenant_id| {
+                machine_api_query_path(LIST_PATH, &[("tenant_id", tenant_id.as_str())])
+            })
             .unwrap_or_else(|| LIST_PATH.to_owned());
         self.get_json::<MachineApiServiceSandboxListResponse>(&path)
             .map(|response| response.sandboxes)
@@ -174,8 +174,12 @@ impl MachineApiClient {
         tenant_id: &TenantId,
         service_name: &str,
     ) -> Result<MachineApiServiceSandboxLookupResponse, Error> {
-        self.get_json(&format!(
-            "{CURRENT_PATH}?tenant_id={tenant_id}&service_name={service_name}"
+        self.get_json(&machine_api_query_path(
+            CURRENT_PATH,
+            &[
+                ("tenant_id", tenant_id.as_str()),
+                ("service_name", service_name),
+            ],
         ))
     }
 
@@ -190,7 +194,7 @@ impl MachineApiClient {
         ))
     }
 
-    pub(crate) fn service_process_snapshot(
+    pub(crate) fn service_sandbox_process_snapshot(
         &self,
         sandbox_id: &SandboxId,
     ) -> Result<MachineApiServiceProcessSnapshot, Error> {
@@ -268,12 +272,14 @@ impl MachineApiClient {
     }
 }
 
-fn normalize_guest_visible_build_launch(
-    mut launch: SandboxBuildLaunchSpec,
-) -> SandboxBuildLaunchSpec {
-    launch.dockerfile_path = normalize_guest_visible_host_path(&launch.dockerfile_path);
-    launch.context_path = normalize_guest_visible_host_path(&launch.context_path);
-    launch
+fn normalize_guest_visible_build_spec(mut spec: SandboxSpec) -> SandboxSpec {
+    if let SandboxRootSpec::OciImage(image) = &mut spec.root
+        && let nimbus::SandboxOciImageSource::Build(build) = &mut image.source
+    {
+        build.dockerfile_path = normalize_guest_visible_host_path(&build.dockerfile_path);
+        build.context_path = normalize_guest_visible_host_path(&build.context_path);
+    }
+    spec
 }
 
 fn normalize_guest_visible_host_path(path: &Path) -> PathBuf {
@@ -323,6 +329,38 @@ fn describe_capability_decode_error(
             CAPABILITIES_PATH
         )),
     }
+}
+
+fn machine_api_query_path(path: &str, params: &[(&str, &str)]) -> String {
+    let mut encoded = String::from(path);
+    for (index, (name, value)) in params.iter().enumerate() {
+        encoded.push(if index == 0 { '?' } else { '&' });
+        encoded.push_str(name);
+        encoded.push('=');
+        percent_encode_query_value_into(value, &mut encoded);
+    }
+    encoded
+}
+
+fn percent_encode_query_value_into(value: &str, encoded: &mut String) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    for byte in value.bytes() {
+        if is_unreserved_query_byte(byte) {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(HEX[(byte >> 4) as usize] as char);
+            encoded.push(HEX[(byte & 0x0F) as usize] as char);
+        }
+    }
+}
+
+fn is_unreserved_query_byte(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~'
+    )
 }
 
 fn read_unix_http_request(
@@ -375,14 +413,28 @@ fn read_unix_http_request(
     loop {
         match stream.read(&mut chunk) {
             Ok(0) => break,
-            Ok(read) => response.extend_from_slice(&chunk[..read]),
+            Ok(read) => {
+                response.extend_from_slice(&chunk[..read]);
+                if let Some(expected_len) =
+                    expected_http_response_len(&response, socket_path, path)?
+                    && response.len() >= expected_len
+                    && !http_response_declares_connection_close(&response)
+                {
+                    break;
+                }
+            }
             Err(error)
                 if matches!(
                     error.kind(),
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                 ) =>
             {
-                break;
+                return Err(Error::Internal(format!(
+                    "timed out reading machine API response from {}{} after {} bytes: {error}",
+                    socket_path.display(),
+                    path,
+                    response.len()
+                )));
             }
             Err(error) => {
                 return Err(Error::Internal(format!(
@@ -402,6 +454,18 @@ fn read_unix_http_request(
         )));
     }
 
+    if let Some(expected_len) = expected_http_response_len(&response, socket_path, path)?
+        && response.len() < expected_len
+    {
+        return Err(Error::Internal(format!(
+            "machine API response from {}{} closed after {} bytes before the declared {} byte response completed",
+            socket_path.display(),
+            path,
+            response.len(),
+            expected_len
+        )));
+    }
+
     Ok(response)
 }
 
@@ -412,34 +476,127 @@ fn parse_http_json_body<'a>(
 ) -> Result<&'a [u8], Error> {
     let response_text = String::from_utf8_lossy(response);
     let status_line = response_text.lines().next().unwrap_or("<empty-response>");
-    let body_offset = response
+    let body_offset = http_response_body_offset(response).ok_or_else(|| {
+        Error::Internal(format!(
+            "machine API response from {}{} did not contain an HTTP body",
+            socket_path.display(),
+            path
+        ))
+    })?;
+    let body = &response[body_offset..];
+    let status_code = parse_http_status_code(status_line);
+    if status_code != Some(200) {
+        if let Ok(error_body) = serde_json::from_slice::<MachineApiErrorResponse>(body) {
+            return Err(machine_api_status_error(
+                status_code,
+                format!(
+                    "machine API request {}{} failed: {}",
+                    socket_path.display(),
+                    path,
+                    error_body.error
+                ),
+            ));
+        }
+        return Err(machine_api_status_error(
+            status_code,
+            format!(
+                "machine API request {}{} did not return 200 OK: {status_line}",
+                socket_path.display(),
+                path
+            ),
+        ));
+    }
+    Ok(body)
+}
+
+fn http_response_body_offset(response: &[u8]) -> Option<usize> {
+    response
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
         .map(|index| index + 4)
-        .ok_or_else(|| {
+}
+
+fn expected_http_response_len(
+    response: &[u8],
+    socket_path: &Path,
+    path: &str,
+) -> Result<Option<usize>, Error> {
+    let Some(body_offset) = http_response_body_offset(response) else {
+        return Ok(None);
+    };
+    let headers = String::from_utf8_lossy(&response[..body_offset]);
+    let mut content_length = None;
+    for line in headers.lines().skip(1) {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if !name.eq_ignore_ascii_case("content-length") {
+            continue;
+        }
+        let parsed = value.trim().parse::<usize>().map_err(|error| {
             Error::Internal(format!(
-                "machine API response from {}{} did not contain an HTTP body",
-                socket_path.display(),
-                path
-            ))
-        })?;
-    let body = &response[body_offset..];
-    if !status_line.contains("200 OK") {
-        if let Ok(error_body) = serde_json::from_slice::<MachineApiErrorResponse>(body) {
-            return Err(Error::Internal(format!(
-                "machine API request {}{} failed: {}",
+                "machine API response from {}{} had invalid Content-Length `{}`: {error}",
                 socket_path.display(),
                 path,
-                error_body.error
+                value.trim()
+            ))
+        })?;
+        if let Some(previous) = content_length
+            && previous != parsed
+        {
+            return Err(Error::Internal(format!(
+                "machine API response from {}{} had conflicting Content-Length values {previous} and {parsed}",
+                socket_path.display(),
+                path
             )));
         }
-        return Err(Error::Internal(format!(
-            "machine API request {}{} did not return 200 OK: {status_line}",
-            socket_path.display(),
-            path
-        )));
+        content_length = Some(parsed);
     }
-    Ok(body)
+    content_length
+        .map(|len| {
+            body_offset.checked_add(len).ok_or_else(|| {
+                Error::Internal(format!(
+                    "machine API response from {}{} declared an oversized Content-Length",
+                    socket_path.display(),
+                    path
+                ))
+            })
+        })
+        .transpose()
+}
+
+fn http_response_declares_connection_close(response: &[u8]) -> bool {
+    let Some(body_offset) = http_response_body_offset(response) else {
+        return false;
+    };
+    let headers = String::from_utf8_lossy(&response[..body_offset]);
+    headers.lines().skip(1).any(|line| {
+        let Some((name, value)) = line.split_once(':') else {
+            return false;
+        };
+        name.eq_ignore_ascii_case("connection")
+            && value
+                .split(',')
+                .any(|directive| directive.trim().eq_ignore_ascii_case("close"))
+    })
+}
+
+fn parse_http_status_code(status_line: &str) -> Option<u16> {
+    let mut parts = status_line.split_ascii_whitespace();
+    let _http_version = parts.next()?;
+    parts.next()?.parse::<u16>().ok()
+}
+
+fn machine_api_status_error(status_code: Option<u16>, message: String) -> Error {
+    match status_code {
+        Some(400 | 422) => Error::InvalidInput(message),
+        Some(401 | 403) => Error::PermissionDenied(message),
+        Some(404) => Error::NotFound(message),
+        Some(409) => Error::Conflict(message),
+        Some(412) => Error::PreconditionFailed(message),
+        Some(429) => Error::ResourceExhausted(message),
+        _ => Error::Internal(message),
+    }
 }
 
 #[cfg(test)]
@@ -455,10 +612,9 @@ mod tests {
     use std::time::Duration;
 
     use nimbus::{
-        PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
-        SandboxBuildLaunchSpec, SandboxError, SandboxFilesystemSpec, SandboxHandle, SandboxId,
-        SandboxImageLaunchSpec, SandboxPortBinding, SandboxProcessSpec, SandboxSpec, SandboxStatus,
-        TenantId,
+        Error, PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
+        SandboxHandle, SandboxId, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
+        SandboxRootSpec, SandboxSpec, SandboxStatus, TenantId,
     };
     use nimbus_sandbox::SandboxFuture;
     use nimbus_sandbox::backends::container::{
@@ -467,7 +623,8 @@ mod tests {
     use tempfile::{Builder, TempDir};
 
     use super::{
-        MachineApiClient, normalize_guest_visible_build_launch, normalize_guest_visible_host_path,
+        MachineApiClient, machine_api_query_path, normalize_guest_visible_build_spec,
+        normalize_guest_visible_host_path,
     };
     use crate::machine::api::{
         MachineApiListenMode, MachineApiState, bind_direct_listener,
@@ -610,6 +767,46 @@ mod tests {
         server.join().expect("server should join");
     }
 
+    #[test]
+    fn client_preserves_machine_api_bad_request_as_invalid_input() {
+        let temp_dir = short_socket_tempdir();
+        let socket_path = temp_dir.path().join("nimbus.sock");
+        let listener = StdUnixListener::bind(&socket_path).expect("listener should bind");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("server should accept request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            let body = serde_json::json!({
+                "error": "service-sandboxes.image-start requires OCI image reference",
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("server should write error response");
+        });
+        let client = MachineApiClient::new_for_test(socket_path);
+
+        let error = client
+            .capabilities()
+            .expect_err("guest contract rejection should stay typed");
+
+        assert!(
+            matches!(
+                &error,
+                Error::InvalidInput(message)
+                    if message.contains("machine API request")
+                        && message.contains("requires OCI image reference")
+            ),
+            "400 machine API errors should remain InvalidInput: {error}"
+        );
+        server.join().expect("server should join");
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn client_round_trips_service_sandbox_operations_when_backend_is_available() {
         let temp_dir = short_socket_tempdir();
@@ -654,10 +851,12 @@ mod tests {
         );
 
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
-        let image_launch =
-            SandboxImageLaunchSpec::new(sample_spec(&tenant_id, "db"), "docker://busybox:latest");
         let image_handle = client
-            .start_service_sandbox_from_image(image_launch)
+            .start_service_sandbox_from_image(image_spec(
+                &tenant_id,
+                "db",
+                "docker://busybox:latest",
+            ))
             .expect("image-backed sandbox should start");
         assert_eq!(image_handle.name, "db");
         assert_eq!(image_handle.backend, SandboxBackendKind::Container);
@@ -681,14 +880,14 @@ mod tests {
             "stopped sandbox should disappear from inspect"
         );
 
-        let build_launch = SandboxBuildLaunchSpec::new(
-            sample_spec(&tenant_id, "api"),
-            "api-image",
-            "/Users/jack/src/github.com/nimbus/nimbus/Dockerfile",
-            "/Users/jack/src/github.com/nimbus/nimbus",
-        );
         let build_handle = client
-            .start_service_sandbox_from_build(build_launch)
+            .start_service_sandbox_from_build(build_spec(
+                &tenant_id,
+                "api",
+                "api-image",
+                "/Users/jack/src/github.com/nimbus/nimbus/Dockerfile",
+                "/Users/jack/src/github.com/nimbus/nimbus",
+            ))
             .expect("build-backed sandbox should start");
         assert_eq!(build_handle.name, "api");
 
@@ -766,7 +965,7 @@ mod tests {
         assert_eq!(logs.next_offset, 15);
 
         let snapshot = client
-            .service_process_snapshot(&sandbox_id)
+            .service_sandbox_process_snapshot(&sandbox_id)
             .expect("process snapshot should read");
         assert_eq!(snapshot.runtime_pid, Some(2002));
         assert_eq!(snapshot.conmon_pid, Some(1001));
@@ -776,6 +975,77 @@ mod tests {
             .await
             .expect("machine API server task should join")
             .expect("machine API server should shut down cleanly");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn client_encodes_current_service_lookup_query_values() {
+        let temp_dir = short_socket_tempdir();
+        let control_data_dir = temp_dir.path().join("control");
+        let manifest_state_root = control_data_dir
+            .join("service-sandboxes")
+            .join("container")
+            .join("state");
+        let socket_path = temp_dir.path().join("nimbus.sock");
+        let listener = bind_direct_listener(&socket_path).expect("listener should bind");
+        let mut backend_config = ContainerSandboxBackendConfig::under_root(
+            control_data_dir.join("service-sandboxes").join("container"),
+        );
+        backend_config.launch_mode = ContainerLaunchMode::PlanOnly;
+        let state = MachineApiState {
+            control_data_dir,
+            listen_mode: MachineApiListenMode::DirectSocket,
+            binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
+            helper_binary_dirs: default_guest_helper_binary_dirs(),
+            service_backend: Some(Arc::new(ContainerSandboxBackend::new(backend_config))),
+            machine_port_forwarder: None,
+        };
+        write_fake_runtime_binaries(temp_dir.path());
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let server = tokio::spawn(serve_machine_api(listener, state, async move {
+            let _ = shutdown_rx.await;
+        }));
+        let client = MachineApiClient::new_for_test(socket_path);
+        let _ = wait_for_health(&client);
+
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let sandbox_id = SandboxId::new("db-special-01aaa");
+        let service_name = "db & cache=1/path";
+        write_container_manifest(
+            manifest_state_root.as_path(),
+            sandbox_id.as_str(),
+            tenant_id.as_str(),
+            service_name,
+            SandboxStatus::Ready,
+        );
+
+        let current = client
+            .inspect_current_service_sandbox(&tenant_id, service_name)
+            .expect("encoded current sandbox lookup should succeed")
+            .details
+            .expect("encoded current sandbox should resolve");
+        assert_eq!(current.summary.sandbox_id, sandbox_id);
+        assert_eq!(current.summary.service_name, service_name);
+
+        let _ = shutdown_tx.send(());
+        server
+            .await
+            .expect("machine API server task should join")
+            .expect("machine API server should shut down cleanly");
+    }
+
+    #[test]
+    fn machine_api_query_path_percent_encodes_query_delimiters() {
+        assert_eq!(
+            machine_api_query_path(
+                "/v1/machine-api/service-sandboxes/current",
+                &[
+                    ("tenant_id", "tenant"),
+                    ("service_name", "db & cache=1/path☁")
+                ]
+            ),
+            "/v1/machine-api/service-sandboxes/current?tenant_id=tenant&service_name=db%20%26%20cache%3D1%2Fpath%E2%98%81"
+        );
     }
 
     #[test]
@@ -790,6 +1060,115 @@ mod tests {
                 .contains("failed to connect to machine API socket"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn client_accepts_complete_content_length_response_without_socket_eof() {
+        let temp_dir = short_socket_tempdir();
+        let socket_path = temp_dir.path().join("nimbus.sock");
+        let listener = StdUnixListener::bind(&socket_path).expect("listener should bind");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("server should accept request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            let body = serde_json::json!({
+                "status": "ok",
+                "role": "guest-machine-api",
+                "protocol_version": PROTOCOL_VERSION,
+                "listen_mode": "direct-socket",
+                "control_data_dir": "/tmp/nimbus-control",
+            })
+            .to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("server should write complete response");
+            std::thread::sleep(Duration::from_millis(200));
+        });
+        let client = MachineApiClient {
+            socket_path,
+            io_timeout: Duration::from_millis(50),
+        };
+
+        let health = client
+            .health()
+            .expect("complete Content-Length response should not require EOF");
+
+        assert_eq!(health.status, "ok");
+        assert_eq!(health.protocol_version, PROTOCOL_VERSION);
+        server.join().expect("server should join");
+    }
+
+    #[test]
+    fn client_reports_timeout_before_declared_response_body_completes() {
+        let temp_dir = short_socket_tempdir();
+        let socket_path = temp_dir.path().join("nimbus.sock");
+        let listener = StdUnixListener::bind(&socket_path).expect("listener should bind");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("server should accept request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 64\r\n\r\n{\"status\":\"ok\"",
+                )
+                .expect("server should write partial response");
+            std::thread::sleep(Duration::from_millis(200));
+        });
+        let client = MachineApiClient {
+            socket_path,
+            io_timeout: Duration::from_millis(50),
+        };
+
+        let error = client
+            .health()
+            .expect_err("partial response should time out before successful parse");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("timed out reading machine API response"),
+            "{message}"
+        );
+        assert!(
+            !message.contains("failed to decode machine API response"),
+            "{message}"
+        );
+        server.join().expect("server should join");
+    }
+
+    #[test]
+    fn client_rejects_eof_before_declared_response_body_completes() {
+        let temp_dir = short_socket_tempdir();
+        let socket_path = temp_dir.path().join("nimbus.sock");
+        let listener = StdUnixListener::bind(&socket_path).expect("listener should bind");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("server should accept request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 64\r\n\r\n{\"status\":\"ok\"",
+                )
+                .expect("server should write truncated response");
+        });
+        let client = MachineApiClient {
+            socket_path,
+            io_timeout: Duration::from_secs(2),
+        };
+
+        let error = client
+            .health()
+            .expect_err("truncated response should not parse as a clean EOF");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("closed after") && message.contains("declared"),
+            "{message}"
+        );
+        server.join().expect("server should join");
     }
 
     #[test]
@@ -814,30 +1193,37 @@ mod tests {
     }
 
     #[test]
-    fn guest_visible_build_launch_normalization_updates_both_paths() {
+    fn guest_visible_build_spec_normalization_updates_both_paths() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
-        let launch = normalize_guest_visible_build_launch(SandboxBuildLaunchSpec::new(
-            sample_spec(&tenant_id, "api"),
+        let spec = normalize_guest_visible_build_spec(build_spec(
+            &tenant_id,
+            "api",
             "api-image",
             "/tmp/nimbus-build-context/Dockerfile",
             "/tmp/nimbus-build-context",
         ));
+        let SandboxRootSpec::OciImage(image) = spec.root else {
+            panic!("build spec should stay OCI-image rooted");
+        };
+        let nimbus::SandboxOciImageSource::Build(build) = image.source else {
+            panic!("build spec should stay build-backed");
+        };
         if cfg!(target_os = "macos") {
             assert_eq!(
-                launch.dockerfile_path,
+                build.dockerfile_path,
                 PathBuf::from("/private/tmp/nimbus-build-context/Dockerfile")
             );
             assert_eq!(
-                launch.context_path,
+                build.context_path,
                 PathBuf::from("/private/tmp/nimbus-build-context")
             );
         } else {
             assert_eq!(
-                launch.dockerfile_path,
+                build.dockerfile_path,
                 PathBuf::from("/tmp/nimbus-build-context/Dockerfile")
             );
             assert_eq!(
-                launch.context_path,
+                build.context_path,
                 PathBuf::from("/tmp/nimbus-build-context")
             );
         }
@@ -941,9 +1327,9 @@ mod tests {
     fn sample_spec(tenant_id: &TenantId, name: &str) -> SandboxSpec {
         SandboxSpec::new(
             tenant_id.clone(),
-            name,
+            SandboxOwnerSpec::service(name),
             SandboxBackendKind::Container,
-            SandboxFilesystemSpec::new("/"),
+            SandboxRootSpec::rootfs("/"),
             SandboxProcessSpec::new(["sleep", "60"]),
         )
         .with_port_binding(SandboxPortBinding::new(
@@ -952,6 +1338,24 @@ mod tests {
             18080,
             8080,
         ))
+    }
+
+    fn image_spec(tenant_id: &TenantId, name: &str, image_reference: &str) -> SandboxSpec {
+        let mut spec = sample_spec(tenant_id, name);
+        spec.root = SandboxRootSpec::oci_image_reference(image_reference);
+        spec
+    }
+
+    fn build_spec(
+        tenant_id: &TenantId,
+        name: &str,
+        image_name: &str,
+        dockerfile_path: impl Into<PathBuf>,
+        context_path: impl Into<PathBuf>,
+    ) -> SandboxSpec {
+        let mut spec = sample_spec(tenant_id, name);
+        spec.root = SandboxRootSpec::oci_image_build(image_name, dockerfile_path, context_path);
+        spec
     }
 
     fn short_socket_tempdir() -> TempDir {
@@ -1006,9 +1410,13 @@ mod tests {
             "handle": handle,
             "spec": {
                 "tenant_id": tenant_id,
-                "name": service_name,
+                "owner": {
+                    "kind": "service",
+                    "name": service_name
+                },
                 "backend": "container",
-                "filesystem": {
+                "root": {
+                    "kind": "rootfs",
                     "rootfs": "/tmp/rootfs",
                     "readonly": true
                 },
@@ -1092,7 +1500,8 @@ mod tests {
     impl StubMachineApiSandboxBackend {
         fn start_with_spec(&self, spec: &SandboxSpec) -> SandboxHandle {
             let sequence = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-            let sandbox_id = SandboxId::new(format!("{}-{sequence}", spec.name));
+            let service_name = spec.display_name().to_owned();
+            let sandbox_id = SandboxId::new(format!("{service_name}-{sequence}"));
             let endpoints = spec
                 .port_bindings
                 .iter()
@@ -1110,7 +1519,7 @@ mod tests {
             let handle = SandboxHandle::new(
                 spec.tenant_id.clone(),
                 sandbox_id.clone(),
-                spec.name.clone(),
+                service_name,
                 SandboxBackendKind::Container,
                 SandboxStatus::Ready,
                 endpoints,
@@ -1129,20 +1538,7 @@ mod tests {
         }
 
         fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
-            let message = format!(
-                "stub backend expects image/build launch, not bare spec {}",
-                spec.name
-            );
-            Box::pin(async move { Err(SandboxError::InvalidSpec { message }) })
-        }
-
-        fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
-            let handle = self.start_with_spec(&launch.spec);
-            Box::pin(async move { Ok(handle) })
-        }
-
-        fn start_from_build(&self, launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
-            let handle = self.start_with_spec(&launch.spec);
+            let handle = self.start_with_spec(&spec);
             Box::pin(async move { Ok(handle) })
         }
 

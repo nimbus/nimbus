@@ -9,7 +9,7 @@ use nimbus_auth::normalize_principal_context;
 
 #[cfg(test)]
 pub(in crate::adapters::convex) fn dispatch_mutation(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     tenant_id: &TenantId,
     mutation: Mutation,
 ) -> Result<Value, Error> {
@@ -17,7 +17,7 @@ pub(in crate::adapters::convex) fn dispatch_mutation(
 }
 
 pub(in crate::adapters::convex) fn dispatch_mutation_with_auth(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     tenant_id: &TenantId,
     mutation: Mutation,
     auth: Option<&InvocationAuth>,
@@ -66,7 +66,7 @@ pub(in crate::adapters::convex) fn dispatch_mutation_with_auth(
 
 #[cfg(test)]
 pub(in crate::adapters::convex) fn execute_named_mutation_request_direct(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     name: &str,
@@ -78,7 +78,7 @@ pub(in crate::adapters::convex) fn execute_named_mutation_request_direct(
 
 #[cfg(test)]
 pub(in crate::adapters::convex) fn dispatch_convex_mutation(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     mutation: ConvexExecutableMutation,
@@ -95,7 +95,7 @@ pub(in crate::adapters::convex) fn dispatch_convex_mutation(
 }
 
 pub(in crate::adapters::convex) fn dispatch_convex_mutation_cancellable_with_auth(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     mutation: ConvexExecutableMutation,

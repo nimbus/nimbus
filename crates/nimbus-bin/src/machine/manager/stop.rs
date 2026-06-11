@@ -425,6 +425,10 @@ pub(super) fn read_pid(path: &Path) -> Result<Option<i32>, Error> {
 }
 
 pub(super) fn send_signal(pid: i32, signal: i32) -> Result<(), Error> {
+    // SAFETY: `kill` does not dereference memory from this process. Callers
+    // pass pids read from Nimbus-managed pid files or child handles and the
+    // stop path uses fixed POSIX signals (SIGTERM/SIGKILL); OS failures are
+    // reported through errno and mapped below.
     let rc = unsafe { kill(pid, signal) };
     if rc == 0 || !pid_is_alive(pid) {
         return Ok(());
@@ -436,6 +440,9 @@ pub(super) fn send_signal(pid: i32, signal: i32) -> Result<(), Error> {
 }
 
 fn pid_is_alive(pid: i32) -> bool {
+    // SAFETY: signal 0 is the POSIX existence/permission probe for `kill`; it
+    // sends no signal and touches no Rust memory. The OS result is interpreted
+    // through errno immediately below.
     let rc = unsafe { kill(pid, 0) };
     if rc == 0 {
         return true;

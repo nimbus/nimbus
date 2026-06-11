@@ -24,7 +24,7 @@ const { useQueryMock } = vi.hoisted(() => ({
   useQueryMock: vi.fn(),
 }));
 
-vi.mock("nimbus/react", () => ({
+vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (..._args: unknown[]) => useQueryMock(),
 }));
 

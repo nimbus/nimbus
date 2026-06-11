@@ -1,32 +1,32 @@
 use super::*;
 
 #[tokio::test]
-async fn service_reload_recovers_durable_journal_before_serving_async_reads_redb() {
-    assert_service_reload_recovers_durable_journal_before_serving_async_reads(
+async fn engine_reload_recovers_durable_journal_before_serving_async_reads_redb() {
+    assert_engine_reload_recovers_durable_journal_before_serving_async_reads(
         EmbeddedProviderKind::Redb,
     )
     .await;
 }
 
 #[tokio::test]
-async fn service_reload_recovers_durable_journal_before_serving_async_reads_sqlite() {
-    assert_service_reload_recovers_durable_journal_before_serving_async_reads(
+async fn engine_reload_recovers_durable_journal_before_serving_async_reads_sqlite() {
+    assert_engine_reload_recovers_durable_journal_before_serving_async_reads(
         EmbeddedProviderKind::Sqlite,
     )
     .await;
 }
 
-async fn assert_service_reload_recovers_durable_journal_before_serving_async_reads(
+async fn assert_engine_reload_recovers_durable_journal_before_serving_async_reads(
     backend: EmbeddedProviderKind,
 ) {
-    let data_dir = tempdir().expect("service tempdir should build");
+    let data_dir = tempdir().expect("engine tempdir should build");
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    let service = Service::new_with_embedded_provider(data_dir.path(), backend)
-        .expect("service should create");
-    service
+    let engine =
+        Engine::new_with_embedded_provider(data_dir.path(), backend).expect("engine should create");
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
-    drop(service);
+    drop(engine);
 
     let document = nimbus_core::Document::new(
         tasks_table(),
@@ -55,8 +55,7 @@ async fn assert_service_reload_recovers_durable_journal_before_serving_async_rea
     );
 
     let reopened = Arc::new(
-        Service::new_with_embedded_provider(data_dir.path(), backend)
-            .expect("service should reopen"),
+        Engine::new_with_embedded_provider(data_dir.path(), backend).expect("engine should reopen"),
     );
     let documents = reopened
         .query_documents_async(tenant_id.clone(), query_for("tasks"))
@@ -139,14 +138,14 @@ async fn assert_service_reload_recovers_durable_journal_before_serving_async_rea
 
 #[tokio::test]
 async fn durable_journal_reads_return_strictly_ordered_authoritative_records() {
-    let data_dir = tempdir().expect("service tempdir should build");
-    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
-    let document_id = service
+    let document_id = engine
         .insert_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -154,7 +153,7 @@ async fn durable_journal_reads_return_strictly_ordered_authoritative_records() {
         )
         .await
         .expect("insert should succeed");
-    service
+    engine
         .update_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -164,7 +163,7 @@ async fn durable_journal_reads_return_strictly_ordered_authoritative_records() {
         .await
         .expect("update should succeed");
 
-    let records = service
+    let records = engine
         .read_durable_journal_async(tenant_id.clone(), SequenceNumber(0))
         .await
         .expect("durable journal should read");
@@ -195,7 +194,7 @@ async fn durable_journal_reads_return_strictly_ordered_authoritative_records() {
         Some(&json!("journal-updated"))
     );
 
-    let filtered = service
+    let filtered = engine
         .read_durable_journal_async(tenant_id, SequenceNumber(1))
         .await
         .expect("filtered durable journal should read");
@@ -213,14 +212,14 @@ async fn durable_journal_reads_return_strictly_ordered_authoritative_records() {
 
 #[tokio::test]
 async fn durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tolerant_pages() {
-    let data_dir = tempdir().expect("service tempdir should build");
-    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
-    let first_document_id = service
+    let first_document_id = engine
         .insert_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -228,7 +227,7 @@ async fn durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tole
         )
         .await
         .expect("first insert should succeed");
-    service
+    engine
         .update_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -237,7 +236,7 @@ async fn durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tole
         )
         .await
         .expect("update should succeed");
-    service
+    engine
         .insert_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -246,13 +245,13 @@ async fn durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tole
         .await
         .expect("second insert should succeed");
 
-    let latest_sequence = service
+    let latest_sequence = engine
         .latest_sequence_async(tenant_id.clone())
         .await
         .expect("latest sequence should load");
     assert!(latest_sequence.0 >= 3);
 
-    let first_page = service
+    let first_page = engine
         .stream_durable_journal_async(tenant_id.clone(), SequenceNumber(0), 1)
         .await
         .expect("first journal page should read");
@@ -267,14 +266,14 @@ async fn durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tole
     assert_eq!(first_page.records.len(), 1);
     assert_eq!(first_page.records[0].sequence, SequenceNumber(1));
 
-    let replayed_first_page = service
+    let replayed_first_page = engine
         .stream_durable_journal_async(tenant_id.clone(), SequenceNumber(0), 1)
         .await
         .expect("replayed first journal page should read");
     assert_eq!(replayed_first_page.records, first_page.records);
     assert_eq!(replayed_first_page.next_cursor, first_page.next_cursor);
 
-    let second_page = service
+    let second_page = engine
         .stream_durable_journal_async(tenant_id.clone(), first_page.next_cursor, 1)
         .await
         .expect("second journal page should read");
@@ -290,7 +289,7 @@ async fn durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tole
     ];
     observed_latest_sequence = observed_latest_sequence.max(second_page.latest_sequence);
     while cursor.0 < observed_latest_sequence.0 {
-        let page = service
+        let page = engine
             .stream_durable_journal_async(tenant_id.clone(), cursor, 1)
             .await
             .expect("next journal page should read");
@@ -313,7 +312,7 @@ async fn durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tole
         3
     );
 
-    let tail_page = service
+    let tail_page = engine
         .stream_durable_journal_async(tenant_id, cursor, 1)
         .await
         .expect("tail journal page should read");
@@ -335,26 +334,26 @@ async fn durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tole
 
 #[tokio::test]
 async fn durable_journal_bootstrap_metadata_reconstructs_same_state_as_live_reads() {
-    let data_dir = tempdir().expect("service tempdir should build");
+    let data_dir = tempdir().expect("engine tempdir should build");
     let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
-    let service = Arc::new(
-        Service::new_with_simulation(
+    let engine = Arc::new(
+        Engine::new_with_simulation(
             data_dir.path(),
             Arc::new(ManualClock::new(Timestamp(80_000))),
             faults.clone(),
         )
-        .expect("service should create"),
+        .expect("engine should create"),
     );
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
     let mut insert_handle = tokio::spawn({
-        let service = service.clone();
+        let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
-            service
+            engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
@@ -374,7 +373,7 @@ async fn durable_journal_bootstrap_metadata_reconstructs_same_state_as_live_read
         "mutation should remain pending while apply is blocked"
     );
 
-    let bootstrap = service
+    let bootstrap = engine
         .export_durable_journal_bootstrap_async(tenant_id.clone())
         .await
         .expect("bootstrap metadata should read");
@@ -385,7 +384,7 @@ async fn durable_journal_bootstrap_metadata_reconstructs_same_state_as_live_read
     assert_eq!(bootstrap.snapshot.durable_head, SequenceNumber(1));
     assert!(bootstrap.snapshot.documents.is_empty());
 
-    let page = service
+    let page = engine
         .stream_durable_journal_async(tenant_id.clone(), bootstrap.resume_after, 10)
         .await
         .expect("journal tail should read");
@@ -410,7 +409,7 @@ async fn durable_journal_bootstrap_metadata_reconstructs_same_state_as_live_read
 
     faults.release();
 
-    let live_documents = service
+    let live_documents = engine
         .query_documents_async(tenant_id, query_for("tasks"))
         .await
         .expect("live read should succeed after apply");
@@ -422,15 +421,15 @@ async fn durable_journal_bootstrap_metadata_reconstructs_same_state_as_live_read
 
 #[tokio::test]
 async fn embedded_replica_bootstrap_matches_live_query_and_pagination_results() {
-    let data_dir = tempdir().expect("service tempdir should build");
-    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
     for (title, rank) in [("alpha", 1), ("beta", 2), ("gamma", 3)] {
-        service
+        engine
             .insert_document_async(
                 tenant_id.clone(),
                 tasks_table(),
@@ -443,10 +442,10 @@ async fn embedded_replica_bootstrap_matches_live_query_and_pagination_results() 
             .expect("seed insert should succeed");
     }
 
-    let replica = EmbeddedReplica::bootstrap_in_memory(&service, tenant_id.clone())
+    let replica = EmbeddedReplica::bootstrap_in_memory(&engine, tenant_id.clone())
         .await
         .expect("replica should bootstrap");
-    let live_query = service
+    let live_query = engine
         .query_documents_async(tenant_id.clone(), query_for("tasks"))
         .await
         .expect("live query should succeed");
@@ -468,7 +467,7 @@ async fn embedded_replica_bootstrap_matches_live_query_and_pagination_results() 
         page_size: 2,
         after: None,
     };
-    let live_page = service
+    let live_page = engine
         .paginate_documents_async(tenant_id.clone(), paginated.clone())
         .await
         .expect("live page should succeed");
@@ -480,14 +479,14 @@ async fn embedded_replica_bootstrap_matches_live_query_and_pagination_results() 
 
 #[tokio::test]
 async fn embedded_replica_catches_up_after_reconnection() {
-    let data_dir = tempdir().expect("service tempdir should build");
-    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
-    service
+    engine
         .insert_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -496,10 +495,10 @@ async fn embedded_replica_catches_up_after_reconnection() {
         .await
         .expect("initial insert should succeed");
 
-    let mut replica = EmbeddedReplica::bootstrap_in_memory(&service, tenant_id.clone())
+    let mut replica = EmbeddedReplica::bootstrap_in_memory(&engine, tenant_id.clone())
         .await
         .expect("replica should bootstrap");
-    let latest_after_catch_up = service
+    let latest_after_catch_up = engine
         .latest_sequence_async(tenant_id.clone())
         .await
         .expect("latest sequence should load");
@@ -508,7 +507,7 @@ async fn embedded_replica_catches_up_after_reconnection() {
         "a background tenant event may advance the source after catch-up chooses its target"
     );
 
-    service
+    engine
         .insert_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -523,10 +522,10 @@ async fn embedded_replica_catches_up_after_reconnection() {
     assert_eq!(stale_documents.len(), 1);
 
     replica
-        .catch_up(&service, 1)
+        .catch_up(&engine, 1)
         .await
         .expect("replica catch-up should succeed");
-    let latest_after_catch_up = service
+    let latest_after_catch_up = engine
         .latest_sequence_async(tenant_id.clone())
         .await
         .expect("latest sequence should load");
@@ -535,7 +534,7 @@ async fn embedded_replica_catches_up_after_reconnection() {
         "a background tenant event may advance the source after catch-up chooses its target"
     );
 
-    let live_documents = service
+    let live_documents = engine
         .query_documents_async(tenant_id, query_for("tasks"))
         .await
         .expect("live query should succeed");
@@ -547,8 +546,8 @@ async fn embedded_replica_catches_up_after_reconnection() {
 
 #[tokio::test]
 async fn embedded_replica_catch_up_refreshes_policy_only_schema_changes() {
-    let data_dir = tempdir().expect("service tempdir should build");
-    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
     let table = messages_table("messages_replica_policy");
     let query = Query {
@@ -561,11 +560,11 @@ async fn embedded_replica_catch_up_refreshes_policy_only_schema_changes() {
         limit: None,
     };
     let principal = principal_with_subject("user-123");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
-    service
+    engine
         .insert_document(
             &tenant_id,
             table.clone(),
@@ -575,7 +574,7 @@ async fn embedded_replica_catch_up_refreshes_policy_only_schema_changes() {
             ]),
         )
         .expect("authorized fixture insert should succeed");
-    service
+    engine
         .insert_document(
             &tenant_id,
             table.clone(),
@@ -586,17 +585,17 @@ async fn embedded_replica_catch_up_refreshes_policy_only_schema_changes() {
         )
         .expect("fixture insert should succeed");
 
-    let mut replica = EmbeddedReplica::bootstrap_in_memory(&service, tenant_id.clone())
+    let mut replica = EmbeddedReplica::bootstrap_in_memory(&engine, tenant_id.clone())
         .await
         .expect("replica should bootstrap");
     assert_eq!(
         replica.sequence_cursor(),
-        service
+        engine
             .latest_sequence(&tenant_id)
             .expect("latest sequence should load")
     );
 
-    service
+    engine
         .set_table_schema(
             &tenant_id,
             messages_schema(
@@ -608,17 +607,17 @@ async fn embedded_replica_catch_up_refreshes_policy_only_schema_changes() {
         .expect("schema should save");
 
     replica
-        .catch_up(&service, 1)
+        .catch_up(&engine, 1)
         .await
         .expect("replica catch-up should refresh schema even without new journal records");
     assert_eq!(
         replica.sequence_cursor(),
-        service
+        engine
             .latest_sequence(&tenant_id)
             .expect("latest sequence should load")
     );
 
-    let live_documents = service
+    let live_documents = engine
         .query_documents_with_principal(&tenant_id, &query, &principal)
         .expect("live principal query should succeed");
     let replica_documents = replica
@@ -627,7 +626,7 @@ async fn embedded_replica_catch_up_refreshes_policy_only_schema_changes() {
     assert_eq!(document_bodies(&replica_documents), vec!["Ada"]);
     assert_eq!(replica_documents, live_documents);
 
-    let live_anonymous = service
+    let live_anonymous = engine
         .query_documents(&tenant_id, &query)
         .expect("live anonymous query should succeed");
     let replica_anonymous = replica
@@ -639,15 +638,15 @@ async fn embedded_replica_catch_up_refreshes_policy_only_schema_changes() {
 
 #[tokio::test]
 async fn embedded_replica_catch_up_rebuilds_indexes_for_schema_only_changes() {
-    let data_dir = tempdir().expect("service tempdir should build");
-    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
     for rank in [1, 2, 3] {
-        service
+        engine
             .insert_document_async(
                 tenant_id.clone(),
                 tasks_table(),
@@ -657,11 +656,11 @@ async fn embedded_replica_catch_up_rebuilds_indexes_for_schema_only_changes() {
             .expect("seed insert should succeed");
     }
 
-    let mut replica = EmbeddedReplica::bootstrap_in_memory(&service, tenant_id.clone())
+    let mut replica = EmbeddedReplica::bootstrap_in_memory(&engine, tenant_id.clone())
         .await
         .expect("replica should bootstrap");
 
-    service
+    engine
         .set_table_schema(
             &tenant_id,
             TableSchema {
@@ -683,7 +682,7 @@ async fn embedded_replica_catch_up_rebuilds_indexes_for_schema_only_changes() {
         .expect("schema should save");
 
     replica
-        .catch_up(&service, 1)
+        .catch_up(&engine, 1)
         .await
         .expect("replica catch-up should refresh schema and indexes");
 
@@ -696,7 +695,7 @@ async fn embedded_replica_catch_up_rebuilds_indexes_for_schema_only_changes() {
         }),
         limit: None,
     };
-    let live_documents = service
+    let live_documents = engine
         .query_documents(&tenant_id, &query)
         .expect("live indexed query should succeed");
     let replica_documents = replica
@@ -708,16 +707,16 @@ async fn embedded_replica_catch_up_rebuilds_indexes_for_schema_only_changes() {
 }
 
 #[tokio::test]
-async fn shadow_materializer_queries_match_live_service_path() {
-    let data_dir = tempdir().expect("service tempdir should build");
-    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+async fn shadow_materializer_queries_match_live_engine_path() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
     for (title, rank) in [("alpha", 1), ("beta", 2), ("gamma", 3)] {
-        service
+        engine
             .insert_document_async(
                 tenant_id.clone(),
                 tasks_table(),
@@ -730,7 +729,7 @@ async fn shadow_materializer_queries_match_live_service_path() {
             .expect("seed insert should succeed");
     }
 
-    let shadow = service
+    let shadow = engine
         .build_shadow_materializer_async(
             tenant_id.clone(),
             ShadowMaterializerConfig {
@@ -739,7 +738,7 @@ async fn shadow_materializer_queries_match_live_service_path() {
         )
         .await
         .expect("shadow materializer should build");
-    let latest_sequence = service
+    let latest_sequence = engine
         .latest_sequence_async(tenant_id.clone())
         .await
         .expect("latest sequence should load");
@@ -754,7 +753,7 @@ async fn shadow_materializer_queries_match_live_service_path() {
         latest_sequence.0
     );
     if shadow_sequence.0 < latest_sequence.0 {
-        let tail_after_shadow = service
+        let tail_after_shadow = engine
             .read_durable_journal_async(tenant_id.clone(), shadow_sequence)
             .await
             .expect("tail after shadow cut should read");
@@ -778,7 +777,7 @@ async fn shadow_materializer_queries_match_live_service_path() {
         }),
         limit: None,
     };
-    let live_query = service
+    let live_query = engine
         .query_documents_async(tenant_id.clone(), ordered_query.clone())
         .await
         .expect("live query should succeed");
@@ -796,7 +795,7 @@ async fn shadow_materializer_queries_match_live_service_path() {
         page_size: 2,
         after: None,
     };
-    let live_page = service
+    let live_page = engine
         .paginate_documents_async(tenant_id, paginated.clone())
         .await
         .expect("live page should succeed");
@@ -811,17 +810,17 @@ async fn shadow_materializer_queries_match_live_service_path() {
 }
 
 #[tokio::test]
-async fn shadow_materializer_schema_aware_queries_match_live_service_path() {
-    let data_dir = tempdir().expect("service tempdir should build");
-    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+async fn shadow_materializer_schema_aware_queries_match_live_engine_path() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
     let table = messages_table("messages_shadow_schema");
     let principal = principal_with_subject("user-123");
     let hidden_owner = principal_with_subject("user-456");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
-    service
+    engine
         .set_table_schema(
             &tenant_id,
             messages_schema(
@@ -847,7 +846,7 @@ async fn shadow_materializer_schema_aware_queries_match_live_service_path() {
         } else {
             hidden_owner.clone()
         };
-        service
+        engine
             .insert_document_with(
                 &tenant_id,
                 table.clone(),
@@ -861,7 +860,7 @@ async fn shadow_materializer_schema_aware_queries_match_live_service_path() {
             .expect("seed insert should succeed");
     }
 
-    let shadow = service
+    let shadow = engine
         .build_shadow_materializer_async(
             tenant_id.clone(),
             ShadowMaterializerConfig {
@@ -881,7 +880,7 @@ async fn shadow_materializer_schema_aware_queries_match_live_service_path() {
         }),
         limit: None,
     };
-    let live_query = service
+    let live_query = engine
         .query_documents_async_with_principal(
             tenant_id.clone(),
             indexed_query.clone(),
@@ -912,7 +911,7 @@ async fn shadow_materializer_schema_aware_queries_match_live_service_path() {
         page_size: 1,
         after: None,
     };
-    let live_page = service
+    let live_page = engine
         .paginate_documents_async_with_principal(tenant_id, paginated.clone(), principal.clone())
         .await
         .expect("live schema-aware page should succeed");
@@ -929,13 +928,13 @@ async fn shadow_materializer_schema_aware_queries_match_live_service_path() {
 
 #[tokio::test]
 async fn online_consistency_verifier_matches_authoritative_shadow_and_replica_state() {
-    let data_dir = tempdir().expect("service tempdir should build");
-    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
+    engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
-    service
+    engine
         .set_table_schema(
             &tenant_id,
             TableSchema {
@@ -957,7 +956,7 @@ async fn online_consistency_verifier_matches_authoritative_shadow_and_replica_st
         .expect("schema should save");
 
     for rank in [1, 2, 3] {
-        service
+        engine
             .insert_document_async(
                 tenant_id.clone(),
                 tasks_table(),
@@ -967,7 +966,7 @@ async fn online_consistency_verifier_matches_authoritative_shadow_and_replica_st
             .expect("seed insert should succeed");
     }
 
-    let report = service
+    let report = engine
         .verify_consistency_async(tenant_id.clone())
         .await
         .expect("consistency verification should succeed");
@@ -1103,7 +1102,7 @@ async fn schema_async_write_path_rebuilds_and_removes_indexes_durably_sqlite() {
 async fn assert_schema_async_write_path_rebuilds_and_removes_indexes_durably(
     backend: EmbeddedProviderKind,
 ) {
-    let data_dir = tempdir().expect("service tempdir should build");
+    let data_dir = tempdir().expect("engine tempdir should build");
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
     let schema = TableSchema {
         table: tasks_table(),
@@ -1122,49 +1121,49 @@ async fn assert_schema_async_write_path_rebuilds_and_removes_indexes_durably(
     };
 
     {
-        let service = Arc::new(
-            Service::new_with_embedded_provider(data_dir.path(), backend)
-                .expect("service should create"),
+        let engine = Arc::new(
+            Engine::new_with_embedded_provider(data_dir.path(), backend)
+                .expect("engine should create"),
         );
-        service
+        engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
                 serde_json::Map::from_iter([("rank".to_string(), json!(7))]),
             )
             .expect("insert should succeed");
-        service
+        engine
             .insert_document(
                 &tenant_id,
                 tasks_table(),
                 serde_json::Map::from_iter([("rank".to_string(), json!(9))]),
             )
             .expect("insert should succeed");
-        service
+        engine
             .set_table_schema_async(tenant_id.clone(), schema.clone())
             .await
             .expect("schema should save");
-        service.quiesce().await;
-        drop_service_sync(service).await;
+        engine.quiesce().await;
+        drop_engine_sync(engine).await;
     }
 
     {
-        let reopened_service = open_service_after_embedded_lock_release(
+        let reopened_engine = open_engine_after_embedded_lock_release(
             data_dir.path(),
             backend,
-            "service should reopen after schema write",
+            "engine should reopen after schema write",
         )
         .await;
         wait_for_embedded_tenant_unlock(data_dir.path(), &tenant_id, backend).await;
-        reopened_service
+        reopened_engine
             .get_table_schema_async(tenant_id.clone(), tasks_table())
             .await
-            .expect("persisted schema should reload through the service path");
-        reopened_service.quiesce().await;
-        drop_service_sync(reopened_service).await;
+            .expect("persisted schema should reload through the engine path");
+        reopened_engine.quiesce().await;
+        drop_engine_sync(reopened_engine).await;
         wait_for_embedded_tenant_unlock(data_dir.path(), &tenant_id, backend).await;
     }
 
@@ -1174,19 +1173,19 @@ async fn assert_schema_async_write_path_rebuilds_and_removes_indexes_durably(
     );
 
     {
-        let service = open_service_after_embedded_lock_release(
+        let engine = open_engine_after_embedded_lock_release(
             data_dir.path(),
             backend,
-            "service should recreate",
+            "engine should recreate",
         )
         .await;
         wait_for_embedded_tenant_unlock(data_dir.path(), &tenant_id, backend).await;
-        service
+        engine
             .delete_table_schema_async(tenant_id.clone(), tasks_table())
             .await
             .expect("schema should delete");
-        service.quiesce().await;
-        drop_service_sync(service).await;
+        engine.quiesce().await;
+        drop_engine_sync(engine).await;
         wait_for_embedded_tenant_unlock(data_dir.path(), &tenant_id, backend).await;
     }
 
@@ -1196,21 +1195,21 @@ async fn assert_schema_async_write_path_rebuilds_and_removes_indexes_durably(
     );
 }
 
-async fn drop_service_sync(service: Arc<Service>) {
-    std::thread::spawn(move || drop(service))
+async fn drop_engine_sync(engine: Arc<Engine>) {
+    std::thread::spawn(move || drop(engine))
         .join()
-        .expect("service drop should join");
+        .expect("engine drop should join");
 }
 
-async fn open_service_after_embedded_lock_release(
+async fn open_engine_after_embedded_lock_release(
     data_dir: &std::path::Path,
     backend: EmbeddedProviderKind,
     context: &'static str,
-) -> Arc<Service> {
+) -> Arc<Engine> {
     let started = std::time::Instant::now();
     loop {
-        match Service::new_with_embedded_provider(data_dir, backend) {
-            Ok(service) => return Arc::new(service),
+        match Engine::new_with_embedded_provider(data_dir, backend) {
+            Ok(engine) => return Arc::new(engine),
             Err(error)
                 if backend == EmbeddedProviderKind::Redb
                     && error
@@ -1250,7 +1249,7 @@ async fn wait_for_embedded_tenant_unlock(
             {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
-            Err(error) => panic!("tenant store should reopen after prior service drop: {error:?}"),
+            Err(error) => panic!("tenant store should reopen after prior engine drop: {error:?}"),
         }
     }
 }

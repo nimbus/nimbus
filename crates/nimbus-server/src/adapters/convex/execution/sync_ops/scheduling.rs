@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::adapters::convex) fn execute_schedule_command(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     command: ConvexScheduledCommand,
@@ -59,7 +59,7 @@ pub(in crate::adapters::convex) fn execute_schedule_command(
 }
 
 pub(super) fn execute_schedule_command_cancellable(
-    service: &nimbus_engine::Service,
+    service: &nimbus_engine::Engine,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     command: ConvexScheduledCommand,

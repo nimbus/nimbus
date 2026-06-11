@@ -38,7 +38,7 @@ where
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         return match handle.runtime_flavor() {
             RuntimeFlavor::MultiThread => tokio::task::block_in_place(task),
-            RuntimeFlavor::CurrentThread | _ => std::thread::scope(|scope| {
+            _ => std::thread::scope(|scope| {
                 scope
                     .spawn(task)
                     .join()

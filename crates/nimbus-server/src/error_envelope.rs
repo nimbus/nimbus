@@ -1,7 +1,7 @@
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use nimbus_core::{Error, StorageErrorKind};
+use nimbus_core::{Error, HistoricalReadErrorKind, StorageErrorKind};
 use serde::Serialize;
 use serde_json::{Value, json};
 use time::OffsetDateTime;
@@ -267,6 +267,28 @@ impl PublicError {
                     "Resolve the conflicting state and retry.",
                 )),
             ),
+            Error::PreconditionFailed(_) => Self::new(
+                "op.precondition_failed",
+                error.to_string(),
+                ErrorSeverity::Error,
+                false,
+                Value::Null,
+                Some(ErrorRemediation::new(
+                    "refresh_resource",
+                    "Refresh the resource, then retry with the latest generation or resource version.",
+                )),
+            ),
+            Error::MissingIndex { fields } => Self::new(
+                "op.missing_index",
+                error.to_string(),
+                ErrorSeverity::Error,
+                false,
+                json!({ "fields": fields }),
+                Some(ErrorRemediation::new(
+                    "create_index",
+                    "Create an index covering the required fields, then retry.",
+                )),
+            ),
             Error::InvalidInput(_) => Self::new(
                 "op.invalid_input",
                 error.to_string(),
@@ -362,6 +384,21 @@ impl PublicError {
                     None,
                 ),
             },
+            Error::HistoricalRead { kind, .. } => Self::new(
+                "op.historical_read",
+                error.to_string(),
+                ErrorSeverity::Error,
+                matches!(
+                    *kind,
+                    HistoricalReadErrorKind::UnsupportedBackend
+                        | HistoricalReadErrorKind::UnsupportedAdapter
+                ),
+                json!({ "historicalReadKind": kind.as_str() }),
+                Some(ErrorRemediation::new(
+                    "fix_request",
+                    "Use a supported historical read target and retry within the retained history window.",
+                )),
+            ),
             Error::Serialization(_) => Self::new(
                 "service.serialization",
                 error.to_string(),
@@ -498,11 +535,28 @@ impl StructuredHttpError {
                     | Error::SchemaNotFound(_)
                     | Error::NotFound(_) => StatusCode::NOT_FOUND,
                     Error::Conflict(_) => StatusCode::CONFLICT,
+                    Error::PreconditionFailed(_) | Error::MissingIndex { .. } => {
+                        StatusCode::PRECONDITION_FAILED
+                    }
                     Error::ResourceExhausted(_) => StatusCode::TOO_MANY_REQUESTS,
                     Error::PermissionDenied(_) => StatusCode::FORBIDDEN,
                     Error::InvalidInput(_) => StatusCode::BAD_REQUEST,
                     Error::SchemaValidation(_) => StatusCode::UNPROCESSABLE_ENTITY,
                     Error::AlreadyExists(_) => StatusCode::CONFLICT,
+                    Error::HistoricalRead { kind, .. } => match kind {
+                        HistoricalReadErrorKind::UnsupportedBackend
+                        | HistoricalReadErrorKind::UnsupportedAdapter => {
+                            StatusCode::NOT_IMPLEMENTED
+                        }
+                        HistoricalReadErrorKind::PolicySnapshotMissing => StatusCode::FORBIDDEN,
+                        HistoricalReadErrorKind::SnapshotUnavailable => {
+                            StatusCode::SERVICE_UNAVAILABLE
+                        }
+                        HistoricalReadErrorKind::CursorMismatch
+                        | HistoricalReadErrorKind::FormatMismatch
+                        | HistoricalReadErrorKind::RetentionExpired
+                        | HistoricalReadErrorKind::TimestampOutOfRange => StatusCode::BAD_REQUEST,
+                    },
                     Error::Transport(_) => StatusCode::SERVICE_UNAVAILABLE,
                     Error::Storage { kind, .. } => match kind {
                         StorageErrorKind::Busy
@@ -555,3 +609,41 @@ pub(crate) async fn send_fatal_error_and_close(
 }
 
 pub(crate) const FATAL_PROTOCOL_CLOSE_CODE: u16 = close_code::POLICY;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_unavailable_historical_read_maps_to_service_unavailable() {
+        let response = StructuredHttpError::from_app_error(crate::state::AppError::from(
+            Error::historical_read(
+                HistoricalReadErrorKind::SnapshotUnavailable,
+                "serving snapshot is not available for the requested sequence",
+            ),
+        ));
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            response
+                .message()
+                .contains("serving snapshot is not available")
+        );
+    }
+
+    #[test]
+    fn missing_index_maps_to_precondition_failed_with_fields() {
+        let response = StructuredHttpError::from_app_error(crate::state::AppError::from(
+            Error::MissingIndex {
+                fields: vec!["state".to_string(), "rank".to_string()],
+            },
+        ));
+
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+        assert_eq!(response.envelope.error.code, "op.missing_index");
+        assert_eq!(
+            response.envelope.error.detail["fields"],
+            serde_json::json!(["state", "rank"])
+        );
+    }
+}

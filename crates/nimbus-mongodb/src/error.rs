@@ -34,6 +34,14 @@ pub const COMMAND_NOT_FOUND: MongoErrorCode = MongoErrorCode {
     code: 59,
     code_name: "CommandNotFound",
 };
+pub const COMMAND_NOT_SUPPORTED: MongoErrorCode = MongoErrorCode {
+    code: 115,
+    code_name: "CommandNotSupported",
+};
+pub const TOO_MANY_LOGICAL_SESSIONS: MongoErrorCode = MongoErrorCode {
+    code: 261,
+    code_name: "TooManyLogicalSessions",
+};
 pub const WRITE_CONFLICT: MongoErrorCode = MongoErrorCode {
     code: 112,
     code_name: "WriteConflict",
@@ -93,7 +101,9 @@ impl From<nimbus_core::Error> for MongoError {
             nimbus_core::Error::InvalidInput(_) => (BAD_VALUE, err.to_string()),
             nimbus_core::Error::SchemaValidation(_) => (BAD_VALUE, err.to_string()),
             nimbus_core::Error::PermissionDenied(_) => (UNAUTHORIZED, err.to_string()),
-            nimbus_core::Error::Conflict(_) => (WRITE_CONFLICT, err.to_string()),
+            nimbus_core::Error::Conflict(_) | nimbus_core::Error::PreconditionFailed(_) => {
+                (WRITE_CONFLICT, err.to_string())
+            }
             nimbus_core::Error::Serialization(_) => (BAD_VALUE, err.to_string()),
             _ => (INTERNAL_ERROR, err.to_string()),
         };

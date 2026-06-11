@@ -1,38 +1,50 @@
 use nimbus_core::Error;
 use nimbus_sandbox::SandboxHandle;
-use nimbus_tenant::TenantIsolationDecision;
+use nimbus_tenant::{TenantIsolationDecision, TenantVolumePolicyDecision};
 
-use crate::SandboxServiceLaunch;
+use crate::ServiceBackend;
 use nimbus_node::LocalEnforcementBinding;
 
-use super::SandboxServiceManager;
+use super::ServiceManager;
 use super::types::{TenantServiceKey, sandbox_backend_error};
 
-impl SandboxServiceManager {
-    pub(super) async fn start_launch_async(
+impl ServiceManager {
+    pub(super) async fn start_sandbox_service_async(
         &self,
         key: &TenantServiceKey,
         decision: &TenantIsolationDecision,
-        launch: SandboxServiceLaunch,
+        service_backend: ServiceBackend,
+        volume_policy: &TenantVolumePolicyDecision,
     ) -> Result<SandboxHandle, Error> {
+        let backend_kind = service_backend.kind();
+        let Some(sandbox_spec) = service_backend.into_sandbox_spec() else {
+            return Err(Error::InvalidInput(format!(
+                "service {} for tenant {} uses a {} backend, but this service manager can only start sandbox-backed services",
+                key.service_name, key.tenant_id, backend_kind
+            )));
+        };
+        if sandbox_spec.service_name() != Some(key.service_name.as_str()) {
+            return Err(Error::InvalidInput(format!(
+                "service {} for tenant {} declared sandbox owner {:?}, but service activation requires matching service owner metadata",
+                key.service_name, key.tenant_id, sandbox_spec.owner,
+            )));
+        }
         let actual_backend = self.sandbox_backend.kind();
         let binding = LocalEnforcementBinding::from_decision(decision)?;
         let service_access = binding.service_access(&key.service_name)?;
-        service_access.ensure_sandbox_spec_matches(launch.spec(), actual_backend)?;
+        service_access.ensure_sandbox_spec_matches(&sandbox_spec, actual_backend)?;
         decision
             .network()
-            .ensure_sandbox_egress_matches(launch.spec(), "sandbox service launch")?;
-        self.admit_launch_image(decision, &launch)?;
+            .ensure_sandbox_egress_matches(&sandbox_spec, "sandbox-backed service launch")?;
+        volume_policy
+            .ensure_sandbox_mounts_match(&sandbox_spec, "sandbox-backed service launch")?;
+        self.admit_sandbox_root(decision, &sandbox_spec)?;
 
-        let handle = match launch {
-            SandboxServiceLaunch::Image(launch) => {
-                self.sandbox_backend.start_from_image(launch).await
-            }
-            SandboxServiceLaunch::Build(launch) => {
-                self.sandbox_backend.start_from_build(launch).await
-            }
-        }
-        .map_err(|error| sandbox_backend_error(key, "start", &error))?;
+        let handle = self
+            .sandbox_backend
+            .start(sandbox_spec)
+            .await
+            .map_err(|error| sandbox_backend_error(key, "start", &error))?;
         if handle.tenant_id != key.tenant_id {
             return Err(Error::InvalidInput(format!(
                 "sandbox backend returned handle for tenant {}, but service activation requested tenant {}",

@@ -3,7 +3,7 @@ function runtimeBundleActionHelpers() {
   if (!isPlainObject(plan) || typeof plan.type !== "string") {
     return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_action", {
       action: plan,
-      session_id: request.kind + ":" + request.function_name,
+      host_call_session_id: request.kind + ":" + request.function_name,
     });
   }
 
@@ -15,7 +15,7 @@ function runtimeBundleActionHelpers() {
         query: plan.query.query,
         page_size: plan.query.page_size,
         cursor: plan.query.after ?? null,
-        session_id: request.kind + ":" + request.function_name,
+        host_call_session_id: request.kind + ":" + request.function_name,
       });
     case "mutation":
       return await executeResolvedMutationPlan(ctx, plan.mutation);
@@ -41,7 +41,7 @@ function runtimeBundleActionHelpers() {
     default:
       return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_action", {
         action: plan,
-        session_id: request.kind + ":" + request.function_name,
+        host_call_session_id: request.kind + ":" + request.function_name,
       });
   }
 }`;

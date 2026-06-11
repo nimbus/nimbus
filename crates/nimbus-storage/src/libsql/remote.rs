@@ -5,8 +5,10 @@ pub(super) struct RemoteNamespaceSnapshot {
     pub(super) table_catalog: Vec<RemoteTableCatalogRow>,
     pub(super) schemas: Vec<RemoteSchemaRow>,
     pub(super) documents: Vec<RemoteDocumentRow>,
+    pub(super) document_versions: Vec<RemoteDocumentVersionRow>,
+    pub(super) index_versions: Vec<RemoteIndexVersionRow>,
     pub(super) resource_path_bindings: Vec<RemoteResourcePathBindingRow>,
-    pub(super) scheduled_jobs: Vec<RemoteJsonRow>,
+    pub(super) scheduled_jobs: Vec<RemoteScheduledJobRow>,
     pub(super) running_scheduled_jobs: Vec<RemoteJsonRow>,
     pub(super) scheduled_job_results: Vec<RemoteJsonRow>,
     pub(super) scheduled_job_executions: Vec<String>,
@@ -40,6 +42,29 @@ pub(super) struct RemoteDocumentRow {
 }
 
 #[derive(Debug, Clone)]
+pub(super) struct RemoteDocumentVersionRow {
+    table_id: String,
+    id: String,
+    commit_sequence: i64,
+    commit_time: i64,
+    tombstone: i64,
+    data_json: Option<String>,
+    typed_fields_json: Option<String>,
+    creation_time: Option<i64>,
+    update_time: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct RemoteIndexVersionRow {
+    table_id: String,
+    index_id: String,
+    encoded_tuple: Vec<u8>,
+    document_id: String,
+    visible_from: i64,
+    visible_until: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
 pub(super) struct RemoteResourcePathBindingRow {
     locator_key: Vec<u8>,
     document_path_key: Vec<u8>,
@@ -51,6 +76,13 @@ pub(super) struct RemoteResourcePathBindingRow {
 #[derive(Debug, Clone)]
 pub(super) struct RemoteJsonRow {
     key: String,
+    data_json: String,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct RemoteScheduledJobRow {
+    id: String,
+    run_at: String,
     data_json: String,
 }
 
@@ -87,8 +119,10 @@ pub(super) async fn fetch_remote_namespace_snapshot(
             table_catalog: query_remote_table_catalog_rows(&conn).await?,
             schemas: query_remote_schema_rows(&conn).await?,
             documents: query_remote_document_rows(&conn).await?,
+            document_versions: query_remote_document_version_rows(&conn).await?,
+            index_versions: query_remote_index_version_rows(&conn).await?,
             resource_path_bindings: query_remote_resource_path_binding_rows(&conn).await?,
-            scheduled_jobs: query_remote_json_rows(&conn, "scheduled_jobs", "id").await?,
+            scheduled_jobs: query_remote_scheduled_job_rows(&conn).await?,
             running_scheduled_jobs: query_remote_json_rows(&conn, "running_scheduled_jobs", "id")
                 .await?,
             scheduled_job_results: query_remote_json_rows(&conn, "scheduled_job_results", "job_id")
@@ -186,6 +220,59 @@ async fn query_remote_document_rows(conn: &Connection) -> Result<Vec<RemoteDocum
     Ok(result)
 }
 
+async fn query_remote_document_version_rows(
+    conn: &Connection,
+) -> Result<Vec<RemoteDocumentVersionRow>> {
+    let mut rows = conn
+        .query(
+            "SELECT table_id, id, commit_sequence, commit_time, tombstone, data_json, typed_fields_json, creation_time, update_time
+             FROM document_versions
+             ORDER BY table_id, id, commit_sequence",
+            (),
+        )
+        .await
+        .map_err(map_libsql_error)?;
+    let mut result = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
+        result.push(RemoteDocumentVersionRow {
+            table_id: row.get::<String>(0).map_err(map_libsql_error)?,
+            id: row.get::<String>(1).map_err(map_libsql_error)?,
+            commit_sequence: row.get::<i64>(2).map_err(map_libsql_error)?,
+            commit_time: row.get::<i64>(3).map_err(map_libsql_error)?,
+            tombstone: row.get::<i64>(4).map_err(map_libsql_error)?,
+            data_json: row.get::<Option<String>>(5).map_err(map_libsql_error)?,
+            typed_fields_json: row.get::<Option<String>>(6).map_err(map_libsql_error)?,
+            creation_time: row.get::<Option<i64>>(7).map_err(map_libsql_error)?,
+            update_time: row.get::<Option<i64>>(8).map_err(map_libsql_error)?,
+        });
+    }
+    Ok(result)
+}
+
+async fn query_remote_index_version_rows(conn: &Connection) -> Result<Vec<RemoteIndexVersionRow>> {
+    let mut rows = conn
+        .query(
+            "SELECT table_id, index_id, encoded_tuple, document_id, visible_from, visible_until
+             FROM index_versions
+             ORDER BY table_id, index_id, encoded_tuple, document_id, visible_from",
+            (),
+        )
+        .await
+        .map_err(map_libsql_error)?;
+    let mut result = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
+        result.push(RemoteIndexVersionRow {
+            table_id: row.get::<String>(0).map_err(map_libsql_error)?,
+            index_id: row.get::<String>(1).map_err(map_libsql_error)?,
+            encoded_tuple: row.get::<Vec<u8>>(2).map_err(map_libsql_error)?,
+            document_id: row.get::<String>(3).map_err(map_libsql_error)?,
+            visible_from: row.get::<i64>(4).map_err(map_libsql_error)?,
+            visible_until: row.get::<Option<i64>>(5).map_err(map_libsql_error)?,
+        });
+    }
+    Ok(result)
+}
+
 async fn query_remote_resource_path_binding_rows(
     conn: &Connection,
 ) -> Result<Vec<RemoteResourcePathBindingRow>> {
@@ -226,6 +313,25 @@ async fn query_remote_json_rows(
         result.push(RemoteJsonRow {
             key: row.get::<String>(0).map_err(map_libsql_error)?,
             data_json: row.get::<String>(1).map_err(map_libsql_error)?,
+        });
+    }
+    Ok(result)
+}
+
+async fn query_remote_scheduled_job_rows(conn: &Connection) -> Result<Vec<RemoteScheduledJobRow>> {
+    let mut rows = conn
+        .query(
+            "SELECT id, run_at, data_json FROM scheduled_jobs ORDER BY run_at, id",
+            (),
+        )
+        .await
+        .map_err(map_libsql_error)?;
+    let mut result = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
+        result.push(RemoteScheduledJobRow {
+            id: row.get::<String>(0).map_err(map_libsql_error)?,
+            run_at: row.get::<String>(1).map_err(map_libsql_error)?,
+            data_json: row.get::<String>(2).map_err(map_libsql_error)?,
         });
     }
     Ok(result)
@@ -409,6 +515,64 @@ fn insert_snapshot_rows(
     {
         let mut statement = conn
             .prepare(
+                "INSERT INTO document_versions (
+                    table_id,
+                    id,
+                    commit_sequence,
+                    commit_time,
+                    tombstone,
+                    data_json,
+                    typed_fields_json,
+                    creation_time,
+                    update_time
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )
+            .map_err(map_local_sqlite_error)?;
+        for row in &snapshot.document_versions {
+            statement
+                .execute(params![
+                    row.table_id.as_str(),
+                    row.id.as_str(),
+                    row.commit_sequence,
+                    row.commit_time,
+                    row.tombstone,
+                    row.data_json.as_deref(),
+                    row.typed_fields_json.as_deref(),
+                    row.creation_time,
+                    row.update_time,
+                ])
+                .map_err(map_local_sqlite_error)?;
+        }
+    }
+    {
+        let mut statement = conn
+            .prepare(
+                "INSERT INTO index_versions (
+                    table_id,
+                    index_id,
+                    encoded_tuple,
+                    document_id,
+                    visible_from,
+                    visible_until
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )
+            .map_err(map_local_sqlite_error)?;
+        for row in &snapshot.index_versions {
+            statement
+                .execute(params![
+                    row.table_id.as_str(),
+                    row.index_id.as_str(),
+                    row.encoded_tuple.as_slice(),
+                    row.document_id.as_str(),
+                    row.visible_from,
+                    row.visible_until,
+                ])
+                .map_err(map_local_sqlite_error)?;
+        }
+    }
+    {
+        let mut statement = conn
+            .prepare(
                 "INSERT INTO resource_path_bindings (
                     locator_key,
                     document_path_key,
@@ -430,7 +594,7 @@ fn insert_snapshot_rows(
                 .map_err(map_local_sqlite_error)?;
         }
     }
-    insert_json_rows(conn, "scheduled_jobs", "id", &snapshot.scheduled_jobs)?;
+    insert_scheduled_job_rows(conn, &snapshot.scheduled_jobs)?;
     insert_json_rows(
         conn,
         "running_scheduled_jobs",
@@ -497,6 +661,25 @@ fn insert_json_rows(
     for row in rows {
         statement
             .execute(params![row.key.as_str(), row.data_json.as_str()])
+            .map_err(map_local_sqlite_error)?;
+    }
+    Ok(())
+}
+
+fn insert_scheduled_job_rows(
+    conn: &LocalSqliteConnection,
+    rows: &[RemoteScheduledJobRow],
+) -> Result<()> {
+    let mut statement = conn
+        .prepare("INSERT INTO scheduled_jobs (id, run_at, data_json) VALUES (?1, ?2, ?3)")
+        .map_err(map_local_sqlite_error)?;
+    for row in rows {
+        statement
+            .execute(params![
+                row.id.as_str(),
+                row.run_at.as_str(),
+                row.data_json.as_str()
+            ])
             .map_err(map_local_sqlite_error)?;
     }
     Ok(())

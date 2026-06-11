@@ -1,4 +1,4 @@
-use super::parse::compose_lifecycle_spec;
+use super::parse::{compose_lifecycle_spec, parse_compose_duration};
 use super::*;
 use crate::compose::discovery::{ResolvedComposeSelection, resolve_compose_selection};
 
@@ -6,6 +6,35 @@ fn write_compose_fixture(tempdir: &tempfile::TempDir, name: &str, contents: &str
     let path = tempdir.path().join(name);
     fs::write(&path, contents).expect("fixture file should write");
     path
+}
+
+fn sandbox_spec_from_backend(service_backend: ServiceBackend) -> SandboxSpec {
+    match service_backend {
+        ServiceBackend::Sandbox(spec) => *spec,
+        other => panic!("service should lower as sandbox-backed, got {other:?}"),
+    }
+}
+
+fn image_reference_from_spec(spec: &SandboxSpec) -> &str {
+    match &spec.root {
+        SandboxRootSpec::OciImage(image) => match &image.source {
+            SandboxOciImageSource::Reference(reference) => reference.reference.as_str(),
+            SandboxOciImageSource::Build(_) => {
+                panic!("service should lower as image-reference-backed")
+            }
+        },
+        SandboxRootSpec::Rootfs(_) => panic!("service should lower as OCI-image-backed"),
+    }
+}
+
+fn build_source_from_spec(spec: &SandboxSpec) -> &SandboxOciBuildSpec {
+    match &spec.root {
+        SandboxRootSpec::OciImage(image) => match &image.source {
+            SandboxOciImageSource::Build(build) => build,
+            SandboxOciImageSource::Reference(_) => panic!("service should lower as build-backed"),
+        },
+        SandboxRootSpec::Rootfs(_) => panic!("service should lower as OCI-image-backed"),
+    }
 }
 
 #[test]
@@ -271,22 +300,18 @@ services:
         .expect("compose file should resolve")
         .into_service_catalog()
         .expect("compose project should lower into a service catalog");
-    let launch = match catalog
-        .sandbox_service_for_tenant(&tenant_id, "db")
-        .expect("db launch should exist")
-    {
-        SandboxServiceLaunch::Image(launch) => launch,
-        SandboxServiceLaunch::Build(_) => panic!("db should lower as an image-backed launch"),
-    };
+    let spec = sandbox_spec_from_backend(
+        catalog
+            .service_backend_for_tenant(&tenant_id, "db")
+            .expect("db backend should exist"),
+    );
+    assert_eq!(image_reference_from_spec(&spec), "postgres:16");
 
     assert_eq!(
-        launch.spec.resources.disk_limit_bytes,
+        spec.resources.disk_limit_bytes,
         Some(2 * 1024 * 1024 * 1024)
     );
-    assert_eq!(
-        launch.spec.resources.log_limit_bytes,
-        Some(32 * 1024 * 1024)
-    );
+    assert_eq!(spec.resources.log_limit_bytes, Some(32 * 1024 * 1024));
 }
 
 #[test]
@@ -442,7 +467,7 @@ fn render_compose_project_selection_renders_merged_services() {
 }
 
 #[test]
-fn compose_process_plan_lowers_to_image_process_overrides() {
+fn compose_process_plan_lowers_to_sandbox_process_spec() {
     let process = ComposeProcessPlan {
         entrypoint: Some(ComposeCommandPlan::List(vec![
             "/bin/sh".to_owned(),
@@ -459,16 +484,16 @@ fn compose_process_plan_lowers_to_image_process_overrides() {
         user: Some("1000:1000".to_owned()),
     };
 
-    let overrides = process
-        .to_image_process_overrides()
+    let process = process
+        .to_process_spec()
         .expect("compose process should lower");
 
     assert_eq!(
-        overrides.entrypoint,
+        process.entrypoint,
         Some(vec!["/bin/sh".to_owned(), "-lc".to_owned()])
     );
     assert_eq!(
-        overrides.cmd,
+        process.command,
         Some(vec![
             "exec".to_owned(),
             "./server".to_owned(),
@@ -477,11 +502,11 @@ fn compose_process_plan_lowers_to_image_process_overrides() {
         ])
     );
     assert_eq!(
-        overrides.env,
+        process.env,
         vec!["APP_ENV=dev".to_owned(), "LOG_LEVEL=debug".to_owned(),]
     );
-    assert_eq!(overrides.cwd, Some(PathBuf::from("/workspace")));
-    assert_eq!(overrides.user.as_deref(), Some("1000:1000"));
+    assert_eq!(process.cwd, PathBuf::from("/workspace"));
+    assert_eq!(process.user.as_deref(), Some("1000:1000"));
 }
 
 #[test]
@@ -495,7 +520,7 @@ fn compose_process_plan_rejects_empty_override_commands() {
     };
 
     let error = process
-        .to_image_process_overrides()
+        .to_process_spec()
         .expect_err("empty command override should be rejected");
     assert!(
         error
@@ -534,6 +559,43 @@ services:
         SandboxRestartPolicy::OnFailure { max_restarts: 3 }
     );
     assert_eq!(lifecycle.stop_timeout, Some(Duration::from_secs(90)));
+}
+
+#[test]
+fn compose_duration_parser_accepts_every_supported_unit() {
+    let cases = [
+        ("1ns", Duration::from_nanos(1)),
+        ("1us", Duration::from_micros(1)),
+        ("1µs", Duration::from_micros(1)),
+        ("1μs", Duration::from_micros(1)),
+        ("1ms", Duration::from_millis(1)),
+        ("1s", Duration::from_secs(1)),
+        ("1m", Duration::from_secs(60)),
+        ("1h", Duration::from_secs(60 * 60)),
+        ("1m30s", Duration::from_secs(90)),
+    ];
+
+    for (value, expected) in cases {
+        assert_eq!(
+            parse_compose_duration("services.db.stop_grace_period", value)
+                .expect("supported duration unit should parse"),
+            expected,
+            "duration literal {value:?} should parse through the shared unit table"
+        );
+    }
+}
+
+#[test]
+fn compose_duration_parser_rejects_unknown_units_without_panicking() {
+    let error = parse_compose_duration("services.db.stop_grace_period", "1d")
+        .expect_err("unknown duration unit should return a parse error");
+
+    assert!(
+        error
+            .to_string()
+            .contains("Supported units are ns, us, ms, s, m, h"),
+        "unknown unit should be reported as validation error, got: {error}"
+    );
 }
 
 #[test]
@@ -664,27 +726,32 @@ volumes:
         .expect("compose file should resolve")
         .into_service_catalog()
         .expect("compose project should lower into a service catalog");
-    let db = catalog
-        .sandbox_service_for_tenant(&tenant_id, "db")
-        .expect("db launch should exist");
-    let launch = match db {
-        SandboxServiceLaunch::Image(launch) => launch,
-        SandboxServiceLaunch::Build(_) => panic!("db should lower as an image-backed launch"),
-    };
-
-    assert_eq!(launch.spec.mounts.len(), 2);
-    assert_eq!(launch.spec.mounts[0].tenant_volume_name(), Some("pgdata"));
+    let spec = sandbox_spec_from_backend(
+        catalog
+            .service_backend_for_tenant(&tenant_id, "db")
+            .expect("db backend should exist"),
+    );
+    let volume_policy = catalog.service_volume_policy_for_tenant(&tenant_id, "db");
+    assert_eq!(image_reference_from_spec(&spec), "postgres:16");
     assert_eq!(
-        launch.spec.mounts[0].destination,
+        volume_policy.named_volumes(),
+        &["pgdata".to_owned(), "logs".to_owned()],
+        "compose catalog should expose admitted service volumes independently from the launch spec"
+    );
+
+    assert_eq!(spec.mounts.len(), 2);
+    assert_eq!(spec.mounts[0].tenant_volume_name(), Some("pgdata"));
+    assert_eq!(
+        spec.mounts[0].destination,
         PathBuf::from("/var/lib/postgresql/data")
     );
-    assert!(!launch.spec.mounts[0].read_only);
-    assert_eq!(launch.spec.mounts[1].tenant_volume_name(), Some("logs"));
+    assert!(!spec.mounts[0].read_only);
+    assert_eq!(spec.mounts[1].tenant_volume_name(), Some("logs"));
     assert_eq!(
-        launch.spec.mounts[1].destination,
+        spec.mounts[1].destination,
         PathBuf::from("/var/log/postgres")
     );
-    assert!(launch.spec.mounts[1].read_only);
+    assert!(spec.mounts[1].read_only);
 }
 
 #[test]
@@ -871,21 +938,21 @@ services:
         .expect("compose file should resolve")
         .into_service_catalog()
         .expect("compose project should lower into a service catalog");
-    let launch = catalog
-        .sandbox_service_for_tenant(&tenant_id, "api")
-        .expect("api launch should exist");
-
-    match launch {
-        SandboxServiceLaunch::Image(launch) => {
-            assert_eq!(launch.spec.egress.rules().len(), 1);
-            let rule = &launch.spec.egress.rules()[0];
-            assert_eq!(rule.name, "stripe-api");
-            assert_eq!(rule.host, "api.stripe.com");
-            assert_eq!(rule.methods, vec!["POST".to_string()]);
-            assert_eq!(rule.path_prefixes, vec!["/v1/".to_string()]);
-        }
-        SandboxServiceLaunch::Build(_) => panic!("api should lower as an image-backed launch"),
-    }
+    let spec = sandbox_spec_from_backend(
+        catalog
+            .service_backend_for_tenant(&tenant_id, "api")
+            .expect("api backend should exist"),
+    );
+    assert_eq!(
+        image_reference_from_spec(&spec),
+        "registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert_eq!(spec.egress.rules().len(), 1);
+    let rule = &spec.egress.rules()[0];
+    assert_eq!(rule.name, "stripe-api");
+    assert_eq!(rule.host, "api.stripe.com");
+    assert_eq!(rule.methods, vec!["POST".to_string()]);
+    assert_eq!(rule.path_prefixes, vec!["/v1/".to_string()]);
 }
 
 #[test]
@@ -1026,7 +1093,7 @@ services:
 }
 
 #[test]
-fn compose_project_lowers_into_sandbox_service_catalog() {
+fn compose_project_lowers_into_service_definition_catalog() {
     let tempdir = tempfile::tempdir().expect("tempdir should build");
     let compose = write_compose_fixture(
         &tempdir,
@@ -1066,71 +1133,107 @@ services:
 
     assert_eq!(catalog.project.project_name, "demo-app");
 
-    let db = catalog
-        .sandbox_service_for_tenant(&tenant_id, "db")
-        .expect("db launch should exist");
-    match db {
-        SandboxServiceLaunch::Image(launch) => {
-            assert_eq!(launch.image_reference, "postgres:16");
-            assert_eq!(launch.spec.tenant_id, tenant_id);
-            assert_eq!(launch.spec.name, "db");
-            assert_eq!(launch.spec.resources.cpu_count, Some(1));
-            assert_eq!(
-                launch.spec.resources.memory_limit_bytes,
-                Some(256 * 1024 * 1024)
-            );
-            assert_eq!(
-                launch.spec.lifecycle.restart_policy,
-                SandboxRestartPolicy::OnFailure { max_restarts: 3 }
-            );
-            assert_eq!(
-                launch.spec.lifecycle.stop_timeout,
-                Some(Duration::from_secs(30))
-            );
-            assert_eq!(launch.spec.port_bindings.len(), 1);
-            assert_eq!(launch.spec.port_bindings[0].host_port, 5432);
-            assert_eq!(launch.spec.port_bindings[0].guest_port, 5432);
-        }
-        SandboxServiceLaunch::Build(_) => panic!("db should lower as an image-backed launch"),
-    }
+    let db = sandbox_spec_from_backend(
+        catalog
+            .service_backend_for_tenant(&tenant_id, "db")
+            .expect("db backend should exist"),
+    );
+    assert_eq!(image_reference_from_spec(&db), "postgres:16");
+    assert_eq!(db.tenant_id, tenant_id);
+    assert_eq!(db.service_name(), Some("db"));
+    assert_eq!(db.resources.cpu_count, Some(1));
+    assert_eq!(db.resources.memory_limit_bytes, Some(256 * 1024 * 1024));
+    assert_eq!(
+        db.lifecycle.restart_policy,
+        SandboxRestartPolicy::OnFailure { max_restarts: 3 }
+    );
+    assert_eq!(db.lifecycle.stop_timeout, Some(Duration::from_secs(30)));
+    assert_eq!(db.port_bindings.len(), 1);
+    assert_eq!(db.port_bindings[0].host_port, 5432);
+    assert_eq!(db.port_bindings[0].guest_port, 5432);
 
-    let api = catalog
-        .sandbox_service_for_tenant(&tenant_id, "api")
-        .expect("api launch should exist");
-    match api {
-        SandboxServiceLaunch::Build(launch) => {
-            assert_eq!(launch.image_name, "nimbus-demo-app-api");
-            assert_eq!(
-                launch.dockerfile_path,
-                tempdir.path().join("Dockerfile.api")
-            );
-            assert_eq!(launch.context_path, tempdir.path());
-            assert_eq!(
-                launch.process_overrides.entrypoint,
-                Some(vec!["/bin/sh".to_owned(), "-lc".to_owned()])
-            );
-            assert_eq!(
-                launch.process_overrides.cmd,
-                Some(vec!["./server".to_owned()])
-            );
-            assert_eq!(
-                launch.process_overrides.cwd,
-                Some(PathBuf::from("/workspace"))
-            );
-            assert_eq!(launch.process_overrides.user.as_deref(), Some("1000:1000"));
-        }
-        SandboxServiceLaunch::Image(_) => panic!("api should lower as a build-backed launch"),
-    }
+    let api = sandbox_spec_from_backend(
+        catalog
+            .service_backend_for_tenant(&tenant_id, "api")
+            .expect("api backend should exist"),
+    );
+    let api_build = build_source_from_spec(&api);
+    assert_eq!(api_build.image_name, "nimbus-demo-app-api");
+    assert_eq!(
+        api_build.dockerfile_path,
+        tempdir.path().join("Dockerfile.api")
+    );
+    assert_eq!(api_build.context_path, tempdir.path());
+    assert_eq!(
+        api.process.entrypoint,
+        Some(vec!["/bin/sh".to_owned(), "-lc".to_owned()])
+    );
+    assert_eq!(api.process.command, Some(vec!["./server".to_owned()]));
+    assert_eq!(api.process.cwd, PathBuf::from("/workspace"));
+    assert_eq!(api.process.user.as_deref(), Some("1000:1000"));
 
     let other_tenant = TenantId::new("other").expect("tenant id should be valid");
-    let other_db = catalog
-        .sandbox_service_for_tenant(&other_tenant, "db")
-        .expect("catalog should lower the same service plan for another tenant");
-    match other_db {
-        SandboxServiceLaunch::Image(launch) => {
-            assert_eq!(launch.spec.tenant_id, other_tenant);
-            assert_eq!(launch.spec.name, "db");
-        }
-        SandboxServiceLaunch::Build(_) => panic!("db should stay image-backed across tenants"),
-    }
+    let other_db = sandbox_spec_from_backend(
+        catalog
+            .service_backend_for_tenant(&other_tenant, "db")
+            .expect("catalog should lower the same service plan for another tenant"),
+    );
+    assert_eq!(image_reference_from_spec(&other_db), "postgres:16");
+    assert_eq!(other_db.tenant_id, other_tenant);
+    assert_eq!(other_db.service_name(), Some("db"));
+}
+
+#[test]
+fn compose_service_catalog_stamps_cached_backends_for_each_tenant() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+name: Demo App
+services:
+  db:
+    image: postgres:16
+  api:
+    image: ghcr.io/example/api:latest
+"#,
+    );
+    let catalog = ComposeProjectPlan::load(&compose)
+        .expect("compose file should resolve")
+        .into_service_catalog()
+        .expect("compose project should lower into a service catalog");
+
+    let tenant_a = TenantId::new("tenant-a").expect("tenant id should be valid");
+    let tenant_b = TenantId::new("tenant-b").expect("tenant id should be valid");
+    let tenant_a_backends = catalog.service_backends_for_tenant(&tenant_a);
+    let tenant_b_backends = catalog.service_backends_for_tenant(&tenant_b);
+
+    assert_eq!(
+        tenant_a_backends.keys().cloned().collect::<Vec<_>>(),
+        vec!["api".to_owned(), "db".to_owned()]
+    );
+    assert_eq!(
+        tenant_b_backends.keys().cloned().collect::<Vec<_>>(),
+        vec!["api".to_owned(), "db".to_owned()]
+    );
+
+    let tenant_a_db = sandbox_spec_from_backend(
+        tenant_a_backends
+            .get("db")
+            .expect("db backend should exist")
+            .clone(),
+    );
+    let tenant_b_db = sandbox_spec_from_backend(
+        tenant_b_backends
+            .get("db")
+            .expect("db backend should exist")
+            .clone(),
+    );
+
+    assert_eq!(tenant_a_db.tenant_id, tenant_a);
+    assert_eq!(tenant_b_db.tenant_id, tenant_b);
+    assert_eq!(tenant_a_db.service_name(), Some("db"));
+    assert_eq!(tenant_b_db.service_name(), Some("db"));
+    assert_eq!(image_reference_from_spec(&tenant_a_db), "postgres:16");
+    assert_eq!(image_reference_from_spec(&tenant_b_db), "postgres:16");
 }

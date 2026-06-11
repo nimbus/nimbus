@@ -34,9 +34,12 @@ async fn convex_named_mutation_can_use_bootstrapped_ctx_scheduler_api() {
         json!([]),
         Some(
             r#"
-globalThis.__nimbusInvoke = function(request) {
-  const ctx = globalThis.__nimbusCreateContext();
-  return (async () => {
+	globalThis.__nimbusInvoke = function(request) {
+	  const ctx = globalThis.__nimbusCreateContext({
+	    hostCallSessionId: `${request.kind}:${request.function_name}`,
+	    request,
+	  });
+	  return (async () => {
     const value = await ctx.scheduler.runAfter(
       request.args.delayMs,
       {
@@ -62,8 +65,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let scheduler_handle = tokio::spawn(run_scheduler(service.clone(), shutdown_rx));
     let server = ServerFixture::start(router_for_convex(service, registry)).await;

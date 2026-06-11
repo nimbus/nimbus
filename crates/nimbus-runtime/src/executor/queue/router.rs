@@ -129,6 +129,9 @@ impl RuntimeWorkerRouter {
     }
 
     fn choose_worker(&self, affinity_key: Option<&RuntimeAffinityKey>) -> WorkerRouteSelection {
+        // Routing uses an eventually consistent snapshot only to choose a
+        // best-effort worker. Assignment and completion keep the counters
+        // themselves consistent.
         let least_loaded = self
             .workers
             .iter()

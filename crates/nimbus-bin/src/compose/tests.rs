@@ -8,8 +8,8 @@ use std::time::Duration;
 use super::*;
 use clap::{Parser, Subcommand};
 use nimbus::{
-    SandboxBackendKind, SandboxBuildLaunchSpec, SandboxFilesystemSpec, SandboxId,
-    SandboxImageLaunchSpec, SandboxProcessSpec, SandboxServiceLaunch, SandboxSpec, SandboxStatus,
+    SandboxBackendKind, SandboxId, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec,
+    SandboxSpec, SandboxStatus, ServiceBackend,
 };
 use nimbus_sandbox::SandboxFuture;
 use nimbus_sandbox::backends::container::{
@@ -19,7 +19,7 @@ use serde_json::json;
 use tempfile::TempDir;
 
 use crate::compose::execution::{
-    load_host_backed_project_backend, load_host_backed_sandbox_service_manager_for_platform,
+    load_host_backed_project_backend, load_host_backed_service_manager_for_platform,
     should_auto_start_default_machine_for_host_loader,
 };
 use crate::compose::lifecycle::{start_service_launch, stop_service_target};

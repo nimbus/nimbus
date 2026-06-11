@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the CI Wall Acceleration plan
-# (`docs/plans/ci-wall-acceleration-plan.md`).
+# (`docs/private/plans/ci-wall-acceleration-plan.md`).
 #
 # Exits 0 iff every condition in the plan's Completion Gate is satisfied.
 # Ships in CW0 so /goal is verifiable from day one; CW1-CW4 progressively
@@ -13,15 +13,15 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN_ACTIVE="docs/plans/ci-wall-acceleration-plan.md"
-PLAN_ARCHIVED="docs/plans/archive/ci-wall-acceleration-plan.md"
+PLAN_ACTIVE="docs/private/plans/ci-wall-acceleration-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/ci-wall-acceleration-plan.md"
 AGENTS_MD="CLAUDE.md"
-PROOF_DIR="docs/plans/proof/ci-wall-acceleration"
+PROOF_DIR="docs/private/plans/proof/ci-wall-acceleration"
 PROOF_CW0="${PROOF_DIR}/cw0-baseline.md"
 
 HARNESS_SCRIPT="scripts/verification-harness.sh"
 CI_WF=".github/workflows/ci.yml"
-MODERN_DOC="docs/operating/ci-modernization.md"
+MODERN_DOC="docs/private/operating/ci-modernization.md"
 
 PASS=0
 FAIL=0

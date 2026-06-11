@@ -73,7 +73,7 @@ globalThis.__nimbusInvoke = async function(request) {
   const definition = definitions.get(request.function_name);
   const value = await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_mutation", {
     mutation: resolveTemplate(definition.plan, request.args ?? {}),
-    session_id: `${request.kind}:${request.function_name}`,
+    host_call_session_id: `${request.kind}:${request.function_name}`,
   });
   return {
     status: "ok",
@@ -88,8 +88,8 @@ export {};
 "#,
         ),
     );
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let scheduler_handle = tokio::spawn(run_scheduler(service.clone(), shutdown_rx));
     let server = ServerFixture::start(router_for_convex(service, registry)).await;

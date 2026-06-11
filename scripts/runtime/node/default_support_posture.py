@@ -1143,7 +1143,7 @@ def classify_entry(entry: dict[str, Any]) -> tuple[str, str, str, str]:
 
 
 def build_posture(repo: Path) -> dict[str, Any]:
-    status_path = repo / "docs/architecture/runtime/node-compat-evidence/latest/status-summary.json"
+    status_path = repo / "tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json"
     status = load_json(status_path)
     lanes: dict[str, Any] = {}
 
@@ -1227,7 +1227,7 @@ def build_posture(repo: Path) -> dict[str, Any]:
         "schema_version": 1,
         "report_kind": "node_default_support_posture",
         "generated_from": [
-            "docs/architecture/runtime/node-compat-evidence/latest/status-summary.json",
+            "tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json",
             "tests/runtime/node/classifications/*.json",
             "docs/plans/node-default-runtime-support-hardening-plan.md",
         ],

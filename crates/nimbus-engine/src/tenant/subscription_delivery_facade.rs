@@ -53,4 +53,11 @@ impl TenantRuntime {
     ) -> SubscriptionDeliveryPauseHandle {
         self.subscription_delivery.pause_handle()
     }
+
+    #[cfg(test)]
+    pub(crate) fn subscription_delivery_publish_pause_handle_for_testing(
+        &self,
+    ) -> SubscriptionDeliveryPublishPauseHandle {
+        self.subscriptions.delivery_publish_pause_handle()
+    }
 }

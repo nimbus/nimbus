@@ -6,7 +6,7 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use rust_embed::Embed;
+use nimbus_assets::ui;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -16,13 +16,6 @@ use crate::local_server::{
     SessionBootstrapFailure, SessionValidationResult, authorize_standard_server_access,
     origin_from_headers,
 };
-
-const AUTH_PAGE_TEMPLATE: &str = include_str!("../../assets/auth.html");
-// Served from `/ui/auth.js`; loaded by the auth template as a same-origin
-// `<script src="/ui/auth.js">`. Keeping it external (rather than inline)
-// means the strict `script-src 'self'` CSP applies without needing a hash
-// pin that drifts every time the body changes.
-const AUTH_PAGE_SCRIPT: &str = include_str!("../../assets/auth.js");
 
 // The SPA shell embeds a single inline <script> in `index.html` that resolves
 // the theme synchronously before paint to avoid FOUC. Its SHA-256 is pinned
@@ -50,10 +43,6 @@ const UI_CSP: &str = concat!(
 
 const SPA_INDEX: &str = "index.html";
 
-#[derive(Embed)]
-#[folder = "$CARGO_MANIFEST_DIR/../../packages/nimbus-ui/dist/"]
-struct UiAssets;
-
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UiAuthSessionRequest {
@@ -76,7 +65,7 @@ pub(crate) async fn ui_path(
     let normalized = path.trim_start_matches('/');
 
     if looks_like_static_asset(normalized) {
-        return match UiAssets::get(normalized) {
+        return match ui::asset(normalized) {
             Some(asset) => Ok(asset_response(normalized, asset.data.into_owned())),
             None => Ok(StatusCode::NOT_FOUND.into_response()),
         };
@@ -90,7 +79,7 @@ pub(crate) async fn ui_auth() -> Html<String> {
 }
 
 pub(crate) async fn ui_auth_script() -> Response {
-    let mut response = (StatusCode::OK, AUTH_PAGE_SCRIPT).into_response();
+    let mut response = (StatusCode::OK, ui::auth_page_script()).into_response();
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/javascript; charset=utf-8"),
@@ -179,6 +168,7 @@ pub(crate) async fn consume_ui_launch_ticket(
     let issued = local_server_security
         .create_session_for_launch_ticket(ticket)
         .map_err(|error| {
+            let app_error = map_session_bootstrap_error(&error);
             state.record_local_server_audit(LocalServerAuditEvent {
                 route_family: LocalServerRouteFamily::UiAuthSession,
                 tenant_id: None,
@@ -186,9 +176,9 @@ pub(crate) async fn consume_ui_launch_ticket(
                 auth_method: Some("launch_ticket"),
                 success: false,
                 origin: origin.clone(),
-                reason: map_session_bootstrap_error(error.clone()).to_string(),
+                reason: app_error.to_string(),
             });
-            map_session_bootstrap_error(error)
+            app_error
         })?;
     state.record_local_server_audit(LocalServerAuditEvent {
         route_family: LocalServerRouteFamily::UiAuthSession,
@@ -230,7 +220,7 @@ fn render_auth_page(error: Option<&str>) -> String {
         ),
         None => (String::new(), String::new()),
     };
-    AUTH_PAGE_TEMPLATE
+    ui::auth_page_template()
         .replace("{{ JETBRAINS_MONO_400 }}", &latin_400)
         .replace("{{ JETBRAINS_MONO_500 }}", &latin_500)
         .replace("{{ NIMBUS_VERSION }}", env!("CARGO_PKG_VERSION"))
@@ -264,7 +254,7 @@ fn escape_html(value: &str) -> String {
 }
 
 fn find_embedded_font(stem: &str) -> Option<String> {
-    UiAssets::iter().find_map(|name| {
+    ui::iter().find_map(|name| {
         let candidate = name.as_ref();
         if candidate.starts_with("assets/")
             && candidate.contains(stem)
@@ -294,7 +284,7 @@ pub(crate) async fn create_ui_session(
     let request = parse_ui_auth_session_request(&body)?;
     let origin = origin_from_headers(&headers);
     let record_failure = |error: SessionBootstrapFailure, auth_method: &'static str| -> Response {
-        let app_error = map_session_bootstrap_error(error);
+        let app_error = map_session_bootstrap_error(&error);
         let reason = app_error.to_string();
         state.record_local_server_audit(LocalServerAuditEvent {
             route_family: LocalServerRouteFamily::UiAuthSession,
@@ -399,7 +389,7 @@ fn serve_spa_shell(state: &Arc<AppState>, headers: &HeaderMap) -> Result<Respons
 }
 
 fn spa_index_response() -> Response {
-    match UiAssets::get(SPA_INDEX) {
+    match ui::index_html() {
         Some(asset) => asset_response(SPA_INDEX, asset.data.into_owned()),
         None => Html(BOOTSTRAP_FALLBACK_HTML).into_response(),
     }
@@ -474,7 +464,7 @@ fn build_session_set_cookie(issued: &IssuedSessionCookie) -> String {
     )
 }
 
-fn map_session_bootstrap_error(error: SessionBootstrapFailure) -> AppError {
+fn map_session_bootstrap_error(error: &SessionBootstrapFailure) -> AppError {
     match error {
         SessionBootstrapFailure::InvalidToken => {
             AppError::unauthorized("invalid local admin token")
@@ -482,6 +472,9 @@ fn map_session_bootstrap_error(error: SessionBootstrapFailure) -> AppError {
         SessionBootstrapFailure::InvalidLaunchTicket => {
             AppError::unauthorized("invalid or expired launch ticket")
         }
+        SessionBootstrapFailure::SessionIssueFailed(message) => AppError::from(
+            nimbus_core::Error::Internal(format!("failed to issue ui session: {message}")),
+        ),
     }
 }
 
@@ -569,8 +562,7 @@ mod tests {
         use base64::Engine;
         use sha2::{Digest, Sha256};
 
-        let index =
-            UiAssets::get(SPA_INDEX).expect("SPA index.html should be embedded at build time");
+        let index = ui::index_html().expect("SPA index.html should be embedded at build time");
         let html = std::str::from_utf8(&index.data).expect("SPA index.html should be valid UTF-8");
 
         let inline_bodies = inline_script_bodies(html);

@@ -1,4 +1,6 @@
 use super::support::*;
+use crate::RetentionGcConfig;
+use std::ops::Bound;
 
 #[test]
 fn sqlite_direct_writes_emit_commit_entries_and_round_trip_journal_reads() {
@@ -46,6 +48,652 @@ fn sqlite_direct_writes_emit_commit_entries_and_round_trip_journal_reads() {
     assert_eq!(entries[0].writes[0].op_type, WriteOpType::Insert);
     assert_eq!(entries[1].writes[0].op_type, WriteOpType::Update);
     assert_eq!(entries[2].writes[0].op_type, WriteOpType::Delete);
+}
+
+#[test]
+fn sqlite_document_versions_track_insert_update_delete_history() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let document = sample_document("versioned_tasks", "v1");
+    let insert = store.insert(&document).expect("insert should succeed");
+    let table_id = insert.writes[0].table_id.clone();
+    let patch = serde_json::Map::from_iter([("title".to_string(), json!("v2"))]);
+    let update = store
+        .update(&document.table, &document.id, &patch)
+        .expect("update should succeed");
+    let delete = store
+        .delete(&document.table, &document.id)
+        .expect("delete should succeed");
+
+    let at_insert = store
+        .get_document_version_at(&document.table, &table_id, &document.id, insert.sequence)
+        .expect("insert version should load")
+        .expect("insert version should exist");
+    let at_update = store
+        .get_document_version_at(&document.table, &table_id, &document.id, update.sequence)
+        .expect("update version should load")
+        .expect("update version should exist");
+    let at_delete = store
+        .get_document_version_at(&document.table, &table_id, &document.id, delete.sequence)
+        .expect("delete version should load");
+
+    assert_eq!(at_insert.fields.get("title"), Some(&json!("v1")));
+    assert_eq!(at_update.fields.get("title"), Some(&json!("v2")));
+    assert_eq!(at_delete, None);
+    assert!(
+        store
+            .get(&document.table, &document.id)
+            .expect("current row get should succeed")
+            .is_none(),
+        "current row should still reflect latest delete"
+    );
+}
+
+#[test]
+fn sqlite_document_versions_are_materialized_during_durable_recovery() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let table = TableName::new("versioned_replay_tasks").expect("table name should be valid");
+    let table_id = TableId::new();
+    let inserted = sample_document("versioned_replay_tasks", "v1");
+    let mut updated = inserted.clone();
+    updated.fields.insert("title".to_string(), json!("v2"));
+    updated.update_time = Timestamp(updated.update_time.0.saturating_add(1));
+    let records = vec![
+        DurableMutationRecord::new(
+            SequenceNumber(1),
+            Timestamp(100),
+            vec![WriteOp {
+                table: table.clone(),
+                table_id: table_id.clone(),
+                op_type: WriteOpType::Insert,
+                doc_id: inserted.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: None,
+                current: Some(inserted.clone()),
+            }],
+            None,
+        )
+        .expect("insert durable record should build"),
+        DurableMutationRecord::new(
+            SequenceNumber(2),
+            Timestamp(101),
+            vec![WriteOp {
+                table: table.clone(),
+                table_id: table_id.clone(),
+                op_type: WriteOpType::Update,
+                doc_id: inserted.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: Some(inserted.clone()),
+                current: Some(updated.clone()),
+            }],
+            None,
+        )
+        .expect("update durable record should build"),
+        DurableMutationRecord::new(
+            SequenceNumber(3),
+            Timestamp(102),
+            vec![WriteOp {
+                table: table.clone(),
+                table_id: table_id.clone(),
+                op_type: WriteOpType::Delete,
+                doc_id: inserted.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: Some(updated.clone()),
+                current: None,
+            }],
+            None,
+        )
+        .expect("delete durable record should build"),
+    ];
+
+    store
+        .append_durable_records_batch(&records)
+        .expect("durable append should succeed");
+    assert!(
+        store
+            .get_document_version_at(&table, &table_id, &inserted.id, SequenceNumber(3))
+            .expect("unapplied version lookup should succeed")
+            .is_none(),
+        "durable-only records must not materialize historical versions before recovery"
+    );
+
+    store
+        .recover_durable_journal()
+        .expect("durable recovery should succeed");
+
+    let at_insert = store
+        .get_document_version_at(&table, &table_id, &inserted.id, SequenceNumber(1))
+        .expect("insert replay version should load")
+        .expect("insert replay version should exist");
+    let at_update = store
+        .get_document_version_at(&table, &table_id, &inserted.id, SequenceNumber(2))
+        .expect("update replay version should load")
+        .expect("update replay version should exist");
+    let at_delete = store
+        .get_document_version_at(&table, &table_id, &inserted.id, SequenceNumber(3))
+        .expect("delete replay version should load");
+
+    assert_eq!(at_insert.fields.get("title"), Some(&json!("v1")));
+    assert_eq!(at_update.fields.get("title"), Some(&json!("v2")));
+    assert_eq!(at_delete, None);
+    assert!(
+        store
+            .get(&table, &inserted.id)
+            .expect("current row get should succeed")
+            .is_none(),
+        "replayed current row should still reflect latest delete"
+    );
+}
+
+#[test]
+fn sqlite_document_versions_storage_diagnostic_reports_format_and_range() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let document = sample_document("versioned_diagnostic_tasks", "v1");
+    let insert = store.insert(&document).expect("insert should succeed");
+    let patch = serde_json::Map::from_iter([("title".to_string(), json!("v2"))]);
+    let update = store
+        .update(&document.table, &document.id, &patch)
+        .expect("update should succeed");
+    let delete = store
+        .delete(&document.table, &document.id)
+        .expect("delete should succeed");
+
+    let health = store
+        .storage_health_diagnostic()
+        .expect("health diagnostic should load");
+
+    assert_eq!(
+        health.document_versions.format_version,
+        Some(crate::CURRENT_DOCUMENT_VERSION_STORAGE_FORMAT)
+    );
+    assert_eq!(health.document_versions.version_count, 3);
+    assert_eq!(health.document_versions.min_sequence, Some(insert.sequence));
+    assert_eq!(health.document_versions.max_sequence, Some(delete.sequence));
+    assert!(update.sequence.0 > insert.sequence.0);
+}
+
+#[test]
+fn sqlite_retention_gc_preserves_document_anchor_and_respects_pins() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let schema = ranked_tasks_schema();
+    let index = schema.indexes[0].clone();
+    store
+        .replace_table_schema(&schema)
+        .expect("schema should persist");
+    let document = ranked_document(&schema.table, "v1", 1);
+    let insert = store.insert(&document).expect("insert should succeed");
+    let table_id = insert.writes[0].table_id.clone();
+    let patch_v2 = serde_json::Map::from_iter([
+        ("title".to_string(), json!("v2")),
+        ("rank".to_string(), json!(2)),
+    ]);
+    let update_v2 = store
+        .update(&document.table, &document.id, &patch_v2)
+        .expect("first update should succeed");
+    let patch_v3 = serde_json::Map::from_iter([
+        ("title".to_string(), json!("v3")),
+        ("rank".to_string(), json!(3)),
+    ]);
+    let update_v3 = store
+        .update(&document.table, &document.id, &patch_v3)
+        .expect("second update should succeed");
+    let delete = store
+        .delete(&document.table, &document.id)
+        .expect("delete should succeed");
+
+    let pin = store.pin_retention_participant(
+        RetentionParticipant::TransactionSession,
+        update_v2.sequence,
+        Some(table_id.clone()),
+        "repeatable-read transaction",
+    );
+    let pinned_health = store
+        .storage_health_diagnostic()
+        .expect("health diagnostic should load");
+    assert_eq!(pinned_health.retention_pins.len(), 1);
+    assert_eq!(
+        pinned_health
+            .retention_gc
+            .document_versions
+            .active_pin_count,
+        1
+    );
+
+    let pinned_summary = store
+        .compact_retained_versions(RetentionGcConfig::new(1).expect("config should build"))
+        .expect("pinned compaction should succeed");
+    assert_eq!(
+        pinned_summary
+            .watermarks
+            .document_versions
+            .safe_prune_before,
+        update_v2.sequence
+    );
+    assert_eq!(pinned_summary.document_versions_pruned, 1);
+    assert_eq!(pinned_summary.index_versions_pruned, 1);
+    let at_pin = store
+        .get_document_version_at(&document.table, &table_id, &document.id, update_v2.sequence)
+        .expect("pinned version should load")
+        .expect("pinned version should remain");
+    assert_eq!(at_pin.fields.get("title"), Some(&json!("v2")));
+
+    drop(pin);
+    let released_summary = store
+        .compact_retained_versions(RetentionGcConfig::new(1).expect("config should build"))
+        .expect("released compaction should succeed");
+    assert_eq!(
+        released_summary
+            .watermarks
+            .document_versions
+            .safe_prune_before,
+        SequenceNumber(delete.sequence.0.saturating_sub(1))
+    );
+    assert_eq!(released_summary.document_versions_pruned, 1);
+    assert_eq!(released_summary.index_versions_pruned, 1);
+    let at_floor = store
+        .get_document_version_at(&document.table, &table_id, &document.id, update_v3.sequence)
+        .expect("floor version should load")
+        .expect("floor anchor should remain");
+    assert_eq!(at_floor.fields.get("title"), Some(&json!("v3")));
+    let intervals = store
+        .index_version_intervals_for_testing(&table_id, &index.id)
+        .expect("index versions should load after GC");
+    assert_eq!(intervals.len(), 1);
+    assert_eq!(intervals[0].visible_from, update_v3.sequence);
+    assert_eq!(intervals[0].visible_until, Some(delete.sequence));
+}
+
+#[test]
+fn sqlite_document_versions_reject_unknown_future_storage_format() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let document = sample_document("versioned_format_tasks", "v1");
+    let insert = store.insert(&document).expect("insert should succeed");
+    let table_id = insert.writes[0].table_id.clone();
+    let future_format = u64::from(crate::CURRENT_DOCUMENT_VERSION_STORAGE_FORMAT.0) + 1;
+
+    store
+        .execute_write(|transaction| {
+            transaction.put_metadata(
+                crate::DOCUMENT_VERSION_STORAGE_FORMAT_METADATA_KEY,
+                future_format.to_be_bytes().as_slice(),
+            )
+        })
+        .expect("format marker should update");
+
+    let err = store
+        .get_document_version_at(&document.table, &table_id, &document.id, insert.sequence)
+        .expect_err("future document-version format must fail closed");
+    assert!(
+        err.to_string()
+            .contains("unknown future document-version storage format version")
+    );
+}
+
+#[test]
+fn sqlite_index_versions_track_update_delete_visibility_intervals() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let schema = ranked_tasks_schema();
+    let index = schema.indexes[0].clone();
+    store
+        .replace_table_schema(&schema)
+        .expect("schema should persist");
+    let document = ranked_document(&schema.table, "v1", 1);
+    let insert = store.insert(&document).expect("insert should succeed");
+    let table_id = insert.writes[0].table_id.clone();
+    let patch = serde_json::Map::from_iter([
+        ("title".to_string(), json!("v2")),
+        ("rank".to_string(), json!(2)),
+    ]);
+    let update = store
+        .update(&document.table, &document.id, &patch)
+        .expect("update should succeed");
+    let delete = store
+        .delete(&document.table, &document.id)
+        .expect("delete should succeed");
+
+    let intervals = store
+        .index_version_intervals_for_testing(&table_id, &index.id)
+        .expect("index versions should load");
+
+    assert_eq!(intervals.len(), 2);
+    assert!(
+        intervals
+            .iter()
+            .all(|interval| interval.document_id == document.id)
+    );
+    assert_eq!(intervals[0].visible_from, insert.sequence);
+    assert_eq!(intervals[0].visible_until, Some(update.sequence));
+    assert_eq!(intervals[1].visible_from, update.sequence);
+    assert_eq!(intervals[1].visible_until, Some(delete.sequence));
+}
+
+#[test]
+fn sqlite_index_versions_are_materialized_during_durable_recovery() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let schema = ranked_tasks_schema();
+    let index = schema.indexes[0].clone();
+    store
+        .replace_table_schema(&schema)
+        .expect("schema should persist");
+    let table_id = sqlite_active_table_id(&store, &schema.table);
+    let inserted = ranked_document(&schema.table, "v1", 1);
+    let mut updated = inserted.clone();
+    updated.fields.insert("title".to_string(), json!("v2"));
+    updated.fields.insert("rank".to_string(), json!(2));
+    updated.update_time = Timestamp(updated.update_time.0.saturating_add(1));
+    let records = vec![
+        sqlite_durable_write_record(
+            SequenceNumber(2),
+            Timestamp(100),
+            &schema.table,
+            &table_id,
+            WriteOpType::Insert,
+            inserted.id.clone(),
+            None,
+            Some(inserted.clone()),
+        ),
+        sqlite_durable_write_record(
+            SequenceNumber(3),
+            Timestamp(101),
+            &schema.table,
+            &table_id,
+            WriteOpType::Update,
+            inserted.id.clone(),
+            Some(inserted.clone()),
+            Some(updated.clone()),
+        ),
+        sqlite_durable_write_record(
+            SequenceNumber(4),
+            Timestamp(102),
+            &schema.table,
+            &table_id,
+            WriteOpType::Delete,
+            inserted.id.clone(),
+            Some(updated),
+            None,
+        ),
+    ];
+
+    store
+        .append_durable_records_batch(&records)
+        .expect("durable append should succeed");
+    assert!(
+        store
+            .index_version_intervals_for_testing(&table_id, &index.id)
+            .expect("unapplied index versions should load")
+            .is_empty(),
+        "durable-only records must not materialize index versions before recovery"
+    );
+
+    store
+        .recover_durable_journal()
+        .expect("durable recovery should succeed");
+
+    let intervals = store
+        .index_version_intervals_for_testing(&table_id, &index.id)
+        .expect("index versions should load after recovery");
+    assert_eq!(intervals.len(), 2);
+    assert_eq!(intervals[0].visible_from, SequenceNumber(2));
+    assert_eq!(intervals[0].visible_until, Some(SequenceNumber(3)));
+    assert_eq!(intervals[1].visible_from, SequenceNumber(3));
+    assert_eq!(intervals[1].visible_until, Some(SequenceNumber(4)));
+}
+
+#[test]
+fn sqlite_index_versions_reject_unknown_future_storage_format() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let schema = ranked_tasks_schema();
+    let index = schema.indexes[0].clone();
+    store
+        .replace_table_schema(&schema)
+        .expect("schema should persist");
+    let document = ranked_document(&schema.table, "v1", 1);
+    let insert = store.insert(&document).expect("insert should succeed");
+    let table_id = insert.writes[0].table_id.clone();
+    let future_format = u64::from(crate::CURRENT_INDEX_VERSION_STORAGE_FORMAT.0) + 1;
+
+    store
+        .execute_write(|transaction| {
+            transaction.put_metadata(
+                crate::INDEX_VERSION_STORAGE_FORMAT_METADATA_KEY,
+                future_format.to_be_bytes().as_slice(),
+            )
+        })
+        .expect("format marker should update");
+
+    let err = store
+        .index_version_intervals_for_testing(&table_id, &index.id)
+        .expect_err("future index-version format must fail closed");
+    assert!(
+        err.to_string()
+            .contains("unknown future index-version storage format version")
+    );
+}
+
+#[test]
+fn sqlite_historical_index_scan_eq_and_range_use_versioned_visibility() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let schema = ranked_tasks_schema();
+    store
+        .replace_table_schema(&schema)
+        .expect("schema should persist");
+    let document = ranked_document(&schema.table, "v1", 1);
+    let insert = store.insert(&document).expect("insert should succeed");
+    let table_id = insert.writes[0].table_id.clone();
+    let patch = serde_json::Map::from_iter([
+        ("title".to_string(), json!("v2")),
+        ("rank".to_string(), json!(2)),
+    ]);
+    let update = store
+        .update(&document.table, &document.id, &patch)
+        .expect("update should succeed");
+    let delete = store
+        .delete(&document.table, &document.id)
+        .expect("delete should succeed");
+    let snapshot = store.read_snapshot().expect("snapshot should open");
+
+    let at_insert =
+        sqlite_historical_read_shape(&schema.table, &table_id, &schema, insert.sequence);
+    let rank_one = snapshot
+        .historical_index_scan_eq_cancellable(&at_insert, "by_rank", &json!(1), &mut || Ok(()))
+        .expect("historical rank=1 scan should succeed");
+    assert_eq!(sqlite_document_titles(&rank_one), vec!["v1"]);
+    assert_eq!(
+        sqlite_document_title_strings(&rank_one),
+        sqlite_rank_full_scan_oracle_titles(
+            &snapshot,
+            &schema.table,
+            &table_id,
+            &[&document],
+            insert.sequence,
+            1
+        )
+    );
+    assert!(
+        snapshot
+            .historical_index_scan_eq_cancellable(&at_insert, "by_rank", &json!(2), &mut || Ok(()))
+            .expect("historical rank=2 scan should succeed")
+            .is_empty()
+    );
+
+    let at_update =
+        sqlite_historical_read_shape(&schema.table, &table_id, &schema, update.sequence);
+    let rank_two = snapshot
+        .historical_index_scan_range_cancellable(
+            &at_update,
+            "by_rank",
+            Bound::Included(&json!(2)),
+            Bound::Included(&json!(2)),
+            &mut || Ok(()),
+        )
+        .expect("historical rank range scan should succeed");
+    assert_eq!(sqlite_document_titles(&rank_two), vec!["v2"]);
+    assert_eq!(
+        sqlite_document_title_strings(&rank_two),
+        sqlite_rank_full_scan_oracle_titles(
+            &snapshot,
+            &schema.table,
+            &table_id,
+            &[&document],
+            update.sequence,
+            2
+        )
+    );
+    assert!(
+        snapshot
+            .historical_index_scan_eq_cancellable(&at_update, "by_rank", &json!(1), &mut || Ok(()))
+            .expect("historical stale rank scan should succeed")
+            .is_empty()
+    );
+
+    let at_delete =
+        sqlite_historical_read_shape(&schema.table, &table_id, &schema, delete.sequence);
+    let deleted_rank_two = snapshot
+        .historical_index_scan_eq_cancellable(&at_delete, "by_rank", &json!(2), &mut || Ok(()))
+        .expect("historical deleted rank scan should succeed");
+    assert_eq!(
+        sqlite_document_title_strings(&deleted_rank_two),
+        sqlite_rank_full_scan_oracle_titles(
+            &snapshot,
+            &schema.table,
+            &table_id,
+            &[&document],
+            delete.sequence,
+            2
+        )
+    );
+}
+
+#[test]
+fn sqlite_historical_index_prefix_composite_range_and_pagination_are_stable() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let schema = sqlite_status_rank_schema();
+    store
+        .replace_table_schema(&schema)
+        .expect("schema should persist");
+    let first = sqlite_status_rank_document(&schema.table, "first", "open", 1);
+    let second = sqlite_status_rank_document(&schema.table, "second", "open", 2);
+    let third = sqlite_status_rank_document(&schema.table, "third", "closed", 3);
+    let first_insert = store.insert(&first).expect("first insert should succeed");
+    let table_id = first_insert.writes[0].table_id.clone();
+    store.insert(&second).expect("second insert should succeed");
+    let third_insert = store.insert(&third).expect("third insert should succeed");
+
+    let read_shape =
+        sqlite_historical_read_shape(&schema.table, &table_id, &schema, third_insert.sequence);
+    let snapshot = store.read_snapshot().expect("snapshot should open");
+    let open_docs = snapshot
+        .historical_index_scan_prefix_cancellable(
+            &read_shape,
+            "by_status_rank",
+            &[json!("open")],
+            &mut || Ok(()),
+        )
+        .expect("historical prefix scan should succeed");
+    assert_eq!(sqlite_document_titles(&open_docs), vec!["first", "second"]);
+    assert_eq!(
+        sqlite_document_title_strings(&open_docs),
+        sqlite_status_rank_full_scan_oracle_titles(
+            &snapshot,
+            &table_id,
+            &[&first, &second, &third],
+            third_insert.sequence,
+            "open",
+            None,
+            None
+        )
+    );
+
+    let exact_rank_two = snapshot
+        .historical_index_scan_composite_range_cancellable(
+            &read_shape,
+            "by_status_rank",
+            &[json!("open")],
+            Bound::Included(&json!(2)),
+            Bound::Included(&json!(2)),
+            &mut || Ok(()),
+        )
+        .expect("historical composite range scan should succeed");
+    assert_eq!(sqlite_document_titles(&exact_rank_two), vec!["second"]);
+    assert_eq!(
+        sqlite_document_title_strings(&exact_rank_two),
+        sqlite_status_rank_full_scan_oracle_titles(
+            &snapshot,
+            &table_id,
+            &[&first, &second, &third],
+            third_insert.sequence,
+            "open",
+            Some(2),
+            Some(2)
+        )
+    );
+
+    let first_page = snapshot
+        .historical_index_scan_prefix_page_cancellable(
+            &read_shape,
+            "by_status_rank",
+            &[json!("open")],
+            None,
+            1,
+            &mut || Ok(()),
+        )
+        .expect("first historical page should succeed");
+    assert_eq!(sqlite_document_titles(&first_page.documents), vec!["first"]);
+    let cursor = first_page
+        .next_cursor
+        .as_ref()
+        .expect("first page should return a cursor");
+    let second_page = snapshot
+        .historical_index_scan_prefix_page_cancellable(
+            &read_shape,
+            "by_status_rank",
+            &[json!("open")],
+            Some(cursor),
+            1,
+            &mut || Ok(()),
+        )
+        .expect("second historical page should succeed");
+    assert_eq!(
+        sqlite_document_titles(&second_page.documents),
+        vec!["second"]
+    );
+
+    let mismatch = snapshot
+        .historical_index_scan_prefix_page_cancellable(
+            &read_shape,
+            "by_status_rank",
+            &[json!("closed")],
+            Some(cursor),
+            1,
+            &mut || Ok(()),
+        )
+        .expect_err("cursor from a different prefix must fail closed");
+    assert_eq!(
+        mismatch.historical_read_kind(),
+        Some(nimbus_core::HistoricalReadErrorKind::CursorMismatch)
+    );
 }
 
 #[test]
@@ -136,6 +784,210 @@ fn sqlite_durable_journal_batch_append_enforces_no_holes() {
             .collect::<Vec<_>>(),
         vec![SequenceNumber(1), SequenceNumber(2)]
     );
+}
+
+fn sqlite_active_table_id(store: &SqliteTenantStore, table: &TableName) -> TableId {
+    store
+        .read_snapshot()
+        .expect("snapshot should open")
+        .table_identities()
+        .expect("table identities should load")
+        .into_iter()
+        .find(|identity| {
+            identity.table == *table
+                && identity.namespace == crate::table_identity::DEFAULT_TABLE_NAMESPACE
+                && identity.state == nimbus_core::TableState::Active
+        })
+        .expect("active table identity should exist")
+        .table_id
+}
+
+fn sqlite_status_rank_schema() -> TableSchema {
+    let table = TableName::new("composite_tasks").expect("table name should be valid");
+    TableSchema {
+        table,
+        fields: vec![
+            FieldSchema {
+                name: "status".to_string(),
+                field_type: FieldType::String,
+                required: true,
+            },
+            FieldSchema {
+                name: "rank".to_string(),
+                field_type: FieldType::Number,
+                required: true,
+            },
+        ],
+        indexes: vec![IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
+            name: "by_status_rank".to_string(),
+            fields: vec!["status".to_string(), "rank".to_string()],
+        }],
+        access_policy: None,
+    }
+}
+
+fn sqlite_status_rank_document(
+    table: &TableName,
+    title: &str,
+    status: &str,
+    rank: u64,
+) -> Document {
+    Document::new(
+        table.clone(),
+        serde_json::Map::from_iter([
+            ("title".to_string(), json!(title)),
+            ("status".to_string(), json!(status)),
+            ("rank".to_string(), json!(rank)),
+        ]),
+    )
+}
+
+fn sqlite_rank_full_scan_oracle_titles(
+    snapshot: &crate::sqlite::SqliteReadSnapshot,
+    table: &TableName,
+    table_id: &TableId,
+    corpus: &[&Document],
+    sequence: SequenceNumber,
+    rank: u64,
+) -> Vec<String> {
+    let mut titles = corpus
+        .iter()
+        .filter_map(|document| {
+            snapshot
+                .get_document_version_at(table, table_id, &document.id, sequence)
+                .expect("document version oracle should load")
+        })
+        .filter(|document| {
+            document.fields.get("rank").and_then(|value| value.as_u64()) == Some(rank)
+        })
+        .map(|document| sqlite_document_title_string(&document))
+        .collect::<Vec<_>>();
+    titles.sort();
+    titles
+}
+
+fn sqlite_status_rank_full_scan_oracle_titles(
+    snapshot: &crate::sqlite::SqliteReadSnapshot,
+    table_id: &TableId,
+    corpus: &[&Document],
+    sequence: SequenceNumber,
+    status: &str,
+    start_rank: Option<u64>,
+    end_rank: Option<u64>,
+) -> Vec<String> {
+    let mut rows = corpus
+        .iter()
+        .filter_map(|document| {
+            snapshot
+                .get_document_version_at(&document.table, table_id, &document.id, sequence)
+                .expect("document version oracle should load")
+        })
+        .filter_map(|document| {
+            let document_status = document.fields.get("status")?.as_str()?;
+            let rank = document.fields.get("rank")?.as_u64()?;
+            if document_status == status
+                && start_rank.is_none_or(|start| rank >= start)
+                && end_rank.is_none_or(|end| rank <= end)
+            {
+                Some((rank, sqlite_document_title_string(&document)))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    rows.into_iter().map(|(_, title)| title).collect()
+}
+
+fn sqlite_historical_read_shape(
+    table: &TableName,
+    table_id: &TableId,
+    schema: &TableSchema,
+    sequence: SequenceNumber,
+) -> nimbus_core::HistoricalReadShape {
+    let registry =
+        nimbus_core::VersionedRegistry::from_records([TenantEventRecord::schema_change(
+            SequenceNumber(1),
+            Timestamp(100),
+            SchemaChangeEvent::SetTable {
+                table: table.clone(),
+                table_id: table_id.clone(),
+                previous: None,
+                current: schema.clone(),
+            },
+        )
+        .expect("schema change event should build")])
+        .expect("registry should build");
+    registry
+        .read_shape_at(table, sqlite_historical_snapshot(sequence))
+        .expect("read shape should load")
+        .expect("table should exist at historical read")
+}
+
+fn sqlite_historical_snapshot(sequence: SequenceNumber) -> nimbus_core::HistoricalReadSnapshot {
+    let timestamp = Timestamp(sequence.0.saturating_mul(100));
+    nimbus_core::HistoricalReadSnapshot::new(
+        nimbus_core::ReadTimestamp::new(timestamp),
+        nimbus_core::CommitSequence::new(sequence),
+        nimbus_core::CommitTimestamp::new(timestamp),
+    )
+}
+
+fn sqlite_document_titles(documents: &[Document]) -> Vec<&str> {
+    documents
+        .iter()
+        .map(|document| {
+            document
+                .fields
+                .get("title")
+                .and_then(|value| value.as_str())
+                .expect("document should have a string title")
+        })
+        .collect()
+}
+
+fn sqlite_document_title_strings(documents: &[Document]) -> Vec<String> {
+    documents.iter().map(sqlite_document_title_string).collect()
+}
+
+fn sqlite_document_title_string(document: &Document) -> String {
+    document
+        .fields
+        .get("title")
+        .and_then(|value| value.as_str())
+        .expect("document should have a string title")
+        .to_string()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sqlite_durable_write_record(
+    sequence: SequenceNumber,
+    timestamp: Timestamp,
+    table: &TableName,
+    table_id: &TableId,
+    op_type: WriteOpType,
+    doc_id: DocumentId,
+    previous: Option<Document>,
+    current: Option<Document>,
+) -> DurableMutationRecord {
+    DurableMutationRecord::new(
+        sequence,
+        timestamp,
+        vec![WriteOp {
+            table: table.clone(),
+            table_id: table_id.clone(),
+            op_type,
+            doc_id,
+            resource_path_binding: None,
+            trigger_write_origin: None,
+            previous,
+            current,
+        }],
+        None,
+    )
+    .expect("durable record should build")
 }
 
 #[test]
@@ -443,4 +1295,36 @@ fn sqlite_durable_journal_stream_uses_cursor_floor_after_retention_cut() {
     assert_eq!(page.next_cursor, SequenceNumber(2));
     assert_eq!(page.records.len(), 1);
     assert_eq!(page.records[0].sequence, SequenceNumber(2));
+}
+
+#[test]
+fn sqlite_changefeed_stream_reports_retention_expired_after_journal_floor_cut() {
+    let dir = tempdir().expect("temporary directory should create");
+    let path = dir.path().join("tenant.sqlite3");
+    let store = SqliteTenantStore::open(&path).expect("sqlite tenant store should open");
+    let bootstrap = store
+        .export_changefeed_bootstrap()
+        .expect("changefeed bootstrap should export");
+    assert_eq!(bootstrap.cursor.after, SequenceNumber(0));
+
+    let first = sample_document("tasks", "first");
+    let second = sample_document("tasks", "second");
+    store.insert(&first).expect("first insert should succeed");
+    store.insert(&second).expect("second insert should succeed");
+
+    rusqlite::Connection::open(&path)
+        .expect("raw sqlite connection should open")
+        .execute("DELETE FROM commit_log WHERE sequence = 1", [])
+        .expect("first journal row should delete");
+
+    let error = store
+        .stream_changefeed(&bootstrap.cursor, 10)
+        .expect_err("changefeed cursor behind floor should fail");
+    assert!(matches!(
+        error,
+        Error::HistoricalRead {
+            kind: nimbus_core::HistoricalReadErrorKind::RetentionExpired,
+            ..
+        }
+    ));
 }

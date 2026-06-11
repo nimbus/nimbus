@@ -214,17 +214,17 @@ where
     Ok((first, second))
 }
 
-pub(super) async fn quiesce_service(service: &Arc<Service>, context: &str) -> BenchResult<()> {
+pub(super) async fn quiesce_engine(engine: &Arc<Engine>, context: &str) -> BenchResult<()> {
     match tokio::time::timeout(
         Duration::from_secs(BENCHMARK_QUIESCE_TIMEOUT_SECS),
-        service.quiesce(),
+        engine.quiesce(),
     )
     .await
     {
         Ok(()) => Ok(()),
         Err(_) => {
             eprintln!(
-                "graceful service quiesce timed out during {context}; falling back to drop-based benchmark teardown"
+                "graceful engine quiesce timed out during {context}; falling back to drop-based benchmark teardown"
             );
             Ok(())
         }
@@ -385,11 +385,11 @@ pub(super) async fn cleanup_registered_mysql_providers() {
     }
 }
 
-pub(super) fn mysql_service_config(
+pub(super) fn mysql_engine_config(
     control_dir: &Path,
     provider_config: &MySqlProviderConfig,
-) -> ServicePersistenceConfig {
-    ServicePersistenceConfig {
+) -> EnginePersistenceConfig {
+    EnginePersistenceConfig {
         tenant_provider: TenantProviderConfig {
             dialect: PersistenceDialect::MySql,
             topology: PersistenceTopology::ExternalPrimary,

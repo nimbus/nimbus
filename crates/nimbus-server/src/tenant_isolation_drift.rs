@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use nimbus_core::{Document, Error, Result, TableName, TenantId};
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
 use nimbus_sandbox::{
     SandboxHandle, SandboxSpec, SandboxStatus, validate_sandbox_mounts, validate_tenant_volume_name,
 };
@@ -87,14 +87,14 @@ pub enum TenantIsolationDriftSurface {
 }
 
 pub async fn scan_tenant_isolation_drift_async(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     config: &TenantIsolationDriftScanConfig,
 ) -> Result<TenantIsolationDriftReport> {
     let mut report = TenantIsolationDriftReport::default();
     let observed = scan_sandbox_state_roots(config, &mut report);
-    let services = list_system_documents(service, "services", &mut report).await?;
-    let ports = list_system_documents(service, "ports", &mut report).await?;
-    let routes = list_system_documents(service, "routes", &mut report).await?;
+    let services = list_system_documents(engine, "services", &mut report).await?;
+    let ports = list_system_documents(engine, "ports", &mut report).await?;
+    let routes = list_system_documents(engine, "routes", &mut report).await?;
 
     let service_records = parse_service_records(&services, config, &mut report);
     let port_records = parse_port_records(&ports, &service_records, &observed, &mut report);
@@ -113,16 +113,13 @@ pub async fn scan_tenant_isolation_drift_async(
 }
 
 async fn list_system_documents(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     table: &str,
     report: &mut TenantIsolationDriftReport,
 ) -> Result<Vec<Document>> {
     let system_tenant = crate::system_tenant::system_tenant_id()?;
     let table_name = TableName::new(table.to_owned())?;
-    match service
-        .list_documents_async(system_tenant, table_name)
-        .await
-    {
+    match engine.list_documents_async(system_tenant, table_name).await {
         Ok(documents) => Ok(documents),
         Err(Error::TenantNotFound(_)) | Err(Error::SchemaNotFound(_)) => {
             let surface = match table {
@@ -160,7 +157,7 @@ fn scan_sandbox_state_roots(
                     observed.push(ObservedSandboxManifest {
                         pointer,
                         tenant_id: manifest.spec.tenant_id.as_str().to_owned(),
-                        service_name: manifest.spec.name.clone(),
+                        service_name: manifest.spec.service_name().map(ToOwned::to_owned),
                         sandbox_id: manifest.handle.id.as_str().to_owned(),
                         status: manifest.status,
                         handle: manifest.handle,
@@ -331,14 +328,15 @@ fn validate_manifest_shape(
             format!("spec tenant `{spec_tenant}` does not match handle tenant `{handle_tenant}`"),
         );
     }
-    if manifest.spec.name != manifest.handle.name {
+    if manifest.spec.display_name() != manifest.handle.name {
         report.push(
             SandboxManifest,
-            "sandbox_manifest_handle_service_mismatch",
+            "sandbox_manifest_handle_name_mismatch",
             &location,
             format!(
-                "spec service `{}` does not match handle service `{}`",
-                manifest.spec.name, manifest.handle.name
+                "spec display name `{}` does not match handle name `{}`",
+                manifest.spec.display_name(),
+                manifest.handle.name
             ),
         );
     }
@@ -599,16 +597,16 @@ fn validate_observed_manifests(
     for manifest in observed {
         let location = manifest.pointer.manifest_path.display().to_string();
         if active_sandbox_status(manifest.status)
-            && !active_service_keys
-                .insert((manifest.tenant_id.clone(), manifest.service_name.clone()))
+            && let Some(service_key) = manifest.service_key()
+            && !active_service_keys.insert(service_key.clone())
         {
             report.push(
                 SandboxManifest,
-                "duplicate_active_sandbox_service_manifest",
+                "duplicate_active_service_manifest",
                 &location,
                 format!(
                     "multiple active manifests claim tenant `{}` service `{}`",
-                    manifest.tenant_id, manifest.service_name
+                    service_key.tenant_id, service_key.service_name
                 ),
             );
         }
@@ -626,12 +624,11 @@ fn validate_observed_manifests(
             );
         }
 
-        let service_key = ServiceKey {
-            tenant_id: manifest.tenant_id.clone(),
-            service_name: manifest.service_name.clone(),
-        };
-        if active_sandbox_status(manifest.status) {
-            match service_records.get(&service_key) {
+        let service_key = manifest.service_key();
+        if active_sandbox_status(manifest.status)
+            && let Some(service_key) = service_key.as_ref()
+        {
+            match service_records.get(service_key) {
                 Some(service_record)
                     if service_record
                         .sandbox_id
@@ -652,19 +649,22 @@ fn validate_observed_manifests(
                     &location,
                     format!(
                         "active manifest for tenant `{}` service `{}` has no _nimbus service document",
-                        manifest.tenant_id, manifest.service_name
+                        service_key.tenant_id, service_key.service_name
                     ),
                 ),
             }
         }
 
         for endpoint in &manifest.handle.published_endpoints {
+            let Some(service_key) = service_key.as_ref() else {
+                continue;
+            };
             if !active_sandbox_status(manifest.status) {
                 continue;
-            }
+            };
             let port_key = PortKey {
-                tenant_id: manifest.tenant_id.clone(),
-                service_name: manifest.service_name.clone(),
+                tenant_id: service_key.tenant_id.clone(),
+                service_name: service_key.service_name.clone(),
                 endpoint_name: endpoint.name.clone(),
             };
             match port_records.get(&port_key) {
@@ -690,7 +690,7 @@ fn validate_observed_manifests(
                     &location,
                     format!(
                         "active manifest endpoint `{}` for tenant `{}` service `{}` has no _nimbus port document",
-                        endpoint.name, manifest.tenant_id, manifest.service_name
+                        endpoint.name, service_key.tenant_id, service_key.service_name
                     ),
                 ),
             }
@@ -703,8 +703,9 @@ fn validate_observed_manifests(
         }
         let has_manifest = observed.iter().any(|manifest| {
             active_sandbox_status(manifest.status)
-                && manifest.tenant_id == service_key.tenant_id
-                && manifest.service_name == service_key.service_name
+                && manifest
+                    .service_key()
+                    .is_some_and(|manifest_key| manifest_key == *service_key)
                 && service_record
                     .sandbox_id
                     .as_ref()
@@ -786,8 +787,9 @@ fn manifest_has_endpoint(
 ) -> bool {
     observed.iter().any(|manifest| {
         active_sandbox_status(manifest.status)
-            && manifest.tenant_id == service_key.tenant_id
-            && manifest.service_name == service_key.service_name
+            && manifest
+                .service_key()
+                .is_some_and(|manifest_key| manifest_key == *service_key)
             && manifest
                 .handle
                 .published_endpoints
@@ -837,7 +839,7 @@ struct PersistedSandboxManifest {
 struct ObservedSandboxManifest {
     pointer: ManifestPointer,
     tenant_id: String,
-    service_name: String,
+    service_name: Option<String>,
     sandbox_id: String,
     status: SandboxStatus,
     handle: SandboxHandle,
@@ -855,6 +857,15 @@ impl ServiceKey {
             tenant_id: tenant_id.to_owned(),
             service_name: service_name.to_owned(),
         }
+    }
+}
+
+impl ObservedSandboxManifest {
+    fn service_key(&self) -> Option<ServiceKey> {
+        self.service_name.as_ref().map(|service_name| ServiceKey {
+            tenant_id: self.tenant_id.clone(),
+            service_name: service_name.clone(),
+        })
     }
 }
 
@@ -885,8 +896,9 @@ mod tests {
 
     use nimbus_core::{DocumentId, TableName};
     use nimbus_sandbox::{
-        PublishedEndpoint, PublishedEndpointProtocol, SandboxBackendKind, SandboxFilesystemSpec,
-        SandboxId, SandboxMountSpec, SandboxPortBinding, SandboxProcessSpec,
+        PublishedEndpoint, PublishedEndpointProtocol, SandboxBackendKind, SandboxId,
+        SandboxMountSpec, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
+        SandboxRootSpec,
     };
     use serde_json::json;
     use tempfile::tempdir;
@@ -896,8 +908,8 @@ mod tests {
     #[tokio::test]
     async fn tenant_isolation_drift_scanner_accepts_clean_projection() {
         let temp = tempdir().expect("tempdir should create");
-        let service = Arc::new(Service::new(temp.path()).expect("service should create"));
-        crate::system_tenant::prepare_system_tenant_async(&service, None)
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+        crate::system_tenant::prepare_system_tenant_async(&engine, None)
             .await
             .expect("system tenant should prepare");
         let state_root = temp.path().join("sandbox-state");
@@ -919,9 +931,9 @@ mod tests {
         );
         let spec = SandboxSpec::new(
             tenant_id.clone(),
-            "db",
+            SandboxOwnerSpec::service("db"),
             SandboxBackendKind::Krun,
-            SandboxFilesystemSpec::new("/rootfs"),
+            SandboxRootSpec::rootfs("/rootfs"),
             SandboxProcessSpec::new(["postgres"]),
         )
         .with_port_binding(SandboxPortBinding::tcp("postgres", 15_432, 5432))
@@ -937,12 +949,12 @@ mod tests {
             &handle,
             &spec,
         );
-        crate::system_tenant::record_service_handle_async(&service, &tenant_id, &handle)
+        crate::system_tenant::record_service_handle_async(&engine, &tenant_id, &handle)
             .await
             .expect("service handle should record");
 
         let report = scan_tenant_isolation_drift_async(
-            &service,
+            &engine,
             &TenantIsolationDriftScanConfig::new().with_sandbox_state_root(&state_root),
         )
         .await
@@ -956,10 +968,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tenant_isolation_drift_scanner_does_not_treat_standalone_sandboxes_as_services() {
+        let temp = tempdir().expect("tempdir should create");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+        crate::system_tenant::prepare_system_tenant_async(&engine, None)
+            .await
+            .expect("system tenant should prepare");
+        let state_root = temp.path().join("sandbox-state");
+        let tenant_id = TenantId::new("tenant-a").expect("tenant id should parse");
+
+        for name in ["desktop-a", "desktop-b"] {
+            let sandbox_id = SandboxId::new(format!("sandbox-tenant-a-{name}"));
+            let handle = SandboxHandle::new(
+                tenant_id.clone(),
+                sandbox_id.clone(),
+                name,
+                SandboxBackendKind::Krun,
+                SandboxStatus::Ready,
+                vec![PublishedEndpoint::new(
+                    "vnc",
+                    PublishedEndpointProtocol::Tcp,
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 16_000),
+                )],
+            );
+            let spec = SandboxSpec::new(
+                tenant_id.clone(),
+                SandboxOwnerSpec::standalone_named(name),
+                SandboxBackendKind::Krun,
+                SandboxRootSpec::rootfs("/rootfs"),
+                SandboxProcessSpec::new(["sleep", "60"]),
+            );
+            write_manifest(&state_root, "tenant-a", sandbox_id.as_str(), &handle, &spec);
+        }
+
+        let report = scan_tenant_isolation_drift_async(
+            &engine,
+            &TenantIsolationDriftScanConfig::new().with_sandbox_state_root(&state_root),
+        )
+        .await
+        .expect("drift scan should complete");
+
+        assert!(
+            report.is_clean(),
+            "standalone sandbox manifests must not be reconciled as services: {:?}",
+            report.violations()
+        );
+    }
+
+    #[tokio::test]
     async fn tenant_isolation_drift_scanner_reports_malformed_state_without_mutating() {
         let temp = tempdir().expect("tempdir should create");
-        let service = Arc::new(Service::new(temp.path()).expect("service should create"));
-        crate::system_tenant::prepare_system_tenant_async(&service, None)
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+        crate::system_tenant::prepare_system_tenant_async(&engine, None)
             .await
             .expect("system tenant should prepare");
         let state_root = temp.path().join("sandbox-state");
@@ -967,12 +1027,12 @@ mod tests {
         create_tenant_volume_root(&state_root, "tenant-a", "bad name");
         write_mismatched_manifest(&state_root);
         write_bad_manifest(&state_root);
-        insert_bad_service_document(&service).await;
-        insert_bad_port_document(&service).await;
-        corrupt_health_route(&service).await;
+        insert_bad_service_document(&engine).await;
+        insert_bad_port_document(&engine).await;
+        corrupt_health_route(&engine).await;
 
         let report = scan_tenant_isolation_drift_async(
-            &service,
+            &engine,
             &TenantIsolationDriftScanConfig::new()
                 .with_sandbox_state_root(&state_root)
                 .require_decision_audit_records(true),
@@ -1003,7 +1063,7 @@ mod tests {
             );
         }
 
-        let routes = service
+        let routes = engine
             .list_documents_async(
                 crate::system_tenant::system_tenant_id().expect("system id should parse"),
                 TableName::new("routes").expect("table should parse"),
@@ -1013,7 +1073,7 @@ mod tests {
         assert!(
             routes
                 .iter()
-                .any(|route| route.id.as_str() == "route:get:health"
+                .any(|route| route.id == health_route_document_id()
                     && route.fields.get("path") == Some(&json!("/tampered-health"))),
             "drift scan must not repair route metadata"
         );
@@ -1069,9 +1129,9 @@ mod tests {
         );
         let spec = SandboxSpec::new(
             tenant_b,
-            "db",
+            SandboxOwnerSpec::service("db"),
             SandboxBackendKind::Krun,
-            SandboxFilesystemSpec::new("/rootfs"),
+            SandboxRootSpec::rootfs("/rootfs"),
             SandboxProcessSpec::new(["postgres"]),
         )
         .with_mount(SandboxMountSpec::tenant_volume(
@@ -1106,8 +1166,8 @@ mod tests {
         .expect("volume root should create");
     }
 
-    async fn insert_bad_service_document(service: &Arc<Service>) {
-        service
+    async fn insert_bad_service_document(engine: &Arc<Engine>) {
+        engine
             .insert_document_async_with_id(
                 crate::system_tenant::system_tenant_id().expect("system id should parse"),
                 TableName::new("services").expect("table should parse"),
@@ -1130,8 +1190,8 @@ mod tests {
             .expect("bad service document should insert");
     }
 
-    async fn insert_bad_port_document(service: &Arc<Service>) {
-        service
+    async fn insert_bad_port_document(engine: &Arc<Engine>) {
+        engine
             .insert_document_async_with_id(
                 crate::system_tenant::system_tenant_id().expect("system id should parse"),
                 TableName::new("ports").expect("table should parse"),
@@ -1152,12 +1212,12 @@ mod tests {
             .expect("bad port document should insert");
     }
 
-    async fn corrupt_health_route(service: &Arc<Service>) {
-        service
+    async fn corrupt_health_route(engine: &Arc<Engine>) {
+        engine
             .update_document_async(
                 crate::system_tenant::system_tenant_id().expect("system id should parse"),
                 TableName::new("routes").expect("table should parse"),
-                DocumentId::from_key("route:get:health").expect("document id should parse"),
+                health_route_document_id(),
                 serde_json::from_value(json!({
                     "method": "GET",
                     "path": "/tampered-health",
@@ -1169,5 +1229,13 @@ mod tests {
             )
             .await
             .expect("route document should update");
+    }
+
+    fn health_route_document_id() -> DocumentId {
+        let route = crate::system_tenant::route_inventory()
+            .into_iter()
+            .find(|route| route.method == "GET" && route.path == "/health")
+            .expect("health route should be present in system route inventory");
+        DocumentId::from_key(route.document_id()).expect("route document id should parse")
     }
 }

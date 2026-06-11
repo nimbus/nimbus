@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the CI modernization plan
-# (`docs/plans/ci-modernization-plan.md`).
+# (`docs/private/plans/ci-modernization-plan.md`).
 #
 # Exits 0 iff every condition in the plan's Completion Gate is satisfied.
 # Ships in CM0 so /goal is verifiable from day one; CM1-CM7 progressively
@@ -13,10 +13,10 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN_ACTIVE="docs/plans/ci-modernization-plan.md"
-PLAN_ARCHIVED="docs/plans/archive/ci-modernization-plan.md"
+PLAN_ACTIVE="docs/private/plans/ci-modernization-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/ci-modernization-plan.md"
 AGENTS_MD="CLAUDE.md"  # symlinks to AGENTS.md
-PROOF_DIR="docs/plans/proof/ci-modernization"
+PROOF_DIR="docs/private/plans/proof/ci-modernization"
 PROOF_CM7="${PROOF_DIR}/cm7-dependabot-audit.md"
 
 COMPOSITE_ACTION=".github/actions/setup-rust-cached/action.yml"

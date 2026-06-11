@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "nimbus/react";
+import { useQuery } from "@nimbus/nimbus/react";
 import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";

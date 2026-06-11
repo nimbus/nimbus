@@ -7,7 +7,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeQueryTerminalPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let response = match self.take_builder(&payload.builder_id) {
             Ok(builder) => {
@@ -40,7 +40,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeQueryTerminalPayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let response = self.take_builder(&payload.builder_id).and_then(|builder| {
             let query = builder.clone().into_query(None);
@@ -61,7 +61,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeQueryPaginatePayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let response = match self.take_builder(&payload.builder_id) {
             Ok(builder) => {
@@ -107,7 +107,7 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeQueryPaginatePayload = serde_json::from_value(payload)?;
-        self.validate_session(payload.session_id.as_deref())?;
+        self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let response = self.take_builder(&payload.builder_id).and_then(|builder| {
             let query = builder.clone().into_query(None);

@@ -2,8 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn tenant_consistency_route_returns_green_report_for_live_state() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -46,9 +46,9 @@ async fn tenant_consistency_route_returns_green_report_for_live_state() {
 
 #[tokio::test]
 async fn embedded_replica_matches_server_results_and_catches_up_after_http_writes() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let service = fixture.service();
-    let server = ServerFixture::start(router_for_service(service.clone())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
+    let server = ServerFixture::start(router_for_engine(service.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

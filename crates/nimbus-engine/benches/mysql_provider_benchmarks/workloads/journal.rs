@@ -62,7 +62,7 @@ async fn benchmark_journal_workload(
                     let started = Instant::now();
                     exercise_journal_workload_sample(
                         workload,
-                        &fixture.tenant.service,
+                        &fixture.tenant.engine,
                         &fixture.tenant.tenant_id,
                     )
                     .await?;
@@ -75,7 +75,7 @@ async fn benchmark_journal_workload(
             .tenant
             .resource
             .cleanup(
-                sqlite_fixture.tenant.service.clone(),
+                sqlite_fixture.tenant.engine.clone(),
                 "journal steady-state sqlite teardown",
             )
             .await?;
@@ -83,7 +83,7 @@ async fn benchmark_journal_workload(
             .tenant
             .resource
             .cleanup(
-                mysql_fixture.tenant.service.clone(),
+                mysql_fixture.tenant.engine.clone(),
                 "journal steady-state mysql teardown",
             )
             .await?;
@@ -123,15 +123,15 @@ async fn benchmark_journal_workload(
                         MeasuredBackend::MySqlLoopback => mysql_seed,
                         MeasuredBackend::MySqlInjectedRtt => unreachable!(),
                     };
-                    let (service, reopened_resource) = seed
+                    let (engine, reopened_resource) = seed
                         .resource
-                        .reopen_service("journal-cold-sample", backend, environment)
+                        .reopen_engine("journal-cold-sample", backend, environment)
                         .await?;
                     let started = Instant::now();
-                    exercise_journal_workload_sample(workload, &service, &seed.tenant_id).await?;
+                    exercise_journal_workload_sample(workload, &engine, &seed.tenant_id).await?;
                     let elapsed = started.elapsed();
                     reopened_resource
-                        .cleanup(service, "journal cold-start reopened teardown")
+                        .cleanup(engine, "journal cold-start reopened teardown")
                         .await?;
                     Ok(elapsed)
                 }
@@ -179,15 +179,15 @@ async fn benchmark_journal_workload(
                         MeasuredBackend::MySqlInjectedRtt => rtt_seed,
                         MeasuredBackend::Sqlite => unreachable!(),
                     };
-                    let (service, reopened_resource) = seed
+                    let (engine, reopened_resource) = seed
                         .resource
-                        .reopen_service("journal-rtt-sample", backend, environment)
+                        .reopen_engine("journal-rtt-sample", backend, environment)
                         .await?;
                     let started = Instant::now();
-                    exercise_journal_workload_sample(workload, &service, &seed.tenant_id).await?;
+                    exercise_journal_workload_sample(workload, &engine, &seed.tenant_id).await?;
                     let elapsed = started.elapsed();
                     reopened_resource
-                        .cleanup(service, "journal RTT reopened teardown")
+                        .cleanup(engine, "journal RTT reopened teardown")
                         .await?;
                     Ok(elapsed)
                 }

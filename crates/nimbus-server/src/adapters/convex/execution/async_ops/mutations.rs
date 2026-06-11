@@ -4,7 +4,7 @@ use super::*;
 use nimbus_auth::normalize_principal_context;
 
 pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     tenant_id: &TenantId,
     mutation: Mutation,
     auth: Option<&InvocationAuth>,
@@ -147,7 +147,7 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
 }
 
 pub(in crate::adapters::convex) async fn dispatch_convex_mutation_async(
-    service: &Arc<nimbus_engine::Service>,
+    service: &Arc<nimbus_engine::Engine>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     mutation: ConvexExecutableMutation,

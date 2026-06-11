@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Completion-gate verifier for
-# docs/plans/server-seam-extraction-readiness-plan.md.
+# docs/private/plans/server-seam-extraction-readiness-plan.md.
 
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/plans/server-seam-extraction-readiness-plan.md"
-PROOF_DIR="docs/plans/proof/server-seam-extraction-readiness"
+PLAN="docs/private/plans/server-seam-extraction-readiness-plan.md"
+PROOF_DIR="docs/private/plans/proof/server-seam-extraction-readiness"
 SCRIPT="scripts/verify-server-seam-extraction-readiness.sh"
 PREVIOUS_SCRIPT="scripts/verify-server-system-bridge-adapters-extraction.sh"
 

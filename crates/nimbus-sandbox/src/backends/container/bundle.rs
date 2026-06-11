@@ -57,7 +57,7 @@ pub(crate) fn write_bundle_config(
     layout: &ContainerBundleLayout,
     hostname: &str,
     spec: &SandboxSpec,
-    image_user: Option<&str>,
+    process_user: Option<&str>,
     network_namespace_path: Option<&Path>,
     options: &ContainerBundleOptions,
 ) -> Result<()> {
@@ -68,7 +68,13 @@ pub(crate) fn write_bundle_config(
         ),
     })?;
 
-    let config = build_bundle_config(hostname, spec, image_user, network_namespace_path, options)?;
+    let config = build_bundle_config(
+        hostname,
+        spec,
+        process_user,
+        network_namespace_path,
+        options,
+    )?;
     let rendered =
         serde_json::to_vec_pretty(&config).map_err(|error| SandboxError::OperationFailed {
             message: format!("failed to serialize container bundle config: {error}"),
@@ -87,7 +93,7 @@ pub(crate) fn write_bundle_config(
 pub(crate) fn build_bundle_config(
     hostname: &str,
     spec: &SandboxSpec,
-    image_user: Option<&str>,
+    process_user: Option<&str>,
     network_namespace_path: Option<&Path>,
     options: &ContainerBundleOptions,
 ) -> Result<Value> {
@@ -112,7 +118,7 @@ pub(crate) fn build_bundle_config(
         &compiled_egress,
         SandboxEgressReloadPolicy::LiveReload,
     );
-    let process_user = parse_process_user(image_user)?;
+    let process_user = parse_process_user(process_user)?;
     let process_env = process_env(
         spec,
         &egress_enforcement,
@@ -140,6 +146,13 @@ pub(crate) fn build_bundle_config(
     let mut mounts = default_linux_mounts();
     mounts.extend(options.additional_mounts.iter().map(bundle_mount_json));
 
+    let rootfs = spec.rootfs().ok_or_else(|| SandboxError::InvalidSpec {
+        message: format!(
+            "container sandbox {} must be resolved to a rootfs before writing an OCI bundle",
+            spec.display_name()
+        ),
+    })?;
+
     Ok(json!({
         "ociVersion": "1.0.2",
         "process": {
@@ -153,8 +166,8 @@ pub(crate) fn build_bundle_config(
             "cwd": process_cwd(&spec.process),
         },
         "root": {
-            "path": spec.filesystem.rootfs.to_string_lossy(),
-            "readonly": spec.filesystem.readonly,
+            "path": rootfs.rootfs.to_string_lossy(),
+            "readonly": rootfs.readonly,
         },
         "hostname": hostname,
         "mounts": mounts,
@@ -171,29 +184,29 @@ fn bundle_mount_json(mount: &ContainerBundleMount) -> Value {
     })
 }
 
-fn parse_process_user(image_user: Option<&str>) -> Result<ProcessUser> {
-    let Some(image_user) = image_user.map(str::trim).filter(|user| !user.is_empty()) else {
+fn parse_process_user(process_user: Option<&str>) -> Result<ProcessUser> {
+    let Some(process_user) = process_user.map(str::trim).filter(|user| !user.is_empty()) else {
         return Ok(ProcessUser::ROOT);
     };
 
-    let (uid, gid) = match image_user.split_once(':') {
+    let (uid, gid) = match process_user.split_once(':') {
         Some((uid, gid)) => (
-            parse_user_component("uid", uid, image_user)?,
-            parse_user_component("gid", gid, image_user)?,
+            parse_user_component("uid", uid, process_user)?,
+            parse_user_component("gid", gid, process_user)?,
         ),
-        None => (parse_user_component("uid", image_user, image_user)?, 0),
+        None => (parse_user_component("uid", process_user, process_user)?, 0),
     };
 
     Ok(ProcessUser { uid, gid })
 }
 
-fn parse_user_component(kind: &str, value: &str, image_user: &str) -> Result<u32> {
+fn parse_user_component(kind: &str, value: &str, process_user: &str) -> Result<u32> {
     value
         .trim()
         .parse::<u32>()
         .map_err(|_| SandboxError::InvalidSpec {
             message: format!(
-                "container image user must resolve to numeric uid[:gid], got {image_user:?} with invalid {kind} component {value:?}"
+                "container process user must resolve to numeric uid[:gid], got {process_user:?} with invalid {kind} component {value:?}"
             ),
         })
 }
@@ -392,7 +405,10 @@ mod tests {
         SandboxEgressReloadPolicy, SandboxEgressRule,
     };
     use crate::endpoint::PublishedEndpointProtocol;
-    use crate::spec::{SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxSpec};
+    use crate::spec::{
+        SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec,
+        SandboxRootfsSpec, SandboxSpec,
+    };
 
     fn egress_enforcement_from_config(config: &serde_json::Value) -> SandboxEgressEnforcementPlan {
         let env = config["process"]["env"]
@@ -416,9 +432,9 @@ mod tests {
     fn sample_spec() -> SandboxSpec {
         SandboxSpec::new(
             TenantId::new("svc-demo").expect("tenant should parse"),
-            "db",
+            SandboxOwnerSpec::service("db"),
             SandboxBackendKind::Container,
-            SandboxFilesystemSpec::new(PathBuf::from("/tmp/rootfs")),
+            SandboxRootSpec::Rootfs(SandboxRootfsSpec::new(PathBuf::from("/tmp/rootfs"))),
             SandboxProcessSpec::new(["/bin/sh", "-c", "sleep 60"]),
         )
     }

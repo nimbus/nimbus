@@ -80,10 +80,6 @@ fn synthesize_runtime_subscription_base_queries_for_table(
         });
     }
 
-    if queries.is_empty() && read_set.documents.iter().any(|read| &read.table == table) {
-        queries.push(broad_runtime_subscription_query(table.clone()));
-    }
-
     if queries.is_empty() {
         queries.push(broad_runtime_subscription_query(table.clone()));
     }

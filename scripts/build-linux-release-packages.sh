@@ -313,11 +313,18 @@ description: |
 rpm:
   summary: Self-hosted JavaScript backend runtime powered by V8
   group: Applications/Internet
+scripts:
+  preinstall: ${staged_root}/package-scripts/nimbus-preinstall.sh
+  postinstall: ${staged_root}/package-scripts/nimbus-postinstall.sh
 contents:
   - src: ${staged_root}/usr/bin/nimbus
     dst: /usr/bin/nimbus
     file_info:
       mode: 0755
+  - src: ${staged_root}/usr/lib/systemd/system/nimbus.service
+    dst: /usr/lib/systemd/system/nimbus.service
+    file_info:
+      mode: 0644
   - src: ${staged_root}/usr/share/doc/nimbus/README.md
     dst: /usr/share/doc/nimbus/README.md
     file_info:
@@ -616,12 +623,17 @@ nimbus_bun_jsc_adapter_stage="${staging_dir}/nimbus-bun-jsc-adapter"
 
 install -d "${nimbus_stage}/usr/bin" \
   "${nimbus_stage}/usr/share/doc/nimbus" \
+  "${nimbus_stage}/usr/lib/systemd/system" \
+  "${nimbus_stage}/package-scripts" \
   "${nimbus_libkrun_stage}/usr/libexec/nimbus" \
   "${nimbus_libkrun_stage}/usr/share/doc/nimbus-libkrun" \
   "${nimbus_crun_stage}/usr/libexec/nimbus" \
   "${nimbus_crun_stage}/usr/share/doc/nimbus-crun"
 
 install -m 0755 "$nimbus_binary" "${nimbus_stage}/usr/bin/nimbus"
+install -m 0644 packaging/systemd/nimbus.service "${nimbus_stage}/usr/lib/systemd/system/nimbus.service"
+install -m 0755 packaging/linux/nimbus-preinstall.sh "${nimbus_stage}/package-scripts/nimbus-preinstall.sh"
+install -m 0755 packaging/linux/nimbus-postinstall.sh "${nimbus_stage}/package-scripts/nimbus-postinstall.sh"
 tar -xzf "$nimbus_libkrun_archive" -C "${nimbus_libkrun_stage}/usr/libexec/nimbus"
 install -m 0755 "$nimbus_crun_binary" "${nimbus_crun_stage}/usr/libexec/nimbus/crun"
 install -m 0644 LICENSE "${nimbus_stage}/usr/share/doc/nimbus/LICENSE"
@@ -637,6 +649,7 @@ if [[ -n "$nimbus_bun_jsc_adapter_archive" ]]; then
   stage_bun_jsc_adapter_archive "$nimbus_bun_jsc_adapter_archive" "$nimbus_bun_jsc_adapter_stage" "$arch"
 fi
 
+[[ -f "${nimbus_stage}/usr/lib/systemd/system/nimbus.service" ]] || die "nimbus stage is missing the systemd unit"
 [[ -e "${nimbus_libkrun_stage}/usr/libexec/nimbus/lib/libkrun.so.1" ]] || die "nimbus-libkrun archive is missing lib/libkrun.so.1"
 [[ -e "${nimbus_libkrun_stage}/usr/libexec/nimbus/lib/libkrunfw.so.5" ]] || die "nimbus-libkrun archive is missing lib/libkrunfw.so.5"
 [[ -f "${nimbus_libkrun_stage}/usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt" ]] || die "nimbus-libkrun archive is missing NIMBUS_LIBKRUN_RELEASE.txt"

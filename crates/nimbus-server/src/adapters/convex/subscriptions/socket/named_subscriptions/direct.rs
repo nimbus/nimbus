@@ -42,7 +42,7 @@ pub(super) async fn handle_direct_named_subscription(
     };
     set_pending_transform(ctx.transforms, request_id.clone(), transform.clone());
     let request_id_for_worker = request_id.clone();
-    let service = ctx.state.service.clone();
+    let service = ctx.state.engine.clone();
     let tenant_id = ctx.tenant_id.clone();
     let sender = ctx.subscription_tx.clone();
     let principal = normalize_principal_context(current_auth.as_ref());

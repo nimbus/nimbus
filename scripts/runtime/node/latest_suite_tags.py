@@ -19,18 +19,20 @@ from schema import default_schema_path, load_json, validate_payload_against_sche
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LATEST_TAGS_PATH = (
     REPO_ROOT
-    / "docs"
-    / "architecture"
+    / "tests"
     / "runtime"
+    / "node"
+    / "compat"
     / "node-lts-compat"
     / "node-latest-suite-tags.json"
 )
 SCHEMA_PATH = default_schema_path("node-latest-suite-tags.schema.json")
 REGISTRY_PATH = (
     REPO_ROOT
-    / "docs"
-    / "architecture"
+    / "tests"
     / "runtime"
+    / "node"
+    / "compat"
     / "node-lts-compat"
     / "node-lts-lanes.json"
 )

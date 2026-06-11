@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use nimbus::Error;
+use nimbus_assets::templates::machine as machine_templates;
 use serde_json::{Value, json};
 
 use super::manager::mount_tag;
@@ -17,13 +18,6 @@ const GUEST_NIMBUS_DB_DIR: &str = "/var/lib/nimbus/data";
 pub(super) const GUEST_NIMBUS_BIN: &str = "/usr/local/bin/nimbus";
 pub(super) const GUEST_NIMBUS_SOCKET: &str = "/run/nimbus/nimbus.sock";
 const VIRTIOFS_SELINUX_CONTEXT: &str = "system_u:object_r:nfs_t:s0";
-const READY_SERVICE_TEMPLATE: &str = include_str!("assets/ready.service.tmpl");
-const NIMBUS_SERVICE_TEMPLATE: &str = include_str!("assets/nimbus.service.tmpl");
-const NIMBUS_SOCKET_TEMPLATE: &str = include_str!("assets/nimbus.socket.tmpl");
-const VIRTIOFS_ROOT_OFF_TEMPLATE: &str = include_str!("assets/virtiofs-root-off.service");
-const VIRTIOFS_ROOT_ON_TEMPLATE: &str = include_str!("assets/virtiofs-root-on.service");
-const VIRTIOFS_MOUNT_TEMPLATE: &str = include_str!("assets/virtiofs-mount.service.tmpl");
-
 pub(super) fn resolve_ignition_file(
     paths: &MachinePaths,
     config: &MachineConfigRecord,
@@ -176,30 +170,30 @@ fn directory_entry(path: &str, mode: u32) -> Value {
 }
 
 fn ready_signal_unit(ready_vsock_port: u32) -> String {
-    READY_SERVICE_TEMPLATE.replace("{ready_vsock_port}", &ready_vsock_port.to_string())
+    machine_templates::READY_SERVICE.replace("{ready_vsock_port}", &ready_vsock_port.to_string())
 }
 
 fn nimbus_service_unit() -> String {
-    NIMBUS_SERVICE_TEMPLATE
+    machine_templates::NIMBUS_SERVICE
         .replace("{guest_nimbus_data_dir}", GUEST_NIMBUS_DATA_DIR)
         .replace("{guest_nimbus_bin}", GUEST_NIMBUS_BIN)
         .replace("{guest_nimbus_control_dir}", GUEST_NIMBUS_CONTROL_DIR)
 }
 
 fn nimbus_socket_unit() -> String {
-    NIMBUS_SOCKET_TEMPLATE.replace("{guest_nimbus_socket}", GUEST_NIMBUS_SOCKET)
+    machine_templates::NIMBUS_SOCKET.replace("{guest_nimbus_socket}", GUEST_NIMBUS_SOCKET)
 }
 
 fn immutable_root_off_unit() -> String {
-    VIRTIOFS_ROOT_OFF_TEMPLATE.to_owned()
+    machine_templates::VIRTIOFS_ROOT_OFF.to_owned()
 }
 
 fn immutable_root_on_unit() -> String {
-    VIRTIOFS_ROOT_ON_TEMPLATE.to_owned()
+    machine_templates::VIRTIOFS_ROOT_ON.to_owned()
 }
 
 fn virtiofs_mount_unit(index: usize, volume: &MachineVolume) -> String {
-    VIRTIOFS_MOUNT_TEMPLATE
+    machine_templates::VIRTIOFS_MOUNT
         .replace("{index}", &index.to_string())
         .replace("{target}", &volume.target.display().to_string())
         .replace("{tag}", &mount_tag(&volume.target))
@@ -279,7 +273,7 @@ mod tests {
                     target: PathBuf::from("/var/folders"),
                 },
             ],
-            roots: MachineRootLayout::new(
+            roots: MachineRootLayout::test_sibling_roots(
                 temp_dir.path().join("config"),
                 temp_dir.path().join("state"),
                 temp_dir.path().join("runtime"),

@@ -3,12 +3,13 @@ use nimbus_runtime::{RuntimePolicy, RuntimeTenantBudget};
 use nimbus_sandbox::{
     CompiledSandboxEgressPolicy, PublishedEndpointProtocol, SandboxEgressAuthorization,
     SandboxEgressPolicy, SandboxEgressRequest, SandboxResourceCharge, SandboxSpec,
+    validate_sandbox_mounts,
 };
 use serde::Serialize;
 
 use super::{
     RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode, TenantRuntimePolicyDecision,
-    TenantWorkloadIdentity,
+    WorkloadAttributes,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -157,6 +158,29 @@ impl TenantVolumePolicyDecision {
     pub fn named_volumes(&self) -> &[String] {
         &self.named_volumes
     }
+
+    pub fn ensure_sandbox_mounts_match(&self, spec: &SandboxSpec, context: &str) -> Result<()> {
+        validate_sandbox_mounts(&spec.mounts).map_err(|message| {
+            Error::InvalidInput(format!(
+                "tenant volume policy rejected invalid sandbox mounts for {context}: {message}"
+            ))
+        })?;
+        for mount in &spec.mounts {
+            let Some(volume_name) = mount.tenant_volume_name() else {
+                continue;
+            };
+            if !self
+                .named_volumes
+                .iter()
+                .any(|allowed| allowed == volume_name)
+            {
+                return Err(Error::PermissionDenied(format!(
+                    "tenant volume policy did not authorize volume `{volume_name}` for {context}"
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -257,7 +281,7 @@ impl Default for TenantAuditRedactionPolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenantIsolationPolicyInput {
-    pub(super) workload: TenantWorkloadIdentity,
+    pub(super) workload: WorkloadAttributes,
     pub(super) runtime: TenantRuntimePolicyDecision,
     pub(super) services: TenantServiceGrantPolicyDecision,
     pub(super) network: TenantNetworkPolicyDecision,
@@ -270,7 +294,7 @@ pub struct TenantIsolationPolicyInput {
 }
 
 impl TenantIsolationPolicyInput {
-    pub fn new(workload: TenantWorkloadIdentity) -> Self {
+    pub fn new(workload: WorkloadAttributes) -> Self {
         Self {
             workload,
             runtime: TenantRuntimePolicyDecision::not_applicable(),

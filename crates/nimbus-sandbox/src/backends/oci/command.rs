@@ -37,3 +37,42 @@ impl CommandSpec {
         command
     }
 }
+
+pub(crate) fn render_command_failure(stdout: &[u8], stderr: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr).trim().to_owned();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+
+    let stdout = String::from_utf8_lossy(stdout).trim().to_owned();
+    if stdout.is_empty() {
+        "stdout and stderr were empty".to_owned()
+    } else {
+        stdout
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_command_failure_prefers_stderr() {
+        assert_eq!(
+            render_command_failure(b"stdout detail", b"stderr detail"),
+            "stderr detail"
+        );
+    }
+
+    #[test]
+    fn render_command_failure_falls_back_to_stdout_then_empty_message() {
+        assert_eq!(
+            render_command_failure(b"stdout detail", b""),
+            "stdout detail"
+        );
+        assert_eq!(
+            render_command_failure(b"", b""),
+            "stdout and stderr were empty"
+        );
+    }
+}

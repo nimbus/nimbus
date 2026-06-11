@@ -156,7 +156,7 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeActionPayload =
             prepare_direct_ctx_payload(self, payload, cancellation)?;
         let response = execute_convex_action_async(
-            self.service(),
+            self.engine(),
             self.registry(),
             self.tenant_id(),
             payload.action,
@@ -182,7 +182,7 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeActionPayload =
             prepare_direct_ctx_payload(self, payload, cancellation)?;
         let response = execute_convex_action_cancellable_with_auth(
-            self.service(),
+            self.engine(),
             self.registry(),
             self.tenant_id(),
             payload.action,
@@ -194,30 +194,30 @@ impl ConvexHostBridge {
 }
 
 trait DirectCtxPayload {
-    fn session_id(&self) -> Option<&str>;
+    fn host_call_session_id(&self) -> Option<&str>;
 }
 
 impl DirectCtxPayload for ConvexRuntimeQueryPayload {
-    fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
+    fn host_call_session_id(&self) -> Option<&str> {
+        self.host_call_session_id.as_deref()
     }
 }
 
 impl DirectCtxPayload for ConvexRuntimePaginatedQueryPayload {
-    fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
+    fn host_call_session_id(&self) -> Option<&str> {
+        self.host_call_session_id.as_deref()
     }
 }
 
 impl DirectCtxPayload for ConvexRuntimeMutationPayload {
-    fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
+    fn host_call_session_id(&self) -> Option<&str> {
+        self.host_call_session_id.as_deref()
     }
 }
 
 impl DirectCtxPayload for ConvexRuntimeActionPayload {
-    fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
+    fn host_call_session_id(&self) -> Option<&str> {
+        self.host_call_session_id.as_deref()
     }
 }
 
@@ -243,7 +243,7 @@ where
     P: DeserializeOwned + DirectCtxPayload,
 {
     let payload: P = serde_json::from_value(payload)?;
-    bridge.validate_session(payload.session_id())?;
+    bridge.validate_host_call_session(payload.host_call_session_id())?;
     ensure_runtime_host_not_cancelled(cancellation)?;
     Ok(payload)
 }
@@ -256,6 +256,10 @@ fn finalize_paginated_runtime_response(
     mut page: nimbus_core::Page,
 ) -> Result<Value, Error> {
     synthesize_runtime_paginate_cursor(query, page_size, &mut page)?;
+    // Paginated read dependencies are recorded after execution because the
+    // returned page defines the window bounds. Subscription bootstrap only
+    // installs successful invocations, so failed paginated queries intentionally
+    // do not establish read-tracking state.
     bridge.record_paginated_window_read(query, page_size, after, &page);
     let value =
         serde_json::to_value(page).map_err(|error| Error::Serialization(error.to_string()))?;

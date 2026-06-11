@@ -9,7 +9,7 @@ use std::time::SystemTime;
 
 use axum::http::header;
 use axum::{Json, Router, extract::State, routing::get};
-use base64::Engine;
+use base64::Engine as Base64Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use futures::channel::mpsc;
 use nimbus_core::{
@@ -18,15 +18,14 @@ use nimbus_core::{
     SpecialDouble, TableAccessPolicy, TableName, TableSchema, TenantId, TransactionSessionMode,
     TypedScalarValue,
 };
-use nimbus_engine::{Service, run_scheduler};
+use nimbus_engine::{Engine, run_scheduler};
 use nimbus_runtime::RuntimeBundle;
 pub(crate) use nimbus_testing::{
-    DeterministicHarness, DeterministicTestCase, GeneratedTaskHistory,
+    DeterministicHarness, DeterministicTestCase, EngineFixture, GeneratedTaskHistory,
     GeneratedTaskHistorySeedCase, GeneratedTaskPageExpectation, GeneratedTaskRecord,
-    HttpApiFixture, ScenarioMetadata, ServerFixture, ServiceFixture, VerificationHarnessMode,
-    WebSocketFixture, replay_generated_task_history_async,
-    run_to_completion_snapshot_runtime_test_limits, selected_generated_task_history_seed_corpus,
-    wait_for_condition, wait_for_value,
+    HttpApiFixture, ScenarioMetadata, ServerFixture, VerificationHarnessMode, WebSocketFixture,
+    replay_generated_task_history_async, run_to_completion_snapshot_runtime_test_limits,
+    selected_generated_task_history_seed_corpus, wait_for_condition, wait_for_value,
 };
 use prost::Message as ProstMessage;
 use prost_types::Timestamp as ProstTimestamp;
@@ -49,8 +48,8 @@ use tonic::transport::Channel;
 
 use crate::{
     ConvexRegistry, FirebaseConfig, LicenseDocument, LicenseEntitlements, LicenseKind,
-    LicenseSourceInfo, LicenseSourceKind, LicenseState, RouterOptions, SandboxCatalog,
-    SandboxServiceManager, ServeOptions, build_router, serve,
+    LicenseSourceInfo, LicenseSourceKind, LicenseState, RouterOptions, ServeOptions, build_router,
+    serve,
 };
 use crate::router::RouterBuildConfig;
 use crate::adapters::firebase::grpc::generated::google::firestore::v1::document_transform::FieldTransform as GrpcFieldTransform;
@@ -110,65 +109,30 @@ use crate::adapters::firebase::grpc::generated::google::firestore::v1::{
     GetDocumentRequest as GrpcGetDocumentRequest, UpdateDocumentRequest as GrpcUpdateDocumentRequest,
 };
 
-fn router_for_service(service: Arc<Service>) -> Router {
-    build_router(RouterOptions::new(service))
+fn router_for_engine(engine: Arc<Engine>) -> Router {
+    build_router(RouterOptions::new(engine))
 }
 
-fn router_for_convex(service: Arc<Service>, convex_registry: ConvexRegistry) -> Router {
-    build_router(RouterOptions::new(service).with_convex_registry(convex_registry))
+fn router_for_convex(engine: Arc<Engine>, convex_registry: ConvexRegistry) -> Router {
+    build_router(RouterOptions::new(engine).with_convex_registry(convex_registry))
 }
 
-fn router_for_firebase(service: Arc<Service>, firebase_config: FirebaseConfig) -> Router {
-    build_router(RouterOptions::new(service).with_firebase_config(firebase_config))
+fn router_for_firebase(engine: Arc<Engine>, firebase_config: FirebaseConfig) -> Router {
+    build_router(RouterOptions::new(engine).with_firebase_config(firebase_config))
 }
 
-fn router_for_license(service: Arc<Service>, license_state: LicenseState) -> Router {
-    build_router(RouterOptions::new(service).with_license(license_state))
-}
-
-fn router_for_convex_sandbox_catalog(
-    service: Arc<Service>,
-    convex_registry: ConvexRegistry,
-    sandbox_catalog: Arc<dyn SandboxCatalog>,
-) -> Router {
-    build_router(
-        RouterOptions::new(service)
-            .with_convex_registry(convex_registry)
-            .with_sandbox_catalog(sandbox_catalog),
-    )
-}
-
-fn router_for_convex_sandbox_service_manager(
-    service: Arc<Service>,
-    convex_registry: ConvexRegistry,
-    sandbox_service_manager: Arc<SandboxServiceManager>,
-) -> Router {
-    build_router(
-        RouterOptions::new(service)
-            .with_convex_registry(convex_registry)
-            .with_sandbox_service_manager(sandbox_service_manager),
-    )
-}
-
-fn router_for_convex_runtime_service_registry(
-    service: Arc<Service>,
-    convex_registry: ConvexRegistry,
-    runtime_service_registry: Arc<dyn nimbus_services::RuntimeServiceRegistry>,
-) -> Router {
-    crate::router::build_router_for_test_runtime(
-        RouterOptions::new(service).with_convex_registry(convex_registry),
-        runtime_service_registry,
-    )
+fn router_for_license(engine: Arc<Engine>, license_state: LicenseState) -> Router {
+    build_router(RouterOptions::new(engine).with_license(license_state))
 }
 
 #[tokio::test]
 async fn serve_loads_embedded_system_convex_registry_by_default() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("listener should bind");
     let addr = listener.local_addr().expect("listener should have addr");
-    let server = tokio::spawn(serve(listener, ServeOptions::new(fixture.service())));
+    let server = tokio::spawn(serve(listener, ServeOptions::new(fixture.engine())));
     tokio::task::yield_now().await;
     if server.is_finished() {
         let result = server.await;
@@ -249,9 +213,9 @@ async fn serve_loads_embedded_system_convex_registry_by_default() {
 
 #[tokio::test]
 async fn router_prepare_system_tenant_records_enabled_adapter_listeners() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
     let listen_addr = "127.0.0.1:45678".parse().expect("listen addr should parse");
-    RouterBuildConfig::core(fixture.service())
+    RouterBuildConfig::core(fixture.engine())
         .with_system_convex_registry(convex_registry(json!([])))
         .with_firebase(FirebaseConfig::new())
         .with_listen_addr(listen_addr)
@@ -260,7 +224,7 @@ async fn router_prepare_system_tenant_records_enabled_adapter_listeners() {
         .expect("router config should prepare system tenant");
 
     let listeners = fixture
-        .service()
+        .engine()
         .list_documents_async(
             crate::system_tenant::system_tenant_id().expect("system id should parse"),
             TableName::new("listeners").expect("table should parse"),
@@ -800,13 +764,13 @@ async fn collect_listen_websocket_bootstrap(
 }
 
 fn seed_firebase_document(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     document_path: &[&str],
     fields: impl IntoIterator<Item = (&'static str, serde_json::Value)>,
 ) {
     seed_firebase_document_with_principal(
-        service,
+        engine,
         tenant_id,
         document_path,
         fields,
@@ -919,7 +883,7 @@ fn firebase_test_auth_config(
 }
 
 fn seed_firebase_document_with_principal(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     document_path: &[&str],
     fields: impl IntoIterator<Item = (&'static str, serde_json::Value)>,
@@ -946,14 +910,14 @@ fn seed_firebase_document_with_principal(
         transforms: Vec::new(),
     }])
     .expect("seed write batch should build");
-    service
+    engine
         .begin_mutation_execution_unit(tenant_id.clone(), principal)
         .expect("seed execution unit should begin")
         .execute_atomic_write_batch(batch)
         .expect("seed write batch should commit");
 }
 
-fn delete_firebase_document(service: &Arc<Service>, tenant_id: &TenantId, document_path: &[&str]) {
+fn delete_firebase_document(engine: &Arc<Engine>, tenant_id: &TenantId, document_path: &[&str]) {
     use nimbus_core::{
         AtomicWrite, AtomicWriteBatch, ResourcePathBinding, WriteKey, WritePrecondition,
     };
@@ -968,7 +932,7 @@ fn delete_firebase_document(service: &Arc<Service>, tenant_id: &TenantId, docume
         missing_ok: false,
     }])
     .expect("delete write batch should build");
-    service
+    engine
         .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
         .expect("delete execution unit should begin")
         .execute_atomic_write_batch(batch)
@@ -978,12 +942,11 @@ fn delete_firebase_document(service: &Arc<Service>, tenant_id: &TenantId, docume
 #[test]
 fn async_runtime_integration_removes_hot_path_blocking_adapters() {
     let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let engine_service_mod =
-        fs::read_to_string(workspace_root.join("../nimbus-engine/src/service/mod.rs"))
-            .expect("engine service module should be readable");
+    let engine_mod = fs::read_to_string(workspace_root.join("../nimbus-engine/src/engine/mod.rs"))
+        .expect("engine module should be readable");
     assert!(
-        !engine_service_mod.contains("call_blocking("),
-        "engine service should not retain the call_blocking adapter"
+        !engine_mod.contains("call_blocking("),
+        "engine should not retain the call_blocking adapter"
     );
 
     let async_host_calls =
@@ -1009,8 +972,8 @@ fn async_runtime_integration_removes_hot_path_blocking_adapters() {
 
 #[tokio::test]
 async fn cors_preflight_only_allows_loopback_browser_origins() {
-    let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(router_for_service(fixture.service())).await;
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
 
     let allowed = server
         .client()
@@ -1204,6 +1167,8 @@ mod convex_functions;
 mod convex_runtime;
 #[path = "tests/core_http.rs"]
 mod core_http;
+#[path = "tests/cors.rs"]
+mod cors;
 #[path = "tests/deploy.rs"]
 mod deploy;
 #[path = "tests/dynamodb_wire.rs"]
@@ -1236,10 +1201,14 @@ mod machine_lifecycle;
 mod mongodb_wire;
 #[path = "tests/registry_and_license/mod.rs"]
 mod registry_and_license;
+#[path = "tests/rest_route_parity.rs"]
+mod rest_route_parity;
 #[path = "tests/scheduling.rs"]
 mod scheduling;
 #[path = "tests/tenant_isolation_harness.rs"]
 mod tenant_isolation_harness;
+#[path = "tests/tls_serve.rs"]
+mod tls_serve;
 #[path = "tests/verification_harness.rs"]
 mod verification_harness;
 #[path = "tests/websocket_protocol.rs"]

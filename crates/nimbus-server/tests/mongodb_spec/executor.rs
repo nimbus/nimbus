@@ -1,26 +1,38 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
-use nimbus_engine::Service;
+use nimbus_engine::Engine;
+use nimbus_server::MongoDbAuthConfig;
 use nimbus_server::adapters_mongodb::listener::run_listener;
-use nimbus_testing::ServiceFixture;
+use nimbus_testing::EngineFixture;
 use tokio::net::TcpListener;
 
 use super::runner::{self, SpecTest, SpecTestFile, TestResult};
 use super::wire_client::WireClient;
 
+pub(crate) const TEST_USERNAME: &str = "spec-user";
+pub(crate) const TEST_PASSWORD: &str = "spec-password";
+
 pub struct SpecTestFixture {
-    _fixture: ServiceFixture<Service>,
+    _fixture: EngineFixture<Engine>,
     pub addr: SocketAddr,
 }
 
 impl SpecTestFixture {
     pub async fn new() -> Self {
-        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let fixture = EngineFixture::new(|path| Engine::new(path));
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("local addr");
-        let service = fixture.service();
-        tokio::spawn(run_listener(listener, service));
+        let service = fixture.engine();
+        tokio::spawn(run_listener(
+            listener,
+            service,
+            Arc::new(MongoDbAuthConfig::new(
+                TEST_USERNAME.into(),
+                TEST_PASSWORD.into(),
+            )),
+        ));
 
         Self {
             _fixture: fixture,
@@ -103,6 +115,9 @@ async fn execute_single_test(
     test: &SpecTest,
 ) -> TestResult {
     let mut client = WireClient::connect(fixture.addr).await;
+    if let Err(error) = client.authenticate(TEST_USERNAME, TEST_PASSWORD).await {
+        return TestResult::Fail(format!("SCRAM authentication failed: {error}"));
+    }
 
     for data in &spec.initial_data {
         let _ = client

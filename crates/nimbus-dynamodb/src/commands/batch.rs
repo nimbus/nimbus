@@ -12,11 +12,14 @@ use extenddb_core::types::{
     BatchGetItemInput, BatchGetItemOutput, BatchWriteItemInput, BatchWriteItemOutput, Item,
     StreamEventName, extract_key,
 };
-use nimbus_core::TableName;
-use nimbus_engine::Service;
+use nimbus_core::{TableName, WritePrecondition};
+use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 
-use crate::commands::item::{primary_key_id, read_item, remove_item, store_item};
+use crate::attribute_value::{item_to_fields, validate_item};
+use crate::commands::item::{
+    delete_atomic_write, overwrite_atomic_write, primary_key_id, read_item,
+};
 use crate::commands::{control_plane, stream};
 use crate::error::map_core_error;
 use crate::expression::{default_limits, project_item};
@@ -34,7 +37,7 @@ const MAX_BATCH_WRITE_OPS: usize = 25;
 /// `ValidationException` for an empty request or more than 100 keys;
 /// `ResourceNotFoundException` if a referenced table is absent.
 pub fn batch_get_item(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: BatchGetItemInput,
 ) -> Result<BatchGetItemOutput, DynamoDbError> {
@@ -57,12 +60,12 @@ pub fn batch_get_item(
     let limits = default_limits();
     let mut responses: HashMap<String, Vec<Item>> = HashMap::new();
     for (table_name, requested) in &input.request_items {
-        let key_schema = control_plane::load_key_schema(service, context, table_name)?;
+        let key_schema = control_plane::load_key_schema(engine, context, table_name)?;
         let table = TableName::new(table_name).map_err(map_core_error)?;
         let mut items = Vec::new();
         for key in &requested.keys {
             let id = primary_key_id(key, &key_schema)?;
-            if let Some(item) = read_item(service, context, &table, id)? {
+            if let Some(item) = read_item(engine, context, &table, id)? {
                 let projected = match requested
                     .projection_expression
                     .as_deref()
@@ -100,7 +103,7 @@ pub fn batch_get_item(
 /// `WriteRequest` without exactly one of Put/Delete; `ResourceNotFoundException`
 /// if a referenced table is absent.
 pub fn batch_write_item(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: BatchWriteItemInput,
 ) -> Result<BatchWriteItemOutput, DynamoDbError> {
@@ -117,53 +120,66 @@ pub fn batch_write_item(
     }
 
     for (table_name, requests) in &input.request_items {
-        let key_schema = control_plane::load_key_schema(service, context, table_name)?;
+        let key_schema = control_plane::load_key_schema(engine, context, table_name)?;
         let table = TableName::new(table_name).map_err(map_core_error)?;
         for request in requests {
             match (&request.put_request, &request.delete_request) {
                 (Some(put), None) => {
                     // Read the prior image first so the stream record is a
                     // correct INSERT vs MODIFY with the right old image.
+                    validate_item(&put.item)?;
                     let id = primary_key_id(&put.item, &key_schema)?;
-                    let old = read_item(service, context, &table, id)?;
-                    store_item(service, context, table_name, &put.item)?;
+                    let old = read_item(engine, context, &table, id.clone())?;
+                    let write = overwrite_atomic_write(
+                        table.clone(),
+                        id,
+                        item_to_fields(&put.item)?,
+                        WritePrecondition::default(),
+                    );
                     let keys = extract_key(&put.item, &key_schema);
-                    stream::capture_event(
-                        service,
-                        context,
-                        table_name,
-                        stream::ChangeEvent {
-                            event_name: if old.is_some() {
-                                StreamEventName::Modify
-                            } else {
-                                StreamEventName::Insert
-                            },
-                            keys: &keys,
-                            old_image: old.as_ref(),
-                            new_image: Some(&put.item),
-                            user_identity: None,
+                    let change = stream::StreamChange::new(
+                        table_name.clone(),
+                        if old.is_some() {
+                            StreamEventName::Modify
+                        } else {
+                            StreamEventName::Insert
                         },
+                        keys,
+                        old,
+                        Some(put.item.clone()),
+                        None,
+                    );
+                    stream::execute_atomic_write_batch_with_streams(
+                        engine,
+                        context,
+                        vec![write],
+                        &[change],
+                        map_core_error,
                     )?;
                 }
                 (None, Some(delete)) => {
                     let id = primary_key_id(&delete.key, &key_schema)?;
-                    let old = read_item(service, context, &table, id)?;
-                    remove_item(service, context, table_name, &delete.key)?;
+                    let old = read_item(engine, context, &table, id.clone())?;
                     // DynamoDB emits a REMOVE record only when an item was
                     // actually deleted.
-                    if let Some(old_image) = old.as_ref() {
+                    if let Some(old_image) = old {
+                        let write =
+                            delete_atomic_write(table.clone(), id, WritePrecondition::default());
                         let keys = extract_key(&delete.key, &key_schema);
-                        stream::capture_event(
-                            service,
+                        let change = stream::StreamChange::new(
+                            table_name.clone(),
+                            StreamEventName::Remove,
+                            keys,
+                            Some(old_image),
+                            None,
+                            None,
+                        );
+                        stream::execute_atomic_write_batch_with_streams(
+                            engine,
                             context,
-                            table_name,
-                            stream::ChangeEvent {
-                                event_name: StreamEventName::Remove,
-                                keys: &keys,
-                                old_image: Some(old_image),
-                                new_image: None,
-                                user_identity: None,
-                            },
+                            vec![write],
+                            &[change],
+                            map_core_error,
                         )?;
                     }
                 }
@@ -191,27 +207,27 @@ mod tests {
     use nimbus_core::TenantId;
     use serde_json::json;
 
-    fn fixture() -> (Arc<Service>, TenantIsolationContext, tempfile::TempDir) {
+    fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
-        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
         let context = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
-        crate::tenant::ensure_tenant(&service, &context).expect("tenant");
-        (service, context, temp)
+        crate::tenant::ensure_tenant(&engine, &context).expect("tenant");
+        (engine, context, temp)
     }
 
-    fn create_orders(service: &Arc<Service>, context: &TenantIsolationContext) {
+    fn create_orders(engine: &Arc<Engine>, context: &TenantIsolationContext) {
         let input: CreateTableInput = serde_json::from_value(json!({
             "TableName": "Orders",
             "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
             "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
         }))
         .unwrap();
-        control_plane::create_table(service, context, input).expect("create table");
+        control_plane::create_table(engine, context, input).expect("create table");
     }
 
-    fn put(service: &Arc<Service>, context: &TenantIsolationContext, pk: &str, v: &str) {
+    fn put(engine: &Arc<Engine>, context: &TenantIsolationContext, pk: &str, v: &str) {
         crate::commands::item::put_item(
-            service,
+            engine,
             context,
             serde_json::from_value(json!({
                 "TableName": "Orders",
@@ -223,21 +239,21 @@ mod tests {
     }
 
     fn batch_get(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         input: serde_json::Value,
     ) -> Result<BatchGetItemOutput, DynamoDbError> {
-        batch_get_item(service, context, serde_json::from_value(input).unwrap())
+        batch_get_item(engine, context, serde_json::from_value(input).unwrap())
     }
 
     #[test]
     fn batch_get_returns_present_items_and_skips_missing() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
-        put(&service, &ctx, "a", "1");
-        put(&service, &ctx, "b", "2");
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        put(&engine, &ctx, "a", "1");
+        put(&engine, &ctx, "b", "2");
         let out = batch_get(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "RequestItems": {
@@ -265,11 +281,11 @@ mod tests {
 
     #[test]
     fn batch_get_projection_applies_per_table() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
-        put(&service, &ctx, "a", "1");
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        put(&engine, &ctx, "a", "1");
         let out = batch_get(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "RequestItems": {
@@ -288,22 +304,22 @@ mod tests {
 
     #[test]
     fn batch_get_empty_request_is_validation_error() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
-        let err = batch_get(&service, &ctx, json!({ "RequestItems": {} }))
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        let err = batch_get(&engine, &ctx, json!({ "RequestItems": {} }))
             .expect_err("empty request rejected");
         assert!(matches!(err, DynamoDbError::ValidationException(_)));
     }
 
     #[test]
     fn batch_get_over_100_keys_is_validation_error() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         let keys: Vec<serde_json::Value> = (0..101)
             .map(|i| json!({ "pk": {"S": format!("k{i}")} }))
             .collect();
         let err = batch_get(
-            &service,
+            &engine,
             &ctx,
             json!({ "RequestItems": { "Orders": { "Keys": keys } } }),
         )
@@ -313,30 +329,30 @@ mod tests {
 
     // ---- D3.2: BatchWriteItem ----
 
-    fn read(service: &Arc<Service>, context: &TenantIsolationContext, pk: &str) -> Option<Item> {
+    fn read(engine: &Arc<Engine>, context: &TenantIsolationContext, pk: &str) -> Option<Item> {
         let key: Item = [("pk".to_string(), AttributeValue::S(pk.into()))]
             .into_iter()
             .collect();
-        let schema = control_plane::load_key_schema(service, context, "Orders").unwrap();
+        let schema = control_plane::load_key_schema(engine, context, "Orders").unwrap();
         let id = primary_key_id(&key, &schema).unwrap();
-        read_item(service, context, &TableName::new("Orders").unwrap(), id).unwrap()
+        read_item(engine, context, &TableName::new("Orders").unwrap(), id).unwrap()
     }
 
     fn batch_write(
-        service: &Arc<Service>,
+        engine: &Arc<Engine>,
         context: &TenantIsolationContext,
         input: serde_json::Value,
     ) -> Result<extenddb_core::types::BatchWriteItemOutput, DynamoDbError> {
-        batch_write_item(service, context, serde_json::from_value(input).unwrap())
+        batch_write_item(engine, context, serde_json::from_value(input).unwrap())
     }
 
     #[test]
     fn batch_write_puts_and_deletes() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
-        put(&service, &ctx, "old", "1"); // will be deleted
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        put(&engine, &ctx, "old", "1"); // will be deleted
         let out = batch_write(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "RequestItems": {
@@ -350,17 +366,17 @@ mod tests {
         )
         .expect("batch write");
         assert!(out.unprocessed_items.is_empty());
-        assert!(read(&service, &ctx, "a").is_some());
-        assert!(read(&service, &ctx, "b").is_some());
-        assert!(read(&service, &ctx, "old").is_none(), "deleted");
+        assert!(read(&engine, &ctx, "a").is_some());
+        assert!(read(&engine, &ctx, "b").is_some());
+        assert!(read(&engine, &ctx, "old").is_none(), "deleted");
     }
 
     #[test]
     fn batch_write_request_with_both_put_and_delete_is_rejected() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         let err = batch_write(
-            &service,
+            &engine,
             &ctx,
             json!({
                 "RequestItems": {
@@ -377,22 +393,22 @@ mod tests {
 
     #[test]
     fn batch_write_over_25_ops_is_validation_error() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         let ops: Vec<serde_json::Value> = (0..26)
             .map(|i| json!({ "PutRequest": { "Item": { "pk": {"S": format!("k{i}")} } } }))
             .collect();
-        let err = batch_write(&service, &ctx, json!({ "RequestItems": { "Orders": ops } }))
+        let err = batch_write(&engine, &ctx, json!({ "RequestItems": { "Orders": ops } }))
             .expect_err("over-25 rejected");
         assert!(matches!(err, DynamoDbError::ValidationException(_)));
     }
 
     #[test]
     fn batch_write_empty_request_is_validation_error() {
-        let (service, ctx, _t) = fixture();
-        create_orders(&service, &ctx);
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
         let err =
-            batch_write(&service, &ctx, json!({ "RequestItems": {} })).expect_err("empty rejected");
+            batch_write(&engine, &ctx, json!({ "RequestItems": {} })).expect_err("empty rejected");
         assert!(matches!(err, DynamoDbError::ValidationException(_)));
     }
 }

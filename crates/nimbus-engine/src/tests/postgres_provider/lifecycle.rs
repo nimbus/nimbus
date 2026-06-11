@@ -3,44 +3,44 @@ use super::support::*;
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
 async fn typed_postgres_config_supports_async_tenant_lifecycle_and_empty_read_paths() {
-    with_postgres_service_config(|service_config, _provider_config| async move {
+    with_postgres_engine_config(|engine_config, _provider_config| async move {
         let tenant_id = TenantId::new("pg-tenant").expect("tenant id should build");
-        let service = Arc::new(
-            Service::new_with_persistence_config(service_config.clone())
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config.clone())
                 .await
-                .expect("postgres-backed service should create"),
+                .expect("postgres-backed engine should create"),
         );
 
-        service
+        engine
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
         assert_eq!(
-            service
+            engine
                 .list_tenants_async()
                 .await
                 .expect("tenant list should load"),
             vec![tenant_id.clone()]
         );
-        service
+        engine
             .ensure_tenant_exists_async(tenant_id.clone())
             .await
             .expect("tenant existence should verify");
         assert_eq!(
-            service
+            engine
                 .latest_sequence_async(tenant_id.clone())
                 .await
                 .expect("latest sequence should read"),
             SequenceNumber(0)
         );
         assert!(
-            service
+            engine
                 .query_documents_async(tenant_id.clone(), query_for("tasks"))
                 .await
                 .expect("empty query should succeed")
                 .is_empty()
         );
-        let bootstrap = service
+        let bootstrap = engine
             .export_durable_journal_bootstrap_async(tenant_id.clone())
             .await
             .expect("bootstrap should export");
@@ -49,13 +49,13 @@ async fn typed_postgres_config_supports_async_tenant_lifecycle_and_empty_read_pa
         assert_eq!(bootstrap.cursor_floor, SequenceNumber(0));
         assert!(bootstrap.snapshot.documents.is_empty());
 
-        service.quiesce().await;
-        drop(service);
+        engine.quiesce().await;
+        drop(engine);
 
         let reopened = Arc::new(
-            Service::new_with_persistence_config(service_config)
+            Engine::new_with_persistence_config(engine_config)
                 .await
-                .expect("postgres-backed service should reopen"),
+                .expect("postgres-backed engine should reopen"),
         );
         assert_eq!(
             reopened
@@ -83,26 +83,26 @@ async fn typed_postgres_config_supports_async_tenant_lifecycle_and_empty_read_pa
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
 async fn typed_postgres_config_reopens_multiple_tenants_for_concurrent_mixed_ops() {
-    with_postgres_service_config(|service_config, _provider_config| async move {
-        let service = Arc::new(
-            Service::new_with_persistence_config(service_config.clone())
+    with_postgres_engine_config(|engine_config, _provider_config| async move {
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config.clone())
                 .await
-                .expect("postgres-backed service should create"),
+                .expect("postgres-backed engine should create"),
         );
 
         let mut seeded = Vec::new();
         for index in 0..4 {
             let tenant_id =
                 TenantId::new(format!("pg-reopen-mixed-{index}")).expect("tenant id should build");
-            service
+            engine
                 .create_tenant_async(tenant_id.clone())
                 .await
                 .expect("tenant should create");
-            service
+            engine
                 .set_table_schema_async(tenant_id.clone(), tasks_schema())
                 .await
                 .expect("schema should persist");
-            let document_id = service
+            let document_id = engine
                 .insert_document_async(
                     tenant_id.clone(),
                     tasks_table(),
@@ -116,21 +116,21 @@ async fn typed_postgres_config_reopens_multiple_tenants_for_concurrent_mixed_ops
             seeded.push((tenant_id, document_id));
         }
 
-        service.quiesce().await;
-        drop(service);
+        engine.quiesce().await;
+        drop(engine);
 
         let reopened = Arc::new(
-            Service::new_with_persistence_config(service_config)
+            Engine::new_with_persistence_config(engine_config)
                 .await
-                .expect("postgres-backed service should reopen"),
+                .expect("postgres-backed engine should reopen"),
         );
 
         tokio::time::timeout(Duration::from_secs(10), async {
             let mut handles = Vec::new();
             for (index, (tenant_id, document_id)) in seeded.into_iter().enumerate() {
-                let service = reopened.clone();
+                let engine = reopened.clone();
                 handles.push(tokio::spawn(async move {
-                    let document = service
+                    let document = engine
                         .get_document_async(tenant_id.clone(), tasks_table(), document_id)
                         .await
                         .expect("reopened point read should succeed");
@@ -143,13 +143,13 @@ async fn typed_postgres_config_reopens_multiple_tenants_for_concurrent_mixed_ops
                         Some(expected_title.as_str())
                     );
 
-                    let documents = service
+                    let documents = engine
                         .query_documents_async(tenant_id.clone(), query_for("tasks"))
                         .await
                         .expect("reopened query should succeed");
                     assert_eq!(documents.len(), 1);
 
-                    let inserted_id = service
+                    let inserted_id = engine
                         .insert_document_async(
                             tenant_id.clone(),
                             tasks_table(),
@@ -160,7 +160,7 @@ async fn typed_postgres_config_reopens_multiple_tenants_for_concurrent_mixed_ops
                         )
                         .await
                         .expect("reopened insert should succeed");
-                    service
+                    engine
                         .update_document_async(
                             tenant_id.clone(),
                             tasks_table(),
@@ -190,7 +190,7 @@ async fn typed_postgres_config_reopens_multiple_tenants_for_concurrent_mixed_ops
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
 async fn postgres_tenant_delete_recreate_cleans_schema_and_runtime_state() {
-    with_postgres_service_config(|service_config, provider_config| async move {
+    with_postgres_engine_config(|engine_config, provider_config| async move {
         let tenant_id = TenantId::new("pg-tenant-delete").expect("tenant id should build");
         let provider = PostgresProvider::connect(provider_config.clone())
             .await
@@ -198,18 +198,18 @@ async fn postgres_tenant_delete_recreate_cleans_schema_and_runtime_state() {
         let schema_name = provider
             .tenant_schema_name(&tenant_id)
             .expect("schema name should derive");
-        let service = Arc::new(
-            Service::new_with_persistence_config(service_config)
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config)
                 .await
-                .expect("postgres-backed service should create"),
+                .expect("postgres-backed engine should create"),
         );
 
-        service
+        engine
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
         assert!(matches!(
-            service.create_tenant_async(tenant_id.clone()).await,
+            engine.create_tenant_async(tenant_id.clone()).await,
             Err(Error::AlreadyExists(_))
         ));
         assert!(
@@ -219,25 +219,25 @@ async fn postgres_tenant_delete_recreate_cleans_schema_and_runtime_state() {
             "tenant schema should exist after creation"
         );
 
-        service
+        engine
             .ensure_tenant_exists_async(tenant_id.clone())
             .await
             .expect("tenant should load");
         assert!(
-            service.loaded_tenant_ids().contains(&tenant_id),
+            engine.loaded_tenant_ids().contains(&tenant_id),
             "tenant should be loaded before deletion"
         );
 
-        service
+        engine
             .delete_tenant_async(tenant_id.clone())
             .await
             .expect("tenant delete should succeed");
         assert!(
-            !service.loaded_tenant_ids().contains(&tenant_id),
+            !engine.loaded_tenant_ids().contains(&tenant_id),
             "tenant should evict from the loaded registry after deletion"
         );
         assert!(
-            !service
+            !engine
                 .list_tenants_async()
                 .await
                 .expect("tenant list should load")
@@ -251,20 +251,20 @@ async fn postgres_tenant_delete_recreate_cleans_schema_and_runtime_state() {
             "tenant schema should be removed after deletion"
         );
         assert!(matches!(
-            service.delete_tenant_async(tenant_id.clone()).await,
+            engine.delete_tenant_async(tenant_id.clone()).await,
             Err(Error::TenantNotFound(_))
         ));
 
-        service
+        engine
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should recreate cleanly");
-        service
+        engine
             .ensure_tenant_exists_async(tenant_id.clone())
             .await
             .expect("recreated tenant should load");
         assert!(
-            service
+            engine
                 .query_documents_async(tenant_id.clone(), query_for("tasks"))
                 .await
                 .expect("recreated tenant query should succeed")
@@ -272,9 +272,9 @@ async fn postgres_tenant_delete_recreate_cleans_schema_and_runtime_state() {
             "recreated tenant should start empty after schema cleanup"
         );
 
-        tokio::time::timeout(Duration::from_secs(2), service.quiesce())
+        tokio::time::timeout(Duration::from_secs(2), engine.quiesce())
             .await
-            .expect("service should quiesce after tenant lifecycle test");
+            .expect("engine should quiesce after tenant lifecycle test");
     })
     .await;
 }

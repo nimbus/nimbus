@@ -177,7 +177,7 @@ fn desired_machine_image_source(config: &MachineConfigRecord) -> MachineImageSou
 fn describe_machine_image_source(source: &MachineImageSource) -> String {
     match source {
         MachineImageSource::OciReference { reference } => reference.clone(),
-        MachineImageSource::HttpUrl { url } => url.clone(),
+        MachineImageSource::HttpUrl { url, sha256 } => format!("{url}#sha256={sha256}"),
         MachineImageSource::LocalDisk { path } => path.display().to_string(),
     }
 }
@@ -220,7 +220,7 @@ fn machine_bootstrap_mode(config: &MachineConfigRecord) -> MachineBootstrapMode 
 }
 
 fn parse_machine_volume(value: &str) -> Result<MachineVolume, String> {
-    MachineVolume::parse(value)
+    MachineVolume::parse(value).map_err(|error| error.to_string())
 }
 
 fn invalidate_materialized_machine_os(paths: &MachinePaths) -> Result<(), nimbus::Error> {

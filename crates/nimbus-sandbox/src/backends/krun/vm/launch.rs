@@ -4,44 +4,16 @@ use super::*;
 impl KrunSandboxBackend {
     pub(super) fn plan_start(&self, spec: &SandboxSpec) -> Result<KrunLaunchPlan> {
         self.ensure_execute_egress_enforcement_available()?;
-        let sandbox_id = next_sandbox_id(&spec.name);
-        self.plan_start_with_id(spec, &sandbox_id, None, None)
-    }
-
-    pub(super) fn plan_start_from_image(
-        &self,
-        spec: &SandboxSpec,
-        image_reference: &str,
-        overrides: &SandboxImageProcessOverrides,
-    ) -> Result<KrunLaunchPlan> {
-        self.ensure_execute_egress_enforcement_available()?;
-        let sandbox_id = next_sandbox_id(&spec.name);
-        self.resource_quota_manager().ensure_launch_quota(spec)?;
-        let prepared_launch =
-            self.prepare_image_launch(spec, &sandbox_id, image_reference, overrides)?;
-        self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
-    }
-
-    pub(super) fn plan_start_from_build(
-        &self,
-        spec: &SandboxSpec,
-        image_name: &str,
-        dockerfile_path: &Path,
-        context_path: &Path,
-        overrides: &SandboxImageProcessOverrides,
-    ) -> Result<KrunLaunchPlan> {
-        self.ensure_execute_egress_enforcement_available()?;
-        let sandbox_id = next_sandbox_id(&spec.name);
-        self.resource_quota_manager().ensure_launch_quota(spec)?;
-        let prepared_launch = self.prepare_built_image_launch(
-            spec,
-            &sandbox_id,
-            image_name,
-            dockerfile_path,
-            context_path,
-            overrides,
-        )?;
-        self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
+        let sandbox_id = next_sandbox_id(spec.display_name());
+        match &spec.root {
+            SandboxRootSpec::Rootfs(_) => self.plan_start_with_id(spec, &sandbox_id, None, None),
+            SandboxRootSpec::OciImage(image) => {
+                self.resource_quota_manager().ensure_launch_quota(spec)?;
+                let prepared_launch =
+                    self.prepare_oci_image_launch(spec, &sandbox_id, &image.source)?;
+                self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
+            }
+        }
     }
 
     #[cfg(test)]
@@ -50,7 +22,7 @@ impl KrunSandboxBackend {
         spec: &SandboxSpec,
         launch_defaults: Option<&OciImageLaunchDefaults>,
     ) -> Result<KrunLaunchPlan> {
-        let sandbox_id = next_sandbox_id(&spec.name);
+        let sandbox_id = next_sandbox_id(spec.display_name());
         self.plan_start_with_id(spec, &sandbox_id, launch_defaults, None)
     }
 
@@ -85,7 +57,7 @@ impl KrunSandboxBackend {
         }
         self.ensure_execute_egress_enforcement_available()?;
 
-        let mut resolved_launch = resolve_launch_spec(spec, launch_defaults);
+        let mut resolved_launch = resolve_launch_spec(spec, launch_defaults)?;
         apply_guest_user_switch(&mut resolved_launch.spec, &resolved_launch.image_metadata)?;
         self.resource_quota_manager()
             .ensure_launch_quota(&resolved_launch.spec)?;
@@ -135,7 +107,7 @@ impl KrunSandboxBackend {
             },
             &conmon_layout,
             sandbox_id,
-            &spec.name,
+            spec.display_name(),
             &bundle_layout.bundle_dir,
             launch_artifact
                 .as_ref()
@@ -152,7 +124,7 @@ impl KrunSandboxBackend {
         let handle = SandboxHandle::new(
             resolved_launch.spec.tenant_id.clone(),
             sandbox_id.clone(),
-            resolved_launch.spec.name.clone(),
+            resolved_launch.spec.display_name().to_owned(),
             SandboxBackendKind::Krun,
             SandboxStatus::Starting,
             visible_published_endpoints(
@@ -195,14 +167,13 @@ impl KrunSandboxBackend {
         spec: &SandboxSpec,
         sandbox_id: &SandboxId,
         image_reference: &str,
-        overrides: &SandboxImageProcessOverrides,
     ) -> Result<PreparedMaterializedImageLaunch> {
         OciImageMaterializer::for_tenant_sandbox(
             &self.config.state_root,
             &spec.tenant_id,
             sandbox_id,
         )
-        .prepare_image_launch(sandbox_id, image_reference, overrides)
+        .prepare_image_launch(sandbox_id, image_reference, &spec.process)
     }
 
     fn prepare_built_image_launch(
@@ -212,7 +183,6 @@ impl KrunSandboxBackend {
         image_name: &str,
         dockerfile_path: &Path,
         context_path: &Path,
-        overrides: &SandboxImageProcessOverrides,
     ) -> Result<PreparedMaterializedImageLaunch> {
         OciDockerfileBuilder::for_tenant_sandbox(
             &self.config.state_root,
@@ -224,8 +194,28 @@ impl KrunSandboxBackend {
             image_name,
             dockerfile_path,
             context_path,
-            overrides,
+            &spec.process,
         )
+    }
+
+    fn prepare_oci_image_launch(
+        &self,
+        spec: &SandboxSpec,
+        sandbox_id: &SandboxId,
+        source: &SandboxOciImageSource,
+    ) -> Result<PreparedMaterializedImageLaunch> {
+        match source {
+            SandboxOciImageSource::Reference(reference) => {
+                self.prepare_image_launch(spec, sandbox_id, &reference.reference)
+            }
+            SandboxOciImageSource::Build(build) => self.prepare_built_image_launch(
+                spec,
+                sandbox_id,
+                &build.image_name,
+                &build.dockerfile_path,
+                &build.context_path,
+            ),
+        }
     }
 
     fn buildah_cli(&self) -> BuildahCli {
@@ -304,7 +294,7 @@ impl KrunSandboxBackend {
             return Ok(());
         }
 
-        let vm_config_path = krun_vm_config_path(&manifest.spec.filesystem.rootfs);
+        let vm_config_path = krun_vm_config_path(&required_rootfs(&manifest.spec)?.rootfs);
         match desired_krun_vm_config(&manifest.spec)? {
             Some(vm_config) => {
                 let rendered = serde_json::to_vec_pretty(&vm_config).map_err(|error| {
@@ -355,24 +345,12 @@ fn next_sandbox_id(name: &str) -> SandboxId {
 }
 
 fn hostname_for(spec: &SandboxSpec) -> String {
-    let slug = slugify(&spec.name);
+    let slug = slugify(spec.display_name());
     if slug.is_empty() {
         "nimbus-sandbox".to_owned()
     } else {
         slug
     }
-}
-
-pub(super) fn slugify(name: &str) -> String {
-    let mut slug = String::with_capacity(name.len());
-    for character in name.chars() {
-        if character.is_ascii_alphanumeric() {
-            slug.push(character.to_ascii_lowercase());
-        } else if !slug.ends_with('-') {
-            slug.push('-');
-        }
-    }
-    slug.trim_matches('-').to_owned()
 }
 
 pub(super) fn desired_krun_vm_config(spec: &SandboxSpec) -> Result<Option<KrunVmConfig>> {
@@ -413,7 +391,7 @@ fn krun_vm_config_prelude(spec: &SandboxSpec, needs_unshare_mount: bool) -> Resu
         return Ok(Vec::new());
     }
 
-    let vm_config_path = krun_vm_config_path(&spec.filesystem.rootfs);
+    let vm_config_path = krun_vm_config_path(&required_rootfs(spec)?.rootfs);
     let escaped_path = shell_escape(vm_config_path.to_string_lossy().as_ref());
     match desired_krun_vm_config(spec)? {
         Some(vm_config) => {
@@ -435,20 +413,25 @@ fn krun_vm_config_prelude(spec: &SandboxSpec, needs_unshare_mount: bool) -> Resu
 fn resolve_launch_spec(
     spec: &SandboxSpec,
     launch_defaults: Option<&OciImageLaunchDefaults>,
-) -> KrunResolvedLaunchSpec {
+) -> Result<KrunResolvedLaunchSpec> {
     let Some(launch_defaults) = launch_defaults else {
-        return KrunResolvedLaunchSpec {
-            spec: spec.clone(),
-            image_metadata: KrunImageMetadata::default(),
-        };
+        let mut resolved_spec = spec.clone();
+        resolved_spec.process = resolve_process_without_image_defaults(&spec.process)?;
+        let process_user = resolved_spec.process.user.clone();
+        return Ok(KrunResolvedLaunchSpec {
+            spec: resolved_spec,
+            image_metadata: KrunImageMetadata {
+                user: process_user,
+                ..KrunImageMetadata::default()
+            },
+        });
     };
 
     let mut resolved_spec = spec.clone();
-    resolved_spec.filesystem =
-        resolve_filesystem_spec(&spec.filesystem, &launch_defaults.filesystem);
+    resolved_spec.root = resolve_root_spec(&spec.root, &launch_defaults.rootfs);
     resolved_spec.process = resolve_process_spec(&spec.process, &launch_defaults.process);
 
-    KrunResolvedLaunchSpec {
+    Ok(KrunResolvedLaunchSpec {
         spec: resolved_spec,
         image_metadata: KrunImageMetadata {
             user: launch_defaults.user.clone(),
@@ -457,44 +440,16 @@ fn resolve_launch_spec(
             labels: launch_defaults.labels.clone(),
             exposed_ports: launch_defaults.exposed_ports.clone(),
         },
-    }
+    })
 }
 
-fn resolve_filesystem_spec(
-    spec: &crate::spec::SandboxFilesystemSpec,
-    defaults: &crate::spec::SandboxFilesystemSpec,
-) -> crate::spec::SandboxFilesystemSpec {
-    if !spec.is_unspecified() {
-        return spec.clone();
-    }
-
-    let mut resolved = defaults.clone();
-    resolved.readonly = resolved.readonly || spec.readonly;
-    resolved
-}
-
-fn resolve_process_spec(
-    spec: &crate::spec::SandboxProcessSpec,
-    defaults: &crate::spec::SandboxProcessSpec,
-) -> crate::spec::SandboxProcessSpec {
-    let mut resolved = defaults.clone();
-
-    if !spec.args.is_empty() {
-        resolved.args = spec.args.clone();
-    }
-
-    resolved.env = if spec.env.is_empty() || spec.uses_default_env() {
-        defaults.env.clone()
-    } else {
-        merge_env_overrides(&defaults.env, &spec.env)
-    };
-
-    if !spec.uses_default_cwd() {
-        resolved.cwd = spec.cwd.clone();
-    }
-
-    resolved.terminal = spec.terminal || defaults.terminal;
-    resolved
+fn required_rootfs(spec: &SandboxSpec) -> Result<&SandboxRootfsSpec> {
+    spec.rootfs().ok_or_else(|| SandboxError::InvalidSpec {
+        message: format!(
+            "krun sandbox {} must be resolved to a rootfs before writing VM configuration",
+            spec.display_name()
+        ),
+    })
 }
 
 fn apply_guest_user_switch(
@@ -574,7 +529,7 @@ fn tenant_volume_mounts(state_root: &Path, spec: &SandboxSpec) -> Result<Vec<Kru
             message: format!(
                 "failed to create tenant volume {} for sandbox {} under {}: {error}",
                 volume_name,
-                spec.name,
+                spec.display_name(),
                 source.display()
             ),
         })?;
@@ -594,31 +549,6 @@ fn tenant_volume_mount_options(read_only: bool) -> Vec<String> {
         "nosuid".to_owned(),
         "nodev".to_owned(),
     ]
-}
-
-fn merge_env_overrides(base: &[String], overrides: &[String]) -> Vec<String> {
-    let mut merged = base.to_vec();
-    for override_entry in overrides {
-        let Some(override_key) = env_key(override_entry) else {
-            merged.push(override_entry.clone());
-            continue;
-        };
-
-        if let Some(index) = merged
-            .iter()
-            .position(|entry| env_key(entry).is_some_and(|key| key == override_key))
-        {
-            merged[index] = override_entry.clone();
-        } else {
-            merged.push(override_entry.clone());
-        }
-    }
-    merged
-}
-
-fn env_key(entry: &str) -> Option<&str> {
-    let (key, _) = entry.split_once('=')?;
-    (!key.is_empty()).then_some(key)
 }
 
 pub(super) fn parse_guest_user(user: Option<&str>) -> Result<Option<GuestUserIds>> {

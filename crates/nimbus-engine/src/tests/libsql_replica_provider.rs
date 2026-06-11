@@ -40,8 +40,8 @@ static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(libsql_replica_provider)]
 async fn typed_libsql_replica_config_reads_seeded_remote_state_and_reopens() {
-    with_shared_libsql_replica_service_configs(
-        |service_config_a, service_config_b, provider_config| async move {
+    with_shared_libsql_replica_engine_configs(
+        |engine_config_a, engine_config_b, provider_config| async move {
             let provider = LibsqlReplicaProvider::connect(provider_config.clone())
                 .await
                 .expect("replica provider should connect");
@@ -63,23 +63,23 @@ async fn typed_libsql_replica_config_reads_seeded_remote_state_and_reopens() {
             .await;
             drop(provider);
 
-            let service = Arc::new(
-                Service::new_with_persistence_config(service_config_a.clone())
+            let engine = Arc::new(
+                Engine::new_with_persistence_config(engine_config_a.clone())
                     .await
-                    .expect("replica-backed service should create"),
+                    .expect("replica-backed engine should create"),
             );
             assert_eq!(
-                service
+                engine
                     .list_tenants_async()
                     .await
                     .expect("tenant list should load from provider metadata"),
                 vec![tenant_id.clone()]
             );
-            service
+            engine
                 .ensure_tenant_exists_async(tenant_id.clone())
                 .await
                 .expect("tenant should lazy load through the replica provider");
-            let documents = service
+            let documents = engine
                 .query_documents_async(tenant_id.clone(), query_for("tasks"))
                 .await
                 .expect("replica-backed query should succeed");
@@ -93,13 +93,13 @@ async fn typed_libsql_replica_config_reads_seeded_remote_state_and_reopens() {
                 Some("from-primary")
             );
 
-            service.quiesce().await;
-            drop(service);
+            engine.quiesce().await;
+            drop(engine);
 
             let reopened = Arc::new(
-                Service::new_with_persistence_config(service_config_b)
+                Engine::new_with_persistence_config(engine_config_b)
                     .await
-                    .expect("replica-backed service should reopen"),
+                    .expect("replica-backed engine should reopen"),
             );
             let reopened_documents = reopened
                 .query_documents_async(tenant_id.clone(), query_for("tasks"))
@@ -116,24 +116,24 @@ async fn typed_libsql_replica_config_reads_seeded_remote_state_and_reopens() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(libsql_replica_provider)]
 async fn typed_libsql_replica_config_supports_async_schema_mutation_journal_and_scheduler_paths() {
-    with_libsql_replica_service_config(|service_config, _provider_config| async move {
+    with_libsql_replica_engine_config(|engine_config, _provider_config| async move {
         let tenant_id = TenantId::new("libsql-replica-mutations").expect("tenant id should build");
-        let service = Arc::new(
-            Service::new_with_persistence_config(service_config)
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config)
                 .await
-                .expect("replica-backed service should create"),
+                .expect("replica-backed engine should create"),
         );
 
-        service
+        engine
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
-        service
+        engine
             .set_table_schema_async(tenant_id.clone(), tasks_schema())
             .await
             .expect("schema write should succeed");
 
-        let inserted_id = service
+        let inserted_id = engine
             .insert_document_async(
                 tenant_id.clone(),
                 tasks_table(),
@@ -141,7 +141,7 @@ async fn typed_libsql_replica_config_supports_async_schema_mutation_journal_and_
             )
             .await
             .expect("insert should succeed");
-        service
+        engine
             .update_document_async(
                 tenant_id.clone(),
                 tasks_table(),
@@ -151,7 +151,7 @@ async fn typed_libsql_replica_config_supports_async_schema_mutation_journal_and_
             .await
             .expect("update should succeed");
 
-        let scheduled_job_id = service
+        let scheduled_job_id = engine
             .schedule_mutation_async(
                 tenant_id.clone(),
                 ScheduleRequest {
@@ -169,7 +169,7 @@ async fn typed_libsql_replica_config_supports_async_schema_mutation_journal_and_
             .await
             .expect("scheduled mutation should persist");
         assert_eq!(
-            service
+            engine
                 .list_scheduled_jobs_async(tenant_id.clone())
                 .await
                 .expect("pending jobs should load")
@@ -177,12 +177,12 @@ async fn typed_libsql_replica_config_supports_async_schema_mutation_journal_and_
             1
         );
 
-        let claimed = service
+        let claimed = engine
             .claim_due_jobs_async(tenant_id.clone(), Timestamp(u64::MAX))
             .await
             .expect("claim should succeed");
         assert_eq!(claimed.len(), 1);
-        service
+        engine
             .record_scheduled_job_result_async(
                 tenant_id.clone(),
                 nimbus_core::ScheduledJobResult {
@@ -196,12 +196,12 @@ async fn typed_libsql_replica_config_supports_async_schema_mutation_journal_and_
             )
             .await
             .expect("scheduled result should persist");
-        service
+        engine
             .complete_scheduled_job_async(tenant_id.clone(), scheduled_job_id.clone())
             .await
             .expect("scheduled completion should persist");
         assert_eq!(
-            service
+            engine
                 .get_scheduled_job_result_async(tenant_id.clone(), scheduled_job_id.clone())
                 .await
                 .expect("scheduled result should load")
@@ -209,7 +209,7 @@ async fn typed_libsql_replica_config_supports_async_schema_mutation_journal_and_
             ScheduledJobOutcome::Completed
         );
 
-        let documents = service
+        let documents = engine
             .query_documents_async(tenant_id.clone(), query_for("tasks"))
             .await
             .expect("query should succeed");
@@ -222,28 +222,28 @@ async fn typed_libsql_replica_config_supports_async_schema_mutation_journal_and_
             Some("Renamed")
         );
         assert_eq!(
-            service
+            engine
                 .latest_sequence_async(tenant_id.clone())
                 .await
                 .expect("latest sequence should track journaled mutations"),
-            service
+            engine
                 .mutation_journal_stats_for_testing(&tenant_id)
                 .expect("journal stats should load")
                 .durable_head
         );
 
-        let bootstrap = service
+        let bootstrap = engine
             .export_durable_journal_bootstrap_async(tenant_id.clone())
             .await
             .expect("bootstrap should export");
-        let latest_sequence = service
+        let latest_sequence = engine
             .latest_sequence_async(tenant_id.clone())
             .await
             .expect("latest sequence should load");
         assert_eq!(bootstrap.bootstrap_cut, latest_sequence);
         assert_eq!(bootstrap.resume_after, latest_sequence);
 
-        service.quiesce().await;
+        engine.quiesce().await;
     })
     .await;
 }
@@ -251,42 +251,42 @@ async fn typed_libsql_replica_config_supports_async_schema_mutation_journal_and_
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(libsql_replica_provider)]
 async fn libsql_replica_background_poll_refreshes_loaded_runtime_schema_and_journal_state() {
-    with_shared_libsql_replica_service_configs(
-        |service_config_a, service_config_b, _provider_config| async move {
+    with_shared_libsql_replica_engine_configs(
+        |engine_config_a, engine_config_b, _provider_config| async move {
             let tenant_id =
                 TenantId::new("libsql-replica-poll-journal").expect("tenant id should build");
-            let service_a = Arc::new(
-                Service::new_with_persistence_config(service_config_a)
+            let engine_a = Arc::new(
+                Engine::new_with_persistence_config(engine_config_a)
                     .await
-                    .expect("first replica-backed service should create"),
+                    .expect("first replica-backed engine should create"),
             );
-            let service_b = Arc::new(
-                Service::new_with_persistence_config(service_config_b)
+            let engine_b = Arc::new(
+                Engine::new_with_persistence_config(engine_config_b)
                     .await
-                    .expect("second replica-backed service should create"),
+                    .expect("second replica-backed engine should create"),
             );
 
-            service_a
+            engine_a
                 .create_tenant_async(tenant_id.clone())
                 .await
                 .expect("tenant should create");
-            service_b
+            engine_b
                 .ensure_tenant_exists_async(tenant_id.clone())
                 .await
-                .expect("second service should load tenant");
+                .expect("second engine should load tenant");
             assert_eq!(
-                service_b
+                engine_b
                     .get_schema_async(tenant_id.clone())
                     .await
                     .expect("empty schema should load"),
                 nimbus_core::Schema::default()
             );
 
-            service_a
+            engine_a
                 .set_table_schema_async(tenant_id.clone(), tasks_schema())
                 .await
                 .expect("schema write should succeed");
-            service_a
+            engine_a
                 .insert_document_async(
                     tenant_id.clone(),
                     tasks_table(),
@@ -300,10 +300,10 @@ async fn libsql_replica_background_poll_refreshes_loaded_runtime_schema_and_jour
                 Duration::from_secs(3),
                 Duration::from_millis(25),
                 || {
-                    let service = service_b.clone();
+                    let engine = engine_b.clone();
                     let tenant_id = tenant_id.clone();
                     async move {
-                        service
+                        engine
                             .get_schema_async(tenant_id)
                             .await
                             .expect("schema should load")
@@ -313,7 +313,7 @@ async fn libsql_replica_background_poll_refreshes_loaded_runtime_schema_and_jour
             )
             .await;
             wait_for_mutation_journal_stats(
-                &service_b,
+                &engine_b,
                 &tenant_id,
                 "replica poll should catch up journal heads",
                 |stats| {
@@ -323,7 +323,7 @@ async fn libsql_replica_background_poll_refreshes_loaded_runtime_schema_and_jour
             )
             .await;
 
-            let documents = service_b
+            let documents = engine_b
                 .query_documents_async(tenant_id.clone(), query_for("tasks"))
                 .await
                 .expect("caught-up query should succeed");
@@ -335,7 +335,7 @@ async fn libsql_replica_background_poll_refreshes_loaded_runtime_schema_and_jour
                     .and_then(|value| value.as_str()),
                 Some("External")
             );
-            let diagnostics = service_b
+            let diagnostics = engine_b
                 .tenant_engine_diagnostics_async(tenant_id.clone())
                 .await
                 .expect("tenant diagnostics should surface replica freshness");
@@ -367,8 +367,8 @@ async fn libsql_replica_background_poll_refreshes_loaded_runtime_schema_and_jour
                 LibsqlReplicaRefreshPath::Unknown
             );
 
-            service_a.quiesce().await;
-            service_b.quiesce().await;
+            engine_a.quiesce().await;
+            engine_b.quiesce().await;
         },
     )
     .await;
@@ -377,34 +377,34 @@ async fn libsql_replica_background_poll_refreshes_loaded_runtime_schema_and_jour
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(libsql_replica_provider)]
 async fn libsql_replica_background_poll_loads_unloaded_tenants_with_scheduled_work() {
-    with_shared_libsql_replica_service_configs(
-        |service_config_a, service_config_b, _provider_config| async move {
+    with_shared_libsql_replica_engine_configs(
+        |engine_config_a, engine_config_b, _provider_config| async move {
             let tenant_id =
                 TenantId::new("libsql-replica-poll-scheduler").expect("tenant id should build");
-            let service_a = Arc::new(
-                Service::new_with_persistence_config(service_config_a)
+            let engine_a = Arc::new(
+                Engine::new_with_persistence_config(engine_config_a)
                     .await
-                    .expect("first replica-backed service should create"),
+                    .expect("first replica-backed engine should create"),
             );
-            let service_b = Arc::new(
-                Service::new_with_persistence_config(service_config_b)
+            let engine_b = Arc::new(
+                Engine::new_with_persistence_config(engine_config_b)
                     .await
-                    .expect("second replica-backed service should create"),
+                    .expect("second replica-backed engine should create"),
             );
 
-            service_b
+            engine_b
                 .load_tenants_with_scheduled_work_async()
                 .await
                 .expect("initial scheduled-work preload should succeed");
-            service_a
+            engine_a
                 .create_tenant_async(tenant_id.clone())
                 .await
                 .expect("tenant should create");
 
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
             let scheduler_handle =
-                tokio::spawn(crate::run_scheduler(service_b.clone(), shutdown_rx));
-            service_a
+                tokio::spawn(crate::run_scheduler(engine_b.clone(), shutdown_rx));
+            engine_a
                 .schedule_mutation_async(
                     tenant_id.clone(),
                     ScheduleRequest {
@@ -423,25 +423,25 @@ async fn libsql_replica_background_poll_loads_unloaded_tenants_with_scheduled_wo
                 .expect("scheduled mutation should persist");
 
             wait_for_value(
-                "replica poll should load the scheduled tenant into the second service",
+                "replica poll should load the scheduled tenant into the second engine",
                 Duration::from_secs(3),
                 Duration::from_millis(25),
                 || {
-                    let service = service_b.clone();
-                    async move { service.loaded_tenant_ids() }
+                    let engine = engine_b.clone();
+                    async move { engine.loaded_tenant_ids() }
                 },
                 |tenant_ids| tenant_ids.contains(&tenant_id),
             )
             .await;
             wait_for_value(
-                "replica poll should execute scheduled work on the second service",
+                "replica poll should execute scheduled work on the second engine",
                 Duration::from_secs(3),
                 Duration::from_millis(25),
                 || {
-                    let service = service_b.clone();
+                    let engine = engine_b.clone();
                     let tenant_id = tenant_id.clone();
                     async move {
-                        service
+                        engine
                             .query_documents_async(tenant_id, query_for("tasks"))
                             .await
                             .expect("query should succeed")
@@ -461,8 +461,8 @@ async fn libsql_replica_background_poll_loads_unloaded_tenants_with_scheduled_wo
 
             let _ = shutdown_tx.send(true);
             scheduler_handle.await.expect("scheduler should shut down");
-            service_a.quiesce().await;
-            service_b.quiesce().await;
+            engine_a.quiesce().await;
+            engine_b.quiesce().await;
         },
     )
     .await;
@@ -471,7 +471,7 @@ async fn libsql_replica_background_poll_loads_unloaded_tenants_with_scheduled_wo
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(libsql_replica_provider)]
 async fn encrypted_libsql_replica_config_reads_seeded_remote_state_and_reopens_existing_cache() {
-    with_encrypted_libsql_replica_service_config(|service_config, provider_config| async move {
+    with_encrypted_libsql_replica_engine_config(|engine_config, provider_config| async move {
         let provider = LibsqlReplicaProvider::connect(provider_config.clone())
             .await
             .expect("replica provider should connect");
@@ -505,16 +505,16 @@ async fn encrypted_libsql_replica_config_reads_seeded_remote_state_and_reopens_e
             "manifest should not exist before the first encrypted open"
         );
 
-        let service = Arc::new(
-            Service::new_with_persistence_config(service_config.clone())
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config.clone())
                 .await
-                .expect("encrypted replica-backed service should create"),
+                .expect("encrypted replica-backed engine should create"),
         );
-        service
+        engine
             .ensure_tenant_exists_async(tenant_id.clone())
             .await
             .expect("tenant should lazy load through the encrypted replica provider");
-        let documents = service
+        let documents = engine
             .query_documents_async(tenant_id.clone(), query_for("tasks"))
             .await
             .expect("encrypted replica-backed query should succeed");
@@ -546,13 +546,13 @@ async fn encrypted_libsql_replica_config_reads_seeded_remote_state_and_reopens_e
         );
         assert_sqlite_file_is_not_plaintext_header(&replica_path);
 
-        service.quiesce().await;
-        drop(service);
+        engine.quiesce().await;
+        drop(engine);
 
         let reopened = Arc::new(
-            Service::new_with_persistence_config(service_config)
+            Engine::new_with_persistence_config(engine_config)
                 .await
-                .expect("encrypted replica-backed service should reopen"),
+                .expect("encrypted replica-backed engine should reopen"),
         );
         let reopened_documents = reopened
             .query_documents_async(tenant_id.clone(), query_for("tasks"))
@@ -576,15 +576,15 @@ async fn encrypted_libsql_replica_config_reads_seeded_remote_state_and_reopens_e
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(libsql_replica_provider)]
 async fn libsql_replica_collection_group_queries_use_path_binding_metadata() {
-    with_libsql_replica_service_config(|service_config, _provider_config| async move {
+    with_libsql_replica_engine_config(|engine_config, _provider_config| async move {
         let tenant_id =
             TenantId::new("libsql-replica-collection-group").expect("tenant id should build");
-        let service = Arc::new(
-            Service::new_with_persistence_config(service_config)
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config)
                 .await
-                .expect("replica-backed service should create"),
+                .expect("replica-backed engine should create"),
         );
-        service
+        engine
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
@@ -593,7 +593,7 @@ async fn libsql_replica_collection_group_queries_use_path_binding_metadata() {
         let nested_table = TableName::new("landmarks_nested").expect("table name should build");
         let other_table = TableName::new("landmarks_other").expect("table name should build");
         for table in [&direct_table, &nested_table, &other_table] {
-            service
+            engine
                 .set_table_schema_async(
                     tenant_id.clone(),
                     TableSchema {
@@ -615,7 +615,7 @@ async fn libsql_replica_collection_group_queries_use_path_binding_metadata() {
         }
 
         seed_bound_collection_group_document(
-            &service,
+            &engine,
             &tenant_id,
             direct_table.clone(),
             "aa-top",
@@ -623,7 +623,7 @@ async fn libsql_replica_collection_group_queries_use_path_binding_metadata() {
             [("rank", json!(1))],
         );
         seed_bound_collection_group_document(
-            &service,
+            &engine,
             &tenant_id,
             direct_table.clone(),
             "bb-top",
@@ -631,7 +631,7 @@ async fn libsql_replica_collection_group_queries_use_path_binding_metadata() {
             [("rank", json!(2))],
         );
         seed_bound_collection_group_document(
-            &service,
+            &engine,
             &tenant_id,
             nested_table.clone(),
             "zz-top",
@@ -639,7 +639,7 @@ async fn libsql_replica_collection_group_queries_use_path_binding_metadata() {
             [("rank", json!(3))],
         );
         seed_bound_collection_group_document(
-            &service,
+            &engine,
             &tenant_id,
             other_table,
             "cc-top",
@@ -647,7 +647,7 @@ async fn libsql_replica_collection_group_queries_use_path_binding_metadata() {
             [("rank", json!(4))],
         );
 
-        let rows = service
+        let rows = engine
             .query_collection_group_documents_structured_with_principal_cancellable(
                 &tenant_id,
                 &CollectionName::new("landmarks").expect("collection group should parse"),
@@ -682,27 +682,27 @@ async fn libsql_replica_collection_group_queries_use_path_binding_metadata() {
             "libsql collection-group queries should use the persisted path bindings and full document-path cursors"
         );
 
-        service.quiesce().await;
+        engine.quiesce().await;
     })
     .await;
 }
 
-async fn with_libsql_replica_service_config<F, Fut>(test: F)
+async fn with_libsql_replica_engine_config<F, Fut>(test: F)
 where
-    F: FnOnce(ServicePersistenceConfig, LibsqlReplicaProviderConfig) -> Fut,
+    F: FnOnce(EnginePersistenceConfig, LibsqlReplicaProviderConfig) -> Fut,
     Fut: Future<Output = ()>,
 {
-    with_shared_libsql_replica_service_configs(
-        |service_config, _unused, provider_config| async move {
-            test(service_config, provider_config).await;
+    with_shared_libsql_replica_engine_configs(
+        |engine_config, _unused, provider_config| async move {
+            test(engine_config, provider_config).await;
         },
     )
     .await;
 }
 
-async fn with_encrypted_libsql_replica_service_config<F, Fut>(test: F)
+async fn with_encrypted_libsql_replica_engine_config<F, Fut>(test: F)
 where
-    F: FnOnce(ServicePersistenceConfig, LibsqlReplicaProviderConfig) -> Fut,
+    F: FnOnce(EnginePersistenceConfig, LibsqlReplicaProviderConfig) -> Fut,
     Fut: Future<Output = ()>,
 {
     let connection = match test_connection().await {
@@ -729,7 +729,7 @@ where
         encryption_provider: None,
     };
 
-    let service_config = ServicePersistenceConfig {
+    let engine_config = EnginePersistenceConfig {
         tenant_provider: TenantProviderConfig {
             dialect: PersistenceDialect::Sqlite,
             topology: PersistenceTopology::ExternalPrimaryWithReplicas,
@@ -752,7 +752,7 @@ where
         )),
     };
 
-    test(service_config, provider_config.clone()).await;
+    test(engine_config, provider_config.clone()).await;
 
     LibsqlReplicaProvider::connect(provider_config)
         .await
@@ -763,13 +763,9 @@ where
     drop(connection);
 }
 
-async fn with_shared_libsql_replica_service_configs<F, Fut>(test: F)
+async fn with_shared_libsql_replica_engine_configs<F, Fut>(test: F)
 where
-    F: FnOnce(
-        ServicePersistenceConfig,
-        ServicePersistenceConfig,
-        LibsqlReplicaProviderConfig,
-    ) -> Fut,
+    F: FnOnce(EnginePersistenceConfig, EnginePersistenceConfig, LibsqlReplicaProviderConfig) -> Fut,
     Fut: Future<Output = ()>,
 {
     let connection = match test_connection().await {
@@ -795,7 +791,7 @@ where
         encryption_provider: None,
     };
 
-    let service_config_a = ServicePersistenceConfig {
+    let engine_config_a = EnginePersistenceConfig {
         tenant_provider: TenantProviderConfig {
             dialect: PersistenceDialect::Sqlite,
             topology: PersistenceTopology::ExternalPrimaryWithReplicas,
@@ -815,20 +811,20 @@ where
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_a.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
     };
-    let service_config_b = ServicePersistenceConfig {
+    let engine_config_b = EnginePersistenceConfig {
         tenant_provider: TenantProviderConfig {
             routing: TenantRoutingConfig::NamespacePerTenant {
                 metadata_namespace,
                 tenant_namespace_prefix,
                 replica_cache_dir: replica_cache_dir_b.path().to_path_buf(),
             },
-            ..service_config_a.tenant_provider.clone()
+            ..engine_config_a.tenant_provider.clone()
         },
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_b.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
     };
 
-    test(service_config_a, service_config_b, provider_config.clone()).await;
+    test(engine_config_a, engine_config_b, provider_config.clone()).await;
 
     LibsqlReplicaProvider::connect(provider_config)
         .await
@@ -1014,7 +1010,7 @@ fn allocate_host_port() -> u16 {
 }
 
 fn seed_bound_collection_group_document(
-    service: &Arc<Service>,
+    engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: TableName,
     document_id: &str,
@@ -1039,7 +1035,7 @@ fn seed_bound_collection_group_document(
         transforms: Vec::new(),
     }])
     .expect("seed write batch should build");
-    service
+    engine
         .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
         .expect("seed execution unit should begin")
         .execute_atomic_write_batch(batch)

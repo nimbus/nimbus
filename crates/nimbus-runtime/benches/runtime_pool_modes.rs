@@ -356,7 +356,7 @@ impl AsyncHostBatchScenario {
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
-    sessionId: `${request.kind}:${request.function_name}`,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
   });
   const host = await ctx.db.get("messages", "doc-1");
   return {

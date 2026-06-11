@@ -2,11 +2,22 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(test)]
+use std::sync::{Condvar, Mutex};
+#[cfg(test)]
+use std::time::Instant;
 
 use nimbus_core::{DependencySet, PrincipalContext, Query, SequenceNumber};
 use tokio::sync::mpsc;
 
 use super::delivery::{SubscriptionDelivery, SubscriptionUpdate};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SubscriptionPublishResult {
+    Delivered,
+    Stale,
+    Missing,
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct Subscription {
@@ -58,6 +69,102 @@ impl SubscriptionRegistration {
 pub(super) struct SubscriptionRegistryState {
     pub(super) next_id: AtomicU64,
     pub(super) subscriptions: RwLock<HashMap<u64, Subscription>>,
+    #[cfg(test)]
+    delivery_publish_pause: Arc<SubscriptionDeliveryPublishPauseState>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub(crate) struct SubscriptionDeliveryPublishPauseHandle {
+    state: Arc<SubscriptionDeliveryPublishPauseState>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct SubscriptionDeliveryPublishPauseControl {
+    armed: bool,
+    entered_sequence: Option<SequenceNumber>,
+    released: bool,
+}
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub(super) struct SubscriptionDeliveryPublishPauseState {
+    control: Mutex<SubscriptionDeliveryPublishPauseControl>,
+    condvar: Condvar,
+}
+
+#[cfg(test)]
+impl SubscriptionDeliveryPublishPauseHandle {
+    pub(crate) fn arm_next_publish(&self) {
+        let mut control = self
+            .state
+            .control
+            .lock()
+            .expect("subscription delivery publish pause lock should not be poisoned");
+        control.armed = true;
+        control.entered_sequence = None;
+        control.released = false;
+    }
+
+    pub(crate) fn wait_until_entered(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Option<SequenceNumber> {
+        let deadline = Instant::now() + timeout;
+        let mut control = self
+            .state
+            .control
+            .lock()
+            .expect("subscription delivery publish pause lock should not be poisoned");
+        while control.armed && control.entered_sequence.is_none() {
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                return control.entered_sequence;
+            };
+            let (next_control, wait_result) = self
+                .state
+                .condvar
+                .wait_timeout(control, remaining)
+                .expect("subscription delivery publish pause wait should not be poisoned");
+            control = next_control;
+            if wait_result.timed_out() {
+                return control.entered_sequence;
+            }
+        }
+        control.entered_sequence
+    }
+
+    pub(crate) fn release(&self) {
+        let mut control = self
+            .state
+            .control
+            .lock()
+            .expect("subscription delivery publish pause lock should not be poisoned");
+        control.released = true;
+        self.state.condvar.notify_all();
+    }
+}
+
+#[cfg(test)]
+impl SubscriptionDeliveryPublishPauseState {
+    fn wait_if_armed(&self, sequence: SequenceNumber) {
+        let mut control = self
+            .control
+            .lock()
+            .expect("subscription delivery publish pause lock should not be poisoned");
+        if !control.armed || control.entered_sequence.is_some() {
+            return;
+        }
+        control.entered_sequence = Some(sequence);
+        self.condvar.notify_all();
+        while !control.released {
+            control = self
+                .condvar
+                .wait(control)
+                .expect("subscription delivery publish pause wait should not be poisoned");
+        }
+        *control = SubscriptionDeliveryPublishPauseControl::default();
+    }
 }
 
 impl SubscriptionRegistryState {
@@ -65,6 +172,8 @@ impl SubscriptionRegistryState {
         Self {
             next_id: AtomicU64::new(1),
             subscriptions: RwLock::new(HashMap::new()),
+            #[cfg(test)]
+            delivery_publish_pause: Arc::new(SubscriptionDeliveryPublishPauseState::default()),
         }
     }
 
@@ -189,23 +298,57 @@ impl SubscriptionRegistry {
             id: subscription.id,
             query: subscription.query,
             principal: subscription.principal,
-            sender: subscription.sender,
             last_delivered_sequence: subscription.last_delivered_sequence,
         })
     }
 
-    pub(crate) fn record_delivery(
+    #[cfg(test)]
+    pub(crate) fn delivery_publish_pause_handle(&self) -> SubscriptionDeliveryPublishPauseHandle {
+        SubscriptionDeliveryPublishPauseHandle {
+            state: self.state.delivery_publish_pause.clone(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn wait_before_delivery_publish_for_testing(&self, sequence: SequenceNumber) {
+        self.state.delivery_publish_pause.wait_if_armed(sequence);
+    }
+
+    pub(super) fn publish_delivery_update(
         &self,
         subscription_id: u64,
         delivered_sequence: SequenceNumber,
-        dependencies: DependencySet,
-    ) {
-        self.update_subscription(subscription_id, |subscription| {
-            subscription.dependencies = dependencies;
+        update: SubscriptionUpdate,
+        dependencies: Option<DependencySet>,
+    ) -> SubscriptionPublishResult {
+        let mut subscriptions = self
+            .state
+            .subscriptions
+            .write()
+            .expect("subscription lock should not be poisoned");
+
+        let Some(subscription) = subscriptions.get_mut(&subscription_id) else {
+            return SubscriptionPublishResult::Missing;
+        };
+        if !subscription.active {
+            return SubscriptionPublishResult::Missing;
+        }
+        if subscription.last_delivered_sequence.load(Ordering::Acquire) >= delivered_sequence.0 {
+            return SubscriptionPublishResult::Stale;
+        }
+
+        if subscription.sender.try_send(update).is_ok() {
+            if let Some(dependencies) = dependencies {
+                subscription.dependencies = dependencies;
+            }
             subscription
                 .last_delivered_sequence
                 .store(delivered_sequence.0, Ordering::Release);
-        });
+            SubscriptionPublishResult::Delivered
+        } else {
+            subscriptions.remove(&subscription_id);
+            SubscriptionPublishResult::Missing
+        }
     }
 }
 
@@ -220,8 +363,9 @@ mod tests {
     use nimbus_core::{PrincipalContext, Query, SequenceNumber, TableName};
     use tokio::sync::mpsc;
 
-    use super::SubscriptionRegistry;
+    use super::{SubscriptionPublishResult, SubscriptionRegistry};
     use crate::subscriptions::DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY;
+    use crate::subscriptions::SubscriptionUpdate;
 
     #[test]
     fn dropping_registration_unregisters_subscription() {
@@ -272,5 +416,60 @@ mod tests {
             .expect("activated subscription should be available for delivery");
         assert!(delivery.is_stale_for_sequence(SequenceNumber(7)));
         assert!(!delivery.is_stale_for_sequence(SequenceNumber(8)));
+    }
+
+    #[test]
+    fn publishing_rechecks_staleness_before_sending_update() {
+        let registry = SubscriptionRegistry::new();
+        let (tx, mut rx) = mpsc::channel(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
+        let registration = registry.register(
+            Query {
+                table: TableName::new("tasks").expect("table name should be valid"),
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+            PrincipalContext::anonymous(),
+            "policy-v1".to_string(),
+            tx,
+            true,
+        );
+
+        assert_eq!(
+            registry.publish_delivery_update(
+                registration.id(),
+                SequenceNumber(9),
+                SubscriptionUpdate::Error {
+                    subscription_id: registration.id(),
+                    request_id: None,
+                    message: "newer".to_string(),
+                },
+                None,
+            ),
+            SubscriptionPublishResult::Delivered
+        );
+        assert_eq!(
+            registry.publish_delivery_update(
+                registration.id(),
+                SequenceNumber(8),
+                SubscriptionUpdate::Error {
+                    subscription_id: registration.id(),
+                    request_id: None,
+                    message: "older".to_string(),
+                },
+                None,
+            ),
+            SubscriptionPublishResult::Stale
+        );
+
+        let delivered = rx.try_recv().expect("newer update should be delivered");
+        assert!(matches!(
+            delivered,
+            SubscriptionUpdate::Error { message, .. } if message == "newer"
+        ));
+        assert!(
+            rx.try_recv().is_err(),
+            "stale older update must not reach the receiver"
+        );
     }
 }

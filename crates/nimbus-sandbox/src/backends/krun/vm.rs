@@ -3,8 +3,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
-use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -12,11 +11,20 @@ use ulid::Ulid;
 
 use super::bundle::{KrunBundleLayout, KrunBundleMount, KrunBundleOptions, write_bundle_config};
 use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
+use crate::backends::conmon::lifecycle::{
+    RuntimeStatusProbe, configured_stop_signal, configured_stop_timeout,
+    detect_runtime_status as detect_conmon_runtime_status, ensure_linux_host, now_millis,
+    read_exit_code, read_pid, remove_if_exists, restart_backoff_delay,
+    restart_policy_allows_restart, run_status_checked, signal_process, spawn_background,
+    wait_for_path, wait_for_runtime_state,
+};
+use crate::backends::conmon::spec_resolve::{
+    merge_env_overrides, resolve_process_spec, resolve_root_spec, slugify,
+};
 use crate::backends::oci::buildah::{
     BuildahCli, ImageHealthcheck, MountedRootfsSession, OciExposedPort, OciImageLaunchDefaults,
 };
 use crate::backends::oci::builder::OciDockerfileBuilder;
-use crate::backends::oci::command::CommandSpec;
 use crate::backends::oci::conmon::{
     OciConmonConfig, OciConmonLaunchPlan, OciConmonLayout, build_launch_plan,
 };
@@ -28,10 +36,9 @@ use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
-use crate::process::pid_is_alive;
 use crate::spec::{
-    SandboxBuildLaunchSpec, SandboxImageLaunchSpec, SandboxImageProcessOverrides,
-    SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxSpec,
+    SandboxOciImageSource, SandboxResourceQuotaPolicy, SandboxRootSpec, SandboxRootfsSpec,
+    SandboxSpec, resolve_process_without_image_defaults,
 };
 
 mod launch;
@@ -39,12 +46,7 @@ mod lifecycle;
 mod readiness;
 
 #[cfg(test)]
-use self::launch::{desired_krun_vm_config, krun_vm_config_path, parse_guest_user, slugify};
-#[cfg(test)]
-use self::lifecycle::{
-    configured_stop_signal, configured_stop_timeout, restart_backoff_delay,
-    restart_policy_allows_restart,
-};
+use self::launch::{desired_krun_vm_config, krun_vm_config_path, parse_guest_user};
 #[cfg(test)]
 use self::readiness::{
     probe_target_ready, readiness_probe_target, running_status, visible_published_endpoints,
@@ -59,8 +61,6 @@ const DEFAULT_PUBLISHED_PORT_END: u16 = 16_000;
 const DEFAULT_START_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_STOP_TIMEOUT_SECS: u64 = 5;
 const DEFAULT_READINESS_PROBE_TIMEOUT_MILLIS: u64 = 1_000;
-const DEFAULT_RESTART_BACKOFF_INITIAL_MILLIS: u64 = 1_000;
-const DEFAULT_RESTART_BACKOFF_MAX_MILLIS: u64 = 60_000;
 const KRUN_VM_CONFIG_FILENAME: &str = ".krun_vm.json";
 const GUEST_USER_HELPER_BINARY_NAME: &str = "nimbus-guest-user-switch";
 const GUEST_USER_HELPER_GUEST_ROOT: &str = "/.nimbus";
@@ -169,26 +169,6 @@ impl KrunSandboxBackend {
         self.finish_start(launch_plan)
     }
 
-    fn start_from_image_sync(&self, launch: SandboxImageLaunchSpec) -> Result<SandboxHandle> {
-        let launch_plan = self.plan_start_from_image(
-            &launch.spec,
-            &launch.image_reference,
-            &launch.process_overrides,
-        )?;
-        self.finish_start(launch_plan)
-    }
-
-    fn start_from_build_sync(&self, launch: SandboxBuildLaunchSpec) -> Result<SandboxHandle> {
-        let launch_plan = self.plan_start_from_build(
-            &launch.spec,
-            &launch.image_name,
-            &launch.dockerfile_path,
-            &launch.context_path,
-            &launch.process_overrides,
-        )?;
-        self.finish_start(launch_plan)
-    }
-
     fn finish_start(&self, launch_plan: KrunLaunchPlan) -> Result<SandboxHandle> {
         let mut manifest = launch_plan.manifest;
         self.materialize_auto_port_bindings(&mut manifest)?;
@@ -215,16 +195,6 @@ impl KrunSandboxBackend {
             self.config.resource_quota_policy.clone(),
         )
     }
-
-    pub fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        let backend = self.clone();
-        Box::pin(async move { backend.start_from_image_sync(launch) })
-    }
-
-    pub fn start_from_build(&self, launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        let backend = self.clone();
-        Box::pin(async move { backend.start_from_build_sync(launch) })
-    }
 }
 
 impl SandboxBackend for KrunSandboxBackend {
@@ -235,16 +205,6 @@ impl SandboxBackend for KrunSandboxBackend {
     fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
         let backend = self.clone();
         Box::pin(async move { backend.start_sync(spec) })
-    }
-
-    fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        let backend = self.clone();
-        Box::pin(async move { backend.start_from_image_sync(launch) })
-    }
-
-    fn start_from_build(&self, launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
-        let backend = self.clone();
-        Box::pin(async move { backend.start_from_build_sync(launch) })
     }
 
     fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
@@ -287,11 +247,6 @@ struct KrunSandboxManifest {
     launch_mode: KrunLaunchMode,
     shutdown_requested: bool,
     status: SandboxStatus,
-}
-
-#[derive(Debug, Deserialize)]
-struct RuntimeStatePayload {
-    status: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the CI PR-Wall Sub-15 plan
-# (`docs/plans/ci-pr-wall-sub-15-plan.md`).
+# (`docs/private/plans/ci-pr-wall-sub-15-plan.md`).
 #
 # Exits 0 iff every condition in the plan's Completion Gate is satisfied.
 # Ships in PW0 so /goal is verifiable from day one; PW1-PW5 progressively
@@ -13,16 +13,16 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN_ACTIVE="docs/plans/ci-pr-wall-sub-15-plan.md"
-PLAN_ARCHIVED="docs/plans/archive/ci-pr-wall-sub-15-plan.md"
+PLAN_ACTIVE="docs/private/plans/ci-pr-wall-sub-15-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/ci-pr-wall-sub-15-plan.md"
 AGENTS_MD="CLAUDE.md"
-PROOF_DIR="docs/plans/proof/ci-pr-wall-sub-15"
+PROOF_DIR="docs/private/plans/proof/ci-pr-wall-sub-15"
 PROOF_PW0="${PROOF_DIR}/pw0-baseline.md"
 PROOF_PW5="${PROOF_DIR}/pw5-green-proof.md"
 
 CI_WF=".github/workflows/ci.yml"
 COVERAGE_WF=".github/workflows/coverage.yml"
-PR_WALL_DOC="docs/operating/ci-pr-wall.md"
+PR_WALL_DOC="docs/private/operating/ci-pr-wall.md"
 
 PASS=0
 FAIL=0
@@ -225,7 +225,7 @@ if [ -f "${CI_WF}" ]; then
       pass "warm-sccache retained with PW4c rationale comment"
     else
       fail "warm-sccache retained without PW4c retention pointer" \
-           "Add a '# see docs/plans/proof/ci-pr-wall-sub-15/pw4c-warm-sccache-retained.md' comment near the warm-sccache: job"
+           "Add a '# see docs/private/plans/proof/ci-pr-wall-sub-15/pw4c-warm-sccache-retained.md' comment near the warm-sccache: job"
     fi
   fi
 else
@@ -275,7 +275,7 @@ else
 fi
 
 # 9. Canonical contract doc exists with required sections.
-step 9 "docs/operating/ci-pr-wall.md exists with Target / Pole attacks / Retain-retire-warm-sccache sections"
+step 9 "docs/private/operating/ci-pr-wall.md exists with Target / Pole attacks / Retain-retire-warm-sccache sections"
 if [ ! -f "${PR_WALL_DOC}" ]; then
   fail "${PR_WALL_DOC} missing" "Expected canonical contract page"
 else

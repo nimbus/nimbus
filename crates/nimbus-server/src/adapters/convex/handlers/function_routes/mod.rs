@@ -30,7 +30,7 @@ impl RunTrace {
 
     async fn record(
         self,
-        service: &Arc<nimbus_engine::Service>,
+        service: &Arc<nimbus_engine::Engine>,
         tenant_id: &TenantId,
         status: &str,
         error: Option<&str>,

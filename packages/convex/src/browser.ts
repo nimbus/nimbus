@@ -2,13 +2,13 @@ import {
   NimbusClient,
   NimbusHttpClient,
   NimbusReactClient,
-} from "nimbus/browser";
+} from "@nimbus/nimbus/browser";
 import type {
   AuthTokenFetcher,
   ConnectionState,
   Unsubscribe,
   WebSocketConstructor,
-} from "nimbus/browser";
+} from "@nimbus/nimbus/browser";
 import type {
   ConvexActionReference,
   ConvexMutationReference,
@@ -40,7 +40,7 @@ export type {
   ConnectionState,
   Unsubscribe,
   WebSocketConstructor,
-} from "nimbus/browser";
+} from "@nimbus/nimbus/browser";
 
 type FetchLike = typeof globalThis.fetch;
 

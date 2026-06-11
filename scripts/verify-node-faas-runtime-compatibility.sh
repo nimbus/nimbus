@@ -66,18 +66,18 @@ from pathlib import Path
 repo = Path.cwd()
 errors: list[str] = []
 
-active_plan = repo / "docs/plans/node-faas-runtime-compatibility-plan.md"
-archived_plan = repo / "docs/plans/archive/node-faas-runtime-compatibility-plan.md"
-plan_readme = repo / "docs/plans/README.md"
-proof_root = repo / "docs/plans/proof/node-faas-runtime-compatibility"
+active_plan = repo / "docs/private/plans/node-faas-runtime-compatibility-plan.md"
+archived_plan = repo / "docs/private/plans/archive/node-faas-runtime-compatibility-plan.md"
+plan_readme = repo / "docs/private/plans/README.md"
+proof_root = repo / "docs/private/plans/proof/node-faas-runtime-compatibility"
 proof_readme = proof_root / "README.md"
-research = repo / "docs/plans/research/node-faas-runtime-compatibility-2026.md"
-faas_profile = repo / "docs/architecture/runtime/node-faas-compatibility-profile.json"
-release_train = repo / "docs/architecture/runtime/node-lts-compat/node-release-train.json"
-compat_doc = repo / "docs/runtimes/nodejs/compatibility.md"
-api_reference = repo / "docs/runtimes/nodejs/reference/node-apis.md"
-package_reference = repo / "docs/runtimes/nodejs/reference/packages.md"
-fundamentals = repo / "docs/runtimes/nodejs/fundamentals.md"
+research = repo / "docs/private/plans/research/node-faas-runtime-compatibility-2026.md"
+faas_profile = repo / "docs/private/architecture/runtime/node-faas-compatibility-profile.json"
+release_train = repo / "docs/private/architecture/runtime/node-lts-compat/node-release-train.json"
+compat_doc = repo / "docs/private/staging/runtimes/nodejs/compatibility.md"
+api_reference = repo / "docs/private/staging/runtimes/nodejs/reference/node-apis.md"
+package_reference = repo / "docs/private/staging/runtimes/nodejs/reference/packages.md"
+fundamentals = repo / "docs/private/staging/runtimes/nodejs/fundamentals.md"
 ci_workflow = repo / ".github/workflows/ci.yml"
 nightly_workflow = repo / ".github/workflows/node-compat-nightly.yml"
 
@@ -131,13 +131,13 @@ for idx in range(14):
         errors.append(f"proof README does not list {expected_proofs[idx]}")
 if "| 2026-05-28 | NFRC13 | done |" not in plan_text:
     errors.append("execution log is missing the NFRC13 done row")
-if "docs/plans/node-faas-runtime-compatibility-plan.md" in plan_index_text:
+if "docs/private/plans/node-faas-runtime-compatibility-plan.md" in plan_index_text:
     errors.append("plans index still routes to the active Node FaaS plan")
-if "docs/plans/archive/node-faas-runtime-compatibility-plan.md" not in plan_index_text:
+if "docs/private/plans/archive/node-faas-runtime-compatibility-plan.md" not in plan_index_text:
     errors.append("plans index does not list the archived Node FaaS baseline")
 
 profile = json.loads(faas_profile.read_text(encoding="utf-8"))
-if profile.get("owning_plan") != "docs/plans/archive/node-faas-runtime-compatibility-plan.md":
+if profile.get("owning_plan") != "docs/private/plans/archive/node-faas-runtime-compatibility-plan.md":
     errors.append("FaaS profile owning_plan does not point at archived plan")
 lanes = {lane["lane"]: lane for lane in profile.get("lane_targets", [])}
 expected_lanes = {

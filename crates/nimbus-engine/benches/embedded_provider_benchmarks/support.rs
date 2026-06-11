@@ -58,18 +58,18 @@ where
     Ok(samples)
 }
 
-pub(super) async fn quiesce_service(service: &Arc<Service>, context: &str) -> BenchResult<()> {
+pub(super) async fn quiesce_engine(engine: &Arc<Engine>, context: &str) -> BenchResult<()> {
     let timeout_secs = read_u64_override("NIMBUS_BENCH_QUIESCE_TIMEOUT_SECS", QUIESCE_TIMEOUT_SECS);
     eprintln!(
         "  quiesce-start context={context} timeout={}s",
         timeout_secs
     );
     let started = Instant::now();
-    if tokio::time::timeout(Duration::from_secs(timeout_secs), service.quiesce())
+    if tokio::time::timeout(Duration::from_secs(timeout_secs), engine.quiesce())
         .await
         .is_err()
     {
-        return Err(format!("service quiesce timed out during {context}").into());
+        return Err(format!("engine quiesce timed out during {context}").into());
     }
     eprintln!(
         "  quiesce-finished context={context} total={:?}",
@@ -78,23 +78,21 @@ pub(super) async fn quiesce_service(service: &Arc<Service>, context: &str) -> Be
     Ok(())
 }
 
-pub(super) async fn open_embedded_service(
+pub(super) async fn open_embedded_engine(
     data_dir: &Path,
     backend: EmbeddedProviderKind,
-) -> BenchResult<Arc<Service>> {
+) -> BenchResult<Arc<Engine>> {
     match encryption_mode() {
-        EncryptionMode::Disabled => Ok(Arc::new(Service::new_with_embedded_provider(
+        EncryptionMode::Disabled => Ok(Arc::new(Engine::new_with_embedded_provider(
             data_dir, backend,
         )?)),
         EncryptionMode::TempMasterKeyFile => {
             let key_path = super::common::write_benchmark_master_key(data_dir)?;
-            let config = ServicePersistenceConfig::embedded(data_dir, backend)
+            let config = EnginePersistenceConfig::embedded(data_dir, backend)
                 .with_local_encryption(LocalEncryptionConfig::Enabled(
                     LocalKeyProviderConfig::MasterKeyFile(MasterKeyFileConfig { path: key_path }),
                 ));
-            Ok(Arc::new(
-                Service::new_with_persistence_config(config).await?,
-            ))
+            Ok(Arc::new(Engine::new_with_persistence_config(config).await?))
         }
     }
 }
@@ -102,7 +100,7 @@ pub(super) async fn open_embedded_service(
 pub(super) fn emit_cold_open_breakdown(
     workload: WorkloadKind,
     backend: EmbeddedProviderKind,
-    service_bootstrap: Duration,
+    engine_bootstrap: Duration,
     first_operation: Duration,
 ) {
     if std::env::var_os("NIMBUS_BENCH_COLD_OPEN_BREAKDOWN").is_none() {
@@ -110,12 +108,12 @@ pub(super) fn emit_cold_open_breakdown(
     }
 
     eprintln!(
-        "cold-open-breakdown workload={} backend={} service_bootstrap={:?} first_operation={:?} total={:?}",
+        "cold-open-breakdown workload={} backend={} engine_bootstrap={:?} first_operation={:?} total={:?}",
         workload.label(),
         provider_label(backend),
-        service_bootstrap,
+        engine_bootstrap,
         first_operation,
-        service_bootstrap + first_operation,
+        engine_bootstrap + first_operation,
     );
 }
 

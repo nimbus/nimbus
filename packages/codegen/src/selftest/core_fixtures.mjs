@@ -298,7 +298,7 @@ export const whoami = query({
 });
 `,
       "auth.config.ts": `
-import { AuthConfig } from "nimbus/server";
+import { AuthConfig } from "@nimbus/nimbus/server";
 
 export default {
   providers: [
@@ -332,7 +332,7 @@ async function testNimbusSourceRootFixture() {
     {
       "messages.ts": `
 import { query } from "./_generated/server";
-import { v } from "nimbus/values";
+import { v } from "@nimbus/nimbus/values";
 
 export const list = query({
   args: { channel: v.string() },
@@ -355,17 +355,17 @@ export const list = query({
     sourceDir: "nimbus",
   });
   assert.match(generatedApi, /messages:list/);
-  assert.match(generatedApi, /from "nimbus\/browser"/);
+  assert.match(generatedApi, /from "@nimbus\/nimbus\/browser"/);
 
   const generatedServer = await readGeneratedFile(appDir, "server.ts", {
     sourceDir: "nimbus",
   });
-  assert.match(generatedServer, /from "nimbus\/server"/);
+  assert.match(generatedServer, /from "@nimbus\/nimbus\/server"/);
 
   const generatedDataModel = await readGeneratedFile(appDir, "dataModel.d.ts", {
     sourceDir: "nimbus",
   });
-  assert.match(generatedDataModel, /from "nimbus\/values"/);
+  assert.match(generatedDataModel, /from "@nimbus\/nimbus\/values"/);
 
   const manifest = await readConvexJson(appDir, "functions.json");
   assert.equal(manifest.functions.length, 1);
@@ -421,7 +421,7 @@ export const ignored = defineQuery("messages:ignored", () => ({
     "utf8",
   );
   assert.match(generatedApi, /messages:selected/);
-  assert.match(generatedApi, /from "nimbus\/browser"/);
+  assert.match(generatedApi, /from "@nimbus\/nimbus\/browser"/);
   await assert.rejects(
     fs.readFile(path.join(appDir, "convex", "_generated", "api.ts"), "utf8"),
     { code: "ENOENT" },

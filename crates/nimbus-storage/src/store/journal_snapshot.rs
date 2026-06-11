@@ -2,16 +2,23 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 use nimbus_core::{
-    Document, DurableMutationRecord, Error, Result, Schema, SequenceNumber, TableId, TableName,
-    TableState,
+    CommitSequence, CommitTimestamp, Document, DurableMutationRecord, Error,
+    HistoricalReadErrorKind, HistoricalReadSnapshot, ReadTimestamp, Result, Schema, SequenceNumber,
+    TableId, TableName, TableState, Timestamp,
 };
 use redb::{ReadableTable, TableError};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
 use crate::keys::document_key;
 use crate::table_identity::{
     DEFAULT_TABLE_NAMESPACE, TableIdentitySnapshotEntry, deleting_table_namespace,
     hidden_table_namespace,
+};
+use crate::{
+    CURRENT_DOCUMENT_VERSION_STORAGE_FORMAT, CURRENT_INDEX_VERSION_STORAGE_FORMAT,
+    CURRENT_STORAGE_FORMAT_VERSION, RetentionGcConfig, StorageFormatVersion,
 };
 
 #[cfg(test)]
@@ -26,7 +33,7 @@ use super::{
     map_redb_error,
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MaterializedJournalSnapshot {
     pub version: u16,
     pub applied_sequence: SequenceNumber,
@@ -38,6 +45,27 @@ pub struct MaterializedJournalSnapshot {
 }
 
 pub(crate) const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 = 3;
+pub(crate) const POINT_IN_TIME_RESTORE_ARCHIVE_VERSION: u16 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PointInTimeRestoreTarget {
+    Sequence(SequenceNumber),
+    Timestamp(Timestamp),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PointInTimeRestoreArchive {
+    pub version: u16,
+    pub target_sequence: SequenceNumber,
+    pub target_timestamp: Timestamp,
+    pub base_snapshot: MaterializedJournalSnapshot,
+    pub journal_tail: Vec<DurableMutationRecord>,
+    pub storage_format_version: StorageFormatVersion,
+    pub document_version_storage_format: StorageFormatVersion,
+    pub index_version_storage_format: StorageFormatVersion,
+    pub target_fingerprint: String,
+}
 
 impl MaterializedJournalSnapshot {
     pub(crate) fn validate(&self) -> Result<()> {
@@ -141,6 +169,114 @@ impl MaterializedJournalSnapshot {
                     table
                 ))
             })
+    }
+
+    pub fn canonical_fingerprint(&self) -> Result<String> {
+        self.validate()?;
+        let mut canonical = self.clone();
+        canonical.table_identities.sort_by(|left, right| {
+            left.namespace
+                .cmp(&right.namespace)
+                .then_with(|| left.table.as_str().cmp(right.table.as_str()))
+                .then_with(|| left.table_id.as_str().cmp(right.table_id.as_str()))
+                .then_with(|| left.state.cmp(&right.state))
+        });
+        canonical.documents.sort_by(|left, right| {
+            left.table
+                .as_str()
+                .cmp(right.table.as_str())
+                .then_with(|| left.id.to_string().cmp(&right.id.to_string()))
+        });
+        canonical.scheduled_execution_ids.sort_unstable();
+        let payload = serde_json::to_vec(&canonical)
+            .map_err(|error| Error::Serialization(error.to_string()))?;
+        Ok(format!("{:x}", Sha256::digest(payload.as_slice())))
+    }
+
+    pub(crate) fn empty_for_point_in_time_base() -> Self {
+        Self {
+            version: MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
+            applied_sequence: SequenceNumber(0),
+            durable_head: SequenceNumber(0),
+            table_identities: Vec::new(),
+            schema: Schema::default(),
+            documents: Vec::new(),
+            scheduled_execution_ids: Vec::new(),
+        }
+    }
+}
+
+impl PointInTimeRestoreArchive {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.version != POINT_IN_TIME_RESTORE_ARCHIVE_VERSION {
+            return Err(Error::InvalidInput(format!(
+                "unsupported point-in-time restore archive version {}",
+                self.version
+            )));
+        }
+        if self.storage_format_version != CURRENT_STORAGE_FORMAT_VERSION {
+            return Err(Error::historical_read(
+                HistoricalReadErrorKind::FormatMismatch,
+                format!(
+                    "point-in-time archive storage format {:?} does not match current {:?}",
+                    self.storage_format_version, CURRENT_STORAGE_FORMAT_VERSION
+                ),
+            ));
+        }
+        if self.document_version_storage_format != CURRENT_DOCUMENT_VERSION_STORAGE_FORMAT {
+            return Err(Error::historical_read(
+                HistoricalReadErrorKind::FormatMismatch,
+                format!(
+                    "point-in-time archive document-version format {:?} does not match current {:?}",
+                    self.document_version_storage_format, CURRENT_DOCUMENT_VERSION_STORAGE_FORMAT
+                ),
+            ));
+        }
+        if self.index_version_storage_format != CURRENT_INDEX_VERSION_STORAGE_FORMAT {
+            return Err(Error::historical_read(
+                HistoricalReadErrorKind::FormatMismatch,
+                format!(
+                    "point-in-time archive index-version format {:?} does not match current {:?}",
+                    self.index_version_storage_format, CURRENT_INDEX_VERSION_STORAGE_FORMAT
+                ),
+            ));
+        }
+        self.base_snapshot.validate()?;
+        if self.target_sequence.0 < self.base_snapshot.applied_sequence.0 {
+            return Err(Error::InvalidInput(format!(
+                "point-in-time target sequence {} is behind base snapshot sequence {}",
+                self.target_sequence.0, self.base_snapshot.applied_sequence.0
+            )));
+        }
+        let mut expected = self.base_snapshot.applied_sequence.0.saturating_add(1);
+        for record in &self.journal_tail {
+            record.validate_integrity()?;
+            if record.sequence.0 != expected {
+                return Err(Error::InvalidInput(format!(
+                    "point-in-time archive expected journal sequence {}, got {}",
+                    expected, record.sequence.0
+                )));
+            }
+            if record.sequence.0 > self.target_sequence.0 {
+                return Err(Error::InvalidInput(format!(
+                    "point-in-time archive journal sequence {} exceeds target {}",
+                    record.sequence.0, self.target_sequence.0
+                )));
+            }
+            expected = expected.saturating_add(1);
+        }
+        if self.target_sequence.0 > self.base_snapshot.applied_sequence.0
+            && self
+                .journal_tail
+                .last()
+                .is_none_or(|record| record.sequence != self.target_sequence)
+        {
+            return Err(Error::InvalidInput(format!(
+                "point-in-time archive is missing target sequence {}",
+                self.target_sequence.0
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -276,6 +412,47 @@ impl TenantStore {
         self.recover_durable_journal()
     }
 
+    pub fn export_point_in_time_restore_archive(
+        &self,
+        target: PointInTimeRestoreTarget,
+        retention_config: RetentionGcConfig,
+    ) -> Result<PointInTimeRestoreArchive> {
+        let records = self.read_durable_journal_from(SequenceNumber(1))?;
+        let progress = self.journal_progress()?;
+        let watermarks = self.retention_gc_watermarks(retention_config)?;
+        build_point_in_time_restore_archive(
+            target,
+            records,
+            progress.durable_head,
+            watermarks.document_versions.safe_prune_before,
+        )
+    }
+
+    pub fn import_point_in_time_restore_archive(
+        &self,
+        archive: &PointInTimeRestoreArchive,
+    ) -> Result<JournalProgress> {
+        archive.validate()?;
+        let progress = self.rebuild_materialized_journal_from_snapshot(
+            &archive.base_snapshot,
+            &archive.journal_tail,
+            Some(archive.target_sequence),
+        )?;
+        let restored_fingerprint = self
+            .export_materialized_journal_snapshot()?
+            .canonical_fingerprint()?;
+        if restored_fingerprint != archive.target_fingerprint {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Corruption,
+                format!(
+                    "point-in-time restore fingerprint mismatch: restored {} expected {}",
+                    restored_fingerprint, archive.target_fingerprint
+                ),
+            ));
+        }
+        Ok(progress)
+    }
+
     fn ensure_materialized_journal_restore_target_is_empty(&self) -> Result<()> {
         let snapshot = self.read_snapshot()?;
         let progress = snapshot.journal_progress()?;
@@ -292,6 +469,140 @@ impl TenantStore {
         }
         Ok(())
     }
+}
+
+pub(crate) fn resolve_point_in_time_target(
+    target: PointInTimeRestoreTarget,
+    records: &[DurableMutationRecord],
+    durable_head: SequenceNumber,
+) -> Result<(SequenceNumber, Timestamp)> {
+    match target {
+        PointInTimeRestoreTarget::Sequence(sequence) => {
+            if sequence.0 > durable_head.0 {
+                return Err(Error::InvalidInput(format!(
+                    "point-in-time target sequence {} is beyond durable head {}",
+                    sequence.0, durable_head.0
+                )));
+            }
+            let timestamp = if sequence.0 == 0 {
+                Timestamp(0)
+            } else {
+                records
+                    .iter()
+                    .find(|record| record.sequence == sequence)
+                    .map(|record| record.timestamp)
+                    .ok_or_else(|| {
+                        Error::historical_read(
+                            HistoricalReadErrorKind::TimestampOutOfRange,
+                            format!(
+                                "point-in-time target sequence {} is not retained",
+                                sequence.0
+                            ),
+                        )
+                    })?
+            };
+            Ok((sequence, timestamp))
+        }
+        PointInTimeRestoreTarget::Timestamp(timestamp) => {
+            let snapshot = HistoricalReadSnapshot::resolve_at_or_before(
+                ReadTimestamp::new(timestamp),
+                records.iter().map(|record| {
+                    (
+                        CommitTimestamp::new(record.timestamp),
+                        CommitSequence::new(record.sequence),
+                    )
+                }),
+            )?;
+            Ok((
+                snapshot.sequence().sequence(),
+                snapshot.commit_timestamp().timestamp(),
+            ))
+        }
+    }
+}
+
+pub(crate) fn build_point_in_time_restore_archive(
+    target: PointInTimeRestoreTarget,
+    records: Vec<DurableMutationRecord>,
+    durable_head: SequenceNumber,
+    retention_floor: SequenceNumber,
+) -> Result<PointInTimeRestoreArchive> {
+    let (target_sequence, target_timestamp) =
+        resolve_point_in_time_target(target, &records, durable_head)?;
+    if target_sequence.0 < retention_floor.0 {
+        return Err(Error::historical_read(
+            HistoricalReadErrorKind::RetentionExpired,
+            format!(
+                "point-in-time target sequence {} is older than retention floor {}",
+                target_sequence.0, retention_floor.0
+            ),
+        ));
+    }
+    let base_snapshot = MaterializedJournalSnapshot::empty_for_point_in_time_base();
+    let journal_tail = records
+        .into_iter()
+        .filter(|record| {
+            record.sequence.0 > base_snapshot.applied_sequence.0
+                && record.sequence.0 <= target_sequence.0
+        })
+        .collect::<Vec<_>>();
+    let target_fingerprint = materialized_snapshot_fingerprint_after_rebuild(
+        &base_snapshot,
+        &journal_tail,
+        target_sequence,
+    )?;
+
+    Ok(PointInTimeRestoreArchive {
+        version: POINT_IN_TIME_RESTORE_ARCHIVE_VERSION,
+        target_sequence,
+        target_timestamp,
+        base_snapshot,
+        journal_tail,
+        storage_format_version: CURRENT_STORAGE_FORMAT_VERSION,
+        document_version_storage_format: CURRENT_DOCUMENT_VERSION_STORAGE_FORMAT,
+        index_version_storage_format: CURRENT_INDEX_VERSION_STORAGE_FORMAT,
+        target_fingerprint,
+    })
+}
+
+pub(crate) fn validate_point_in_time_archive_for_journal_replay_import(
+    archive: &PointInTimeRestoreArchive,
+) -> Result<()> {
+    archive.validate()?;
+    validate_materialized_journal_replay_base_is_empty(&archive.base_snapshot)
+}
+
+pub(crate) fn validate_materialized_journal_replay_base_is_empty(
+    snapshot: &MaterializedJournalSnapshot,
+) -> Result<()> {
+    if snapshot.applied_sequence.0 != 0
+        || snapshot.durable_head.0 != 0
+        || !snapshot.table_identities.is_empty()
+        || !snapshot.schema.tables.is_empty()
+        || !snapshot.documents.is_empty()
+        || !snapshot.scheduled_execution_ids.is_empty()
+    {
+        return Err(Error::InvalidInput(
+            "journal-replay restore requires an empty sequence-0 materialized snapshot".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn materialized_snapshot_fingerprint_after_rebuild(
+    base_snapshot: &MaterializedJournalSnapshot,
+    journal_tail: &[DurableMutationRecord],
+    target_sequence: SequenceNumber,
+) -> Result<String> {
+    let restored = TenantStore::create_in_memory()?;
+    restored.rebuild_materialized_journal_from_snapshot(
+        base_snapshot,
+        journal_tail,
+        Some(target_sequence),
+    )?;
+    restored
+        .export_materialized_journal_snapshot()?
+        .canonical_fingerprint()
 }
 
 impl TenantReadSnapshot {

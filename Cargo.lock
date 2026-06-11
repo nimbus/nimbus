@@ -5866,6 +5866,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nimbus-assets"
+version = "0.1.33"
+dependencies = [
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+]
+
+[[package]]
 name = "nimbus-auth"
 version = "0.1.33"
 dependencies = [
@@ -5889,6 +5900,7 @@ dependencies = [
  "indicatif",
  "libc",
  "nimbus",
+ "nimbus-assets",
  "nimbus-machine",
  "nimbus-sandbox",
  "nimbus-server",
@@ -5897,7 +5909,6 @@ dependencies = [
  "open",
  "rand 0.8.5",
  "reqwest 0.12.28",
- "rust-embed",
  "semver",
  "serde",
  "serde_json",
@@ -5912,6 +5923,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
  "zstd",
 ]
 
@@ -5949,7 +5961,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tokio",
  "tracing",
 ]
 
@@ -6222,8 +6233,11 @@ dependencies = [
  "futures",
  "hmac 0.12.1",
  "http 1.4.0",
+ "hyper 1.9.0",
+ "hyper-util",
  "libc",
  "nimbus-artifacts",
+ "nimbus-assets",
  "nimbus-auth",
  "nimbus-bridge",
  "nimbus-cloud-functions",
@@ -6250,7 +6264,7 @@ dependencies = [
  "prost-types 0.13.5",
  "reqwest 0.12.28",
  "ring",
- "rust-embed",
+ "rustls-pki-types",
  "semver",
  "serde",
  "serde_json",
@@ -6260,6 +6274,7 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite",
  "tonic 0.13.1",
  "tonic-web",
@@ -6282,6 +6297,8 @@ dependencies = [
  "nimbus-tenant",
  "tempfile",
  "tokio",
+ "ulid",
+ "url",
 ]
 
 [[package]]

@@ -288,7 +288,7 @@ impl SqliteTenantStore {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
     ) -> Result<Option<CommitEntry>> {
-        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None)
+        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None, None)
     }
 
     pub fn apply_execution_unit_batch_with_origin(
@@ -296,6 +296,7 @@ impl SqliteTenantStore {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
         trigger_write_origin: Option<&TriggerWriteOrigin>,
+        commit_timestamp: Option<Timestamp>,
     ) -> Result<Option<CommitEntry>> {
         if writes.is_empty() && schedule_ops.is_empty() {
             return Err(Error::Internal(
@@ -305,6 +306,7 @@ impl SqliteTenantStore {
 
         let committed = self.execute_write(move |transaction| {
             transaction.set_trigger_write_origin(trigger_write_origin.cloned());
+            transaction.set_commit_timestamp(commit_timestamp);
             for write in writes {
                 transaction.apply_resolved_write(write)?;
             }
@@ -536,19 +538,20 @@ impl SqliteWriteTransaction {
         self.check_cancel()?;
         self.connection_mut()?
             .execute(
-                "INSERT INTO scheduled_jobs (id, data_json) VALUES (?1, ?2)",
-                params![job.id.to_string(), serialize_json(job)?],
+                "INSERT INTO scheduled_jobs (id, run_at, data_json) VALUES (?1, ?2, ?3)",
+                params![
+                    job.id.to_string(),
+                    scheduled_run_at_key(job.run_at),
+                    serialize_json(job)?
+                ],
             )
             .map_err(map_sqlite_error)?;
         Ok(())
     }
 
-    pub fn claim_due_jobs(&mut self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
+    pub fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
         self.check_cancel()?;
-        let due = load_scheduled_jobs_from_conn(self.connection_mut()?, "scheduled_jobs")?
-            .into_iter()
-            .filter(|job| job.run_at.0 <= now.0)
-            .collect::<Vec<_>>();
+        let due = load_due_scheduled_jobs_from_conn(self.connection_mut()?, now, max_jobs)?;
         for job in &due {
             self.check_cancel()?;
             self.connection_mut()?
@@ -631,8 +634,12 @@ impl SqliteWriteTransaction {
             job.run_at = now;
             self.connection_mut()?
                 .execute(
-                    "INSERT INTO scheduled_jobs (id, data_json) VALUES (?1, ?2)",
-                    params![job.id.to_string(), serialize_json(&job)?],
+                    "INSERT INTO scheduled_jobs (id, run_at, data_json) VALUES (?1, ?2, ?3)",
+                    params![
+                        job.id.to_string(),
+                        scheduled_run_at_key(job.run_at),
+                        serialize_json(&job)?
+                    ],
                 )
                 .map_err(map_sqlite_error)?;
             self.connection_mut()?
@@ -790,7 +797,7 @@ impl SqliteWriteTransaction {
         } else {
             Some(append_commit_entry(
                 &conn,
-                self.clock.now(),
+                self.commit_timestamp.unwrap_or_else(|| self.clock.now()),
                 commit_writes,
                 std::mem::take(&mut self.tenant_events),
             )?)
@@ -825,6 +832,10 @@ impl SqliteWriteTransaction {
 
     fn set_trigger_write_origin(&mut self, trigger_write_origin: Option<TriggerWriteOrigin>) {
         self.trigger_write_origin = trigger_write_origin;
+    }
+
+    fn set_commit_timestamp(&mut self, commit_timestamp: Option<Timestamp>) {
+        self.commit_timestamp = commit_timestamp;
     }
 
     fn record_commit_write(&mut self, mut write: WriteOp) {

@@ -1,6 +1,17 @@
 use super::raw::*;
 use super::*;
 
+const DURATION_UNITS: &[(&str, f64)] = &[
+    ("ns", 1.0),
+    ("us", 1_000.0),
+    ("µs", 1_000.0),
+    ("μs", 1_000.0),
+    ("ms", 1_000_000.0),
+    ("s", 1_000_000_000.0),
+    ("m", 60.0 * 1_000_000_000.0),
+    ("h", 60.0 * 60.0 * 1_000_000_000.0),
+];
+
 pub(super) fn resolve_ports(
     service_name: &str,
     ports: Vec<String>,
@@ -66,7 +77,7 @@ pub(super) fn parse_port_binding(
 
     if index > 0 {
         warnings.push(format!(
-            "ports[{index}]: additional exposed port {guest_port} will be available through ctx.services.<name>.endpoints"
+            "ports[{index}]: additional exposed port {guest_port} will be available through the declared service binding"
         ));
     }
 
@@ -251,12 +262,10 @@ pub(super) fn parse_compose_duration(label: &str, value: &str) -> Result<Duratio
         }
 
         let remaining = &trimmed[offset..];
-        let (unit, unit_nanos) = ["ns", "us", "µs", "μs", "ms", "s", "m", "h"]
-            .into_iter()
-            .find_map(|unit| {
-                remaining
-                    .strip_prefix(unit)
-                    .map(|_| (unit, duration_unit_nanos(unit)))
+        let (unit, unit_nanos) = DURATION_UNITS
+            .iter()
+            .find_map(|(unit, unit_nanos)| {
+                remaining.strip_prefix(unit).map(|_| (*unit, *unit_nanos))
             })
             .ok_or_else(|| {
                 Error::InvalidInput(format!(
@@ -274,18 +283,6 @@ pub(super) fn parse_compose_duration(label: &str, value: &str) -> Result<Duratio
     }
 
     Ok(Duration::from_nanos(total_nanos.round() as u64))
-}
-
-pub(super) fn duration_unit_nanos(unit: &str) -> f64 {
-    match unit {
-        "ns" => 1.0,
-        "us" | "µs" | "μs" => 1_000.0,
-        "ms" => 1_000_000.0,
-        "s" => 1_000_000_000.0,
-        "m" => 60.0 * 1_000_000_000.0,
-        "h" => 60.0 * 60.0 * 1_000_000_000.0,
-        _ => unreachable!("unsupported duration unit {unit}"),
-    }
 }
 
 pub(super) fn resolve_depends_on(

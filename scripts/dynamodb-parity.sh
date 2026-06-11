@@ -4,7 +4,7 @@
 # Runs the official-SDK scenario corpus against Nimbus and — when Docker is
 # available — against AWS DynamoDB Local, then reports the per-scenario result.
 # DynamoDB Local is the behavioral ground truth; any Nimbus deviation must be
-# either a fix or a recorded divergence in docs/adapters/dynamodb/divergences.md.
+# either a fix or a recorded divergence in docs/private/adapters/dynamodb/divergences.md.
 #
 # Lanes:
 #   * Nimbus lane (always): the in-process official-SDK parity runner
@@ -17,7 +17,7 @@
 #     silently skipped) with the next action, per the plan's parity policy.
 #
 # The committed classification of every scenario lives in
-# docs/plans/proof/dynamodb-adapter/parity-classification.md.
+# docs/private/plans/proof/dynamodb-adapter/parity-classification.md.
 
 set -u
 
@@ -68,7 +68,7 @@ echo
 echo "== Summary =="
 echo "  nimbus_lane=$([ "${nimbus_ok}" = 1 ] && echo pass || echo fail)"
 echo "  dynamodb_local_lane=${ddb_local}"
-echo "  classification: docs/plans/proof/dynamodb-adapter/parity-classification.md"
+echo "  classification: docs/private/plans/proof/dynamodb-adapter/parity-classification.md"
 
 [ "${nimbus_ok}" = 1 ] || exit 1
 exit 0

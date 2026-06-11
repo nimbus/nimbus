@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use super::{AppError, AppState};
 use crate::local_server::{
-    LocalServerAuditEvent, LocalServerRouteFamily, extract_required_bearer_token,
-    origin_from_headers,
+    LocalServerAuditEvent, LocalServerRouteFamily, authorize_standard_server_access,
+    extract_required_bearer_token, origin_from_headers,
 };
 
 #[derive(Debug, Serialize)]
@@ -71,8 +71,15 @@ pub(crate) async fn shutdown_system(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<ShutdownSystemResponse>, AppError> {
+    let local_server_security = state.local_server_security.as_ref().ok_or_else(|| {
+        AppError::unauthorized(
+            "system shutdown is unavailable because server access auth is not configured",
+        )
+    })?;
+    let auth_method =
+        authorize_standard_server_access(&headers, Some(local_server_security.as_ref()))?;
     if let Err(error) = nimbus_system::record_system_event_async(
-        &state.service,
+        &state.engine,
         "system",
         "info",
         "lifecycle",
@@ -90,7 +97,7 @@ pub(crate) async fn shutdown_system(
         route_family: LocalServerRouteFamily::NativeApi,
         tenant_id: None,
         auth_scope: "server_access",
-        auth_method: Some("local_admin_bearer_or_session"),
+        auth_method,
         success: true,
         origin: origin_from_headers(&headers),
         reason: "server.shutdown_requested".to_string(),

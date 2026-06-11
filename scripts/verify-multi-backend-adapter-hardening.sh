@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the Multi-Backend Multi-Adapter
-# Hardening plan (`docs/plans/multi-backend-adapter-hardening-plan.md`).
+# Hardening plan (`docs/private/plans/multi-backend-adapter-hardening-plan.md`).
 #
 # Ships in MBA0 so the plan can be audited from day one. Most conditions are
 # expected to fail until MBA1-MBA14 land.
@@ -12,9 +12,9 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN_ACTIVE="docs/plans/multi-backend-adapter-hardening-plan.md"
-PLAN_ARCHIVED="docs/plans/archive/multi-backend-adapter-hardening-plan.md"
-PROOF_DIR="docs/plans/proof/multi-backend-adapter-hardening"
+PLAN_ACTIVE="docs/private/plans/multi-backend-adapter-hardening-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/multi-backend-adapter-hardening-plan.md"
+PROOF_DIR="docs/private/plans/proof/multi-backend-adapter-hardening"
 AGENTS_MD="AGENTS.md"
 
 PASS=0
@@ -75,12 +75,12 @@ else
   fail "Plan or MBA0 proof missing" "$(printf '%s; ' "${DETAIL[@]}")"
 fi
 
-# 2. docs/technical-debt.md exists with >= 20 entries, seven fields, >= 5 categories.
+# 2. docs/private/technical-debt.md exists with >= 20 entries, seven fields, >= 5 categories.
 step 2 "Technical debt tracker exists and is structured"
-DEBT_DOC="docs/technical-debt.md"
+DEBT_DOC="docs/private/technical-debt.md"
 DEBT_SEED_PROOF="${PROOF_DIR}/mba1-technical-debt-seed.md"
 if [ ! -f "${DEBT_DOC}" ]; then
-  fail "docs/technical-debt.md missing" "MBA1 must create the debt tracker"
+  fail "docs/private/technical-debt.md missing" "MBA1 must create the debt tracker"
 else
   ENTRY_COUNT="$(grep -E '^\|[[:space:]]*[FCSTAPO]-[0-9]+' "${DEBT_DOC}" | line_count)"
   CATEGORY_COUNT="$(grep -E '^\|[[:space:]]*[FCSTAPO]-[0-9]+' "${DEBT_DOC}" \
@@ -254,7 +254,7 @@ fi
 
 # 8. Auth caching ADR exists.
 step 8 "Auth caching ADR exists"
-AUTH_ADRS=(docs/decisions/[0-9][0-9][0-9]-auth-caching-policy.md)
+AUTH_ADRS=(docs/private/decisions/[0-9][0-9][0-9]-auth-caching-policy.md)
 AUTH_PROOF="${PROOF_DIR}/mba6-auth-caching-adr.md"
 if [ -f "${AUTH_ADRS[0]}" ]; then
   AUTH_ADR="${AUTH_ADRS[0]}"
@@ -265,7 +265,7 @@ if [ -f "${AUTH_ADRS[0]}" ]; then
   fi
 else
   AUTH_ADR=""
-  fail "Auth caching ADR missing" "Expected docs/decisions/NNN-auth-caching-policy.md"
+  fail "Auth caching ADR missing" "Expected docs/private/decisions/NNN-auth-caching-policy.md"
 fi
 
 # 9. Auth cache references match ADR.
@@ -303,7 +303,7 @@ SQL_DETAIL=()
 SQL_PROOF="${PROOF_DIR}/mba7-sql-safety-adrs.md"
 [ ! -f "${SQL_PROOF}" ] && SQL_DETAIL+=("${SQL_PROOF} missing")
 for backend in sqlite postgres mysql libsql; do
-  if ! find docs/decisions -maxdepth 1 -type f -name "*${backend}*sql*.md" 2>/dev/null | grep -q .; then
+  if ! find docs/private/decisions -maxdepth 1 -type f -name "*${backend}*sql*.md" 2>/dev/null | grep -q .; then
     SQL_DETAIL+=("${backend} ADR missing")
   fi
 done
@@ -320,8 +320,8 @@ fi
 step 11 "Latency budgets are instrumented and documented"
 LATENCY_DETAIL=()
 LATENCY_PROOF="${PROOF_DIR}/mba8-latency-budgets.md"
-if [ ! -f "docs/operating/latency-budgets.md" ]; then
-  LATENCY_DETAIL+=("docs/operating/latency-budgets.md missing")
+if [ ! -f "docs/private/operating/latency-budgets.md" ]; then
+  LATENCY_DETAIL+=("docs/private/operating/latency-budgets.md missing")
 fi
 if [ ! -f "${LATENCY_PROOF}" ]; then
   LATENCY_DETAIL+=("${LATENCY_PROOF} missing")
@@ -341,8 +341,8 @@ fi
 # 12. Trait conventions doc and object-safety audit exist.
 step 12 "Trait conventions and object-safety audit exist"
 TRAIT_DETAIL=()
-if [ ! -f "docs/architecture/trait-conventions.md" ]; then
-  TRAIT_DETAIL+=("docs/architecture/trait-conventions.md missing")
+if [ ! -f "docs/private/architecture/trait-conventions.md" ]; then
+  TRAIT_DETAIL+=("docs/private/architecture/trait-conventions.md missing")
 fi
 if [ ! -f "${PROOF_DIR}/mba9-trait-conventions.md" ]; then
   TRAIT_DETAIL+=("${PROOF_DIR}/mba9-trait-conventions.md missing")
@@ -454,11 +454,11 @@ else
   if ! grep -R 'resolve_or_create_table_id' "${SQL_STORAGE_PATHS[@]}" >/dev/null 2>&1; then
     TABLE_ID_DETAIL+=("SQL write paths do not resolve/create table ids")
   fi
-  TYPED_DOC="docs/architecture/storage/typed-key-columns.md"
+  TYPED_DOC="docs/private/architecture/storage/typed-key-columns.md"
   TYPED_PROOF="${PROOF_DIR}/mba11-typed-key-columns.md"
-  CONSISTENCY_DOC="docs/architecture/storage/consistency-routing.md"
+  CONSISTENCY_DOC="docs/private/architecture/storage/consistency-routing.md"
   CONSISTENCY_PROOF="${PROOF_DIR}/mba12-consistency-routing.md"
-  EVENT_DOC="docs/architecture/adapters/event-capture.md"
+  EVENT_DOC="docs/private/architecture/adapters/event-capture.md"
   EVENT_PROOF="${PROOF_DIR}/mba13-event-capture.md"
   [ ! -f "${TYPED_DOC}" ] && TABLE_ID_DETAIL+=("${TYPED_DOC} missing")
   [ ! -f "${TYPED_PROOF}" ] && TABLE_ID_DETAIL+=("${TYPED_PROOF} missing")
@@ -493,8 +493,8 @@ if [ -z "${PLAN_FILE}" ]; then
   ROUTING_OK=0
 else
   PLAN_BASENAME="$(basename "${PLAN_FILE}")"
-  if ! grep -q "${PLAN_BASENAME}" docs/plans/README.md; then
-    fail "docs/plans/README.md routing missing" "Expected ${PLAN_BASENAME}"
+  if ! grep -q "${PLAN_BASENAME}" docs/private/plans/README.md; then
+    fail "docs/private/plans/README.md routing missing" "Expected ${PLAN_BASENAME}"
     ROUTING_OK=0
   fi
   if ! grep -q "${PLAN_BASENAME}" "${AGENTS_MD}"; then
@@ -503,7 +503,7 @@ else
   fi
 fi
 if [ "${ROUTING_OK}" -eq 1 ]; then
-  pass "Routing entries exist in docs/plans/README.md and AGENTS.md"
+  pass "Routing entries exist in docs/private/plans/README.md and AGENTS.md"
 fi
 
 # 15. Ledger closed and main CI green evidence recorded.

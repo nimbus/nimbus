@@ -1,11 +1,12 @@
-use futures::executor::block_on;
 use nimbus_core::{Error, TenantId};
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
+use nimbus_tenant::TenantIsolationContext;
 
-use super::SandboxServiceManager;
+use super::ServiceManager;
+use super::activation::service_lifecycle_decision;
 use super::types::{TenantServiceKey, sandbox_backend_error};
 
-impl SandboxServiceManager {
+impl ServiceManager {
     pub(super) fn current_handle(&self, key: &TenantServiceKey) -> Option<SandboxHandle> {
         self.state
             .lock()
@@ -13,38 +14,6 @@ impl SandboxServiceManager {
             .handles
             .get(key)
             .cloned()
-    }
-
-    pub(super) fn refresh_handle(
-        &self,
-        key: &TenantServiceKey,
-    ) -> Result<Option<SandboxHandle>, Error> {
-        let Some(handle) = self.current_handle(key) else {
-            return Ok(None);
-        };
-        let inspected = block_on(self.sandbox_backend.inspect(&handle.id))
-            .map_err(|error| sandbox_backend_error(key, "inspect", &error))?;
-        let mut state = self
-            .state
-            .lock()
-            .expect("manager lock should not be poisoned");
-        match inspected {
-            Some(handle) => {
-                if matches!(
-                    handle.status,
-                    SandboxStatus::Stopped | SandboxStatus::Failed
-                ) {
-                    state.handles.remove(key);
-                } else {
-                    state.handles.insert(key.clone(), handle.clone());
-                }
-                Ok(Some(handle))
-            }
-            None => {
-                state.handles.remove(key);
-                Ok(None)
-            }
-        }
     }
 
     pub(super) async fn refresh_handle_async(
@@ -88,6 +57,16 @@ impl SandboxServiceManager {
         }
 
         Ok(refreshed)
+    }
+
+    pub async fn inspect_service_for_context_async(
+        &self,
+        isolation: &TenantIsolationContext,
+        service_name: &str,
+    ) -> Result<Option<SandboxHandle>, Error> {
+        let decision = service_lifecycle_decision(isolation, service_name)?;
+        let key = TenantServiceKey::new(decision.tenant_id(), service_name);
+        self.refresh_handle_async(&key).await
     }
 
     pub(super) fn tenant_handles(
