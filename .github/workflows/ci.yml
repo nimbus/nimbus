@@ -559,6 +559,13 @@ jobs:
             --features systemd-dbus,systemd-dbus-integration-tests \
             --test zbus_systemd_live --no-fail-fast 2>&1 | tee /tmp/ndb-live.log
 
+      - name: Run live node-run reconciler test (LR12)
+        run: |
+          set -o pipefail
+          cargo test -p nimbus-bin \
+            --features node-run-integration-tests \
+            node_run_converges_transient_unit --no-fail-fast 2>&1 | tee -a /tmp/ndb-live.log
+
       - name: Summarize per-test results
         if: always()
         run: |

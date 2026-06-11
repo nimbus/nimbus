@@ -210,7 +210,7 @@ sources exist.
 | `reference/cli.md` | `codegen`, `init` (adapter values), `token rotate`, `ui` | `crates/nimbus-bin/src/codegen.rs`, `crates/nimbus-bin/src/init.rs`, `crates/nimbus-bin/src/token.rs`, `crates/nimbus-bin/src/ui.rs` |
 | `reference/cli.md` | `auth` subcommands; `rotate-admin` required before `start --allow-network` | `crates/nimbus-bin/src/auth.rs` |
 | `reference/cli.md` | `machine` subcommands, init defaults (2 CPUs / 2048 MiB / 20 GiB / `default`), default image, ssh target resolution | `crates/nimbus-bin/src/machine/command.rs`, `crates/nimbus-bin/src/machine/mod.rs`, `crates/nimbus-bin/src/machine/handlers/transfer.rs` |
-| `reference/cli.md` | `node` subcommands; exactly-one `--systemd`/`--container`; system scope default | `crates/nimbus-bin/src/node_service.rs` |
+| `reference/cli.md` | `node` subcommands; exactly-one `--systemd`/`--container`; system scope default; `node run` reconciler (operator admission, systemd transient units, JSONL evidence) | `crates/nimbus-bin/src/node_service.rs`, `crates/nimbus-bin/src/node_run.rs` |
 | `reference/cli.md` | `compose` subcommands; `COMPOSE_FILE` + walk-up discovery; quadlet export modes | `crates/nimbus-bin/src/compose/commands.rs`, `crates/nimbus-bin/src/compose/discovery.rs` |
 | `reference/cli.md` | `policy`, `encryption`, `packages` subcommands and value sets | `crates/nimbus-bin/src/policy.rs`, `crates/nimbus-bin/src/encryption/mod.rs`, `crates/nimbus-bin/src/provision.rs` |
 | `reference/cli.md` | `NIMBUS_LICENSE_FILE` env for `--license-file` | `crates/nimbus-license/src/lib.rs` |

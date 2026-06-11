@@ -14,6 +14,7 @@ mod init;
 mod local_server_client;
 mod machine;
 mod node;
+mod node_run;
 mod node_service;
 mod path_boundary;
 mod policy;

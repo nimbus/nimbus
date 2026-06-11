@@ -454,12 +454,28 @@ release; `rollback` queues the previous bootc deployment for the next boot.
 ## nimbus node
 
 Manages Nimbus node service-manager installation artifacts (systemd units
-and Podman Quadlet files) on Linux hosts. Every subcommand selects a target
-with `--systemd` (native unit) or `--container` (Quadlet), and a scope with
-`--user` or `--system` (default: system). `node install` requires an
-explicit target; the other subcommands default to `--systemd`. See
+and Podman Quadlet files) on Linux hosts, and runs the node-side workload
+reconciler. The artifact subcommands select a target with `--systemd`
+(native unit) or `--container` (Quadlet), and a scope with `--user` or
+`--system` (default: system). `node install` requires an explicit target;
+the other artifact subcommands default to `--systemd`. See
 [Node lifecycle](/operators/node-lifecycle/) and
 [Deploy on Linux](/operators/deploy-linux/).
+
+### nimbus node run
+
+```bash
+nimbus node run --tenant <id> --workload <name> --exec </abs/path> \
+  [--arg <v>]... [--bus system|session] --status-path <file.jsonl> \
+  [--interval-secs 10] [--once] [--stop]
+```
+
+Reconciles one tenant workload to its desired state as a systemd
+transient unit (Linux only). The workload is admitted through the tenant
+isolation authority, then a converge loop starts, observes, or stops the
+unit (`--stop` converges to stopped; `--once` runs a single pass) and
+appends status evidence to the JSONL file after every pass. Production
+units drive the system bus; `--bus session` targets `systemctl --user`.
 
 ### nimbus node install
 
