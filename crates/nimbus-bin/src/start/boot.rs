@@ -52,6 +52,7 @@ pub(crate) async fn run_start_command(
     if !command.systemd_socket_activation {
         ensure_host_opt_in(&command.host, command.allow_network)?;
     }
+    let cors_allowed_origins = resolve_cors_allowed_origins(&command)?;
     let persistence_config = persistence_config_from_start_command(&command)?;
     let compose_control_data_dir =
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
@@ -171,6 +172,7 @@ pub(crate) async fn run_start_command(
     }
     serve_options = serve_options.with_local_server_security(local_server_security);
     serve_options = serve_options.with_tenant_isolation_mode(command.tenant_isolation_mode);
+    serve_options = serve_options.with_cors_allowed_origins(cors_allowed_origins);
 
     let server_result = serve(listener, serve_options).await;
     drop(discovery_lease);
@@ -286,6 +288,27 @@ fn emit_rotation_warning(warning: Option<super::network_bind::StaleRotationWarni
         tracing::warn!(age_days = warning.age_days, "{warning}");
         let _ = cli_ux::write_stderr_prefixed_line("warning:", &warning.to_string());
     }
+}
+
+/// `--cors-allow-origin` flags win; otherwise the comma-separated
+/// NIMBUS_CORS_ALLOW_ORIGINS env var applies. Every value is normalized
+/// or rejected — never silently dropped.
+pub(super) fn resolve_cors_allowed_origins(command: &StartCommand) -> Result<Vec<String>, Error> {
+    if !command.cors_allow_origin.is_empty() {
+        return Ok(command.cors_allow_origin.clone());
+    }
+    let Ok(raw) = std::env::var("NIMBUS_CORS_ALLOW_ORIGINS") else {
+        return Ok(Vec::new());
+    };
+    raw.split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            nimbus_server::normalize_cors_origin(value).map_err(|reason| {
+                Error::InvalidInput(format!("NIMBUS_CORS_ALLOW_ORIGINS: {reason}"))
+            })
+        })
+        .collect()
 }
 
 fn emit_start_startup_summary(

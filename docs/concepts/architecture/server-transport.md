@@ -124,13 +124,18 @@ protocol (see [adapter crates](/concepts/architecture/adapters/) and
 
 ## CORS posture
 
-The CORS layer in `router.rs` allows browser origins only on loopback:
-`localhost`, `127.0.0.1`, and `[::1]` on any port, over HTTP or HTTPS.
-The allow-listed request headers include the Firebase and Google client
-headers plus the gRPC-Web headers, and the gRPC status headers are
-exposed, so stock browser SDKs work against a local server out of the
-box. Non-loopback browser origins are refused by default — the same
-local-first posture as the bind policy below.
+The CORS layer in `router.rs` allows browser origins on loopback by
+default: `localhost`, `127.0.0.1`, and `[::1]` on any port, over HTTP or
+HTTPS. Additional exact origins can be granted with
+`--cors-allow-origin` (or the comma-separated
+`NIMBUS_CORS_ALLOW_ORIGINS` environment variable); values are normalized
+to the browser `Origin` form and wildcards are rejected, so the
+allowlist stays exact-match. The allow-listed request headers include
+the Firebase and Google client headers plus the gRPC-Web headers, and
+the gRPC status headers are exposed, so stock browser SDKs work against
+a local server out of the box. Unconfigured non-loopback browser
+origins are refused — the same local-first posture as the bind policy
+below.
 
 ## MongoDB and DynamoDB: sibling listeners, not routes
 

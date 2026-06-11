@@ -56,6 +56,16 @@ been explicitly rotated at least once (`nimbus auth rotate-admin`), or the
 bind is refused; a rotation older than 30 days logs a startup warning but
 does not block. See [Hardening](/operators/hardening/).
 
+### CORS origins
+
+Browsers are granted CORS access from loopback origins only, by default.
+`--cors-allow-origin <origin>` (repeatable) or the comma-separated
+`NIMBUS_CORS_ALLOW_ORIGINS` environment variable allow additional exact
+origins, normalized to the browser `Origin` form
+(`scheme://host[:port]`, lowercase, default ports stripped). Flags win
+over the environment variable. Wildcards and bare hosts are rejected at
+startup — the allowlist is exact-match only.
+
 ### systemd socket activation
 
 With `--systemd-socket-activation`, the server takes its listener from

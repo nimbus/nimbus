@@ -19,8 +19,10 @@ loopback and let a reverse proxy on the same host be the only public entry
 point.
 
 Also built in: browsers only receive CORS approval for `localhost`,
-`127.0.0.1`, and `[::1]` origins, so cross-origin browser scripts cannot
-read responses from the server's HTTP API.
+`127.0.0.1`, and `[::1]` origins unless you explicitly allow more with
+`--cors-allow-origin` (exact origins only; wildcards are rejected), so
+cross-origin browser scripts cannot read responses from the server's
+HTTP API by default.
 
 ## If you must bind a public interface
 

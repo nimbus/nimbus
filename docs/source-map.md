@@ -182,8 +182,8 @@ sources exist.
 | `operators/observability.md` | Logging via `RUST_LOG` (`target=level` directives, default info, stdout); latency WARN fields | `crates/nimbus-bin/src/main.rs`, `crates/nimbus-server/src/latency.rs`, `crates/nimbus-engine/src/engine/latency.rs` |
 | `operators/observability.md` | Access audit log JSONL paths + record fields | `crates/nimbus-operator/src/audit.rs`, `crates/nimbus-operator/src/paths.rs` |
 | `operators/hardening.md` | Local admin auth always on; token 32 bytes, 0600/0700, constant-time compare | `crates/nimbus-bin/src/start/boot.rs`, `crates/nimbus-operator/src/token.rs` |
-| `operators/hardening.md` | Public bind needs `--allow-network` + token rotated within 30 days | `crates/nimbus-bin/src/start/network_bind.rs`, `crates/nimbus-operator/src/token.rs` |
-| `operators/hardening.md` | CORS approval limited to localhost origins; admin route families audited | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/local_server/middleware.rs` |
+| `operators/hardening.md` | Public bind needs `--allow-network` + token explicitly rotated at least once (age advisory) | `crates/nimbus-bin/src/start/network_bind.rs`, `crates/nimbus-operator/src/token.rs` |
+| `operators/hardening.md` | CORS approval limited to localhost origins unless `--cors-allow-origin` grants exact origins; admin route families audited | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/local_server/middleware.rs` |
 | `operators/troubleshooting.md` | Bind/auth/schema/storage/encryption/license/codegen/bundle error strings (each entry quotes source text) | `crates/nimbus-bin/src/start/network_bind.rs`, `crates/nimbus-operator/src/access_policy.rs`, `crates/nimbus-core/src/error.rs`, `crates/nimbus-storage/src/encryption/runtime.rs`, `crates/nimbus-storage/src/sqlite/backend.rs`, `crates/nimbus-license/src/loading.rs`, `crates/nimbus-bin/src/codegen.rs`, `crates/nimbus-runtime/src/error.rs` |
 
 ## Concepts + Reference — tenancy and server
@@ -203,7 +203,7 @@ sources exist.
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
 | `reference/cli.md` | Root command list and command map (14 visible commands) | `crates/nimbus-bin/src/main.rs` |
-| `reference/cli.md` | `start` flags, defaults (port 8080, host 127.0.0.1, `./data`, sqlite), `NIMBUS_*` env names, flag > env > config precedence | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/config.rs` |
+| `reference/cli.md` | `start` flags, defaults (port 8080, host 127.0.0.1, `./data`, sqlite), `NIMBUS_*` env names, `--cors-allow-origin`/`NIMBUS_CORS_ALLOW_ORIGINS`, flag > env > config precedence | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-bin/src/start/boot.rs` |
 | `reference/cli.md` | `dev` flags, port 3210, tail-log modes, `--no-open` semantics, `.nimbus/dev` data dir, walk-up bounded at `.git` | `crates/nimbus-bin/src/dev.rs`, `crates/nimbus-bin/src/dev/plan.rs`, `crates/nimbus-bin/src/path_boundary.rs` |
 | `reference/cli.md` | `deploy` flags, `NIMBUS_DEPLOY_URL`/`NIMBUS_DEPLOY_TOKEN`/`NIMBUS_ADMIN_TOKEN`, credentials-file fallback, loopback admin-token auto-discovery | `crates/nimbus-bin/src/deploy.rs` |
 | `reference/cli.md` | `codegen`, `init` (adapter values), `token rotate`, `ui` | `crates/nimbus-bin/src/codegen.rs`, `crates/nimbus-bin/src/init.rs`, `crates/nimbus-bin/src/token.rs`, `crates/nimbus-bin/src/ui.rs` |
@@ -214,7 +214,7 @@ sources exist.
 | `reference/cli.md` | `policy`, `encryption`, `packages` subcommands and value sets | `crates/nimbus-bin/src/policy.rs`, `crates/nimbus-bin/src/encryption/mod.rs`, `crates/nimbus-bin/src/provision.rs` |
 | `reference/cli.md` | `NIMBUS_LICENSE_FILE` env for `--license-file` | `crates/nimbus-license/src/lib.rs` |
 | `reference/configuration.md` | Precedence CLI > env > config file; JSON keys under `persistence`; unknown keys rejected | `crates/nimbus-bin/src/start/config.rs` |
-| `reference/configuration.md` | Network/bind table; explicit-rotation public-bind gate (30-day age advisory); systemd socket activation (`LISTEN_FDS`/`LISTEN_PID`, fd 3) | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/network_bind.rs`, `crates/nimbus-bin/src/start/boot.rs` |
+| `reference/configuration.md` | Network/bind table; explicit-rotation public-bind gate (30-day age advisory); CORS origin flag/env normalization; systemd socket activation (`LISTEN_FDS`/`LISTEN_PID`, fd 3) | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/network_bind.rs`, `crates/nimbus-bin/src/start/boot.rs` |
 | `reference/configuration.md` | Core storage / postgres / mysql / libsql tables (env names, config keys, defaults `nimbus_provider`, `tenant_`); min ≤ max pool rule on both postgres and mysql | `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-engine/src/persistence_config.rs`, `crates/nimbus-storage/src/postgres/config.rs`, `crates/nimbus-storage/src/mysql.rs`, `crates/nimbus-storage/src/libsql.rs` |
 | `reference/configuration.md` | Runtime limit defaults (128 MB heap, 8 MB initial, 30 s timeout, 64 nested; derived instance/worker/in-flight budgets) | `crates/nimbus-bin/src/start/runtime_limits.rs`, `crates/nimbus-runtime/src/limits/resources.rs` |
 | `reference/configuration.md` | App-dir resolution and required app surface; no source-tree discovery without `--app-dir` | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/boot.rs` |
@@ -283,7 +283,7 @@ sources exist.
 
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
-| `concepts/architecture/server-transport.md` | `RouterOptions`/`build_router`, opt-in builder surface, route families, CORS layer, loopback-origin predicate, middleware layering | `crates/nimbus-server/src/router.rs` |
+| `concepts/architecture/server-transport.md` | `RouterOptions`/`build_router`, opt-in builder surface, route families, CORS layer, loopback + configured exact-origin predicates, middleware layering | `crates/nimbus-server/src/router.rs` |
 | `concepts/architecture/server-transport.md` | `ServeOptions`/`serve`, pre-bound listener, graceful shutdown, MongoDB/DynamoDB sibling listeners + abort-on-exit, listener-state recording, TTL sweeper spawn | `crates/nimbus-server/src/construction.rs` |
 | `concepts/architecture/server-transport.md` | Route lists: native `/api/*`, `/ws`, `/debug/*`, `/ui/*`, `/health`, `/demos`, Convex `/convex/{tenant}/*` + `/convex/{tenant}/ws`, Firestore REST + `/google.firestore.v1.Firestore/*`, gRPC-Web layer, shared `Listen` service instance, Cloud Functions fallback | `crates/nimbus-server/src/router.rs` |
 | `concepts/architecture/server-transport.md` | Admin gate: origin allowlist → credential extraction → route-family gate, audit on every decision, credential modes (standard vs deploy admin-header-only) | `crates/nimbus-server/src/local_server/middleware.rs`, `crates/nimbus-server/src/local_server/mod.rs`, `crates/nimbus-operator/src/access_policy.rs` |

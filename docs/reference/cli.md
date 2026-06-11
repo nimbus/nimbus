@@ -53,7 +53,8 @@ Most-used flags:
 | --- | --- | --- | --- |
 | `--port` | — | `8080` | Port to listen on. |
 | `--host` | — | `127.0.0.1` | Host interface to listen on; defaults to loopback for local safety. |
-| `--allow-network` | — | `false` | Opt in to binding a non-loopback interface; requires a recently rotated local admin token (`nimbus auth rotate-admin`). |
+| `--allow-network` | — | `false` | Opt in to binding a non-loopback interface; requires an explicitly rotated local admin token (`nimbus auth rotate-admin`). |
+| `--cors-allow-origin` | `NIMBUS_CORS_ALLOW_ORIGINS` | loopback only | Additional allowed browser origin for CORS (repeatable; env var is comma-separated). Exact match; wildcards rejected. |
 | `--data-dir` | `NIMBUS_DATA_DIR` | `./data` | Local data directory for embedded tenant databases and, by default, the control plane. |
 | `--tenant-provider` | `NIMBUS_TENANT_PROVIDER` | `sqlite` | Tenant persistence provider: `sqlite`, `libsql-replica`, `redb`, `postgres`, or `mysql`. |
 | `--config` | `NIMBUS_CONFIG` | unset | Optional JSON config file; CLI flags override env vars, which override file values. |

@@ -54,6 +54,13 @@ pub(crate) struct StartCommand {
     #[arg(long, default_value_t = false)]
     pub(crate) systemd_socket_activation: bool,
 
+    /// Additional allowed browser origin for CORS (repeatable), e.g.
+    /// `https://app.example.com`. Loopback origins are always allowed;
+    /// wildcards are not supported. Defaults to NIMBUS_CORS_ALLOW_ORIGINS
+    /// (comma-separated) when the flag is absent.
+    #[arg(long = "cors-allow-origin", value_name = "ORIGIN", value_parser = parse_cors_origin)]
+    pub(crate) cors_allow_origin: Vec<String>,
+
     /// Local data directory used for embedded tenant databases and, by default,
     /// the local redb control plane.
     #[arg(long)]
@@ -248,6 +255,13 @@ pub(crate) struct StartCommand {
     pub(crate) tenant_isolation_mode: nimbus_server::TenantIsolationMode,
 }
 
+/// clap value parser for `--cors-allow-origin`: normalize-or-reject at
+/// parse time so a bad origin fails the command instead of being silently
+/// ignored at the CORS layer.
+fn parse_cors_origin(value: &str) -> Result<String, String> {
+    nimbus_server::normalize_cors_origin(value)
+}
+
 impl Default for StartCommand {
     fn default() -> Self {
         Self {
@@ -256,6 +270,7 @@ impl Default for StartCommand {
             host: "127.0.0.1".to_string(),
             allow_network: false,
             systemd_socket_activation: false,
+            cors_allow_origin: Vec::new(),
             data_dir: None,
             control_data_dir: None,
             tenant_provider: None,

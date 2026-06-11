@@ -122,6 +122,14 @@ impl ServeOptions {
         self.router_options = self.router_options.with_tenant_isolation_mode(mode);
         self
     }
+
+    /// Allow additional exact browser origins through the CORS layer
+    /// (loopback origins are always allowed). See
+    /// [`crate::normalize_cors_origin`] for the accepted form.
+    pub fn with_cors_allowed_origins(mut self, origins: Vec<String>) -> Self {
+        self.router_options = self.router_options.with_cors_allowed_origins(origins);
+        self
+    }
 }
 
 async fn serve_with_router_config(

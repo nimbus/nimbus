@@ -78,6 +78,7 @@ pub struct RouterOptions {
     deploy_admin_token: Option<String>,
     local_server_security: Option<Arc<LocalServerSecurityState>>,
     tenant_isolation_mode: TenantIsolationMode,
+    cors_allowed_origins: Vec<String>,
 }
 
 impl RouterOptions {
@@ -95,6 +96,7 @@ impl RouterOptions {
             deploy_admin_token: None,
             local_server_security: None,
             tenant_isolation_mode: TenantIsolationMode::default(),
+            cors_allowed_origins: Vec::new(),
         }
     }
 
@@ -167,6 +169,15 @@ impl RouterOptions {
         self
     }
 
+    /// Allow additional exact browser origins through the CORS layer.
+    /// Loopback origins are always allowed. Values should be normalized via
+    /// [`normalize_cors_origin`]; entries that fail normalization are
+    /// ignored with a warning (fail closed).
+    pub fn with_cors_allowed_origins(mut self, origins: Vec<String>) -> Self {
+        self.cors_allowed_origins = origins;
+        self
+    }
+
     pub(crate) fn engine(&self) -> Arc<Engine> {
         Arc::clone(&self.engine)
     }
@@ -206,6 +217,7 @@ impl RouterOptions {
         if let Some(machine_lifecycle_manager) = self.machine_lifecycle_manager {
             config = config.with_machine_lifecycle_manager(machine_lifecycle_manager);
         }
+        config = config.with_cors_allowed_origins(self.cors_allowed_origins);
         config
     }
 }
@@ -225,6 +237,7 @@ pub(crate) struct RouterBuildConfig {
     tenant_isolation_mode: TenantIsolationMode,
     listen_addr: Option<SocketAddr>,
     server_shutdown: Option<watch::Sender<bool>>,
+    cors_allowed_origins: Vec<String>,
 }
 
 impl RouterBuildConfig {
@@ -246,7 +259,13 @@ impl RouterBuildConfig {
             tenant_isolation_mode: TenantIsolationMode::default(),
             listen_addr: None,
             server_shutdown: None,
+            cors_allowed_origins: Vec::new(),
         }
+    }
+
+    pub(crate) fn with_cors_allowed_origins(mut self, origins: Vec<String>) -> Self {
+        self.cors_allowed_origins = origins;
+        self
     }
 
     pub(crate) fn with_convex(mut self, convex_registry: ConvexRegistry) -> Self {
@@ -463,7 +482,7 @@ impl RouterBuildConfig {
             router = router.fallback(any(cloud_functions::http_handler));
         }
         router
-            .layer(build_cors_layer())
+            .layer(build_cors_layer(&self.cors_allowed_origins))
             .layer(middleware::from_fn_with_state(
                 state.clone(),
                 origin_allowlist_middleware,
@@ -490,10 +509,23 @@ pub fn build_router(options: RouterOptions) -> Router {
     options.into_build_config().build()
 }
 
-fn build_cors_layer() -> CorsLayer {
+fn build_cors_layer(configured_origins: &[String]) -> CorsLayer {
+    let mut allowed = std::collections::HashSet::new();
+    for origin in configured_origins {
+        match normalize_cors_origin(origin) {
+            Ok(normalized) => {
+                allowed.insert(normalized);
+            }
+            Err(reason) => {
+                // Fail closed: a bad entry grants nothing extra; the origin
+                // it was meant to allow will visibly fail CORS.
+                tracing::warn!(%origin, %reason, "ignoring invalid configured CORS origin");
+            }
+        }
+    }
     CorsLayer::new()
-        .allow_origin(AllowOrigin::predicate(|origin, _request_head| {
-            is_allowed_local_cors_origin(origin)
+        .allow_origin(AllowOrigin::predicate(move |origin, _request_head| {
+            is_allowed_local_cors_origin(origin) || is_configured_cors_origin(origin, &allowed)
         }))
         .allow_headers([
             header::ACCEPT,
@@ -525,7 +557,7 @@ fn build_cors_layer() -> CorsLayer {
         ])
 }
 
-fn is_allowed_local_cors_origin(origin: &HeaderValue) -> bool {
+pub(crate) fn is_allowed_local_cors_origin(origin: &HeaderValue) -> bool {
     let Ok(origin) = origin.to_str() else {
         return false;
     };
@@ -540,6 +572,93 @@ fn is_allowed_local_cors_origin(origin: &HeaderValue) -> bool {
         || authority.starts_with("localhost:")
         || authority.starts_with("127.0.0.1:")
         || authority.starts_with("[::1]:")
+}
+
+pub(crate) fn is_configured_cors_origin(
+    origin: &HeaderValue,
+    allowed: &std::collections::HashSet<String>,
+) -> bool {
+    if allowed.is_empty() {
+        return false;
+    }
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+    let Ok(normalized) = normalize_cors_origin(origin) else {
+        return false;
+    };
+    allowed.contains(&normalized)
+}
+
+/// Normalize a configured browser origin to the exact form browsers send in
+/// the `Origin` header: lowercase `scheme://host`, default ports stripped,
+/// no path/query/fragment. Wildcards are rejected — the CORS allowlist is
+/// exact-match only.
+pub fn normalize_cors_origin(origin: &str) -> Result<String, String> {
+    let trimmed = origin.trim();
+    if trimmed.is_empty() {
+        return Err("CORS origin must not be empty".to_string());
+    }
+    if trimmed.contains('*') {
+        return Err(
+            "wildcard CORS origins are not supported; pass each origin explicitly".to_string(),
+        );
+    }
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return Err(format!(
+            "CORS origin `{trimmed}` must include an http:// or https:// scheme"
+        ));
+    };
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Err(format!(
+            "CORS origin `{trimmed}` must use the http or https scheme"
+        ));
+    }
+    let authority = rest.strip_suffix('/').unwrap_or(rest);
+    if authority.is_empty() {
+        return Err(format!("CORS origin `{trimmed}` is missing a host"));
+    }
+    if authority.contains('/') || authority.contains('?') || authority.contains('#') {
+        return Err(format!(
+            "CORS origin `{trimmed}` must not include a path, query, or fragment"
+        ));
+    }
+    let authority = authority.to_ascii_lowercase();
+    let (host, port) = split_origin_port(&authority);
+    if host.is_empty() {
+        return Err(format!("CORS origin `{trimmed}` is missing a host"));
+    }
+    match port {
+        None => Ok(format!("{scheme}://{host}")),
+        Some(port) => {
+            let Ok(parsed) = port.parse::<u16>() else {
+                return Err(format!("CORS origin `{trimmed}` has an invalid port"));
+            };
+            let is_default =
+                (scheme == "http" && parsed == 80) || (scheme == "https" && parsed == 443);
+            if is_default {
+                Ok(format!("{scheme}://{host}"))
+            } else {
+                Ok(format!("{scheme}://{host}:{parsed}"))
+            }
+        }
+    }
+}
+
+/// Split `host[:port]`, treating a bracketed IPv6 literal as the host
+/// boundary so `[::1]:8080` does not split inside the address.
+fn split_origin_port(authority: &str) -> (&str, Option<&str>) {
+    if let Some(bracket_end) = authority.rfind(']') {
+        match authority[bracket_end + 1..].strip_prefix(':') {
+            Some(port) => (&authority[..=bracket_end], Some(port)),
+            None => (authority, None),
+        }
+    } else if let Some((host, port)) = authority.rsplit_once(':') {
+        (host, Some(port))
+    } else {
+        (authority, None)
+    }
 }
 
 fn build_public_router() -> Router<Arc<AppState>> {

@@ -1167,6 +1167,8 @@ mod convex_functions;
 mod convex_runtime;
 #[path = "tests/core_http.rs"]
 mod core_http;
+#[path = "tests/cors.rs"]
+mod cors;
 #[path = "tests/deploy.rs"]
 mod deploy;
 #[path = "tests/dynamodb_wire.rs"]

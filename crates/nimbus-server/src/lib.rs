@@ -75,7 +75,7 @@ pub use nimbus_services::{
     ServiceManager,
 };
 pub use nimbus_system::SystemTenantStatusEvidenceWriter;
-pub use router::{RouterOptions, build_router};
+pub use router::{RouterOptions, build_router, normalize_cors_origin};
 pub use tenant::{
     ArtifactImageVerificationProvider, OPERATOR_POLICY_SCHEMA_VERSION, OperatorAuditPolicy,
     OperatorDeniedEgressEvent, OperatorExternalPolicyBackend, OperatorExternalPolicyBackendError,
