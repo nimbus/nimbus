@@ -4,7 +4,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LEDGER="${REPO_ROOT}/docs/private/staging/architecture/repo-architecture-quality-ledger.tsv"
+LEDGER="${REPO_ROOT}/docs/private/architecture/repo-architecture-quality-ledger.tsv"
 
 issue_count=0
 exclusion_patterns=()

@@ -49,7 +49,21 @@ export default defineConfig({
           ],
         },
         { label: 'Operators', items: [{ autogenerate: { directory: 'operators' } }] },
-        { label: 'Concepts', items: [{ autogenerate: { directory: 'concepts' } }] },
+        {
+          label: 'Concepts',
+          items: [
+            'concepts',
+            'concepts/how-nimbus-works',
+            'concepts/tenant-isolation',
+            'concepts/data-and-mutations',
+            'concepts/adapter-boundary',
+            'concepts/runtime-permissions',
+            'concepts/resource-model',
+            'concepts/scaling',
+            'concepts/nodejs-runtime',
+            { label: 'Architecture', items: [{ autogenerate: { directory: 'concepts/architecture' } }] },
+          ],
+        },
         {
           label: 'Reference',
           items: [

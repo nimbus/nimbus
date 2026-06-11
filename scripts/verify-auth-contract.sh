@@ -15,7 +15,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
-target="docs/private/staging/architecture/server/auth-runtime-trust.md"
+target="docs/private/architecture/server/auth-runtime-trust.md"
 fail=0
 
 check_present() {

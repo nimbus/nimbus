@@ -37,3 +37,10 @@ or [Operators](/operators/) when you have a task in hand.
 
 - [Scaling](/concepts/scaling/) — what one Nimbus process gives you today
   and where the scaling boundaries are.
+
+## Architecture
+
+- [Architecture](/concepts/architecture/) — a system-by-system map of the
+  binary: twelve pages covering the server, adapters, engine, storage,
+  runtime, sandboxes, auth, tenancy, node lifecycle, CLI, SDK packages,
+  and observability, each citing the crates that implement it.

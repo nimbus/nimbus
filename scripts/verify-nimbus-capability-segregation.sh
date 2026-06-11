@@ -89,7 +89,7 @@ condition_1_engine_rename() {
   [ -d crates/nimbus-engine/src/engine ] || ok=1
   [ ! -d crates/nimbus-engine/src/service ] || ok=1
   if grep -RqE 'nimbus_engine::Service|ServiceBootstrapPlan|ServicePersistenceConfig|crates/nimbus-engine/src/service' \
-    crates docs/private/staging/architecture docs/private/staging/operating docs/private/plans/*.md 2>/dev/null; then
+    crates docs/private/architecture docs/private/staging/operating docs/private/plans/*.md 2>/dev/null; then
     ok=1
   fi
   return "${ok}"
@@ -261,7 +261,7 @@ condition_9_principal_route_policy() {
     grep -RqE 'spawned.*admin|admin.*spawned' crates/nimbus-server/src &&
     grep -RqE 'exact.*service|service.*exact' crates/nimbus-server/src &&
     ! grep -RqE 'TenantWorkloadStableIdentity|TenantWorkloadIdentity|TenantWorkloadLocation' \
-      crates docs/private/staging/architecture docs/private/staging/operating docs/private/plans/*.md 2>/dev/null
+      crates docs/private/architecture docs/private/staging/operating docs/private/plans/*.md 2>/dev/null
 }
 
 condition_10_debrand_and_routing() {

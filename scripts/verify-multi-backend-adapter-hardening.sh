@@ -341,8 +341,8 @@ fi
 # 12. Trait conventions doc and object-safety audit exist.
 step 12 "Trait conventions and object-safety audit exist"
 TRAIT_DETAIL=()
-if [ ! -f "docs/private/staging/architecture/trait-conventions.md" ]; then
-  TRAIT_DETAIL+=("docs/private/staging/architecture/trait-conventions.md missing")
+if [ ! -f "docs/private/architecture/trait-conventions.md" ]; then
+  TRAIT_DETAIL+=("docs/private/architecture/trait-conventions.md missing")
 fi
 if [ ! -f "${PROOF_DIR}/mba9-trait-conventions.md" ]; then
   TRAIT_DETAIL+=("${PROOF_DIR}/mba9-trait-conventions.md missing")
@@ -454,11 +454,11 @@ else
   if ! grep -R 'resolve_or_create_table_id' "${SQL_STORAGE_PATHS[@]}" >/dev/null 2>&1; then
     TABLE_ID_DETAIL+=("SQL write paths do not resolve/create table ids")
   fi
-  TYPED_DOC="docs/private/staging/architecture/storage/typed-key-columns.md"
+  TYPED_DOC="docs/private/architecture/storage/typed-key-columns.md"
   TYPED_PROOF="${PROOF_DIR}/mba11-typed-key-columns.md"
-  CONSISTENCY_DOC="docs/private/staging/architecture/storage/consistency-routing.md"
+  CONSISTENCY_DOC="docs/private/architecture/storage/consistency-routing.md"
   CONSISTENCY_PROOF="${PROOF_DIR}/mba12-consistency-routing.md"
-  EVENT_DOC="docs/private/staging/architecture/adapters/event-capture.md"
+  EVENT_DOC="docs/private/architecture/adapters/event-capture.md"
   EVENT_PROOF="${PROOF_DIR}/mba13-event-capture.md"
   [ ! -f "${TYPED_DOC}" ] && TABLE_ID_DETAIL+=("${TYPED_DOC} missing")
   [ ! -f "${TYPED_PROOF}" ] && TABLE_ID_DETAIL+=("${TYPED_PROOF} missing")
