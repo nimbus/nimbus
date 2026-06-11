@@ -135,7 +135,7 @@ sources exist.
 | `operators/deploy-linux.md` | `--port`/`--host`/`--data-dir`/`--tenant-provider`/`--allow-network` names + defaults; foreground start | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-bin/src/main.rs` |
 | `operators/deploy-linux.md` | Token minted on first boot before listener; JSON shape; `nimbus_at_` prefix; file 0600; path from service user's HOME/XDG | `crates/nimbus-operator/src/token.rs`, `crates/nimbus-operator/src/paths.rs`, `crates/nimbus-bin/src/start/boot.rs` |
 | `operators/deploy-linux.md` | `/health` unauthenticated `{"ok":true}`; `GET /api/tenants` admin-gated | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/http/metadata.rs`, `crates/nimbus-server/src/http/tenants.rs` |
-| `operators/deploy-linux.md` | No shipped systemd unit (tutorial authors one) | `crates/nimbus-assets/embedded/templates/` (absence; only machine-VM templates) |
+| `operators/deploy-linux.md` | Packages ship hardened `nimbus.service` (system user, StateDirectory, env-file overrides); install-script path authors one | `packaging/systemd/nimbus.service`, `packaging/linux/nimbus-preinstall.sh`, `scripts/build-linux-release-packages.sh` |
 | `operators/container-image.md` | Image `ghcr.io/nimbus/nimbus:<version>`, per-arch tags, multi-arch manifest, `latest` on stable | `.github/workflows/release.yml`, `Containerfile` |
 | `operators/container-image.md` | Entrypoint/CMD, UID 10001, volume `/var/lib/nimbus`, port 8080, healthcheck, `HOME=/var/lib/nimbus` | `Containerfile` |
 | `operators/container-image.md` | OCI release assets (image ref, SBOM, vulns SARIF, attestation); `gh attestation verify` | `.github/workflows/release.yml` |

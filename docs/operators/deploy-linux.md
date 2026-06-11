@@ -82,10 +82,17 @@ Other storage backends (Postgres, MySQL, libSQL, redb) are selected with
 `--tenant-provider` — see [storage backends](/operators/storage-backends/).
 This tutorial stays on the SQLite default.
 
-## 4. Write a systemd unit
+## 4. Set up the systemd unit
 
-Nimbus does not install a service file — you write one now. Create
-`/etc/systemd/system/nimbus.service`:
+The apt/rpm packages ship a hardened unit at
+`/usr/lib/systemd/system/nimbus.service` (a dedicated `nimbus` system
+user is created on install, the state directory lives at
+`/var/lib/nimbus`, and operator overrides go in `/etc/nimbus/nimbus.env`
+as `NIMBUS_*` variables). If you installed from a package, skip the
+authoring below and enable it directly in step 5.
+
+If you installed with the install script (no package manager), write the
+unit yourself. Create `/etc/systemd/system/nimbus.service`:
 
 ```bash
 sudo tee /etc/systemd/system/nimbus.service > /dev/null <<'EOF'

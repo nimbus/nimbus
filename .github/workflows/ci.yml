@@ -986,6 +986,12 @@ jobs:
       - name: Verify Linux package helper
         run: bash scripts/verify-build-linux-release-packages-helper.sh
 
+      - name: Verify shipped systemd unit
+        run: |
+          sudo install -m 0755 /bin/true /usr/bin/nimbus
+          systemd-analyze verify packaging/systemd/nimbus.service
+          sudo rm -f /usr/bin/nimbus
+
       - name: Verify install script helper
         run: bash scripts/verify-install-helper.sh
 

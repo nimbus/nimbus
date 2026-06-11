@@ -116,6 +116,16 @@ for package in nimbus nimbus-libkrun nimbus-crun nimbus-bun-jsc-adapter; do
 done
 
 grep -F "dst: /usr/bin/nimbus" "${output_dir}/render/manifests/nimbus-deb.yaml" >/dev/null
+# LR10: the hardened systemd unit ships in both package formats with the
+# user-creating preinstall and guidance-printing postinstall scripts.
+test -f "${output_dir}/render/staging/nimbus/usr/lib/systemd/system/nimbus.service"
+test -x "${output_dir}/render/staging/nimbus/package-scripts/nimbus-preinstall.sh"
+test -x "${output_dir}/render/staging/nimbus/package-scripts/nimbus-postinstall.sh"
+for format in deb rpm; do
+  grep -F "dst: /usr/lib/systemd/system/nimbus.service" "${output_dir}/render/manifests/nimbus-${format}.yaml" >/dev/null
+  grep -F "preinstall:" "${output_dir}/render/manifests/nimbus-${format}.yaml" >/dev/null
+  grep -F "postinstall:" "${output_dir}/render/manifests/nimbus-${format}.yaml" >/dev/null
+done
 grep -F "dst: /usr/libexec/nimbus/crun" "${output_dir}/render/manifests/nimbus-crun-rpm.yaml" >/dev/null
 grep -F "version: 1.18.1-nimbus.1" "${output_dir}/render/manifests/nimbus-libkrun-deb.yaml" >/dev/null
 grep -F "version: 1.27.1-nimbus.2" "${output_dir}/render/manifests/nimbus-crun-deb.yaml" >/dev/null
