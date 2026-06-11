@@ -1,6 +1,8 @@
 ---
 title: How the Node runtime works
 description: Why Nimbus's Node.js support is a measured, in-process compatibility contract rather than a Node process.
+sidebar:
+  order: 9
 ---
 
 Nimbus's Node.js support is an explicit compatibility contract for function

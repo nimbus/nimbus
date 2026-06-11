@@ -11,10 +11,24 @@ wins and the page gets fixed.
 
 ## Server
 
-- [Configuration](/reference/configuration/) — flag ↔ environment variable
-  ↔ config-key cross-reference.
+- [CLI](/reference/cli/) — every `nimbus` command, subcommand, and flag.
+- [Configuration](/reference/configuration/) — every `nimbus start` flag,
+  environment variable, and config key.
 - [Deploy & admin API](/reference/deploy-admin-api/) — staging, diff, and
   activation.
+- [Current capabilities](/reference/current-capabilities/) — the honest
+  snapshot of what works today.
+
+## JavaScript SDK
+
+- [Overview](/reference/sdk/) — the `@nimbus/nimbus` package and its entry
+  points.
+- [Server functions](/reference/sdk/server/) — builders, validators, and
+  context types.
+- [Clients](/reference/sdk/client/) — WebSocket, HTTP, and REST clients.
+- [Resources](/reference/sdk/resources/) — services, sandboxes, and
+  sessions from the SDK.
+- [React](/reference/sdk/react/) — providers and hooks.
 
 ## Native API
 
@@ -49,11 +63,3 @@ wins and the page gets fixed.
 - [Node APIs](/reference/runtimes/node-apis/) — built-in API coverage.
 - [Packages](/reference/runtimes/packages/) — npm package support matrix.
 
-## Still arriving
-
-- **CLI** — every `nimbus` command, subcommand, and flag.
-- **Current capabilities** — the honest snapshot of what works today.
-
-The [Configuration](/reference/configuration/) page currently covers the
-storage and encryption surface; the full cross-reference is being built
-out.

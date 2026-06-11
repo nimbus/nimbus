@@ -197,3 +197,84 @@ sources exist.
 | `reference/configuration.md` | Storage + encryption flag ↔ `NIMBUS_*` env ↔ `persistence` config keys; unknown keys rejected | `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-bin/src/start/mod.rs` |
 | `reference/deploy-admin-api.md` | `POST /api/admin/deploy`; `NIMBUS_DEPLOY_TOKEN` enablement; dual credentials (deploy bearer + admin header) | `crates/nimbus-server/src/router.rs`, `crates/nimbus-operator/src/access_policy.rs`, `crates/nimbus-server/src/local_server/middleware.rs` |
 | `reference/deploy-admin-api.md` | Nested `artifacts.convex`/`artifacts.cloud_functions` schema; staging/activation semantics; no rollback | `crates/nimbus-server/src/http/deploy.rs` |
+
+## Reference — CLI and configuration
+
+| Doc page | Claim / surface | Source |
+| --- | --- | --- |
+| `reference/cli.md` | Root command list and command map (14 visible commands) | `crates/nimbus-bin/src/main.rs` |
+| `reference/cli.md` | `start` flags, defaults (port 8080, host 127.0.0.1, `./data`, sqlite), `NIMBUS_*` env names, flag > env > config precedence | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/config.rs` |
+| `reference/cli.md` | `dev` flags, port 3210, tail-log modes, `--no-open` semantics, `.nimbus/dev` data dir, walk-up bounded at `.git` | `crates/nimbus-bin/src/dev.rs`, `crates/nimbus-bin/src/dev/plan.rs`, `crates/nimbus-bin/src/path_boundary.rs` |
+| `reference/cli.md` | `deploy` flags, `NIMBUS_DEPLOY_URL`/`NIMBUS_DEPLOY_TOKEN`, credentials-file fallback | `crates/nimbus-bin/src/deploy.rs` |
+| `reference/cli.md` | `codegen`, `init` (adapter values), `token rotate`, `ui` | `crates/nimbus-bin/src/codegen.rs`, `crates/nimbus-bin/src/init.rs`, `crates/nimbus-bin/src/token.rs`, `crates/nimbus-bin/src/ui.rs` |
+| `reference/cli.md` | `auth` subcommands; `rotate-admin` required before `start --allow-network` | `crates/nimbus-bin/src/auth.rs` |
+| `reference/cli.md` | `machine` subcommands, init defaults (2 CPUs / 2048 MiB / 20 GiB / `default`), default image, ssh target resolution | `crates/nimbus-bin/src/machine/command.rs`, `crates/nimbus-bin/src/machine/mod.rs`, `crates/nimbus-bin/src/machine/handlers/transfer.rs` |
+| `reference/cli.md` | `node` subcommands; exactly-one `--systemd`/`--container`; system scope default | `crates/nimbus-bin/src/node_service.rs` |
+| `reference/cli.md` | `compose` subcommands; `COMPOSE_FILE` + walk-up discovery; quadlet export modes | `crates/nimbus-bin/src/compose/commands.rs`, `crates/nimbus-bin/src/compose/discovery.rs` |
+| `reference/cli.md` | `policy`, `encryption`, `packages` subcommands and value sets | `crates/nimbus-bin/src/policy.rs`, `crates/nimbus-bin/src/encryption/mod.rs`, `crates/nimbus-bin/src/provision.rs` |
+| `reference/cli.md` | `NIMBUS_LICENSE_FILE` env for `--license-file` | `crates/nimbus-license/src/lib.rs` |
+| `reference/configuration.md` | Precedence CLI > env > config file; JSON keys under `persistence`; unknown keys rejected | `crates/nimbus-bin/src/start/config.rs` |
+| `reference/configuration.md` | Network/bind table; 30-day admin-token freshness gate; systemd socket activation (`LISTEN_FDS`/`LISTEN_PID`, fd 3) | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/network_bind.rs`, `crates/nimbus-bin/src/start/boot.rs` |
+| `reference/configuration.md` | Core storage / postgres / mysql / libsql tables (env names, config keys, defaults `nimbus_provider`, `tenant_`); min ≤ max pool rule on both postgres and mysql | `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-engine/src/persistence_config.rs`, `crates/nimbus-storage/src/postgres/config.rs`, `crates/nimbus-storage/src/mysql.rs`, `crates/nimbus-storage/src/libsql.rs` |
+| `reference/configuration.md` | Runtime limit defaults (128 MB heap, 8 MB initial, 30 s timeout, 64 nested; derived instance/worker/in-flight budgets) | `crates/nimbus-bin/src/start/runtime_limits.rs`, `crates/nimbus-runtime/src/limits/resources.rs` |
+| `reference/configuration.md` | App-dir resolution and required app surface; no source-tree discovery without `--app-dir` | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/boot.rs` |
+| `reference/configuration.md` | Compose-file discovery order and `.git` boundary | `crates/nimbus-bin/src/compose/discovery.rs`, `crates/nimbus-bin/src/compose/file.rs` |
+| `reference/configuration.md` | License resolution: flag > env > XDG path > built-in community license | `crates/nimbus-bin/src/start/boot.rs`, `crates/nimbus-license/src/loading.rs`, `crates/nimbus-bin/src/dirs.rs` |
+| `reference/configuration.md` | `NIMBUS_DEPLOY_TOKEN` env-only enablement of the deploy admin API | `crates/nimbus-server/src/router.rs`, `crates/nimbus-operator/src/access_policy.rs` |
+
+## Reference — JavaScript SDK
+
+| Doc page | Claim / surface | Source |
+| --- | --- | --- |
+| `reference/sdk/index.md` | Package name, ESM-only, six entry points, react peers | `packages/nimbus/package.json` |
+| `reference/sdk/index.md` | Binary-provisioned into `.nimbus/packages/` with `file:` specifiers; `convex` package wraps this SDK | `crates/nimbus-bin/src/provision.rs`, `packages/convex/package.json` |
+| `reference/sdk/index.md` | Deployment URL `{origin}/convex/{tenant}` owns `/query` + `/ws` | `crates/nimbus-server/src/router.rs` |
+| `reference/sdk/server.md` | Builder signatures, ctx types, db/scheduler/auth surfaces, httpRouter, defineTable/defineSchema, pagination validators | `packages/nimbus/src/server.ts` |
+| `reference/sdk/server.md` | `v` validator namespace (11 constructors), `GenericId`/`Validator`/`Infer` | `packages/nimbus/src/values.ts` |
+| `reference/sdk/client.md` | `NimbusClient` options, protocol (`nimbus.v2`, client_hello), auth timeout/refresh, reconnect, dedupe | `packages/nimbus/src/browser.ts`, `packages/nimbus/src/browser-utils.ts` |
+| `reference/sdk/client.md` | `NimbusHttpClient` endpoints, 401-retry, auth token fetcher | `packages/nimbus/src/http-client.ts`, `crates/nimbus-server/src/router.rs` |
+| `reference/sdk/client.md` | `NimbusRestClient` method/route table; methods-to-avoid caution (stale CRUD methods vs server routes) | `packages/nimbus/src/rest.ts`, `crates/nimbus-server/src/router.rs` |
+| `reference/sdk/client.md` | `filters` required despite optional TS type | `crates/nimbus-core/src/query.rs` |
+| `reference/sdk/resources.md` | `Nimbus` class, services/sandboxes/sessions verbs + paths, wait defaults, credential/endpoint discovery order | `packages/nimbus/src/index.ts`, `crates/nimbus-server/src/router.rs` |
+| `reference/sdk/react.md` | Providers, hooks, skip semantics, paginated status machine, auth-state semantics | `packages/nimbus/src/react.ts` |
+
+## Concepts — system, data, runtime
+
+| Doc page | Claim / surface | Source |
+| --- | --- | --- |
+| `concepts/how-nimbus-works.md` | Five layers map to crate boundaries; server is the integration point | `crates/nimbus-server/src/lib.rs`, `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/construction.rs` |
+| `concepts/how-nimbus-works.md` | Adapters are transport-agnostic libraries on the engine, not the server | `crates/nimbus-convex/`, `crates/nimbus-firebase/`, `crates/nimbus-cloud-functions/`, `crates/nimbus-mongodb/`, `crates/nimbus-dynamodb/`, `crates/nimbus-server/src/adapters/` |
+| `concepts/how-nimbus-works.md` | `Engine` is the central coordinator; runtime is standalone V8 behind `HostBridge` with zero workspace deps | `crates/nimbus-engine/src/engine/mod.rs`, `crates/nimbus-runtime/Cargo.toml`, `crates/nimbus-runtime/src/host.rs` |
+| `concepts/how-nimbus-works.md` | Bundles SHA-256 integrity-checked before invocation | `crates/nimbus-runtime/src/runtime/bundle.rs`, `crates/nimbus-runtime/src/runtime/driver/invocation.rs` |
+| `concepts/how-nimbus-works.md` | Storage providers and per-tenant namespaces (file / schema / database / namespace) | `crates/nimbus-storage/src/sqlite.rs`, `crates/nimbus-storage/src/postgres/provider.rs`, `crates/nimbus-storage/src/mysql/provider.rs`, `crates/nimbus-storage/src/libsql/provider.rs` |
+| `concepts/how-nimbus-works.md` | Per-adapter transport surfaces (Convex HTTP+WS, Firestore REST+gRPC, Cloud Functions HTTP, MongoDB wire listener, DynamoDB endpoint) | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/adapters/` |
+| `concepts/data-and-mutations.md` | Documents = JSON + `_id`/`_creationTime`/`_updateTime`; tables created on first write in the same transaction | `crates/nimbus-core/src/document.rs`, `crates/nimbus-storage/src/store/write/direct.rs` |
+| `concepts/data-and-mutations.md` | Schemaless tables accept any document; declared-field checks only | `crates/nimbus-core/src/schema.rs`, `crates/nimbus-engine/src/engine/mutations/direct/execution.rs` |
+| `concepts/data-and-mutations.md` | Single engine-owned mutation path; scheduled dedup by execution id; OCC commit for runtime mutations | `crates/nimbus-engine/src/engine/mutations/`, `crates/nimbus-engine/src/engine/execution_units/`, `crates/nimbus-storage/src/store/write/direct.rs` |
+| `concepts/data-and-mutations.md` | Document + index effects + commit-log append are one storage transaction on every backend | `crates/nimbus-storage/src/store/write/transaction.rs`, `crates/nimbus-storage/src/sqlite/write.rs`, `crates/nimbus-storage/src/postgres/write.rs` |
+| `concepts/data-and-mutations.md` | Subscription invalidation is conservative; delivery is monotonic and coalesced | `crates/nimbus-engine/src/engine/mutations/commit_processing.rs`, `crates/nimbus-engine/src/subscriptions/delivery.rs` |
+| `concepts/adapter-boundary.md` | Five protocol front doors over one engine; per-protocol auth (OIDC/JWT, SCRAM-SHA-256, SigV4) | `crates/nimbus-server/src/adapters/`, `crates/nimbus-convex/src/auth/`, `crates/nimbus-mongodb/src/auth.rs`, `crates/nimbus-dynamodb/src/dispatch.rs` |
+| `concepts/adapter-boundary.md` | Namespace→tenant mapping; provider-shaped errors; adapters execute engine atomic write batches | `crates/nimbus-dynamodb/src/tenant.rs`, `crates/nimbus-mongodb/src/error.rs`, `crates/nimbus-engine/src/engine/transactions.rs` |
+| `concepts/adapter-boundary.md` | Reactivity derives from committed-mutation events; `ctx.db` host calls share the engine path | `crates/nimbus-engine/src/engine/committed_mutations.rs`, `crates/nimbus-bridge/src/` |
+| `concepts/runtime-permissions.md` | Grant families, exact-name semantics, mode ceilings (Restricted = all 14 families empty) | `crates/nimbus-runtime/src/limits/grants.rs` |
+| `concepts/runtime-permissions.md` | Queries/mutations deny ambient authority; only actions carry grants; `"use node"` selects a target, not permissions | `crates/nimbus-runtime/src/runtime_capabilities.rs`, `crates/nimbus-runtime/src/limits/axes.rs` |
+| `concepts/runtime-permissions.md` | Production admission routes risky grants to sandbox/trusted tiers; production default | `crates/nimbus-tenant/src/runtime_admission.rs`, `crates/nimbus-tenant/src/authority.rs` |
+| `concepts/runtime-permissions.md` | Use-time grant re-checks; heap/watchdog/per-tenant invocation budgets | `crates/nimbus-runtime/src/runtime/bootstrap/ops/shared.rs`, `crates/nimbus-runtime/src/limits/resources.rs`, `crates/nimbus-runtime/src/watchdog.rs` |
+
+## Concepts + Reference — resources, scaling, capabilities
+
+| Doc page | Claim / surface | Source |
+| --- | --- | --- |
+| `concepts/resource-model.md` | Services by tenant+name, sandboxes by id, sessions target exactly one | `crates/nimbus-server/src/http/sessions.rs`, `crates/nimbus-server/src/router.rs` |
+| `concepts/resource-model.md` | Backend kinds (sandbox/built-in/external); built-in provider allowlist; only sandbox-backed services launch | `crates/nimbus-services/src/catalog.rs`, `crates/nimbus-services/src/manager/definitions.rs`, `crates/nimbus-services/src/manager/launch.rs` |
+| `concepts/resource-model.md` | Sandbox root (rootfs/OCI), profiles worker/desktop, container + krun backends, krun execute fail-closed | `crates/nimbus-sandbox/src/spec.rs`, `crates/nimbus-server/src/http/sandboxes.rs`, `crates/nimbus-sandbox/src/backend.rs`, `crates/nimbus-sandbox/src/backends/krun/vm/launch.rs` |
+| `concepts/resource-model.md` | Deny-by-default egress; API redacts launch inputs | `crates/nimbus-sandbox/src/egress.rs`, `crates/nimbus-server/src/http/sandbox_spec.rs` |
+| `concepts/resource-model.md` | Session TTL default 15 min / cap 1 h; per-target channel rules; generation-pinned target snapshots | `crates/nimbus-services/src/manager/sessions.rs` |
+| `concepts/resource-model.md` | Exact service grant / sandbox reach required; session ops audited | `crates/nimbus-server/src/http/sessions.rs` |
+| `concepts/scaling.md` | No clustering/coordination substrate exists (single-process baseline) | workspace `Cargo.toml`/`Cargo.lock` (absence) |
+| `concepts/scaling.md` | Per-tenant admission queue, shedding, journal/apply lag; invocation caps → 429 | `crates/nimbus-engine/src/tenant/mutation/admission.rs`, `crates/nimbus-runtime/src/executor/admission.rs`, `crates/nimbus-server/src/error_envelope.rs` |
+| `concepts/scaling.md` | libSQL remote-primary writes + per-tenant replica reads with measured freshness | `crates/nimbus-storage/src/libsql/provider.rs`, `crates/nimbus-storage/src/libsql/freshness.rs` |
+| `reference/current-capabilities.md` | Native API route families (tenants, documents, query, schema, schedule, ws) | `crates/nimbus-server/src/router.rs` |
+| `reference/current-capabilities.md` | Single-field + composite index planning, backfill lifecycle; index-aware subscriptions | `crates/nimbus-core/src/schema.rs`, `crates/nimbus-engine/src/tenant/query_planning.rs`, `crates/nimbus-engine/src/subscriptions/` |
+| `reference/current-capabilities.md` | Adapter enablement statuses (Convex/Cloud Functions CLI-wired; Firestore config-gated; MongoDB/DynamoDB embedding API) | `crates/nimbus-bin/src/start/boot.rs`, `crates/nimbus-server/src/construction.rs`, `crates/nimbus-server/src/adapters/` |
+| `reference/current-capabilities.md` | Storage/encryption/sandbox/machine/resource API statuses | `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-sandbox/src/backends/`, `crates/nimbus-bin/src/machine/mod.rs`, `crates/nimbus-server/src/router.rs` |
