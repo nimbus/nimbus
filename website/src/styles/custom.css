@@ -104,3 +104,28 @@ starlight-tabs {
 [data-has-hero] .hero .tagline {
   max-width: 46rem;
 }
+
+/*
+ * Landing adapter tabs: monochrome brand glyphs before each tab label.
+ * Sources and attribution in public/brands/README.md. Rendered with
+ * mask-image + currentColor so they track the theme and active-tab
+ * accent instead of importing full-color third-party marks (identity
+ * colors stay small marks per DESIGN.md).
+ */
+.adapter-tabs [role='tablist'] [role='tab']::before {
+  content: '';
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-inline-end: 0.45em;
+  vertical-align: -0.14em;
+  background-color: currentColor;
+  -webkit-mask: var(--tab-brand) no-repeat center / contain;
+  mask: var(--tab-brand) no-repeat center / contain;
+}
+.adapter-tabs [role='tablist'] li:nth-child(1) [role='tab'] { --tab-brand: url('/brands/convex.svg'); }
+.adapter-tabs [role='tablist'] li:nth-child(2) [role='tab'] { --tab-brand: url('/brands/firebase.svg'); }
+.adapter-tabs [role='tablist'] li:nth-child(3) [role='tab'] { --tab-brand: url('/brands/googlecloud.svg'); }
+.adapter-tabs [role='tablist'] li:nth-child(4) [role='tab'] { --tab-brand: url('/brands/mongodb.svg'); }
+.adapter-tabs [role='tablist'] li:nth-child(5) [role='tab'] { --tab-brand: url('/brands/database.svg'); }
+.adapter-tabs [role='tablist'] li:nth-child(6) [role='tab'] { --tab-brand: url('/brands/api.svg'); }
