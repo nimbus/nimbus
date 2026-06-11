@@ -12,8 +12,12 @@ export interface NimbusRestClientOptions {
 
 export interface TableSchema {
   table: string;
-  fields: { name: string; field_type: string; required: boolean }[];
-  indexes?: { name: string; field: string }[];
+  fields: {
+    name: string;
+    field_type: "string" | "number" | "boolean" | "array" | "object" | "any";
+    required: boolean;
+  }[];
+  indexes: { name: string; fields: string[] }[];
 }
 
 export interface ScheduleMutationRequest {
@@ -27,7 +31,7 @@ export interface ScheduleMutationRequest {
 
 export interface CronJobRequest {
   name: string;
-  schedule: string;
+  schedule: { type: "interval"; seconds: number };
   mutation: {
     type: string;
     table: string;
@@ -37,9 +41,16 @@ export interface CronJobRequest {
 
 export interface SubscribeQuery {
   table: string;
-  filters?: unknown[];
+  /** Required by the server — pass `[]` for no filters. */
+  filters: unknown[];
   order?: { field: string; direction: "asc" | "desc" };
   limit?: number;
+}
+
+export interface PaginatedQueryRequest {
+  query: SubscribeQuery;
+  page_size: number;
+  after?: string | null;
 }
 
 export interface Subscription {
@@ -60,6 +71,65 @@ function websocketUrlFromBase(baseUrl: string): URL {
   return url;
 }
 
+/// The native REST surface this client speaks, one entry per method.
+/// Path templates use `{placeholder}` segments matching the server's
+/// router; `native_rest_routes.json` carries the same table and the
+/// selftest parity check (`rest_client_route_parity.mjs`) fails if the
+/// two drift or if any method stops honoring its entry.
+export const NIMBUS_REST_ROUTES = {
+  health: { verb: "GET", path: "/health" },
+  createTenant: { verb: "POST", path: "/api/tenants" },
+  listTenants: { verb: "GET", path: "/api/tenants" },
+  deleteTenant: { verb: "DELETE", path: "/api/tenants/{tenant_id}" },
+  getSchema: { verb: "GET", path: "/api/tenants/{tenant_id}/schema" },
+  getTableSchema: { verb: "GET", path: "/api/tenants/{tenant_id}/schema/{table}" },
+  setTableSchema: { verb: "PUT", path: "/api/tenants/{tenant_id}/schema/{table}" },
+  deleteTableSchema: { verb: "DELETE", path: "/api/tenants/{tenant_id}/schema/{table}" },
+  insertDocument: { verb: "POST", path: "/api/tenants/{tenant_id}/documents" },
+  listDocuments: { verb: "GET", path: "/api/tenants/{tenant_id}/documents/{table}" },
+  getDocument: {
+    verb: "GET",
+    path: "/api/tenants/{tenant_id}/documents/{table}/{document_id}",
+  },
+  updateDocument: {
+    verb: "PATCH",
+    path: "/api/tenants/{tenant_id}/documents/{table}/{document_id}",
+  },
+  deleteDocument: {
+    verb: "DELETE",
+    path: "/api/tenants/{tenant_id}/documents/{table}/{document_id}",
+  },
+  query: { verb: "POST", path: "/api/tenants/{tenant_id}/query" },
+  queryPaginated: { verb: "POST", path: "/api/tenants/{tenant_id}/query/paginated" },
+  readJournal: { verb: "GET", path: "/api/tenants/{tenant_id}/journal" },
+  bootstrapJournal: { verb: "GET", path: "/api/tenants/{tenant_id}/journal/bootstrap" },
+  scheduleMutation: { verb: "POST", path: "/api/tenants/{tenant_id}/schedule" },
+  listScheduledJobs: { verb: "GET", path: "/api/tenants/{tenant_id}/schedule" },
+  cancelScheduledJob: {
+    verb: "DELETE",
+    path: "/api/tenants/{tenant_id}/schedule/{job_id}",
+  },
+  getScheduledJobResult: {
+    verb: "GET",
+    path: "/api/tenants/{tenant_id}/schedule/history/{job_id}",
+  },
+  createCronJob: { verb: "POST", path: "/api/tenants/{tenant_id}/crons" },
+  listCronJobs: { verb: "GET", path: "/api/tenants/{tenant_id}/crons" },
+  deleteCronJob: { verb: "DELETE", path: "/api/tenants/{tenant_id}/crons/{name}" },
+} as const;
+
+export type NimbusRestRouteName = keyof typeof NIMBUS_REST_ROUTES;
+
+function expandPath(template: string, params: Record<string, string>): string {
+  return template.replace(/\{([a-z_]+)\}/g, (_, name: string) => {
+    const value = params[name];
+    if (value === undefined) {
+      throw new Error(`missing path parameter \`${name}\` for ${template}`);
+    }
+    return encodeURIComponent(value);
+  });
+}
+
 export class NimbusRestClient {
   readonly baseUrl: string;
   private readonly fetchImpl: FetchLike;
@@ -72,6 +142,18 @@ export class NimbusRestClient {
       ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
       ...(options.headers ?? {}),
     };
+  }
+
+  private route<T = unknown>(
+    name: NimbusRestRouteName,
+    params: Record<string, string>,
+    body?: unknown,
+  ): Promise<T> {
+    const { verb, path } = NIMBUS_REST_ROUTES[name];
+    return this.request<T>(expandPath(path, params), {
+      method: verb,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
   }
 
   async request<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -106,25 +188,35 @@ export class NimbusRestClient {
   }
 
   health(): Promise<unknown> {
-    return this.request("/health", { method: "GET" });
+    return this.route("health", {});
   }
 
   createTenant(id: string): Promise<unknown> {
-    return this.request("/api/tenants", {
-      method: "POST",
-      body: JSON.stringify({ id }),
-    });
+    return this.route("createTenant", {}, { id });
   }
 
   listTenants(): Promise<unknown> {
-    return this.request("/api/tenants", { method: "GET" });
+    return this.route("listTenants", {});
+  }
+
+  deleteTenant(tenantId: string): Promise<unknown> {
+    return this.route("deleteTenant", { tenant_id: tenantId });
+  }
+
+  getSchema(tenantId: string): Promise<unknown> {
+    return this.route("getSchema", { tenant_id: tenantId });
+  }
+
+  getTableSchema(tenantId: string, table: string): Promise<unknown> {
+    return this.route("getTableSchema", { tenant_id: tenantId, table });
   }
 
   setTableSchema(tenantId: string, table: string, schema: TableSchema): Promise<unknown> {
-    return this.request(`/api/tenants/${tenantId}/schema/${table}`, {
-      method: "PUT",
-      body: JSON.stringify(schema),
-    });
+    return this.route("setTableSchema", { tenant_id: tenantId, table }, schema);
+  }
+
+  deleteTableSchema(tenantId: string, table: string): Promise<unknown> {
+    return this.route("deleteTableSchema", { tenant_id: tenantId, table });
   }
 
   insertDocument(
@@ -132,77 +224,87 @@ export class NimbusRestClient {
     table: string,
     fields: Record<string, unknown>,
   ): Promise<unknown> {
-    return this.request(`/api/tenants/${tenantId}/documents`, {
-      method: "POST",
-      body: JSON.stringify({ table, fields }),
+    return this.route("insertDocument", { tenant_id: tenantId }, { table, fields });
+  }
+
+  listDocuments(tenantId: string, table: string): Promise<unknown> {
+    return this.route("listDocuments", { tenant_id: tenantId, table });
+  }
+
+  getDocument(tenantId: string, table: string, docId: string): Promise<unknown> {
+    return this.route("getDocument", {
+      tenant_id: tenantId,
+      table,
+      document_id: docId,
     });
-  }
-
-  getDocument(tenantId: string, docId: string): Promise<unknown> {
-    return this.request(`/api/tenants/${tenantId}/documents/${docId}`, { method: "GET" });
-  }
-
-  listDocuments(tenantId: string): Promise<unknown> {
-    return this.request(`/api/tenants/${tenantId}/documents`, { method: "GET" });
   }
 
   updateDocument(
     tenantId: string,
+    table: string,
     docId: string,
-    fields: Record<string, unknown>,
+    patch: Record<string, unknown>,
   ): Promise<unknown> {
-    return this.request(`/api/tenants/${tenantId}/documents/${docId}`, {
-      method: "PATCH",
-      body: JSON.stringify(fields),
-    });
+    return this.route(
+      "updateDocument",
+      { tenant_id: tenantId, table, document_id: docId },
+      { patch },
+    );
   }
 
-  deleteDocument(tenantId: string, docId: string): Promise<unknown> {
-    return this.request(`/api/tenants/${tenantId}/documents/${docId}`, { method: "DELETE" });
+  deleteDocument(tenantId: string, table: string, docId: string): Promise<unknown> {
+    return this.route("deleteDocument", {
+      tenant_id: tenantId,
+      table,
+      document_id: docId,
+    });
   }
 
   query(tenantId: string, query: SubscribeQuery): Promise<unknown> {
-    return this.request(`/api/tenants/${tenantId}/query`, {
-      method: "POST",
-      body: JSON.stringify(query),
-    });
+    return this.route("query", { tenant_id: tenantId }, query);
+  }
+
+  queryPaginated(tenantId: string, query: PaginatedQueryRequest): Promise<unknown> {
+    return this.route("queryPaginated", { tenant_id: tenantId }, query);
+  }
+
+  readJournal(tenantId: string): Promise<unknown> {
+    return this.route("readJournal", { tenant_id: tenantId });
+  }
+
+  bootstrapJournal(tenantId: string): Promise<unknown> {
+    return this.route("bootstrapJournal", { tenant_id: tenantId });
   }
 
   scheduleMutation(
     tenantId: string,
     request: ScheduleMutationRequest,
   ): Promise<{ job_id: string }> {
-    return this.request(`/api/tenants/${tenantId}/schedule`, {
-      method: "POST",
-      body: JSON.stringify(request),
-    });
+    return this.route("scheduleMutation", { tenant_id: tenantId }, request);
   }
 
   listScheduledJobs(tenantId: string): Promise<unknown> {
-    return this.request(`/api/tenants/${tenantId}/schedule`, { method: "GET" });
+    return this.route("listScheduledJobs", { tenant_id: tenantId });
+  }
+
+  cancelScheduledJob(tenantId: string, jobId: string): Promise<unknown> {
+    return this.route("cancelScheduledJob", { tenant_id: tenantId, job_id: jobId });
   }
 
   getScheduledJobResult(tenantId: string, jobId: string): Promise<unknown> {
-    return this.request(`/api/tenants/${tenantId}/schedule/history/${jobId}`, {
-      method: "GET",
-    });
+    return this.route("getScheduledJobResult", { tenant_id: tenantId, job_id: jobId });
   }
 
   createCronJob(tenantId: string, request: CronJobRequest): Promise<unknown> {
-    return this.request(`/api/tenants/${tenantId}/crons`, {
-      method: "POST",
-      body: JSON.stringify(request),
-    });
+    return this.route("createCronJob", { tenant_id: tenantId }, request);
   }
 
   listCronJobs(tenantId: string): Promise<unknown> {
-    return this.request(`/api/tenants/${tenantId}/crons`, { method: "GET" });
+    return this.route("listCronJobs", { tenant_id: tenantId });
   }
 
   deleteCronJob(tenantId: string, name: string): Promise<unknown> {
-    return this.request(`/api/tenants/${tenantId}/crons/${encodeURIComponent(name)}`, {
-      method: "DELETE",
-    });
+    return this.route("deleteCronJob", { tenant_id: tenantId, name });
   }
 }
 

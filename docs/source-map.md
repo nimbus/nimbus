@@ -233,8 +233,8 @@ sources exist.
 | `reference/sdk/server.md` | `v` validator namespace (11 constructors), `GenericId`/`Validator`/`Infer` | `packages/nimbus/src/values.ts` |
 | `reference/sdk/client.md` | `NimbusClient` options, protocol (`nimbus.v2`, client_hello), auth timeout/refresh, reconnect, dedupe | `packages/nimbus/src/browser.ts`, `packages/nimbus/src/browser-utils.ts` |
 | `reference/sdk/client.md` | `NimbusHttpClient` endpoints, 401-retry, auth token fetcher | `packages/nimbus/src/http-client.ts`, `crates/nimbus-server/src/router.rs` |
-| `reference/sdk/client.md` | `NimbusRestClient` method/route table; methods-to-avoid caution (stale CRUD methods vs server routes) | `packages/nimbus/src/rest.ts`, `crates/nimbus-server/src/router.rs` |
-| `reference/sdk/client.md` | `filters` required despite optional TS type | `crates/nimbus-core/src/query.rs` |
+| `reference/sdk/client.md` | `NimbusRestClient` method/route table pinned by native_rest_routes.json parity guard; request types match server shapes | `packages/nimbus/src/rest.ts`, `packages/nimbus/src/native_rest_routes.json`, `crates/nimbus-server/src/router.rs` |
+| `reference/sdk/client.md` | `SubscribeQuery.filters` required (typed required); `PaginatedQuery` nested `{query, page_size, after}`; `{patch}` update body; interval cron schedule; `{name, fields}` indexes | `crates/nimbus-core/src/query.rs`, `crates/nimbus-core/src/scheduled.rs`, `crates/nimbus-core/src/schema.rs`, `crates/nimbus-server/src/protocol.rs` |
 | `reference/sdk/resources.md` | `Nimbus` class, services/sandboxes/sessions verbs + paths, wait defaults, credential/endpoint discovery order | `packages/nimbus/src/index.ts`, `crates/nimbus-server/src/router.rs` |
 | `reference/sdk/react.md` | Providers, hooks, skip semantics, paginated status machine, auth-state semantics | `packages/nimbus/src/react.ts` |
 

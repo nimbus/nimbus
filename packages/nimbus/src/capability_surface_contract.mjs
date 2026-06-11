@@ -326,9 +326,12 @@ const entryContracts = {
     exports: [
       "CronJobRequest",
       "FetchLike",
+      "NIMBUS_REST_ROUTES",
       "NimbusRestClient",
       "NimbusRestClientOptions",
+      "NimbusRestRouteName",
       "NimbusSubscriptionClient",
+      "PaginatedQueryRequest",
       "RequestOptions",
       "ScheduleMutationRequest",
       "SubscribeQuery",

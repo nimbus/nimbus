@@ -1,0 +1,29 @@
+{
+  "comment": "Native REST routes the NimbusRestClient speaks. Mirrors NIMBUS_REST_ROUTES in rest.ts (enforced by rest_client_route_parity.mjs in the package selftest) and the server's build_local_admin_router (enforced by the rest_client_route_parity test in nimbus-server). Update all three together.",
+  "routes": {
+    "health": { "verb": "GET", "path": "/health" },
+    "createTenant": { "verb": "POST", "path": "/api/tenants" },
+    "listTenants": { "verb": "GET", "path": "/api/tenants" },
+    "deleteTenant": { "verb": "DELETE", "path": "/api/tenants/{tenant_id}" },
+    "getSchema": { "verb": "GET", "path": "/api/tenants/{tenant_id}/schema" },
+    "getTableSchema": { "verb": "GET", "path": "/api/tenants/{tenant_id}/schema/{table}" },
+    "setTableSchema": { "verb": "PUT", "path": "/api/tenants/{tenant_id}/schema/{table}" },
+    "deleteTableSchema": { "verb": "DELETE", "path": "/api/tenants/{tenant_id}/schema/{table}" },
+    "insertDocument": { "verb": "POST", "path": "/api/tenants/{tenant_id}/documents" },
+    "listDocuments": { "verb": "GET", "path": "/api/tenants/{tenant_id}/documents/{table}" },
+    "getDocument": { "verb": "GET", "path": "/api/tenants/{tenant_id}/documents/{table}/{document_id}" },
+    "updateDocument": { "verb": "PATCH", "path": "/api/tenants/{tenant_id}/documents/{table}/{document_id}" },
+    "deleteDocument": { "verb": "DELETE", "path": "/api/tenants/{tenant_id}/documents/{table}/{document_id}" },
+    "query": { "verb": "POST", "path": "/api/tenants/{tenant_id}/query" },
+    "queryPaginated": { "verb": "POST", "path": "/api/tenants/{tenant_id}/query/paginated" },
+    "readJournal": { "verb": "GET", "path": "/api/tenants/{tenant_id}/journal" },
+    "bootstrapJournal": { "verb": "GET", "path": "/api/tenants/{tenant_id}/journal/bootstrap" },
+    "scheduleMutation": { "verb": "POST", "path": "/api/tenants/{tenant_id}/schedule" },
+    "listScheduledJobs": { "verb": "GET", "path": "/api/tenants/{tenant_id}/schedule" },
+    "cancelScheduledJob": { "verb": "DELETE", "path": "/api/tenants/{tenant_id}/schedule/{job_id}" },
+    "getScheduledJobResult": { "verb": "GET", "path": "/api/tenants/{tenant_id}/schedule/history/{job_id}" },
+    "createCronJob": { "verb": "POST", "path": "/api/tenants/{tenant_id}/crons" },
+    "listCronJobs": { "verb": "GET", "path": "/api/tenants/{tenant_id}/crons" },
+    "deleteCronJob": { "verb": "DELETE", "path": "/api/tenants/{tenant_id}/crons/{name}" }
+  }
+}

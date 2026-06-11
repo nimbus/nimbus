@@ -242,35 +242,37 @@ is `RequestInit` with a plain-object `headers` field. Any route in the
 | `health()` | `GET /health` |
 | `createTenant(id)` | `POST /api/tenants` |
 | `listTenants()` | `GET /api/tenants` |
+| `deleteTenant(tenantId)` | `DELETE /api/tenants/{t}` |
+| `getSchema(tenantId)` | `GET /api/tenants/{t}/schema` |
+| `getTableSchema(tenantId, table)` | `GET /api/tenants/{t}/schema/{table}` |
+| `setTableSchema(tenantId, table, schema)` | `PUT /api/tenants/{t}/schema/{table}` |
+| `deleteTableSchema(tenantId, table)` | `DELETE /api/tenants/{t}/schema/{table}` |
 | `insertDocument(tenantId, table, fields)` | `POST /api/tenants/{t}/documents` |
+| `listDocuments(tenantId, table)` | `GET /api/tenants/{t}/documents/{table}` |
+| `getDocument(tenantId, table, docId)` | `GET /api/tenants/{t}/documents/{table}/{docId}` |
+| `updateDocument(tenantId, table, docId, patch)` | `PATCH /api/tenants/{t}/documents/{table}/{docId}` |
+| `deleteDocument(tenantId, table, docId)` | `DELETE /api/tenants/{t}/documents/{table}/{docId}` |
 | `query(tenantId, query)` | `POST /api/tenants/{t}/query` |
+| `queryPaginated(tenantId, request)` | `POST /api/tenants/{t}/query/paginated` |
+| `readJournal(tenantId)` | `GET /api/tenants/{t}/journal` |
+| `bootstrapJournal(tenantId)` | `GET /api/tenants/{t}/journal/bootstrap` |
 | `scheduleMutation(tenantId, request)` | `POST /api/tenants/{t}/schedule` |
 | `listScheduledJobs(tenantId)` | `GET /api/tenants/{t}/schedule` |
+| `cancelScheduledJob(tenantId, jobId)` | `DELETE /api/tenants/{t}/schedule/{jobId}` |
 | `getScheduledJobResult(tenantId, jobId)` | `GET /api/tenants/{t}/schedule/history/{jobId}` |
+| `createCronJob(tenantId, request)` | `POST /api/tenants/{t}/crons` |
 | `listCronJobs(tenantId)` | `GET /api/tenants/{t}/crons` |
 | `deleteCronJob(tenantId, name)` | `DELETE /api/tenants/{t}/crons/{name}` |
 
+The method ↔ route table is pinned: the package ships
+`native_rest_routes.json` and its selftest fails if a method or the
+server router drifts from it. Request types match the server's shapes:
 `scheduleMutation` resolves to `{ job_id }` (`ScheduleMutationRequest` is
-`{ run_after_ms, mutation }`). When calling `query`, always pass `filters`
-explicitly (use `[]` for no filters) — the server requires the field even
-though the `SubscribeQuery` type marks it optional.
-
-### Methods to avoid
-
-Several convenience methods predate the current server routes and do not
-work against the current server. Use `request()` with the routes documented
-in the [native HTTP API reference](/reference/native/http-api/) instead:
-
-- `getDocument`, `listDocuments`, `updateDocument`, `deleteDocument` — these
-  target document paths the server does not expose in that shape (document
-  reads and updates are addressed by `{table}/{documentId}`, and updates send
-  a `{ patch }` body).
-- `createCronJob` — the route exists, but the `CronJobRequest.schedule`
-  field is typed as a `string` while the server expects a schedule object
-  such as `{ "type": "interval", "seconds": 60 }`.
-- `setTableSchema` — the route exists, but the `TableSchema` type's
-  `indexes` entries (`{ name, field }`) do not match the server's expected
-  shape (`{ name, fields: [...] }`, with `indexes` required).
+`{ run_after_ms, mutation }`); `SubscribeQuery.filters` is required (pass
+`[]` for no filters); `queryPaginated` takes
+`{ query, page_size, after? }`; `updateDocument` sends a `{ patch }`
+body; `CronJobRequest.schedule` is `{ type: "interval", seconds }`; and
+`TableSchema.indexes` entries are `{ name, fields: [...] }`.
 
 ## NimbusSubscriptionClient — `@nimbus/nimbus/transports/rest`
 

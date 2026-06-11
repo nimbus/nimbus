@@ -1201,6 +1201,8 @@ mod machine_lifecycle;
 mod mongodb_wire;
 #[path = "tests/registry_and_license/mod.rs"]
 mod registry_and_license;
+#[path = "tests/rest_route_parity.rs"]
+mod rest_route_parity;
 #[path = "tests/scheduling.rs"]
 mod scheduling;
 #[path = "tests/tenant_isolation_harness.rs"]

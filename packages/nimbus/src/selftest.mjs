@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+
+import { assertRestClientRouteParity } from "./rest_client_route_parity.mjs";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -26,7 +28,8 @@ async function main() {
   await bundleModule("react.ts", "browser");
   await bundleModule("server.ts", "neutral");
   await bundleModule("values.ts", "neutral");
-  await bundleModule("transports/rest.ts", "neutral");
+  const restBundle = await bundleModule("transports/rest.ts", "neutral");
+  await assertRestClientRouteParity(restBundle);
   await assertExplicitOptionsBypassLocalCredentialFile(indexBundle);
   await assertLifecycleWaitValidation(indexBundle);
   await assertServiceDefinitionRoutes(indexBundle);
