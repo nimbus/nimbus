@@ -6,7 +6,6 @@ import {
 
 export type NimbusCredential =
   | { kind: "bearer"; token: string }
-  | { kind: "api_key"; apiKey: string }
   | {
       kind: "workload_identity";
       token: string;
@@ -19,7 +18,6 @@ export interface NimbusClientOptions {
   endpoint?: string;
   tenantId?: string;
   token?: string;
-  apiKey?: string;
   credential?: NimbusCredential;
   fetch?: FetchLike;
   headers?: Record<string, string>;
@@ -395,15 +393,11 @@ type LocalCredentialFile = {
   endpoint?: unknown;
   token?: unknown;
   access_token?: unknown;
-  api_key?: unknown;
-  apiKey?: unknown;
   credential?: {
     kind?: unknown;
     type?: unknown;
     token?: unknown;
     access_token?: unknown;
-    api_key?: unknown;
-    apiKey?: unknown;
     issuer?: unknown;
     audience?: unknown;
     subject?: unknown;
@@ -723,7 +717,6 @@ async function createDefaultRestClient(options: NimbusClientOptions): Promise<Ni
 function normalizeExplicitCredential(options: NimbusClientOptions): NimbusCredential | null {
   if (options.credential) return options.credential;
   if (options.token) return { kind: "bearer", token: options.token };
-  if (options.apiKey) return { kind: "api_key", apiKey: options.apiKey };
   return null;
 }
 
@@ -731,9 +724,6 @@ function normalizeEnvCredential(env: Record<string, string | undefined>): Nimbus
   const token = stringOrUndefined(env.NIMBUS_TOKEN)
     ?? stringOrUndefined(env.NIMBUS_BEARER_TOKEN);
   if (token) return { kind: "bearer", token };
-
-  const apiKey = stringOrUndefined(env.NIMBUS_API_KEY);
-  if (apiKey) return { kind: "api_key", apiKey };
 
   const workloadToken = stringOrUndefined(env.NIMBUS_WORKLOAD_IDENTITY_TOKEN);
   if (workloadToken) {
@@ -768,17 +758,10 @@ function normalizeLocalCredential(file: LocalCredentialFile | null): NimbusCrede
     if ((kind === "bearer" || kind === "access_token") && token) {
       return { kind: "bearer", token };
     }
-    const nestedApiKey = stringOrUndefined(nested.apiKey) ?? stringOrUndefined(nested.api_key);
-    if ((kind === "api_key" || kind === "apiKey") && nestedApiKey) {
-      return { kind: "api_key", apiKey: nestedApiKey };
-    }
   }
 
   const token = stringOrUndefined(file.token) ?? stringOrUndefined(file.access_token);
   if (token) return { kind: "bearer", token };
-
-  const apiKey = stringOrUndefined(file.apiKey) ?? stringOrUndefined(file.api_key);
-  if (apiKey) return { kind: "api_key", apiKey };
 
   return null;
 }
@@ -845,8 +828,6 @@ function defaultCredentialFilePath(env: Record<string, string | undefined>): str
 
 function headersForCredential(credential: NimbusCredential): Record<string, string> {
   switch (credential.kind) {
-    case "api_key":
-      return { "X-Nimbus-Api-Key": credential.apiKey };
     case "bearer":
     case "workload_identity":
       return { Authorization: `Bearer ${credential.token}` };

@@ -221,9 +221,7 @@ const rest = new NimbusRestClient("http://127.0.0.1:8080", {
 ```
 
 Options (`NimbusRestClientOptions`): `fetch` (custom fetch), `headers`
-(extra default headers), `token` (sent as `Authorization: Bearer …`), and
-`apiKey` (sent as an `X-Nimbus-Api-Key` header — note that the current
-server authenticates bearer tokens; prefer `token`).
+(extra default headers), and `token` (sent as `Authorization: Bearer …`).
 
 ### request
 

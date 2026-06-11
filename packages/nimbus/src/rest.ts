@@ -8,7 +8,6 @@ export interface NimbusRestClientOptions {
   fetch?: FetchLike;
   headers?: Record<string, string>;
   token?: string;
-  apiKey?: string;
 }
 
 export interface TableSchema {
@@ -71,7 +70,6 @@ export class NimbusRestClient {
     this.fetchImpl = options.fetch ?? fetch.bind(globalThis);
     this.defaultHeaders = {
       ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-      ...(options.apiKey ? { "X-Nimbus-Api-Key": options.apiKey } : {}),
       ...(options.headers ?? {}),
     };
   }

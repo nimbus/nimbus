@@ -43,7 +43,6 @@ runs lazily on the first request (or eagerly via `defaultClient`).
 | `endpoint` | Server origin, for example `http://127.0.0.1:8080`. |
 | `tenantId` | Default tenant for calls that need one. |
 | `token` | Bearer token (shorthand for `credential: { kind: "bearer", token }`). |
-| `apiKey` | API key (shorthand for `credential: { kind: "api_key", apiKey }`). |
 | `credential` | Explicit `NimbusCredential`. |
 | `fetch` | Custom fetch implementation. |
 | `headers` | Extra headers on every request. |
@@ -53,14 +52,11 @@ runs lazily on the first request (or eagerly via `defaultClient`).
 ```typescript
 type NimbusCredential =
   | { kind: "bearer"; token: string }
-  | { kind: "api_key"; apiKey: string }
   | { kind: "workload_identity"; token: string; issuer?: string; audience?: string; subject?: string };
 ```
 
 Bearer and workload-identity credentials are sent as
-`Authorization: Bearer …`. API-key credentials are sent as an
-`X-Nimbus-Api-Key` header — note that the current server authenticates
-bearer tokens; prefer bearer credentials.
+`Authorization: Bearer …`.
 
 ### Endpoint and credential discovery
 
@@ -75,16 +71,16 @@ discovers them in order:
 
 **Credential:**
 
-1. `options.credential`, `options.token`, or `options.apiKey`
+1. `options.credential` or `options.token`
 2. Environment variables: `NIMBUS_TOKEN` or `NIMBUS_BEARER_TOKEN` (bearer),
-   then `NIMBUS_API_KEY`, then `NIMBUS_WORKLOAD_IDENTITY_TOKEN` (with
+   then `NIMBUS_WORKLOAD_IDENTITY_TOKEN` (with
    optional `NIMBUS_WORKLOAD_IDENTITY_ISSUER`,
    `NIMBUS_WORKLOAD_IDENTITY_AUDIENCE`, `NIMBUS_WORKLOAD_IDENTITY_SUBJECT`)
 3. The local credential file:
    `~/.config/nimbus/application_default_credentials.json` (honors
    `XDG_CONFIG_HOME`; override the path with
    `NIMBUS_APPLICATION_CREDENTIALS`). The file may carry `endpoint`, a
-   top-level `token`/`access_token` or `apiKey`/`api_key`, or a nested
+   top-level `token`/`access_token`, or a nested
    `credential` object with `kind`, `token`, and workload-identity fields.
 4. A token file named by `NIMBUS_WORKLOAD_IDENTITY_TOKEN_FILE` (read as a
    workload-identity token).

@@ -27,8 +27,8 @@ order:
 
 - **Endpoint** — `endpoint` option, then `NIMBUS_ENDPOINT`, then the
   `endpoint` field of the local credential file.
-- **Credential** — `token`, `apiKey`, or `credential` option; then
-  `NIMBUS_TOKEN` (or `NIMBUS_BEARER_TOKEN`), `NIMBUS_API_KEY`, or
+- **Credential** — `token` or `credential` option; then
+  `NIMBUS_TOKEN` (or `NIMBUS_BEARER_TOKEN`) or
   `NIMBUS_WORKLOAD_IDENTITY_TOKEN`; then the local credential file at
   `~/.config/nimbus/application_default_credentials.json` (override the
   path with `NIMBUS_APPLICATION_CREDENTIALS`); then a workload identity

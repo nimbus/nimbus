@@ -32,10 +32,6 @@ const TENANT_BUNDLE_OPERATOR_CREDENTIAL_PATTERNS = Object.freeze([
     label: "NIMBUS_BEARER_TOKEN",
     regex: /\bNIMBUS_BEARER_TOKEN\b/,
   },
-  {
-    label: "NIMBUS_API_KEY",
-    regex: /\bNIMBUS_API_KEY\b/,
-  },
 ]);
 
 function collectModuleSpecifiers(source) {
