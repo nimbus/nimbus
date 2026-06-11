@@ -17,12 +17,13 @@ pub(super) const SERVICE_GRANT_WARM_POOL_CASE: IsolatedRuntimeTestCase =
         "runtime::tests::warm_pool::warm_pool_partitions_by_exact_service_grants_subprocess",
     );
 
-pub(super) const PERMISSION_PROFILE_WARM_POOL_CASE: IsolatedRuntimeTestCase =
+pub(super) const INVOCATION_KIND_REUSE_WARM_POOL_CASE: IsolatedRuntimeTestCase =
     IsolatedRuntimeTestCase::new(
-        "runtime-warm-pool-permission-profile-partition",
+        "runtime-warm-pool-invocation-kind-reuse",
         "cooperative-warm-pool",
-        "warm-pool entries stay isolated by query/mutation/action permission profile",
-        "runtime::tests::warm_pool::warm_pool_partitions_by_permission_profile_subprocess",
+        "warm-pool entries are reused across invocation kinds: the configured grants are the \
+         authority surface, so kind is not a partition dimension",
+        "runtime::tests::warm_pool::warm_pool_reuses_across_invocation_kinds_subprocess",
     );
 
 #[test]
@@ -101,8 +102,8 @@ fn warm_pool_partitions_by_exact_service_grants() {
 }
 
 #[test]
-fn warm_pool_partitions_by_permission_profile() {
-    run_v8_sensitive_runtime_test_in_subprocess(PERMISSION_PROFILE_WARM_POOL_CASE);
+fn warm_pool_reuses_across_invocation_kinds() {
+    run_v8_sensitive_runtime_test_in_subprocess(INVOCATION_KIND_REUSE_WARM_POOL_CASE);
 }
 
 #[test]
@@ -127,12 +128,12 @@ fn warm_pool_partitions_by_exact_service_grants_subprocess() {
 
 #[test]
 #[ignore = "runs in a subprocess to isolate warm-pool locker V8 state"]
-fn warm_pool_partitions_by_permission_profile_subprocess() {
+fn warm_pool_reuses_across_invocation_kinds_subprocess() {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("tokio runtime should build")
-        .block_on(warm_pool_partitions_by_permission_profile_inner());
+        .block_on(warm_pool_reuses_across_invocation_kinds_inner());
 }
 
 async fn warm_pool_cross_tenant_isolation_inner() {
@@ -313,7 +314,7 @@ export {};
     assert_eq!(native_metrics_after_reuse.warm_pool_misses, 1);
 }
 
-async fn warm_pool_partitions_by_permission_profile_inner() {
+async fn warm_pool_reuses_across_invocation_kinds_inner() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -385,20 +386,18 @@ export {};
             Some(&action_context),
             true,
         )
-        .expect("action-profile runtime cold take should succeed");
+        .expect("action take should succeed");
     let metrics_after_action_take = runtime_owner.policy.metrics_snapshot();
     assert_eq!(
-        metrics_after_action_take.warm_pool_misses, 2,
-        "action permission profile must not reuse a query-profile runtime"
+        metrics_after_action_take.warm_pool_hits, 1,
+        "an action invocation reuses the query-warmed runtime: the configured grants are \
+         the authority surface, so invocation kind is not a pool partition dimension"
     );
-    assert_eq!(
-        metrics_after_action_take.warm_pool_hits, 0,
-        "mismatched permission profile must not produce a warm hit"
-    );
+    assert_eq!(metrics_after_action_take.warm_pool_misses, 1);
     assert_eq!(
         v8_runtime_pool.warm_pool_count_for_test(),
-        1,
-        "query-profile entry should remain retained after action cold miss"
+        0,
+        "the reused entry leaves the pool while the action holds it"
     );
 
     v8_runtime_pool.return_runtime_for_invocation(
@@ -407,7 +406,7 @@ export {};
         Some(&action_context),
         action,
     );
-    assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 2);
+    assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 1);
 
     let _query_again = v8_runtime_pool
         .take_runtime_with_options_for_invocation(
@@ -416,11 +415,11 @@ export {};
             Some(&query_context),
             true,
         )
-        .expect("same query permission profile should reuse the query runtime");
+        .expect("query take should reuse the returned runtime");
     let metrics_after_query_reuse = runtime_owner.policy.metrics_snapshot();
     assert_eq!(
-        metrics_after_query_reuse.warm_pool_hits, 1,
-        "matching permission profile should produce a warm hit"
+        metrics_after_query_reuse.warm_pool_hits, 2,
+        "the same runtime keeps cycling across invocation kinds"
     );
-    assert_eq!(metrics_after_query_reuse.warm_pool_misses, 2);
+    assert_eq!(metrics_after_query_reuse.warm_pool_misses, 1);
 }
