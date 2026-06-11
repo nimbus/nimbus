@@ -17,6 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 REGISTRY_PATH = (
     REPO_ROOT
     / "docs"
+    / "private"
     / "architecture"
     / "runtime"
     / "node-lts-compat"

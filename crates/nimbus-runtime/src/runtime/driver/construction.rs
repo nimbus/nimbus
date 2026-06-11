@@ -6,7 +6,7 @@ use crate::backends::v8::{V8StartupSnapshot, create_v8_startup_snapshot};
 use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::RuntimeCompatibilityTarget;
 use crate::module_loader::RestrictedModuleLoader;
-use crate::runtime_capabilities::{RuntimePathPolicy, RuntimePermissionProfile};
+use crate::runtime_capabilities::RuntimePathPolicy;
 
 use super::super::bootstrap::{
     InstalledRuntimeWorkerBootstrapState, execution_extensions, extension_transpiler_for_target,
@@ -62,14 +62,12 @@ impl NimbusRuntime {
         &self,
         bundle: &RuntimeBundle,
         snapshot: &V8StartupSnapshot,
-        permission_profile: RuntimePermissionProfile,
     ) -> Result<JsRuntime> {
         self.create_runtime_with_bootstrap_state(
             bundle,
             Some(snapshot),
             false,
             main_thread_worker_bootstrap_state(),
-            permission_profile,
         )
     }
 
@@ -78,14 +76,12 @@ impl NimbusRuntime {
         bundle: &RuntimeBundle,
         startup_snapshot: Option<&V8StartupSnapshot>,
         use_locker: bool,
-        permission_profile: RuntimePermissionProfile,
     ) -> Result<JsRuntime> {
         self.create_runtime_with_bootstrap_state(
             bundle,
             startup_snapshot,
             use_locker,
             main_thread_worker_bootstrap_state(),
-            permission_profile,
         )
     }
 
@@ -95,7 +91,6 @@ impl NimbusRuntime {
         startup_snapshot: Option<&V8StartupSnapshot>,
         use_locker: bool,
         worker_bootstrap_state: InstalledRuntimeWorkerBootstrapState,
-        permission_profile: RuntimePermissionProfile,
     ) -> Result<JsRuntime> {
         let mut runtime = JsRuntime::new(self.runtime_options(
             bundle,
@@ -104,7 +99,7 @@ impl NimbusRuntime {
             worker_bootstrap_state,
         )?);
         install_missing_runtime_start_time(&mut runtime);
-        self.initialize_runtime_state(&mut runtime, bundle, permission_profile)?;
+        self.initialize_runtime_state(&mut runtime, bundle)?;
         if startup_snapshot.is_none() {
             Self::install_bootstrap(&mut runtime)?;
         }
@@ -117,13 +112,7 @@ impl NimbusRuntime {
         bundle: &RuntimeBundle,
         worker_bootstrap_state: InstalledRuntimeWorkerBootstrapState,
     ) -> Result<JsRuntime> {
-        self.create_runtime_with_bootstrap_state(
-            bundle,
-            None,
-            false,
-            worker_bootstrap_state,
-            RuntimePermissionProfile::Action,
-        )
+        self.create_runtime_with_bootstrap_state(bundle, None, false, worker_bootstrap_state)
     }
 
     pub(crate) fn runtime_options(
@@ -186,9 +175,8 @@ impl NimbusRuntime {
         &self,
         runtime: &mut JsRuntime,
         bundle: &RuntimeBundle,
-        permission_profile: RuntimePermissionProfile,
     ) -> Result<()> {
-        initialize_runtime_state(runtime, self, bundle, permission_profile)
+        initialize_runtime_state(runtime, self, bundle)
     }
 
     pub(crate) fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {

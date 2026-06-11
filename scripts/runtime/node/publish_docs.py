@@ -14,17 +14,18 @@ def repo_root() -> Path:
 
 
 def default_evidence_root() -> Path:
-    return repo_root() / "docs" / "architecture" / "runtime" / "node-compat-evidence" / "latest"
+    return repo_root() / "docs" / "private" / "architecture" / "runtime" / "node-compat-evidence" / "latest"
 
 
 def default_output_root() -> Path:
-    return repo_root() / "docs" / "runtimes" / "nodejs" / "evidence"
+    return repo_root() / "docs" / "private" / "staging" / "runtimes" / "nodejs" / "evidence"
 
 
 def lane_registry_path() -> Path:
     return (
         repo_root()
         / "docs"
+        / "private"
         / "architecture"
         / "runtime"
         / "node-lts-compat"
@@ -36,6 +37,7 @@ def faas_profile_path() -> Path:
     return (
         repo_root()
         / "docs"
+        / "private"
         / "architecture"
         / "runtime"
         / "node-faas-compatibility-profile.json"

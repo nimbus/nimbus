@@ -34,6 +34,7 @@ LANE_MANIFEST_ROOT = (
 REGISTRY_PATH = (
     REPO_ROOT
     / "docs"
+    / "private"
     / "architecture"
     / "runtime"
     / "node-lts-compat"
@@ -42,6 +43,7 @@ REGISTRY_PATH = (
 PUBLISHED_STATUS_PATH = (
     REPO_ROOT
     / "docs"
+    / "private"
     / "architecture"
     / "runtime"
     / "node-compat-evidence"

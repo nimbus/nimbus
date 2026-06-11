@@ -16,7 +16,7 @@ from schema import default_schema_path, load_json, validate_payload_against_sche
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PROFILE_PATH = (
-    REPO_ROOT / "docs" / "architecture" / "runtime" / "node-faas-compatibility-profile.json"
+    REPO_ROOT / "docs" / "private" / "architecture" / "runtime" / "node-faas-compatibility-profile.json"
 )
 SCHEMA_PATH = default_schema_path("node-faas-compatibility-profile.schema.json")
 

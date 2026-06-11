@@ -15,7 +15,7 @@ from typing import Any
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-OUTPUT_ROOT = REPO_ROOT / "docs" / "architecture" / "runtime" / "node-lts-compat"
+OUTPUT_ROOT = REPO_ROOT / "docs" / "private" / "architecture" / "runtime" / "node-lts-compat"
 DENO_REPO = pathlib.Path.home() / "src" / "github.com" / "nimbus" / "deno"
 
 NODE20_URL = "https://nodejs.org/download/release/latest-v20.x/docs/api/all.json"

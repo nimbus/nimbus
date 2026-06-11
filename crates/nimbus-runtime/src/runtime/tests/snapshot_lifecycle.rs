@@ -47,7 +47,7 @@ export {};
         .bootstrap_snapshot()
         .expect("bootstrap snapshot should build");
     let runtime = runtime_owner
-        .create_runtime(&bundle, Some(snapshot), false, context.permission_profile)
+        .create_runtime(&bundle, Some(snapshot), false)
         .expect("snapshot-born runtime should build");
     let expected = serde_json::json!({
         "operation": "document_get",
@@ -165,7 +165,7 @@ export {};
         .bootstrap_snapshot()
         .expect("bootstrap snapshot should build");
     let runtime = initial_owner
-        .create_runtime(&bundle, Some(snapshot), false, context.permission_profile)
+        .create_runtime(&bundle, Some(snapshot), false)
         .expect("snapshot-born runtime should build");
     let expected = serde_json::json!({
         "operation": "document_get",
@@ -294,7 +294,7 @@ export {};
                 .bootstrap_snapshot()
                 .expect("bootstrap snapshot should build");
             let runtime = runtime_owner
-                .create_runtime(&bundle, Some(snapshot), false, context.permission_profile)
+                .create_runtime(&bundle, Some(snapshot), false)
                 .expect("snapshot-born runtime should build");
             let expected = serde_json::json!({
                 "operation": "document_get",

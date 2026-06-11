@@ -14,8 +14,7 @@ use crate::host::{HostBridge, HostCallCancellation};
 use crate::limits::RuntimeLimits;
 use crate::runtime::NimbusRuntime;
 use crate::runtime_capabilities::{
-    RuntimeEnvPolicy, RuntimePathPolicy, RuntimePermissionProfile,
-    build_permissions_container_for_profile,
+    RuntimeEnvPolicy, RuntimePathPolicy, build_permissions_container,
 };
 use crate::watchdog::{WatchdogRegistration, WatchdogTimer};
 
@@ -292,11 +291,10 @@ pub(crate) fn initialize_runtime_state(
     runtime: &mut JsRuntime,
     runtime_owner: &NimbusRuntime,
     bundle: &RuntimeBundle,
-    permission_profile: RuntimePermissionProfile,
 ) -> Result<()> {
     install_runtime_owner(runtime, runtime_owner.clone());
     install_runtime_host_bridge_slot(runtime, runtime_owner.host.clone());
-    install_runtime_contract(runtime, runtime_owner, bundle, permission_profile)?;
+    install_runtime_contract(runtime, runtime_owner, bundle)?;
     if runtime_owner
         .policy()
         .limits()
@@ -321,7 +319,6 @@ fn install_runtime_contract(
     runtime: &mut JsRuntime,
     runtime_owner: &NimbusRuntime,
     bundle: &RuntimeBundle,
-    permission_profile: RuntimePermissionProfile,
 ) -> Result<()> {
     let limits = runtime_owner.policy().limits().clone();
     let paths = RuntimePathPolicy::for_bundle(bundle, &limits)?;
@@ -334,12 +331,7 @@ fn install_runtime_contract(
         }
     }
     let capability_policy = InstalledRuntimeCapabilityPolicy {
-        permissions: build_permissions_container_for_profile(
-            &paths,
-            &env,
-            &limits,
-            permission_profile,
-        )?,
+        permissions: build_permissions_container(&paths, &env, &limits)?,
         paths,
         env,
     };

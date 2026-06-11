@@ -521,7 +521,7 @@ mod tests {
     use crate::limits::RuntimeLimits;
     use crate::runtime::RuntimeBundle;
     use crate::runtime_capabilities::{
-        RuntimeEnvPolicy, RuntimePermissionProfile, build_permissions_container_for_profile,
+        RuntimeEnvPolicy, build_ambient_denied_permissions_container,
     };
 
     #[test]
@@ -560,13 +560,9 @@ mod tests {
         let limits = RuntimeLimits::application_node22();
         let policy = RuntimePathPolicy::for_bundle(&bundle, &limits).expect("policy should build");
         let env = RuntimeEnvPolicy::for_grants(&limits.grants);
-        let denied_module_permissions = build_permissions_container_for_profile(
-            &policy,
-            &env,
-            &limits,
-            RuntimePermissionProfile::Query,
-        )
-        .expect("query permissions should build");
+        let denied_module_permissions =
+            build_ambient_denied_permissions_container(&policy, &env, &limits)
+                .expect("ambient-denied permissions should build");
         let loader = ScopedNodeRequireLoader::new_with_module_read_permissions(
             policy.clone(),
             build_package_json_resolver(),

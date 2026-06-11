@@ -18,7 +18,7 @@ def default_artifacts_root() -> Path:
 
 
 def default_publish_root() -> Path:
-    return repo_root() / "docs" / "architecture" / "runtime" / "node-compat-evidence" / "latest"
+    return repo_root() / "docs" / "private" / "architecture" / "runtime" / "node-compat-evidence" / "latest"
 
 
 def load_json(path: Path) -> dict[str, Any]:

@@ -329,8 +329,8 @@ fn compare_json_objects(
 ) -> Ordering {
     let mut a_entries = a.iter().collect::<Vec<_>>();
     let mut b_entries = b.iter().collect::<Vec<_>>();
-    a_entries.sort_by(|(ak, _), (bk, _)| ak.cmp(bk));
-    b_entries.sort_by(|(ak, _), (bk, _)| ak.cmp(bk));
+    a_entries.sort_by_key(|(key, _)| *key);
+    b_entries.sort_by_key(|(key, _)| *key);
 
     for ((ak, av), (bk, bv)) in a_entries.iter().zip(b_entries.iter()) {
         let key_cmp = ak.cmp(bk);

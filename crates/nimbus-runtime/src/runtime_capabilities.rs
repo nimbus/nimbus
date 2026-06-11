@@ -16,29 +16,7 @@ use sys_traits::impls::RealSys;
 
 use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::{RuntimeGrants, RuntimeLimits};
-use crate::runtime::{InvocationKind, RuntimeBundle};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum RuntimePermissionProfile {
-    Query,
-    Mutation,
-    Action,
-}
-
-impl RuntimePermissionProfile {
-    pub(crate) fn for_invocation_kind(kind: &InvocationKind) -> Self {
-        match kind {
-            InvocationKind::Query | InvocationKind::PaginatedQuery => Self::Query,
-            InvocationKind::Mutation => Self::Mutation,
-            InvocationKind::Action => Self::Action,
-        }
-    }
-
-    fn allows_configured_ambient_authority(self) -> bool {
-        matches!(self, Self::Action)
-    }
-}
+use crate::runtime::RuntimeBundle;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct RuntimeContractPathsDescriptor {
@@ -526,23 +504,38 @@ impl PermissionDescriptorParser for RuntimePermissionDescriptorParser {
     }
 }
 
-#[cfg(test)]
+/// Worker permission contract: the configured `RuntimeLimits` grants and
+/// `RuntimePathPolicy` roots ARE the authority surface — every invocation
+/// kind gets exactly the profile's grants, no more, no less (the node22
+/// profile contract tests in `runtime/tests/basic_invocation/` pin this).
+/// Per-invocation-kind capability segregation is capability-segregation-
+/// plan scope and must land together with revised profile contracts.
 pub(crate) fn build_permissions_container(
     paths: &RuntimePathPolicy,
     env: &RuntimeEnvPolicy,
     limits: &RuntimeLimits,
 ) -> Result<PermissionsContainer> {
-    build_permissions_container_for_profile(paths, env, limits, RuntimePermissionProfile::Action)
+    build_permissions_container_with_ambient(paths, env, limits, true)
 }
 
-pub(crate) fn build_permissions_container_for_profile(
+/// Test fixture: a container whose configured ambient grants (read/write/
+/// net/ffi/run) are withheld, used to prove denial propagation paths.
+#[cfg(test)]
+pub(crate) fn build_ambient_denied_permissions_container(
     paths: &RuntimePathPolicy,
     env: &RuntimeEnvPolicy,
     limits: &RuntimeLimits,
-    permission_profile: RuntimePermissionProfile,
+) -> Result<PermissionsContainer> {
+    build_permissions_container_with_ambient(paths, env, limits, false)
+}
+
+fn build_permissions_container_with_ambient(
+    paths: &RuntimePathPolicy,
+    env: &RuntimeEnvPolicy,
+    limits: &RuntimeLimits,
+    ambient_authority_allowed: bool,
 ) -> Result<PermissionsContainer> {
     let parser = Arc::new(RuntimePermissionDescriptorParser::new(paths.cwd.clone()));
-    let ambient_authority_allowed = permission_profile.allows_configured_ambient_authority();
     let options = PermissionsOptions {
         allow_env: (!env.allowed_read_names.is_empty()).then(|| env.allowed_names()),
         deny_env: None,
@@ -972,15 +965,15 @@ mod tests {
         (tempdir, policy, env, limits, bundle_path)
     }
 
-    fn assert_profile_denies_ambient_net_fs_run_ffi(profile: RuntimePermissionProfile) {
+    #[test]
+    fn ambient_denied_container_denies_net_fs_run_ffi() {
         let (_tempdir, policy, env, limits, bundle_path) = privileged_permission_profile_fixture();
-        let mut permissions =
-            build_permissions_container_for_profile(&policy, &env, &limits, profile)
-                .expect("permissions should build");
+        let mut permissions = build_ambient_denied_permissions_container(&policy, &env, &limits)
+            .expect("permissions should build");
 
         let net = permissions
             .check_net(&("127.0.0.1", Some(8080)), "test")
-            .expect_err("query/mutation permission profile should deny net access");
+            .expect_err("ambient-denied container should deny net access");
         assert!(
             net.to_string().contains("Requires net access"),
             "unexpected net denial: {net}"
@@ -992,7 +985,7 @@ mod tests {
                 OpenAccessKind::Read,
                 Some("test"),
             )
-            .expect_err("query/mutation permission profile should deny fs read access");
+            .expect_err("ambient-denied container should deny fs read access");
         assert!(
             read.to_string().contains("Requires read access"),
             "unexpected read denial: {read}"
@@ -1004,7 +997,7 @@ mod tests {
                 OpenAccessKind::Write,
                 Some("test"),
             )
-            .expect_err("query/mutation permission profile should deny fs write access");
+            .expect_err("ambient-denied container should deny fs write access");
         assert!(
             write.to_string().contains("Requires write access"),
             "unexpected write denial: {write}"
@@ -1017,7 +1010,7 @@ mod tests {
             .expect("runtime host exec query should parse");
         let run = permissions
             .check_run(&run_query, "test")
-            .expect_err("query/mutation permission profile should deny run access");
+            .expect_err("ambient-denied container should deny run access");
         assert!(
             run.to_string().contains("Requires run access"),
             "unexpected run denial: {run}"
@@ -1028,7 +1021,7 @@ mod tests {
             .expect("bundle path should canonicalize");
         let ffi = permissions
             .check_ffi(Cow::Borrowed(ffi_path.as_path()))
-            .expect_err("query/mutation permission profile should deny ffi access");
+            .expect_err("ambient-denied container should deny ffi access");
         assert!(
             ffi.to_string().contains("Requires ffi access"),
             "unexpected ffi denial: {ffi}"
@@ -1036,43 +1029,28 @@ mod tests {
     }
 
     #[test]
-    fn query_permission_profile_denies_net_fs_run_ffi() {
-        assert_profile_denies_ambient_net_fs_run_ffi(RuntimePermissionProfile::Query);
-    }
-
-    #[test]
-    fn mutation_permission_profile_denies_net_fs_run_ffi() {
-        assert_profile_denies_ambient_net_fs_run_ffi(RuntimePermissionProfile::Mutation);
-    }
-
-    #[test]
-    fn action_permission_profile_preserves_configured_authority() {
+    fn worker_container_preserves_configured_authority_for_all_kinds() {
         let (_tempdir, policy, env, limits, bundle_path) = privileged_permission_profile_fixture();
-        let mut permissions = build_permissions_container_for_profile(
-            &policy,
-            &env,
-            &limits,
-            RuntimePermissionProfile::Action,
-        )
-        .expect("permissions should build");
+        let mut permissions =
+            build_permissions_container(&policy, &env, &limits).expect("permissions should build");
 
         permissions
             .check_net(&("127.0.0.1", Some(8080)), "test")
-            .expect("action permission profile should preserve configured net authority");
+            .expect("worker container should preserve configured net authority");
         permissions
             .check_open(
                 Cow::Borrowed(Path::new("./bundle.mjs")),
                 OpenAccessKind::Read,
                 Some("test"),
             )
-            .expect("action permission profile should preserve configured fs read authority");
+            .expect("worker container should preserve configured fs read authority");
         permissions
             .check_open(
                 Cow::Borrowed(Path::new("./created.txt")),
                 OpenAccessKind::Write,
                 Some("test"),
             )
-            .expect("action permission profile should preserve configured fs write authority");
+            .expect("worker container should preserve configured fs write authority");
 
         let parser = RuntimePermissionDescriptorParser::new(policy.cwd().to_path_buf());
         let run_path = policy.run_targets()[0].to_string_lossy().into_owned();
@@ -1081,14 +1059,14 @@ mod tests {
             .expect("runtime host exec query should parse");
         permissions
             .check_run(&run_query, "test")
-            .expect("action permission profile should preserve configured run authority");
+            .expect("worker container should preserve configured run authority");
 
         let ffi_path = bundle_path
             .canonicalize()
             .expect("bundle path should canonicalize");
         permissions
             .check_ffi(Cow::Borrowed(ffi_path.as_path()))
-            .expect("action permission profile should preserve configured ffi authority");
+            .expect("worker container should preserve configured ffi authority");
     }
 
     #[test]

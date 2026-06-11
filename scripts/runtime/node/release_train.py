@@ -23,6 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 LANE_REGISTRY_PATH = (
     REPO_ROOT
     / "docs"
+    / "private"
     / "architecture"
     / "runtime"
     / "node-lts-compat"
@@ -31,6 +32,7 @@ LANE_REGISTRY_PATH = (
 LATEST_TAGS_PATH = (
     REPO_ROOT
     / "docs"
+    / "private"
     / "architecture"
     / "runtime"
     / "node-lts-compat"
@@ -39,6 +41,7 @@ LATEST_TAGS_PATH = (
 STATUS_SUMMARY_PATH = (
     REPO_ROOT
     / "docs"
+    / "private"
     / "architecture"
     / "runtime"
     / "node-compat-evidence"
@@ -48,6 +51,7 @@ STATUS_SUMMARY_PATH = (
 DASHBOARD_SUMMARY_PATH = (
     REPO_ROOT
     / "docs"
+    / "private"
     / "architecture"
     / "runtime"
     / "node-compat-evidence"
@@ -57,6 +61,7 @@ DASHBOARD_SUMMARY_PATH = (
 SUMMARY_JSON_PATH = (
     REPO_ROOT
     / "docs"
+    / "private"
     / "architecture"
     / "runtime"
     / "node-lts-compat"

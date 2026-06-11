@@ -3,7 +3,6 @@ use crate::context::RuntimeInvocationContext;
 use crate::error::Result;
 use crate::limits::{RuntimeLimits, RuntimePoolKind};
 use crate::runtime::{NimbusRuntime, RuntimeBundle, RuntimeBundleIdentity};
-use crate::runtime_capabilities::RuntimePermissionProfile;
 
 use super::{embedder::JsRuntime, startup::V8RuntimeConstructionMode};
 
@@ -27,7 +26,6 @@ pub(crate) struct RuntimePoolPartitionKey {
     affinity_key: Option<RuntimeAffinityKey>,
     runtime_limits: RuntimeLimits,
     construction_mode: V8RuntimeConstructionMode,
-    permission_profile: RuntimePermissionProfile,
     exact_service_grants: Vec<String>,
 }
 
@@ -39,16 +37,12 @@ impl RuntimePoolPartitionKey {
         construction_mode: V8RuntimeConstructionMode,
     ) -> Self {
         let runtime_limits = runtime_owner.policy().limits().clone();
-        let permission_profile = context
-            .map(|context| context.permission_profile)
-            .unwrap_or(RuntimePermissionProfile::Action);
         Self {
             bundle_identity: bundle.identity().clone(),
             affinity_key: runtime_affinity_key(runtime_limits.routing_affinity, context, bundle),
             exact_service_grants: runtime_limits.grants.sorted_service_grants(),
             runtime_limits,
             construction_mode,
-            permission_profile,
         }
     }
 
@@ -60,7 +54,6 @@ impl RuntimePoolPartitionKey {
         self.bundle_identity == other.bundle_identity
             && self.runtime_limits == other.runtime_limits
             && self.construction_mode == other.construction_mode
-            && self.permission_profile == other.permission_profile
             && self.exact_service_grants == other.exact_service_grants
     }
 }
@@ -125,9 +118,6 @@ impl V8WorkerRuntimePool {
         context: Option<&RuntimeInvocationContext>,
         use_locker: bool,
     ) -> Result<ReusableV8Runtime> {
-        let permission_profile = context
-            .map(|context| context.permission_profile)
-            .unwrap_or(RuntimePermissionProfile::Action);
         let use_startup_snapshot = !runtime_owner
             .policy()
             .limits()
@@ -163,22 +153,12 @@ impl V8WorkerRuntimePool {
                 runtime_owner.policy().metrics().record_runtime_pool_miss();
                 let runtime = if use_startup_snapshot {
                     let snapshot = runtime_owner.bootstrap_snapshot()?;
-                    runtime_owner.create_runtime(
-                        bundle,
-                        Some(snapshot),
-                        use_locker,
-                        partition_key.permission_profile,
-                    )?
+                    runtime_owner.create_runtime(bundle, Some(snapshot), use_locker)?
                 } else {
                     // Proper Node22 snapshotting requires a Deno-style module
                     // evaluation bootstrap. Until that lands, keep the target
                     // honest by constructing live runtimes directly.
-                    runtime_owner.create_runtime(
-                        bundle,
-                        None,
-                        use_locker,
-                        partition_key.permission_profile,
-                    )?
+                    runtime_owner.create_runtime(bundle, None, use_locker)?
                 };
                 self.warmed = true;
                 return Ok(ReusableV8Runtime::fresh(runtime, construction_mode));
@@ -192,7 +172,7 @@ impl V8WorkerRuntimePool {
             if use_startup_snapshot {
                 let snapshot = runtime_owner.bootstrap_snapshot()?;
                 runtime_owner
-                    .create_runtime(bundle, Some(snapshot), use_locker, permission_profile)
+                    .create_runtime(bundle, Some(snapshot), use_locker)
                     .map(|runtime| {
                         ReusableV8Runtime::fresh(
                             runtime,
@@ -201,7 +181,7 @@ impl V8WorkerRuntimePool {
                     })
             } else {
                 runtime_owner
-                    .create_runtime(bundle, None, use_locker, permission_profile)
+                    .create_runtime(bundle, None, use_locker)
                     .map(|runtime| {
                         ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::Unsnapshotted)
                     })
@@ -210,14 +190,9 @@ impl V8WorkerRuntimePool {
             runtime_owner.policy().metrics().record_runtime_pool_miss();
             let runtime = if use_startup_snapshot {
                 let snapshot = runtime_owner.bootstrap_snapshot()?;
-                runtime_owner.create_runtime(
-                    bundle,
-                    Some(snapshot),
-                    use_locker,
-                    permission_profile,
-                )?
+                runtime_owner.create_runtime(bundle, Some(snapshot), use_locker)?
             } else {
-                runtime_owner.create_runtime(bundle, None, use_locker, permission_profile)?
+                runtime_owner.create_runtime(bundle, None, use_locker)?
             };
             self.warmed = true;
             Ok(ReusableV8Runtime::fresh(
