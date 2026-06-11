@@ -24,7 +24,7 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
 ## One binary, your choice of client
 
 <Tabs>
-  <TabItem label="TypeScript" icon="seti:typescript">
+  <TabItem label="Convex">
     ```typescript
     // convex/messages.ts — server-side functions with reactive queries
     import { query, mutation } from "./_generated/server";
@@ -41,6 +41,50 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
         await ctx.db.insert("messages", { author, body }),
     });
     ```
+    See [the Convex guide](/developers/convex/) — or scaffold this app in
+    the [5-minute quickstart](/get-started/quickstart/).
+  </TabItem>
+  <TabItem label="Firestore">
+    ```typescript
+    // Stock Firestore SDK surface, served by Nimbus
+    import { initializeApp } from "@nimbus/firebase/app";
+    import {
+      addDoc,
+      collection,
+      connectFirestoreEmulator,
+      getFirestore,
+      onSnapshot,
+    } from "@nimbus/firebase/firestore";
+
+    const db = getFirestore(initializeApp({ projectId: "demo" }));
+    connectFirestoreEmulator(db, "127.0.0.1", 8080);
+
+    const messages = collection(db, "messages");
+    await addDoc(messages, { body: "hello from nimbus" });
+    onSnapshot(messages, (live) => console.log("live size", live.size));
+    ```
+    See [the Firestore guide](/developers/firebase/) for enabling the
+    routes (`nimbus start --firestore`).
+  </TabItem>
+  <TabItem label="Cloud Functions">
+    ```typescript
+    // functions/src/index.ts — Firebase-style HTTP + Firestore triggers
+    import { onRequest } from "firebase-functions/v2/https";
+    import { onDocumentCreated } from "firebase-functions/v2/firestore";
+
+    export const hello = onRequest(async (req, res) => {
+      res.json({ message: "Hello from Nimbus Cloud Functions!" });
+    });
+
+    export const onMessageCreated = onDocumentCreated(
+      "messages/{messageId}",
+      async (event) => {
+        console.log("New message:", event.data?.data());
+      },
+    );
+    ```
+    See [the Cloud Functions guide](/developers/cloud-functions/) for the
+    project layout and deploy flow.
   </TabItem>
   <TabItem label="MongoDB">
     ```javascript
@@ -56,7 +100,8 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
     await messages.insertOne({ author: "Ada", body: "Hello from Nimbus" });
     const docs = await messages.find({ author: "Ada" }).toArray();
     ```
-    See [the MongoDB guide](/developers/mongodb/) for enabling the endpoint.
+    See [the MongoDB guide](/developers/mongodb/) for enabling the
+    endpoint (`nimbus start --mongodb-port 27017`).
   </TabItem>
   <TabItem label="DynamoDB">
     ```javascript
@@ -78,14 +123,12 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
       Key: { pk: { S: "order-1" } },
     }));
     ```
-    See [the DynamoDB guide](/developers/dynamodb/) for enabling the endpoint.
+    See [the DynamoDB guide](/developers/dynamodb/) for enabling the
+    endpoint (`nimbus start --dynamodb-port 8000`).
   </TabItem>
-  <TabItem label="curl" icon="seti:shell">
+  <TabItem label="HTTP API">
     ```bash
-    # The same engine over plain HTTP — no codegen required
-    nimbus start --port 8080 --data-dir ./data
-    # grab the local admin token — see the self-host quickstart
-
+    # Nimbus's own REST surface — the same engine, no SDK and no codegen
     curl -s -X POST http://localhost:8080/api/tenants \
       -H "Authorization: Bearer $NIMBUS_TOKEN" \
       -H "Content-Type: application/json" -d '{"id": "demo"}'
@@ -95,13 +138,14 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
       -H "Content-Type: application/json" \
       -d '{"table": "messages", "fields": {"text": "hello world"}}'
     ```
-    Full walkthrough in the [self-host quickstart](/get-started/self-host/).
+    See the [native API guide](/developers/native/) and the
+    [self-host quickstart](/get-started/self-host/) for the token setup.
   </TabItem>
 </Tabs>
 
-Nimbus speaks the Convex, Firestore, Cloud Functions, MongoDB, and DynamoDB
-surfaces from one engine — see [Developers](/developers/) for every adapter
-and how each is enabled.
+Every tab above is the same engine and the same data — five drop-in
+protocol surfaces plus Nimbus's native API. See
+[Developers](/developers/) for all of them side by side.
 
 <CardGrid stagger>
   <Card title="One binary" icon="rocket">

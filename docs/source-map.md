@@ -20,8 +20,11 @@ sources exist.
 | `get-started/from-convex.md` | Convex function model + `convex/` layout compatibility | `packages/nimbus/src/server.ts`, `packages/convex/src/`, `crates/nimbus-convex/` |
 | `index.mdx` (landing) | Speaks Convex / Firestore / Cloud Functions / MongoDB / DynamoDB | `crates/nimbus-convex/`, `crates/nimbus-firebase/`, `crates/nimbus-cloud-functions/`, `crates/nimbus-mongodb/`, `crates/nimbus-dynamodb/` |
 | `index.mdx` (landing) | Single-binary storage/compute/networking/realtime/scheduling | `crates/nimbus-bin/src/main.rs`, `crates/nimbus-engine/`, `crates/nimbus-storage/`, `crates/nimbus-server/` |
-| `index.mdx` (landing) | MongoDB tab: connection string shape, `directConnection=true` | `packages/mongodb/src/uri.ts`, `demos/mongodb/node/script.ts` |
-| `index.mdx` (landing) | DynamoDB tab: endpoint `127.0.0.1:8000`, registered-key credentials | `crates/nimbus-dynamodb/src/config.rs`, `packages/dynamodb/src/client.ts` |
+| `index.mdx` (landing) | Firestore tab: `@nimbus/firebase` entry points, `connectFirestoreEmulator` flow, `projectId` → tenant, `--firestore` enablement | `packages/firebase/src/firestore.ts`, `crates/nimbus-bin/src/start/adapters.rs` |
+| `index.mdx` (landing) | Cloud Functions tab: firebase-functions v2 `onRequest`/`onDocumentCreated` handler shapes | `crates/nimbus-cloud-functions/src/lib.rs`, `docs/developers/cloud-functions/index.md` |
+| `index.mdx` (landing) | MongoDB tab: connection string shape, `directConnection=true`, `--mongodb-port` enablement | `packages/mongodb/src/uri.ts`, `crates/nimbus-bin/src/start/adapters.rs` |
+| `index.mdx` (landing) | DynamoDB tab: endpoint `127.0.0.1:8000`, registered-key credentials, `--dynamodb-port` enablement | `crates/nimbus-dynamodb/src/config.rs`, `crates/nimbus-bin/src/start/adapters.rs` |
+| `index.mdx` (landing) | HTTP API tab: `POST /api/tenants`, `POST /api/tenants/{t}/documents`, bearer auth | `crates/nimbus-server/src/router.rs`, `packages/nimbus/src/native_rest_routes.json` |
 
 ## Developers — platform guides
 
