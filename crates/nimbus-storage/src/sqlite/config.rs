@@ -121,7 +121,11 @@ impl SqliteTenantStore {
             retention_floor: RetentionFloor::new(),
         };
         let pooled_open_started = std::time::Instant::now();
-        let conn = store.open_pooled_read_connection()?;
+        let conn = store.open_pooled_read_connection()?.ok_or_else(|| {
+            Error::Internal(
+                "fresh sqlite store could not reserve its first read connection".to_string(),
+            )
+        })?;
         let pooled_open_elapsed = pooled_open_started.elapsed();
         let schema_load_started = std::time::Instant::now();
         let schema = load_schema_from_conn(&conn)?;
@@ -263,14 +267,13 @@ impl SqliteTenantStore {
         Ok(conn)
     }
 
-    fn reserve_read_connection_slot(&self) -> Result<()> {
+    /// Try to claim a pool slot without waiting; `false` means the pool
+    /// is at its cap.
+    fn try_reserve_read_connection_slot(&self) -> bool {
         let mut current = self.open_read_connections.load(Ordering::Acquire);
         loop {
             if current >= self.max_read_connections {
-                return Err(Error::ResourceExhausted(format!(
-                    "sqlite read connection pool exhausted at {} open connections",
-                    self.max_read_connections
-                )));
+                return false;
             }
             match self.open_read_connections.compare_exchange(
                 current,
@@ -278,7 +281,7 @@ impl SqliteTenantStore {
                 Ordering::AcqRel,
                 Ordering::Acquire,
             ) {
-                Ok(_) => return Ok(()),
+                Ok(_) => return true,
                 Err(updated) => current = updated,
             }
         }
@@ -288,10 +291,12 @@ impl SqliteTenantStore {
         self.open_read_connections.fetch_sub(1, Ordering::AcqRel);
     }
 
-    fn open_pooled_read_connection(&self) -> Result<Connection> {
-        self.reserve_read_connection_slot()?;
+    fn open_pooled_read_connection(&self) -> Result<Option<Connection>> {
+        if !self.try_reserve_read_connection_slot() {
+            return Ok(None);
+        }
         match self.open_connection() {
-            Ok(conn) => Ok(conn),
+            Ok(conn) => Ok(Some(conn)),
             Err(error) => {
                 self.release_read_connection_slot();
                 Err(error)
@@ -299,17 +304,37 @@ impl SqliteTenantStore {
         }
     }
 
+    /// Acquire a pooled read connection, waiting up to
+    /// [`READ_POOL_WAIT`] for one to free up when the pool is at its
+    /// cap. The cap tracks `available_parallelism`, so a transient
+    /// overlap between foreground reads and background readers (small
+    /// CI runners) must wait for a returned connection instead of
+    /// failing a correct operation; sustained exhaustion still fails
+    /// closed with a typed error after the bounded wait.
     fn acquire_read_connection(&self) -> Result<PooledSqliteConnection> {
-        let conn = self
-            .lock_read_connections()?
-            .pop()
-            .map(Ok)
-            .unwrap_or_else(|| self.open_pooled_read_connection())?;
-        Ok(PooledSqliteConnection {
-            conn: Some(conn),
-            open_read_connections: self.open_read_connections.clone(),
-            pool: self.read_connections.clone(),
-        })
+        let deadline = std::time::Instant::now() + READ_POOL_WAIT;
+        loop {
+            let cached = self.lock_read_connections()?.pop();
+            let conn = match cached {
+                Some(conn) => Some(conn),
+                None => self.open_pooled_read_connection()?,
+            };
+            if let Some(conn) = conn {
+                return Ok(PooledSqliteConnection {
+                    conn: Some(conn),
+                    open_read_connections: self.open_read_connections.clone(),
+                    pool: self.read_connections.clone(),
+                });
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(Error::ResourceExhausted(format!(
+                    "sqlite read connection pool exhausted at {} open connections \
+                     (waited {READ_POOL_WAIT:?} for a free connection)",
+                    self.max_read_connections
+                )));
+            }
+            std::thread::sleep(READ_POOL_RETRY_INTERVAL);
+        }
     }
 
     fn lock_read_connections(&self) -> Result<MutexGuard<'_, Vec<Connection>>> {
@@ -342,6 +367,11 @@ impl Drop for PooledSqliteConnection {
         }
     }
 }
+
+/// Bounded wait for a pooled read connection before failing closed.
+const READ_POOL_WAIT: Duration = Duration::from_secs(2);
+/// Poll cadence while waiting for a pooled read connection.
+const READ_POOL_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 
 pub(super) fn default_sqlite_read_connection_limit() -> usize {
     std::thread::available_parallelism()
