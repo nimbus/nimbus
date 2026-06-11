@@ -2,7 +2,7 @@
 
 ## Status
 
-- **Status:** `in_progress` — DOC0..DOC7 complete (DOC3 shipped the IA
+- **Status:** `in_progress` — DOC0..DOC8 complete (DOC3 shipped the IA
   shell + landing + Get started live at nimbusdocs.com on 2026-06-10;
   DOC4 shipped the full Developers + adapter Reference corpus; DOC5
   shipped the Operators group + tenancy concepts + reference seeds; DOC6
@@ -11,9 +11,14 @@
   `concepts/architecture/` manifest pages + index front door,
   rewrote root `ARCHITECTURE.md` 1,497 → 198 lines as the contributor
   map, and retired `staging/architecture/**` into
-  `docs/private/architecture/` — all source-verified, same day). Next:
-  DOC8 (llms.txt tuning + `scripts/check-docs.sh`). Verifier: 13/17
-  (remaining reds are DOC8/11/12 conditions 10, 11, 12, 15).
+  `docs/private/architecture/`; DOC8 tuned `llms-small.txt` via
+  starlight-llms-txt `exclude` globs (81,624 → 50,413 words — drops
+  `concepts/architecture/**` + per-protocol reference matrices, all
+  retained in `llms-full.txt`) and shipped `scripts/check-docs.sh`
+  (dead-link + source-map resolution + docs/private fence; caught and
+  fixed 3 stale source-map rows; docs.yml step auto-activates) — all
+  source-verified, same day). Next: DOC9 (preview-comment proof PR).
+  Verifier: 14/17 (remaining reds are DOC11/12 conditions 11, 12, 15).
 - **Primary goal:** ship the canonical public documentation site for Nimbus at
   **`nimbusdocs.com`**. Astro 6 + Starlight, Markdown authored in-repo in the
   public top-level groups of `docs/` as the source of truth, a hybrid persona ×

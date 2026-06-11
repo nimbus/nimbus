@@ -145,8 +145,8 @@ sources exist.
 | `operators/node-lifecycle.md` | `machine status` / `machine os upgrade` / `machine os apply`; `ghcr.io/nimbus/machine-os` | `crates/nimbus-bin/src/machine/command.rs` |
 | `operators/updates.md` | No auto-upgrade; `brew upgrade --cask nimbus/tap/nimbus`; install-method detection | `crates/nimbus-server/src/system/install_method.rs` |
 | `operators/updates.md` | Update check: 24h TTL, cache path, `NIMBUS_DISABLE_UPDATE_CHECK=1`, `/api/system/version-info` admin-gated | `crates/nimbus-server/src/system/version_check.rs`, `crates/nimbus-server/src/system/cache.rs`, `crates/nimbus-server/src/router.rs` |
-| `operators/desktop-install.md` | Casks `nimbus/tap/nimbus` + `nimbus/tap/nimbus-desktop`; macOS 14+; notarized DMG | `nimbus/homebrew-tap` Casks (live), `scripts/install.sh` |
-| `operators/desktop-install.md` | Desktop Linux x64 AppImage/deb/rpm; Windows NSIS unsigned; spawn-on-demand; updater on quit | `nimbus/desktop` electron-builder.yml + release assets (live) |
+| `operators/desktop-install.md` | Casks `nimbus/tap/nimbus` + `nimbus/tap/nimbus-desktop`; macOS 14+; notarized DMG | external repo nimbus/homebrew-tap Casks (live), `scripts/install.sh` |
+| `operators/desktop-install.md` | Desktop Linux x64 AppImage/deb/rpm; Windows NSIS unsigned; spawn-on-demand; updater on quit | external repo nimbus/desktop electron-builder.yml + release assets (live) |
 
 ## Operators — data: storage, encryption, backup
 
@@ -165,7 +165,7 @@ sources exist.
 | `operators/backup-restore.md` | WAL mode + synchronous=FULL; `-wal`/`-shm` sidecars matter | `crates/nimbus-storage/src/sqlite/config.rs` |
 | `operators/backup-restore.md` | Control DB holds usage tracking; present even with external backends | `crates/nimbus-storage/src/usage_store.rs`, `crates/nimbus-engine/src/persistence_config.rs` |
 | `operators/backup-restore.md` | Encrypted DBs are SQLCipher (stock sqlite3 can't open); `nimbus encryption export` plaintext recovery | `crates/nimbus-storage/src/sqlite/encryption.rs`, `crates/nimbus-bin/src/encryption/mod.rs` |
-| `operators/backup-restore.md` | Admin token regenerable; libSQL replica cache rebuildable | `crates/nimbus-bin/src/token.rs`, `crates/nimbus-storage/src/async_storage/libsql.rs` |
+| `operators/backup-restore.md` | Admin token regenerable; libSQL replica cache rebuildable | `crates/nimbus-bin/src/token.rs`, `crates/nimbus-storage/src/libsql/provider.rs` |
 
 ## Operators — administration + observability
 
