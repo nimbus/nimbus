@@ -74,7 +74,7 @@ Generated evidence lands under `target/node-compat/`, including:
 - aggregated dashboard summaries under `target/node-compat/dashboard/`
 - trend snapshots under `target/node-compat/trends/`
 - curated publish snapshots under
-  `docs/private/architecture/runtime/node-compat-evidence/latest/` or a custom
+  `tests/runtime/node/compat/node-compat-evidence/latest/` or a custom
   `PUBLISH_ROOT`
 
 All generated Node test check, canary, oracle, and dashboard summaries now carry the
