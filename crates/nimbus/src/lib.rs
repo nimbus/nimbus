@@ -54,6 +54,7 @@ pub use nimbus_server::{
 pub use nimbus_storage::AwsKmsKeyProvider;
 // Storage and encryption helpers.
 pub use nimbus_storage::EmbeddedProviderKind;
+pub use nimbus_storage::PointInTimeRestoreArchive;
 pub use nimbus_storage::TenantStore;
 pub use nimbus_storage::{
     KeyDirectoryProvider, KeyManifest, KeyManifestHeader, LOGICAL_PAGE_SIZE, LocalArtifactRole,

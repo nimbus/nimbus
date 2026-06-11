@@ -161,7 +161,7 @@ sources exist.
 | `operators/encryption.md` | Coverage: SQLCipher for SQLite/libsql cache; AES-256-GCM-SIV for redb/control; external backends control-plane-only | `crates/nimbus-engine/src/engine/encryption/mod.rs`, `crates/nimbus-storage/src/sqlite/encryption.rs` |
 | `operators/encryption.md` | Master key 32 raw bytes; HKDF-SHA256 wrapping; key-dir hex descriptor naming; KMS GenerateDataKey/Decrypt/ReEncrypt | `crates/nimbus-storage/src/encryption/master_key_file.rs`, `crates/nimbus-storage/src/encryption/key_directory.rs`, `crates/nimbus-storage/src/encryption/aws_kms.rs` |
 | `operators/encryption.md` | `nimbus encryption status/migrate/export/rotate-kek/rotate-dek` flags and semantics | `crates/nimbus-bin/src/encryption/mod.rs`, `crates/nimbus-bin/src/encryption/migrate.rs`, `crates/nimbus-bin/src/encryption/rotate.rs`, `crates/nimbus-bin/src/encryption/status.rs` |
-| `operators/backup-restore.md` | No first-class backup/snapshot/PITR command | `crates/nimbus-bin/src/main.rs` (full CLI enum; absence) |
+| `operators/backup-restore.md` | `nimbus backup create/restore`: per-tenant point-in-time archives at latest sequence, fingerprint-verified restore, empty-journal requirement, no-clobber, embedded-only scope | `crates/nimbus-bin/src/backup.rs`, `crates/nimbus-engine/src/engine/queries/journal.rs`, `crates/nimbus-storage/src/store/journal_snapshot.rs` |
 | `operators/backup-restore.md` | WAL mode + synchronous=FULL; `-wal`/`-shm` sidecars matter | `crates/nimbus-storage/src/sqlite/config.rs` |
 | `operators/backup-restore.md` | Control DB holds usage tracking; present even with external backends | `crates/nimbus-storage/src/usage_store.rs`, `crates/nimbus-engine/src/persistence_config.rs` |
 | `operators/backup-restore.md` | Encrypted DBs are SQLCipher (stock sqlite3 can't open); `nimbus encryption export` plaintext recovery | `crates/nimbus-storage/src/sqlite/encryption.rs`, `crates/nimbus-bin/src/encryption/mod.rs` |
@@ -203,7 +203,7 @@ sources exist.
 
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
-| `reference/cli.md` | Root command list and command map (14 visible commands) | `crates/nimbus-bin/src/main.rs` |
+| `reference/cli.md` | Root command list and command map (15 visible commands incl. `backup`) | `crates/nimbus-bin/src/main.rs`, `crates/nimbus-bin/src/backup.rs` |
 | `reference/cli.md` | `start` flags, defaults (port 8080, host 127.0.0.1, `./data`, sqlite), `NIMBUS_*` env names, `--cors-allow-origin`/`NIMBUS_CORS_ALLOW_ORIGINS`, flag > env > config precedence | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-bin/src/start/boot.rs` |
 | `reference/cli.md` | `dev` flags, port 3210, tail-log modes, `--no-open` semantics, `.nimbus/dev` data dir, walk-up bounded at `.git` | `crates/nimbus-bin/src/dev.rs`, `crates/nimbus-bin/src/dev/plan.rs`, `crates/nimbus-bin/src/path_boundary.rs` |
 | `reference/cli.md` | `deploy` flags, `NIMBUS_DEPLOY_URL`/`NIMBUS_DEPLOY_TOKEN`/`NIMBUS_ADMIN_TOKEN`, credentials-file fallback, loopback admin-token auto-discovery | `crates/nimbus-bin/src/deploy.rs` |

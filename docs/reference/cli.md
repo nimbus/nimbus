@@ -22,6 +22,7 @@ nimbus <command> [subcommand] [flags]
 | [`codegen`](#nimbus-codegen) | Generate app artifacts from `nimbus/` or `convex/` source |
 | [`init`](#nimbus-init) | Scaffold a new Nimbus project |
 | [`token`](#nimbus-token) | Local admin token management |
+| [`backup`](#nimbus-backup) | Offline backup and restore of the local data directory |
 | [`auth`](#nimbus-auth) | Console sign-in URLs and remote deploy credentials |
 | [`ui`](#nimbus-ui) | Open the operator console in a browser |
 | [`machine`](#nimbus-machine) | Manage local developer machines (macOS Linux guest) |
@@ -174,6 +175,20 @@ nimbus token rotate
 Rotates the local admin token used for localhost server access. When a live
 server is discoverable, rotation goes through the running server; otherwise
 it rotates the on-disk token file offline. Takes no flags.
+
+## nimbus backup
+
+```bash
+nimbus backup create --data-dir ./data --out <file>
+nimbus backup restore --in <file> --data-dir ./data
+```
+
+Offline whole-deployment backup and restore for the embedded providers
+(`--provider sqlite|redb`): one point-in-time archive per tenant in a
+single file, fingerprint-verified on restore. Run with the server
+stopped; restore requires a fresh data directory. See
+[Backup & restore](/operators/backup-restore/) for procedures, encrypted
+deployments, and external backends.
 
 ## nimbus auth
 

@@ -6,10 +6,13 @@ sidebar:
   order: 6
 ---
 
-Nimbus does not ship a first-class `backup` or `snapshot` command today; you
-back up the storage layer directly using the procedures on this page. There
-is also no point-in-time recovery — a restore returns the server to the
-moment the backup was taken.
+For the embedded providers, `nimbus backup create` and
+`nimbus backup restore` are the first-class path: one point-in-time
+archive per tenant, written to a single file and verified by fingerprint
+on restore. The manual procedures on this page remain the path for
+encrypted data directories and for the external database backends, which
+use their own native tooling. A restore returns the server to the moment
+the backup was taken.
 
 ## Know what you are backing up
 
@@ -42,6 +45,32 @@ backed up. The server creates a new token on first boot if the file is
 missing, and you can rotate it at any time with `nimbus token rotate` or
 `nimbus auth rotate-admin`. After restoring onto a fresh machine, re-read
 the token file before making admin API calls.
+
+## nimbus backup (embedded providers)
+
+With the server stopped, back up every tenant in the data directory to
+one file, and restore it into a fresh directory:
+
+```bash
+nimbus backup create --data-dir ./data --out backups/nimbus-backup.json
+
+nimbus backup restore --in backups/nimbus-backup.json --data-dir ./restored
+```
+
+- `--provider` selects the embedded backend (`sqlite`, the default, or
+  `redb`).
+- Each tenant is captured as a point-in-time restore archive at its
+  latest committed sequence; the file records one archive per tenant.
+- `create` refuses to overwrite an existing output file.
+- `restore` requires every restored tenant to have an empty journal —
+  restore into a fresh data directory. The storage layer verifies the
+  restored state's fingerprint against the archive and fails closed on
+  any mismatch.
+- Encrypted data directories are not yet covered by `nimbus backup`; use
+  the cold-backup procedure below and keep every `.nimbus-enc` sidecar
+  with its database file.
+- External backends (`postgres`, `mysql`, `libsql-replica`) use their
+  native backup tooling — see below.
 
 ## Back up the SQLite backend
 
