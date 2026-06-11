@@ -572,12 +572,19 @@ jobs:
       - name: Refresh nimbus-ui artifact mtimes
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
+      - name: Download embedded package payload
+        uses: actions/download-artifact@v8
+        with:
+          name: embedded-packages
+          path: crates/nimbus-assets/embedded/packages
+
+      - name: Refresh embedded package payload mtimes
+        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
+
       - name: Run live node-run reconciler test (LR12)
         run: |
           set -o pipefail
-          cargo test -p nimbus-bin \
-            --features node-run-integration-tests \
-            node_run_converges_transient_unit --no-fail-fast 2>&1 | tee -a /tmp/ndb-live.log
+          make test-node-run-live 2>&1 | tee -a /tmp/ndb-live.log
 
       - name: Summarize per-test results
         if: always()

@@ -47,8 +47,10 @@ pub(crate) fn load_rustls_server_config(config: &TlsConfig) -> io::Result<Arc<Se
     // Pin the crypto provider explicitly: the workspace dependency graph
     // can enable both `ring` and `aws-lc-rs` rustls backends (the AWS SDK
     // stack pulls aws-lc-rs), which makes the process-default provider
-    // ambiguous at runtime.
-    let provider = std::sync::Arc::new(tokio_rustls::rustls::crypto::aws_lc_rs::default_provider());
+    // ambiguous at runtime. ring also keeps the TLS path off aws-lc so
+    // the vendored-OpenSSL test links never see duplicate crypto
+    // assembly (`bn_sqrx8x_internal`).
+    let provider = std::sync::Arc::new(tokio_rustls::rustls::crypto::ring::default_provider());
     let server_config = ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(|error| io::Error::other(format!("TLS protocol configuration failed: {error}")))?
