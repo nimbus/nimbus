@@ -3550,3 +3550,4 @@ include!("cases/nds3_cycle13_wave1.rs");
 include!("cases/nds3_cycle13_wave2_staging.rs");
 include!("cases/nds3_cycle13_wave3_staging.rs");
 include!("cases/nds3_cycle13_wave4_staging.rs");
+include!("cases/nds3_cycle15_wave1.rs");

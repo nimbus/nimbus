@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-28T22:37:25.535218+00:00",
+  "generated_at": "2026-06-11T19:13:23.520973+00:00",
   "report_kind": "node_compat_trend_snapshot",
   "baseline_available": true,
   "current_sources": {
@@ -8,22 +8,22 @@
     "dashboard": "target/node-compat/dashboard/dashboard-summary.json"
   },
   "baseline_sources": {
-    "status": "docs/architecture/runtime/node-compat-evidence/latest/status-summary.json",
-    "dashboard": "docs/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json"
+    "status": "tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json",
+    "dashboard": "tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json"
   },
   "lane_trends": [
     {
       "lane": "node20",
       "upstream_tag": "v20.20.2",
       "baseline_upstream_tag": "v20.20.2",
-      "vendored_test_file_count": 1308,
-      "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 902,
-      "documented_manifested_green_count_delta": 0,
+      "vendored_test_file_count": 4248,
+      "vendored_test_file_count_delta": 2940,
+      "documented_manifested_green_count": 916,
+      "documented_manifested_green_count_delta": 14,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.689602,
-      "documented_manifested_green_ratio_delta": 0.0
+      "documented_manifested_green_ratio": 0.215631,
+      "documented_manifested_green_ratio_delta": -0.47397100000000003
     },
     {
       "lane": "node22",
@@ -31,12 +31,12 @@
       "baseline_upstream_tag": "v22.22.3",
       "vendored_test_file_count": 4748,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 1000,
-      "documented_manifested_green_count_delta": 0,
+      "documented_manifested_green_count": 2297,
+      "documented_manifested_green_count_delta": 1297,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.210615,
-      "documented_manifested_green_ratio_delta": 0.0
+      "documented_manifested_green_ratio": 0.483783,
+      "documented_manifested_green_ratio_delta": 0.273168
     },
     {
       "lane": "node24",
@@ -44,12 +44,12 @@
       "baseline_upstream_tag": "v24.16.0",
       "vendored_test_file_count": 5198,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 1002,
-      "documented_manifested_green_count_delta": 0,
+      "documented_manifested_green_count": 2327,
+      "documented_manifested_green_count_delta": 1325,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.192766,
-      "documented_manifested_green_ratio_delta": 0.0
+      "documented_manifested_green_ratio": 0.447672,
+      "documented_manifested_green_ratio_delta": 0.254906
     },
     {
       "lane": "node26",
@@ -57,29 +57,29 @@
       "baseline_upstream_tag": "v26.2.0",
       "vendored_test_file_count": 5578,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 0,
-      "documented_manifested_green_count_delta": 0,
+      "documented_manifested_green_count": 1008,
+      "documented_manifested_green_count_delta": 1008,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.0,
-      "documented_manifested_green_ratio_delta": 0.0
+      "documented_manifested_green_ratio": 0.18071,
+      "documented_manifested_green_ratio_delta": 0.18071
     }
   ],
   "evidence_trends": {
     "canary_report_count": {
-      "current": 2,
+      "current": 0,
       "baseline": 2,
-      "delta": 0
+      "delta": -2
     },
     "expectation_catalog_entry_count": {
-      "current": 67,
+      "current": 135,
       "baseline": 67,
-      "delta": 0
+      "delta": 68
     },
     "oracle_report_count": {
-      "current": 2,
+      "current": 0,
       "baseline": 2,
-      "delta": 0
+      "delta": -2
     },
     "required_canary_gap_count": {
       "current": 0,
@@ -87,14 +87,14 @@
       "delta": 0
     },
     "rust_ignore_count": {
-      "current": 67,
+      "current": 135,
       "baseline": 67,
-      "delta": 0
+      "delta": 68
     },
     "slice_report_count": {
-      "current": 8,
+      "current": 0,
       "baseline": 8,
-      "delta": 0
+      "delta": -8
     },
     "unexpected_pass_count": {
       "current": 0,
