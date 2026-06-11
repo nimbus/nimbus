@@ -223,8 +223,8 @@ mod tests {
         let token =
             load_or_create_local_admin_token(&paths).expect("local admin token should initialize");
         let local_server_security = Arc::new(LocalServerSecurityState::new(paths.clone(), token));
-        let service =
-            Arc::new(Engine::new(temp.path().join("service")).expect("service should initialize"));
+        let engine =
+            Arc::new(Engine::new(temp.path().join("engine")).expect("engine should initialize"));
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("listener should bind");
@@ -233,7 +233,7 @@ mod tests {
             .expect("listener address should resolve");
         let server_task = tokio::spawn(serve(
             listener,
-            ServeOptions::new(service.clone()).with_local_server_security(local_server_security),
+            ServeOptions::new(engine.clone()).with_local_server_security(local_server_security),
         ));
         wait_for_live_server_health(
             "first-boot test server should answer /health",
@@ -260,6 +260,6 @@ mod tests {
         drop(lease);
         server_task.abort();
         let _ = server_task.await;
-        service.quiesce().await;
+        engine.quiesce().await;
     }
 }

@@ -57,7 +57,7 @@ pub(crate) async fn run_start_command(
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
     // Snapshot first-boot before `Engine::new_with_persistence_config`
     // touches the data dir; otherwise the marker landscape we observe
-    // would always say "second boot" because Service initialization
+    // would always say "second boot" because Engine initialization
     // would have already populated the dir. The H5 banner is fired
     // after the listener is up and the discovery lease is held so the
     // launch ticket can mint against the live server.
@@ -107,16 +107,16 @@ pub(crate) async fn run_start_command(
         local_server_paths.clone(),
         local_admin_token,
     ));
-    let service = Arc::new(Engine::new_with_persistence_config(persistence_config).await?);
-    let shutdown_service = service.clone();
-    service.recover_scheduled_work_on_startup_async().await?;
+    let engine = Arc::new(Engine::new_with_persistence_config(persistence_config).await?);
+    let shutdown_engine = engine.clone();
+    engine.recover_scheduled_work_on_startup_async().await?;
     if let Some(tenant_name) = &command.auto_tenant {
-        ensure_auto_tenant(&service, tenant_name)?;
+        ensure_auto_tenant(&engine, tenant_name)?;
     }
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let scheduler_service = service.clone();
+    let scheduler_engine = engine.clone();
     let scheduler_handle = tokio::spawn(async move {
-        run_scheduler(scheduler_service, shutdown_rx).await;
+        run_scheduler(scheduler_engine, shutdown_rx).await;
     });
     let listener = match activated_listener {
         Some(listener) => listener,
@@ -153,7 +153,7 @@ pub(crate) async fn run_start_command(
     }
 
     tracing::info!("nimbus listening on {}", listener.local_addr()?);
-    let mut serve_options = ServeOptions::new(service.clone()).with_license(license_state);
+    let mut serve_options = ServeOptions::new(engine.clone()).with_license(license_state);
     if let Some(registry) = convex_registry {
         serve_options = serve_options.with_convex_registry(registry);
     }
@@ -178,7 +178,7 @@ pub(crate) async fn run_start_command(
         handle.abort();
         let _ = handle.await;
     }
-    shutdown_service.quiesce().await;
+    shutdown_engine.quiesce().await;
     server_result?;
     Ok(())
 }
@@ -546,11 +546,11 @@ fn package_declares_functions_framework(package_json_path: &Path) -> bool {
 }
 
 fn ensure_auto_tenant(
-    service: &Engine,
+    engine: &Engine,
     tenant_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tenant_id = TenantId::new(tenant_name)?;
-    match service.create_tenant(tenant_id) {
+    match engine.create_tenant(tenant_id) {
         Ok(()) => {
             emit_start_info(format!("auto-created tenant \"{tenant_name}\""));
         }
