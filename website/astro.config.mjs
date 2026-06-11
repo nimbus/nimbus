@@ -86,6 +86,20 @@ export default defineConfig({
       plugins: [
         starlightLlmsTxt({
           projectName: 'Nimbus',
+          // llms-small.txt keeps the task corpus (get started, developers,
+          // operators, core concepts, CLI/config/SDK reference) and drops the
+          // deep architecture pages and per-protocol compatibility matrices,
+          // which stay in llms-full.txt.
+          exclude: [
+            'concepts/architecture/**',
+            'reference/convex/**',
+            'reference/firebase/**',
+            'reference/cloud-functions/**',
+            'reference/mongodb/**',
+            'reference/dynamodb/**',
+            'reference/native/**',
+            'reference/runtimes/**',
+          ],
         }),
       ],
     }),
