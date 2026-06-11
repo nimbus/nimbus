@@ -47,18 +47,26 @@ A running server keeps its in-memory token until restart, so the restart is
 what makes the new token live. If the rotation goes stale, the next service
 start on a public host fails with an error telling you to rotate again.
 
-## Terminate TLS at a reverse proxy
+## Terminate TLS
 
-**Your configuration.** Nimbus serves plain HTTP and does not terminate
-TLS. Standard deployment practice: put a TLS-terminating reverse proxy
-(nginx, Caddy, HAProxy, or your cloud load balancer) in front, and have it
-forward to `http://127.0.0.1:8080`. Because Nimbus stays bound to loopback,
-the proxy is the only network path to the server, and the proxy's
-certificate handling, request logging, and rate limiting all apply before a
-request reaches Nimbus.
+**Your configuration.** Two supported postures:
+
+- **In-server TLS.** Start with `--tls-cert <cert.pem> --tls-key
+  <key.pem>` and Nimbus terminates TLS on the main listener itself —
+  HTTPS and `wss://` replace plain HTTP, and a bad certificate fails the
+  boot rather than the first connection.
+- **Reverse proxy.** Keep Nimbus on plain loopback HTTP and put a
+  TLS-terminating reverse proxy (nginx, Caddy, HAProxy, or your cloud
+  load balancer) in front, forwarding to `http://127.0.0.1:8080`. The
+  proxy's certificate handling, request logging, and rate limiting all
+  apply before a request reaches Nimbus.
+
+The MongoDB and DynamoDB sibling listeners are not covered by the TLS
+flags: MongoDB is loopback-only by design, and remote access to either
+goes through a TLS-terminating proxy.
 
 WebSocket endpoints (`/ws`, `/convex/{tenant}/ws`) need the proxy's
-WebSocket upgrade support enabled.
+WebSocket upgrade support enabled when proxying.
 
 ## Expose only the routes your clients need
 

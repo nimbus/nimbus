@@ -71,6 +71,17 @@ The MongoDB listener is loopback-only. The DynamoDB listener may bind a
 non-loopback host with `--allow-network`; with no access keys configured
 it rejects every request.
 
+### TLS
+
+`--tls-cert <CERT_PEM>` and `--tls-key <KEY_PEM>` (both required
+together) terminate TLS on the main HTTP listener: HTTPS and `wss://`
+replace plain HTTP on the configured port. The PEM pair is loaded and
+validated at startup — a missing or mismatched identity fails the boot
+with the offending path named. The MongoDB and DynamoDB listeners are
+not covered: MongoDB is loopback-only, and remote access to either
+adapter goes through a TLS-terminating proxy (see
+[Hardening](/operators/hardening/)).
+
 ### CORS origins
 
 Browsers are granted CORS access from loopback origins only, by default.

@@ -62,6 +62,15 @@ pub(crate) struct StartCommand {
     #[arg(long = "cors-allow-origin", value_name = "ORIGIN", value_parser = parse_cors_origin)]
     pub(crate) cors_allow_origin: Vec<String>,
 
+    /// PEM certificate chain for TLS termination on the main HTTP
+    /// listener. Requires --tls-key; HTTPS and wss:// replace plain HTTP.
+    #[arg(long, requires = "tls_key", value_name = "CERT_PEM")]
+    pub(crate) tls_cert: Option<PathBuf>,
+
+    /// PEM private key for TLS termination. Requires --tls-cert.
+    #[arg(long, requires = "tls_cert", value_name = "KEY_PEM")]
+    pub(crate) tls_key: Option<PathBuf>,
+
     /// Mount the Firestore-compatible routes on the main HTTP listener.
     #[arg(long, default_value_t = false)]
     pub(crate) firestore: bool,
@@ -310,6 +319,8 @@ impl Default for StartCommand {
             allow_network: false,
             systemd_socket_activation: false,
             cors_allow_origin: Vec::new(),
+            tls_cert: None,
+            tls_key: None,
             firestore: false,
             mongodb_port: None,
             mongodb_host: "127.0.0.1".to_string(),

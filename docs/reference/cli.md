@@ -59,7 +59,8 @@ Most-used flags:
 | `--tenant-provider` | `NIMBUS_TENANT_PROVIDER` | `sqlite` | Tenant persistence provider: `sqlite`, `libsql-replica`, `redb`, `postgres`, or `mysql`. |
 | `--config` | `NIMBUS_CONFIG` | unset | Optional JSON config file; CLI flags override env vars, which override file values. |
 
-`nimbus start` accepts further flag families — protocol adapters
+`nimbus start` accepts further flag families — TLS termination
+(`--tls-cert` + `--tls-key`), protocol adapters
 (`--firestore`; `--mongodb-port` with `--mongodb-username` and the env-only
 `NIMBUS_MONGODB_PASSWORD`; `--dynamodb-port` with repeatable
 `--dynamodb-access-key KEY_ID:SECRET:TENANT` or

@@ -76,6 +76,32 @@ fn cors_env_fallback_applies_only_without_flags() {
 }
 
 #[test]
+fn tls_flags_are_both_or_neither() {
+    let command = parse_start([
+        "nimbus",
+        "start",
+        "--tls-cert",
+        "/etc/nimbus/cert.pem",
+        "--tls-key",
+        "/etc/nimbus/key.pem",
+    ]);
+    assert!(command.tls_cert.is_some() && command.tls_key.is_some());
+
+    for partial in [
+        vec!["nimbus", "start", "--tls-cert", "/etc/nimbus/cert.pem"],
+        vec!["nimbus", "start", "--tls-key", "/etc/nimbus/key.pem"],
+    ] {
+        let error = Cli::try_parse_from(partial)
+            .expect_err("a lone TLS flag must be rejected at parse time");
+        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
+    }
+    assert!(
+        StartCommand::default().tls_cert.is_none(),
+        "TLS stays off by default"
+    );
+}
+
+#[test]
 fn start_command_default_has_no_auto_tenant() {
     let command = StartCommand::default();
     assert!(

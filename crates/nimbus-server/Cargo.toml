@@ -62,6 +62,12 @@ tokio.workspace = true
 tonic = "0.13.0"
 tonic-web = "0.13.0"
 tower = "0.5"
+# TLS termination for the main HTTP listener (LR8). Versions match the
+# already-locked transitive stack (rustls 0.23 via tokio-rustls 0.26).
+tokio-rustls = "0.26"
+rustls-pki-types = "1"
+hyper = "1"
+hyper-util = { version = "0.1", features = ["server-auto", "tokio", "service"] }
 tower-http.workspace = true
 tracing.workspace = true
 

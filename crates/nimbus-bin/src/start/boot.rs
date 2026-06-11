@@ -55,6 +55,11 @@ pub(crate) async fn run_start_command(
     }
     let cors_allowed_origins = resolve_cors_allowed_origins(&command)?;
     let adapter_enablement = resolve_adapter_enablement(&command)?;
+    let tls_config = match (&command.tls_cert, &command.tls_key) {
+        (Some(cert), Some(key)) => Some(nimbus_server::TlsConfig::new(cert, key)),
+        _ => None,
+    };
+    let tls_enabled = tls_config.is_some();
     let persistence_config = persistence_config_from_start_command(&command)?;
     let compose_control_data_dir =
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
@@ -137,7 +142,8 @@ pub(crate) async fn run_start_command(
         deploy_admin_enabled,
     );
     let first_boot_handle = if is_first_boot_run {
-        let console_url = operator_console_url_from_base(&local_listen_url(listener.local_addr()?));
+        let console_url =
+            operator_console_url_from_base(&local_listen_url(listener.local_addr()?, tls_enabled));
         Some(spawn_first_boot_announce(
             console_url,
             local_server_paths.clone(),
@@ -183,6 +189,9 @@ pub(crate) async fn run_start_command(
     }
     if let Some(dynamodb_config) = adapter_enablement.dynamodb {
         serve_options = serve_options.with_dynamodb(dynamodb_config);
+    }
+    if let Some(tls_config) = tls_config {
+        serve_options = serve_options.with_tls(tls_config);
     }
 
     let server_result = serve(listener, serve_options).await;
@@ -347,7 +356,10 @@ pub(super) fn start_startup_summary_lines(
     listen_addr: SocketAddr,
     deploy_admin_enabled: bool,
 ) -> Vec<String> {
-    let base_url = local_listen_url(listen_addr);
+    let base_url = local_listen_url(
+        listen_addr,
+        command.tls_cert.is_some() && command.tls_key.is_some(),
+    );
     let mut lines = vec![
         format!("Nimbus server listening at {base_url}"),
         format!(
@@ -412,7 +424,7 @@ pub(super) fn resolve_start_app_dir(
     Ok(Some(ResolvedStartAppDir::Explicit(resolved)))
 }
 
-fn local_listen_url(addr: SocketAddr) -> String {
+fn local_listen_url(addr: SocketAddr, tls_enabled: bool) -> String {
     let host = if addr.ip().is_unspecified() {
         "localhost".to_string()
     } else if addr.ip().is_ipv6() {
@@ -420,7 +432,8 @@ fn local_listen_url(addr: SocketAddr) -> String {
     } else {
         addr.ip().to_string()
     };
-    format!("http://{host}:{}/", addr.port())
+    let scheme = if tls_enabled { "https" } else { "http" };
+    format!("{scheme}://{host}:{}/", addr.port())
 }
 
 async fn start_listener(command: &StartCommand) -> std::io::Result<tokio::net::TcpListener> {

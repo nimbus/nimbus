@@ -21,6 +21,7 @@ mod system;
 mod system_tenant;
 mod tenant;
 mod tenant_isolation_drift;
+mod tls;
 mod ws;
 
 pub use adapters::cloud_functions::CloudFunctionsRegistry;
@@ -115,6 +116,7 @@ pub use tenant_isolation_drift::{
     TenantIsolationDriftReport, TenantIsolationDriftScanConfig, TenantIsolationDriftSurface,
     TenantIsolationDriftViolation, scan_tenant_isolation_drift_async,
 };
+pub use tls::TlsConfig;
 
 #[cfg(test)]
 mod tests;

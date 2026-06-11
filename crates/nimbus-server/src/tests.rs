@@ -1207,6 +1207,8 @@ mod rest_route_parity;
 mod scheduling;
 #[path = "tests/tenant_isolation_harness.rs"]
 mod tenant_isolation_harness;
+#[path = "tests/tls_serve.rs"]
+mod tls_serve;
 #[path = "tests/verification_harness.rs"]
 mod verification_harness;
 #[path = "tests/websocket_protocol.rs"]

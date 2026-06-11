@@ -13,6 +13,7 @@ use crate::local_server::LocalServerSecurityState;
 use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::router::{RouterBuildConfig, RouterOptions};
 use crate::tenant::TenantIsolationMode;
+use crate::tls::TlsConfig;
 use nimbus_services::ServiceInstanceCatalog;
 use nimbus_services::ServiceManager;
 
@@ -21,6 +22,7 @@ pub struct ServeOptions {
     router_options: RouterOptions,
     mongodb_config: Option<MongoDbConfig>,
     dynamodb_config: Option<DynamoDbConfig>,
+    tls_config: Option<TlsConfig>,
 }
 
 impl ServeOptions {
@@ -33,6 +35,7 @@ impl ServeOptions {
             router_options,
             mongodb_config: None,
             dynamodb_config: None,
+            tls_config: None,
         }
     }
 
@@ -130,12 +133,27 @@ impl ServeOptions {
         self.router_options = self.router_options.with_cors_allowed_origins(origins);
         self
     }
+
+    /// Terminate TLS on the main HTTP listener with this PEM pair. The
+    /// pair is loaded and validated at startup; sibling adapter listeners
+    /// stay plain TCP (see docs/private/decisions/adapter-listener-tls.md).
+    pub fn with_tls(mut self, tls_config: TlsConfig) -> Self {
+        self.tls_config = Some(tls_config);
+        self
+    }
 }
 
 async fn serve_with_router_config(
     listener: tokio::net::TcpListener,
     config: RouterBuildConfig,
+    tls_config: Option<TlsConfig>,
 ) -> std::io::Result<()> {
+    // Load and validate the TLS identity before any engine work so a bad
+    // certificate fails the boot, not the first connection.
+    let rustls_config = tls_config
+        .as_ref()
+        .map(crate::tls::load_rustls_server_config)
+        .transpose()?;
     let listen_addr = listener.local_addr()?;
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let config = config
@@ -145,15 +163,22 @@ async fn serve_with_router_config(
         .prepare_system_tenant()
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
-    axum::serve(listener, config.build())
-        .with_graceful_shutdown(async move {
-            while !*shutdown_rx.borrow() {
-                if shutdown_rx.changed().await.is_err() {
-                    break;
-                }
-            }
-        })
-        .await
+    match rustls_config {
+        Some(rustls_config) => {
+            crate::tls::serve_tls(listener, config.build(), rustls_config, shutdown_rx).await
+        }
+        None => {
+            axum::serve(listener, config.build())
+                .with_graceful_shutdown(async move {
+                    while !*shutdown_rx.borrow() {
+                        if shutdown_rx.changed().await.is_err() {
+                            break;
+                        }
+                    }
+                })
+                .await
+        }
+    }
 }
 
 fn load_default_system_convex_registry() -> std::io::Result<ConvexRegistry> {
@@ -170,6 +195,7 @@ pub async fn serve(
         mut router_options,
         mongodb_config,
         dynamodb_config,
+        tls_config,
     } = options;
     let engine = router_options.engine();
     if !router_options.has_system_convex_registry() {
@@ -255,7 +281,7 @@ pub async fn serve(
         }));
     }
 
-    let http_result = serve_with_router_config(listener, config).await;
+    let http_result = serve_with_router_config(listener, config, tls_config).await;
     for handle in adapter_handles {
         handle.abort();
     }
