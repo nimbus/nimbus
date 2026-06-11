@@ -661,26 +661,57 @@ async fn service_sandbox_id_routes_ignore_standalone_sandbox_records() {
 }
 
 fn unix_http_get(socket_path: &Path, path: &str) -> String {
-    let mut stream = UnixStream::connect(socket_path).expect("unix socket should accept");
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .expect("read timeout should set");
-    write!(stream, "GET {path} HTTP/1.0\r\nHost: localhost\r\n\r\n").expect("request should write");
-    read_unix_http_response(stream).expect("response should be valid utf-8")
+    unix_http_request(
+        socket_path,
+        &format!("GET {path} HTTP/1.0\r\nHost: localhost\r\n\r\n"),
+    )
 }
 
 fn unix_http_post_json(socket_path: &Path, path: &str, body: &str) -> String {
-    let mut stream = UnixStream::connect(socket_path).expect("unix socket should accept");
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .expect("read timeout should set");
-    write!(
-        stream,
-        "POST {path} HTTP/1.0\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-        body.len()
+    unix_http_request(
+        socket_path,
+        &format!(
+            "POST {path} HTTP/1.0\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        ),
     )
-    .expect("request should write");
-    read_unix_http_response(stream).expect("response should be valid utf-8")
+}
+
+/// One-shot HTTP/1.0 exchange over the unix socket. The server accepts
+/// each connection for a single request; under parallel test load the
+/// accept can race the client's write, surfacing as a transient
+/// `BrokenPipe`/`ConnectionReset` (or an empty response). A real
+/// one-shot client retries on a fresh connection, so this helper does
+/// too — bounded, with real errors still failing loudly.
+fn unix_http_request(socket_path: &Path, request: &str) -> String {
+    let mut last_failure = String::new();
+    for _ in 0..5 {
+        let mut stream = UnixStream::connect(socket_path).expect("unix socket should accept");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("read timeout should set");
+        match stream.write_all(request.as_bytes()) {
+            Ok(()) => {
+                let response =
+                    read_unix_http_response(stream).expect("response should be valid utf-8");
+                if !response.is_empty() {
+                    return response;
+                }
+                last_failure = "empty response".to_string();
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+                ) =>
+            {
+                last_failure = error.to_string();
+            }
+            Err(error) => panic!("request should write: {error:?}"),
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    panic!("machine API request kept failing after retries: {last_failure}");
 }
 
 fn read_unix_http_response(mut stream: UnixStream) -> Result<String, std::io::Error> {
