@@ -60,24 +60,9 @@ demos/convex/vendor/browser.bundle.js
 # Local runtime and machine state
 data/
 
-# Private business docs (pricing, strategy, competitive research) stay
-# untracked; the in-repo working-state subtrees moved under docs/private
-# by the docs-site plan are tracked and must not be silently ignored.
-# The pattern MUST stay `docs/private/*` (children), not `docs/private/`
-# (the whole directory): git never descends into an excluded parent, so
-# the directory form turns every negation below into a no-op and new
-# plan/proof/decision files get silently ignored.
-docs/private/*
-!docs/private/plans/
-!docs/private/prompts/
-!docs/private/decisions/
-!docs/private/reviews/
-!docs/private/architecture/
-!docs/private/adapters/
-!docs/private/operating/
-!docs/private/examples/
-!docs/private/staging/
-!docs/private/technical-debt.md
-!docs/private/getting-started.md
-!docs/private/current-capabilities.md
-!docs/private/tenant-isolation.md
+# The entire docs/private tree is private working state and business
+# context (plans, proofs, decisions, strategy). It stays on local disks
+# for agents but is never tracked — user directive 2026-06-11.
+# Pipeline-owned runtime-compat inputs that builds and CI depend on live
+# under tests/runtime/node/ instead, never here.
+docs/private/

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "registry_kind": "nimbus_node_latest_suite_tags",
+  "as_of": "2026-05-28",
+  "source_urls": [
+    "https://raw.githubusercontent.com/nodejs/Release/main/schedule.json",
+    "https://nodejs.org/dist/index.json",
+    "https://github.com/nodejs/node/releases"
+  ],
+  "local_node_checkout": "/Users/jack/src/github.com/nodejs/node",
+  "lanes": [
+    {
+      "lane": "node20",
+      "support_phase": "eol_legacy",
+      "latest_official_tag": "v20.20.2",
+      "latest_official_tag_object": "35e07843146797923006aa01c6daabf4f53a4fb9",
+      "latest_official_commit": "3626fea570e44896ad99aaf3bf6e59def5adede5",
+      "fixture_corpus_current_tag": "v20.20.2",
+      "fixture_corpus_current_tag_object": "35e07843146797923006aa01c6daabf4f53a4fb9",
+      "fixture_corpus_current_commit": "3626fea570e44896ad99aaf3bf6e59def5adede5",
+      "fixture_sync_required": false,
+      "intended_sync_command": "python3 scripts/runtime/node/sync.py --lane node20 --upstream-tag v20.20.2 --apply"
+    },
+    {
+      "lane": "node22",
+      "support_phase": "maintenance_lts",
+      "latest_official_tag": "v22.22.3",
+      "latest_official_tag_object": "354ef4b9bd94d5b662a9c300ddacc67f95a1bbe8",
+      "latest_official_commit": "fdfa0ff0dbaf0fbf4d7d6d89a2ab807f3177fa5c",
+      "fixture_corpus_current_tag": "v22.22.3",
+      "fixture_corpus_current_tag_object": "354ef4b9bd94d5b662a9c300ddacc67f95a1bbe8",
+      "fixture_corpus_current_commit": "fdfa0ff0dbaf0fbf4d7d6d89a2ab807f3177fa5c",
+      "fixture_sync_required": false,
+      "intended_sync_command": "python3 scripts/runtime/node/sync.py --lane node22 --upstream-tag v22.22.3 --apply"
+    },
+    {
+      "lane": "node24",
+      "support_phase": "active_lts",
+      "latest_official_tag": "v24.16.0",
+      "latest_official_tag_object": "75143a8d75629c5d429dd0becb0d725e955f48fb",
+      "latest_official_commit": "c7d10158bc31036de6783d66beaaaf551e3167aa",
+      "fixture_corpus_current_tag": "v24.16.0",
+      "fixture_corpus_current_tag_object": "75143a8d75629c5d429dd0becb0d725e955f48fb",
+      "fixture_corpus_current_commit": "c7d10158bc31036de6783d66beaaaf551e3167aa",
+      "fixture_sync_required": false,
+      "intended_sync_command": "python3 scripts/runtime/node/sync.py --lane node24 --upstream-tag v24.16.0 --apply"
+    },
+    {
+      "lane": "node26",
+      "support_phase": "current_non_lts",
+      "latest_official_tag": "v26.2.0",
+      "latest_official_tag_object": "30ffe3cfc2fda3684c38ec43aa79c381d398bf14",
+      "latest_official_commit": "cfd7920d5a2d84905c4292362d01d07870047e93",
+      "fixture_corpus_current_tag": "v26.2.0",
+      "fixture_corpus_current_tag_object": "30ffe3cfc2fda3684c38ec43aa79c381d398bf14",
+      "fixture_corpus_current_commit": "cfd7920d5a2d84905c4292362d01d07870047e93",
+      "fixture_sync_required": false,
+      "intended_sync_command": "python3 scripts/runtime/node/sync.py --lane node26 --upstream-tag v26.2.0 --apply"
+    }
+  ]
+}

@@ -33,19 +33,19 @@ LANE_MANIFEST_ROOT = (
 )
 REGISTRY_PATH = (
     REPO_ROOT
-    / "docs"
-    / "private"
-    / "architecture"
+    / "tests"
     / "runtime"
+    / "node"
+    / "compat"
     / "node-lts-compat"
     / "node-lts-lanes.json"
 )
 PUBLISHED_STATUS_PATH = (
     REPO_ROOT
-    / "docs"
-    / "private"
-    / "architecture"
+    / "tests"
     / "runtime"
+    / "node"
+    / "compat"
     / "node-compat-evidence"
     / "latest"
     / "status-summary.json"

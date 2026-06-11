@@ -123,9 +123,9 @@ sources exist.
 | `developers/runtimes/nodejs/configuration.md` | `nodeVersion` values {20,22,24,26} default 24; `--debug-node-apis`; Node 22 toolchain floor | `packages/codegen/src/project_config.mjs`, `crates/nimbus-bin/src/dev.rs`, `crates/nimbus-bin/src/codegen.rs`, `crates/nimbus-bin/src/node.rs` |
 | `developers/runtimes/nodejs/packages-and-bundling.md` | `externalPackages` rules; staging paths; size references | `packages/codegen/src/project_config.mjs`, `packages/codegen/src/node_external_packages.mjs`, `packages/codegen/src/main.mjs` |
 | `concepts/nodejs-runtime.md` | Compatibility targets and permission modes are separate axes; in-process V8 | `crates/nimbus-runtime/src/limits/axes.rs`, `crates/nimbus-runtime/src/limits/grants.rs`, `crates/nimbus-runtime/src/backends/v8/` |
-| `reference/runtimes/node-apis.md` | API-family support table | generated evidence: `docs/private/staging/runtimes/nodejs/reference/node-apis.md` |
-| `reference/runtimes/packages.md` | Package-support matrix | generated evidence: `docs/private/staging/runtimes/nodejs/reference/packages.md` |
-| `reference/runtimes/node-compat.md` | Version table, contract, headline coverage numbers (2026-05-28) | generated evidence: `docs/private/staging/runtimes/nodejs/compatibility.md`, `docs/private/staging/runtimes/nodejs/evidence/latest.md` |
+| `reference/runtimes/node-apis.md` | API-family support table | generated evidence: `tests/runtime/node/published/nodejs/reference/node-apis.md` |
+| `reference/runtimes/packages.md` | Package-support matrix | generated evidence: `tests/runtime/node/published/nodejs/reference/packages.md` |
+| `reference/runtimes/node-compat.md` | Version table, contract, headline coverage numbers (2026-05-28) | generated evidence: `tests/runtime/node/published/nodejs/compatibility.md`, `tests/runtime/node/published/nodejs/evidence/latest.md` |
 
 ## Operators — install, deploy, lifecycle
 

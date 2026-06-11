@@ -14,20 +14,20 @@ def repo_root() -> Path:
 
 
 def default_evidence_root() -> Path:
-    return repo_root() / "docs" / "private" / "architecture" / "runtime" / "node-compat-evidence" / "latest"
+    return repo_root() / "tests" / "runtime" / "node" / "compat" / "node-compat-evidence" / "latest"
 
 
 def default_output_root() -> Path:
-    return repo_root() / "docs" / "private" / "staging" / "runtimes" / "nodejs" / "evidence"
+    return repo_root() / "tests" / "runtime" / "node" / "published" / "nodejs" / "evidence"
 
 
 def lane_registry_path() -> Path:
     return (
         repo_root()
-        / "docs"
-        / "private"
-        / "architecture"
+        / "tests"
         / "runtime"
+        / "node"
+        / "compat"
         / "node-lts-compat"
         / "node-lts-lanes.json"
     )
@@ -36,10 +36,10 @@ def lane_registry_path() -> Path:
 def faas_profile_path() -> Path:
     return (
         repo_root()
-        / "docs"
-        / "private"
-        / "architecture"
+        / "tests"
         / "runtime"
+        / "node"
+        / "compat"
         / "node-faas-compatibility-profile.json"
     )
 
@@ -288,7 +288,7 @@ def api_reference_lines(
     lines = [
         "# Node API Reference",
         "",
-        *generated_header("docs/private/architecture/runtime/node-faas-compatibility-profile.json"),
+        *generated_header("tests/runtime/node/compat/node-faas-compatibility-profile.json"),
         "This generated reference lists the Node API families Nimbus exposes, denies, or routes for functions-as-a-service workloads. It is a measured support contract, not a blanket Node.js compatibility claim.",
         "",
         *version_support_lines(profile, status, registry),
@@ -399,7 +399,7 @@ def compatibility_lines(
     lines = [
         "# Node.js Runtime Compatibility",
         "",
-        *generated_header("docs/private/architecture/runtime/node-faas-compatibility-profile.json"),
+        *generated_header("tests/runtime/node/compat/node-faas-compatibility-profile.json"),
         "Nimbus's Node.js runtime compatibility is evidence-backed and deliberately bounded. A surface is considered supported only when it has checked-in fixture, canary, oracle, or classification evidence.",
         "",
         *version_support_lines(profile, status, registry),
@@ -463,11 +463,11 @@ def latest_lines(
         "## Snapshot",
         "",
         f"- generated at: `{status.get('generated_at', 'unknown')}`",
-        "- status source: `docs/private/architecture/runtime/node-compat-evidence/latest/status-summary.json`",
-        "- dashboard source: `docs/private/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json`",
+        "- status source: `tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json`",
+        "- dashboard source: `tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json`",
     ]
     if trends:
-        lines.append("- trend source: `docs/private/architecture/runtime/node-compat-evidence/latest/trend-summary.json`")
+        lines.append("- trend source: `tests/runtime/node/compat/node-compat-evidence/latest/trend-summary.json`")
     lines.extend(
         [
             "",

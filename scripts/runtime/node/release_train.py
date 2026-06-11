@@ -22,48 +22,48 @@ from schema import default_schema_path, load_json, validate_payload_against_sche
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LANE_REGISTRY_PATH = (
     REPO_ROOT
-    / "docs"
-    / "private"
-    / "architecture"
+    / "tests"
     / "runtime"
+    / "node"
+    / "compat"
     / "node-lts-compat"
     / "node-lts-lanes.json"
 )
 LATEST_TAGS_PATH = (
     REPO_ROOT
-    / "docs"
-    / "private"
-    / "architecture"
+    / "tests"
     / "runtime"
+    / "node"
+    / "compat"
     / "node-lts-compat"
     / "node-latest-suite-tags.json"
 )
 STATUS_SUMMARY_PATH = (
     REPO_ROOT
-    / "docs"
-    / "private"
-    / "architecture"
+    / "tests"
     / "runtime"
+    / "node"
+    / "compat"
     / "node-compat-evidence"
     / "latest"
     / "status-summary.json"
 )
 DASHBOARD_SUMMARY_PATH = (
     REPO_ROOT
-    / "docs"
-    / "private"
-    / "architecture"
+    / "tests"
     / "runtime"
+    / "node"
+    / "compat"
     / "node-compat-evidence"
     / "latest"
     / "dashboard-summary.json"
 )
 SUMMARY_JSON_PATH = (
     REPO_ROOT
-    / "docs"
-    / "private"
-    / "architecture"
+    / "tests"
     / "runtime"
+    / "node"
+    / "compat"
     / "node-lts-compat"
     / "node-release-train.json"
 )
@@ -71,11 +71,11 @@ SUMMARY_MD_PATH = SUMMARY_JSON_PATH.with_suffix(".md")
 SCHEMA_PATH = default_schema_path("node-release-train.schema.json")
 PROOF_PATH = (
     REPO_ROOT
-    / "docs"
-    / "private"
-    / "plans"
-    / "proof"
-    / "node-faas-runtime-compatibility"
+    / "tests"
+    / "runtime"
+    / "node"
+    / "compat"
+    / "provenance"
     / "nfrc11-release-train-automation.md"
 )
 PROOF_README_PATH = PROOF_PATH.parent / "README.md"

@@ -237,10 +237,10 @@ fn node_compat_lane_metadata_accepts_synthetic_future_lane_values() {
         },
         "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
         "manifest_docs": [
-            "docs/private/architecture/runtime/node-lts-compat/manifests/core-semantics.md"
+            "tests/runtime/node/compat/node-lts-compat/manifests/core-semantics.md"
         ],
         "failure_docs": [
-            "docs/private/architecture/runtime/node-lts-compat/failures/core-semantics.md"
+            "tests/runtime/node/compat/node-lts-compat/failures/core-semantics.md"
         ]
     }))
     .expect("synthetic future lane metadata should parse");

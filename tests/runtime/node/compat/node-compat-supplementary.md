@@ -1,0 +1,57 @@
+# Node Compatibility Supplementary Evidence
+
+This document tracks Nimbus-authored supplementary Node-compatibility probes
+that sit between the vendored upstream Node test corpus and the package or
+framework canary layer.
+
+Current measured slices:
+
+- `supplementary-builtin-completeness`
+  - Category: `builtin_completeness`
+  - Scope: bare builtin import and require coverage for `fs` and `path`,
+    including `node:` forms, `createRequire(...)`, and
+    `process.getBuiltinModule(...)` when present
+  - Measured outcome: green on `node20`, `node22`, and `node24`
+- `supplementary-module-resolution-bridge`
+  - Category: `module_resolution_bridge`
+  - Scope: bare-specifier conditional-exports resolution for ESM `import` and
+    `createRequire(...)`, plus ESM loading of a CommonJS leaf
+  - Measured outcome: green on `node20`, `node22`, and `node24`
+- `supplementary-global-injection-fidelity`
+  - Category: `global_injection_fidelity`
+  - Scope: CJS `require` / `__dirname` / `__filename` injection plus the
+    corresponding absence of those globals in ESM modules
+  - Measured outcome: green on `node20`, `node22`, and `node24`
+- `supplementary-process-release-shape`
+  - Category: `process_object_shape`
+  - Scope: lane-specific `process.version`, `process.versions.node`, and
+    `process.release` shape plus `process.versions.modules` ABI metadata for
+    the carried Node20, Node22, and Node24 lines
+  - Measured outcome: green on `node20`, `node22`, and `node24`
+  - Contract note: `process.version`, `process.versions.node`,
+    `process.release.*`, and `process.versions.modules` are lane-contract
+    metadata sourced from `node-lts-lanes.json`. Other embedded component
+    values, such as the actual V8/Deno substrate, remain diagnostics for the
+    Nimbus runtime substrate rather than a claim of full native Node patch
+    parity.
+- `supplementary-resource-safety`
+  - Category: `resource_safety`
+  - Scope: file-handle close/use-after-close behavior, abortable
+    `node:timers/promises`, and bundle-root cleanup
+  - Measured outcome: green on `node20`, `node22`, and `node24`
+- `supplementary-framework-loader-patterns`
+  - Category: `framework_motivated_patterns`
+  - Scope: CommonJS `require.extensions` custom loader registration/restoration,
+    require cache visibility, and package `main` resolution for toolchain-style
+    loaders
+  - Measured outcome: green on `node20`, `node22`, and `node24`
+- `supplementary-signal-listener-lifecycle`
+  - Category: `resource_safety`
+  - Scope: `process.on/off` listener lifecycle for real POSIX signal names
+    without sending a host signal
+  - Measured outcome: expected failure on `node20`, `node22`, and `node24`;
+    the embedded runtime currently reaches `Deno.addSignalListener`, which is
+    unavailable in this host path
+
+These probes are successor-scope correctness evidence. They do not widen the
+completed `Node compatibility` support denominator by themselves.

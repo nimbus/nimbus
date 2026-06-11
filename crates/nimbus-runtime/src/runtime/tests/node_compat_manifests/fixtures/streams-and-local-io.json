@@ -19,8 +19,8 @@
       "subset_test": "runtime::tests::node_compat::node24_default_lane_streams_and_local_io_watchpoint"
     }
   ],
-  "manifest_doc": "docs/private/architecture/runtime/node-lts-compat/manifests/streams-and-local-io.md",
-  "failure_doc": "docs/private/architecture/runtime/node-lts-compat/failures/streams-and-local-io.md",
+  "manifest_doc": "tests/runtime/node/compat/node-lts-compat/manifests/streams-and-local-io.md",
+  "failure_doc": "tests/runtime/node/compat/node-lts-compat/failures/streams-and-local-io.md",
   "fixture_seeds": [
     {
       "id": "test/parallel/test-os-eol.js",
