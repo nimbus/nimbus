@@ -63,7 +63,11 @@ data/
 # Private business docs (pricing, strategy, competitive research) stay
 # untracked; the in-repo working-state subtrees moved under docs/private
 # by the docs-site plan are tracked and must not be silently ignored.
-docs/private/
+# The pattern MUST stay `docs/private/*` (children), not `docs/private/`
+# (the whole directory): git never descends into an excluded parent, so
+# the directory form turns every negation below into a no-op and new
+# plan/proof/decision files get silently ignored.
+docs/private/*
 !docs/private/plans/
 !docs/private/prompts/
 !docs/private/decisions/
