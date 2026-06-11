@@ -137,6 +137,7 @@ fn krun_backend_m3_restart_policy_restarts_failed_vm() {
         "guest should have booted twice: initial failure, then restarted success"
     );
 
+    let tenant_id = sandbox_tenant();
     let manifest_path = manifest_path(&state_root, &tenant_id, &handle.id);
     let manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest_path).expect("manifest should be readable after restart"),
@@ -219,6 +220,7 @@ fn krun_backend_m3_restart_backoff_delays_repeated_restarts() {
         "guest should have booted three times: two failures, then restarted success"
     );
 
+    let tenant_id = sandbox_tenant();
     let manifest_path = manifest_path(&state_root, &tenant_id, &handle.id);
     let manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest_path).expect("manifest should be readable after restart"),
