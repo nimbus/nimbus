@@ -12,7 +12,14 @@ export default defineConfig({
   site: 'https://nimbusdocs.com',
   integrations: [
     starlight({
-      title: 'Nimbus',
+      // The wordmark is lowercase "nimbus" next to the cloud mark
+      // (DESIGN.md §Brand Palette). Transparent logo variants so the mark
+      // sits on the nav's own background in both modes.
+      title: 'nimbus',
+      logo: {
+        light: '../docs/brand/logo/nimbus-warm-transparent.svg',
+        dark: '../docs/brand/logo/nimbus-night-blue-transparent.svg',
+      },
       description:
         'The single-binary backend for apps and AI agents. Drop-in compatible with Convex, Firestore, MongoDB, and DynamoDB.',
       favicon: '/favicon.svg',

@@ -3,6 +3,9 @@
 #
 # Reads:   packages/nimbus-ui/public/nimbus-logo.svg (L0 canonical)
 # Writes:  docs/brand/logo/nimbus-<variant>.svg (9 files)
+#          docs/brand/logo/nimbus-<variant>-transparent.svg (9 files, no
+#          background rect — for placement on surfaces that own their own
+#          background: docs hero, top-nav strip, README badges)
 #
 # Idempotent: running twice produces byte-identical output (verified via
 # sha256sum diff in docs/private/plans/brand-system-plan.md §L9).
@@ -49,27 +52,34 @@ for entry in "${variants[@]}"; do
   IFS='|' read -r name stroke fill bg <<<"${entry}"
   out="${out_dir}/nimbus-${name}.svg"
 
+  out_transparent="${out_dir}/nimbus-${name}-transparent.svg"
+
   # Substitute:
   #   1. var(--logo-fill, transparent)    -> ${fill}
   #   2. var(--logo-stroke, currentColor) -> ${stroke}
   #   3. <title>Nimbus</title>            -> <title>Nimbus (${name})</title>
-  #   4. Insert background <rect> as the first child of <svg>.
-  python3 - "${canonical}" "${out}" "${name}" "${stroke}" "${fill}" "${bg}" \
+  #   4. Insert background <rect> as the first child of <svg> (skipped for
+  #      the -transparent companion).
+  python3 - "${canonical}" "${out}" "${out_transparent}" "${name}" "${stroke}" "${fill}" "${bg}" \
     "${vb_x}" "${vb_y}" "${vb_w}" "${vb_h}" <<'PY'
 import sys, pathlib
 
-src, dst, name, stroke, fill, bg, vb_x, vb_y, vb_w, vb_h = sys.argv[1:]
+src, dst, dst_t, name, stroke, fill, bg, vb_x, vb_y, vb_w, vb_h = sys.argv[1:]
 content = pathlib.Path(src).read_text()
 
 content = content.replace("var(--logo-fill, transparent)", fill)
 content = content.replace("var(--logo-stroke, currentColor)", stroke)
-content = content.replace("<title>Nimbus</title>", f"<title>Nimbus ({name})</title>")
 
+transparent = content.replace(
+    "<title>Nimbus</title>", f"<title>Nimbus ({name}, transparent)</title>"
+)
+pathlib.Path(dst_t).write_text(transparent)
+
+content = content.replace("<title>Nimbus</title>", f"<title>Nimbus ({name})</title>")
 rect = f'  <rect x="{vb_x}" y="{vb_y}" width="{vb_w}" height="{vb_h}" fill="{bg}"/>\n'
 content = content.replace("  <title>", rect + "  <title>", 1)
-
 pathlib.Path(dst).write_text(content)
 PY
 
-  echo "wrote ${out#${repo_root}/}"
+  echo "wrote ${out#${repo_root}/} (+ transparent)"
 done

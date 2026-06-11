@@ -38,7 +38,7 @@ function Frame({ mode, palette }: StoryArgs) {
 }
 
 export const Default: Story = {
-  args: { mode: "system", palette: "blue" },
+  args: { mode: "system", palette: "warm" },
   render: (args) => <Frame {...args} />,
 };
 
@@ -52,7 +52,7 @@ export const MonoLight: Story = {
   render: (args) => <Frame {...args} />,
 };
 
-export const WarmSystem: Story = {
-  args: { mode: "system", palette: "warm" },
+export const BlueSystem: Story = {
+  args: { mode: "system", palette: "blue" },
   render: (args) => <Frame {...args} />,
 };

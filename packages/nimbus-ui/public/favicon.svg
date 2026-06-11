@@ -1,8 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 322 201" role="img" aria-label="Nimbus" preserveAspectRatio="xMidYMid meet">
   <title>Nimbus</title>
   <style>
-    .nimbus-fill { fill: #FFFFFF; }
-    .nimbus-stroke { fill: #3B82F6; }
+    /* Sky-cycle default: Warm (golden) by day, Night Blue by night. */
+    .nimbus-fill { fill: #FFE7B3; }
+    .nimbus-stroke { fill: #0F172A; }
     @media (prefers-color-scheme: dark) {
       .nimbus-fill { fill: #1E293B; }
       .nimbus-stroke { fill: #60A5FA; }

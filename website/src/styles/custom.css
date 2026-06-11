@@ -1,18 +1,19 @@
 /**
  * Nimbus docs theme — Industrial Precision, in reading form.
  *
- * Token source of truth: DESIGN.md §Visual Language (Product Palette, Blue;
- * §Brand Palette Two-Tier Bridge; §Typography; §Spacing And Shape).
- * The doc body is product-tier: OKLCH Blue-palette neutrals, --brand as the
- * Starlight accent family, no gradients. The splash hero is the single
- * brand-tier moment on the site (see the hero rules at the bottom).
+ * Token source of truth: DESIGN.md §Visual Language (Product Palette,
+ * sky-cycle default: Warm light / Night Blue dark; §Brand Palette Two-Tier
+ * Bridge; §Typography; §Spacing And Shape). The doc body is product-tier:
+ * OKLCH default-palette neutrals, --brand as the Starlight accent family,
+ * no gradients. The splash hero is the single brand-tier moment on the
+ * site (see the hero rules at the bottom).
  *
  * Starlight inverts gray semantics per theme: in dark mode --sl-color-white
  * is the text color and --sl-color-black the page background; light mode
  * flips them. Values below map DESIGN.md tokens onto that scale.
  */
 
-/* Dark mode (Starlight default :root) — DESIGN.md Blue dark column. */
+/* Dark mode (Starlight default :root) — DESIGN.md Night Blue dark column. */
 :root {
   /* Accent family ← --brand oklch(72% 0.17 248) (#60A5FA); high ← --link dark. */
   --sl-color-accent-low: oklch(35% 0.1 252);
@@ -38,22 +39,25 @@
     Menlo, Consolas, monospace;
 }
 
-/* Light mode — DESIGN.md Blue light column (gray semantics inverted). */
+/* Light mode — DESIGN.md Warm light column (golden daylight; gray
+ * semantics inverted). The sky-cycle default: golden by day, Night Blue
+ * by night. */
 :root[data-theme='light'] {
-  /* Accent family ← --brand oklch(62% 0.20 258) (#3B82F6); high ← --link light. */
-  --sl-color-accent-low: oklch(94% 0.03 250);
-  --sl-color-accent: oklch(62% 0.2 258);
-  --sl-color-accent-high: oklch(54% 0.22 264);
+  /* Accent family ← warm --link oklch(62% 0.17 55) (#D97706, Golden Hour
+   * primary); high deepens to amber-800 strength for link text on paper. */
+  --sl-color-accent-low: oklch(95% 0.045 84);
+  --sl-color-accent: oklch(62% 0.17 55);
+  --sl-color-accent-high: oklch(48% 0.12 50);
 
-  --sl-color-white: oklch(20% 0.035 263);
-  --sl-color-gray-1: oklch(27% 0.032 260);
-  --sl-color-gray-2: oklch(36% 0.03 258);
-  --sl-color-gray-3: oklch(48% 0.028 255);
-  --sl-color-gray-4: oklch(62% 0.024 252);
-  --sl-color-gray-5: oklch(82% 0.02 250);
-  --sl-color-gray-6: oklch(96% 0.008 248);
-  --sl-color-gray-7: oklch(98% 0.005 248);
-  --sl-color-black: oklch(100% 0 0);
+  --sl-color-white: oklch(20% 0.02 60);
+  --sl-color-gray-1: oklch(27% 0.02 60);
+  --sl-color-gray-2: oklch(36% 0.018 62);
+  --sl-color-gray-3: oklch(53% 0.013 75);
+  --sl-color-gray-4: oklch(65% 0.018 78);
+  --sl-color-gray-5: oklch(90% 0.025 82);
+  --sl-color-gray-6: oklch(95.5% 0.025 82);
+  --sl-color-gray-7: oklch(97% 0.018 84);
+  --sl-color-black: oklch(98.5% 0.012 85);
 }
 
 /* Monospace cadence: DESIGN.md requires -0.01em so JetBrains Mono reads at
@@ -84,10 +88,10 @@ starlight-tabs {
  * Splash hero — the single brand-tier moment on the site.
  *
  * Dark mode uses the canonical brand "Interactive Elements" gradient
- * (#67E8F9 → #06B6D4). That gradient has no light-mode-safe form (cyan-300
- * fails contrast on white), so light mode composes the two tier-bridge
- * solids instead: accent #06B6D4 → brand #3B82F6. Both rules are recorded
- * in DESIGN.md §Documentation site; do not use gradients anywhere else.
+ * (#67E8F9 → #06B6D4) over Night Blue. Light mode is golden daylight, so
+ * its hero composes the warm identity instead: amber-500 → amber-700
+ * (#F59E0B → #B45309) on warm paper. Both rules are recorded in DESIGN.md
+ * §Documentation site; do not use gradients anywhere else.
  */
 [data-has-hero] .hero h1 {
   background-image: linear-gradient(135deg, #67e8f9, #06b6d4);
@@ -96,8 +100,10 @@ starlight-tabs {
   color: transparent;
 }
 
-:root[data-theme='light'] [data-has-hero] .hero h1 {
-  background-image: linear-gradient(135deg, #06b6d4, #3b82f6);
+/* data-has-hero sits on <html> itself, so the theme and hero attributes
+ * must be compounded on :root — a descendant combinator never matches. */
+:root[data-theme='light'][data-has-hero] .hero h1 {
+  background-image: linear-gradient(135deg, #f59e0b, #b45309);
 }
 
 /* Identity colors appear as small marks, never section fills (DESIGN.md). */
