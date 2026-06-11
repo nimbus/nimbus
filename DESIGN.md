@@ -727,8 +727,9 @@ tight mark (`nimbus-mark.svg`) accept `--logo-stroke` and `--logo-fill` as
 CSS variables. Variant rendering is parameter substitution — the path data
 is identical across all variants. `gen-variants.sh` also emits a
 `-transparent` companion for every variant (same colors, no background
-rect) for placement on surfaces that own their own background: the docs
-hero, the docs top-nav, README badges. The wordmark is lowercase
+rect, viewBox cropped to the ink bounds so lockups control their own
+spacing) for placement on surfaces that own their own background: the
+docs hero, the docs top-nav, README badges. The wordmark is lowercase
 `nimbus` whenever it is set next to the mark.
 
 #### Usage Guidelines

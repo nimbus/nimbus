@@ -135,3 +135,21 @@ starlight-tabs {
 .adapter-tabs [role='tablist'] li:nth-child(4) [role='tab'] { --tab-brand: url('/brands/mongodb.svg'); }
 .adapter-tabs [role='tablist'] li:nth-child(5) [role='tab'] { --tab-brand: url('/brands/database.svg'); }
 .adapter-tabs [role='tablist'] li:nth-child(6) [role='tab'] { --tab-brand: url('/brands/api.svg'); }
+
+/*
+ * Top-nav lockup: the -transparent mark is ink-cropped (no baked padding),
+ * so spacing here is real. Hold the cloud at its optical size and close
+ * the mark-to-wordmark gap to lockup distance (~0.4x mark height).
+ */
+.site-title {
+  gap: 0.625rem;
+}
+.site-title img {
+  height: 1.75rem;
+  width: auto;
+}
+
+/* Nav social icons: Starlight's 16px glyph reads lost in the 64px nav. */
+.social-icons a {
+  font-size: 1.375rem;
+}

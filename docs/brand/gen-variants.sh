@@ -54,17 +54,24 @@ for entry in "${variants[@]}"; do
 
   out_transparent="${out_dir}/nimbus-${name}-transparent.svg"
 
+  # Ink bounds of the canonical path (measured via getBBox through the
+  # translate(0,261) scale(0.1,-0.1) transform). The -transparent
+  # companions crop to these so lockups control their own spacing — the
+  # canonical viewBox carries ~40 units of padding per side that reads as
+  # phantom gap next to a wordmark. Re-measure if the artwork changes.
+  tight_viewbox="40 40 302 181"
+
   # Substitute:
   #   1. var(--logo-fill, transparent)    -> ${fill}
   #   2. var(--logo-stroke, currentColor) -> ${stroke}
   #   3. <title>Nimbus</title>            -> <title>Nimbus (${name})</title>
   #   4. Insert background <rect> as the first child of <svg> (skipped for
-  #      the -transparent companion).
+  #      the -transparent companion, which instead crops to the ink bounds).
   python3 - "${canonical}" "${out}" "${out_transparent}" "${name}" "${stroke}" "${fill}" "${bg}" \
-    "${vb_x}" "${vb_y}" "${vb_w}" "${vb_h}" <<'PY'
+    "${vb_x}" "${vb_y}" "${vb_w}" "${vb_h}" "${tight_viewbox}" <<'PY'
 import sys, pathlib
 
-src, dst, dst_t, name, stroke, fill, bg, vb_x, vb_y, vb_w, vb_h = sys.argv[1:]
+src, dst, dst_t, name, stroke, fill, bg, vb_x, vb_y, vb_w, vb_h, tight_vb = sys.argv[1:]
 content = pathlib.Path(src).read_text()
 
 content = content.replace("var(--logo-fill, transparent)", fill)
@@ -72,6 +79,9 @@ content = content.replace("var(--logo-stroke, currentColor)", stroke)
 
 transparent = content.replace(
     "<title>Nimbus</title>", f"<title>Nimbus ({name}, transparent)</title>"
+)
+transparent = transparent.replace(
+    f'viewBox="{vb_x} {vb_y} {vb_w} {vb_h}"', f'viewBox="{tight_vb}"'
 )
 pathlib.Path(dst_t).write_text(transparent)
 
