@@ -115,7 +115,14 @@ async fn activate_dev_generation(
     plan: &DevWatchPlan,
 ) -> Result<crate::deploy::DeployResponse, Box<dyn std::error::Error>> {
     let request = DeployRequest::from_app_dir(&plan.app_dir, false)?;
-    post_deploy_request(&plan.local_url, &plan.deploy_admin_token, &request).await
+    let admin_token = crate::deploy::load_local_admin_token_for_loopback(&plan.local_url);
+    post_deploy_request(
+        &plan.local_url,
+        &plan.deploy_admin_token,
+        admin_token.as_deref(),
+        &request,
+    )
+    .await
 }
 
 fn emit_dev_info(message: impl AsRef<str>) {

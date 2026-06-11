@@ -12,6 +12,7 @@ use crate::codegen::run_codegen_for_app_dir;
 
 const DEPLOY_URL_ENV: &str = "NIMBUS_DEPLOY_URL";
 const DEPLOY_TOKEN_ENV: &str = "NIMBUS_DEPLOY_TOKEN";
+const ADMIN_TOKEN_ENV: &str = "NIMBUS_ADMIN_TOKEN";
 
 /// Push app artifacts to an explicit self-hosted Nimbus instance.
 #[derive(Debug, Args)]
@@ -27,6 +28,12 @@ pub(crate) struct DeployCommand {
     /// Deploy admin bearer token. Defaults to NIMBUS_DEPLOY_TOKEN.
     #[arg(long)]
     pub(crate) token: Option<String>,
+
+    /// Local admin token sent as X-Nimbus-Admin-Token. Defaults to
+    /// NIMBUS_ADMIN_TOKEN, then to the on-disk local admin token when the
+    /// target URL is a loopback address on this machine.
+    #[arg(long)]
+    pub(crate) admin_token: Option<String>,
 
     /// App directory containing a nimbus/ or convex/ source root.
     #[arg(long)]
@@ -136,6 +143,12 @@ pub(crate) async fn run_deploy_command(
         |name| env::var(name).ok(),
         crate::auth::lookup_credentials_bearer,
     )?;
+    let admin_token = resolve_deploy_admin_token(
+        command.admin_token.as_deref(),
+        &target_url,
+        |name| env::var(name).ok(),
+        load_local_admin_token_for_loopback,
+    );
     let app_dir = resolve_deploy_app_dir(command.app_dir.as_deref(), &cwd)?;
 
     emit_deploy_phase(format!("Preparing Nimbus app from {}", app_dir.display()));
@@ -153,9 +166,59 @@ pub(crate) async fn run_deploy_command(
     let request = DeployRequest::from_app_dir(&app_dir, command.dry_run)?;
 
     emit_deploy_phase(format!("Uploading app artifacts to {target_url}"));
-    let response = post_deploy_request(&target_url, &token, &request).await?;
+    let response =
+        post_deploy_request(&target_url, &token, admin_token.as_deref(), &request).await?;
     print_deploy_result(&target_url, &response);
     Ok(())
+}
+
+/// Resolve the local admin token for the `X-Nimbus-Admin-Token` header the
+/// deploy route requires in addition to the deploy bearer token: explicit
+/// flag, then NIMBUS_ADMIN_TOKEN, then the on-disk local admin token when
+/// the target is a loopback address on this machine.
+fn resolve_deploy_admin_token(
+    explicit: Option<&str>,
+    target_url: &str,
+    env_lookup: impl Fn(&str) -> Option<String>,
+    local_lookup: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    if let Some(token) = explicit {
+        return Some(token.to_string());
+    }
+    if let Some(token) = env_lookup(ADMIN_TOKEN_ENV) {
+        return Some(token);
+    }
+    local_lookup(target_url)
+}
+
+/// On-disk local admin token discovery, restricted to loopback targets:
+/// a remote server has its own token file that this machine cannot read,
+/// so sending the local one would only produce a confusing 401.
+pub(crate) fn load_local_admin_token_for_loopback(target_url: &str) -> Option<String> {
+    if !target_url_is_loopback(target_url) {
+        return None;
+    }
+    let paths = nimbus_server::LocalServerPaths::resolve_for_current_platform().ok()?;
+    nimbus_server::load_local_admin_token(&paths)
+        .ok()
+        .map(|record| record.token)
+}
+
+fn target_url_is_loopback(target_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(target_url) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
 }
 
 impl DeployDiff {
@@ -427,17 +490,31 @@ impl DeployArtifacts {
 pub(crate) async fn post_deploy_request(
     base_url: &str,
     token: &str,
+    admin_token: Option<&str>,
     request: &DeployRequest,
 ) -> Result<DeployResponse, Box<dyn std::error::Error>> {
-    let response = reqwest::Client::new()
+    let mut builder = reqwest::Client::new()
         .post(deploy_endpoint_url(base_url))
         .bearer_auth(token)
-        .json(request)
-        .send()
-        .await?;
+        .json(request);
+    if let Some(admin_token) = admin_token {
+        builder = builder.header(nimbus_server::LOCAL_ADMIN_HEADER_NAME, admin_token);
+    }
+    let response = builder.send().await?;
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
+        if status == reqwest::StatusCode::UNAUTHORIZED && admin_token.is_none() {
+            return Err(io::Error::other(format!(
+                "deploy request failed with {status}: {body}\n\n\
+                 The deploy route requires the server's local admin token in the\n\
+                 X-Nimbus-Admin-Token header in addition to the deploy bearer token.\n\
+                 On the server's machine `nimbus deploy` reads it automatically from\n\
+                 the local token file; from elsewhere pass --admin-token or set\n\
+                 NIMBUS_ADMIN_TOKEN."
+            ))
+            .into());
+        }
         return Err(
             io::Error::other(format!("deploy request failed with {status}: {body}")).into(),
         );
@@ -997,5 +1074,168 @@ mod tests {
             resolved, nested_cwd,
             "deploy walker must stop at worktree `.git` *file*; got {resolved:?}"
         );
+    }
+
+    // --- LR2: deploy admin handshake ------------------------------------
+
+    #[test]
+    fn deploy_admin_token_resolution_prefers_explicit_then_env_then_local() {
+        let explicit = resolve_deploy_admin_token(
+            Some("from-flag"),
+            "http://localhost:8080/",
+            |_| Some("from-env".to_string()),
+            |_| Some("from-disk".to_string()),
+        );
+        assert_eq!(explicit.as_deref(), Some("from-flag"));
+
+        let from_env = resolve_deploy_admin_token(
+            None,
+            "http://localhost:8080/",
+            |name| (name == ADMIN_TOKEN_ENV).then(|| "from-env".to_string()),
+            |_| Some("from-disk".to_string()),
+        );
+        assert_eq!(from_env.as_deref(), Some("from-env"));
+
+        let from_disk = resolve_deploy_admin_token(
+            None,
+            "http://localhost:8080/",
+            |_| None,
+            |_| Some("from-disk".to_string()),
+        );
+        assert_eq!(from_disk.as_deref(), Some("from-disk"));
+    }
+
+    #[test]
+    fn deploy_admin_token_local_discovery_is_loopback_only() {
+        assert!(target_url_is_loopback("http://localhost:8080/"));
+        assert!(target_url_is_loopback("http://127.0.0.1:3210"));
+        assert!(target_url_is_loopback("https://[::1]:8443/"));
+        assert!(!target_url_is_loopback("https://nimbus.example.com/"));
+        assert!(!target_url_is_loopback("http://203.0.113.5:8080/"));
+        assert!(!target_url_is_loopback("not a url"));
+    }
+
+    fn live_server_paths(root: &Path) -> nimbus_server::LocalServerPaths {
+        nimbus_server::LocalServerPaths {
+            auth_token_path: root.join("auth").join("token"),
+            server_discovery_path: root.join("run").join("server.json"),
+            audit_log_path: root.join("logs").join("access.jsonl"),
+        }
+    }
+
+    fn minimal_deploy_request() -> DeployRequest {
+        DeployRequest {
+            dry_run: false,
+            artifacts: DeployArtifacts {
+                convex: Some(ConvexDeployArtifacts {
+                    functions_json: json!({ "functions": [] }),
+                    http_routes_json: Some(json!({ "routes": [] })),
+                    schema_json: None,
+                    auth_config_json: None,
+                    bundle_mjs: None,
+                    bundle_sha256: None,
+                }),
+                cloud_functions: None,
+            },
+        }
+    }
+
+    /// Boot a real server with BOTH deploy credentials configured — the
+    /// deploy bearer token and the local-admin security state — exactly as
+    /// `nimbus start` wires them, and return its base URL plus the admin
+    /// token record.
+    async fn spawn_deploy_gated_server(
+        temp: &tempfile::TempDir,
+        deploy_token: &str,
+    ) -> (
+        String,
+        nimbus_server::LocalAdminTokenRecord,
+        tokio::task::JoinHandle<std::io::Result<()>>,
+        std::sync::Arc<nimbus::Engine>,
+    ) {
+        let paths = live_server_paths(&temp.path().join("paths"));
+        let record = nimbus_server::load_or_create_local_admin_token(&paths)
+            .expect("local admin token should initialize");
+        let security = std::sync::Arc::new(nimbus_server::LocalServerSecurityState::new(
+            paths,
+            record.clone(),
+        ));
+        let engine = std::sync::Arc::new(
+            nimbus::Engine::new(temp.path().join("engine")).expect("engine should initialize"),
+        );
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener address should resolve");
+        let server_task = tokio::spawn(nimbus_server::serve(
+            listener,
+            nimbus_server::ServeOptions::new(engine.clone())
+                .with_deploy_admin_token(deploy_token.to_string())
+                .with_local_server_security(security),
+        ));
+        crate::test_support::wait_for_live_server_health(
+            "deploy-gated test server should answer /health",
+            address,
+            &server_task,
+        )
+        .await;
+        (format!("http://{address}/"), record, server_task, engine)
+    }
+
+    #[tokio::test]
+    async fn deploy_round_trip_with_local_admin_token() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let (base_url, record, server_task, engine) =
+            spawn_deploy_gated_server(&temp, "deploy-secret").await;
+
+        let response = post_deploy_request(
+            &base_url,
+            "deploy-secret",
+            Some(&record.token),
+            &minimal_deploy_request(),
+        )
+        .await
+        .expect("deploy with bearer + admin header should succeed");
+
+        assert!(!response.dry_run, "non-dry-run deploy should activate");
+        assert!(response.activated, "deploy should report activation");
+        assert_eq!(response.previous_generation, 0);
+        assert_eq!(response.generation, 1);
+
+        server_task.abort();
+        let _ = server_task.await;
+        engine.quiesce().await;
+    }
+
+    #[tokio::test]
+    async fn deploy_rejects_missing_admin_token() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let (base_url, _record, server_task, engine) =
+            spawn_deploy_gated_server(&temp, "deploy-secret").await;
+
+        let error =
+            post_deploy_request(&base_url, "deploy-secret", None, &minimal_deploy_request())
+                .await
+                .expect_err("deploy without the admin header must be rejected");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("401"),
+            "rejection should surface the 401 status, got: {message}"
+        );
+        assert!(
+            message.contains("X-Nimbus-Admin-Token"),
+            "rejection should name the required header, got: {message}"
+        );
+        assert!(
+            message.contains("--admin-token") && message.contains("NIMBUS_ADMIN_TOKEN"),
+            "rejection should name the flag and env fallback, got: {message}"
+        );
+
+        server_task.abort();
+        let _ = server_task.await;
+        engine.quiesce().await;
     }
 }

@@ -52,10 +52,10 @@ pub use license::{
     LicenseUsageSnapshot,
 };
 pub use local_server::{
-    LOCAL_ADMIN_TOKEN_SCOPE, LocalAdminTokenRecord, LocalServerPaths, LocalServerPlatform,
-    LocalServerSecurityState, SERVER_DISCOVERY_PROTOCOL_VERSIONS, ServerDiscoveryLease,
-    ServerDiscoveryRecord, load_local_admin_token, load_or_create_local_admin_token,
-    read_live_server_discovery, rotate_local_admin_token_offline,
+    LOCAL_ADMIN_HEADER_NAME, LOCAL_ADMIN_TOKEN_SCOPE, LocalAdminTokenRecord, LocalServerPaths,
+    LocalServerPlatform, LocalServerSecurityState, SERVER_DISCOVERY_PROTOCOL_VERSIONS,
+    ServerDiscoveryLease, ServerDiscoveryRecord, load_local_admin_token,
+    load_or_create_local_admin_token, read_live_server_discovery, rotate_local_admin_token_offline,
 };
 pub use machine_lifecycle::{
     MachineCreateRequest, MachineLifecycleFuture, MachineLifecycleManager,

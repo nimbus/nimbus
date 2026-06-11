@@ -17,8 +17,8 @@ pub use nimbus_operator::{
     IssuedSessionCookie, LocalServerSecurityState, SessionBootstrapFailure, SessionValidationResult,
 };
 pub use nimbus_operator::{
-    LOCAL_ADMIN_TOKEN_SCOPE, LocalAdminTokenRecord, load_local_admin_token,
-    load_or_create_local_admin_token, rotate_local_admin_token_offline,
+    LOCAL_ADMIN_HEADER_NAME, LOCAL_ADMIN_TOKEN_SCOPE, LocalAdminTokenRecord,
+    load_local_admin_token, load_or_create_local_admin_token, rotate_local_admin_token_offline,
 };
 pub(crate) use nimbus_operator::{
     LocalServerAuditEvent, origin_from_headers, tenant_id_from_request,

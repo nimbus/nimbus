@@ -106,13 +106,18 @@ Packages generated app artifacts and pushes them to an explicit self-hosted
 Nimbus instance, printing a diff of functions, HTTP routes, schema, and
 runtime-bundle changes. The target URL and token resolve from flags first,
 then environment variables; tokens stored by `nimbus auth login` are used
-when `NIMBUS_DEPLOY_TOKEN` is unset. The server-side contract is documented
-in [Deploy & admin API](/reference/deploy-admin-api/).
+when `NIMBUS_DEPLOY_TOKEN` is unset. The deploy route also requires the
+server's local admin token: when the target URL is a loopback address on
+the same machine, `nimbus deploy` reads it from the local token file
+automatically; for a remote server, pass `--admin-token` or set
+`NIMBUS_ADMIN_TOKEN`. The server-side contract is documented in
+[Deploy & admin API](/reference/deploy-admin-api/).
 
 | Flag | Env var | Default | What it does |
 | --- | --- | --- | --- |
 | `--url` | `NIMBUS_DEPLOY_URL` | required | Target Nimbus server URL. |
 | `--token` | `NIMBUS_DEPLOY_TOKEN` | credentials file | Deploy admin bearer token. |
+| `--admin-token` | `NIMBUS_ADMIN_TOKEN` | local token file (loopback targets) | Local admin token sent as `X-Nimbus-Admin-Token`. |
 | `--app-dir` | — | auto-detected | App directory containing a `nimbus/` or `convex/` source root. |
 | `--dry-run` | — | `false` | Validate and diff without activating the new generation. |
 | `--skip-codegen` | — | `false` | Skip codegen and package already-generated artifacts. |

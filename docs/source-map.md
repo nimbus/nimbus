@@ -205,7 +205,7 @@ sources exist.
 | `reference/cli.md` | Root command list and command map (14 visible commands) | `crates/nimbus-bin/src/main.rs` |
 | `reference/cli.md` | `start` flags, defaults (port 8080, host 127.0.0.1, `./data`, sqlite), `NIMBUS_*` env names, flag > env > config precedence | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/config.rs` |
 | `reference/cli.md` | `dev` flags, port 3210, tail-log modes, `--no-open` semantics, `.nimbus/dev` data dir, walk-up bounded at `.git` | `crates/nimbus-bin/src/dev.rs`, `crates/nimbus-bin/src/dev/plan.rs`, `crates/nimbus-bin/src/path_boundary.rs` |
-| `reference/cli.md` | `deploy` flags, `NIMBUS_DEPLOY_URL`/`NIMBUS_DEPLOY_TOKEN`, credentials-file fallback | `crates/nimbus-bin/src/deploy.rs` |
+| `reference/cli.md` | `deploy` flags, `NIMBUS_DEPLOY_URL`/`NIMBUS_DEPLOY_TOKEN`/`NIMBUS_ADMIN_TOKEN`, credentials-file fallback, loopback admin-token auto-discovery | `crates/nimbus-bin/src/deploy.rs` |
 | `reference/cli.md` | `codegen`, `init` (adapter values), `token rotate`, `ui` | `crates/nimbus-bin/src/codegen.rs`, `crates/nimbus-bin/src/init.rs`, `crates/nimbus-bin/src/token.rs`, `crates/nimbus-bin/src/ui.rs` |
 | `reference/cli.md` | `auth` subcommands; `rotate-admin` required before `start --allow-network` | `crates/nimbus-bin/src/auth.rs` |
 | `reference/cli.md` | `machine` subcommands, init defaults (2 CPUs / 2048 MiB / 20 GiB / `default`), default image, ssh target resolution | `crates/nimbus-bin/src/machine/command.rs`, `crates/nimbus-bin/src/machine/mod.rs`, `crates/nimbus-bin/src/machine/handlers/transfer.rs` |
