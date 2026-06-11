@@ -25,6 +25,7 @@ mod ws;
 
 pub use adapters::cloud_functions::CloudFunctionsRegistry;
 pub use adapters::convex::ConvexRegistry;
+pub use adapters::dynamodb::DynamoDbConfig;
 pub use adapters::firebase::FirebaseConfig;
 pub use adapters::mongodb::{AuthConfig as MongoDbAuthConfig, MongoDbConfig};
 pub use artifact_verifier_effects::{
@@ -34,6 +35,7 @@ pub use artifact_verifier_effects::{
     ProcessArtifactVerifierCommandRunner, SbomVerifierBackend, SlsaVerifierBackend,
     admit_guest_executable_artifact, admit_runtime_bundle_artifact,
 };
+pub use nimbus_dynamodb::AccessKeyRegistry as DynamoDbAccessKeyRegistry;
 pub mod adapters_mongodb {
     pub use super::adapters::mongodb::bson_bridge;
     pub use super::adapters::mongodb::listener;

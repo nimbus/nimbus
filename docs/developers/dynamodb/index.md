@@ -11,9 +11,9 @@ official AWS SDKs connect to it the same way they connect to DynamoDB
 Local: override the endpoint URL, keep everything else stock. No Nimbus
 SDK, no code changes beyond client construction.
 
-The endpoint is part of the Nimbus server library, and you enable it when
-you configure the server. The `nimbus start` CLI does not currently expose
-a flag for it, so this guide enables it through a small Rust program, then
+You enable the endpoint when you start the server — a CLI flag on
+`nimbus start`, or the embedding API if you run Nimbus as a library (see
+[the embedding alternative](#embedding-alternative) below). This guide then
 talks to it with the AWS SDK for JavaScript v3.
 
 ## How the endpoint works
@@ -28,61 +28,41 @@ talks to it with the AWS SDK for JavaScript v3.
 
 ## 1. Enable the endpoint
 
-Create a Rust project next to your Nimbus checkout and point it at the
-Nimbus crates. In `Cargo.toml`:
+Start the server with the DynamoDB listener and an access-key binding —
+each binding maps one AWS access key ID (with its SigV4 signing secret) to
+one Nimbus tenant:
 
-```toml
-[dependencies]
-nimbus-core = { path = "../nimbus/crates/nimbus-core" }
-nimbus-dynamodb = { path = "../nimbus/crates/nimbus-dynamodb" }
-nimbus-engine = { path = "../nimbus/crates/nimbus-engine" }
-nimbus-server = { path = "../nimbus/crates/nimbus-server" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```bash
+nimbus start --dynamodb-port 8000 \
+  --dynamodb-access-key AKIAACME:acme-secret:acme
 ```
 
-In `src/main.rs`:
+Repeat `--dynamodb-access-key` for more tenants, or set the
+comma-separated `NIMBUS_DYNAMODB_ACCESS_KEYS` environment variable.
+Requests signed with an access key you did not register are rejected with
+`UnrecognizedClientException` — the registry starts empty and fails
+closed.
+
+### Embedding alternative
+
+Running Nimbus as a Rust library? Configure the same listener with
+`ServeOptions`:
 
 ```rust
-use std::sync::Arc;
-
 use nimbus_core::TenantId;
-use nimbus_dynamodb::DynamoDbConfig;
-use nimbus_engine::Engine;
-use nimbus_server::{ServeOptions, serve};
+use nimbus_server::{DynamoDbConfig, ServeOptions};
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Persists to ./data with the embedded SQLite backend.
-    let engine = Arc::new(Engine::new("./data")?);
-
-    // The main HTTP API. The DynamoDB endpoint runs as a sibling listener.
-    let http = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
-
-    // Binds 127.0.0.1:8000 and maps the access key AKIAACME to the
-    // tenant "acme", verified with full SigV4 against this secret.
-    let dynamodb = DynamoDbConfig::default().with_signed_access_key(
-        "AKIAACME",
-        TenantId::new("acme")?,
-        "acme-secret",
-    );
-
-    let options = ServeOptions::new(engine).with_dynamodb(dynamodb);
-    serve(http, options).await?;
-    Ok(())
-}
+let dynamodb = DynamoDbConfig::default().with_signed_access_key(
+    "AKIAACME",
+    TenantId::new("acme")?,
+    "acme-secret",
+);
+let options = ServeOptions::new(engine).with_dynamodb(dynamodb);
 ```
 
-Run it with `cargo run`. Requests signed with an access key you did not
-register are rejected with `UnrecognizedClientException` — the registry
-starts empty and fails closed.
-
-For local development you can skip signature verification:
-
-```rust
-let dynamodb = DynamoDbConfig::default()
-    .with_access_key("dev-key", TenantId::new("dev")?)
-    .insecure_dev_auth();
-```
+The embedding API additionally offers a signature-skipping
+`insecure_dev_auth()` lookup mode for local development; the server
+refuses to bind it to a non-loopback address.
 
 In this mode any signature is accepted for a registered key, so the server
 refuses to bind it to anything but a loopback address.

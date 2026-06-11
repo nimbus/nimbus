@@ -13,6 +13,7 @@ use nimbus_server::{
 };
 
 use super::StartCommand;
+use super::adapters::resolve_adapter_enablement;
 use super::config::{
     control_data_dir_from_persistence_config, persistence_config_from_start_command,
 };
@@ -53,6 +54,7 @@ pub(crate) async fn run_start_command(
         ensure_host_opt_in(&command.host, command.allow_network)?;
     }
     let cors_allowed_origins = resolve_cors_allowed_origins(&command)?;
+    let adapter_enablement = resolve_adapter_enablement(&command)?;
     let persistence_config = persistence_config_from_start_command(&command)?;
     let compose_control_data_dir =
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
@@ -173,6 +175,15 @@ pub(crate) async fn run_start_command(
     serve_options = serve_options.with_local_server_security(local_server_security);
     serve_options = serve_options.with_tenant_isolation_mode(command.tenant_isolation_mode);
     serve_options = serve_options.with_cors_allowed_origins(cors_allowed_origins);
+    if let Some(firebase_config) = adapter_enablement.firebase {
+        serve_options = serve_options.with_firebase_config(firebase_config);
+    }
+    if let Some(mongodb_config) = adapter_enablement.mongodb {
+        serve_options = serve_options.with_mongodb(mongodb_config);
+    }
+    if let Some(dynamodb_config) = adapter_enablement.dynamodb {
+        serve_options = serve_options.with_dynamodb(dynamodb_config);
+    }
 
     let server_result = serve(listener, serve_options).await;
     drop(discovery_lease);

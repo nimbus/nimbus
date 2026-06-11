@@ -20,11 +20,11 @@ precise surface.
 
 ## Before you start
 
-The Firestore-compatible routes are part of the Nimbus server, but they are
-switched on per deployment by server configuration — a stock `nimbus start`
-process does not serve them today, and there is no CLI flag yet that enables
-them. The steps below are the supported client contract against a Nimbus
-endpoint that has the Firestore surface enabled.
+The Firestore-compatible routes are switched on per server: start yours
+with `nimbus start --firestore` (embedders call
+`ServeOptions::with_firebase_config`). The steps below are the supported
+client contract against a Nimbus endpoint with the Firestore surface
+enabled.
 
 ## 1. Provision the SDK
 

@@ -56,6 +56,21 @@ been explicitly rotated at least once (`nimbus auth rotate-admin`), or the
 bind is refused; a rotation older than 30 days logs a startup warning but
 does not block. See [Hardening](/operators/hardening/).
 
+### Protocol adapters
+
+The Convex-compatible surface and the native API are always served.
+The other adapters are off by default and enabled per server:
+
+| Surface | Enable with | Credentials |
+| --- | --- | --- |
+| Firestore routes | `--firestore` | Main-listener auth applies |
+| MongoDB listener | `--mongodb-port <port>` | `--mongodb-username` (or `NIMBUS_MONGODB_USERNAME`) + `NIMBUS_MONGODB_PASSWORD` (env-only) |
+| DynamoDB listener | `--dynamodb-port <port>` | `--dynamodb-access-key KEY_ID:SECRET:TENANT` (repeatable) or `NIMBUS_DYNAMODB_ACCESS_KEYS` (comma-separated) |
+
+The MongoDB listener is loopback-only. The DynamoDB listener may bind a
+non-loopback host with `--allow-network`; with no access keys configured
+it rejects every request.
+
 ### CORS origins
 
 Browsers are granted CORS access from loopback origins only, by default.

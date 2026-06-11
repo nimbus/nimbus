@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 
+mod adapters;
 mod boot;
 mod config;
 mod first_boot;
@@ -60,6 +61,44 @@ pub(crate) struct StartCommand {
     /// (comma-separated) when the flag is absent.
     #[arg(long = "cors-allow-origin", value_name = "ORIGIN", value_parser = parse_cors_origin)]
     pub(crate) cors_allow_origin: Vec<String>,
+
+    /// Mount the Firestore-compatible routes on the main HTTP listener.
+    #[arg(long, default_value_t = false)]
+    pub(crate) firestore: bool,
+
+    /// Enable the MongoDB wire-protocol listener on this port. Requires
+    /// SCRAM credentials: --mongodb-username (or NIMBUS_MONGODB_USERNAME)
+    /// plus the NIMBUS_MONGODB_PASSWORD environment variable.
+    #[arg(long)]
+    pub(crate) mongodb_port: Option<u16>,
+
+    /// Host interface for the MongoDB listener. Non-loopback hosts
+    /// require --allow-network.
+    #[arg(long, default_value = "127.0.0.1")]
+    pub(crate) mongodb_host: String,
+
+    /// SCRAM username for the MongoDB listener. Defaults to
+    /// NIMBUS_MONGODB_USERNAME. The password is env-only
+    /// (NIMBUS_MONGODB_PASSWORD) so it never appears in process listings.
+    #[arg(long)]
+    pub(crate) mongodb_username: Option<String>,
+
+    /// Enable the DynamoDB HTTP listener on this port (DynamoDB Local
+    /// convention is 8000).
+    #[arg(long)]
+    pub(crate) dynamodb_port: Option<u16>,
+
+    /// Host interface for the DynamoDB listener. Non-loopback hosts
+    /// require --allow-network.
+    #[arg(long, default_value = "127.0.0.1")]
+    pub(crate) dynamodb_host: String,
+
+    /// DynamoDB access-key binding as ACCESS_KEY_ID:SECRET:TENANT
+    /// (repeatable). Defaults to NIMBUS_DYNAMODB_ACCESS_KEYS
+    /// (comma-separated). Every request authenticates through these
+    /// bindings; with none configured the listener rejects all requests.
+    #[arg(long = "dynamodb-access-key", value_name = "KEY_ID:SECRET:TENANT")]
+    pub(crate) dynamodb_access_key: Vec<String>,
 
     /// Local data directory used for embedded tenant databases and, by default,
     /// the local redb control plane.
@@ -271,6 +310,13 @@ impl Default for StartCommand {
             allow_network: false,
             systemd_socket_activation: false,
             cors_allow_origin: Vec::new(),
+            firestore: false,
+            mongodb_port: None,
+            mongodb_host: "127.0.0.1".to_string(),
+            mongodb_username: None,
+            dynamodb_port: None,
+            dynamodb_host: "127.0.0.1".to_string(),
+            dynamodb_access_key: Vec::new(),
             data_dir: None,
             control_data_dir: None,
             tenant_provider: None,

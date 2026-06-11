@@ -63,7 +63,7 @@ sources exist.
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
 | `developers/firebase/index.md` | `nimbus packages provision firebase` → `@nimbus/firebase` | `crates/nimbus-bin/src/provision.rs`, `packages/firebase/package.json` |
-| `developers/firebase/index.md` | Firestore routes gated on deployment config (no CLI flag) | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/construction.rs`, `crates/nimbus-bin/src/start/boot.rs` |
+| `developers/firebase/index.md` | Firestore routes enabled by `nimbus start --firestore` / `with_firebase_config` | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/construction.rs` |
 | `developers/firebase/index.md` | `projectId` → tenant id; only `(default)` database | `crates/nimbus-firebase/src/operations.rs`, `crates/nimbus-firebase/src/firestore_model.rs` |
 | `developers/firebase/index.md` | `connectFirestoreEmulator` flow; transport options | `packages/firebase/src/firestore.ts`, `crates/nimbus-server/src/tests/firebase/rest_crud.rs` |
 | `reference/firebase/websocket-listen.md` | Listen route, subprotocols, close codes, loopback origin policy | `crates/nimbus-server/src/adapters/firebase/grpc/listen_websocket.rs`, `crates/nimbus-server/src/router.rs` |
@@ -85,7 +85,7 @@ sources exist.
 
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
-| `developers/mongodb/index.md` | Endpoint enabled via `ServeOptions::with_mongodb` (no CLI flag); loopback-only listener | `crates/nimbus-server/src/construction.rs`, `crates/nimbus-server/src/adapters/mongodb/listener.rs` |
+| `developers/mongodb/index.md` | Endpoint enabled by `nimbus start --mongodb-port` (SCRAM via flag/env, password env-only) or `with_mongodb`; loopback-only listener | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-server/src/construction.rs`, `crates/nimbus-server/src/adapters/mongodb/listener.rs` |
 | `developers/mongodb/index.md` | `MongoDbAuthConfig` SCRAM-SHA-256; `MongoDbConfig::localhost` | `crates/nimbus-server/src/adapters/mongodb/mod.rs`, `crates/nimbus-mongodb/src/auth.rs` |
 | `developers/mongodb/index.md` | `directConnection=true` required; tenant/collection auto-create | `packages/mongodb/src/uri.ts`, `crates/nimbus-mongodb/src/commands/tenant.rs` |
 | `developers/mongodb/examples.md` | `mongoUri()` defaults; filter/update operator surface; transactions + `WriteConflict`; change streams unsupported | `packages/mongodb/src/uri.ts`, `crates/nimbus-mongodb/src/commands/crud/filter.rs`, `crates/nimbus-mongodb/src/commands/session.rs`, `crates/nimbus-mongodb/src/commands/aggregation/mod.rs` |
@@ -98,7 +98,7 @@ sources exist.
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
 | `developers/dynamodb/index.md` | Default `127.0.0.1:8000`; `X-Amz-Target` dispatch; strict-auth default, fail-closed registry | `crates/nimbus-dynamodb/src/config.rs`, `crates/nimbus-server/src/adapters/dynamodb/listener.rs`, `crates/nimbus-dynamodb/src/tenant.rs` |
-| `developers/dynamodb/index.md` | `with_dynamodb(DynamoDbConfig)` enablement; `insecure_dev_auth` loopback-only | `crates/nimbus-server/src/construction.rs`, `crates/nimbus-dynamodb/src/config.rs` |
+| `developers/dynamodb/index.md` | Enabled by `nimbus start --dynamodb-port` + `--dynamodb-access-key`/env bindings or `with_dynamodb`; `insecure_dev_auth` loopback-only (embedding API) | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-server/src/construction.rs`, `crates/nimbus-dynamodb/src/config.rs` |
 | `developers/dynamodb/index.md` | `clientConfig()` defaults; tables ACTIVE immediately | `packages/dynamodb/src/client.ts`, `crates/nimbus-dynamodb/src/commands/control_plane.rs` |
 | `reference/dynamodb/feature-coverage.md` | Operation coverage; conditional-write atomicity; TTL sweeper interval | `crates/nimbus-dynamodb/src/dispatch.rs`, `crates/nimbus-dynamodb/src/commands/item.rs`, `crates/nimbus-dynamodb/src/config.rs` |
 | `reference/dynamodb/divergences.md` | Key-size cap, sortable encoding, `_ddb_` reserved, stream semantics, TTL/GSI divergences | `crates/nimbus-core/src/types.rs`, `crates/nimbus-dynamodb/src/key.rs`, `crates/nimbus-dynamodb/src/commands/` |
@@ -214,7 +214,7 @@ sources exist.
 | `reference/cli.md` | `policy`, `encryption`, `packages` subcommands and value sets | `crates/nimbus-bin/src/policy.rs`, `crates/nimbus-bin/src/encryption/mod.rs`, `crates/nimbus-bin/src/provision.rs` |
 | `reference/cli.md` | `NIMBUS_LICENSE_FILE` env for `--license-file` | `crates/nimbus-license/src/lib.rs` |
 | `reference/configuration.md` | Precedence CLI > env > config file; JSON keys under `persistence`; unknown keys rejected | `crates/nimbus-bin/src/start/config.rs` |
-| `reference/configuration.md` | Network/bind table; explicit-rotation public-bind gate (30-day age advisory); CORS origin flag/env normalization; systemd socket activation (`LISTEN_FDS`/`LISTEN_PID`, fd 3) | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/network_bind.rs`, `crates/nimbus-bin/src/start/boot.rs` |
+| `reference/configuration.md` | Network/bind table; explicit-rotation public-bind gate (30-day age advisory); CORS origin flag/env normalization; adapter enablement flags + listener postures; systemd socket activation (`LISTEN_FDS`/`LISTEN_PID`, fd 3) | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/network_bind.rs`, `crates/nimbus-bin/src/start/boot.rs` |
 | `reference/configuration.md` | Core storage / postgres / mysql / libsql tables (env names, config keys, defaults `nimbus_provider`, `tenant_`); min ≤ max pool rule on both postgres and mysql | `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-engine/src/persistence_config.rs`, `crates/nimbus-storage/src/postgres/config.rs`, `crates/nimbus-storage/src/mysql.rs`, `crates/nimbus-storage/src/libsql.rs` |
 | `reference/configuration.md` | Runtime limit defaults (128 MB heap, 8 MB initial, 30 s timeout, 64 nested; derived instance/worker/in-flight budgets) | `crates/nimbus-bin/src/start/runtime_limits.rs`, `crates/nimbus-runtime/src/limits/resources.rs` |
 | `reference/configuration.md` | App-dir resolution and required app surface; no source-tree discovery without `--app-dir` | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/boot.rs` |
@@ -275,6 +275,7 @@ sources exist.
 | `concepts/scaling.md` | Per-tenant admission queue, shedding, journal/apply lag; invocation caps → 429 | `crates/nimbus-engine/src/tenant/mutation/admission.rs`, `crates/nimbus-runtime/src/executor/admission.rs`, `crates/nimbus-server/src/error_envelope.rs` |
 | `concepts/scaling.md` | libSQL remote-primary writes + per-tenant replica reads with measured freshness | `crates/nimbus-storage/src/libsql/provider.rs`, `crates/nimbus-storage/src/libsql/freshness.rs` |
 | `reference/current-capabilities.md` | Native API route families (tenants, documents, query, schema, schedule, ws) | `crates/nimbus-server/src/router.rs` |
+| `reference/current-capabilities.md` | Adapter enablement flags (`--firestore`, `--mongodb-port` + SCRAM env, `--dynamodb-port` + key bindings) | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-bin/src/start/mod.rs` |
 | `reference/current-capabilities.md` | Single-field + composite index planning, backfill lifecycle; index-aware subscriptions | `crates/nimbus-core/src/schema.rs`, `crates/nimbus-engine/src/tenant/query_planning.rs`, `crates/nimbus-engine/src/subscriptions/` |
 | `reference/current-capabilities.md` | Adapter enablement statuses (Convex/Cloud Functions CLI-wired; Firestore config-gated; MongoDB/DynamoDB embedding API) | `crates/nimbus-bin/src/start/boot.rs`, `crates/nimbus-server/src/construction.rs`, `crates/nimbus-server/src/adapters/` |
 | `reference/current-capabilities.md` | Storage/encryption/sandbox/machine/resource API statuses | `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-sandbox/src/backends/`, `crates/nimbus-bin/src/machine/mod.rs`, `crates/nimbus-server/src/router.rs` |

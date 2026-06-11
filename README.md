@@ -134,10 +134,10 @@ real-time subscriptions. Current status, stated honestly:
 | Protocol | Status | Docs |
 |----------|--------|------|
 | **Convex** (functions, reactive queries, React hooks) | Available | [guide](https://nimbusdocs.com/developers/convex/) · [compatibility](https://nimbusdocs.com/reference/convex/compatibility/) |
-| **Firestore** (SDKs, real-time listeners) | Available with caveats — routes are config-gated; no CLI flag wires them yet | [guide](https://nimbusdocs.com/developers/firebase/) · [compatibility](https://nimbusdocs.com/reference/firebase/compatibility/) |
+| **Firestore** (SDKs, real-time listeners) | Available — enable with `nimbus start --firestore` | [guide](https://nimbusdocs.com/developers/firebase/) · [compatibility](https://nimbusdocs.com/reference/firebase/compatibility/) |
 | **Cloud Functions** (v2 triggers, Functions Framework) | Available | [guide](https://nimbusdocs.com/developers/cloud-functions/) · [compatibility](https://nimbusdocs.com/reference/cloud-functions/compatibility/) |
-| **MongoDB** (stock drivers, wire protocol) | Available with caveats — enabled via the Rust embedding API, not a CLI flag | [guide](https://nimbusdocs.com/developers/mongodb/) · [operations](https://nimbusdocs.com/reference/mongodb/operations/) |
-| **DynamoDB** (AWS SDKs, dedicated listener) | Available with caveats — enabled via the Rust embedding API, not a CLI flag | [guide](https://nimbusdocs.com/developers/dynamodb/) · [coverage](https://nimbusdocs.com/reference/dynamodb/feature-coverage/) |
+| **MongoDB** (stock drivers, wire protocol) | Available — enable with `nimbus start --mongodb-port` (SCRAM credentials required) | [guide](https://nimbusdocs.com/developers/mongodb/) · [operations](https://nimbusdocs.com/reference/mongodb/operations/) |
+| **DynamoDB** (AWS SDKs, dedicated listener) | Available — enable with `nimbus start --dynamodb-port` (per-tenant signed access keys) | [guide](https://nimbusdocs.com/developers/dynamodb/) · [coverage](https://nimbusdocs.com/reference/dynamodb/feature-coverage/) |
 | **Native HTTP/WebSocket** (just curl) | Available — always on | [guide](https://nimbusdocs.com/developers/native/) · [API](https://nimbusdocs.com/reference/native/http-api/) |
 
 See [current capabilities](https://nimbusdocs.com/reference/current-capabilities/)

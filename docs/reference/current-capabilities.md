@@ -48,9 +48,9 @@ Each capability carries one of three statuses:
 | --- | --- | --- |
 | Convex | Available | Detected by `nimbus dev` and `nimbus start` from your `convex/` directory. See the [guide](/developers/convex/) and [compatibility reference](/reference/convex/compatibility/). |
 | Cloud Functions for Firebase | Available | Detected from `firebase.json`. See the [guide](/developers/cloud-functions/) and [compatibility reference](/reference/cloud-functions/compatibility/). |
-| Firestore | Available with caveats | Routes are implemented in the server and gated on deployment configuration; no CLI flag wires them yet. See the [guide](/developers/firebase/) and [compatibility reference](/reference/firebase/compatibility/). |
-| MongoDB wire protocol | Available with caveats | Enabled through the Rust embedding API, not a CLI flag. SCRAM-SHA-256 authentication on a loopback listener. See the [guide](/developers/mongodb/) and [operations reference](/reference/mongodb/operations/). |
-| DynamoDB API | Available with caveats | Enabled through the Rust embedding API, not a CLI flag. Dedicated listener (default `127.0.0.1:8000`); each access key is bound to one tenant. See the [guide](/developers/dynamodb/) and [feature coverage](/reference/dynamodb/feature-coverage/). |
+| Firestore | Available | Enable with `nimbus start --firestore`. See the [guide](/developers/firebase/) and [compatibility reference](/reference/firebase/compatibility/). |
+| MongoDB wire protocol | Available | Enable with `nimbus start --mongodb-port` plus SCRAM credentials (`--mongodb-username`, `NIMBUS_MONGODB_PASSWORD`). Loopback-only listener. See the [guide](/developers/mongodb/) and [operations reference](/reference/mongodb/operations/). |
+| DynamoDB API | Available | Enable with `nimbus start --dynamodb-port` and `--dynamodb-access-key KEY_ID:SECRET:TENANT` bindings (dedicated listener, DynamoDB Local convention port 8000). See the [guide](/developers/dynamodb/) and [feature coverage](/reference/dynamodb/feature-coverage/). |
 | Native HTTP and WebSocket API | Available | Always on. See [build on the native API](/developers/native/). |
 | Nimbus JavaScript SDK | Available | Services, sandboxes, and sessions from one client. See the [SDK guide](/developers/sdk/resource-model/). |
 

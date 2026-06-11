@@ -63,6 +63,7 @@ where
     command
 }
 
+mod adapters;
 mod app_dir_codegen;
 mod cli_surface;
 mod encryption;
