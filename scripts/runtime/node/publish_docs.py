@@ -319,7 +319,7 @@ def default_support_posture_lines(posture: dict[str, Any]) -> list[str]:
     lines = [
         "## Default-Support Posture",
         "",
-        "Source: `docs/architecture/runtime/node-default-support-posture.json`",
+        "Source: `docs/private/architecture/runtime/node-default-support-posture.json`",
         "",
         "The default-support posture separates the full official fixture corpus from the V8-isolate-required surface, optional isolate gaps, diagnostic non-isolate behavior, test-harness-only fixtures, and upstream/platform boundaries.",
         "",

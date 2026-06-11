@@ -263,7 +263,7 @@ check "15. ExternalNode classification is consistent (Convex in-binary/diagnosti
 # Scope: live user docs + package READMEs. Excludes docs/private/plans/**, where
 # historical plans/proofs legitimately keep old command transcripts.
 USER_DOCS=(docs/private/adapters docs/private/operating packages/convex/README.md
-  packages/nimbus/README.md packages/codegen/README.md docs/private/staging/runtimes)
+  packages/nimbus/README.md packages/codegen/README.md tests/runtime/node/published)
 # Detect a stale POSITIVE codegen instruction (`npx convex codegen`,
 # `convex codegen --app`, `nimbus-codegen --app`) while ALLOWING negative
 # disclaimers ("there is no `npx convex codegen` step"). Markdown wraps such

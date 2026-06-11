@@ -546,6 +546,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name != 'schedule'
+    # The LR12 live node-run test builds nimbus-bin, which embeds the
+    # operator UI through nimbus-assets — reuse the ui-artifacts leader
+    # build like the other nimbus-bin-building lanes.
+    needs: [ui-artifacts]
 
     steps:
       - name: Check out repository
@@ -594,12 +598,28 @@ jobs:
             --features systemd-dbus,systemd-dbus-integration-tests \
             --test zbus_systemd_live --no-fail-fast 2>&1 | tee /tmp/ndb-live.log
 
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ui-artifacts
+          path: packages/nimbus-ui
+
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Download embedded package payload
+        uses: actions/download-artifact@v8
+        with:
+          name: embedded-packages
+          path: crates/nimbus-assets/embedded/packages
+
+      - name: Refresh embedded package payload mtimes
+        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
+
       - name: Run live node-run reconciler test (LR12)
         run: |
           set -o pipefail
-          cargo test -p nimbus-bin \
-            --features node-run-integration-tests \
-            node_run_converges_transient_unit --no-fail-fast 2>&1 | tee -a /tmp/ndb-live.log
+          make test-node-run-live 2>&1 | tee -a /tmp/ndb-live.log
 
       - name: Summarize per-test results
         if: always()

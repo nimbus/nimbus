@@ -1371,8 +1371,8 @@ def main() -> int:
     args = parser.parse_args()
 
     repo = repo_root()
-    json_path = repo / "docs/architecture/runtime/node-default-support-posture.json"
-    md_path = repo / "docs/architecture/runtime/node-default-support-posture.md"
+    json_path = repo / "docs/private/architecture/runtime/node-default-support-posture.json"
+    md_path = repo / "docs/private/architecture/runtime/node-default-support-posture.md"
     posture = build_posture(repo)
     errors = validate(posture)
     if errors:
