@@ -11,7 +11,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
 PLAN="docs/private/plans/nimbus-sdk-resource-model-plan.md"
-MODEL_DOC="docs/private/staging/architecture/sandbox/service-sandbox-session-model.md"
+MODEL_DOC="docs/private/architecture/sandbox/service-sandbox-session-model.md"
 PLANS_README="docs/private/plans/README.md"
 AGENTS_MD="AGENTS.md"
 SDK_PACKAGE="packages/nimbus/package.json"

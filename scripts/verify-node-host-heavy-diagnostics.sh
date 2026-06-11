@@ -12,9 +12,9 @@ import sys
 from pathlib import Path
 
 repo = Path.cwd()
-lane_registry_path = repo / "docs/private/staging/architecture/runtime/node-lts-compat/node-lts-lanes.json"
+lane_registry_path = repo / "docs/private/architecture/runtime/node-lts-compat/node-lts-lanes.json"
 canary_registry_path = repo / "tests/runtime/node/canary-registry.json"
-dashboard_path = repo / "docs/private/staging/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json"
+dashboard_path = repo / "docs/private/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json"
 
 required_surfaces = {
     "child_process_denial": "node:child_process",

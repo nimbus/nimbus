@@ -1255,7 +1255,7 @@ Every UI feature must satisfy:
 - `docs/private/staging/adapters/mongodb/README.md`
 - `docs/private/staging/adapters/mongodb/operations.md`
 - `docs/private/staging/adapters/native/README.md`
-- `docs/private/staging/architecture/sandbox/microvm-service-baseline.md`
+- `docs/private/architecture/sandbox/microvm-service-baseline.md`
 - VoltAgent `awesome-design-md` as the plain-text design-system pattern
 - Convex dashboard docs for Health, Data, Functions, Schedules, Logs, Settings
 - MongoDB Atlas docs for Data Explorer and Indexes

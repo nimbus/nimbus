@@ -5,7 +5,7 @@ at rest across Nimbus-owned local persistence.
 
 Canonical architecture baseline:
 
-- [`docs/architecture/storage/encryption.md`](../staging/architecture/storage/encryption.md)
+- [`docs/architecture/storage/encryption.md`](../../architecture/storage/encryption.md)
   owns the durable design, diagrams, provider boundaries, and algorithm
   rationale
 - this plan owns rollout order, acceptance criteria, and verification

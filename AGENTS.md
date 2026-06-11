@@ -46,15 +46,15 @@ If you find yourself writing compatibility code, stop and make the breaking chan
 
 - Generic maintainability, refactor, modularity, reliability hardening, or
   canonical naming:
-  `docs/private/staging/architecture/testing/reliability-posture.md`,
-  `docs/private/staging/architecture/testing/ci-failure-investigation.md`,
+  `docs/private/architecture/testing/reliability-posture.md`,
+  `docs/private/architecture/testing/ci-failure-investigation.md`,
   `docs/private/plans/archive/architecture-seam-cleanliness-plan.md`,
   `docs/private/plans/archive/deployment-auth-runtime-boundary-plan.md`,
   `docs/private/plans/archive/repo-architecture-and-seam-hardening-plan.md`
 - Adapter/runtime/auth/trust cleanup:
-  `docs/private/staging/architecture/server/adapter-expectations.md`,
-  `docs/private/staging/architecture/runtime/adapter-boundary.md`,
-  `docs/private/staging/architecture/server/auth-runtime-trust.md`,
+  `docs/private/architecture/server/adapter-expectations.md`,
+  `docs/private/architecture/runtime/adapter-boundary.md`,
+  `docs/private/architecture/server/auth-runtime-trust.md`,
   `docs/private/plans/archive/deployment-auth-runtime-boundary-plan.md`
   Use the completed baselines in `docs/private/plans/archive/server-runtime-canonicalization-plan.md`,
   `docs/private/plans/archive/adapter-runtime-trust-hardening-plan.md`,
@@ -65,9 +65,9 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   shortcut removal, private Nimbus-managed isolate host-transport gating,
   Bun/JSC service-capability fail-closed parity, principal-class service route
   policy, engine `Service` -> `Engine` naming, or JS SDK authority boundaries:
-  `docs/private/staging/architecture/server/auth-runtime-trust.md`,
-  `docs/private/staging/architecture/runtime/adapter-boundary.md`,
-  `docs/private/staging/architecture/sandbox/service-sandbox-session-model.md`,
+  `docs/private/architecture/server/auth-runtime-trust.md`,
+  `docs/private/architecture/runtime/adapter-boundary.md`,
+  `docs/private/architecture/sandbox/service-sandbox-session-model.md`,
   `docs/private/plans/nimbus-capability-segregation-plan.md`, gated on
   `bash scripts/verify-nimbus-capability-segregation.sh` once CB0 creates it.
 - Cross-cutting multi-backend / multi-adapter hardening (storage trait
@@ -100,16 +100,16 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   for historical context. Promote a new active plan before another
   Convex-informed storage trust wave.
 - Sandbox, machine lifecycle, or CLI UX:
-  `docs/private/staging/architecture/sandbox/service-sandbox-session-model.md`,
-  `docs/private/staging/architecture/sandbox/microvm-service-baseline.md`,
-  `docs/private/staging/architecture/sandbox/macos-machine-flow.md` when relevant,
+  `docs/private/architecture/sandbox/service-sandbox-session-model.md`,
+  `docs/private/architecture/sandbox/microvm-service-baseline.md`,
+  `docs/private/architecture/sandbox/macos-machine-flow.md` when relevant,
   `docs/private/staging/operating/cli.md`, and the active platform plan from
   `docs/private/plans/README.md`
 - SDK services/sandboxes/sessions resource model, built-in/external/sandbox-backed
   service implementations, dynamic services, sandbox APIs, runtime-isolate
   non-resource semantics, future `profile: "isolate"` sandbox semantics, or
   session target semantics:
-  `docs/private/staging/architecture/sandbox/service-sandbox-session-model.md` and
+  `docs/private/architecture/sandbox/service-sandbox-session-model.md` and
   `docs/private/plans/nimbus-sdk-resource-model-plan.md`
 - Sandbox backend / snapshot / desktop / GPU (unified-lift roadmap on
   `nimbus-libkrun`): `docs/private/plans/nimbus-sandbox-plan.md` is the single
@@ -124,7 +124,7 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   capability gaps), `docs/private/plans/research/nimbus-libkrun-fork-inventory.md`
   (fork delta + muvm lift map),
   `docs/private/plans/research/macos-host-vs-guest-control-plane-rationale.md`
-  (per-host topology), `docs/private/staging/architecture/sandbox/macos-machine-flow.md`
+  (per-host topology), `docs/private/architecture/sandbox/macos-machine-flow.md`
   (macOS outer-VM flow). Archived predecessors:
   `docs/private/plans/archive/computer-use-sandbox-plan.md` (→ Band D),
   `docs/private/plans/archive/gpu-accelerated-sandbox-plan.md` (→ Band G),
@@ -287,21 +287,21 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `docs/private/staging/adapters/firebase/compatibility.md`,
   `docs/private/staging/adapters/firebase/migration.md`,
   `docs/private/staging/adapters/firebase/auth-contract.md`,
-  `docs/private/staging/architecture/runtime/adapter-boundary.md`,
-  `docs/private/staging/architecture/server/auth-runtime-trust.md`
+  `docs/private/architecture/runtime/adapter-boundary.md`,
+  `docs/private/architecture/server/auth-runtime-trust.md`
 - Cloud Functions compatibility:
   `docs/private/staging/adapters/cloud-functions/compatibility.md`,
   `docs/private/staging/adapters/cloud-functions/migration.md`,
-  `docs/private/staging/architecture/runtime/adapter-boundary.md`,
-  `docs/private/staging/architecture/server/auth-runtime-trust.md`
+  `docs/private/architecture/runtime/adapter-boundary.md`,
+  `docs/private/architecture/server/auth-runtime-trust.md`
 - Convex or Nimbus CLI/codegen workflow:
   `docs/private/staging/adapters/convex/ai-guidelines.md`,
   `docs/private/staging/operating/cli.md`,
   `docs/private/staging/adapters/convex/compatibility.md`,
   `docs/private/plans/archive/nimbus-init-plan.md`
 - Node-compatible runtime / `deno_core` / `rusty_v8` / embedded-codegen:
-  `docs/private/staging/architecture/runtime/adapter-boundary.md` and
-  `docs/private/staging/architecture/server/auth-runtime-trust.md` after the top-level docs.
+  `docs/private/architecture/runtime/adapter-boundary.md` and
+  `docs/private/architecture/server/auth-runtime-trust.md` after the top-level docs.
   Current default-quality work lives in
   `docs/private/plans/node-default-runtime-support-hardening-plan.md` (NDS0..NDS10):
   raise Node24 from bounded FaaS-compatible default to a well-supported default,

@@ -61,7 +61,7 @@ flowchart TD
 ## Required Proof Fields
 
 Every Deno or `rusty_v8` bump needs a row in
-[`docs/architecture/runtime/deno-fork-bump-ledger.md`](../staging/architecture/runtime/deno-fork-bump-ledger.md)
+[`docs/architecture/runtime/deno-fork-bump-ledger.md`](../../architecture/runtime/deno-fork-bump-ledger.md)
 with these fields:
 
 | Field | Requirement |

@@ -19,10 +19,10 @@ PLAN_ARCHIVED="docs/private/plans/archive/node-default-runtime-support-hardening
 PROOF_DIR="docs/private/plans/proof/node-default-runtime-support-hardening"
 BASELINE_PROOF="${PROOF_DIR}/nds0-baseline.md"
 CONTROL_PROOF="${PROOF_DIR}/nds0-control-plane.md"
-POSTURE_JSON="docs/private/staging/architecture/runtime/node-default-support-posture.json"
-POSTURE_MD="docs/private/staging/architecture/runtime/node-default-support-posture.md"
+POSTURE_JSON="docs/private/architecture/runtime/node-default-support-posture.json"
+POSTURE_MD="docs/private/architecture/runtime/node-default-support-posture.md"
 CANARY_REGISTRY="tests/runtime/node/canary-registry.json"
-STATUS_SUMMARY="docs/private/staging/architecture/runtime/node-compat-evidence/latest/status-summary.md"
+STATUS_SUMMARY="docs/private/architecture/runtime/node-compat-evidence/latest/status-summary.md"
 
 PASS=0
 FAIL=0
@@ -247,7 +247,7 @@ else
 fi
 
 step 17 "Required canary gaps are zero"
-if [ -f "docs/private/staging/architecture/runtime/node-compat-evidence/latest/dashboard-summary.md" ] &&
+if [ -f "docs/private/architecture/runtime/node-compat-evidence/latest/dashboard-summary.md" ] &&
    grep -q 'required canary gaps: `0`' docs/private/staging/runtimes/nodejs/compatibility.md 2>/dev/null; then
   pass "Required Application canary gaps are zero"
 else
@@ -299,23 +299,23 @@ else
 fi
 
 step 23 "Shim/emulation inventory"
-if [ -f docs/private/staging/architecture/runtime/node-isolate-shim-inventory.json ] ||
-   [ -f docs/private/staging/architecture/runtime/node-isolate-shim-inventory.md ]; then
+if [ -f docs/private/architecture/runtime/node-isolate-shim-inventory.json ] ||
+   [ -f docs/private/architecture/runtime/node-isolate-shim-inventory.md ]; then
   pass "Shim/emulation inventory exists"
 else
   fail "Shim/emulation inventory missing" "Expected inventory covering nimbus/nimbus and nimbus/deno"
 fi
 
 step 24 "User-facing docs disclose capability classes"
-if has 'native|shimmed|emulated|test-harness-only|diagnostic|unsupported' docs/private/staging/runtimes/nodejs docs/private/staging/architecture/runtime 2>/dev/null; then
+if has 'native|shimmed|emulated|test-harness-only|diagnostic|unsupported' docs/private/staging/runtimes/nodejs docs/private/architecture/runtime 2>/dev/null; then
   pass "User-facing docs disclose capability classes"
 else
   fail "Capability class docs missing" "Expected native/shimmed/emulated/diagnostic/unsupported disclosure"
 fi
 
 step 25 "Release-train and latest-suite drift"
-if [ -f docs/private/staging/architecture/runtime/node-lts-compat/node-release-train.json ] &&
-   grep -q '"drift_detected": false' docs/private/staging/architecture/runtime/node-lts-compat/node-release-train.json; then
+if [ -f docs/private/architecture/runtime/node-lts-compat/node-release-train.json ] &&
+   grep -q '"drift_detected": false' docs/private/architecture/runtime/node-lts-compat/node-release-train.json; then
   pass "Release-train drift check is clean"
 else
   fail "Release-train drift proof missing or dirty" "Expected drift_detected=false"

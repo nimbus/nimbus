@@ -151,8 +151,12 @@ Nimbus, don't patch it — rerun `nimbus node install` with `--overwrite`
 so the artifact matches a command you can review and repeat.
 
 Tenant workloads scheduled by a running Nimbus server are a separate
-path: the server manages them as short-lived systemd transient units
-itself. They produce no unit files for you to install or edit.
+path that never produces unit files for you to install or edit. The
+node-side machinery for supervising them as short-lived systemd
+transient units exists in the binary but is not yet wired into the
+running server — see
+[Node lifecycle](/concepts/architecture/node-lifecycle/) for the
+current state of that seam.
 
 ## Export Quadlet files from Compose
 

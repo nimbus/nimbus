@@ -34,7 +34,7 @@ lifecycle, auto-update, deep links, and IPC for those concerns only.
   discovery polling, detached child spawn, Chromium-family preference,
   and actionable error messaging. The Electron shell adopts the same
   contract — it does not re-implement discovery from scratch.
-- [`docs/architecture/server/auth-runtime-trust.md`](../staging/architecture/server/auth-runtime-trust.md):
+- [`docs/architecture/server/auth-runtime-trust.md`](../../architecture/server/auth-runtime-trust.md):
   server-owned auth, deployment-scoped activation, provider-neutral
   runtime ABI. IPC from the shell does not bypass any of those rules.
 - `nimbus/desktop` repo provisioned on GitHub under the `nimbus` org.

@@ -128,8 +128,8 @@ Public support states follow the generated compatibility baseline:
 
 Use these documents together:
 
-- [Generated Node LTS baseline](docs/private/staging/architecture/runtime/node-lts-compat/node-lts-compat-summary.md)
-- [Detailed runtime surface matrix](docs/private/staging/architecture/runtime/node-compat-surface-matrix.md)
+- [Generated Node LTS baseline](docs/private/architecture/runtime/node-lts-compat/node-lts-compat-summary.md)
+- [Detailed runtime surface matrix](docs/private/architecture/runtime/node-compat-surface-matrix.md)
 
 Current high-level posture:
 

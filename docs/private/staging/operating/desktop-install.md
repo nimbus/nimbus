@@ -113,6 +113,6 @@ curl -fsSL https://nimbus.dev/install | sh # Linux / macOS install script
 ```
 
 See [`docs/operating/cli.md`](./cli.md) for the full CLI surface and
-[`docs/architecture/sandbox/macos-machine-flow.md`](../staging/architecture/sandbox/macos-machine-flow.md)
+[`docs/architecture/sandbox/macos-machine-flow.md`](../../architecture/sandbox/macos-machine-flow.md)
 for the macOS-specific developer-machine architecture the shell
 operates against.

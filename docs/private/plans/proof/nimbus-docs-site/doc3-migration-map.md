@@ -136,14 +136,28 @@ the server wire shapes.
 
 ## DOC7 — Architecture (rewrite, not move)
 
-Twelve manifest pages under `concepts/architecture/` (slugs fixed by
+**Status: done (2026-06-10).** Twelve manifest pages published under
+`concepts/architecture/` (slugs fixed by
 `scripts/verify-nimbus-docs-site.sh` condition 17): server-transport,
 adapters, engine-mutation-path, runtime-isolates, storage, sandbox-machines,
 auth-trust, tenancy, node-lifecycle, cli-codegen, sdk-packages,
-observability. The `staging/architecture/**` deep-dives are raw material
-only; generated evidence (`node-lts-compat/**`), krun validation logs, fork
-ledgers, proof harnesses, and "for contributors" seams stay private. After
-DOC7, `staging/architecture/` should be empty or retired into `private/`.
+observability — plus an `index.md` front door. Written source-first by
+seven parallel agents (staged docs treated as stale raw material);
+`docs/source-map.md` carries three new sections of audit rows. Root
+`ARCHITECTURE.md` rewritten 1,497 → 198 lines as the contributor map
+(crate/package tables, six invariants, links out to the public pages);
+all 8 recorded drift items fixed, including `Service` → `Engine` and the
+adapter-crate extraction. Honesty posture: no TLS claims (none exists),
+krun execute documented fail-closed, WSL2 documented declared-not-wired,
+systemd reconciler documented as a library seam with no production
+caller (and the `operators/node-lifecycle.md` overstatement of that
+point was corrected). Trigger/CDC/history semantics deliberately
+excluded (in-flight working-tree churn). Retirement executed:
+`staging/architecture/**` (66 files) moved wholesale to
+`docs/private/architecture/` with all in-repo path references rewritten.
+New product gaps surfaced at DOC7 closeout: no TLS termination anywhere
+(bind policy only); `boot.rs` retains stale "Service initialization"
+comments and a `service` local variable.
 
 ## Landing follow-up (DOC4)
 

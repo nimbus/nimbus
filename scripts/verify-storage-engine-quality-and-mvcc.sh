@@ -834,13 +834,13 @@ fi
 
 step 20 "Closeout requires architecture docs and PR"
 if contains "${PLAN}" 'ARCHITECTURE.md' \
-   && contains "${PLAN}" 'docs/private/staging/architecture/storage/persistence-engine-baseline.md' \
+   && contains "${PLAN}" 'docs/private/architecture/storage/persistence-engine-baseline.md' \
    && contains "${PLAN}" 'pull request' \
    && contains "${PLAN}" 'pushed branch' \
    && contains "${PLAN}" 'draft PR' \
    && contains "${SEQ14_PROOF}" '^status: done$' \
    && contains "${SEQ14_PROOF}" 'ARCHITECTURE.md' \
-   && contains "${SEQ14_PROOF}" 'docs/private/staging/architecture/storage/persistence-engine-baseline.md' \
+   && contains "${SEQ14_PROOF}" 'docs/private/architecture/storage/persistence-engine-baseline.md' \
    && contains "${SEQ14_PROOF}" 'docs/private/staging/operating/storage-backends.md' \
    && contains "${SEQ14_PROOF}" 'docs/private/staging/adapters/convex/compatibility.md' \
    && contains "${SEQ14_PROOF}" 'docs/private/staging/adapters/firebase/compatibility.md' \
@@ -869,9 +869,9 @@ if contains "${PLAN}" 'ARCHITECTURE.md' \
    && contains "${SEQ14_PROOF}" 'git diff --check' \
    && contains "${SEQ14_PROOF}" 'libSQL diagnostics freshness bug is fixed' \
    && contains "ARCHITECTURE.md" 'latest-row plus version-history architecture' \
-   && contains "docs/private/staging/architecture/storage/persistence-engine-baseline.md" 'MVCC, PITR, CDC, and retention contract' \
-   && contains "docs/private/staging/architecture/storage/persistence-engine-baseline.md" 'mysql/table_catalog.rs' \
-   && contains "docs/private/staging/architecture/storage/persistence-engine-baseline.md" 'postgres/write_schema_events.rs' \
+   && contains "docs/private/architecture/storage/persistence-engine-baseline.md" 'MVCC, PITR, CDC, and retention contract' \
+   && contains "docs/private/architecture/storage/persistence-engine-baseline.md" 'mysql/table_catalog.rs' \
+   && contains "docs/private/architecture/storage/persistence-engine-baseline.md" 'postgres/write_schema_events.rs' \
    && contains "${PLAN}" 'SQL-family production storage roots stay below' \
    && contains "${PLAN}" 'crates/nimbus-storage/src/mysql/table_catalog.rs' \
    && contains "${PLAN}" 'crates/nimbus-storage/src/postgres/write_schema_events.rs' \

@@ -5,7 +5,7 @@ guide covers operator setup, current coverage, migration and rotation flows,
 and the limits that matter in an enterprise review.
 
 For architecture rationale and design details, see
-[Storage encryption architecture](../staging/architecture/storage/encryption.md).
+[Storage encryption architecture](../../architecture/storage/encryption.md).
 
 ---
 

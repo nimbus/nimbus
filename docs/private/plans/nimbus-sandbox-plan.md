@@ -27,7 +27,7 @@ three previously-separate plans: `nimbus-libkrun-snapshot-port-plan.md`,
   - [`docs/plans/research/nimbus-libkrun-fork-inventory.md`](./research/nimbus-libkrun-fork-inventory.md) — fork patch inventory and anticipated-patch list
   - [`docs/plans/research/macos-host-vs-guest-control-plane-rationale.md`](./research/macos-host-vs-guest-control-plane-rationale.md) — Option-A host topology rationale
 - **References (architecture / upstream):**
-  - [`docs/architecture/sandbox/service-sandbox-session-model.md`](../staging/architecture/sandbox/service-sandbox-session-model.md), [`docs/architecture/sandbox/microvm-service-baseline.md`](../staging/architecture/sandbox/microvm-service-baseline.md), [`docs/architecture/sandbox/macos-machine-flow.md`](../staging/architecture/sandbox/macos-machine-flow.md)
+  - [`docs/architecture/sandbox/service-sandbox-session-model.md`](../architecture/sandbox/service-sandbox-session-model.md), [`docs/architecture/sandbox/microvm-service-baseline.md`](../architecture/sandbox/microvm-service-baseline.md), [`docs/architecture/sandbox/macos-machine-flow.md`](../architecture/sandbox/macos-machine-flow.md)
   - libkrun v1.18.1 (`~/src/github.com/nimbus/nimbus-libkrun`, branch `nimbus/v1.18.1`)
   - Firecracker `snapshot-support.md` and `src/vmm/src/persist.rs` (`~/src/github.com/firecracker-microvm/firecracker`, head `eaa62396d`, Apache-2.0)
   - zeroboot prototype (`~/src/github.com/zerobootdev/zeroboot`, Apache-2.0)
@@ -56,7 +56,7 @@ Do not build a separate `computer_use` backend or a separate
 `libkrun_session` backend with different spec options.
 
 Resource vocabulary follows
-[`service-sandbox-session-model.md`](../staging/architecture/sandbox/service-sandbox-session-model.md):
+[`service-sandbox-session-model.md`](../architecture/sandbox/service-sandbox-session-model.md):
 services are named tenant dependencies managed by `nimbus-services` with
 sandbox-backed, built-in, or external implementations; sandboxes are isolated
 execution resources addressed by id/handle; sessions are scoped interaction
@@ -84,7 +84,7 @@ mechanism:
   does not need snapshot/restore or sub-ms fork. Per-service workloads
   inside the outer VM run as **standard Linux containers** managed by
   the guest machine API
-  ([`docs/architecture/sandbox/macos-machine-flow.md`](../staging/architecture/sandbox/macos-machine-flow.md) §"Flow 6"),
+  ([`docs/architecture/sandbox/macos-machine-flow.md`](../architecture/sandbox/macos-machine-flow.md) §"Flow 6"),
   not as nested libkrun microVMs. macOS dev gets crun's ~10–50 ms
   container cold start; production parity for fork-semantics is enforced
   via Linux CI.

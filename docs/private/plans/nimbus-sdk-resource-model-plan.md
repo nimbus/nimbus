@@ -4,7 +4,7 @@
 
 - **Status:** `done`
 - **Primary goal:** implement the `@nimbus/nimbus` resource model described in
-  [`docs/architecture/sandbox/service-sandbox-session-model.md`](../staging/architecture/sandbox/service-sandbox-session-model.md).
+  [`docs/architecture/sandbox/service-sandbox-session-model.md`](../architecture/sandbox/service-sandbox-session-model.md).
   The landed SDK owns service lifecycle/status, service-definition CRUD,
   standalone sandbox resources, and scoped service/sandbox session leases through
   server-backed routes.

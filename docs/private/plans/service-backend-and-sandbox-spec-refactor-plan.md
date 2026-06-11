@@ -10,7 +10,7 @@
   policy-gated OCI image materialization source, and keeping `SandboxBackend`
   as the only sandbox lifecycle executor interface.
 - **Owning docs:**
-  - [`docs/architecture/sandbox/service-sandbox-session-model.md`](../staging/architecture/sandbox/service-sandbox-session-model.md)
+  - [`docs/architecture/sandbox/service-sandbox-session-model.md`](../architecture/sandbox/service-sandbox-session-model.md)
   - [`docs/plans/nimbus-sdk-resource-model-plan.md`](nimbus-sdk-resource-model-plan.md)
   - [`docs/plans/nimbus-capability-segregation-plan.md`](nimbus-capability-segregation-plan.md)
 - **Pre-launch posture:** breaking changes are preferred. Do not add aliases,

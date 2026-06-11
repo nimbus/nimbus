@@ -1,0 +1,188 @@
+---
+title: Engine and the mutation path
+description: A crate-level tour of nimbus-engine — the Engine coordinator, per-tenant runtimes, the single mutation path, the durable journal, execution units, the scheduler, and subscription delivery.
+sidebar:
+  label: "Engine & mutations"
+  order: 4
+---
+
+`crates/nimbus-engine` is the decision-making center of Nimbus. Transport
+crates accept requests, adapter crates translate dialects, and the runtime
+executes JavaScript — but every one of them ends up calling the engine,
+and the engine is where validation, authorization, durability, ordering,
+and fan-out actually happen. The user-facing guarantees are explained in
+[data and mutations](/concepts/data-and-mutations/); this page is the
+crate-level tour of the machinery behind them.
+
+## The Engine and per-tenant runtimes
+
+The coordinator is the `Engine` struct in
+`crates/nimbus-engine/src/engine/mod.rs`. It owns the cross-tenant state:
+a map of live tenants behind a read–write lock, the persistence provider
+that opens tenant storage, the control-plane provider, the clock, the
+scheduler wakeup signal, trigger and committed-mutation observer
+registries, and the executors that move storage work off async threads.
+Tenant creation is serialized through a load gate
+(`crates/nimbus-engine/src/engine/tenant_load_gate.rs`) so two requests
+racing to open the same tenant cannot construct it twice.
+
+Everything tenant-scoped lives in `TenantRuntime`
+(`crates/nimbus-engine/src/tenant.rs`): the tenant's persistence handle,
+a read executor, the subscription registry, the current schema behind an
+atomic swap, a document cache, the subscription delivery worker, and —
+central to this page — the mutation admission gate and the durable
+mutation journal. One tenant's queues, caches, and watermarks are
+invisible to every other tenant, which is what makes the tenant the
+isolation and scaling unit described in [scaling](/concepts/scaling/).
+
+## One mutation path
+
+The engine's public write surface is a family of document methods —
+`insert_document`, `insert_document_with_id`, `update_document`,
+`delete_document`, and their `_async` and principal-carrying `_with`
+variants — defined in
+`crates/nimbus-engine/src/engine/mutations/direct/api.rs`. All of them
+funnel into one private implementation, the `apply_mutation_with_mode`
+family in `crates/nimbus-engine/src/engine/mutations/direct/execution.rs`.
+That function is deliberately not public: callers outside the mutation
+module cannot reach the apply step without passing through the surface
+that enforces the rules.
+
+On that path, every mutation — regardless of which protocol produced
+it — gets the same treatment:
+
+- schema validation against the table's current schema, if one exists;
+- authorization against the table's access policy for the caller's
+  principal;
+- a storage call that writes the document and its index effects together
+  (`insert_with_indexes`, `update_with_indexes_validated`, and friends),
+  so indexes can never drift from documents.
+
+The mode parameter distinguishes two origins: `Immediate` for direct API
+writes, and a scheduled mode that carries an execution id, which storage
+records in the same transaction as the write so a re-run scheduled job
+applies at most once.
+
+## The queued journal path
+
+Asynchronous mutations take a second hop before that apply step: the
+per-tenant durable journal. The pipeline is:
+
+```text
+admission gate → durable append (ack) → ordered apply → applied watermark
+```
+
+**Admission.** Each tenant has a bounded admission queue
+(`crates/nimbus-engine/src/tenant/mutation/admission.rs`). A full queue
+rejects new work with a resource-exhausted error, and a CoDel controller
+(5 ms target delay, 100 ms interval) sheds queued work under sustained
+overload — before any durable effect, so an admitted mutation keeps its
+commit guarantee.
+
+**Durable append.** A journal worker
+(`crates/nimbus-engine/src/engine/mutations/journal.rs`) drains admitted
+mutations in batches of up to 32, plans them against an in-memory overlay
+of the batch so earlier writes are visible to later ones, and appends the
+batch of durable mutation records to the tenant's commit log in one
+storage write. This advances the **durable head** — the acknowledgement
+point.
+
+**Ordered apply.** The same worker then materializes document and index
+effects in journal order and advances the **applied head**. If the
+process crashes between the two steps, startup recovery replays
+durable-but-unapplied records, so the acknowledgement made at append time
+survives a crash.
+
+**Visibility.** Reads gate on the applied watermark: the document query
+path (`crates/nimbus-engine/src/engine/queries/documents.rs`) captures
+the tenant's durable head and waits for the applied head to reach it
+before serving, which is what gives clients read-your-writes without ever
+exposing a durable-but-unapplied record. The watermark bookkeeping lives
+in `crates/nimbus-engine/src/tenant/mutation/journal.rs`.
+
+## Multi-step mutations: execution units
+
+A mutation function that performs several reads and writes cannot use the
+one-shot path, so the engine provides execution units
+(`crates/nimbus-engine/src/engine/execution_units/mod.rs`). An execution
+unit captures a schema snapshot, a persistence snapshot, and the snapshot
+sequence at begin time. Reads are served from the snapshot and recorded
+into a dependency set; writes are validated and staged locally, touching
+no shared state.
+
+Commit (`crates/nimbus-engine/src/engine/execution_units/commit.rs`)
+takes the tenant's mutation-sequence lock and validates optimistically:
+it checks that no touched table's schema changed since the snapshot, then
+reads every commit that landed after the snapshot sequence and intersects
+each against the unit's dependency set. Dependencies are precise — the
+kinds in `crates/nimbus-core/src/dependency.rs` cover whole tables,
+individual documents, index ranges, predicates, observed-missing tables,
+and paginated windows. Any intersection fails the whole unit with a
+conflict error ("transaction conflict detected; retry the mutation");
+otherwise the staged writes apply as one batch and both journal heads
+advance together. This is the path behind `ctx.db` in the V8 runtime
+(via `crates/nimbus-bridge`) and behind the transactional surfaces of
+the protocol adapters — see
+[adapter crates](/concepts/architecture/adapters/) and
+[runtime and isolates](/concepts/architecture/runtime-isolates/).
+
+## Committed mutations fan out
+
+After any commit — direct, journaled, or execution-unit — the engine runs
+commit processing
+(`crates/nimbus-engine/src/engine/mutations/commit_processing.rs`): it
+computes affected document ids, hands subscription work to the tenant's
+delivery worker, collects trigger candidates, and notifies registered
+committed-mutation observers
+(`crates/nimbus-engine/src/engine/committed_mutations.rs`). Batches of
+applied journal records are processed as one coalesced event carrying the
+latest sequence. Because this hook hangs off the single mutation path,
+no write from any surface can skip fan-out.
+
+## The scheduler
+
+The scheduler loop (`crates/nimbus-engine/src/scheduler.rs`) sleeps until
+the next due job or a wakeup signal — schedule-affecting writes wake it
+immediately — and ticks all tenants concurrently, bounded by available
+parallelism. Job claiming and execution live in
+`crates/nimbus-engine/src/engine/scheduler/`: cron definitions expand
+into scheduled runs, claimed jobs execute through the same mutation path
+as everything else, and each run carries an execution id derived from the
+job id. Storage refuses a duplicate execution id inside the write
+transaction, so a job that was claimed, run, and re-claimed after a crash
+deduplicates instead of double-applying. Startup recovery re-queues jobs
+that were left in a running state by a previous process.
+
+## Subscription delivery
+
+Live queries are registered in a per-tenant registry and re-evaluated by
+a delivery worker (`crates/nimbus-engine/src/subscriptions.rs` and its
+submodules). The design trades spurious work for correctness:
+
+- **Conservative invalidation.** A commit wakes every subscription whose
+  dependency set it might intersect; a wakeup re-evaluates the full query
+  rather than patching the previous result.
+- **Monotonic delivery.** Each subscription tracks its last delivered
+  sequence and the worker discards results that would publish older state
+  after newer state.
+- **Coalescing.** Overlapping wakeups for the same subscription merge
+  into one re-evaluation at the latest applied sequence, so write storms
+  produce current results, not backlogs.
+- **Bounded channels.** Delivery channels have a fixed capacity (256); a
+  subscriber that cannot keep up is removed rather than allowed to grow
+  an unbounded queue inside the server.
+
+Policy changes are handled at the same layer: replacing a table's access
+policy terminates affected subscriptions so a client can never keep
+streaming results under a revoked policy.
+
+## Related pages
+
+- [Data and mutations](/concepts/data-and-mutations/) — the user-facing
+  contract this machinery implements.
+- [Storage](/concepts/architecture/storage/) — the providers beneath the
+  persistence calls on this page.
+- [Server and transport](/concepts/architecture/server-transport/) — how
+  requests reach the engine.
+- [Tenancy](/concepts/architecture/tenancy/) — the per-tenant boundary
+  the runtime map enforces.

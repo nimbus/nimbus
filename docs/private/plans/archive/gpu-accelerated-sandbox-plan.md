@@ -30,7 +30,7 @@ trusted-only), suitable for AI inference and training workloads.
   [`docs/plans/research/gpu-sandbox-backends.md`](./research/gpu-sandbox-backends.md),
   [`docs/plans/computer-use-sandbox-plan.md`](./computer-use-sandbox-plan.md),
   [`docs/plans/nimbus-libkrun-snapshot-port-plan.md`](./nimbus-libkrun-snapshot-port-plan.md),
-  [`docs/architecture/sandbox/microvm-service-baseline.md`](../staging/architecture/sandbox/microvm-service-baseline.md),
+  [`docs/architecture/sandbox/microvm-service-baseline.md`](../../architecture/sandbox/microvm-service-baseline.md),
   [muvm (AsahiLinux/muvm)](https://github.com/AsahiLinux/muvm),
   [Mesa Venus driver docs](https://docs.mesa3d.org/drivers/venus.html).
 

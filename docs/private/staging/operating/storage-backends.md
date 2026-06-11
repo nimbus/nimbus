@@ -208,5 +208,5 @@ nimbus start --tenant-provider postgres --postgres-url "postgresql://nimbus:nimb
 
 - [CLI reference](cli.md) -- all flags and defaults
 - [Encryption reference](encryption.md) -- key management and migration
-- [Provider topologies](../staging/architecture/storage/provider-topologies.md) -- architecture details
-- [Persistence engine baseline](../staging/architecture/storage/persistence-engine-baseline.md) -- backend layouts
+- [Provider topologies](../../architecture/storage/provider-topologies.md) -- architecture details
+- [Persistence engine baseline](../../architecture/storage/persistence-engine-baseline.md) -- backend layouts

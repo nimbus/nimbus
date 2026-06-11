@@ -31,7 +31,7 @@ suitable for AI-agent computer-use workloads.
   [`docs/plans/research/gpu-sandbox-backends.md`](./research/gpu-sandbox-backends.md),
   [`docs/plans/research/nimbus-libkrun-fork-inventory.md`](./research/nimbus-libkrun-fork-inventory.md),
   [`docs/plans/research/computer-use-capabilities-audit.md`](./research/computer-use-capabilities-audit.md),
-  [`docs/architecture/sandbox/microvm-service-baseline.md`](../staging/architecture/sandbox/microvm-service-baseline.md),
+  [`docs/architecture/sandbox/microvm-service-baseline.md`](../../architecture/sandbox/microvm-service-baseline.md),
   [`docs/plans/nimbus-libkrun-snapshot-port-plan.md`](./nimbus-libkrun-snapshot-port-plan.md),
   [`docs/plans/gpu-accelerated-sandbox-plan.md`](./gpu-accelerated-sandbox-plan.md),
   [muvm (AsahiLinux/muvm)](https://github.com/AsahiLinux/muvm).

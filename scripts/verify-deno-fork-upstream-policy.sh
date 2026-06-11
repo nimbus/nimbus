@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
 OPERATING_DOC="docs/private/staging/operating/deno-fork-workflow.md"
-LEDGER_DOC="docs/private/staging/architecture/runtime/deno-fork-bump-ledger.md"
+LEDGER_DOC="docs/private/architecture/runtime/deno-fork-bump-ledger.md"
 
 EXPECTED_DENO_TAG="v2.8.0-nimbus.5"
 EXPECTED_DENO_SHA="37b6333a1f703db523efe8a703d36f2152ad087a"
