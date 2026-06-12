@@ -1,5 +1,5 @@
-import type { Firestore } from "../firestore";
-import type { FirestoreGrpcWebContext } from "./grpc-web";
+import type { Firestore } from "../firestore.ts";
+import type { FirestoreGrpcWebContext } from "./grpc-web.ts";
 
 const FIRESTORE_LISTEN_AUTH_SUBPROTOCOL_PREFIX = "nimbus.firebase.auth.";
 const FIRESTORE_LISTEN_WEBSOCKET_PROTOCOL = "nimbus.firebase.listen.v1";

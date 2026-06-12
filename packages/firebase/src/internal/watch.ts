@@ -3,8 +3,8 @@ import type { JsonValue } from "@bufbuild/protobuf";
 import {
   openFirestoreListenWebSocket,
   type FirestoreListenResumeCursor,
-} from "./listen-websocket";
-import { create, firestoreQueryV1, firestoreV1, fromJson } from "./protobuf";
+} from "./listen-websocket.ts";
+import { create, firestoreQueryV1, firestoreV1, fromJson } from "./protobuf.ts";
 
 import type {
   CollectionGroup,
@@ -18,7 +18,7 @@ import type {
   QuerySnapshot,
   SnapshotObserver,
   Unsubscribe,
-} from "../firestore";
+} from "../firestore.ts";
 
 export type SnapshotListenSource<AppModelType = DocumentData> =
   | DocumentReference<AppModelType>

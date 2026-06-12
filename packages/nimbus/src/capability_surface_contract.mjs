@@ -34,7 +34,7 @@ const packageContracts = {
       "./transports/rest": "./src/transports/rest.ts",
     },
   },
-  "@nimbus/firebase": {
+  firebase: {
     path: "packages/firebase/package.json",
     exports: {
       ".": "./src/index.ts",
@@ -340,7 +340,7 @@ const entryContracts = {
       "TableSchema",
     ],
   },
-  "@nimbus/firebase": {
+  firebase: {
     path: "packages/firebase/src/index.ts",
     exports: [
       "CollectionGroup",
@@ -413,7 +413,7 @@ const entryContracts = {
       "writeBatch",
     ],
   },
-  "@nimbus/firebase/app": {
+  "firebase/app": {
     path: "packages/firebase/src/app.ts",
     exports: [
       "FirebaseApp",
@@ -425,7 +425,7 @@ const entryContracts = {
       "initializeApp",
     ],
   },
-  "@nimbus/firebase/firestore": {
+  "firebase/firestore": {
     path: "packages/firebase/src/firestore.ts",
     exports: [
       "CollectionGroup",

@@ -32,6 +32,10 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
 <div class="adapter-tabs">
 <Tabs>
   <TabItem label="Convex">
+    ```bash
+    nimbus init convex my-app && cd my-app
+    nimbus dev
+    ```
     ```typescript
     // convex/messages.ts — server-side functions with reactive queries
     import { query, mutation } from "./_generated/server";
@@ -52,16 +56,22 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
     the [5-minute quickstart](/get-started/quickstart/).
   </TabItem>
   <TabItem label="Firebase">
+    ```bash
+    nimbus packages provision firebase
+    npm pkg set dependencies.firebase=file:./.nimbus/packages/firebase
+    npm install
+    nimbus start --firestore
+    ```
     ```typescript
-    // Stock Firebase SDK, Firestore surface — served by Nimbus
-    import { initializeApp } from "@nimbus/firebase/app";
+    // Your Firebase code, unchanged — stock imports, served by Nimbus
+    import { initializeApp } from "firebase/app";
     import {
       addDoc,
       collection,
       connectFirestoreEmulator,
       getFirestore,
       onSnapshot,
-    } from "@nimbus/firebase/firestore";
+    } from "firebase/firestore";
 
     const db = getFirestore(initializeApp({ projectId: "demo" }));
     connectFirestoreEmulator(db, "127.0.0.1", 8080);
@@ -70,11 +80,16 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
     await addDoc(messages, { body: "hello from nimbus" });
     onSnapshot(messages, (live) => console.log("live size", live.size));
     ```
-    Firestore is Firebase's database — Nimbus speaks its wire protocol, so
-    the stock SDK just works. See [the Firestore guide](/developers/firebase/)
-    for enabling the routes (`nimbus start --firestore`).
+    Firestore is Firebase's database — Nimbus speaks its wire protocol and
+    ships a drop-in `firebase` package inside the binary, so your imports
+    stay exactly as they are. See
+    [the Firestore guide](/developers/firebase/).
   </TabItem>
   <TabItem label="Cloud Functions">
+    ```bash
+    nimbus init cloud-functions my-functions-app && cd my-functions-app
+    nimbus dev
+    ```
     ```typescript
     // functions/src/index.ts — Firebase-style HTTP + Firestore triggers
     import { onRequest } from "firebase-functions/v2/https";
@@ -95,8 +110,11 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
     project layout and deploy flow.
   </TabItem>
   <TabItem label="MongoDB">
+    ```bash
+    nimbus start --mongodb-port 27017
+    ```
     ```javascript
-    // Official MongoDB driver against Nimbus's wire-protocol endpoint
+    // Official MongoDB driver, unchanged — Nimbus speaks the wire protocol
     import { MongoClient } from "mongodb";
 
     const client = new MongoClient(
@@ -108,12 +126,15 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
     await messages.insertOne({ author: "Ada", body: "Hello from Nimbus" });
     const docs = await messages.find({ author: "Ada" }).toArray();
     ```
-    See [the MongoDB guide](/developers/mongodb/) for enabling the
-    endpoint (`nimbus start --mongodb-port 27017`).
+    See [the MongoDB guide](/developers/mongodb/) for credential setup and
+    the supported command surface.
   </TabItem>
   <TabItem label="DynamoDB">
+    ```bash
+    nimbus start --dynamodb-port 8000
+    ```
     ```javascript
-    // AWS SDK v3 pointed at Nimbus's DynamoDB endpoint
+    // Official AWS SDK v3, unchanged — pointed at Nimbus's endpoint
     import { DynamoDBClient, PutItemCommand, GetItemCommand } from "@aws-sdk/client-dynamodb";
 
     const client = new DynamoDBClient({
@@ -131,10 +152,13 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
       Key: { pk: { S: "order-1" } },
     }));
     ```
-    See [the DynamoDB guide](/developers/dynamodb/) for enabling the
-    endpoint (`nimbus start --dynamodb-port 8000`).
+    See [the DynamoDB guide](/developers/dynamodb/) for registered-key
+    credentials and the supported operation surface.
   </TabItem>
   <TabItem label="HTTP API">
+    ```bash
+    nimbus start
+    ```
     ```bash
     # Nimbus's own REST surface — the same engine, no SDK and no codegen
     curl -s -X POST http://localhost:8080/api/tenants \

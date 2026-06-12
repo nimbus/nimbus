@@ -24,7 +24,7 @@ const OUT_DIR = path.join(REPO_ROOT, "crates", "nimbus-assets", "embedded", "pac
 const PROVISIONED = [
   { sourceDir: "convex", stageDir: "convex" },
   { sourceDir: "nimbus", stageDir: "@nimbus/nimbus" },
-  { sourceDir: "firebase", stageDir: "@nimbus/firebase" },
+  { sourceDir: "firebase", stageDir: "firebase" },
   { sourceDir: "mongodb", stageDir: "@nimbus/mongodb" },
   { sourceDir: "dynamodb", stageDir: "@nimbus/dynamodb" },
 ];

@@ -1,7 +1,7 @@
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { createGrpcWebTransport } from "@connectrpc/connect-web";
 
-import { firestoreV1 } from "./protobuf";
+import { firestoreV1 } from "./protobuf.ts";
 
 export interface FirestoreGrpcWebContext {
   readonly baseUrl: string;

@@ -1,2 +1,2 @@
-export * from "./app";
-export * from "./firestore";
+export * from "./app.ts";
+export * from "./firestore.ts";

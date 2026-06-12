@@ -1,4 +1,4 @@
-import type { FirebaseApp } from "./app";
+import type { FirebaseApp } from "./app.ts";
 import {
   FieldValue,
   arrayRemove,
@@ -12,15 +12,15 @@ import {
   readValueAtFieldPath,
   serverTimestamp,
   splitFieldPath,
-} from "./internal/document-data";
-import type { FirestoreWebSocketFactory } from "./internal/listen-websocket";
+} from "./internal/document-data.ts";
+import type { FirestoreWebSocketFactory } from "./internal/listen-websocket.ts";
 import {
   buildCreateWrite as buildCreateWriteInternal,
   buildDeleteWrite as buildDeleteWriteInternal,
   buildSetWrite as buildSetWriteInternal,
   buildUpdateWrite as buildUpdateWriteInternal,
   type FirestoreWriteDependencies,
-} from "./internal/writes";
+} from "./internal/writes.ts";
 import {
   beginFirestoreTransactionInternal,
   batchGetDocumentInternal,
@@ -29,14 +29,14 @@ import {
   rollbackFirestoreTransactionInternal,
   runQueryDocumentsInternal,
   type FirestoreUnaryDependencies,
-} from "./internal/unary";
+} from "./internal/unary.ts";
 import {
   canRefreshAuthToken,
   grpcWebContext,
   resolveAuthToken,
   resolveListenWebSocketSubprotocols,
   type FirestoreAuthDependencies,
-} from "./internal/auth";
+} from "./internal/auth.ts";
 import {
   applyQueryConstraint,
   assertCursorValues,
@@ -66,7 +66,7 @@ import {
   type QuerySource,
   type StructuredQueryShape,
   type WhereQueryConstraint,
-} from "./internal/firestore-helpers";
+} from "./internal/firestore-helpers.ts";
 import {
   FirestoreImpl,
   DocumentSnapshotImpl,
@@ -81,18 +81,18 @@ import {
   normalizeQuerySource,
   normalizedDatabaseId,
   parseDocumentReferenceFromName,
-} from "./internal/firestore-models";
+} from "./internal/firestore-models.ts";
 import {
   onSnapshotInternal,
   type SnapshotForSource,
   type SnapshotListenSource,
-} from "./internal/watch";
+} from "./internal/watch.ts";
 import {
   buildWatchDocumentSnapshot as buildWatchDocumentSnapshotInternal,
   buildWatchQuerySnapshot as buildWatchQuerySnapshotInternal,
   type FirestoreWatchSnapshotDependencies,
-} from "./internal/watch-snapshots";
-import { create, firestoreQueryV1, firestoreV1, fromJson, toJson } from "./internal/protobuf";
+} from "./internal/watch-snapshots.ts";
+import { create, firestoreQueryV1, firestoreV1, fromJson, toJson } from "./internal/protobuf.ts";
 
 export {
   FieldValue,

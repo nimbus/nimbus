@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
-const protoRoot = path.join(repoRoot, "crates", "nimbus-server", "proto");
+const protoRoot = path.join(repoRoot, "crates", "nimbus-firebase", "proto");
 const googleProtoRoot = path.join(protoRoot, "google");
 const outputRoot = path.join(packageRoot, "src", "gen");
 const protocPlugin = resolvePluginBinary();
@@ -29,7 +29,10 @@ async function main() {
     `--plugin=protoc-gen-es=${protocPlugin}`,
     `--proto_path=${protoRoot}`,
     `--es_out=${outputRoot}`,
-    "--es_opt=target=ts,json_types=true,import_extension=none",
+    // import_extension=ts so tsc's rewriteRelativeImportExtensions emits real
+    // `.js` specifiers in dist/ — extensionless relative imports break Node ESM
+    // consumers of the provisioned package (bundlers masked this).
+    "--es_opt=target=ts,json_types=true,import_extension=ts",
     ...protoFiles,
   ];
   const result = spawnSync(protoc, args, {

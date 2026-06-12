@@ -1,6 +1,6 @@
 import "./app.css";
 
-import { deleteApp, initializeApp, type FirebaseApp } from "@nimbus/firebase/app";
+import { deleteApp, initializeApp, type FirebaseApp } from "firebase/app";
 import {
   addDoc,
   arrayUnion,
@@ -22,7 +22,7 @@ import {
   type DocumentData,
   type Firestore,
   type FirestoreUnaryTransport,
-} from "@nimbus/firebase/firestore";
+} from "firebase/firestore";
 
 const COLLECTION_NAME = "demoMessages";
 const LOCAL_STORAGE_KEY = "nimbus.firebase.demo.settings";
@@ -57,7 +57,7 @@ type FeedMessage = {
 const defaultSettings: DemoSettings = {
   author: "Nimbus Demo",
   baseUrl: "http://127.0.0.1:8080",
-  message: "Hello from @nimbus/firebase",
+  message: "Hello from Nimbus",
   tag: "demo",
   unaryTransport: "rest",
 };
@@ -90,7 +90,9 @@ root.innerHTML = `
         <span class="eyebrow">Firebase / Firestore demo</span>
         <h1>Exercise the first-party SDK over REST, gRPC-Web, and live Listen.</h1>
         <p class="lede">
-          This demo talks to a local Nimbus server with <code>@nimbus/firebase</code>,
+          This demo talks to a local Nimbus server with stock
+          <code>firebase/app</code> + <code>firebase/firestore</code> imports
+          served by the Nimbus-provisioned <code>firebase</code> package,
           using REST or gRPC-Web for unary calls and the browser WebSocket Listen path
           for live query updates. It is the concrete runnable reference for the current
           supported Firebase data-path tier.

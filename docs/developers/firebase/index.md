@@ -1,22 +1,24 @@
 ---
 title: Use Firestore SDKs with Nimbus
-description: Point Firestore-style apps at Nimbus with the @nimbus/firebase SDK — host configuration, project-to-tenant mapping, and the supported operations.
+description: Point Firestore-style apps at Nimbus with the provisioned drop-in firebase package — host configuration, project-to-tenant mapping, and the supported operations.
 sidebar:
   label: Overview
   order: 1
 ---
 
 Nimbus speaks the Firestore wire protocol — REST, gRPC-Web, and a WebSocket
-`Listen` channel for live queries — and ships a first-party SDK,
-`@nimbus/firebase`, that mirrors the `firebase/firestore` API. You keep your
-Firestore data model, query shapes, and helper names; you swap the import
-and point the SDK at a Nimbus host.
+`Listen` channel for live queries — and ships a first-party drop-in
+`firebase` package that mirrors the modular `firebase/app` and
+`firebase/firestore` API. Your imports, data model, query shapes, and
+helper names stay unchanged; the `nimbus` binary provisions the package
+locally and a `file:` dependency points `firebase` at it.
 
-The supported client today is `@nimbus/firebase`, not the stock
-`firebase/firestore` browser package. The stock browser SDK transports over
-WebChannel, which Nimbus does not implement. See the
-[Firestore compatibility matrix](/reference/firebase/compatibility/) for the
-precise surface.
+The supported client is the Nimbus-provisioned `firebase` package, not the
+registry-published Google package. The two share import paths and API
+shapes, but the upstream browser SDK transports over WebChannel, which
+Nimbus does not implement. See the
+[Firestore compatibility matrix](/reference/firebase/compatibility/) for
+the precise surface.
 
 ## Before you start
 
@@ -26,26 +28,29 @@ with `nimbus start --firestore` (embedders call
 client contract against a Nimbus endpoint with the Firestore surface
 enabled.
 
-## 1. Provision the SDK
+## 1. Wire the dependency
 
-The `nimbus` binary materializes `@nimbus/firebase` locally — nothing is
-fetched from a registry:
+The `nimbus` binary materializes its `firebase` package locally — nothing
+is fetched from a registry:
 
 ```bash
 nimbus packages provision firebase
+npm pkg set dependencies.firebase=file:./.nimbus/packages/firebase
+npm install
 ```
 
-The package lands under `.nimbus/packages/` in your app directory and exports
-two entry points: `@nimbus/firebase/app` and `@nimbus/firebase/firestore`.
+The package lands under `.nimbus/packages/firebase` in your app directory,
+and the `file:` dependency makes every stock `firebase/app` and
+`firebase/firestore` import resolve to it.
 
 ## 2. Initialize and connect
 
 ```typescript
-import { initializeApp } from "@nimbus/firebase/app";
+import { initializeApp } from "firebase/app";
 import {
   connectFirestoreEmulator,
   getFirestore,
-} from "@nimbus/firebase/firestore";
+} from "firebase/firestore";
 
 const app = initializeApp({ projectId: "demo" });
 const db = getFirestore(app);
@@ -72,7 +77,7 @@ import {
   collection,
   getDocs,
   onSnapshot,
-} from "@nimbus/firebase/firestore";
+} from "firebase/firestore";
 
 const messages = collection(db, "messages");
 
@@ -97,7 +102,7 @@ Transport behavior is explicit rather than auto-negotiated:
 - gRPC-Web unary is available by opting in:
 
   ```typescript
-  import { initializeFirestore } from "@nimbus/firebase/firestore";
+  import { initializeFirestore } from "firebase/firestore";
 
   const db = initializeFirestore(app, {
     experimentalUnaryTransport: "grpc-web",

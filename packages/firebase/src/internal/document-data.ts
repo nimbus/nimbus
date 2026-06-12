@@ -1,4 +1,4 @@
-import type { DocumentData } from "../firestore";
+import type { DocumentData } from "../firestore.ts";
 
 type FieldValueKind =
   | "delete"

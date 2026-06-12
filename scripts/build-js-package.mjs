@@ -41,13 +41,15 @@ const SANITIZE = {
   // codegen-time deps: `@nimbus/codegen` (codegen runs in-binary) and `esbuild`
   // (only used by the dev/test scripts, never the shipped surface).
   convex: { dropDependencies: ["@nimbus/codegen", "esbuild"], keepDependencies: ["@nimbus/nimbus"] },
-  // Firebase client. Its three runtime deps are zero-dep pure ESM used only by
-  // internal transport/generated protos (the public surface does not expose
-  // their types), so they are co-provisioned as additional binary-owned roots
-  // rather than bundled — no fragile .d.ts-bundler is needed and the proven
-  // per-file tsc emit applies. (Plan Decision permits "provisioned as
-  // additional binary-owned package roots".)
-  "@nimbus/firebase": {
+  // Firebase client — takes the stock npm name (like `convex`) so provisioned
+  // apps keep stock `firebase/app` + `firebase/firestore` imports. Its three
+  // runtime deps are zero-dep pure ESM used only by internal transport/
+  // generated protos (the public surface does not expose their types), so they
+  // are co-provisioned as additional binary-owned roots rather than bundled —
+  // no fragile .d.ts-bundler is needed and the proven per-file tsc emit
+  // applies. (Plan Decision permits "provisioned as additional binary-owned
+  // package roots".)
+  firebase: {
     dropDependencies: [],
     keepDependencies: ["@bufbuild/protobuf", "@connectrpc/connect", "@connectrpc/connect-web"],
   },

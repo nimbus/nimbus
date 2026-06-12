@@ -410,7 +410,7 @@ mod tests {
         provision_packages(app.path(), &Selection::Adapter("firebase".into())).unwrap();
         let root = app.path().join(PACKAGES_REL);
         for dir in [
-            "@nimbus/firebase",
+            "firebase",
             "@bufbuild/protobuf",
             "@connectrpc/connect",
             "@connectrpc/connect-web",
@@ -545,12 +545,7 @@ mod tests {
             "closure is provisioned"
         );
         // The convex closure does not pull unrelated adapters.
-        assert!(
-            !app.path()
-                .join(PACKAGES_REL)
-                .join("@nimbus/firebase")
-                .exists()
-        );
+        assert!(!app.path().join(PACKAGES_REL).join("firebase").exists());
         // A second ensure with the matching stamp is a no-op.
         assert!(!ensure(app.path(), &Selection::Adapter("convex".into())).unwrap());
     }

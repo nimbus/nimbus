@@ -26,7 +26,7 @@ const MANIFEST = path.join(EMBED_DIR, "manifest.json");
 const ALLOWED_PEERS = new Set(["react", "react-dom", "@aws-sdk/client-dynamodb"]);
 
 // Every Nimbus package whose dist must be provisioned.
-const REQUIRED_PROVISIONED = ["convex", "@nimbus/nimbus", "@nimbus/firebase", "@nimbus/mongodb", "@nimbus/dynamodb"];
+const REQUIRED_PROVISIONED = ["convex", "@nimbus/nimbus", "firebase", "@nimbus/mongodb", "@nimbus/dynamodb"];
 
 const errors = [];
 

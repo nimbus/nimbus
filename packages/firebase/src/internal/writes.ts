@@ -2,7 +2,7 @@ import type {
   DocumentData,
   DocumentReference,
   SetOptions,
-} from "../firestore";
+} from "../firestore.ts";
 import {
   type FieldValue,
   encodeDocumentFields,
@@ -13,7 +13,7 @@ import {
   readValueAtFieldPath,
   setValueAtFieldPath,
   splitFieldPath,
-} from "./document-data";
+} from "./document-data.ts";
 
 export interface FirestoreWriteDependencies {
   documentResourceName<AppModelType = DocumentData>(

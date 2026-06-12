@@ -4,7 +4,7 @@ import type {
   DocumentSnapshot,
   Query,
   QuerySnapshot,
-} from "../firestore";
+} from "../firestore.ts";
 
 export interface FirestoreWatchSnapshotDependencies {
   buildDocumentSnapshot<AppModelType = DocumentData>(

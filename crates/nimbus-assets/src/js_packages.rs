@@ -253,7 +253,7 @@ mod tests {
     const EXPECTED: &[&str] = &[
         "convex",
         "@nimbus/nimbus",
-        "@nimbus/firebase",
+        "firebase",
         "@nimbus/mongodb",
         "@nimbus/dynamodb",
     ];

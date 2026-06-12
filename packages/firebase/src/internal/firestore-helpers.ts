@@ -1,6 +1,6 @@
-import type { FirebaseApp } from "../app";
-import { getApp } from "../app";
-import { assertDocumentData, isPlainObject } from "./document-data";
+import type { FirebaseApp } from "../app.ts";
+import { getApp } from "../app.ts";
+import { assertDocumentData, isPlainObject } from "./document-data.ts";
 import type {
   CollectionGroup,
   CollectionReference,
@@ -17,7 +17,7 @@ import type {
   QuerySnapshot,
   SnapshotMetadata,
   WhereFilterOp,
-} from "../firestore";
+} from "../firestore.ts";
 
 const DEFAULT_DATABASE_ID = "(default)";
 const DEFAULT_HOST = "firestore.googleapis.com";

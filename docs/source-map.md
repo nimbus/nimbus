@@ -20,7 +20,7 @@ sources exist.
 | `get-started/from-convex.md` | Convex function model + `convex/` layout compatibility | `packages/nimbus/src/server.ts`, `packages/convex/src/`, `crates/nimbus-convex/` |
 | `index.mdx` (landing) | Speaks Convex / Firestore / Cloud Functions / MongoDB / DynamoDB | `crates/nimbus-convex/`, `crates/nimbus-firebase/`, `crates/nimbus-cloud-functions/`, `crates/nimbus-mongodb/`, `crates/nimbus-dynamodb/` |
 | `index.mdx` (landing) | Single-binary storage/compute/networking/realtime/scheduling | `crates/nimbus-bin/src/main.rs`, `crates/nimbus-engine/`, `crates/nimbus-storage/`, `crates/nimbus-server/` |
-| `index.mdx` (landing) | Firebase tab (Firestore surface): `@nimbus/firebase` entry points, `connectFirestoreEmulator` flow, `projectId` → tenant, `--firestore` enablement | `packages/firebase/src/firestore.ts`, `crates/nimbus-bin/src/start/adapters.rs` |
+| `index.mdx` (landing) | Firebase tab (Firestore surface): stock `firebase/app` + `firebase/firestore` imports via the provisioned `firebase` package (`file:` dependency), `connectFirestoreEmulator` flow, `projectId` → tenant, `--firestore` enablement | `packages/firebase/package.json`, `packages/firebase/src/firestore.ts`, `crates/nimbus-bin/src/provision.rs`, `crates/nimbus-bin/src/start/adapters.rs` |
 | `index.mdx` (landing) | Cloud Functions tab: firebase-functions v2 `onRequest`/`onDocumentCreated` handler shapes | `crates/nimbus-cloud-functions/src/lib.rs`, `docs/developers/cloud-functions/index.md` |
 | `index.mdx` (landing) | MongoDB tab: connection string shape, `directConnection=true`, `--mongodb-port` enablement | `packages/mongodb/src/uri.ts`, `crates/nimbus-bin/src/start/adapters.rs` |
 | `index.mdx` (landing) | DynamoDB tab: endpoint `127.0.0.1:8000`, registered-key credentials, `--dynamodb-port` enablement | `crates/nimbus-dynamodb/src/config.rs`, `crates/nimbus-bin/src/start/adapters.rs` |
@@ -65,7 +65,7 @@ sources exist.
 
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
-| `developers/firebase/index.md` | `nimbus packages provision firebase` → `@nimbus/firebase` | `crates/nimbus-bin/src/provision.rs`, `packages/firebase/package.json` |
+| `developers/firebase/index.md` | `nimbus packages provision firebase` → drop-in `firebase` package under the stock npm name; `file:` dependency wiring | `crates/nimbus-bin/src/provision.rs`, `packages/firebase/package.json` |
 | `developers/firebase/index.md` | Firestore routes enabled by `nimbus start --firestore` / `with_firebase_config` | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/construction.rs` |
 | `developers/firebase/index.md` | `projectId` → tenant id; only `(default)` database | `crates/nimbus-firebase/src/operations.rs`, `crates/nimbus-firebase/src/firestore_model.rs` |
 | `developers/firebase/index.md` | `connectFirestoreEmulator` flow; transport options | `packages/firebase/src/firestore.ts`, `crates/nimbus-server/src/tests/firebase/rest_crud.rs` |
@@ -413,7 +413,7 @@ sources exist.
 | `concepts/architecture/sdk-packages.md` | Codegen emits `_generated/{api.ts,server.ts,scheduled_functions.ts,dataModel.d.ts}` + `.nimbus/convex/{functions.json,schema.json,http_routes.json,auth.config.json,bundle.mjs,bundle.sha256}` | `packages/codegen/src/main.mjs`, `packages/codegen/src/emit/generated_files.mjs` |
 | `concepts/architecture/sdk-packages.md` | Bundle SHA-256 enforced at load and per invocation | `crates/nimbus-convex/src/registry/loading.rs`, `crates/nimbus-runtime/src/runtime/driver/invocation.rs` |
 | `concepts/architecture/sdk-packages.md` | UI embedded via rust-embed of `packages/nimbus-ui/dist/`; build script asserts built UI; served at `/ui` with SPA fallback | `crates/nimbus-assets/src/ui.rs`, `crates/nimbus-assets/build.rs`, `crates/nimbus-server/Cargo.toml`, `crates/nimbus-server/src/http/ui.rs`, `crates/nimbus-server/src/router.rs` |
-| `concepts/architecture/sdk-packages.md` | Adapter helpers: firebase app+firestore over Connect-Web; `mongoUri`; `clientConfig`/`endpoint` | `packages/firebase/src/index.ts`, `packages/firebase/src/app.ts`, `packages/firebase/package.json`, `packages/mongodb/src/index.ts`, `packages/dynamodb/src/index.ts` |
+| `concepts/architecture/sdk-packages.md` | Adapter packages: drop-in `firebase` (stock npm name) app+firestore over Connect-Web; `mongoUri`; `clientConfig`/`endpoint` | `packages/firebase/src/index.ts`, `packages/firebase/src/app.ts`, `packages/firebase/package.json`, `packages/mongodb/src/index.ts`, `packages/dynamodb/src/index.ts` |
 | `concepts/architecture/sdk-packages.md` | Distribution: staged checksummed payload → rust-embed → `.nimbus/packages/` with `.version` stamp, closure resolution, `file:` specifiers, drift-forced reinstall, `nimbus packages verify` | `scripts/stage-embedded-packages.mjs`, `crates/nimbus-assets/src/js_packages.rs`, `crates/nimbus-bin/src/provision.rs`, `crates/nimbus-assets/embedded/templates/convex/package.json.tmpl` |
 | `concepts/architecture/sdk-packages.md` | Codegen tooling embedded but not provisioned (temp-dir materialized) | `crates/nimbus-assets/src/js_packages.rs`, `scripts/stage-embedded-packages.mjs` |
 | `concepts/architecture/observability.md` | `/health` public, unauthenticated `{"ok":true}` | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/http/metadata.rs` |
