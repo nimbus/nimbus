@@ -112,6 +112,27 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
         cli_ux::write_stderr_line("")?;
         cli_ux::write_stderr_line("No compatible adapter detected.")?;
         cli_ux::write_stderr_line("")?;
+        if adapter::has_firebase_dependency(&plan.app_dir) {
+            // A `firebase` dependency without firebase.json/functions markers is
+            // a Firestore client app — `nimbus dev` has no server-side sources
+            // to watch, so point at the migration commands instead of init.
+            cli_ux::write_stderr_line(
+                "Found a `firebase` dependency in package.json. To migrate this app to Nimbus:",
+            )?;
+            cli_ux::write_stderr_line("")?;
+            cli_ux::write_stderr_line(
+                "  nimbus packages provision firebase   # rewires `firebase` to the drop-in package",
+            )?;
+            cli_ux::write_stderr_line("  npm install")?;
+            cli_ux::write_stderr_line(
+                "  nimbus start --firestore             # serve the Firestore surface",
+            )?;
+            cli_ux::write_stderr_line("")?;
+            cli_ux::write_stderr_line(
+                "The drop-in package covers firebase/app and firebase/firestore imports.",
+            )?;
+            return Ok(());
+        }
         cli_ux::write_stderr_line("To get started:")?;
         cli_ux::write_stderr_line("  nimbus init convex          # Convex adapter")?;
         cli_ux::write_stderr_line("  nimbus init cloud-functions # Cloud Functions adapter")?;
