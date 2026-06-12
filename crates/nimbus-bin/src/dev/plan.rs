@@ -8,6 +8,7 @@ use crate::dirs;
 use crate::start::{CliTenantProvider, StartCommand};
 
 use super::adapter::{DevAdapter, detect_dev_adapter};
+use super::firebase_project::{DEMO_TENANT, ProjectTenantMapping, discover_project_tenant};
 use super::launch::{AutoOpenDecision, ProcessEnv, resolve_auto_open};
 use super::surfaces::{WireSurfaces, detect_wire_surfaces};
 use super::{DevCommand, DevTailLogsMode};
@@ -20,6 +21,9 @@ pub(super) struct DevPlan {
     pub(super) compose_selection: Option<ResolvedComposeSelection>,
     pub(super) local_url: String,
     pub(super) adapter: Option<DevAdapter>,
+    /// The projectId→tenant mapping a Firestore client app's requests will
+    /// resolve to; `None` for every other adapter shape.
+    pub(super) firestore_tenant: Option<ProjectTenantMapping>,
     pub(super) wire_surfaces: WireSurfaces,
     pub(super) once: bool,
     pub(super) tail_logs: DevTailLogsMode,
@@ -76,6 +80,19 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         .unwrap_or_else(|| app_dir.join(".nimbus").join("dev"));
     let local_url = format!("http://localhost:{}/", command.port);
     let deploy_admin_token = generate_dev_deploy_token();
+    // A Firestore client app addresses `projects/{projectId}` directly, and
+    // the serve side resolves that segment to the tenant of the same name —
+    // so the auto-created tenant must be the discovered project id, not a
+    // fixed default. Every other adapter shape keeps the standard demo
+    // tenant.
+    let firestore_tenant = match &adapter {
+        Some(DevAdapter::FirestoreClient) => Some(discover_project_tenant(&app_dir)?),
+        _ => None,
+    };
+    let auto_tenant = firestore_tenant
+        .as_ref()
+        .map(|mapping| mapping.tenant.clone())
+        .unwrap_or_else(|| DEMO_TENANT.to_string());
     // Detected wire surfaces do not flip listener flags here yet: listeners
     // are deny-by-default on credentials, and the generated-credential story
     // (DXW2/DXW3) is what turns a detected surface into an enabled one.
@@ -93,7 +110,7 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         debug_node_apis: command.debug_node_apis,
         compose_file: command.compose_file,
         deploy_admin_token: Some(deploy_admin_token),
-        auto_tenant: Some("demo".to_string()),
+        auto_tenant: Some(auto_tenant),
         tenant_isolation_mode: nimbus_server::TenantIsolationMode::LocalDevelopment,
         ..StartCommand::default()
     };
@@ -105,6 +122,7 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         compose_selection,
         local_url,
         adapter,
+        firestore_tenant,
         wire_surfaces,
         once: command.once,
         tail_logs: command.tail_logs,
@@ -130,6 +148,9 @@ pub(super) fn detect_app_dir(cwd: &Path) -> PathBuf {
                 .join("functions.json")
                 .is_file()
             || candidate.join("firebase.json").is_file()
+            // The Firebase CLI's own project-root marker; a Firestore
+            // client app may carry no other recognizable root file.
+            || candidate.join(".firebaserc").is_file()
         {
             return candidate.to_path_buf();
         }

@@ -29,6 +29,13 @@ pub(super) fn dev_banner_lines(plan: &DevPlan) -> Vec<String> {
     if let Some(adapter) = &plan.adapter {
         lines.push(format!("Adapter:    {}", adapter.name()));
     }
+    if let Some(mapping) = &plan.firestore_tenant {
+        lines.push(format!(
+            "Tenant:     {} ({})",
+            mapping.tenant,
+            mapping.describe_source()
+        ));
+    }
     if let Some(selection) = plan.compose_selection.as_ref() {
         lines.push(format!(
             "Compose:    {}",

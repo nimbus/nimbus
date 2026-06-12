@@ -12,6 +12,7 @@ use crate::start::run_start_command;
 mod adapter;
 mod banner;
 mod env_file;
+mod firebase_project;
 mod firebase_scan;
 mod launch;
 mod plan;
@@ -484,6 +485,134 @@ mod tests {
     }
 
     #[test]
+    fn firestore_client_plan_maps_discovered_project_to_auto_tenant() {
+        let temp = tempdir().expect("tempdir should build");
+        // Real apps live in git repos; the boundary keeps the app-dir
+        // walk-up from escaping the fixture.
+        fs::create_dir_all(temp.path().join(".git")).expect(".git boundary should create");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"dependencies": {"firebase": "^11.0.0"}}"#,
+        )
+        .expect("package.json should write");
+        fs::write(
+            temp.path().join(".firebaserc"),
+            r#"{"projects": {"default": "acme-staging"}}"#,
+        )
+        .expect(".firebaserc should write");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+
+        assert_eq!(plan.adapter, Some(DevAdapter::FirestoreClient));
+        assert_eq!(
+            plan.start_command.auto_tenant,
+            Some("acme-staging".to_string()),
+            "the auto-created tenant must be the tenant the app's requests resolve to"
+        );
+        let mapping = plan
+            .firestore_tenant
+            .as_ref()
+            .expect("firestore client plan should carry the tenant mapping");
+        assert_eq!(mapping.tenant, "acme-staging");
+        assert_eq!(
+            mapping.source,
+            firebase_project::ProjectTenantSource::FirebaseRc
+        );
+        assert!(
+            dev_banner_lines(&plan)
+                .iter()
+                .any(|line| line == "Tenant:     acme-staging (.firebaserc default project)"),
+            "banner must name the mapped tenant and its source"
+        );
+    }
+
+    #[test]
+    fn firestore_client_plan_falls_back_to_demo_tenant() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join(".git")).expect(".git boundary should create");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"dependencies": {"firebase": "^11.0.0"}}"#,
+        )
+        .expect("package.json should write");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+
+        assert_eq!(plan.start_command.auto_tenant, Some("demo".to_string()));
+        assert_eq!(
+            plan.firestore_tenant
+                .as_ref()
+                .expect("firestore client plan should carry the tenant mapping")
+                .source,
+            firebase_project::ProjectTenantSource::DemoFallback
+        );
+        assert!(
+            dev_banner_lines(&plan)
+                .iter()
+                .any(|line| line == "Tenant:     demo (no Firebase project id found)"),
+            "banner must state the demo fallback"
+        );
+    }
+
+    #[test]
+    fn firebaserc_marks_the_app_root_for_nested_cwd() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join(".git")).expect(".git boundary should create");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"dependencies": {"firebase": "^11.0.0"}}"#,
+        )
+        .expect("package.json should write");
+        fs::write(
+            temp.path().join(".firebaserc"),
+            r#"{"projects": {"default": "acme-staging"}}"#,
+        )
+        .expect(".firebaserc should write");
+        let nested = temp.path().join("src").join("components");
+        fs::create_dir_all(&nested).expect("nested cwd should create");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), &nested)
+            .expect("dev plan should resolve");
+
+        assert_eq!(
+            plan.app_dir,
+            temp.path()
+                .canonicalize()
+                .expect("app dir should canonicalize"),
+            ".firebaserc must mark the app root from a nested cwd"
+        );
+        assert_eq!(plan.adapter, Some(DevAdapter::FirestoreClient));
+        assert_eq!(
+            plan.start_command.auto_tenant,
+            Some("acme-staging".to_string())
+        );
+    }
+
+    #[test]
+    fn non_firestore_apps_keep_demo_tenant_despite_project_signals() {
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+        fs::write(
+            temp.path().join(".firebaserc"),
+            r#"{"projects": {"default": "acme-staging"}}"#,
+        )
+        .expect(".firebaserc should write");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+
+        assert!(matches!(plan.adapter, Some(DevAdapter::Convex { .. })));
+        assert_eq!(
+            plan.start_command.auto_tenant,
+            Some("demo".to_string()),
+            "projectId mapping applies only to the Firestore client adapter"
+        );
+        assert!(plan.firestore_tenant.is_none());
+    }
+
+    #[test]
     fn dev_plan_detects_parent_app_from_source_root() {
         let temp = tempdir().expect("tempdir should build");
         create_source_root(temp.path(), "nimbus");
@@ -610,6 +739,7 @@ mod tests {
             compose_selection: Some(selection),
             local_url: "http://localhost:3210/".to_owned(),
             adapter: None,
+            firestore_tenant: None,
             wire_surfaces: surfaces::WireSurfaces::default(),
             once: false,
             tail_logs: DevTailLogsMode::PauseOnSync,
@@ -798,6 +928,119 @@ mod tests {
             response.status(),
             reqwest::StatusCode::NOT_FOUND,
             "dev must answer the Firestore route family without Firebase markers"
+        );
+
+        task.abort();
+        let _ = task.await;
+        engine.quiesce().await;
+    }
+
+    fn workspace_firebase_selftest_dependencies_available(repo_root: &Path) -> bool {
+        let root_node_modules = repo_root.join("node_modules");
+        let package_node_modules = repo_root.join("packages/firebase/node_modules");
+        let has_dependency = |node_modules: &Path, scoped_segments: &[&str]| {
+            let mut path = node_modules.to_path_buf();
+            for segment in scoped_segments {
+                path.push(segment);
+            }
+            path.is_dir()
+        };
+
+        repo_root
+            .join("packages/firebase/src/selftest.mjs")
+            .is_file()
+            && (has_dependency(&root_node_modules, &["esbuild"])
+                || has_dependency(&package_node_modules, &["esbuild"]))
+            && (has_dependency(&root_node_modules, &["@connectrpc", "connect"])
+                || has_dependency(&package_node_modules, &["@connectrpc", "connect"]))
+            && (has_dependency(&root_node_modules, &["@connectrpc", "connect-web"])
+                || has_dependency(&package_node_modules, &["@connectrpc", "connect-web"]))
+            && (has_dependency(&root_node_modules, &["@bufbuild", "protobuf"])
+                || has_dependency(&package_node_modules, &["@bufbuild", "protobuf"]))
+    }
+
+    #[tokio::test]
+    async fn covered_app_round_trips_firestore_via_emulator_connection() {
+        // DXF4 live gate: a covered Firestore client app under a dev-shaped
+        // server completes addDoc/getDocs/onSnapshot through
+        // connectFirestoreEmulator, addressing the project id dev discovered
+        // — proving the auto-created tenant IS the tenant the app's requests
+        // resolve to.
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root should exist");
+        if !workspace_firebase_selftest_dependencies_available(repo_root) {
+            eprintln!(
+                "skipping firestore round-trip selftest because JS workspace dependencies are unavailable"
+            );
+            return;
+        }
+
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join(".git")).expect(".git boundary should create");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"dependencies": {"firebase": "^11.0.0"}}"#,
+        )
+        .expect("package.json should write");
+        fs::write(
+            temp.path().join(".firebaserc"),
+            r#"{"projects": {"default": "dxf4-round-trip"}}"#,
+        )
+        .expect(".firebaserc should write");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        assert_eq!(plan.adapter, Some(DevAdapter::FirestoreClient));
+        assert_eq!(
+            plan.start_command.auto_tenant,
+            Some("dxf4-round-trip".to_string()),
+            "the auto-created tenant must be the discovered project id"
+        );
+
+        let enablement = crate::start::adapters::resolve_adapter_enablement_with_env(
+            &plan.start_command,
+            |_| None,
+        )
+        .expect("dev enablement should resolve");
+        let engine = std::sync::Arc::new(
+            nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"),
+        );
+        // Mirror boot's ensure_auto_tenant for the planned auto_tenant.
+        engine
+            .create_tenant(nimbus::TenantId::new("dxf4-round-trip").expect("tenant id is valid"))
+            .expect("mapped tenant should create");
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("addr should resolve");
+        let task = tokio::spawn(nimbus_server::serve(
+            listener,
+            enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone())),
+        ));
+        crate::test_support::wait_for_live_server_health(
+            "dev-shaped server should answer /health",
+            addr,
+            &task,
+        )
+        .await;
+
+        let output = tokio::process::Command::new("node")
+            .current_dir(repo_root)
+            .arg("./packages/firebase/src/selftest.mjs")
+            .arg("--round-trip-base-url")
+            .arg(format!("http://{addr}/"))
+            .arg("--round-trip-project-id")
+            .arg("dxf4-round-trip")
+            .output()
+            .await
+            .expect("firestore round-trip selftest should run");
+        assert!(
+            output.status.success(),
+            "firestore round-trip selftest should pass\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
         );
 
         task.abort();

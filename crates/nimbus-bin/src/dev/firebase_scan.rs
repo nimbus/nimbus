@@ -38,7 +38,7 @@ use nimbus_assets::js_packages;
 
 use super::watch::should_skip_watch_dir;
 
-const SCANNED_EXTENSIONS: [&str; 6] = ["ts", "tsx", "js", "jsx", "mjs", "cjs"];
+pub(super) const SCANNED_EXTENSIONS: [&str; 6] = ["ts", "tsx", "js", "jsx", "mjs", "cjs"];
 
 /// Import specifiers the embedded drop-in `firebase` package serves.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -315,21 +315,21 @@ fn is_identifier_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
 }
 
-fn word_starts_at(line: &str, index: usize) -> bool {
+pub(super) fn word_starts_at(line: &str, index: usize) -> bool {
     line[..index]
         .chars()
         .next_back()
         .is_none_or(|ch| !is_identifier_char(ch))
 }
 
-fn word_continues_at(line: &str, index: usize) -> bool {
+pub(super) fn word_continues_at(line: &str, index: usize) -> bool {
     line[index..].chars().next().is_some_and(is_identifier_char)
 }
 
 /// Parse a leading string literal. Template literals count only without
 /// interpolation; escapes are treated as non-literal so they fall through
 /// to the conservative dynamic path.
-fn parse_string_literal(text: &str) -> Option<String> {
+pub(super) fn parse_string_literal(text: &str) -> Option<String> {
     let mut chars = text.chars();
     let quote = chars.next()?;
     if quote != '"' && quote != '\'' && quote != '`' {
