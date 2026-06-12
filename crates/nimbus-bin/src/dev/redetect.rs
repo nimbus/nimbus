@@ -220,7 +220,7 @@ async fn adopt_app_adapter(
             );
         }
         Some(DevAdapter::FirestoreClient) => {
-            super::wire_firestore_client_app(watch.app_dir)?;
+            super::firebase::wire_firestore_client_app(watch.app_dir)?;
             crate::node::auto_install_node_dependencies(watch.app_dir).await?;
             register_watch_roots(watch.watch_roots, Vec::new());
             let _ = cli_ux::write_stderr_prefixed_line(
