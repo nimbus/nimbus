@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the Nimbus Dev Adapter
-# Autodetection plan (DX bands A/F/W/L/D). Exits 0 iff every condition is
-# satisfied. Ships in DXA0 so /goal is verifiable from day one; later rows
-# progressively flip conditions from FAIL to PASS.
+# Autodetection plan (DX bands A/F/W/L/D, archived completed 2026-06-12).
+# Exits 0 iff every condition is satisfied. Shipped in DXA0 so /goal was
+# verifiable from day one; rows progressively flipped conditions to PASS.
 #
 # Run from the repo root (works from a linked git worktree: plan and proof
 # files live under the MAIN worktree's untracked docs/private/, which this
@@ -16,7 +16,7 @@ cd "${REPO_ROOT}"
 
 MAIN_WORKTREE="$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')"
 PRIVATE_ROOT="${NIMBUS_PRIVATE_DOCS:-${MAIN_WORKTREE}/docs/private}"
-PLAN="${PRIVATE_ROOT}/plans/nimbus-dev-adapter-autodetection-plan.md"
+PLAN="${PRIVATE_ROOT}/plans/archive/nimbus-dev-adapter-autodetection-plan.md"
 PROOF_DIR="${PRIVATE_ROOT}/plans/proof/nimbus-dev-autodetect"
 
 DEV_DIR="crates/nimbus-bin/src/dev"
