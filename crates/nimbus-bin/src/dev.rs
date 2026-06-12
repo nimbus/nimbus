@@ -18,6 +18,7 @@ mod launch;
 mod plan;
 mod surfaces;
 mod watch;
+mod wire;
 
 use adapter::DevAdapter;
 use banner::emit_dev_banner;
@@ -139,6 +140,15 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
     }
 
     write_env_local_deployment(&plan.app_dir, &plan.deployment_slug)?;
+    // Detected wire surfaces get their resolved endpoints + generated
+    // credentials as Nimbus-owned keys; user-owned keys are never touched.
+    env_file::write_env_local_nimbus_keys(
+        &plan.app_dir,
+        &plan.wire.env_local_entries(plan.wire_surfaces),
+    )?;
+    for notice in wire::port_fallback_notices(&plan.wire, plan.wire_surfaces) {
+        cli_ux::write_stderr_line(&notice)?;
+    }
 
     if let Some(adapter) = &plan.adapter
         && !skip_codegen
@@ -850,6 +860,7 @@ mod tests {
             adapter: None,
             firestore_tenant: None,
             wire_surfaces: surfaces::WireSurfaces::default(),
+            wire: wire::WirePlan::fixture(),
             once: false,
             tail_logs: DevTailLogsMode::PauseOnSync,
             start_command: StartCommand::default(),

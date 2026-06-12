@@ -11,6 +11,7 @@ use super::adapter::{DevAdapter, detect_dev_adapter};
 use super::firebase_project::{DEMO_TENANT, ProjectTenantMapping, discover_project_tenant};
 use super::launch::{AutoOpenDecision, ProcessEnv, resolve_auto_open};
 use super::surfaces::{WireSurfaces, detect_wire_surfaces};
+use super::wire::{WirePlan, resolve_wire_plan};
 use super::{DevCommand, DevTailLogsMode};
 
 #[derive(Debug)]
@@ -25,6 +26,11 @@ pub(super) struct DevPlan {
     /// resolve to; `None` for every other adapter shape.
     pub(super) firestore_tenant: Option<ProjectTenantMapping>,
     pub(super) wire_surfaces: WireSurfaces,
+    /// Resolved wire-listener ports + shared persisted credentials
+    /// (D4/D5). Always resolved, because listeners are always available
+    /// (D6) — detection only chooses port prominence and what
+    /// `.env.local` carries.
+    pub(super) wire: WirePlan,
     pub(super) once: bool,
     pub(super) tail_logs: DevTailLogsMode,
     pub(super) start_command: StartCommand,
@@ -101,9 +107,11 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         Some(DevAdapter::FirestoreClient) => None,
         _ => Some(app_dir.clone()),
     };
-    // Detected wire surfaces do not flip listener flags here yet: listeners
-    // are deny-by-default on credentials, and the generated-credential story
-    // (DXW2/DXW3) is what turns a detected surface into an enabled one.
+    // Wire-listener enablement flows into the start command in DXW3
+    // (always-available listeners, D6/D7); this row resolves the ports and
+    // shared credentials so `.env.local` and the run banner can present
+    // stable endpoints first.
+    let wire = resolve_wire_plan(wire_surfaces, &data_dir)?;
     let start_command = StartCommand {
         port: command.port,
         // Firestore-compatible routes are always-on in dev: they mount on
@@ -132,6 +140,7 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         adapter,
         firestore_tenant,
         wire_surfaces,
+        wire,
         once: command.once,
         tail_logs: command.tail_logs,
         start_command,
