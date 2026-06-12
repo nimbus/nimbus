@@ -5,12 +5,15 @@ import {
   buildPackageSurface,
   typecheckFirebaseSurface,
 } from "./selftest/package_surface.mjs";
+import { testRoundTripSurface } from "./selftest/round_trip_surface.mjs";
 import { testRuntimeSurface } from "./selftest/runtime_surface.mjs";
 import { testSmokeSurface } from "./selftest/smoke_surface.mjs";
 
 const buildOnly = process.argv.includes("--build-only");
 const typecheckOnly = process.argv.includes("--typecheck-only");
 const smokeBaseUrl = optionalFlagValue("--smoke-base-url");
+const roundTripBaseUrl = optionalFlagValue("--round-trip-base-url");
+const roundTripProjectId = optionalFlagValue("--round-trip-project-id");
 
 function optionalFlagValue(flag) {
   const index = process.argv.indexOf(flag);
@@ -37,6 +40,14 @@ async function main() {
   const bundleDir = await buildPackageSurface();
   if (smokeBaseUrl) {
     await testSmokeSurface(bundleDir, smokeBaseUrl);
+    return;
+  }
+  if (roundTripBaseUrl) {
+    assert.ok(
+      roundTripProjectId,
+      "--round-trip-base-url requires --round-trip-project-id.",
+    );
+    await testRoundTripSurface(bundleDir, roundTripBaseUrl, roundTripProjectId);
     return;
   }
 

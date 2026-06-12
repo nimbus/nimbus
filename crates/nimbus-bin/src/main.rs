@@ -25,6 +25,7 @@ mod start;
 mod test_support;
 mod token;
 mod ui;
+mod wire_credentials;
 
 use crate::auth::{AuthCommand, run_auth_command};
 use crate::backup::{BackupCommand, run_backup_command};

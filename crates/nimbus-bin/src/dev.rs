@@ -1,6 +1,6 @@
 use std::env;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Args, ValueEnum};
 
@@ -12,12 +12,19 @@ use crate::start::run_start_command;
 mod adapter;
 mod banner;
 mod env_file;
+mod firebase_project;
+mod firebase_scan;
 mod launch;
 mod plan;
+mod redetect;
+mod surfaces;
 mod watch;
+mod wire;
 
+use adapter::DevAdapter;
 use banner::emit_dev_banner;
 use env_file::write_env_local_deployment;
+use firebase_scan::{CoveredSet, FirebaseScan};
 use launch::{announce_launch_url_when_ready, operator_console_url};
 use plan::resolve_dev_plan;
 use watch::run_dev_watch_loop;
@@ -25,7 +32,7 @@ use watch::run_dev_watch_loop;
 #[cfg(test)]
 use crate::start::{CliTenantProvider, StartCommand};
 #[cfg(test)]
-use adapter::{DevAdapter, detect_dev_adapter};
+use adapter::detect_dev_adapter;
 #[cfg(test)]
 use banner::dev_banner_lines;
 #[cfg(test)]
@@ -107,40 +114,47 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
     }
 
     let plan = resolve_dev_plan(command, &cwd)?;
+    tracing::debug!(
+        mongodb = plan.wire_surfaces.mongodb,
+        dynamodb = plan.wire_surfaces.dynamodb,
+        aws_sdk_v2_hint = plan.wire_surfaces.aws_sdk_v2_hint,
+        "detected wire surfaces"
+    );
 
+    // D8: no detected adapter is guidance, not an exit. The session serves
+    // anyway — detection never gates serving — so an adapter added to the
+    // app is adopted live by the manifest watch loop below.
     if plan.adapter.is_none() && !skip_codegen {
         cli_ux::write_stderr_line("")?;
         cli_ux::write_stderr_line("No compatible adapter detected.")?;
         cli_ux::write_stderr_line("")?;
-        if adapter::has_firebase_dependency(&plan.app_dir) {
-            // A `firebase` dependency without firebase.json/functions markers is
-            // a Firestore client app — `nimbus dev` has no server-side sources
-            // to watch, so point at the migration commands instead of init.
-            cli_ux::write_stderr_line(
-                "Found a `firebase` dependency in package.json. To migrate this app to Nimbus:",
-            )?;
-            cli_ux::write_stderr_line("")?;
-            cli_ux::write_stderr_line(
-                "  nimbus packages provision firebase   # rewires `firebase` to the drop-in package",
-            )?;
-            cli_ux::write_stderr_line("  npm install")?;
-            cli_ux::write_stderr_line(
-                "  nimbus start --firestore             # serve the Firestore surface",
-            )?;
-            cli_ux::write_stderr_line("")?;
-            cli_ux::write_stderr_line(
-                "The drop-in package covers firebase/app and firebase/firestore imports.",
-            )?;
-            return Ok(());
-        }
         cli_ux::write_stderr_line("To get started:")?;
         cli_ux::write_stderr_line("  nimbus init convex          # Convex adapter")?;
         cli_ux::write_stderr_line("  nimbus init cloud-functions # Cloud Functions adapter")?;
-        cli_ux::write_stderr_line("  nimbus dev")?;
-        return Ok(());
+        cli_ux::write_stderr_line("")?;
+        cli_ux::write_stderr_line(
+            "The dev server is starting anyway; an adapter added to this app is adopted live.",
+        )?;
+    }
+
+    // The Firestore client path is the only dev flow that mutates the app
+    // (`package.json` is rewired to the drop-in `firebase` package), so it
+    // runs first and fail-closed: a refusal happens before any mutation —
+    // including the `.env.local` write below.
+    if matches!(plan.adapter, Some(DevAdapter::FirestoreClient)) && !skip_codegen {
+        wire_firestore_client_app(&plan.app_dir)?;
     }
 
     write_env_local_deployment(&plan.app_dir, &plan.deployment_slug)?;
+    // Detected wire surfaces get their resolved endpoints + generated
+    // credentials as Nimbus-owned keys; user-owned keys are never touched.
+    env_file::write_env_local_nimbus_keys(
+        &plan.app_dir,
+        &plan.wire.env_local_entries(plan.wire_surfaces),
+    )?;
+    for notice in wire::port_fallback_notices(&plan.wire, plan.wire_surfaces) {
+        cli_ux::write_stderr_line(&notice)?;
+    }
 
     if let Some(adapter) = &plan.adapter
         && !skip_codegen
@@ -150,7 +164,7 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
         // `file:` specifiers resolve — on a fresh clone `.nimbus/` is gitignored
         // and absent, and after a binary upgrade the payload must be refreshed
         // (which also forces a Node dependency reinstall so copies can't go stale).
-        if let Some(target) = adapter.adapter().provision_target() {
+        if let Some(target) = adapter.provision_target() {
             let selection = provision::Selection::parse(target)
                 .expect("adapter provision target must be a known selection");
             provision::ensure(&plan.app_dir, &selection)?;
@@ -172,10 +186,75 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
     }
 
     let watch_plan = plan.watch_plan();
+    let boot_auto_tenant = plan
+        .start_command
+        .auto_tenant
+        .clone()
+        .expect("dev plan should configure an auto tenant");
+    // The codegen watch roots are live state shared between the loops:
+    // seeded from the boot-time adapter, re-registered by the manifest
+    // watch loop when an adapter is adopted or removed mid-session.
+    let (watch_roots_tx, watch_roots_rx) = tokio::sync::watch::channel(plan.initial_watch_roots());
+    // Moving `plan.start_command` into the first arm while the manifest
+    // watch borrows `plan.app_dir` / `plan.wire` is a disjoint partial
+    // move — `DevPlan` has no `Drop`, so the borrow checker allows it.
     tokio::select! {
         result = run_start_command(plan.start_command) => result,
-        result = run_dev_watch_loop(watch_plan) => result,
+        result = run_dev_watch_loop(watch_plan, watch_roots_rx) => result,
+        result = redetect::run_manifest_watch_loop(redetect::ManifestWatch {
+            app_dir: &plan.app_dir,
+            wire: &plan.wire,
+            initial_surfaces: plan.wire_surfaces,
+            initial_adapter: plan.adapter,
+            boot_auto_tenant,
+            watch_roots: &watch_roots_tx,
+        }) => result,
     }
+}
+
+/// Scan-gated Firebase wiring: statically scan the app's imports against
+/// the drop-in `firebase` package's covered set, then either wire the app
+/// (provision the embedded closure, rewire `package.json` to the
+/// provisioned `file:` spec, force a Node reinstall) or refuse before any
+/// mutation with every blocking finding listed.
+fn wire_firestore_client_app(app_dir: &Path) -> io::Result<()> {
+    let covered = CoveredSet::from_embedded_manifest()?;
+    let scan = firebase_scan::scan_app(app_dir, &covered)?;
+    if !scan.passes() {
+        for line in firestore_wiring_refusal_lines(&scan, &covered) {
+            cli_ux::write_stderr_line(&line)?;
+        }
+        return Err(io::Error::other(
+            "refusing to wire this app: the import scan found Firebase usage \
+             the drop-in `firebase` package does not cover",
+        ));
+    }
+    let selection = provision::Selection::parse("firebase")
+        .expect("firebase must be a known provision selection");
+    provision::ensure(app_dir, &selection)?;
+    Ok(())
+}
+
+fn firestore_wiring_refusal_lines(scan: &FirebaseScan, covered: &CoveredSet) -> Vec<String> {
+    let mut lines = vec![
+        String::new(),
+        "This app uses Firebase modules the drop-in `firebase` package does not cover:".to_string(),
+        String::new(),
+    ];
+    for finding in scan.blocking_findings() {
+        lines.push(format!("  {}", finding.describe()));
+    }
+    lines.push(String::new());
+    lines.push(format!(
+        "Covered imports: {}",
+        covered.covered_specifiers().collect::<Vec<_>>().join(", ")
+    ));
+    lines.push("No files were changed.".to_string());
+    lines.push(
+        "Compatibility reference: https://nimbusdocs.com/reference/firebase/compatibility/"
+            .to_string(),
+    );
+    lines
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
@@ -442,6 +521,244 @@ mod tests {
     }
 
     #[test]
+    fn firestore_client_plan_maps_discovered_project_to_auto_tenant() {
+        let temp = tempdir().expect("tempdir should build");
+        // Real apps live in git repos; the boundary keeps the app-dir
+        // walk-up from escaping the fixture.
+        fs::create_dir_all(temp.path().join(".git")).expect(".git boundary should create");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"dependencies": {"firebase": "^11.0.0"}}"#,
+        )
+        .expect("package.json should write");
+        fs::write(
+            temp.path().join(".firebaserc"),
+            r#"{"projects": {"default": "acme-staging"}}"#,
+        )
+        .expect(".firebaserc should write");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+
+        assert_eq!(plan.adapter, Some(DevAdapter::FirestoreClient));
+        assert_eq!(
+            plan.start_command.auto_tenant,
+            Some("acme-staging".to_string()),
+            "the auto-created tenant must be the tenant the app's requests resolve to"
+        );
+        let mapping = plan
+            .firestore_tenant
+            .as_ref()
+            .expect("firestore client plan should carry the tenant mapping");
+        assert_eq!(mapping.tenant, "acme-staging");
+        assert_eq!(
+            mapping.source,
+            firebase_project::ProjectTenantSource::FirebaseRc
+        );
+        assert!(
+            dev_banner_lines(&plan)
+                .iter()
+                .any(|line| line == "Tenant:     acme-staging (.firebaserc default project)"),
+            "banner must name the mapped tenant and its source"
+        );
+    }
+
+    #[test]
+    fn firestore_client_plan_falls_back_to_demo_tenant() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join(".git")).expect(".git boundary should create");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"dependencies": {"firebase": "^11.0.0"}}"#,
+        )
+        .expect("package.json should write");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+
+        assert_eq!(plan.start_command.auto_tenant, Some("demo".to_string()));
+        assert_eq!(
+            plan.firestore_tenant
+                .as_ref()
+                .expect("firestore client plan should carry the tenant mapping")
+                .source,
+            firebase_project::ProjectTenantSource::DemoFallback
+        );
+        assert!(
+            dev_banner_lines(&plan)
+                .iter()
+                .any(|line| line == "Tenant:     demo (no Firebase project id found)"),
+            "banner must state the demo fallback"
+        );
+    }
+
+    #[test]
+    fn firebaserc_marks_the_app_root_for_nested_cwd() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join(".git")).expect(".git boundary should create");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"dependencies": {"firebase": "^11.0.0"}}"#,
+        )
+        .expect("package.json should write");
+        fs::write(
+            temp.path().join(".firebaserc"),
+            r#"{"projects": {"default": "acme-staging"}}"#,
+        )
+        .expect(".firebaserc should write");
+        let nested = temp.path().join("src").join("components");
+        fs::create_dir_all(&nested).expect("nested cwd should create");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), &nested)
+            .expect("dev plan should resolve");
+
+        assert_eq!(
+            plan.app_dir,
+            temp.path()
+                .canonicalize()
+                .expect("app dir should canonicalize"),
+            ".firebaserc must mark the app root from a nested cwd"
+        );
+        assert_eq!(plan.adapter, Some(DevAdapter::FirestoreClient));
+        assert_eq!(
+            plan.start_command.auto_tenant,
+            Some("acme-staging".to_string())
+        );
+    }
+
+    #[test]
+    fn non_firestore_apps_keep_demo_tenant_despite_project_signals() {
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+        fs::write(
+            temp.path().join(".firebaserc"),
+            r#"{"projects": {"default": "acme-staging"}}"#,
+        )
+        .expect(".firebaserc should write");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+
+        assert!(matches!(plan.adapter, Some(DevAdapter::Convex { .. })));
+        assert_eq!(
+            plan.start_command.auto_tenant,
+            Some("demo".to_string()),
+            "projectId mapping applies only to the Firestore client adapter"
+        );
+        assert!(plan.firestore_tenant.is_none());
+    }
+
+    fn firestore_client_fixture(temp: &Path) {
+        fs::create_dir_all(temp.join(".git")).expect(".git boundary should create");
+        fs::write(
+            temp.join("package.json"),
+            r#"{"dependencies": {"firebase": "^11.0.0"}}"#,
+        )
+        .expect("package.json should write");
+        fs::write(
+            temp.join(".firebaserc"),
+            r#"{"projects": {"default": "acme-staging"}}"#,
+        )
+        .expect(".firebaserc should write");
+    }
+
+    #[test]
+    fn firestore_client_banner_states_endpoint_and_omits_watch_line() {
+        let temp = tempdir().expect("tempdir should build");
+        firestore_client_fixture(temp.path());
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        let lines = dev_banner_lines(&plan);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Adapter:    firestore-client"),
+            "banner must state the adapter: {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Tenant:     acme-staging (.firebaserc default project)"),
+            "banner must state the mapped tenant: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line
+                == "Firestore:  http://localhost:3210/v1/projects/acme-staging/databases/(default)/documents"),
+            "banner must state the Firestore endpoint: {lines:?}"
+        );
+        assert!(
+            lines.iter().all(|line| !line.starts_with("Watch:")),
+            "a client app has no server sources; the banner must not claim watching: {lines:?}"
+        );
+
+        let once_plan = resolve_dev_plan(parse_dev(["nimbus", "dev", "--once"]), temp.path())
+            .expect("dev plan should resolve");
+        assert!(
+            dev_banner_lines(&once_plan)
+                .iter()
+                .all(|line| !line.starts_with("Watch:")),
+            "--once must not reintroduce a Watch line for client apps"
+        );
+    }
+
+    #[test]
+    fn firestore_client_start_command_omits_app_dir_so_start_accepts_it() {
+        // Start rejects explicit app dirs without a Convex or Cloud
+        // Functions surface, and its codegen preflight only acts on a
+        // resolved app dir — so handing start no app dir is both what
+        // makes `nimbus dev` boot for a client app and what guarantees
+        // no codegen ever writes `_generated/` into it.
+        let temp = tempdir().expect("tempdir should build");
+        firestore_client_fixture(temp.path());
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        assert!(
+            plan.start_command.app_dir.is_none(),
+            "client apps must hand start no app dir"
+        );
+        let resolved = crate::start::resolve_start_app_dir(&plan.start_command)
+            .expect("start must accept a firestore client start command");
+        assert!(
+            resolved.is_none(),
+            "no resolved app dir means the codegen preflight and registry loads stay off"
+        );
+        assert!(
+            !temp.path().join("_generated").exists(),
+            "plan resolution must not create codegen artifacts in the app dir"
+        );
+    }
+
+    #[tokio::test]
+    async fn firestore_client_long_running_watch_loop_stays_idle() {
+        // The dev loop races the server against the watch loop in a
+        // select!. If the empty-roots branch ever completed instead of
+        // idling, the select! would resolve and the long-running server
+        // would exit at startup for every client app.
+        let temp = tempdir().expect("tempdir should build");
+        firestore_client_fixture(temp.path());
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        let watch_plan = plan.watch_plan();
+        assert!(
+            plan.initial_watch_roots().is_empty(),
+            "client apps have no server sources to watch"
+        );
+        let (_roots_tx, roots_rx) = tokio::sync::watch::channel(plan.initial_watch_roots());
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            run_dev_watch_loop(watch_plan, roots_rx),
+        )
+        .await;
+        assert!(
+            outcome.is_err(),
+            "the watch loop must idle forever with no source roots"
+        );
+    }
+
+    #[test]
     fn dev_plan_detects_parent_app_from_source_root() {
         let temp = tempdir().expect("tempdir should build");
         create_source_root(temp.path(), "nimbus");
@@ -568,6 +885,9 @@ mod tests {
             compose_selection: Some(selection),
             local_url: "http://localhost:3210/".to_owned(),
             adapter: None,
+            firestore_tenant: None,
+            wire_surfaces: surfaces::WireSurfaces::default(),
+            wire: wire::WirePlan::fixture(),
             once: false,
             tail_logs: DevTailLogsMode::PauseOnSync,
             start_command: StartCommand::default(),
@@ -579,6 +899,79 @@ mod tests {
         assert!(lines.iter().any(|line| {
             line == "Compose:    COMPOSE_FILE=./compose.yaml (+ 1 extra Compose files)"
         }));
+    }
+
+    #[test]
+    fn dev_banner_lists_detected_wire_endpoints() {
+        let mut plan = DevPlan {
+            app_dir: PathBuf::from("/workspace"),
+            data_dir: PathBuf::from("/workspace/.nimbus/dev"),
+            deployment_slug: "workspace-abcd1234".to_owned(),
+            compose_selection: None,
+            local_url: "http://localhost:3210/".to_owned(),
+            adapter: None,
+            firestore_tenant: None,
+            wire_surfaces: surfaces::WireSurfaces {
+                mongodb: true,
+                dynamodb: true,
+                aws_sdk_v2_hint: false,
+            },
+            wire: wire::WirePlan::fixture(),
+            once: false,
+            tail_logs: DevTailLogsMode::PauseOnSync,
+            start_command: StartCommand::default(),
+            auto_open_decision: AutoOpenDecision::open(),
+        };
+
+        let lines = dev_banner_lines(&plan);
+        assert!(
+            lines.iter().any(|line| line
+                == "MongoDB:    mongodb://127.0.0.1:27017/ (NIMBUS_MONGODB_URL in .env.local)"),
+            "{lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("new MongoClient(process.env.NIMBUS_MONGODB_URL)")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line
+                == "DynamoDB:   http://127.0.0.1:8000 (NIMBUS_DYNAMODB_ENDPOINT in .env.local)"),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("new DynamoDBClient(")
+                && line.contains("process.env.NIMBUS_DYNAMODB_SECRET_ACCESS_KEY")),
+            "{lines:?}"
+        );
+        // The banner references env keys, never credential values.
+        assert!(
+            lines.iter().all(|line| {
+                !line.contains(&plan.wire.credentials.mongodb_password)
+                    && !line.contains(&plan.wire.credentials.dynamodb_secret_access_key)
+            }),
+            "the banner must never print secrets: {lines:?}"
+        );
+
+        // D3: an aws-sdk v2 import alone earns a hint, not endpoint
+        // promotion.
+        plan.wire_surfaces = surfaces::WireSurfaces {
+            mongodb: false,
+            dynamodb: false,
+            aws_sdk_v2_hint: true,
+        };
+        let lines = dev_banner_lines(&plan);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("Hint:") && line.contains("@aws-sdk/client-dynamodb")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().all(|line| !line.starts_with("DynamoDB:")),
+            "an undetected surface must not be promoted: {lines:?}"
+        );
     }
 
     #[test]
@@ -697,6 +1090,646 @@ mod tests {
                 .map(|path| fs::canonicalize(path).unwrap())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[tokio::test]
+    async fn dev_serves_firestore_routes_without_firebase_markers() {
+        // DX contract: dev mounts the Firestore-compatible route family
+        // unconditionally — zero Firebase markers in the app (no
+        // firebase.json, no firebase dependency). The routes ride the main
+        // HTTP listener and are inert without callers.
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        assert!(
+            plan.start_command.firestore,
+            "dev plan must request the Firestore route family unconditionally"
+        );
+
+        // Resolve through the same enablement path `nimbus start` uses; the
+        // wire listeners are always available too (D6/D7), store-backed on
+        // the plan's ephemeral ports.
+        let enablement = crate::start::adapters::resolve_adapter_enablement_with_env(
+            &plan.start_command,
+            plan.start_command
+                .control_data_dir
+                .as_deref()
+                .expect("dev plan sets the control data dir"),
+            |_| None,
+            |_| true,
+        )
+        .expect("dev enablement should resolve");
+        assert!(enablement.firebase.is_some());
+        assert!(enablement.mongodb.is_some());
+        assert!(enablement.dynamodb.is_some());
+
+        let engine = std::sync::Arc::new(
+            nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"),
+        );
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("addr should resolve");
+        let task = tokio::spawn(nimbus_server::serve(
+            listener,
+            enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone())),
+        ));
+        crate::test_support::wait_for_live_server_health(
+            "dev-shaped server should answer /health",
+            addr,
+            &task,
+        )
+        .await;
+
+        let response = reqwest::Client::new()
+            .get(format!(
+                "http://{addr}/v1/projects/demo/databases/(default)/documents/notes"
+            ))
+            .send()
+            .await
+            .expect("firestore request should send");
+        assert_ne!(
+            response.status(),
+            reqwest::StatusCode::NOT_FOUND,
+            "dev must answer the Firestore route family without Firebase markers"
+        );
+
+        task.abort();
+        let _ = task.await;
+        engine.quiesce().await;
+    }
+
+    #[tokio::test]
+    async fn pure_convex_dev_serves_wire_listeners_on_ephemeral_ports() {
+        // D6: a pure-Convex app (no driver deps) still gets both wire
+        // listeners — on ephemeral ports nothing in the app references, so
+        // a real mongod or DynamoDB Local beside it sees zero interference.
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        assert!(!plan.wire_surfaces.mongodb && !plan.wire_surfaces.dynamodb);
+        let mongodb_port = plan
+            .start_command
+            .mongodb_port
+            .expect("dev plan pins the mongodb port");
+        let dynamodb_port = plan
+            .start_command
+            .dynamodb_port
+            .expect("dev plan pins the dynamodb port");
+
+        let enablement = crate::start::adapters::resolve_adapter_enablement_with_env(
+            &plan.start_command,
+            plan.start_command
+                .control_data_dir
+                .as_deref()
+                .expect("dev plan sets the control data dir"),
+            |_| None,
+            |_| true,
+        )
+        .expect("dev enablement should resolve");
+        assert!(enablement.mongodb.is_some());
+        assert!(enablement.dynamodb.is_some());
+
+        let engine = std::sync::Arc::new(
+            nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"),
+        );
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("addr should resolve");
+        let task = tokio::spawn(nimbus_server::serve(
+            listener,
+            enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone())),
+        ));
+        crate::test_support::wait_for_live_server_health(
+            "dev-shaped server should answer /health",
+            addr,
+            &task,
+        )
+        .await;
+
+        assert!(
+            tokio::net::TcpStream::connect(("127.0.0.1", mongodb_port))
+                .await
+                .is_ok(),
+            "the mongodb listener should accept connections on the plan's ephemeral port"
+        );
+        assert!(
+            tokio::net::TcpStream::connect(("127.0.0.1", dynamodb_port))
+                .await
+                .is_ok(),
+            "the dynamodb listener should accept connections on the plan's ephemeral port"
+        );
+
+        task.abort();
+        let _ = task.await;
+        engine.quiesce().await;
+    }
+
+    fn workspace_wire_selftest_dependencies_available(repo_root: &Path) -> bool {
+        let root_node_modules = repo_root.join("node_modules");
+        let has_dependency = |package_dir: &str, scoped_segments: &[&str]| {
+            let candidates = [
+                root_node_modules.clone(),
+                repo_root.join(package_dir).join("node_modules"),
+            ];
+            candidates.iter().any(|node_modules| {
+                let mut path = node_modules.clone();
+                for segment in scoped_segments {
+                    path.push(segment);
+                }
+                path.is_dir()
+            })
+        };
+
+        repo_root
+            .join("packages/mongodb/src/selftest.mjs")
+            .is_file()
+            && repo_root
+                .join("packages/dynamodb/src/selftest.mjs")
+                .is_file()
+            && has_dependency("packages/mongodb", &["mongodb"])
+            && has_dependency("packages/dynamodb", &["@aws-sdk", "client-dynamodb"])
+    }
+
+    #[tokio::test]
+    async fn detected_wire_app_round_trips_mongodb_and_dynamodb_drivers() {
+        // DXW3 live gate: an app declaring both drivers, served by a
+        // dev-shaped server, completes real driver round-trips using
+        // exactly the credentials dev advertises in `.env.local` — and the
+        // selftests' wrong-credential probes prove the listeners reject
+        // anything else.
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root should exist");
+        if !workspace_wire_selftest_dependencies_available(repo_root) {
+            eprintln!(
+                "skipping wire round-trip selftests because JS workspace dependencies are unavailable"
+            );
+            return;
+        }
+
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join(".git")).expect(".git boundary should create");
+        create_source_root(temp.path(), "convex");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"dependencies": {"mongodb": "^6.0.0", "@aws-sdk/client-dynamodb": "^3.600.0"}}"#,
+        )
+        .expect("package.json should write");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        assert!(plan.wire_surfaces.mongodb && plan.wire_surfaces.dynamodb);
+
+        let enablement = crate::start::adapters::resolve_adapter_enablement_with_env(
+            &plan.start_command,
+            plan.start_command
+                .control_data_dir
+                .as_deref()
+                .expect("dev plan sets the control data dir"),
+            |_| None,
+            |_| true,
+        )
+        .expect("dev enablement should resolve");
+        let engine = std::sync::Arc::new(
+            nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"),
+        );
+        // Mirror boot's ensure_auto_tenant: the DynamoDB binding targets it.
+        let auto_tenant = plan
+            .start_command
+            .auto_tenant
+            .clone()
+            .expect("dev plan sets an auto tenant");
+        engine
+            .create_tenant(nimbus::TenantId::new(&auto_tenant).expect("tenant id is valid"))
+            .expect("auto tenant should create");
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("addr should resolve");
+        let task = tokio::spawn(nimbus_server::serve(
+            listener,
+            enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone())),
+        ));
+        crate::test_support::wait_for_live_server_health(
+            "dev-shaped server should answer /health",
+            addr,
+            &task,
+        )
+        .await;
+
+        // MongoDB: real driver CRUD + aggregation with the store
+        // credentials, plus the selftest's wrong-password rejection probe.
+        let mongodb_port = plan
+            .start_command
+            .mongodb_port
+            .expect("dev plan pins the mongodb port");
+        let output = tokio::process::Command::new("node")
+            .current_dir(repo_root)
+            .arg("./packages/mongodb/src/selftest.mjs")
+            .arg("--smoke-only")
+            .arg("--smoke-port")
+            .arg(mongodb_port.to_string())
+            .arg("--smoke-username")
+            .arg(&plan.wire.credentials.mongodb_username)
+            .arg("--smoke-password")
+            .arg(&plan.wire.credentials.mongodb_password)
+            .output()
+            .await
+            .expect("mongodb selftest should run");
+        assert!(
+            output.status.success(),
+            "mongodb round-trip selftest should pass\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        // DynamoDB: real SigV4 driver round-trip with the store access
+        // key, plus the selftest's wrong-secret rejection probe.
+        let dynamodb_port = plan
+            .start_command
+            .dynamodb_port
+            .expect("dev plan pins the dynamodb port");
+        let output = tokio::process::Command::new("node")
+            .current_dir(repo_root)
+            .arg("./packages/dynamodb/src/selftest.mjs")
+            .arg("--smoke-only")
+            .arg("--smoke-port")
+            .arg(dynamodb_port.to_string())
+            .arg("--smoke-access-key-id")
+            .arg(&plan.wire.credentials.dynamodb_access_key_id)
+            .arg("--smoke-secret-access-key")
+            .arg(&plan.wire.credentials.dynamodb_secret_access_key)
+            .output()
+            .await
+            .expect("dynamodb selftest should run");
+        assert!(
+            output.status.success(),
+            "dynamodb round-trip selftest should pass\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        task.abort();
+        let _ = task.await;
+        engine.quiesce().await;
+    }
+
+    #[tokio::test]
+    async fn mid_session_mongodb_adoption_round_trips_with_subscriptions_intact() {
+        // DXL1 live gate: adoption is presentation-only (D6). The MongoDB
+        // listener has served on the plan's port since boot; the manifest
+        // watch notices the new dependency and refreshes `.env.local` from
+        // the boot-time wire plan; the official driver then round-trips via
+        // that unchanged listener; and a main-listener subscription opened
+        // before the adoption keeps receiving pushes — nothing restarts.
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root should exist");
+        if !workspace_wire_selftest_dependencies_available(repo_root) {
+            eprintln!(
+                "skipping mid-session adoption selftest because JS workspace dependencies are unavailable"
+            );
+            return;
+        }
+
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join(".git")).expect(".git boundary should create");
+        create_source_root(temp.path(), "convex");
+        fs::write(temp.path().join("package.json"), r#"{"dependencies": {}}"#)
+            .expect("package.json should write");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        assert!(
+            !plan.wire_surfaces.mongodb,
+            "the app must not declare the driver at boot"
+        );
+        let mongodb_port = plan
+            .start_command
+            .mongodb_port
+            .expect("dev plan pins the mongodb port");
+
+        let enablement = crate::start::adapters::resolve_adapter_enablement_with_env(
+            &plan.start_command,
+            plan.start_command
+                .control_data_dir
+                .as_deref()
+                .expect("dev plan sets the control data dir"),
+            |_| None,
+            |_| true,
+        )
+        .expect("dev enablement should resolve");
+        assert!(
+            enablement.mongodb.is_some(),
+            "the listener serves from boot regardless of detection (D6)"
+        );
+        let engine = std::sync::Arc::new(
+            nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"),
+        );
+        let auto_tenant = plan
+            .start_command
+            .auto_tenant
+            .clone()
+            .expect("dev plan sets an auto tenant");
+        engine
+            .create_tenant(nimbus::TenantId::new(&auto_tenant).expect("tenant id is valid"))
+            .expect("auto tenant should create");
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("addr should resolve");
+        let task = tokio::spawn(nimbus_server::serve(
+            listener,
+            enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone())),
+        ));
+        crate::test_support::wait_for_live_server_health(
+            "dev-shaped server should answer /health",
+            addr,
+            &task,
+        )
+        .await;
+
+        // Open a main-listener subscription before the adoption; it must
+        // stay live across the rescan.
+        let mut socket =
+            nimbus_testing::WebSocketFixture::connect(&format!("ws://{addr}/ws"), &auto_tenant)
+                .await;
+        socket.subscribe_all("dxl1", "tasks").await;
+        let initial = socket.next_json().await;
+        assert_eq!(initial["type"], serde_json::json!("subscription_result"));
+        assert_eq!(initial["request_id"], serde_json::json!("dxl1"));
+        assert_eq!(initial["data"], serde_json::json!([]));
+
+        // Drive the real manifest watch loop. Prime it once so the baseline
+        // snapshot predates the dependency write — the future is lazy, so
+        // without this poll the baseline would already include the change.
+        let (watch_roots_tx, _watch_roots_rx) =
+            tokio::sync::watch::channel(plan.initial_watch_roots());
+        let manifest_loop = redetect::run_manifest_watch_loop(redetect::ManifestWatch {
+            app_dir: &plan.app_dir,
+            wire: &plan.wire,
+            initial_surfaces: plan.wire_surfaces,
+            initial_adapter: plan.adapter.clone(),
+            boot_auto_tenant: auto_tenant.clone(),
+            watch_roots: &watch_roots_tx,
+        });
+        tokio::pin!(manifest_loop);
+        let primed =
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut manifest_loop).await;
+        assert!(primed.is_err(), "the manifest watch loop must keep running");
+
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"dependencies": {"mongodb": "^6.0.0"}}"#,
+        )
+        .expect("package.json should gain the driver");
+
+        let env_path = temp.path().join(".env.local");
+        let wait_for_refresh = async {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                if let Ok(content) = fs::read_to_string(&env_path)
+                    && content.contains("NIMBUS_MONGODB_URL=")
+                {
+                    break content;
+                }
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    ".env.local should gain NIMBUS_MONGODB_URL within 10s of the manifest change"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        };
+        let env_content = tokio::select! {
+            _ = &mut manifest_loop => panic!("the manifest watch loop must not exit"),
+            content = wait_for_refresh => content,
+        };
+        // The advertised URL carries the boot-time port and credentials —
+        // the rescan presents the listener that has been serving all along;
+        // it never re-resolves.
+        let expected_url = format!(
+            "NIMBUS_MONGODB_URL=mongodb://{}:{}@127.0.0.1:{}/",
+            plan.wire.credentials.mongodb_username,
+            plan.wire.credentials.mongodb_password,
+            mongodb_port,
+        );
+        assert!(
+            env_content.contains(&expected_url),
+            ".env.local must advertise the boot-time listener: {env_content}"
+        );
+
+        // The driver round-trips through the already-serving listener.
+        let output = tokio::process::Command::new("node")
+            .current_dir(repo_root)
+            .arg("./packages/mongodb/src/selftest.mjs")
+            .arg("--smoke-only")
+            .arg("--smoke-port")
+            .arg(mongodb_port.to_string())
+            .arg("--smoke-username")
+            .arg(&plan.wire.credentials.mongodb_username)
+            .arg("--smoke-password")
+            .arg(&plan.wire.credentials.mongodb_password)
+            .output()
+            .await
+            .expect("mongodb selftest should run");
+        assert!(
+            output.status.success(),
+            "mid-session mongodb round-trip should pass\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        // The pre-adoption subscription is still live: an insert through
+        // the main listener pushes to the socket opened before the rescan.
+        let insert = reqwest::Client::new()
+            .post(format!("http://{addr}/api/tenants/{auto_tenant}/documents"))
+            .json(&serde_json::json!({
+                "table": "tasks",
+                "fields": { "title": "still-live" },
+            }))
+            .send()
+            .await
+            .expect("document insert should send");
+        assert!(
+            insert.status().is_success(),
+            "document insert should succeed: {}",
+            insert.status()
+        );
+        let pushed = socket
+            .next_json_with_timeout(std::time::Duration::from_secs(5))
+            .await
+            .expect("the pre-adoption subscription should still receive pushes");
+        assert_eq!(pushed["type"], serde_json::json!("subscription_result"));
+        assert_eq!(pushed["data"][0]["title"], serde_json::json!("still-live"));
+
+        task.abort();
+        let _ = task.await;
+        engine.quiesce().await;
+    }
+
+    fn workspace_firebase_selftest_dependencies_available(repo_root: &Path) -> bool {
+        let root_node_modules = repo_root.join("node_modules");
+        let package_node_modules = repo_root.join("packages/firebase/node_modules");
+        let has_dependency = |node_modules: &Path, scoped_segments: &[&str]| {
+            let mut path = node_modules.to_path_buf();
+            for segment in scoped_segments {
+                path.push(segment);
+            }
+            path.is_dir()
+        };
+
+        repo_root
+            .join("packages/firebase/src/selftest.mjs")
+            .is_file()
+            && (has_dependency(&root_node_modules, &["esbuild"])
+                || has_dependency(&package_node_modules, &["esbuild"]))
+            && (has_dependency(&root_node_modules, &["@connectrpc", "connect"])
+                || has_dependency(&package_node_modules, &["@connectrpc", "connect"]))
+            && (has_dependency(&root_node_modules, &["@connectrpc", "connect-web"])
+                || has_dependency(&package_node_modules, &["@connectrpc", "connect-web"]))
+            && (has_dependency(&root_node_modules, &["@bufbuild", "protobuf"])
+                || has_dependency(&package_node_modules, &["@bufbuild", "protobuf"]))
+    }
+
+    #[tokio::test]
+    async fn covered_app_round_trips_firestore_via_emulator_connection() {
+        // DXF4 live gate: a covered Firestore client app under a dev-shaped
+        // server completes addDoc/getDocs/onSnapshot through
+        // connectFirestoreEmulator, addressing the project id dev discovered
+        // — proving the auto-created tenant IS the tenant the app's requests
+        // resolve to.
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root should exist");
+        if !workspace_firebase_selftest_dependencies_available(repo_root) {
+            eprintln!(
+                "skipping firestore round-trip selftest because JS workspace dependencies are unavailable"
+            );
+            return;
+        }
+
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join(".git")).expect(".git boundary should create");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"dependencies": {"firebase": "^11.0.0"}}"#,
+        )
+        .expect("package.json should write");
+        fs::write(
+            temp.path().join(".firebaserc"),
+            r#"{"projects": {"default": "dxf4-round-trip"}}"#,
+        )
+        .expect(".firebaserc should write");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        assert_eq!(plan.adapter, Some(DevAdapter::FirestoreClient));
+        assert_eq!(
+            plan.start_command.auto_tenant,
+            Some("dxf4-round-trip".to_string()),
+            "the auto-created tenant must be the discovered project id"
+        );
+
+        let enablement = crate::start::adapters::resolve_adapter_enablement_with_env(
+            &plan.start_command,
+            plan.start_command
+                .control_data_dir
+                .as_deref()
+                .expect("dev plan sets the control data dir"),
+            |_| None,
+            |_| true,
+        )
+        .expect("dev enablement should resolve");
+        let engine = std::sync::Arc::new(
+            nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"),
+        );
+        // Mirror boot's ensure_auto_tenant for the planned auto_tenant.
+        engine
+            .create_tenant(nimbus::TenantId::new("dxf4-round-trip").expect("tenant id is valid"))
+            .expect("mapped tenant should create");
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("addr should resolve");
+        let task = tokio::spawn(nimbus_server::serve(
+            listener,
+            enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone())),
+        ));
+        crate::test_support::wait_for_live_server_health(
+            "dev-shaped server should answer /health",
+            addr,
+            &task,
+        )
+        .await;
+
+        let output = tokio::process::Command::new("node")
+            .current_dir(repo_root)
+            .arg("./packages/firebase/src/selftest.mjs")
+            .arg("--round-trip-base-url")
+            .arg(format!("http://{addr}/"))
+            .arg("--round-trip-project-id")
+            .arg("dxf4-round-trip")
+            .output()
+            .await
+            .expect("firestore round-trip selftest should run");
+        assert!(
+            output.status.success(),
+            "firestore round-trip selftest should pass\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        task.abort();
+        let _ = task.await;
+        engine.quiesce().await;
+    }
+
+    #[test]
+    fn convex_app_with_mongodb_dep_resolves_adapter_and_surface() {
+        // App adapters are singular; wire surfaces are a set that combines
+        // with any app adapter. A Convex app that also declares `mongodb`
+        // must resolve BOTH, independently.
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"dependencies": {"mongodb": "^6.0.0"}}"#,
+        )
+        .expect("package.json should write");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+
+        assert!(
+            matches!(plan.adapter, Some(DevAdapter::Convex { .. })),
+            "Convex app adapter must resolve despite the driver dependency"
+        );
+        assert!(
+            plan.wire_surfaces.mongodb,
+            "mongodb dependency must resolve the MongoDB wire surface"
+        );
+        assert!(!plan.wire_surfaces.dynamodb);
+        assert!(!plan.wire_surfaces.aws_sdk_v2_hint);
+    }
+
+    #[test]
+    fn dev_plan_without_driver_deps_resolves_empty_wire_surfaces() {
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+
+        assert_eq!(plan.wire_surfaces, surfaces::WireSurfaces::default());
     }
 
     #[test]
@@ -989,6 +2022,127 @@ mod tests {
             Some(DevAdapter::CloudFunctions {
                 source_roots: vec![temp.path().to_path_buf()],
             })
+        );
+    }
+
+    #[test]
+    fn refusal_leaves_package_json_byte_identical() {
+        let temp = tempdir().expect("tempdir should build");
+        // Deliberately non-canonical formatting: a refusal must not even
+        // reformat the manifest, let alone rewire it.
+        let manifest = "{\n    \"name\": \"client-app\",\n\n    \"dependencies\": {\"firebase\": \"^11.0.0\"}\n}\n";
+        fs::write(temp.path().join("package.json"), manifest).unwrap();
+        fs::create_dir_all(temp.path().join("src")).unwrap();
+        fs::write(
+            temp.path().join("src/auth.ts"),
+            "import { getAuth } from \"firebase/auth\";\n",
+        )
+        .unwrap();
+
+        let error = wire_firestore_client_app(temp.path())
+            .expect_err("uncovered firebase/auth import must refuse wiring");
+
+        assert!(
+            error.to_string().contains("refusing to wire"),
+            "unexpected refusal error: {error}"
+        );
+        assert_eq!(
+            fs::read(temp.path().join("package.json")).unwrap(),
+            manifest.as_bytes(),
+            "refusal must leave package.json byte-identical"
+        );
+        assert!(
+            !temp.path().join(".nimbus").exists(),
+            "refusal must not provision anything into the app"
+        );
+    }
+
+    #[test]
+    fn covered_app_is_rewired_to_the_provisioned_drop_in() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::write(
+            temp.path().join("package.json"),
+            "{\n  \"name\": \"client-app\",\n  \"dependencies\": {\n    \"firebase\": \"^11.0.0\"\n  }\n}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(temp.path().join("src")).unwrap();
+        fs::write(
+            temp.path().join("src/db.ts"),
+            "import { initializeApp } from \"firebase/app\";\n\
+             import { getFirestore, collection, addDoc } from \"firebase/firestore\";\n",
+        )
+        .unwrap();
+        // A registry-installed copy and a recorded install fingerprint: wiring
+        // must drop the stale copy and clear the fingerprint so the next
+        // dependency install refreshes from the provisioned payload.
+        fs::create_dir_all(temp.path().join("node_modules/firebase")).unwrap();
+        fs::write(
+            temp.path().join("node_modules/firebase/package.json"),
+            r#"{"name": "firebase", "version": "11.0.0"}"#,
+        )
+        .unwrap();
+        let state_path = temp.path().join(".nimbus/cache/node/dependency-state.json");
+        fs::create_dir_all(state_path.parent().unwrap()).unwrap();
+        fs::write(&state_path, "{}").unwrap();
+
+        wire_firestore_client_app(temp.path()).expect("covered app must wire");
+
+        let rewritten = fs::read_to_string(temp.path().join("package.json")).unwrap();
+        assert!(
+            rewritten.contains("\"firebase\": \"file:./.nimbus/packages/firebase\""),
+            "package.json must point firebase at the provisioned copy: {rewritten}"
+        );
+        assert!(
+            temp.path()
+                .join(".nimbus/packages/firebase/package.json")
+                .is_file(),
+            "the drop-in package payload must be provisioned"
+        );
+        assert!(
+            !temp.path().join("node_modules/firebase").exists(),
+            "the stale registry-installed copy must be dropped"
+        );
+        assert!(
+            !state_path.exists(),
+            "the install fingerprint must be cleared so the next install reinstalls"
+        );
+    }
+
+    #[test]
+    fn refusal_report_names_every_blocking_finding_with_file_line() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join("src")).unwrap();
+        fs::write(
+            temp.path().join("src/auth.ts"),
+            "import { getAuth } from \"firebase/auth\";\n",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("src/lazy.ts"),
+            "const flavor = pick();\nconst mod = await import(`firebase/${flavor}`);\n",
+        )
+        .unwrap();
+
+        let covered = CoveredSet::from_embedded_manifest().expect("embedded manifest");
+        let scan = firebase_scan::scan_app(temp.path(), &covered).expect("scan should run");
+        let lines = firestore_wiring_refusal_lines(&scan, &covered);
+        let report = lines.join("\n");
+
+        assert!(
+            report.contains("src/auth.ts:1") && report.contains("firebase/auth"),
+            "report must name the uncovered import with file:line: {report}"
+        );
+        assert!(
+            report.contains("src/lazy.ts:2"),
+            "report must name the dynamic import with file:line: {report}"
+        );
+        assert!(
+            report.contains("firebase/app") && report.contains("firebase/firestore"),
+            "report must list the covered set: {report}"
+        );
+        assert!(
+            report.contains("https://nimbusdocs.com/reference/firebase/compatibility/"),
+            "report must point at the compatibility reference: {report}"
         );
     }
 

@@ -30,7 +30,7 @@ use crate::deploy::resolve_deploy_app_dir;
 use crate::dirs;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum ResolvedStartAppDir {
+pub(crate) enum ResolvedStartAppDir {
     Explicit(PathBuf),
 }
 
@@ -54,7 +54,6 @@ pub(crate) async fn run_start_command(
         ensure_host_opt_in(&command.host, command.allow_network)?;
     }
     let cors_allowed_origins = resolve_cors_allowed_origins(&command)?;
-    let adapter_enablement = resolve_adapter_enablement(&command)?;
     let tls_config = match (&command.tls_cert, &command.tls_key) {
         (Some(cert), Some(key)) => Some(nimbus_server::TlsConfig::new(cert, key)),
         _ => None,
@@ -63,6 +62,10 @@ pub(crate) async fn run_start_command(
     let persistence_config = persistence_config_from_start_command(&command)?;
     let compose_control_data_dir =
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
+    // Adapter enablement resolves after the control data dir: default-on
+    // listeners without operator credentials load (or generate) theirs
+    // from the wire-credential store under that dir.
+    let adapter_enablement = resolve_adapter_enablement(&command, &compose_control_data_dir)?;
     // Snapshot first-boot before `Engine::new_with_persistence_config`
     // touches the data dir; otherwise the marker landscape we observe
     // would always say "second boot" because Engine initialization
@@ -181,15 +184,7 @@ pub(crate) async fn run_start_command(
     serve_options = serve_options.with_local_server_security(local_server_security);
     serve_options = serve_options.with_tenant_isolation_mode(command.tenant_isolation_mode);
     serve_options = serve_options.with_cors_allowed_origins(cors_allowed_origins);
-    if let Some(firebase_config) = adapter_enablement.firebase {
-        serve_options = serve_options.with_firebase_config(firebase_config);
-    }
-    if let Some(mongodb_config) = adapter_enablement.mongodb {
-        serve_options = serve_options.with_mongodb(mongodb_config);
-    }
-    if let Some(dynamodb_config) = adapter_enablement.dynamodb {
-        serve_options = serve_options.with_dynamodb(dynamodb_config);
-    }
+    serve_options = adapter_enablement.apply_to(serve_options);
     if let Some(tls_config) = tls_config {
         serve_options = serve_options.with_tls(tls_config);
     }
@@ -396,7 +391,7 @@ pub(super) fn start_startup_summary_lines(
     lines
 }
 
-pub(super) fn resolve_start_app_dir(
+pub(crate) fn resolve_start_app_dir(
     command: &StartCommand,
 ) -> Result<Option<ResolvedStartAppDir>, Error> {
     let Some(explicit_app_dir) = command.app_dir.as_deref() else {

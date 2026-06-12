@@ -168,4 +168,4 @@ npm run typecheck --workspace @nimbus/nimbus  # type-only selftest pass
 - [`convex`](../convex/README.md) — Convex-compatible aliases over this SDK
 - [`@nimbus/codegen`](../codegen/README.md) — the codegen engine, embedded in
   the `nimbus` binary and run via `nimbus codegen` (not app-installed)
-- [Convex compatibility reference](../../docs/private/adapters/convex/compatibility.md)
+- [Convex compatibility reference](../../docs/reference/convex/compatibility.md)

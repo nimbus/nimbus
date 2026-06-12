@@ -29,9 +29,11 @@ const { TableNames } = await client.send(new ListTablesCommand({}));
 ```
 
 The **access key id selects the tenant** — Nimbus binds each access key to a
-tenant server-side, so two clients with different keys are isolated. The secret
-is only verified when the server runs in strict SigV4 mode; in the default
-lookup mode any non-empty secret is accepted.
+tenant server-side, so two clients with different keys are isolated. Strict
+SigV4 verification is the default, so the secret must match the key's
+registered signing secret; only the embedding-only `insecure_dev_auth()`
+lookup mode (which the server refuses to bind to a non-loopback address)
+accepts any non-empty secret.
 
 ## API
 
@@ -65,6 +67,6 @@ npm run typecheck --workspace @nimbus/dynamodb   # type-only selftest pass
 
 ## Related
 
-- [DynamoDB SDK compatibility](../../docs/private/adapters/dynamodb/sdk-compatibility.md)
-- [DynamoDB feature coverage](../../docs/private/adapters/dynamodb/feature-coverage.md)
-- [Known divergences](../../docs/private/adapters/dynamodb/divergences.md)
+- [DynamoDB SDK compatibility](../../docs/reference/dynamodb/sdk-compatibility.md)
+- [DynamoDB feature coverage](../../docs/reference/dynamodb/feature-coverage.md)
+- [Known divergences](../../docs/reference/dynamodb/divergences.md)

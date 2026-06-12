@@ -23,7 +23,9 @@ yet, then [build your first app](/developers/first-app/).
 
 ## Adapter guides
 
-Each protocol surface has a front door and a migration guide:
+Each protocol surface has a front door and a migration guide. Every server
+serves these surfaces by default, and `nimbus dev` detects which one your app
+uses and wires the app to it automatically:
 
 - [Convex](/developers/convex/) — the Convex function model, schema, and
   clients; [migrate a Convex app](/developers/convex/migrate/).

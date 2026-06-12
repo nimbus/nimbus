@@ -58,18 +58,30 @@ does not block. See [Hardening](/operators/hardening/).
 
 ### Protocol adapters
 
-The Convex-compatible surface and the native API are always served.
-The other adapters are off by default and enabled per server:
+Every adapter surface is served by default — the Convex-compatible
+surface and native API on the main listener, the Firestore routes
+alongside them, and the MongoDB and DynamoDB wire listeners on their
+conventional ports:
 
-| Surface | Enable with | Credentials |
-| --- | --- | --- |
-| Firestore routes | `--firestore` | Main-listener auth applies |
-| MongoDB listener | `--mongodb-port <port>` | `--mongodb-username` (or `NIMBUS_MONGODB_USERNAME`) + `NIMBUS_MONGODB_PASSWORD` (env-only) |
-| DynamoDB listener | `--dynamodb-port <port>` | `--dynamodb-access-key KEY_ID:SECRET:TENANT` (repeatable) or `NIMBUS_DYNAMODB_ACCESS_KEYS` (comma-separated) |
+| Surface | Default | Switch off | Credential override |
+| --- | --- | --- | --- |
+| Firestore routes | on (main listener) | `--no-firestore` | Main-listener auth applies |
+| MongoDB listener | on (`127.0.0.1:27017`) | `--no-mongodb` | `--mongodb-username` (or `NIMBUS_MONGODB_USERNAME`) + `NIMBUS_MONGODB_PASSWORD` (env-only) |
+| DynamoDB listener | on (`127.0.0.1:8000`) | `--no-dynamodb` | `--dynamodb-access-key KEY_ID:SECRET:TENANT` (repeatable) or `NIMBUS_DYNAMODB_ACCESS_KEYS` (comma-separated) |
 
-The MongoDB listener is loopback-only. The DynamoDB listener may bind a
-non-loopback host with `--allow-network`; with no access keys configured
-it rejects every request.
+When a conventional port is busy, that listener is skipped with a
+warning. `--mongodb-port <port>` / `--dynamodb-port <port>` pin an
+explicit port instead — then a busy port is a hard startup error.
+
+Every request authenticates. Without credential overrides, both wire
+listeners use generated credentials persisted at `wire-credentials.json`
+(owner-only, `0600`) in the data directory; the generated DynamoDB key
+binds to the tenant `default`, and explicit access-key bindings replace
+it.
+
+The MongoDB listener is loopback-only — non-loopback hosts are refused
+even with `--allow-network`. The DynamoDB listener may bind a
+non-loopback host with `--dynamodb-host` plus `--allow-network`.
 
 ### TLS
 
