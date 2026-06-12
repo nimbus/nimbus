@@ -30,7 +30,7 @@ use crate::deploy::resolve_deploy_app_dir;
 use crate::dirs;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum ResolvedStartAppDir {
+pub(crate) enum ResolvedStartAppDir {
     Explicit(PathBuf),
 }
 
@@ -388,7 +388,7 @@ pub(super) fn start_startup_summary_lines(
     lines
 }
 
-pub(super) fn resolve_start_app_dir(
+pub(crate) fn resolve_start_app_dir(
     command: &StartCommand,
 ) -> Result<Option<ResolvedStartAppDir>, Error> {
     let Some(explicit_app_dir) = command.app_dir.as_deref() else {

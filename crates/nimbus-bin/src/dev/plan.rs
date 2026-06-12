@@ -93,6 +93,14 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         .as_ref()
         .map(|mapping| mapping.tenant.clone())
         .unwrap_or_else(|| DEMO_TENANT.to_string());
+    // A Firestore client app has no server-side authoring surface, so start
+    // gets no app dir: the codegen preflight and registry loads stay off and
+    // nothing ever writes `_generated/` into a client app. The dev-side app
+    // dir (env file, scan-gated wiring, banner) is unaffected.
+    let start_app_dir = match &adapter {
+        Some(DevAdapter::FirestoreClient) => None,
+        _ => Some(app_dir.clone()),
+    };
     // Detected wire surfaces do not flip listener flags here yet: listeners
     // are deny-by-default on credentials, and the generated-credential story
     // (DXW2/DXW3) is what turns a detected surface into an enabled one.
@@ -105,7 +113,7 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         data_dir: Some(data_dir.clone()),
         control_data_dir: Some(data_dir.clone()),
         tenant_provider: Some(CliTenantProvider::Sqlite),
-        app_dir: Some(app_dir.clone()),
+        app_dir: start_app_dir,
         skip_codegen: command.skip_codegen,
         debug_node_apis: command.debug_node_apis,
         compose_file: command.compose_file,

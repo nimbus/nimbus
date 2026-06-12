@@ -13,6 +13,8 @@ mod tests;
 
 #[cfg(test)]
 pub(crate) use self::boot::resolve_optional_compose_selection;
+#[cfg(test)]
+pub(crate) use self::boot::resolve_start_app_dir;
 pub(crate) use self::boot::run_start_command;
 pub(crate) use self::config::persistence_config_from_start_command;
 pub(crate) use self::config::{CliKeyProvider, CliTenantProvider};

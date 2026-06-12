@@ -612,6 +612,115 @@ mod tests {
         assert!(plan.firestore_tenant.is_none());
     }
 
+    fn firestore_client_fixture(temp: &Path) {
+        fs::create_dir_all(temp.join(".git")).expect(".git boundary should create");
+        fs::write(
+            temp.join("package.json"),
+            r#"{"dependencies": {"firebase": "^11.0.0"}}"#,
+        )
+        .expect("package.json should write");
+        fs::write(
+            temp.join(".firebaserc"),
+            r#"{"projects": {"default": "acme-staging"}}"#,
+        )
+        .expect(".firebaserc should write");
+    }
+
+    #[test]
+    fn firestore_client_banner_states_endpoint_and_omits_watch_line() {
+        let temp = tempdir().expect("tempdir should build");
+        firestore_client_fixture(temp.path());
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        let lines = dev_banner_lines(&plan);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Adapter:    firestore-client"),
+            "banner must state the adapter: {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Tenant:     acme-staging (.firebaserc default project)"),
+            "banner must state the mapped tenant: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line
+                == "Firestore:  http://localhost:3210/v1/projects/acme-staging/databases/(default)/documents"),
+            "banner must state the Firestore endpoint: {lines:?}"
+        );
+        assert!(
+            lines.iter().all(|line| !line.starts_with("Watch:")),
+            "a client app has no server sources; the banner must not claim watching: {lines:?}"
+        );
+
+        let once_plan = resolve_dev_plan(parse_dev(["nimbus", "dev", "--once"]), temp.path())
+            .expect("dev plan should resolve");
+        assert!(
+            dev_banner_lines(&once_plan)
+                .iter()
+                .all(|line| !line.starts_with("Watch:")),
+            "--once must not reintroduce a Watch line for client apps"
+        );
+    }
+
+    #[test]
+    fn firestore_client_start_command_omits_app_dir_so_start_accepts_it() {
+        // Start rejects explicit app dirs without a Convex or Cloud
+        // Functions surface, and its codegen preflight only acts on a
+        // resolved app dir — so handing start no app dir is both what
+        // makes `nimbus dev` boot for a client app and what guarantees
+        // no codegen ever writes `_generated/` into it.
+        let temp = tempdir().expect("tempdir should build");
+        firestore_client_fixture(temp.path());
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        assert!(
+            plan.start_command.app_dir.is_none(),
+            "client apps must hand start no app dir"
+        );
+        let resolved = crate::start::resolve_start_app_dir(&plan.start_command)
+            .expect("start must accept a firestore client start command");
+        assert!(
+            resolved.is_none(),
+            "no resolved app dir means the codegen preflight and registry loads stay off"
+        );
+        assert!(
+            !temp.path().join("_generated").exists(),
+            "plan resolution must not create codegen artifacts in the app dir"
+        );
+    }
+
+    #[tokio::test]
+    async fn firestore_client_long_running_watch_loop_stays_idle() {
+        // The dev loop races the server against the watch loop in a
+        // select!. If the empty-roots branch ever completed instead of
+        // idling, the select! would resolve and the long-running server
+        // would exit at startup for every client app.
+        let temp = tempdir().expect("tempdir should build");
+        firestore_client_fixture(temp.path());
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        let watch_plan = plan.watch_plan();
+        assert!(
+            watch_plan.source_roots.is_empty(),
+            "client apps have no server sources to watch"
+        );
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            run_dev_watch_loop(watch_plan),
+        )
+        .await;
+        assert!(
+            outcome.is_err(),
+            "the watch loop must stay pending forever with no source roots"
+        );
+    }
+
     #[test]
     fn dev_plan_detects_parent_app_from_source_root() {
         let temp = tempdir().expect("tempdir should build");

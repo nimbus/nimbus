@@ -35,6 +35,10 @@ pub(super) fn dev_banner_lines(plan: &DevPlan) -> Vec<String> {
             mapping.tenant,
             mapping.describe_source()
         ));
+        lines.push(format!(
+            "Firestore:  {}v1/projects/{}/databases/(default)/documents",
+            plan.local_url, mapping.tenant
+        ));
     }
     if let Some(selection) = plan.compose_selection.as_ref() {
         lines.push(format!(
@@ -43,6 +47,9 @@ pub(super) fn dev_banner_lines(plan: &DevPlan) -> Vec<String> {
         ));
     }
     match plan.adapter.as_ref() {
+        // A client app has no server-side sources: the watch loop never
+        // runs, so a Watch line would describe a loop that does not exist.
+        Some(adapter) if adapter.source_roots().is_empty() => {}
         Some(adapter) if plan.once => lines.push(format!(
             "Watch:      disabled by --once; detected {}",
             format_watch_roots(adapter.source_roots())
