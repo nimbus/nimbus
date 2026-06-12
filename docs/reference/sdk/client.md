@@ -1,5 +1,5 @@
 ---
-title: SDK Clients
+title: SDK clients
 description: Reference for @nimbus/nimbus/browser and @nimbus/nimbus/transports/rest — deployment clients, subscriptions, and the native REST client.
 sidebar:
   label: Clients

@@ -1,7 +1,8 @@
 ---
-title: WebSocket Listen
+title: Firestore WebSocket Listen
 description: The browser-oriented Firestore Listen transport — framing, subprotocols, auth tunneling, and close codes.
 sidebar:
+  label: WebSocket Listen
   order: 2
 ---
 

@@ -3,7 +3,7 @@ title: Tenant isolation
 description: The isolation model between Nimbus tenants — storage scoping, runtime isolation, sandbox boundaries, and auth — and the reasoning behind it.
 sidebar:
   label: Tenant isolation
-  order: 3
+  order: 4
 ---
 
 A single Nimbus server hosts many tenants. Each tenant is a complete,

@@ -1,7 +1,8 @@
 ---
-title: Errors
+title: Native API errors
 description: The structured error envelope, error code catalog, and HTTP status mappings for the native API.
 sidebar:
+  label: Errors
   order: 3
 ---
 

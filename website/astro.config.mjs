@@ -86,22 +86,25 @@ export default defineConfig({
             { label: 'DynamoDB', items: [{ autogenerate: { directory: 'developers/dynamodb' } }] },
             { label: 'Native API', items: [{ autogenerate: { directory: 'developers/native' } }] },
             { label: 'Node.js runtime', items: [{ autogenerate: { directory: 'developers/runtimes/nodejs' } }] },
-            { label: 'SDK', items: [{ autogenerate: { directory: 'developers/sdk' } }] },
           ],
         },
+        { label: 'Agents', items: [{ autogenerate: { directory: 'agents' } }] },
         { label: 'Operators', items: [{ autogenerate: { directory: 'operators' } }] },
         {
           label: 'Concepts',
+          // Pedagogical order — primitives before composites: engine, then
+          // data, then isolation, then the surfaces and runtimes built on
+          // them, then the resource model, then how it all scales.
           items: [
             'concepts',
             'concepts/how-nimbus-works',
-            'concepts/tenant-isolation',
             'concepts/data-and-mutations',
+            'concepts/tenant-isolation',
             'concepts/adapter-boundary',
             'concepts/runtime-permissions',
+            'concepts/nodejs-runtime',
             'concepts/resource-model',
             'concepts/scaling',
-            'concepts/nodejs-runtime',
             { label: 'Architecture', items: [{ autogenerate: { directory: 'concepts/architecture' } }] },
           ],
         },

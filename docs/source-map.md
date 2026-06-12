@@ -1,7 +1,7 @@
 # Source map
 
 This page maps user-facing behavior claims in the published docs
-(`docs/{get-started,developers,operators,concepts,reference}/`) to the files
+(`docs/{get-started,developers,agents,operators,concepts,reference}/`) to the files
 that implement them. The docs are descriptive; treat these files as the
 source-backed check before changing any behavior claim. Every page with a
 load-bearing claim gets a row; `scripts/check-docs.sh` verifies the listed
@@ -19,6 +19,7 @@ sources exist.
 | `get-started/self-host.md` | Local admin token required; token file locations | `crates/nimbus-operator/src/paths.rs`, `crates/nimbus-operator/src/token.rs`, `crates/nimbus-operator/src/access_policy.rs` |
 | `get-started/from-convex.md` | Convex function model + `convex/` layout compatibility | `packages/nimbus/src/server.ts`, `packages/convex/src/`, `crates/nimbus-convex/` |
 | `get-started/from-convex.md` | `nimbus dev` in an existing Convex app provisions packages and rewires the `convex` dependency to `file:./.nimbus/packages/convex` | `crates/nimbus-bin/src/provision.rs`, `crates/nimbus-bin/src/dev.rs` |
+| `get-started/deploy.md` | `nimbus deploy` flow: `NIMBUS_DEPLOY_TOKEN` startup enablement, dry-run validate+diff, atomic generation activation, loopback admin-token auto-read, `nimbus auth login` credentials fallback | `crates/nimbus-bin/src/deploy.rs`, `crates/nimbus-server/src/http/deploy.rs` |
 | `index.mdx` (landing) | Speaks Convex / Firestore / Cloud Functions / MongoDB / DynamoDB | `crates/nimbus-convex/`, `crates/nimbus-firebase/`, `crates/nimbus-cloud-functions/`, `crates/nimbus-mongodb/`, `crates/nimbus-dynamodb/` |
 | `index.mdx` (landing) | Single-binary storage/compute/networking/realtime/scheduling | `crates/nimbus-bin/src/main.rs`, `crates/nimbus-engine/`, `crates/nimbus-storage/`, `crates/nimbus-server/` |
 | `index.mdx` (landing) | Firebase tab (Firestore surface): stock `firebase/app` + `firebase/firestore` imports via the provisioned `firebase` package; `nimbus packages provision firebase` auto-wires `dependencies.firebase` in `package.json`; `connectFirestoreEmulator` flow, `projectId` → tenant, `--firestore` enablement | `packages/firebase/package.json`, `packages/firebase/src/firestore.ts`, `crates/nimbus-bin/src/provision.rs`, `crates/nimbus-bin/src/start/adapters.rs` |
@@ -39,7 +40,9 @@ sources exist.
 | `developers/auth.md` | OIDC discovery; `aud` must equal `applicationID`; multi-audience rejected; `tokenIdentifier` = `issuer\|subject` | `crates/nimbus-convex/src/auth/verifier/metadata.rs`, `crates/nimbus-convex/src/auth/verifier/identity.rs`, `crates/nimbus-convex/src/auth/jwt/models/parsed_claims.rs` |
 | `developers/auth.md` | `ConvexProviderWithAuth` / `useConvexAuth` / `setAuth` / `clearAuth` client surface | `packages/convex/src/react.ts`, `packages/nimbus/src/browser.ts`, `packages/nimbus/src/react.ts` |
 | `developers/auth.md` | No token → `getUserIdentity()` null; invalid token → request rejected | `crates/nimbus-server/src/application_auth.rs`, `crates/nimbus-runtime/src/runtime/bootstrap/source.rs` |
-| `developers/sdk/resource-model.md` | `Nimbus` client options, endpoint/credential discovery, services/sandboxes/sessions CRUD + lifecycle | `packages/nimbus/src/index.ts` |
+| `agents/index.md`, `agents/sandbox-quickstart.md` | `Nimbus` client options, endpoint/credential discovery, sandbox create/get/stop, session open/close, ready-state gating | `packages/nimbus/src/index.ts` |
+| `agents/sandboxes.md`, `agents/services.md`, `agents/sessions.md` | services/sandboxes/sessions CRUD + lifecycle, `waitUntil`/`wait` polling, `ifMatchGeneration` checks, session channels/TTLs, launch-input redaction | `packages/nimbus/src/index.ts` |
+| `agents/index.md`, `agents/sandbox-quickstart.md`, `agents/sandboxes.md` | Linux-host sandbox execution, container vs krun posture, `nimbus machine` on macOS/WSL2 (restates the verified rows for the pages below) | `docs/reference/current-capabilities.md`, `docs/concepts/resource-model.md` |
 
 ## Developers + Reference — Convex
 

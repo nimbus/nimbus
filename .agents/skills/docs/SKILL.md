@@ -12,10 +12,10 @@ plan, DOC0..DOC13, closed 2026-06-10).
 
 ## Where things live
 
-- **Content:** `docs/{get-started,developers,operators,concepts,reference}/`
-  — the five public groups, and the ONLY public directories under `docs/`.
+- **Content:** `docs/{get-started,developers,agents,operators,concepts,reference}/`
+  — the six public groups, and the ONLY public directories under `docs/`.
 - **Renderer:** `website/` — Astro + Starlight. `website/src/content/docs/`
-  contains symlinks to the five groups plus the landing `index.mdx`. Never
+  contains symlinks to the six groups plus the landing `index.mdx`. Never
   put content there directly.
 - **Sidebar:** `website/astro.config.mjs` — explicit lists; a new docs
   subdirectory must be added there to appear.
@@ -26,12 +26,13 @@ plan, DOC0..DOC13, closed 2026-06-10).
 
 ## Information architecture (hybrid persona × Diátaxis)
 
-Five groups, persona-first, Diátaxis-shaped inside each:
+Six groups, persona-first, Diátaxis-shaped inside each:
 
 | Group | Persona | Dominant mode |
 | --- | --- | --- |
 | Get started | new arrival | Tutorial |
-| Developers | app/agent builder | Tutorial + How-to |
+| Developers | app builder | Tutorial + How-to |
+| Agents | agent builder (sandboxes, services, sessions) | Tutorial + How-to |
 | Operators | self-hoster | How-to |
 | Concepts | understanding-seeker | Explanation |
 | Reference | looker-upper | Reference |
@@ -77,7 +78,7 @@ bash scripts/check-docs.sh       # dead links + source-map resolution + private 
 bash scripts/verify-nimbus-docs-site.sh   # full plan gate (17 conditions)
 ```
 
-CI: `.github/workflows/docs.yml` builds + gates every PR touching the five
+CI: `.github/workflows/docs.yml` builds + gates every PR touching the six
 groups or `website/`, comments a preview URL on PRs, and deploys `main` to
 Cloudflare Workers at nimbusdocs.com. `llms-small.txt` excludes
 (`concepts/architecture/**`, per-protocol reference matrices) are tuned in

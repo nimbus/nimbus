@@ -3,7 +3,7 @@ title: Services, sandboxes, and sessions
 description: Nimbus's resource model — named services, isolated sandboxes, and scoped sessions — and why each noun is addressed and trusted differently.
 sidebar:
   label: Resource model
-  order: 7
+  order: 8
 ---
 
 Nimbus models long-running and interactive workloads with three nouns:
@@ -12,8 +12,7 @@ Nimbus models long-running and interactive workloads with three nouns:
 connections to a running service or sandbox). This page explains what each
 noun means and why the model is shaped the way it is. For the hands-on
 walkthrough — creating, starting, and connecting to each with the
-JavaScript SDK — see
-[Manage services, sandboxes, and sessions](/developers/sdk/resource-model/).
+JavaScript SDK — see the [Agents guides](/agents/).
 
 ## Three nouns, three addressing rules
 
@@ -177,8 +176,8 @@ authorization applies regardless of where the call originates.
 
 ## Related pages
 
-- [Manage services, sandboxes, and sessions](/developers/sdk/resource-model/)
-  — the SDK walkthrough for every verb described here.
+- [Agents](/agents/) — quickstart and how-to guides for every verb
+  described here.
 - [Tenant isolation](/concepts/tenant-isolation/) — the admission and
   enforcement model these resources run inside.
 - [Manage tenants](/operators/tenant-isolation/) —

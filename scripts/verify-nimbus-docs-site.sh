@@ -23,7 +23,7 @@ DOCS_WF=".github/workflows/docs.yml"
 SOURCE_MAP="docs/source-map.md"
 CHECK_DOCS="scripts/check-docs.sh"
 
-PUBLIC_GROUPS=(get-started developers operators concepts reference)
+PUBLIC_GROUPS=(get-started developers agents operators concepts reference)
 
 # DOC7 system manifest — the canonical page list for docs/concepts/architecture/.
 ARCH_MANIFEST=(
@@ -78,11 +78,12 @@ else
   fail "${C}" "missing ${ASTRO_CONFIG}, site URL, llms plugin, or non-static output set"
 fi
 
-# --- 3. content loaded only from the five public docs/ groups ----------------
-# Allow-list is implemented as five symlinks under website/src/content/docs/,
-# each resolving into the matching docs/<group>; the only real file there is
-# the splash landing index.mdx, so nothing outside the groups can publish.
-C="3. Starlight content loads only from docs/{get-started,developers,operators,concepts,reference} (symlink allow-list)"
+# --- 3. content loaded only from the six public docs/ groups -----------------
+# Allow-list is implemented as one symlink per public group under
+# website/src/content/docs/, each resolving into the matching docs/<group>;
+# the only real file there is the splash landing index.mdx, so nothing
+# outside the groups can publish.
+C="3. Starlight content loads only from docs/{get-started,developers,agents,operators,concepts,reference} (symlink allow-list)"
 bad_links=()
 for g in "${PUBLIC_GROUPS[@]}"; do
   link="website/src/content/docs/${g}"
@@ -97,8 +98,8 @@ else
   fail "${C}" "bad/missing symlinks: [${bad_links[*]:-}] unexpected real files: [${real_files:-none}]"
 fi
 
-# --- 4. five public groups each have a landing page --------------------------
-C="4. docs/{get-started,developers,operators,concepts,reference}/ each have a landing page"
+# --- 4. public groups each have a landing page --------------------------------
+C="4. docs/{get-started,developers,agents,operators,concepts,reference}/ each have a landing page"
 missing_landings=()
 for g in "${PUBLIC_GROUPS[@]}"; do
   [[ -f "docs/${g}/index.md" || -f "docs/${g}/index.mdx" ]] || missing_landings+=("${g}")
@@ -110,8 +111,8 @@ else
 fi
 
 # --- 5. docs/ top level is exactly the allowed set; no private links ---------
-C="5. docs/ top level = five groups + brand/ + private/ + README.md + source-map.md; no published links into docs/private"
-allowed="get-started developers operators concepts reference brand private README.md source-map.md"
+C="5. docs/ top level = six groups + brand/ + private/ + README.md + source-map.md; no published links into docs/private"
+allowed="get-started developers agents operators concepts reference brand private README.md source-map.md"
 unexpected=()
 for entry in docs/* docs/.[!.]*; do
   [[ -e "${entry}" ]] || continue

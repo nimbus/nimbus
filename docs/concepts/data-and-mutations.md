@@ -3,7 +3,7 @@ title: Data and mutations
 description: Documents, schema-optional tables, the single engine-owned mutation path, storage atomicity, and how reactive queries observe commits.
 sidebar:
   label: Data & mutations
-  order: 4
+  order: 3
 ---
 
 Nimbus stores JSON documents in tables and pushes query results to

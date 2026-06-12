@@ -52,7 +52,7 @@ APIs under Convex-style names. If you are migrating a Convex project, see
   `@nimbus/nimbus/browser` (or `@nimbus/nimbus/react` in React apps).
 - Managing services, sandboxes, or sessions programmatically? Use the root
   entry `@nimbus/nimbus`. See the
-  [resource model guide](/developers/sdk/resource-model/) for concepts.
+  [Agents guides](/agents/) for worked examples.
 - Talking to the native admin surface (tenants, documents, schedules, crons)
   directly? Use `@nimbus/nimbus/transports/rest`, or call the
   [native HTTP API](/reference/native/http-api/) yourself.

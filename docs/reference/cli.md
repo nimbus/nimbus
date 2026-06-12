@@ -1,5 +1,5 @@
 ---
-title: CLI
+title: CLI reference
 description: Command and flag reference for the nimbus binary — server, dev loop, deploys, machines, Compose services, policy, and encryption admin.
 sidebar:
   label: CLI

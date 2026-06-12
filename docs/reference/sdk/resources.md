@@ -1,5 +1,5 @@
 ---
-title: SDK Resources
+title: SDK resources
 description: Reference for the root @nimbus/nimbus entry — the Nimbus control-plane client, credential discovery, and the services, sandboxes, and sessions APIs.
 sidebar:
   label: Resources
@@ -8,8 +8,9 @@ sidebar:
 
 The root entry point exports the `Nimbus` class — the control-plane client
 for managing **services**, **sandboxes**, and **sessions** — along with the
-request and resource types those APIs use. For concepts and worked examples,
-see the [resource model guide](/developers/sdk/resource-model/).
+request and resource types those APIs use. For concepts, see
+[Services, sandboxes, and sessions](/concepts/resource-model/); for worked
+examples, see the [Agents guides](/agents/).
 
 ```typescript
 import { Nimbus } from "@nimbus/nimbus";
@@ -126,9 +127,9 @@ All service paths are rooted at `/api/tenants/{tenant}/services`.
 
 `update` and `delete` require `ifMatchGeneration` — the `metadata.generation`
 of the definition you read. If the resource changed in the meantime, the
-server rejects the write and the call throws; re-read and retry. See the
-[resource model guide](/developers/sdk/resource-model/) for the full
-read-modify-write pattern.
+server rejects the write and the call throws; re-read and retry. See
+[Manage services](/agents/services/) for the full read-modify-write
+pattern.
 
 ### Backend specs
 

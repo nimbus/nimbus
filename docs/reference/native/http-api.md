@@ -182,8 +182,8 @@ responses has `name`, `schedule`, `mutation`, `enabled`, `last_run`
 ## Service control
 
 These routes manage services, sandboxes, and sessions. The
-[JavaScript SDK guide](/developers/sdk/resource-model/) covers their
-request and response shapes through a typed client.
+[Agents guides](/agents/) cover their request and response shapes
+through a typed client.
 
 | Method | Path | Purpose |
 | --- | --- | --- |

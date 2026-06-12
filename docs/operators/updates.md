@@ -1,5 +1,5 @@
 ---
-title: Updates
+title: Update Nimbus
 description: Update the nimbus binary safely — per-install-method upgrade commands, restart and verify steps, built-in staleness checks, and the air-gapped opt-out.
 sidebar:
   label: Updates

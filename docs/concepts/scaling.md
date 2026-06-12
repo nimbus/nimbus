@@ -1,18 +1,19 @@
 ---
 title: Scaling
-description: How a single Nimbus binary scales today — the tenant as the unit of isolation and growth, external storage backends, and the honest limits of horizontal scale.
+description: How a single Nimbus binary scales today — the tenant as the unit of isolation and growth, sandbox-backed services for heavy compute, external storage backends, and the honest limits of horizontal scale.
 sidebar:
   label: Scaling
-  order: 8
+  order: 9
 ---
 
 A Nimbus deployment today is one process. The single binary contains the
 transport layer, the function runtime, the engine that coordinates every
 mutation, and the storage layer — there is no cluster mode, no leader
 election, and no coordination protocol between instances. The scaling story
-that exists right now has three parts: tenants isolate load from each other
-inside one server, the server scales up with the machine it runs on, and
-external storage backends move data onto infrastructure you can grow
+that exists right now has four parts: tenants isolate load from each other
+inside one server, the server scales up with the machine it runs on,
+heavier compute fans out into sandbox-backed services beside the engine,
+and external storage backends move data onto infrastructure you can grow
 independently.
 
 This page describes only what ships today. For the full capability
@@ -57,14 +58,33 @@ and the read paths off the write path:
   the queries whose dependency sets it intersects, not every query on the
   table.
 - Functions execute in V8 isolates inside the server process — no
-  per-invocation process or container cost. Heavier service workloads run
-  beside the server in sandboxes (containers or libkrun microVMs on Linux
-  hosts) under the same lifecycle management.
+  per-invocation process or container cost. Workloads too heavy for an
+  isolate fan out into sandbox-backed services, covered next.
 
 The practical consequence: a single Nimbus server scales with the machine
 you give it, and the per-tenant diagnostics endpoint reports each tenant's
 queue depths, journal lag, and serving health so you can see which tenant
 is consuming the headroom. See [observability](/operators/observability/).
+
+## Heavy compute fans out into services
+
+Functions are for short, transactional work. When a tenant's workload
+includes something heavier or longer-lived — a worker process, an indexing
+pipeline, a headless browser — it moves into a
+[service](/agents/services/): a named, tenant-scoped workload backed by a
+container sandbox that the server launches and supervises beside the
+engine. The service exposes readiness and health states other code can
+wait on, generation checks guard concurrent edits to its definition, and
+its process runs as its own supervised container rather than inside the
+engine — so the heavy work lives next to the data without sitting on the
+mutation path.
+
+This is fan-out within the deployment, not across machines. Sandbox-backed
+services run on the same Linux host as the server (on macOS and WSL2,
+`nimbus machine` provides that host), and they scale with that machine the
+way everything else in the process does. What services buy you is
+separation and supervision, not a second box — when you do outgrow the
+machine, the partitioning story below is unchanged.
 
 ## Where the data lives
 

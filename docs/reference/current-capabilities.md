@@ -52,7 +52,7 @@ Each capability carries one of three statuses:
 | MongoDB wire protocol | Available | Enable with `nimbus start --mongodb-port` plus SCRAM credentials (`--mongodb-username`, `NIMBUS_MONGODB_PASSWORD`). Loopback-only listener. See the [guide](/developers/mongodb/) and [operations reference](/reference/mongodb/operations/). |
 | DynamoDB API | Available | Enable with `nimbus start --dynamodb-port` and `--dynamodb-access-key KEY_ID:SECRET:TENANT` bindings (dedicated listener, DynamoDB Local convention port 8000). See the [guide](/developers/dynamodb/) and [feature coverage](/reference/dynamodb/feature-coverage/). |
 | Native HTTP and WebSocket API | Available | Always on. See [build on the native API](/developers/native/). |
-| Nimbus JavaScript SDK | Available | Services, sandboxes, and sessions from one client. See the [SDK guide](/developers/sdk/resource-model/). |
+| Nimbus JavaScript SDK | Available | Services, sandboxes, and sessions from one client. See the [Agents guides](/agents/). |
 
 ## Storage and operations
 

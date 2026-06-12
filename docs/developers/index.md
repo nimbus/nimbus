@@ -18,8 +18,8 @@ yet, then [build your first app](/developers/first-app/).
   your functions.
 - [Node.js runtime](/developers/runtimes/nodejs/) — `"use node"` actions,
   packages, and bundling.
-- [SDK resource model](/developers/sdk/resource-model/) — services,
-  sandboxes, and sessions with the `nimbus` JS SDK.
+- Building for AI agents? Sandboxes, services, and sessions have their
+  own [Agents](/agents/) section.
 
 ## Adapter guides
 

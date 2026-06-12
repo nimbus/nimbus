@@ -25,7 +25,20 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/components';
+import { Tabs, TabItem, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## Run the whole backend in two commands
+
+```bash
+brew install nimbus/tap/nimbus
+nimbus start --port 8080 --data-dir ./data
+```
+
+That's the deployment. One process now serves storage, TypeScript
+functions, realtime subscriptions, scheduling, and agent sandboxes,
+persisting to a directory on disk. No Compose file, no sidecar services,
+no managed account. The [self-host quickstart](/get-started/self-host/)
+takes you from here to your first stored document in about two minutes.
 
 ## One binary, your choice of client
 
@@ -179,30 +192,96 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
     See the [native API guide](/developers/native/) and the
     [self-host quickstart](/get-started/self-host/) for the token setup.
   </TabItem>
+  <TabItem label="Sandboxes">
+    ```bash
+    # isolated compute for agents — same binary
+    nimbus start
+    ```
+    ```typescript
+    // @nimbus/nimbus SDK — give an agent its own isolated process
+    import { Nimbus } from "@nimbus/nimbus";
+
+    const nimbus = new Nimbus({
+      endpoint: "http://localhost:8080",
+      tenantId: "demo",
+      token: process.env.NIMBUS_TOKEN,
+    });
+
+    const sandbox = await nimbus.sandboxes.create({
+      profile: "worker",
+      spec: {
+        owner: { kind: "standalone", displayName: "agent-task" },
+        backend: "container",
+        root: {
+          kind: "oci_image",
+          source: { kind: "reference", reference: "docker.io/library/node:22-alpine" },
+        },
+        process: { argv: ["node", "-e", "setInterval(() => {}, 1000)"] },
+      },
+    });
+    ```
+    Sandboxes, services, and sessions live in the same binary as your
+    data — no separate sandbox vendor. Execution runs on Linux hosts;
+    `nimbus machine` hosts them on macOS. Start with the
+    [agent sandbox quickstart](/agents/sandbox-quickstart/).
+  </TabItem>
 </Tabs>
 </div>
 
 Every tab above is the same engine and the same data — five drop-in
-protocol surfaces plus Nimbus's native API. See
-[Developers](/developers/) for all of them side by side.
+protocol surfaces, Nimbus's native API, and an agent sandbox surface. See
+[Developers](/developers/) for the adapters side by side.
 
-<CardGrid stagger>
-  <Card title="One binary" icon="rocket">
-    Storage, compute, networking, realtime, and scheduling in a single
-    self-hostable Rust binary.
-  </Card>
-  <Card title="Drop-in compatible" icon="puzzle">
-    Speaks Convex, Firestore, Cloud Functions, MongoDB, and DynamoDB wire
-    protocols — bring your existing clients.
-  </Card>
-  <Card title="Built for agents" icon="seti:powershell">
-    A backend AI agents can run, inspect, and build against — with llms.txt
-    and an agent-readable surface.
-  </Card>
-  <Card title="No lock-in" icon="setting">
-    Self-hosted, source-available, and protocol-portable by design.
-  </Card>
+## Dev to prod is one verb
+
+```bash
+nimbus dev      # laptop: watch files, run codegen, reload functions
+nimbus deploy   # production: package, validate, activate atomically
+```
+
+There is no infrastructure layer between development and production — no
+Terraform, no Helm chart, no Dockerfile. Both sides run the same binary
+with the same configuration surface; `nimbus deploy` packages your
+functions, previews a diff with `--dry-run`, and atomically activates the
+new generation on whatever server you point it at.
+[Deploy to production](/get-started/deploy/) walks the whole flow.
+
+## Built for agents
+
+Agents need a backend they can **run** (one binary, started in one
+command), **inspect** (docs shipped as [llms.txt](/llms.txt), structured
+errors, an honest capability table), and get **isolated compute** from.
+That last part is first-class: **sandboxes** are isolated worlds addressed
+by id, **services** are named workloads other code can depend on, and
+**sessions** are expiring leases for stdio, file, and browser-control
+access — all managed through the `@nimbus/nimbus` SDK against the same
+server that holds your data.
+
+<CardGrid>
+  <LinkCard
+    title="Agent sandbox quickstart"
+    description="Create a sandbox, lease a session, tear it down — about 5 minutes."
+    href="/agents/sandbox-quickstart/"
+  />
+  <LinkCard
+    title="Agents overview"
+    description="Sandboxes, services, and sessions — the guides and the design rationale."
+    href="/agents/"
+  />
 </CardGrid>
+
+## Scale with tenants and services
+
+The unit of isolation is also the unit of growth. Every tenant gets its
+own storage namespace, its own admission queue, and its own function
+budgets — load on one tenant cannot degrade another, and adding load means
+adding tenants. Heavier compute fans out into sandbox-backed services that
+run beside the engine under the same lifecycle management, and storage
+can move onto PostgreSQL, MySQL, or libSQL infrastructure that grows
+independently. One deployment is one process today — no cluster mode, and
+[scaling](/concepts/scaling/) tells that story honestly rather than
+hand-waving past it. Self-hosted, source-available, and protocol-portable
+by design: there is no lock-in to scale your way out of later.
 
 ## Find your path
 
@@ -216,6 +295,16 @@ protocol surfaces plus Nimbus's native API. See
     title="Self-host quickstart"
     description="Run the server and make your first requests with curl — about 2 minutes."
     href="/get-started/self-host/"
+  />
+  <LinkCard
+    title="Agent sandboxes"
+    description="Isolated compute for agents: sandboxes, services, and sessions from one SDK."
+    href="/agents/"
+  />
+  <LinkCard
+    title="Deploy to production"
+    description="One command from laptop to server — preview the diff, activate atomically."
+    href="/get-started/deploy/"
   />
   <LinkCard
     title="Coming from Convex"
