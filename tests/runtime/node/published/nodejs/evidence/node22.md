@@ -11,11 +11,11 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 - upstream fixture line: `v22.22.3`
 - runtime execution target: `Node22`
 - vendored official fixtures: `4748`
-- passed official fixtures: `1000`
-- expected failure / known gap fixtures: `3728`
+- passed official fixtures: `2299`
+- expected failure / known gap fixtures: `2429`
 - skipped / excluded fixtures: `20`
 - unclassified fixtures: `0`
-- official fixture pass rate: `21.1%`
+- official fixture pass rate: `48.4%`
 - classified coverage: `100.0%`
 
 ## Classification Catalog
@@ -24,51 +24,15 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 
 | Expectation | Count |
 | --- | ---: |
-| Expected failure | 34 |
-| Known gap | 3694 |
+| Expected failure | 24 |
+| Known gap | 2405 |
 | Skipped / excluded | 20 |
 
 ## Canary Coverage
 
 | Package | Preset | Pinned version | Evidence | Support boundary | Status |
 | --- | --- | --- | --- | --- | --- |
-| `@anthropic-ai/sdk` | Application | `0.100.0` | Support | Supported | Passed |
-| `@aws-sdk/client-s3` | Application | `3.1056.0` | Support | Supported | Passed |
-| `axios` | Application | `1.7.7` | Support | Supported | Passed |
-| `convex-use-node-action` | Application | `nimbus` | Support | Supported | Passed |
-| `convex-use-node-real-app` | Application | `nimbus` | Support | Supported | Passed |
-| `express` | Application | `4.19.2` | Support | Supported | Passed |
-| `fastify` | Application | `4.28.1` | Support | Supported | Passed |
-| `node:child_process` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `esbuild` | Application | `0.28.0` | Diagnostic | Service/microVM required | Passed |
-| `node:inspector` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `native-addon` | Application | `nimbus` | Diagnostic | Service/microVM required | Passed |
-| `node --test` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `persistent-filesystem` | Application | `nimbus` | Diagnostic | Service/microVM required | Passed |
-| `prisma` | Application | `engine-boundary` | Diagnostic | Service/microVM required | Passed |
-| `raw-server-listen` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `node:repl` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `sharp` | Application | `0.34.5` | Diagnostic | Service/microVM required | Passed |
-| `node:worker_threads` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `jose` | Application | `6.2.3` | Support | Supported | Passed |
-| `nanoid` | Application | `5.1.11` | Support | Supported | Passed |
-| `node-platform-builtins` | Application | `builtin` | Support | Supported | Passed |
-| `octokit` | Application | `5.0.5` | Support | Supported | Passed |
-| `openai` | Application | `6.39.1` | Support | Supported | Passed |
-| `resend` | Application | `6.12.4` | Support | Supported | Passed |
-| `@slack/web-api` | Application | `7.16.0` | Support | Supported | Passed |
-| `socket.io` | Application | `4.7.5` | Support | Supported | Passed |
-| `stripe` | Application | `22.2.0` | Support | Supported | Passed |
-| `undici` | Application | `6.19.8` | Support | Supported | Passed |
-| `@upstash/redis` | Application | `1.38.0` | Support | Supported | Passed |
-| `uuid` | Application | `14.0.0` | Support | Supported | Passed |
-| `ai` | Application | `6.0.192` | Support | Supported | Passed |
-| `zod` | Application | `4.4.3` | Support | Supported | Passed |
-| `jest` | Tooling | `30.4.2` | Support | Supported | Passed |
-| `next` | Tooling | `16.2.6` | Support | Supported | Passed |
-| `prisma` | Tooling | `7.8.0` | Support | Supported | Passed |
-| `ts-node` | Tooling | `10.9.2` | Support | Supported | Passed |
-| `tsx` | Tooling | `4.21.0` | Support | Supported | Passed |
+| none in current snapshot | n/a | n/a | n/a | n/a | n/a |
 
 ## Claim Boundary
 

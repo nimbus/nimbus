@@ -177,6 +177,22 @@ HOST_NETWORK_SOCKET_PATHS = {
     "test/parallel/test-dgram-udp6-link-local-address.js",
     "test/parallel/test-dgram-udp6-send-default-host.js",
     "test/parallel/test-https-connect-address-family.js",
+    # NDS3 cycle-17 fresh-census reclassification (2026-06-11): source-confirmed
+    # against crates/nimbus-runtime/.../node22/test/parallel/. Both fixtures stand
+    # up a real host TLS listener and drive client sockets against it:
+    #   test-https-localaddress-bind-error.js: https.createServer + server.listen(
+    #     0, '127.0.0.1') then https.request({ localAddress: '1.2.3.4' }) to assert
+    #     the OS-level client-socket bind error; the multi-tenant isolate denies
+    #     ambient host network access, so the fresh census reports
+    #     `NotCapable: Requires net access to "1.2.3.4:0"`.
+    #   test-https-agent-additional-options.js: https.Server + many live TLS client
+    #     requests through https.globalAgent asserting the socket-pool keying across
+    #     TLS options (dhparam/ecdhCurve/secureProtocol/...); needs a real host TLS
+    #     server+client loopback the isolate must not own (census: `unsupported
+    #     protocol`). Same host-owned socket class as test-https-connect-address-
+    #     family.js directly above.
+    "test/parallel/test-https-localaddress-bind-error.js",
+    "test/parallel/test-https-agent-additional-options.js",
 }
 
 NODE_CLI_TOPOLOGY_PATHS = {
@@ -937,6 +953,24 @@ WATCHPOINT_STRUCTURAL_RECLASSIFICATIONS = {
     #     a chosen cwd, the canonical host-process-control surface.
     "test/parallel/test-fs-readdir-buffer.js": _WP_UPSTREAM_PLATFORM,
     "test/parallel/test-process-finalization.mjs": _WP_HOST_PROCESS_CONTROL,
+    # NDS3 cycle-17 fresh-census reclassification (2026-06-11): the node22 lane
+    # pins each https fixture below as a rust_watchpoint expected-failure
+    # (v8_isolate_required); both stand up a real host TLS listener and drive
+    # client sockets against it, the same host-owned socket class as
+    # test-https-connect-address-family.js directly above. Source-confirmed
+    # against node22/test/parallel/ and re-confirmed by the cycle-17 single-fixture
+    # census on v2.8.2-nimbus.29:
+    #   test-https-localaddress-bind-error.js: https.createServer +
+    #     server.listen(0,'127.0.0.1') then https.request({localAddress:
+    #     '1.2.3.4'}) to assert the OS-level client-socket bind error; the
+    #     multi-tenant isolate denies ambient host network access (census:
+    #     `NotCapable: Requires net access to "1.2.3.4:0"`).
+    #   test-https-agent-additional-options.js: https.Server + many live TLS
+    #     client requests through https.globalAgent asserting socket-pool keying
+    #     across TLS options; needs a real host TLS server+client loopback the
+    #     isolate must not own (census: `unsupported protocol`).
+    "test/parallel/test-https-localaddress-bind-error.js": _WP_HOST_NETWORK_SOCKET,
+    "test/parallel/test-https-agent-additional-options.js": _WP_HOST_NETWORK_SOCKET,
 }
 
 

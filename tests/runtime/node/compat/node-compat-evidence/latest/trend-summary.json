@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-12T00:12:03.078349+00:00",
+  "generated_at": "2026-06-12T00:53:07.728085+00:00",
   "report_kind": "node_compat_trend_snapshot",
   "baseline_available": true,
   "current_sources": {
@@ -19,11 +19,11 @@
       "vendored_test_file_count": 4248,
       "vendored_test_file_count_delta": 0,
       "documented_manifested_green_count": 917,
-      "documented_manifested_green_count_delta": 1,
+      "documented_manifested_green_count_delta": 0,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
       "documented_manifested_green_ratio": 0.215866,
-      "documented_manifested_green_ratio_delta": 0.00023500000000001298
+      "documented_manifested_green_ratio_delta": 0.0
     },
     {
       "lane": "node22",
@@ -31,12 +31,12 @@
       "baseline_upstream_tag": "v22.22.3",
       "vendored_test_file_count": 4748,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 2298,
+      "documented_manifested_green_count": 2299,
       "documented_manifested_green_count_delta": 1,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.483993,
-      "documented_manifested_green_ratio_delta": 0.00020999999999998797
+      "documented_manifested_green_ratio": 0.484204,
+      "documented_manifested_green_ratio_delta": 0.00021100000000001673
     },
     {
       "lane": "node24",
@@ -45,11 +45,11 @@
       "vendored_test_file_count": 5198,
       "vendored_test_file_count_delta": 0,
       "documented_manifested_green_count": 2328,
-      "documented_manifested_green_count_delta": 1,
+      "documented_manifested_green_count_delta": 0,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
       "documented_manifested_green_ratio": 0.447865,
-      "documented_manifested_green_ratio_delta": 0.00019299999999999873
+      "documented_manifested_green_ratio_delta": 0.0
     },
     {
       "lane": "node26",
@@ -58,11 +58,11 @@
       "vendored_test_file_count": 5578,
       "vendored_test_file_count_delta": 0,
       "documented_manifested_green_count": 1009,
-      "documented_manifested_green_count_delta": 1,
+      "documented_manifested_green_count_delta": 0,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
       "documented_manifested_green_ratio": 0.180889,
-      "documented_manifested_green_ratio_delta": 0.00017899999999998473
+      "documented_manifested_green_ratio_delta": 0.0
     }
   ],
   "evidence_trends": {
