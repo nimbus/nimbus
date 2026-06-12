@@ -647,6 +647,15 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         #     behavior is implemented but cannot be exercised on the non-Windows
         #     host (same lever as test-require-long-path.js directly above).
         'test/parallel/test-vm-global-property-enumerator.js',
+        # NDS3 cycle-22 (2026-06-11): source-confirmed. test-intl-v8BreakIterator.js
+        # asserts `!('v8BreakIterator' in Intl)` (and the same inside a fresh vm
+        # context) -- i.e. that the non-standard V8 `Intl.v8BreakIterator`
+        # extension has been removed. Nimbus's embedded V8 149 still exposes that
+        # extension, so the assertion is tied to the embedded V8 release's Intl
+        # composition rather than Nimbus's compatibility contract -- the same
+        # V8-version-drift structural class as test-vm-global-property-enumerator.js
+        # directly above. It cannot pass without modifying the embedded V8 build.
+        'test/parallel/test-intl-v8BreakIterator.js',
         'test/parallel/test-path-win32-normalize-device-names.js',
         # NDS3 cycle-9 dossier wave (2026-06-09): source-confirmed +
         # adversarially verified. test-fileurltopathbuffer.js opens with
