@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 
-mod adapters;
+pub(crate) mod adapters;
 mod boot;
 mod config;
 mod first_boot;

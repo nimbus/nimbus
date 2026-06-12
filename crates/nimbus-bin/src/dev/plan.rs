@@ -81,6 +81,10 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
     // (DXW2/DXW3) is what turns a detected surface into an enabled one.
     let start_command = StartCommand {
         port: command.port,
+        // Firestore-compatible routes are always-on in dev: they mount on
+        // the main HTTP listener and are inert without callers, so no
+        // Firebase markers are required to serve them.
+        firestore: true,
         data_dir: Some(data_dir.clone()),
         control_data_dir: Some(data_dir.clone()),
         tenant_provider: Some(CliTenantProvider::Sqlite),

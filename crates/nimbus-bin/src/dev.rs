@@ -707,6 +707,69 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn dev_serves_firestore_routes_without_firebase_markers() {
+        // DX contract: dev mounts the Firestore-compatible route family
+        // unconditionally — zero Firebase markers in the app (no
+        // firebase.json, no firebase dependency). The routes ride the main
+        // HTTP listener and are inert without callers.
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        assert!(
+            plan.start_command.firestore,
+            "dev plan must request the Firestore route family unconditionally"
+        );
+
+        // Resolve through the same enablement path `nimbus start` uses; the
+        // wire listeners stay off (no credentials, deny-by-default intact).
+        let enablement = crate::start::adapters::resolve_adapter_enablement_with_env(
+            &plan.start_command,
+            |_| None,
+        )
+        .expect("dev enablement should resolve");
+        assert!(enablement.firebase.is_some());
+        assert!(enablement.mongodb.is_none());
+        assert!(enablement.dynamodb.is_none());
+
+        let engine = std::sync::Arc::new(
+            nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"),
+        );
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("addr should resolve");
+        let task = tokio::spawn(nimbus_server::serve(
+            listener,
+            enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone())),
+        ));
+        crate::test_support::wait_for_live_server_health(
+            "dev-shaped server should answer /health",
+            addr,
+            &task,
+        )
+        .await;
+
+        let response = reqwest::Client::new()
+            .get(format!(
+                "http://{addr}/v1/projects/demo/databases/(default)/documents/notes"
+            ))
+            .send()
+            .await
+            .expect("firestore request should send");
+        assert_ne!(
+            response.status(),
+            reqwest::StatusCode::NOT_FOUND,
+            "dev must answer the Firestore route family without Firebase markers"
+        );
+
+        task.abort();
+        let _ = task.await;
+        engine.quiesce().await;
+    }
+
     #[test]
     fn convex_app_with_mongodb_dep_resolves_adapter_and_surface() {
         // App adapters are singular; wire surfaces are a set that combines

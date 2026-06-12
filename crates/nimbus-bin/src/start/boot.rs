@@ -181,15 +181,7 @@ pub(crate) async fn run_start_command(
     serve_options = serve_options.with_local_server_security(local_server_security);
     serve_options = serve_options.with_tenant_isolation_mode(command.tenant_isolation_mode);
     serve_options = serve_options.with_cors_allowed_origins(cors_allowed_origins);
-    if let Some(firebase_config) = adapter_enablement.firebase {
-        serve_options = serve_options.with_firebase_config(firebase_config);
-    }
-    if let Some(mongodb_config) = adapter_enablement.mongodb {
-        serve_options = serve_options.with_mongodb(mongodb_config);
-    }
-    if let Some(dynamodb_config) = adapter_enablement.dynamodb {
-        serve_options = serve_options.with_dynamodb(dynamodb_config);
-    }
+    serve_options = adapter_enablement.apply_to(serve_options);
     if let Some(tls_config) = tls_config {
         serve_options = serve_options.with_tls(tls_config);
     }

@@ -18,10 +18,29 @@ pub(super) const DYNAMODB_ACCESS_KEYS_ENV: &str = "NIMBUS_DYNAMODB_ACCESS_KEYS";
 /// Adapter configs resolved from the start command. `None` means the
 /// surface stays off — the default.
 #[derive(Debug)]
-pub(super) struct AdapterEnablement {
-    pub(super) firebase: Option<FirebaseConfig>,
-    pub(super) mongodb: Option<MongoDbConfig>,
-    pub(super) dynamodb: Option<DynamoDbConfig>,
+pub(crate) struct AdapterEnablement {
+    pub(crate) firebase: Option<FirebaseConfig>,
+    pub(crate) mongodb: Option<MongoDbConfig>,
+    pub(crate) dynamodb: Option<DynamoDbConfig>,
+}
+
+impl AdapterEnablement {
+    /// Mounts every resolved adapter surface onto the serve options.
+    pub(crate) fn apply_to(
+        self,
+        mut options: nimbus_server::ServeOptions,
+    ) -> nimbus_server::ServeOptions {
+        if let Some(firebase) = self.firebase {
+            options = options.with_firebase_config(firebase);
+        }
+        if let Some(mongodb) = self.mongodb {
+            options = options.with_mongodb(mongodb);
+        }
+        if let Some(dynamodb) = self.dynamodb {
+            options = options.with_dynamodb(dynamodb);
+        }
+        options
+    }
 }
 
 pub(super) fn resolve_adapter_enablement(
@@ -30,7 +49,7 @@ pub(super) fn resolve_adapter_enablement(
     resolve_adapter_enablement_with_env(command, |name| std::env::var(name).ok())
 }
 
-pub(super) fn resolve_adapter_enablement_with_env(
+pub(crate) fn resolve_adapter_enablement_with_env(
     command: &StartCommand,
     env_lookup: impl Fn(&str) -> Option<String>,
 ) -> Result<AdapterEnablement, Error> {

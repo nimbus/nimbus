@@ -10,17 +10,7 @@ fn adapter_serve_options(
     engine: &Arc<nimbus::Engine>,
     enablement: super::super::adapters::AdapterEnablement,
 ) -> nimbus_server::ServeOptions {
-    let mut options = nimbus_server::ServeOptions::new(engine.clone());
-    if let Some(firebase) = enablement.firebase {
-        options = options.with_firebase_config(firebase);
-    }
-    if let Some(mongodb) = enablement.mongodb {
-        options = options.with_mongodb(mongodb);
-    }
-    if let Some(dynamodb) = enablement.dynamodb {
-        options = options.with_dynamodb(dynamodb);
-    }
-    options
+    enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone()))
 }
 
 #[tokio::test]
