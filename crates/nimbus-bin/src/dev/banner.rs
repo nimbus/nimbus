@@ -6,6 +6,7 @@ use crate::compose::discovery::compose_selection_summary;
 
 use super::launch::operator_console_url;
 use super::plan::DevPlan;
+use super::wire::AWS_SDK_V2_HINT;
 
 pub(super) fn emit_dev_banner(plan: &DevPlan) -> io::Result<()> {
     for line in dev_banner_lines(plan) {
@@ -43,32 +44,21 @@ pub(super) fn dev_banner_lines(plan: &DevPlan) -> Vec<String> {
     // Detected wire surfaces get an endpoint line plus a copy-paste client
     // snippet. The snippets reference the Nimbus-owned `.env.local` keys —
     // the banner never prints credential values.
-    if plan.wire_surfaces.mongodb {
+    for surface in plan.wire.surface_presentations(plan.wire_surfaces) {
+        if !surface.detected {
+            continue;
+        }
+        let label = format!("{}:", surface.display_name);
         lines.push(format!(
-            "MongoDB:    mongodb://127.0.0.1:{}/ (NIMBUS_MONGODB_URL in .env.local)",
-            plan.wire.mongodb_port.port
+            "{label:<12}{} ({} in .env.local)",
+            surface.endpoint, surface.primary_env_key
         ));
-        lines.push("            new MongoClient(process.env.NIMBUS_MONGODB_URL)".to_string());
+        lines.push(format!("{:<12}{}", "", surface.client_snippet));
     }
-    if plan.wire_surfaces.dynamodb {
-        lines.push(format!(
-            "DynamoDB:   http://127.0.0.1:{} (NIMBUS_DYNAMODB_ENDPOINT in .env.local)",
-            plan.wire.dynamodb_port.port
-        ));
-        lines.push(
-            "            new DynamoDBClient({ endpoint: process.env.NIMBUS_DYNAMODB_ENDPOINT, \
-             credentials: { accessKeyId: process.env.NIMBUS_DYNAMODB_ACCESS_KEY_ID, \
-             secretAccessKey: process.env.NIMBUS_DYNAMODB_SECRET_ACCESS_KEY } })"
-                .to_string(),
-        );
-    } else if plan.wire_surfaces.aws_sdk_v2_hint {
+    if !plan.wire_surfaces.dynamodb && plan.wire_surfaces.aws_sdk_v2_hint {
         // D3: aws-sdk v2 alone never promotes the endpoint — the v2 import
         // shape is too ambiguous (S3, SQS, …) — but it earns a hint.
-        lines.push(
-            "Hint:       aws-sdk v2 detected; @aws-sdk/client-dynamodb (v3) enables \
-             automatic DynamoDB endpoint + credentials in .env.local"
-                .to_string(),
-        );
+        lines.push(format!("{:<12}{AWS_SDK_V2_HINT}", "Hint:"));
     }
     if let Some(selection) = plan.compose_selection.as_ref() {
         lines.push(format!(

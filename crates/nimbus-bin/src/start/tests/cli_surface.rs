@@ -281,6 +281,17 @@ fn runtime_limits_from_command_applies_per_tenant_runtime_budgets() {
     assert_eq!(limits.max_queued_top_level_invocations_per_tenant, 7);
 }
 
+/// Summary-shape tests pass an opted-out enablement; the resolution
+/// behind it (and the populated status lines) is covered by the
+/// `adapters` module's own tests.
+fn adapterless_enablement() -> crate::start::adapters::AdapterEnablement {
+    crate::start::adapters::AdapterEnablement {
+        firebase: None,
+        mongodb: None,
+        dynamodb: None,
+    }
+}
+
 #[test]
 fn start_startup_summary_mentions_url_app_codegen_and_deploy_api() {
     let command = StartCommand {
@@ -302,6 +313,7 @@ fn start_startup_summary_mentions_url_app_codegen_and_deploy_api() {
                 "./compose.yaml",
             )),
         ),
+        &adapterless_enablement(),
         SocketAddr::from((Ipv4Addr::UNSPECIFIED, 3210)),
         true,
     );
@@ -328,6 +340,11 @@ fn start_startup_summary_mentions_url_app_codegen_and_deploy_api() {
             .any(|line| line == "compose file: ./compose.yaml")
     );
     assert!(lines.iter().any(|line| line == "deploy admin API: enabled"));
+    // The adapter status lines flow into the banner — one per surface,
+    // honest about an opted-out boot.
+    assert!(lines.iter().any(|line| line == "firestore routes:\toff"));
+    assert!(lines.iter().any(|line| line == "mongodb listener:\toff"));
+    assert!(lines.iter().any(|line| line == "dynamodb listener:\toff"));
 }
 
 #[test]
@@ -350,6 +367,7 @@ fn start_startup_summary_reports_auto_discovered_override_companion() {
         &command,
         None,
         Some(&selection),
+        &adapterless_enablement(),
         SocketAddr::from((Ipv4Addr::UNSPECIFIED, 3210)),
         false,
     );
@@ -375,6 +393,7 @@ fn start_startup_summary_emits_operator_console_url_line() {
         &command,
         None,
         None,
+        &adapterless_enablement(),
         SocketAddr::from((Ipv4Addr::LOCALHOST, 4711)),
         false,
     );
@@ -404,6 +423,7 @@ fn start_startup_summary_reports_no_app_dir_when_none_resolved() {
         &command,
         None,
         None,
+        &adapterless_enablement(),
         SocketAddr::from((Ipv4Addr::UNSPECIFIED, 3210)),
         false,
     );
@@ -433,6 +453,7 @@ fn start_startup_summary_reports_compose_file_environment_selection() {
         &command,
         None,
         Some(&selection),
+        &adapterless_enablement(),
         SocketAddr::from((Ipv4Addr::UNSPECIFIED, 3210)),
         false,
     );

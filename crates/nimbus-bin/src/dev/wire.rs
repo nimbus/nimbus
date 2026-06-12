@@ -22,6 +22,41 @@ pub(super) struct WireListenerPort {
     pub(super) conventional_fallback: bool,
 }
 
+/// The D3 hint shown when only the ambiguous aws-sdk v2 import shape is
+/// present: v2 alone never promotes the DynamoDB endpoint, but it earns
+/// this pointer in both the dev banner and the redetect notices.
+pub(super) const AWS_SDK_V2_HINT: &str = "aws-sdk v2 detected; @aws-sdk/client-dynamodb (v3) \
+     enables automatic DynamoDB endpoint + credentials in .env.local";
+
+/// Everything the presentation layers need to describe one wire surface.
+/// Adding a wire surface means adding one entry to
+/// [`WirePlan::surface_presentations`]; the `.env.local` entries, the
+/// port-fallback notices, the dev banner, and the redetect notices all
+/// render from this list instead of hand-listing surfaces.
+pub(super) struct SurfacePresentation {
+    /// Display name in banners and notices ("MongoDB", "DynamoDB").
+    pub(super) display_name: &'static str,
+    /// What detection saw, for redetect notices ("mongodb dependency").
+    pub(super) dependency_label: &'static str,
+    /// Which `.env.local` keys the surface advertises, for notices
+    /// ("NIMBUS_MONGODB_URL", "NIMBUS_DYNAMODB_ENDPOINT and access keys").
+    pub(super) env_keys_label: &'static str,
+    /// True when the app's dependency set references this surface.
+    pub(super) detected: bool,
+    /// The resolved listener port (the listener is always serving — D6).
+    pub(super) port: WireListenerPort,
+    /// The conventional port the surface prefers, for fallback notices.
+    pub(super) conventional_port: u16,
+    /// Credential-free endpoint shown in the banner beside the env key.
+    pub(super) endpoint: String,
+    /// The headline Nimbus-owned env key, named in the banner.
+    pub(super) primary_env_key: &'static str,
+    /// Nimbus-owned `.env.local` entries advertising this surface.
+    pub(super) env_entries: Vec<(&'static str, String)>,
+    /// Copy-paste client snippet referencing env keys — never values.
+    pub(super) client_snippet: &'static str,
+}
+
 /// Resolved wire-listener ports plus the shared persisted credentials
 /// (D4/D5). Always resolved — listeners are always available (D6) — while
 /// detection only chooses port prominence and what `.env.local` carries.
@@ -33,38 +68,72 @@ pub(super) struct WirePlan {
 }
 
 impl WirePlan {
+    /// One presentation per wire surface, in canonical order. Callers
+    /// filter on `detected` themselves; the aws-sdk v2 hint is not a
+    /// surface and stays with [`AWS_SDK_V2_HINT`].
+    pub(super) fn surface_presentations(&self, surfaces: WireSurfaces) -> Vec<SurfacePresentation> {
+        vec![
+            SurfacePresentation {
+                display_name: "MongoDB",
+                dependency_label: "mongodb dependency",
+                env_keys_label: "NIMBUS_MONGODB_URL",
+                detected: surfaces.mongodb,
+                port: self.mongodb_port,
+                conventional_port: MONGODB_CONVENTIONAL_PORT,
+                endpoint: format!("mongodb://127.0.0.1:{}/", self.mongodb_port.port),
+                primary_env_key: "NIMBUS_MONGODB_URL",
+                env_entries: vec![(
+                    "NIMBUS_MONGODB_URL",
+                    format!(
+                        "mongodb://{}:{}@127.0.0.1:{}/",
+                        self.credentials.mongodb_username,
+                        self.credentials.mongodb_password,
+                        self.mongodb_port.port
+                    ),
+                )],
+                client_snippet: "new MongoClient(process.env.NIMBUS_MONGODB_URL)",
+            },
+            SurfacePresentation {
+                display_name: "DynamoDB",
+                dependency_label: "DynamoDB SDK dependency",
+                env_keys_label: "NIMBUS_DYNAMODB_ENDPOINT and access keys",
+                detected: surfaces.dynamodb,
+                port: self.dynamodb_port,
+                conventional_port: DYNAMODB_CONVENTIONAL_PORT,
+                endpoint: format!("http://127.0.0.1:{}", self.dynamodb_port.port),
+                primary_env_key: "NIMBUS_DYNAMODB_ENDPOINT",
+                env_entries: vec![
+                    (
+                        "NIMBUS_DYNAMODB_ENDPOINT",
+                        format!("http://127.0.0.1:{}", self.dynamodb_port.port),
+                    ),
+                    (
+                        "NIMBUS_DYNAMODB_ACCESS_KEY_ID",
+                        self.credentials.dynamodb_access_key_id.clone(),
+                    ),
+                    (
+                        "NIMBUS_DYNAMODB_SECRET_ACCESS_KEY",
+                        self.credentials.dynamodb_secret_access_key.clone(),
+                    ),
+                ],
+                client_snippet: "new DynamoDBClient({ endpoint: \
+                     process.env.NIMBUS_DYNAMODB_ENDPOINT, credentials: { accessKeyId: \
+                     process.env.NIMBUS_DYNAMODB_ACCESS_KEY_ID, secretAccessKey: \
+                     process.env.NIMBUS_DYNAMODB_SECRET_ACCESS_KEY } })",
+            },
+        ]
+    }
+
     /// The Nimbus-owned `.env.local` entries for the *detected* surfaces.
     /// Undetected surfaces stay out of the app's env file entirely: their
     /// listeners are still up (D6), but on ephemeral ports nothing in the
     /// app references.
     pub(super) fn env_local_entries(&self, surfaces: WireSurfaces) -> Vec<(&'static str, String)> {
-        let mut entries = Vec::new();
-        if surfaces.mongodb {
-            entries.push((
-                "NIMBUS_MONGODB_URL",
-                format!(
-                    "mongodb://{}:{}@127.0.0.1:{}/",
-                    self.credentials.mongodb_username,
-                    self.credentials.mongodb_password,
-                    self.mongodb_port.port
-                ),
-            ));
-        }
-        if surfaces.dynamodb {
-            entries.push((
-                "NIMBUS_DYNAMODB_ENDPOINT",
-                format!("http://127.0.0.1:{}", self.dynamodb_port.port),
-            ));
-            entries.push((
-                "NIMBUS_DYNAMODB_ACCESS_KEY_ID",
-                self.credentials.dynamodb_access_key_id.clone(),
-            ));
-            entries.push((
-                "NIMBUS_DYNAMODB_SECRET_ACCESS_KEY",
-                self.credentials.dynamodb_secret_access_key.clone(),
-            ));
-        }
-        entries
+        self.surface_presentations(surfaces)
+            .into_iter()
+            .filter(|surface| surface.detected)
+            .flat_map(|surface| surface.env_entries)
+            .collect()
     }
 
     #[cfg(test)]
@@ -102,22 +171,17 @@ pub(super) fn resolve_wire_plan(surfaces: WireSurfaces, data_dir: &Path) -> io::
 /// Nimbus-owned `.env.local` key already carries the real port, so apps
 /// reading it keep working without edits.
 pub(super) fn port_fallback_notices(plan: &WirePlan, surfaces: WireSurfaces) -> Vec<String> {
-    let mut notices = Vec::new();
-    if surfaces.mongodb && plan.mongodb_port.conventional_fallback {
-        notices.push(format!(
-            "MongoDB conventional port {MONGODB_CONVENTIONAL_PORT} is busy; \
-             using 127.0.0.1:{} (recorded in .env.local)",
-            plan.mongodb_port.port
-        ));
-    }
-    if surfaces.dynamodb && plan.dynamodb_port.conventional_fallback {
-        notices.push(format!(
-            "DynamoDB conventional port {DYNAMODB_CONVENTIONAL_PORT} is busy; \
-             using 127.0.0.1:{} (recorded in .env.local)",
-            plan.dynamodb_port.port
-        ));
-    }
-    notices
+    plan.surface_presentations(surfaces)
+        .into_iter()
+        .filter(|surface| surface.detected && surface.port.conventional_fallback)
+        .map(|surface| {
+            format!(
+                "{} conventional port {} is busy; using 127.0.0.1:{} \
+                 (recorded in .env.local)",
+                surface.display_name, surface.conventional_port, surface.port.port
+            )
+        })
+        .collect()
 }
 
 fn resolve_listener_port(detected: bool, conventional: u16) -> io::Result<WireListenerPort> {

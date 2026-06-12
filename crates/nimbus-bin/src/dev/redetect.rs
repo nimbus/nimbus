@@ -28,7 +28,7 @@ use super::adapter::{DevAdapter, detect_dev_adapter};
 use super::env_file::write_env_local_nimbus_keys;
 use super::firebase_project::discover_project_tenant;
 use super::surfaces::{WireSurfaces, detect_wire_surfaces};
-use super::wire::WirePlan;
+use super::wire::{AWS_SDK_V2_HINT, WirePlan};
 
 const MANIFEST_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -105,27 +105,23 @@ pub(super) fn rescan_wire_presentation(
 ) -> std::io::Result<WireRescan> {
     let surfaces = detect_wire_surfaces(app_dir);
     write_env_local_nimbus_keys(app_dir, &wire.env_local_entries(surfaces))?;
-    let mut notices = Vec::new();
-    if surfaces.mongodb && !previous.mongodb {
-        notices.push(format!(
-            "detected mongodb dependency: NIMBUS_MONGODB_URL added to .env.local \
-             (listener already serving on 127.0.0.1:{})",
-            wire.mongodb_port.port
-        ));
-    }
-    if surfaces.dynamodb && !previous.dynamodb {
-        notices.push(format!(
-            "detected DynamoDB SDK dependency: NIMBUS_DYNAMODB_ENDPOINT and access keys \
-             added to .env.local (listener already serving on 127.0.0.1:{})",
-            wire.dynamodb_port.port
-        ));
-    }
+    let mut notices: Vec<String> = wire
+        .surface_presentations(surfaces)
+        .into_iter()
+        .zip(wire.surface_presentations(previous))
+        .filter(|(now, before)| now.detected && !before.detected)
+        .map(|(now, _)| {
+            format!(
+                "detected {}: {} added to .env.local \
+                 (listener already serving on 127.0.0.1:{})",
+                now.dependency_label, now.env_keys_label, now.port.port
+            )
+        })
+        .collect();
+    // The aws-sdk v2 hint is not a surface (D3): it never enables a
+    // listener or env keys, so it announces from the shared hint text.
     if surfaces.aws_sdk_v2_hint && !previous.aws_sdk_v2_hint {
-        notices.push(
-            "aws-sdk v2 detected; @aws-sdk/client-dynamodb (v3) enables automatic \
-             DynamoDB endpoint + credentials in .env.local"
-                .to_string(),
-        );
+        notices.push(AWS_SDK_V2_HINT.to_string());
     }
     Ok(WireRescan { surfaces, notices })
 }

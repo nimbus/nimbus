@@ -43,6 +43,29 @@ pub(crate) struct AdapterEnablement {
 }
 
 impl AdapterEnablement {
+    /// Startup-summary lines describing which adapter surfaces serve this
+    /// boot. Every surface reports — `off` is as informative as an address
+    /// — and the lines carry bind addresses only, never credentials.
+    pub(super) fn status_lines(&self) -> Vec<String> {
+        let firestore = match &self.firebase {
+            Some(_) => "mounted on the main listener".to_string(),
+            None => "off".to_string(),
+        };
+        let mongodb = self
+            .mongodb
+            .as_ref()
+            .map_or_else(|| "off".to_string(), |config| config.bind_addr.to_string());
+        let dynamodb = self
+            .dynamodb
+            .as_ref()
+            .map_or_else(|| "off".to_string(), |config| config.bind_addr.to_string());
+        vec![
+            format!("firestore routes:\t{firestore}"),
+            format!("mongodb listener:\t{mongodb}"),
+            format!("dynamodb listener:\t{dynamodb}"),
+        ]
+    }
+
     /// Mounts every resolved adapter surface onto the serve options.
     pub(crate) fn apply_to(
         self,
@@ -381,6 +404,46 @@ mod tests {
                 .binding(&store.dynamodb_access_key_id)
                 .is_ok(),
             "the store access key must authenticate"
+        );
+    }
+
+    #[test]
+    fn status_lines_report_every_surface_without_credentials() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let resolved = resolve(&base_command(), temp.path(), |_| None)
+            .expect("the default command must resolve every surface");
+        let lines = resolved.status_lines();
+        assert_eq!(
+            lines,
+            vec![
+                "firestore routes:\tmounted on the main listener".to_string(),
+                format!("mongodb listener:\t127.0.0.1:{MONGODB_CONVENTIONAL_PORT}"),
+                format!("dynamodb listener:\t127.0.0.1:{DYNAMODB_CONVENTIONAL_PORT}"),
+            ]
+        );
+        let store = load_or_generate(temp.path()).expect("reload the persisted store");
+        for line in &lines {
+            assert!(
+                !line.contains(&store.mongodb_password)
+                    && !line.contains(&store.dynamodb_access_key_id)
+                    && !line.contains(&store.dynamodb_secret_access_key),
+                "status lines must never carry credential material: {line}"
+            );
+        }
+
+        let mut command = base_command();
+        command.firestore = false;
+        command.mongodb = false;
+        command.dynamodb = false;
+        let opted_out = resolve(&command, temp.path(), |_| None)
+            .expect("a fully opted-out command should resolve");
+        assert_eq!(
+            opted_out.status_lines(),
+            vec![
+                "firestore routes:\toff".to_string(),
+                "mongodb listener:\toff".to_string(),
+                "dynamodb listener:\toff".to_string(),
+            ]
         );
     }
 

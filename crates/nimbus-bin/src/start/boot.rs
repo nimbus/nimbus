@@ -13,7 +13,7 @@ use nimbus_server::{
 };
 
 use super::StartCommand;
-use super::adapters::resolve_adapter_enablement;
+use super::adapters::{AdapterEnablement, resolve_adapter_enablement};
 use super::config::{
     control_data_dir_from_persistence_config, persistence_config_from_start_command,
 };
@@ -141,6 +141,7 @@ pub(crate) async fn run_start_command(
         &command,
         resolved_app_dir.as_ref(),
         compose_selection.as_ref(),
+        &adapter_enablement,
         listener.local_addr()?,
         deploy_admin_enabled,
     );
@@ -330,6 +331,7 @@ fn emit_start_startup_summary(
     command: &StartCommand,
     resolved_app_dir: Option<&ResolvedStartAppDir>,
     compose_selection: Option<&ResolvedComposeSelection>,
+    adapter_enablement: &AdapterEnablement,
     listen_addr: SocketAddr,
     deploy_admin_enabled: bool,
 ) {
@@ -337,6 +339,7 @@ fn emit_start_startup_summary(
         command,
         resolved_app_dir,
         compose_selection,
+        adapter_enablement,
         listen_addr,
         deploy_admin_enabled,
     ) {
@@ -348,6 +351,7 @@ pub(super) fn start_startup_summary_lines(
     command: &StartCommand,
     resolved_app_dir: Option<&ResolvedStartAppDir>,
     compose_selection: Option<&ResolvedComposeSelection>,
+    adapter_enablement: &AdapterEnablement,
     listen_addr: SocketAddr,
     deploy_admin_enabled: bool,
 ) -> Vec<String> {
@@ -367,6 +371,7 @@ pub(super) fn start_startup_summary_lines(
             command.tenant_isolation_mode.as_str()
         ),
     ];
+    lines.extend(adapter_enablement.status_lines());
     match resolved_app_dir {
         Some(ResolvedStartAppDir::Explicit(app_dir)) => {
             lines.push(format!("app dir: {}", app_dir.display()));
