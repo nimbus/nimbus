@@ -27,12 +27,13 @@ batches, and transactions are all exposed with matching signatures. The
 
 ## Usage
 
-Wire an app's `firebase` dependency at the provisioned package, then keep
-stock imports:
+Provision the package into an app — this also rewires the app's `firebase`
+dependency in `package.json` to the provisioned copy — then keep stock
+imports:
 
 ```bash
+# in your existing app directory
 nimbus packages provision firebase
-npm pkg set dependencies.firebase=file:./.nimbus/packages/firebase
 npm install
 ```
 

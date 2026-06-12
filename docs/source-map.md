@@ -18,10 +18,11 @@ sources exist.
 | `get-started/self-host.md` | `/api/tenants`, `/documents`, `/query` endpoints | `crates/nimbus-server/src/router.rs` |
 | `get-started/self-host.md` | Local admin token required; token file locations | `crates/nimbus-operator/src/paths.rs`, `crates/nimbus-operator/src/token.rs`, `crates/nimbus-operator/src/access_policy.rs` |
 | `get-started/from-convex.md` | Convex function model + `convex/` layout compatibility | `packages/nimbus/src/server.ts`, `packages/convex/src/`, `crates/nimbus-convex/` |
+| `get-started/from-convex.md` | `nimbus dev` in an existing Convex app provisions packages and rewires the `convex` dependency to `file:./.nimbus/packages/convex` | `crates/nimbus-bin/src/provision.rs`, `crates/nimbus-bin/src/dev.rs` |
 | `index.mdx` (landing) | Speaks Convex / Firestore / Cloud Functions / MongoDB / DynamoDB | `crates/nimbus-convex/`, `crates/nimbus-firebase/`, `crates/nimbus-cloud-functions/`, `crates/nimbus-mongodb/`, `crates/nimbus-dynamodb/` |
 | `index.mdx` (landing) | Single-binary storage/compute/networking/realtime/scheduling | `crates/nimbus-bin/src/main.rs`, `crates/nimbus-engine/`, `crates/nimbus-storage/`, `crates/nimbus-server/` |
-| `index.mdx` (landing) | Firebase tab (Firestore surface): stock `firebase/app` + `firebase/firestore` imports via the provisioned `firebase` package (`file:` dependency), `connectFirestoreEmulator` flow, `projectId` → tenant, `--firestore` enablement | `packages/firebase/package.json`, `packages/firebase/src/firestore.ts`, `crates/nimbus-bin/src/provision.rs`, `crates/nimbus-bin/src/start/adapters.rs` |
-| `index.mdx` (landing) | Cloud Functions tab: firebase-functions v2 `onRequest`/`onDocumentCreated` handler shapes | `crates/nimbus-cloud-functions/src/lib.rs`, `docs/developers/cloud-functions/index.md` |
+| `index.mdx` (landing) | Firebase tab (Firestore surface): stock `firebase/app` + `firebase/firestore` imports via the provisioned `firebase` package; `nimbus packages provision firebase` auto-wires `dependencies.firebase` in `package.json`; `connectFirestoreEmulator` flow, `projectId` → tenant, `--firestore` enablement | `packages/firebase/package.json`, `packages/firebase/src/firestore.ts`, `crates/nimbus-bin/src/provision.rs`, `crates/nimbus-bin/src/start/adapters.rs` |
+| `index.mdx` (landing) | Cloud Functions tab: firebase-functions v2 `onRequest`/`onDocumentCreated` handler shapes; `nimbus dev` detects an existing Functions project via `firebase.json` | `crates/nimbus-cloud-functions/src/lib.rs`, `crates/nimbus-bin/src/dev/adapter.rs`, `docs/developers/cloud-functions/index.md` |
 | `index.mdx` (landing) | MongoDB tab: connection string shape, `directConnection=true`, `--mongodb-port` enablement | `packages/mongodb/src/uri.ts`, `crates/nimbus-bin/src/start/adapters.rs` |
 | `index.mdx` (landing) | DynamoDB tab: endpoint `127.0.0.1:8000`, registered-key credentials, `--dynamodb-port` enablement | `crates/nimbus-dynamodb/src/config.rs`, `crates/nimbus-bin/src/start/adapters.rs` |
 | `index.mdx` (landing) | HTTP API tab: `POST /api/tenants`, `POST /api/tenants/{t}/documents`, bearer auth | `crates/nimbus-server/src/router.rs`, `packages/nimbus/src/native_rest_routes.json` |
@@ -49,7 +50,7 @@ sources exist.
 | `developers/convex/index.md` | Deployment URL `http://localhost:3210/convex/demo` | `crates/nimbus-server/src/router.rs`, `crates/nimbus-bin/src/dev/plan.rs` |
 | `developers/convex/index.md` | ctx capability split (query read / mutation write+scheduler / action run-only) | `packages/codegen/src/planner/context_api.mjs` |
 | `developers/convex/index.md` | React/HTTP client surface (`ConvexProvider`, `useQuery`, `ConvexHttpClient`) | `packages/convex/src/react.ts`, `packages/convex/src/browser.ts` |
-| `developers/convex/migrate.md` | Dev provisions packages for detected Convex apps; `file:./.nimbus/packages/convex` dependency | `crates/nimbus-bin/src/dev.rs`, `crates/nimbus-bin/src/node.rs` |
+| `developers/convex/migrate.md` | Dev provisions packages for detected Convex apps and rewires the `convex` dependency to `file:./.nimbus/packages/convex` | `crates/nimbus-bin/src/dev.rs`, `crates/nimbus-bin/src/provision.rs`, `crates/nimbus-bin/src/node.rs` |
 | `developers/convex/migrate.md` | Generated files import from `convex/server`/`browser`/`values` | `packages/codegen/src/emit/generated_files.mjs`, `packages/codegen/src/app.mjs` |
 | `developers/convex/migrate.md` | `.env.local` `NIMBUS_DEPLOYMENT=local:<slug>`; `nimbus codegen --app .` | `crates/nimbus-bin/src/dev/env_file.rs`, `crates/nimbus-bin/src/codegen.rs` |
 | `reference/convex/compatibility.md` | Auth providers, OIDC discovery, audience rules, `getUserIdentity`/`getVerifiedIdentity` | `packages/codegen/src/auth_config.mjs`, `crates/nimbus-convex/src/auth/`, `crates/nimbus-runtime/src/runtime/bootstrap/source.rs` |
@@ -65,7 +66,7 @@ sources exist.
 
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
-| `developers/firebase/index.md` | `nimbus packages provision firebase` → drop-in `firebase` package under the stock npm name; `file:` dependency wiring | `crates/nimbus-bin/src/provision.rs`, `packages/firebase/package.json` |
+| `developers/firebase/index.md` | `nimbus packages provision firebase` → drop-in `firebase` package under the stock npm name; auto-wires `dependencies.firebase` to `file:./.nimbus/packages/firebase` in the app's `package.json` | `crates/nimbus-bin/src/provision.rs`, `packages/firebase/package.json` |
 | `developers/firebase/index.md` | Firestore routes enabled by `nimbus start --firestore` / `with_firebase_config` | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/construction.rs` |
 | `developers/firebase/index.md` | `projectId` → tenant id; only `(default)` database | `crates/nimbus-firebase/src/operations.rs`, `crates/nimbus-firebase/src/firestore_model.rs` |
 | `developers/firebase/index.md` | `connectFirestoreEmulator` flow; transport options | `packages/firebase/src/firestore.ts`, `crates/nimbus-server/src/tests/firebase/rest_crud.rs` |

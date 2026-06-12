@@ -33,7 +33,7 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
 <Tabs>
   <TabItem label="Convex">
     ```bash
-    nimbus init convex my-app && cd my-app
+    # migrate an existing Convex app — provisions and rewires `convex` automatically
     nimbus dev
     ```
     ```typescript
@@ -52,14 +52,15 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
         await ctx.db.insert("messages", { author, body }),
     });
     ```
-    See [the Convex guide](/developers/convex/) — or scaffold this app in
-    the [5-minute quickstart](/get-started/quickstart/).
+    One command in your project root: `nimbus dev` detects the `convex/`
+    directory and repoints the `convex` dependency at the package inside the
+    binary. See [the Convex guide](/developers/convex/) — or scaffold a fresh
+    app in the [5-minute quickstart](/get-started/quickstart/).
   </TabItem>
   <TabItem label="Firebase">
     ```bash
-    nimbus packages provision firebase
-    npm pkg set dependencies.firebase=file:./.nimbus/packages/firebase
-    npm install
+    # migrate an existing Firebase app — provision rewires `firebase` automatically
+    nimbus packages provision firebase && npm install
     nimbus start --firestore
     ```
     ```typescript
@@ -81,13 +82,13 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
     onSnapshot(messages, (live) => console.log("live size", live.size));
     ```
     Firestore is Firebase's database — Nimbus speaks its wire protocol and
-    ships a drop-in `firebase` package inside the binary, so your imports
-    stay exactly as they are. See
-    [the Firestore guide](/developers/firebase/).
+    ships a drop-in `firebase` package inside the binary. Provisioning
+    rewires your app's `firebase` dependency at it, so your imports stay
+    exactly as they are. See [the Firestore guide](/developers/firebase/).
   </TabItem>
   <TabItem label="Cloud Functions">
     ```bash
-    nimbus init cloud-functions my-functions-app && cd my-functions-app
+    # migrate an existing Firebase Functions project — firebase.json is detected
     nimbus dev
     ```
     ```typescript
@@ -106,11 +107,14 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
       },
     );
     ```
-    See [the Cloud Functions guide](/developers/cloud-functions/) for the
+    Run `nimbus dev` in your existing Functions project — `firebase.json`
+    marks the root. See
+    [the Cloud Functions guide](/developers/cloud-functions/) for the
     project layout and deploy flow.
   </TabItem>
   <TabItem label="MongoDB">
     ```bash
+    # no migration needed — point your existing driver at Nimbus
     nimbus start --mongodb-port 27017
     ```
     ```javascript
@@ -131,6 +135,7 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
   </TabItem>
   <TabItem label="DynamoDB">
     ```bash
+    # no migration needed — point your existing AWS SDK client at Nimbus
     nimbus start --dynamodb-port 8000
     ```
     ```javascript
@@ -157,6 +162,7 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
   </TabItem>
   <TabItem label="HTTP API">
     ```bash
+    # Nimbus's native surface — no SDK and nothing to migrate
     nimbus start
     ```
     ```bash

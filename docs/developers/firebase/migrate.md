@@ -21,14 +21,16 @@ precise support reference.
 ## 1. Repoint the `firebase` dependency
 
 ```bash
+# in your existing app directory
 nimbus packages provision firebase
-npm pkg set dependencies.firebase=file:./.nimbus/packages/firebase
 npm install
 ```
 
 The `nimbus` binary materializes its `firebase` package under
-`.nimbus/packages/firebase` — no registry access required — and the `file:`
-specifier swaps it in for the upstream package.
+`.nimbus/packages/firebase` — no registry access required — and rewrites
+your app's `firebase` dependency from the registry spec to
+`file:./.nimbus/packages/firebase`, swapping the provisioned package in
+for the upstream one. `npm install` picks up the change.
 
 ## 2. Keep your imports unchanged
 

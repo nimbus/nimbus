@@ -14,7 +14,8 @@ Nimbus has three distinct Firebase-facing stories:
 1. A tested first-party drop-in `firebase` package. It takes the stock npm
    name, so `firebase/app` and `firebase/firestore` imports work unchanged
    once the app's `firebase` dependency points at the copy provisioned by
-   the `nimbus` binary.
+   the `nimbus` binary — `nimbus packages provision firebase` wires that
+   dependency itself.
 2. A live Firestore server surface: REST, selected native gRPC, gRPC-Web,
    and WebSocket `Listen`.
 3. Deferred wire compatibility with the registry-published Google

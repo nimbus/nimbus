@@ -6,8 +6,9 @@ sidebar:
 ---
 
 Nimbus runs Convex projects in place: it detects the `convex/` directory,
-runs codegen, and serves the same function and client APIs from a local
-binary. Most projects need only a dependency swap and a new deployment URL.
+swaps the `convex` dependency to its own provisioned package, runs codegen,
+and serves the same function and client APIs from a local binary. Most
+projects need only `nimbus dev` and a new deployment URL.
 
 Before you start, scan the
 [compatibility reference](/reference/convex/compatibility/) for the surfaces
@@ -19,7 +20,7 @@ today — if your app depends on them, it is not ready to migrate.
 ### 1. Run the dev server from your project root
 
 ```bash
-cd my-convex-app
+# in your existing Convex app directory
 nimbus dev
 ```
 
@@ -27,10 +28,11 @@ nimbus dev
 Convex-compatible npm package into `.nimbus/packages/`, runs codegen, and
 serves on `http://localhost:3210` with an auto-created `demo` tenant.
 
-### 2. Swap the `convex` dependency
+### 2. Let it swap the `convex` dependency
 
-Point your `convex` dependency at the package Nimbus provisions, then
-reinstall:
+There is no manual dependency edit. When `nimbus dev` provisions, it also
+rewires the `convex` entry in your `package.json` from the registry spec to
+the provisioned copy and reinstalls dependencies:
 
 ```json
 {
@@ -40,13 +42,10 @@ reinstall:
 }
 ```
 
-```bash
-npm install
-```
-
 The regenerated `convex/_generated/` files import from `convex/server`,
 `convex/browser`, and `convex/values`, and those imports must resolve to the
-Nimbus-compatible package rather than the hosted-Convex one.
+Nimbus-compatible package rather than the hosted-Convex one — which the
+rewired dependency guarantees.
 
 ### 3. Update the deployment URL
 

@@ -22,14 +22,25 @@ subscriptions — self-hosted in a single binary.
 
 ## Try it
 
+With an existing Convex project, run Nimbus from its root:
+
+```bash
+# in your existing Convex app directory
+nimbus dev
+```
+
+`nimbus dev` recognizes the `convex/` directory, provisions the
+Convex-compatible package from inside the binary, and rewires the app's
+`convex` dependency in `package.json` to the provisioned copy — no
+registry access and no manual dependency edit.
+
+Starting fresh instead? Scaffold a new app:
+
 ```bash
 nimbus init convex my-app
 cd my-app
 nimbus dev
 ```
-
-Or point Nimbus at an existing Convex project directory and run
-`nimbus dev` from its root.
 
 ## What differs
 

@@ -139,8 +139,9 @@ Three packages support the protocol adapters on the client side:
   (`packages/firebase/src/firestore.ts`) speaking the Firestore wire
   protocol via Connect-Web generated protobuf code. Like `convex`, it
   takes the stock npm name, so existing imports work unchanged once the
-  app's `firebase` dependency points at the provisioned copy
-  (`npm pkg set dependencies.firebase=file:./.nimbus/packages/firebase`).
+  app's `firebase` dependency points at the provisioned copy —
+  `nimbus packages provision firebase` rewires the `package.json`
+  dependency to `file:./.nimbus/packages/firebase` itself.
 - `@nimbus/mongodb` exports a single `mongoUri` helper that builds a
   connection string pointed at a Nimbus tenant, for use with the stock
   `mongodb` driver.
@@ -166,7 +167,7 @@ crates/nimbus-assets/embedded/packages/   (rust-embed, version-locked)
       ▼
 <app>/.nimbus/packages/<name>/  +  .version stamp
       ▲
-"convex": "file:./.nimbus/packages/convex"   (scaffolded package.json)
+"convex": "file:./.nimbus/packages/convex"   (scaffolded or auto-wired package.json)
 ```
 
 - A staging script copies each built package — plus three co-provisioned
@@ -181,7 +182,10 @@ crates/nimbus-assets/embedded/packages/   (rust-embed, version-locked)
   rewritten on the next call.
 - Scaffolds reference the payload with `file:` specifiers (for example
   `"convex": "file:./.nimbus/packages/convex"` in the embedded init
-  template), so `npm install` resolves entirely offline.
+  template), so `npm install` resolves entirely offline. For an existing
+  app, adapter provisioning writes the same specifier into the app's
+  `package.json` itself — replacing a registry spec — so migrating needs no
+  manual dependency edit.
 - On a binary upgrade the stamp drifts, provisioning rewrites the payload,
   and the installed copies are invalidated so Node reinstalls from the
   fresh bytes. `nimbus packages verify` re-checks every provisioned file

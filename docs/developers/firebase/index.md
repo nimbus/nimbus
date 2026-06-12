@@ -34,14 +34,16 @@ The `nimbus` binary materializes its `firebase` package locally — nothing
 is fetched from a registry:
 
 ```bash
+# in your existing app directory
 nimbus packages provision firebase
-npm pkg set dependencies.firebase=file:./.nimbus/packages/firebase
 npm install
 ```
 
 The package lands under `.nimbus/packages/firebase` in your app directory,
-and the `file:` dependency makes every stock `firebase/app` and
-`firebase/firestore` import resolve to it.
+and provisioning rewires `dependencies.firebase` in your `package.json` to
+`file:./.nimbus/packages/firebase` automatically — replacing a registry
+spec if one is there. Every stock `firebase/app` and `firebase/firestore`
+import then resolves to the provisioned package.
 
 ## 2. Initialize and connect
 
