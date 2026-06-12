@@ -12,10 +12,10 @@ use super::firebase_scan::{self, CoveredSet, FirebaseScan};
 /// provisioned `file:` spec, force a Node reinstall) or refuse before any
 /// mutation with every blocking finding listed.
 pub(super) fn wire_firestore_client_app(app_dir: &Path) -> io::Result<()> {
-    let covered = CoveredSet::from_embedded_manifest()?;
-    let scan = firebase_scan::scan_app(app_dir, &covered)?;
+    let covered = firebase_scan::embedded_covered_set()?;
+    let scan = firebase_scan::scan_app(app_dir, covered)?;
     if !scan.passes() {
-        for line in firestore_wiring_refusal_lines(&scan, &covered) {
+        for line in firestore_wiring_refusal_lines(&scan, covered) {
             cli_ux::write_stderr_line(&line)?;
         }
         return Err(io::Error::other(

@@ -33,12 +33,24 @@
 use std::collections::BTreeSet;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use nimbus_assets::js_packages;
 
 use super::watch::should_skip_watch_dir;
 
 pub(super) const SCANNED_EXTENSIONS: [&str; 6] = ["ts", "tsx", "js", "jsx", "mjs", "cjs"];
+
+/// The embedded drop-in package's covered set, derived once per process:
+/// the manifest is compiled into the binary, so the result can never
+/// change at runtime. A derivation error is replayed on every call.
+pub(super) fn embedded_covered_set() -> io::Result<&'static CoveredSet> {
+    static EMBEDDED: OnceLock<Result<CoveredSet, String>> = OnceLock::new();
+    EMBEDDED
+        .get_or_init(|| CoveredSet::from_embedded_manifest().map_err(|error| error.to_string()))
+        .as_ref()
+        .map_err(|message| io::Error::other(message.clone()))
+}
 
 /// Import specifiers the embedded drop-in `firebase` package serves.
 #[derive(Debug, Clone, PartialEq, Eq)]

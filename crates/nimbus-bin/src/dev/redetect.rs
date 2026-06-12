@@ -178,7 +178,12 @@ pub(super) async fn run_manifest_watch_loop(
             }
         }
         match adopt_app_adapter(&watch, adapter.as_ref()).await {
-            Ok(next_adapter) => adapter = next_adapter,
+            Ok(rescan) => {
+                for notice in &rescan.notices {
+                    let _ = cli_ux::write_stderr_prefixed_line("info:", notice);
+                }
+                adapter = rescan.adapter;
+            }
             // The previous adapter stays in effect: `adapter` is unchanged,
             // so the next manifest change re-detects and retries.
             Err(error) => {
@@ -194,6 +199,14 @@ pub(super) async fn run_manifest_watch_loop(
     }
 }
 
+/// Outcome of one adapter re-detection: the adapter now in effect plus
+/// the notices the adoption earned. Mirrors [`WireRescan`] — adoption
+/// produces data, the watch loop owns all printing.
+pub(super) struct AdapterRescan {
+    pub(super) adapter: Option<DevAdapter>,
+    pub(super) notices: Vec<String>,
+}
+
 /// Re-detect the app adapter and adopt a change through the boot-time
 /// flow. The Firebase lane is the only one that mutates the app, and it
 /// stays behind the same fail-closed import scan as boot — a refusal
@@ -206,42 +219,43 @@ pub(super) async fn run_manifest_watch_loop(
 async fn adopt_app_adapter(
     watch: &ManifestWatch<'_>,
     previous: Option<&DevAdapter>,
-) -> Result<Option<DevAdapter>, Box<dyn std::error::Error>> {
+) -> Result<AdapterRescan, Box<dyn std::error::Error>> {
     let detected = detect_dev_adapter(watch.app_dir)?;
+    let mut notices = Vec::new();
     if detected.as_ref() == previous {
-        return Ok(detected);
+        return Ok(AdapterRescan {
+            adapter: detected,
+            notices,
+        });
     }
     match &detected {
         None => {
             register_watch_roots(watch.watch_roots, Vec::new());
-            let _ = cli_ux::write_stderr_prefixed_line(
-                "info:",
-                "adapter markers removed; codegen watch idled (the server keeps serving)",
+            notices.push(
+                "adapter markers removed; codegen watch idled (the server keeps serving)"
+                    .to_string(),
             );
         }
         Some(DevAdapter::FirestoreClient) => {
             super::firebase::wire_firestore_client_app(watch.app_dir)?;
             crate::node::auto_install_node_dependencies(watch.app_dir).await?;
             register_watch_roots(watch.watch_roots, Vec::new());
-            let _ = cli_ux::write_stderr_prefixed_line(
-                "info:",
+            notices.push(
                 "firebase dependency adopted: package.json now points at the drop-in \
-                 firebase package",
+                 firebase package"
+                    .to_string(),
             );
             // The boot-time plan already created its auto tenant; this
             // session cannot retroactively map a different project id.
             let mapping = discover_project_tenant(watch.app_dir)?;
             if mapping.tenant != watch.boot_auto_tenant {
-                let _ = cli_ux::write_stderr_prefixed_line(
-                    "info:",
-                    &format!(
-                        "this app addresses project '{}' ({}), but this session serves \
-                         tenant '{}'; restart `nimbus dev` to map the project",
-                        mapping.tenant,
-                        mapping.describe_source(),
-                        watch.boot_auto_tenant
-                    ),
-                );
+                notices.push(format!(
+                    "this app addresses project '{}' ({}), but this session serves \
+                     tenant '{}'; restart `nimbus dev` to map the project",
+                    mapping.tenant,
+                    mapping.describe_source(),
+                    watch.boot_auto_tenant
+                ));
             }
         }
         Some(adapter) => {
@@ -256,16 +270,16 @@ async fn adopt_app_adapter(
                 }
             }
             register_watch_roots(watch.watch_roots, adapter.source_roots().to_vec());
-            let _ = cli_ux::write_stderr_prefixed_line(
-                "info:",
-                &format!(
-                    "detected {} sources; codegen watch is now active",
-                    adapter.name()
-                ),
-            );
+            notices.push(format!(
+                "detected {} sources; codegen watch is now active",
+                adapter.name()
+            ));
         }
     }
-    Ok(detected)
+    Ok(AdapterRescan {
+        adapter: detected,
+        notices,
+    })
 }
 
 /// Send the roots only when they actually change, so a re-adoption with

@@ -13,7 +13,9 @@ const MONGODB_DEV_USERNAME: &str = "nimbus";
 /// restarts (decision D5) and shared by `nimbus dev` and `nimbus start`
 /// (decision D7) — both commands load-or-generate the same store, so the
 /// same data dir always speaks with the same secrets. Rotation = delete
-/// the file.
+/// the file and restart: a running session keeps serving with the
+/// credentials it loaded at boot, and the next boot generates a fresh
+/// set and refreshes the Nimbus-owned `.env.local` keys.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct WireCredentials {
     pub(crate) mongodb_username: String,

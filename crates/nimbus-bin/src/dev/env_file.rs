@@ -15,6 +15,12 @@ pub(super) fn write_env_local_deployment(app_dir: &Path, slug: &str) -> io::Resu
 /// every other line is preserved byte-for-byte. Only `NIMBUS_*` keys may
 /// flow through this writer — a user-owned key (e.g. `MONGODB_URI`) is
 /// refused with `InvalidInput` before anything touches the file.
+///
+/// The replace itself is atomic (temp file + rename), but the
+/// read-modify-write sequence is not cross-process locked: the writer
+/// assumes one Nimbus session owns the app dir at a time. Within a
+/// session, callers run sequentially (boot, then the manifest watch
+/// loop), so writes never interleave.
 pub(super) fn write_env_local_nimbus_keys(
     app_dir: &Path,
     entries: &[(&str, String)],
