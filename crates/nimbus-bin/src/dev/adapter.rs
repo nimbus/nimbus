@@ -93,7 +93,7 @@ pub(super) fn has_firebase_dependency(app_dir: &Path) -> bool {
     has_package_dependency(app_dir, "firebase")
 }
 
-fn has_package_dependency(app_dir: &Path, package_name: &str) -> bool {
+pub(super) fn has_package_dependency(app_dir: &Path, package_name: &str) -> bool {
     let package_json_path = app_dir.join("package.json");
     let Ok(content) = std::fs::read_to_string(&package_json_path) else {
         return false;

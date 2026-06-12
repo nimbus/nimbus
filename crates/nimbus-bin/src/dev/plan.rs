@@ -9,6 +9,7 @@ use crate::start::{CliTenantProvider, StartCommand};
 
 use super::adapter::{DevAdapter, detect_dev_adapter};
 use super::launch::{AutoOpenDecision, ProcessEnv, resolve_auto_open};
+use super::surfaces::{WireSurfaces, detect_wire_surfaces};
 use super::{DevCommand, DevTailLogsMode};
 
 #[derive(Debug)]
@@ -19,6 +20,7 @@ pub(super) struct DevPlan {
     pub(super) compose_selection: Option<ResolvedComposeSelection>,
     pub(super) local_url: String,
     pub(super) adapter: Option<DevAdapter>,
+    pub(super) wire_surfaces: WireSurfaces,
     pub(super) once: bool,
     pub(super) tail_logs: DevTailLogsMode,
     pub(super) start_command: StartCommand,
@@ -61,6 +63,7 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         resolve_auto_open(command.no_open, io::stdout().is_terminal(), &ProcessEnv);
     let app_dir = resolve_app_dir(command.app_dir.as_deref(), cwd)?;
     let adapter = detect_dev_adapter(&app_dir)?;
+    let wire_surfaces = detect_wire_surfaces(&app_dir);
     let deployment_slug =
         dirs::deployment_slug(&app_dir).map_err(|error| io::Error::other(error.to_string()))?;
     let explicit_compose_files = command.compose_file.as_slice();
@@ -73,6 +76,9 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         .unwrap_or_else(|| app_dir.join(".nimbus").join("dev"));
     let local_url = format!("http://localhost:{}/", command.port);
     let deploy_admin_token = generate_dev_deploy_token();
+    // Detected wire surfaces do not flip listener flags here yet: listeners
+    // are deny-by-default on credentials, and the generated-credential story
+    // (DXW2/DXW3) is what turns a detected surface into an enabled one.
     let start_command = StartCommand {
         port: command.port,
         data_dir: Some(data_dir.clone()),
@@ -95,6 +101,7 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         compose_selection,
         local_url,
         adapter,
+        wire_surfaces,
         once: command.once,
         tail_logs: command.tail_logs,
         start_command,

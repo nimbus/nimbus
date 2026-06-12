@@ -14,6 +14,7 @@ mod banner;
 mod env_file;
 mod launch;
 mod plan;
+mod surfaces;
 mod watch;
 
 use banner::emit_dev_banner;
@@ -107,6 +108,12 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
     }
 
     let plan = resolve_dev_plan(command, &cwd)?;
+    tracing::debug!(
+        mongodb = plan.wire_surfaces.mongodb,
+        dynamodb = plan.wire_surfaces.dynamodb,
+        aws_sdk_v2_hint = plan.wire_surfaces.aws_sdk_v2_hint,
+        "detected wire surfaces"
+    );
 
     if plan.adapter.is_none() && !skip_codegen {
         cli_ux::write_stderr_line("")?;
@@ -568,6 +575,7 @@ mod tests {
             compose_selection: Some(selection),
             local_url: "http://localhost:3210/".to_owned(),
             adapter: None,
+            wire_surfaces: surfaces::WireSurfaces::default(),
             once: false,
             tail_logs: DevTailLogsMode::PauseOnSync,
             start_command: StartCommand::default(),
@@ -697,6 +705,45 @@ mod tests {
                 .map(|path| fs::canonicalize(path).unwrap())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn convex_app_with_mongodb_dep_resolves_adapter_and_surface() {
+        // App adapters are singular; wire surfaces are a set that combines
+        // with any app adapter. A Convex app that also declares `mongodb`
+        // must resolve BOTH, independently.
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"dependencies": {"mongodb": "^6.0.0"}}"#,
+        )
+        .expect("package.json should write");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+
+        assert!(
+            matches!(plan.adapter, Some(DevAdapter::Convex { .. })),
+            "Convex app adapter must resolve despite the driver dependency"
+        );
+        assert!(
+            plan.wire_surfaces.mongodb,
+            "mongodb dependency must resolve the MongoDB wire surface"
+        );
+        assert!(!plan.wire_surfaces.dynamodb);
+        assert!(!plan.wire_surfaces.aws_sdk_v2_hint);
+    }
+
+    #[test]
+    fn dev_plan_without_driver_deps_resolves_empty_wire_surfaces() {
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+
+        assert_eq!(plan.wire_surfaces, surfaces::WireSurfaces::default());
     }
 
     #[test]
