@@ -24,7 +24,8 @@ const nimbus = new Nimbus({
 ```
 
 Endpoint and credential discovery (environment variables, the local
-credential file) is covered in the [SDK clients reference](/reference/sdk/client/).
+credential file) is covered in the
+[SDK resources reference](/reference/sdk/resources/).
 
 ## Create a standalone sandbox
 

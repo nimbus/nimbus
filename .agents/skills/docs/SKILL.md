@@ -69,6 +69,13 @@ module paths inline.
   scope + handoff to nimbusdocs.com. Docs landing = hero pitch +
   proof-by-code + routing. Docs body = everything else. No surface
   duplicates another's content.
+- Landing leads with `nimbus dev` — the command is the demo. The install
+  step goes beneath it, never as the opener.
+- No self-referential praise: never call our own docs or tables "honest"
+  ("an honest capability table", "tells that story honestly"). Be honest;
+  don't say it.
+- Short declarative sentences. Headings carry the claim so the page skims
+  without a card grid.
 
 ## Verification
 

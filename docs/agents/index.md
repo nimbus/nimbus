@@ -14,8 +14,9 @@ compute** from — without adding a second vendor next to the database.
   is no service mesh to assemble before the first task runs.
 - **Inspect.** The docs ship as [llms.txt](/llms.txt) artifacts, every API
   returns structured errors from a published
-  [error catalog](/reference/native/errors/), and the honest capability
-  snapshot lives in [current capabilities](/reference/current-capabilities/).
+  [error catalog](/reference/native/errors/), and
+  [current capabilities](/reference/current-capabilities/) is a plain
+  table of what works today.
 - **Isolate.** Agent workloads get three purpose-built resources, managed
   through the `@nimbus/nimbus` SDK or plain HTTP: **sandboxes** (isolated
   execution environments addressed by id), **services** (named workloads
@@ -46,10 +47,11 @@ nouns is explained in
 ## Where sandboxes actually run
 
 Sandbox execution runs on Linux hosts: workloads launch as OCI containers
-(the process-capable default) or libkrun microVMs, with deny-by-default
-network egress. On macOS (and WSL2 on Windows), `nimbus machine` provides
-the managed Linux VM that hosts them — see the
-[CLI reference](/reference/cli/). The full status table is in
+with deny-by-default network egress. (A libkrun microVM backend exists but
+fails closed for process execution today — containers are what run
+workloads.) On macOS and WSL2, `nimbus machine` provides the managed Linux
+VM that hosts them — see the [CLI reference](/reference/cli/). The full
+status table is in
 [current capabilities](/reference/current-capabilities/).
 
 Ordinary Nimbus functions are not sandboxes: they run in V8 isolates

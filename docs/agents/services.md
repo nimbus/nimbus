@@ -114,7 +114,7 @@ for (const service of page.items) {
 // page.metadata.nextPageToken feeds the next call's pageToken.
 ```
 
-## Built-in and external backends
+## Declare built-in and external backends
 
 Two other backend kinds exist alongside sandbox-backed services:
 

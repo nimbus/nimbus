@@ -27,18 +27,28 @@ hero:
 
 import { Tabs, TabItem, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-## Run the whole backend in two commands
+## The whole backend in one command
+
+```bash
+nimbus dev
+```
+
+Run it in your project. One process — a single Rust binary — serves
+storage, TypeScript functions, realtime subscriptions, scheduling, and
+agent sandboxes, and reloads your functions as you save. No Compose file,
+no sidecar services, no managed account.
+
+Install it first:
 
 ```bash
 brew install nimbus/tap/nimbus
-nimbus start --port 8080 --data-dir ./data
 ```
 
-That's the deployment. One process now serves storage, TypeScript
-functions, realtime subscriptions, scheduling, and agent sandboxes,
-persisting to a directory on disk. No Compose file, no sidecar services,
-no managed account. The [self-host quickstart](/get-started/self-host/)
-takes you from here to your first stored document in about two minutes.
+Other platforms ship via the install script and release binaries — see the
+[install options](https://github.com/nimbus/nimbus#install). The
+[5-minute quickstart](/get-started/quickstart/) scaffolds an app around
+`nimbus dev`; the [self-host quickstart](/get-started/self-host/) runs the
+same binary as a long-lived server with `nimbus start`.
 
 ## One binary, your choice of client
 
@@ -228,29 +238,31 @@ takes you from here to your first stored document in about two minutes.
 </Tabs>
 </div>
 
-Every tab above is the same engine and the same data — five drop-in
-protocol surfaces, Nimbus's native API, and an agent sandbox surface. See
-[Developers](/developers/) for the adapters side by side.
+Every tab is the same engine and the same data — five drop-in protocols,
+the native API, and the sandbox surface. See [Developers](/developers/)
+for the adapters side by side.
 
-## Dev to prod is one verb
+## Production is one more verb
 
 ```bash
 nimbus dev      # laptop: watch files, run codegen, reload functions
 nimbus deploy   # production: package, validate, activate atomically
 ```
 
-There is no infrastructure layer between development and production — no
-Terraform, no Helm chart, no Dockerfile. Both sides run the same binary
-with the same configuration surface; `nimbus deploy` packages your
-functions, previews a diff with `--dry-run`, and atomically activates the
-new generation on whatever server you point it at.
+You have already run the first one. Both are the same binary with the
+same configuration surface — no Terraform, no Helm chart, no Dockerfile
+between them. `nimbus deploy` packages your functions, previews a diff
+with `--dry-run`, and activates the new generation atomically on whatever
+server you point it at.
 [Deploy to production](/get-started/deploy/) walks the whole flow.
 
 ## Built for agents
 
 Agents need a backend they can **run** (one binary, started in one
 command), **inspect** (docs shipped as [llms.txt](/llms.txt), structured
-errors, an honest capability table), and get **isolated compute** from.
+errors, and a
+[plain table of what works today](/reference/current-capabilities/)), and
+get **isolated compute** from.
 That last part is first-class: **sandboxes** are isolated worlds addressed
 by id, **services** are named workloads other code can depend on, and
 **sessions** are expiring leases for stdio, file, and browser-control
@@ -273,15 +285,15 @@ server that holds your data.
 ## Scale with tenants and services
 
 The unit of isolation is also the unit of growth. Every tenant gets its
-own storage namespace, its own admission queue, and its own function
-budgets — load on one tenant cannot degrade another, and adding load means
-adding tenants. Heavier compute fans out into sandbox-backed services that
-run beside the engine under the same lifecycle management, and storage
-can move onto PostgreSQL, MySQL, or libSQL infrastructure that grows
-independently. One deployment is one process today — no cluster mode, and
-[scaling](/concepts/scaling/) tells that story honestly rather than
-hand-waving past it. Self-hosted, source-available, and protocol-portable
-by design: there is no lock-in to scale your way out of later.
+own storage namespace, its own write queue, and its own function budgets —
+load on one tenant cannot degrade another, and adding load means adding
+tenants. Heavier compute fans out into sandbox-backed services that Nimbus
+launches and supervises next to your data, and storage can move onto
+PostgreSQL, MySQL, or libSQL infrastructure that grows independently. One
+deployment is one process today — no cluster mode;
+[scaling](/concepts/scaling/) spells out the limits and the partitioning
+pattern for growing past one machine. Self-hosted, source-available, and
+protocol-portable by design: no lock-in.
 
 ## Find your path
 

@@ -50,7 +50,7 @@ actually offer:
 | Built-in `browser` service | `cdp`, `page` |
 | Other built-in providers, external services | none |
 
-## Every session expires
+## Set the TTL and close when done
 
 The requested TTL is optional; the server applies a default of fifteen
 minutes and caps every session at one hour. Sessions move through `open`,
@@ -63,7 +63,7 @@ const open = await nimbus.sessions.list({ state: "open" });
 await nimbus.sessions.close({ id: session.metadata.id, reason: "done" });
 ```
 
-## The target is pinned at open time
+## Check what the session attached to
 
 The response's `spec.targetSnapshot` records exactly what the session
 attached to — the service name or sandbox id, its generation, and its
