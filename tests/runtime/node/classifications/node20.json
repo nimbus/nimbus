@@ -518,7 +518,6 @@
         "test/parallel/test-domain-fs-enoent-stream.js",
         "test/parallel/test-domain-http-server.js",
         "test/parallel/test-domain-implicit-fs.js",
-        "test/parallel/test-domain-load-after-set-uncaught-exception-capture.js",
         "test/parallel/test-domain-multi.js",
         "test/parallel/test-domain-nested-throw.js",
         "test/parallel/test-domain-no-error-handler-abort-on-uncaught-0.js",

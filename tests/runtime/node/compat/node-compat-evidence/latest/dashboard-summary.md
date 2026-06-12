@@ -13,16 +13,16 @@
 
 | Lane | Upstream | Role | Passed | Expected failure / known gap | Skipped / excluded | Classified total | Classified coverage count | Vendored | Unclassified | Pass rate |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `node20` | `v20.20.2` | `legacy` | 916 | 3319 | 13 | 3332 | 4248 | 4248 | 0 | 21.6% |
-| `node22` | `v22.22.3` | `supported` | 2297 | 2431 | 20 | 2451 | 4748 | 4748 | 0 | 48.4% |
-| `node24` | `v24.16.0` | `default` | 2327 | 2823 | 48 | 2871 | 5198 | 5198 | 0 | 44.8% |
-| `node26` | `v26.2.0` | `current` | 1008 | 4524 | 46 | 4570 | 5578 | 5578 | 0 | 18.1% |
+| `node20` | `v20.20.2` | `legacy` | 917 | 3318 | 13 | 3331 | 4248 | 4248 | 0 | 21.6% |
+| `node22` | `v22.22.3` | `supported` | 2298 | 2430 | 20 | 2450 | 4748 | 4748 | 0 | 48.4% |
+| `node24` | `v24.16.0` | `default` | 2328 | 2822 | 48 | 2870 | 5198 | 5198 | 0 | 44.8% |
+| `node26` | `v26.2.0` | `current` | 1009 | 4523 | 46 | 4569 | 5578 | 5578 | 0 | 18.1% |
 
 ### Evidence Tiers
 
 | Tier | Source | Primary count | Passed | Claims | Official denominator? |
 | --- | --- | ---: | ---: | ---: | --- |
-| `official` | `vendored_official_fixture_corpus` | 19772 fixture_count | 6548 | - | yes |
+| `official` | `vendored_official_fixture_corpus` | 19772 fixture_count | 6552 | - | yes |
 | `supplementary` | `node_compat_manifest_test_tier` | 7 fixture_count | - | - | no |
 | `regression` | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/regression` | 26 fixture_count | - | - | no |
 | `canary` | `tests/runtime/node/canary-registry.json` | 37 active_canary_count | - | 79 | no |

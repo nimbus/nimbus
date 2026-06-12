@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-11T19:13:23.520973+00:00",
+  "generated_at": "2026-06-12T00:12:03.078349+00:00",
   "report_kind": "node_compat_trend_snapshot",
   "baseline_available": true,
   "current_sources": {
@@ -17,13 +17,13 @@
       "upstream_tag": "v20.20.2",
       "baseline_upstream_tag": "v20.20.2",
       "vendored_test_file_count": 4248,
-      "vendored_test_file_count_delta": 2940,
-      "documented_manifested_green_count": 916,
-      "documented_manifested_green_count_delta": 14,
+      "vendored_test_file_count_delta": 0,
+      "documented_manifested_green_count": 917,
+      "documented_manifested_green_count_delta": 1,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.215631,
-      "documented_manifested_green_ratio_delta": -0.47397100000000003
+      "documented_manifested_green_ratio": 0.215866,
+      "documented_manifested_green_ratio_delta": 0.00023500000000001298
     },
     {
       "lane": "node22",
@@ -31,12 +31,12 @@
       "baseline_upstream_tag": "v22.22.3",
       "vendored_test_file_count": 4748,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 2297,
-      "documented_manifested_green_count_delta": 1297,
+      "documented_manifested_green_count": 2298,
+      "documented_manifested_green_count_delta": 1,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.483783,
-      "documented_manifested_green_ratio_delta": 0.273168
+      "documented_manifested_green_ratio": 0.483993,
+      "documented_manifested_green_ratio_delta": 0.00020999999999998797
     },
     {
       "lane": "node24",
@@ -44,12 +44,12 @@
       "baseline_upstream_tag": "v24.16.0",
       "vendored_test_file_count": 5198,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 2327,
-      "documented_manifested_green_count_delta": 1325,
+      "documented_manifested_green_count": 2328,
+      "documented_manifested_green_count_delta": 1,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.447672,
-      "documented_manifested_green_ratio_delta": 0.254906
+      "documented_manifested_green_ratio": 0.447865,
+      "documented_manifested_green_ratio_delta": 0.00019299999999999873
     },
     {
       "lane": "node26",
@@ -57,29 +57,29 @@
       "baseline_upstream_tag": "v26.2.0",
       "vendored_test_file_count": 5578,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 1008,
-      "documented_manifested_green_count_delta": 1008,
+      "documented_manifested_green_count": 1009,
+      "documented_manifested_green_count_delta": 1,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.18071,
-      "documented_manifested_green_ratio_delta": 0.18071
+      "documented_manifested_green_ratio": 0.180889,
+      "documented_manifested_green_ratio_delta": 0.00017899999999998473
     }
   ],
   "evidence_trends": {
     "canary_report_count": {
       "current": 0,
-      "baseline": 2,
-      "delta": -2
+      "baseline": 0,
+      "delta": 0
     },
     "expectation_catalog_entry_count": {
       "current": 135,
-      "baseline": 67,
-      "delta": 68
+      "baseline": 135,
+      "delta": 0
     },
     "oracle_report_count": {
       "current": 0,
-      "baseline": 2,
-      "delta": -2
+      "baseline": 0,
+      "delta": 0
     },
     "required_canary_gap_count": {
       "current": 0,
@@ -88,13 +88,13 @@
     },
     "rust_ignore_count": {
       "current": 135,
-      "baseline": 67,
-      "delta": 68
+      "baseline": 135,
+      "delta": 0
     },
     "slice_report_count": {
       "current": 0,
-      "baseline": 8,
-      "delta": -8
+      "baseline": 0,
+      "delta": 0
     },
     "unexpected_pass_count": {
       "current": 0,
