@@ -1,6 +1,6 @@
 use std::env;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Args, ValueEnum};
 
@@ -12,13 +12,16 @@ use crate::start::run_start_command;
 mod adapter;
 mod banner;
 mod env_file;
+mod firebase_scan;
 mod launch;
 mod plan;
 mod surfaces;
 mod watch;
 
+use adapter::DevAdapter;
 use banner::emit_dev_banner;
 use env_file::write_env_local_deployment;
+use firebase_scan::{CoveredSet, FirebaseScan};
 use launch::{announce_launch_url_when_ready, operator_console_url};
 use plan::resolve_dev_plan;
 use watch::run_dev_watch_loop;
@@ -26,7 +29,7 @@ use watch::run_dev_watch_loop;
 #[cfg(test)]
 use crate::start::{CliTenantProvider, StartCommand};
 #[cfg(test)]
-use adapter::{DevAdapter, detect_dev_adapter};
+use adapter::detect_dev_adapter;
 #[cfg(test)]
 use banner::dev_banner_lines;
 #[cfg(test)]
@@ -119,32 +122,19 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
         cli_ux::write_stderr_line("")?;
         cli_ux::write_stderr_line("No compatible adapter detected.")?;
         cli_ux::write_stderr_line("")?;
-        if adapter::has_firebase_dependency(&plan.app_dir) {
-            // A `firebase` dependency without firebase.json/functions markers is
-            // a Firestore client app — `nimbus dev` has no server-side sources
-            // to watch, so point at the migration commands instead of init.
-            cli_ux::write_stderr_line(
-                "Found a `firebase` dependency in package.json. To migrate this app to Nimbus:",
-            )?;
-            cli_ux::write_stderr_line("")?;
-            cli_ux::write_stderr_line(
-                "  nimbus packages provision firebase   # rewires `firebase` to the drop-in package",
-            )?;
-            cli_ux::write_stderr_line("  npm install")?;
-            cli_ux::write_stderr_line(
-                "  nimbus start --firestore             # serve the Firestore surface",
-            )?;
-            cli_ux::write_stderr_line("")?;
-            cli_ux::write_stderr_line(
-                "The drop-in package covers firebase/app and firebase/firestore imports.",
-            )?;
-            return Ok(());
-        }
         cli_ux::write_stderr_line("To get started:")?;
         cli_ux::write_stderr_line("  nimbus init convex          # Convex adapter")?;
         cli_ux::write_stderr_line("  nimbus init cloud-functions # Cloud Functions adapter")?;
         cli_ux::write_stderr_line("  nimbus dev")?;
         return Ok(());
+    }
+
+    // The Firestore client path is the only dev flow that mutates the app
+    // (`package.json` is rewired to the drop-in `firebase` package), so it
+    // runs first and fail-closed: a refusal happens before any mutation —
+    // including the `.env.local` write below.
+    if matches!(plan.adapter, Some(DevAdapter::FirestoreClient)) && !skip_codegen {
+        wire_firestore_client_app(&plan.app_dir)?;
     }
 
     write_env_local_deployment(&plan.app_dir, &plan.deployment_slug)?;
@@ -157,7 +147,7 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
         // `file:` specifiers resolve — on a fresh clone `.nimbus/` is gitignored
         // and absent, and after a binary upgrade the payload must be refreshed
         // (which also forces a Node dependency reinstall so copies can't go stale).
-        if let Some(target) = adapter.adapter().provision_target() {
+        if let Some(target) = adapter.provision_target() {
             let selection = provision::Selection::parse(target)
                 .expect("adapter provision target must be a known selection");
             provision::ensure(&plan.app_dir, &selection)?;
@@ -183,6 +173,51 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
         result = run_start_command(plan.start_command) => result,
         result = run_dev_watch_loop(watch_plan) => result,
     }
+}
+
+/// Scan-gated Firebase wiring: statically scan the app's imports against
+/// the drop-in `firebase` package's covered set, then either wire the app
+/// (provision the embedded closure, rewire `package.json` to the
+/// provisioned `file:` spec, force a Node reinstall) or refuse before any
+/// mutation with every blocking finding listed.
+fn wire_firestore_client_app(app_dir: &Path) -> io::Result<()> {
+    let covered = CoveredSet::from_embedded_manifest()?;
+    let scan = firebase_scan::scan_app(app_dir, &covered)?;
+    if !scan.passes() {
+        for line in firestore_wiring_refusal_lines(&scan, &covered) {
+            cli_ux::write_stderr_line(&line)?;
+        }
+        return Err(io::Error::other(
+            "refusing to wire this app: the import scan found Firebase usage \
+             the drop-in `firebase` package does not cover",
+        ));
+    }
+    let selection = provision::Selection::parse("firebase")
+        .expect("firebase must be a known provision selection");
+    provision::ensure(app_dir, &selection)?;
+    Ok(())
+}
+
+fn firestore_wiring_refusal_lines(scan: &FirebaseScan, covered: &CoveredSet) -> Vec<String> {
+    let mut lines = vec![
+        String::new(),
+        "This app uses Firebase modules the drop-in `firebase` package does not cover:".to_string(),
+        String::new(),
+    ];
+    for finding in scan.blocking_findings() {
+        lines.push(format!("  {}", finding.describe()));
+    }
+    lines.push(String::new());
+    lines.push(format!(
+        "Covered imports: {}",
+        covered.covered_specifiers().collect::<Vec<_>>().join(", ")
+    ));
+    lines.push("No files were changed.".to_string());
+    lines.push(
+        "Compatibility reference: https://nimbusdocs.com/reference/firebase/compatibility/"
+            .to_string(),
+    );
+    lines
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
@@ -1099,6 +1134,127 @@ mod tests {
             Some(DevAdapter::CloudFunctions {
                 source_roots: vec![temp.path().to_path_buf()],
             })
+        );
+    }
+
+    #[test]
+    fn refusal_leaves_package_json_byte_identical() {
+        let temp = tempdir().expect("tempdir should build");
+        // Deliberately non-canonical formatting: a refusal must not even
+        // reformat the manifest, let alone rewire it.
+        let manifest = "{\n    \"name\": \"client-app\",\n\n    \"dependencies\": {\"firebase\": \"^11.0.0\"}\n}\n";
+        fs::write(temp.path().join("package.json"), manifest).unwrap();
+        fs::create_dir_all(temp.path().join("src")).unwrap();
+        fs::write(
+            temp.path().join("src/auth.ts"),
+            "import { getAuth } from \"firebase/auth\";\n",
+        )
+        .unwrap();
+
+        let error = wire_firestore_client_app(temp.path())
+            .expect_err("uncovered firebase/auth import must refuse wiring");
+
+        assert!(
+            error.to_string().contains("refusing to wire"),
+            "unexpected refusal error: {error}"
+        );
+        assert_eq!(
+            fs::read(temp.path().join("package.json")).unwrap(),
+            manifest.as_bytes(),
+            "refusal must leave package.json byte-identical"
+        );
+        assert!(
+            !temp.path().join(".nimbus").exists(),
+            "refusal must not provision anything into the app"
+        );
+    }
+
+    #[test]
+    fn covered_app_is_rewired_to_the_provisioned_drop_in() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::write(
+            temp.path().join("package.json"),
+            "{\n  \"name\": \"client-app\",\n  \"dependencies\": {\n    \"firebase\": \"^11.0.0\"\n  }\n}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(temp.path().join("src")).unwrap();
+        fs::write(
+            temp.path().join("src/db.ts"),
+            "import { initializeApp } from \"firebase/app\";\n\
+             import { getFirestore, collection, addDoc } from \"firebase/firestore\";\n",
+        )
+        .unwrap();
+        // A registry-installed copy and a recorded install fingerprint: wiring
+        // must drop the stale copy and clear the fingerprint so the next
+        // dependency install refreshes from the provisioned payload.
+        fs::create_dir_all(temp.path().join("node_modules/firebase")).unwrap();
+        fs::write(
+            temp.path().join("node_modules/firebase/package.json"),
+            r#"{"name": "firebase", "version": "11.0.0"}"#,
+        )
+        .unwrap();
+        let state_path = temp.path().join(".nimbus/cache/node/dependency-state.json");
+        fs::create_dir_all(state_path.parent().unwrap()).unwrap();
+        fs::write(&state_path, "{}").unwrap();
+
+        wire_firestore_client_app(temp.path()).expect("covered app must wire");
+
+        let rewritten = fs::read_to_string(temp.path().join("package.json")).unwrap();
+        assert!(
+            rewritten.contains("\"firebase\": \"file:./.nimbus/packages/firebase\""),
+            "package.json must point firebase at the provisioned copy: {rewritten}"
+        );
+        assert!(
+            temp.path()
+                .join(".nimbus/packages/firebase/package.json")
+                .is_file(),
+            "the drop-in package payload must be provisioned"
+        );
+        assert!(
+            !temp.path().join("node_modules/firebase").exists(),
+            "the stale registry-installed copy must be dropped"
+        );
+        assert!(
+            !state_path.exists(),
+            "the install fingerprint must be cleared so the next install reinstalls"
+        );
+    }
+
+    #[test]
+    fn refusal_report_names_every_blocking_finding_with_file_line() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join("src")).unwrap();
+        fs::write(
+            temp.path().join("src/auth.ts"),
+            "import { getAuth } from \"firebase/auth\";\n",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("src/lazy.ts"),
+            "const flavor = pick();\nconst mod = await import(`firebase/${flavor}`);\n",
+        )
+        .unwrap();
+
+        let covered = CoveredSet::from_embedded_manifest().expect("embedded manifest");
+        let scan = firebase_scan::scan_app(temp.path(), &covered).expect("scan should run");
+        let lines = firestore_wiring_refusal_lines(&scan, &covered);
+        let report = lines.join("\n");
+
+        assert!(
+            report.contains("src/auth.ts:1") && report.contains("firebase/auth"),
+            "report must name the uncovered import with file:line: {report}"
+        );
+        assert!(
+            report.contains("src/lazy.ts:2"),
+            "report must name the dynamic import with file:line: {report}"
+        );
+        assert!(
+            report.contains("firebase/app") && report.contains("firebase/firestore"),
+            "report must list the covered set: {report}"
+        );
+        assert!(
+            report.contains("https://nimbusdocs.com/reference/firebase/compatibility/"),
+            "report must point at the compatibility reference: {report}"
         );
     }
 

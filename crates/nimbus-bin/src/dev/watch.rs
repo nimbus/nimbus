@@ -198,7 +198,7 @@ fn collect_source_snapshot_recursive(
     Ok(())
 }
 
-fn should_skip_watch_dir(path: &Path) -> bool {
+pub(super) fn should_skip_watch_dir(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
         return false;
     };
