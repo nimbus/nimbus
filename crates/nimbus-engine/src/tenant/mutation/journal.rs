@@ -181,12 +181,16 @@ impl MutationJournalState {
         let started = Instant::now();
         tokio::pin!(cancel_wait);
         loop {
+            // Create the notified future before re-checking the head:
+            // `notify_waiters` only reaches futures that already exist, so an
+            // apply landing between a head check and a later `notified()` call
+            // would be lost and this wait would hang until the next mutation.
+            let notified = self.applied_notify.notified();
+            tokio::pin!(notified);
             if self.applied_head().0 >= required.0 {
                 self.record_read_wait(started);
                 return Ok(());
             }
-            let notified = self.applied_notify.notified();
-            tokio::pin!(notified);
             tokio::select! {
                 _ = &mut cancel_wait => {
                     self.record_read_wait(started);
@@ -264,5 +268,66 @@ impl MutationJournalState {
     #[cfg(test)]
     pub(in crate::tenant) fn pause_handle(&self) -> MutationJournalPauseHandle {
         MutationJournalPauseHandle::from_state(self.pause_before_drain.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    fn empty_state() -> Arc<MutationJournalState> {
+        Arc::new(MutationJournalState::new(JournalProgress {
+            durable_head: SequenceNumber(0),
+            applied_head: SequenceNumber(0),
+        }))
+    }
+
+    /// The apply worker advances the head from a blocking-pool thread, in
+    /// true parallelism with async waiters. `notify_waiters` only reaches
+    /// `Notified` futures that already exist, so the wait loop must create
+    /// its notified future before checking the head — otherwise an apply
+    /// landing in that gap is lost and the waiter hangs until an unrelated
+    /// mutation re-notifies. This hammers that interleaving from both sides
+    /// of the window; with the wrong ordering it hangs a round and trips
+    /// the per-round timeout.
+    #[tokio::test]
+    async fn applied_sequence_wait_observes_apply_racing_the_wait_setup() {
+        for round in 0..200u32 {
+            let state = empty_state();
+            let marker = {
+                let state = Arc::clone(&state);
+                std::thread::spawn(move || {
+                    for _ in 0..round {
+                        std::hint::spin_loop();
+                    }
+                    state.mark_applied_head(SequenceNumber(1));
+                })
+            };
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                state.wait_for_applied_sequence_cancellable(
+                    SequenceNumber(1),
+                    std::future::pending(),
+                ),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                panic!("round {round}: the wait must observe the racing apply, not hang")
+            })
+            .expect("applied-visibility wait should succeed");
+            marker.join().expect("apply marker thread should join");
+        }
+    }
+
+    #[tokio::test]
+    async fn applied_sequence_wait_returns_immediately_when_already_applied() {
+        let state = empty_state();
+        state.mark_applied_head(SequenceNumber(3));
+        state
+            .wait_for_applied_sequence_cancellable(SequenceNumber(2), std::future::pending())
+            .await
+            .expect("an already-applied sequence should not wait");
     }
 }
