@@ -1,6 +1,6 @@
 ---
 title: Migrate from Firebase
-description: Move a Firestore-backed JavaScript app onto Nimbus by repointing the firebase dependency at the provisioned drop-in package and porting Security Rules intent into application auth.
+description: Move a Firestore-backed JavaScript app onto Nimbus — nimbus dev repoints the firebase dependency at the drop-in package automatically — and port Security Rules intent into application auth.
 sidebar:
   order: 2
 ---
@@ -22,15 +22,28 @@ precise support reference.
 
 ```bash
 # in your existing app directory
+nimbus dev
+```
+
+`nimbus dev` detects the `firebase` dependency, scans your sources to
+confirm every Firebase import is on the supported surface, and repoints
+the dependency at the drop-in package. If a file imports an uncovered
+surface (say `firebase/auth`), the scan refuses with the file, line, and
+import named, and nothing is changed — resolve that import first, then
+rerun.
+
+To repoint without a dev session, provision directly:
+
+```bash
 nimbus packages provision firebase
 npm install
 ```
 
-The `nimbus` binary materializes its `firebase` package under
+Either way, the `nimbus` binary materializes its `firebase` package under
 `.nimbus/packages/firebase` — no registry access required — and rewrites
 your app's `firebase` dependency from the registry spec to
 `file:./.nimbus/packages/firebase`, swapping the provisioned package in
-for the upstream one. `npm install` picks up the change.
+for the upstream one.
 
 ## 2. Keep your imports unchanged
 
@@ -71,12 +84,15 @@ import {
 
 const app = initializeApp({ projectId: "demo" });
 const db = getFirestore(app);
-connectFirestoreEmulator(db, "127.0.0.1", 8080);
+connectFirestoreEmulator(db, "127.0.0.1", 3210);
 ```
 
-The `projectId` maps directly to a Nimbus tenant id, and only the
-`(default)` database is supported. The Firestore-compatible routes are
-enabled per server deployment — see the availability note in
+Use the port your server listens on — `nimbus dev` serves on `3210`,
+`nimbus start` defaults to `8080`. The `projectId` maps directly to a
+Nimbus tenant id, and only the `(default)` database is supported.
+`nimbus dev` discovers the project id from your `.firebaserc` and creates
+the tenant automatically; every server serves the Firestore-compatible
+routes by default — see
 [Use Firestore SDKs with Nimbus](/developers/firebase/).
 
 ## 4. Keep REST first, opt into gRPC-Web deliberately
@@ -91,7 +107,7 @@ import { initializeFirestore } from "firebase/firestore";
 const db = initializeFirestore(app, {
   experimentalUnaryTransport: "grpc-web",
 });
-connectFirestoreEmulator(db, "127.0.0.1", 8080);
+connectFirestoreEmulator(db, "127.0.0.1", 3210);
 ```
 
 `onSnapshot(...)` never uses gRPC-Web; it always runs over the binary
@@ -144,7 +160,8 @@ labels is in the [compatibility matrix](/reference/firebase/compatibility/).
 
 ## Suggested order
 
-1. Repoint the `firebase` dependency at the provisioned package.
+1. Run `nimbus dev` (or provision directly) to repoint the `firebase`
+   dependency at the drop-in package.
 2. Redirect local development with `connectFirestoreEmulator(...)`.
 3. Keep REST unary first and confirm CRUD/query/watch parity.
 4. Migrate transactions, write batches, and `FieldValue` usage.

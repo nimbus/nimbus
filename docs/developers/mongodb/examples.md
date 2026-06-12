@@ -10,24 +10,25 @@ MongoDB drivers. Each section is independent — jump to the task you need.
 If you haven't connected a driver yet, start with the
 [tutorial](/developers/mongodb/).
 
-All examples assume a Nimbus server with the MongoDB endpoint enabled on
-`127.0.0.1:27017` and SCRAM-SHA-256 credentials `app-user` / `app-secret`,
-as set up in the tutorial.
+All examples assume a Nimbus server serving the MongoDB endpoint on
+`127.0.0.1:27017` (the default) with SCRAM-SHA-256 credentials
+`app-user` / `app-secret`, as set up in the tutorial.
 
 ## Build a connection string
 
 The shape Nimbus expects:
 
 ```text
-mongodb://<username>:<password>@<host>:<port>/<database>?directConnection=true
+mongodb://<username>:<password>@<host>:<port>/<database>
 ```
 
 - Credentials are your server's configured SCRAM-SHA-256 username and
   password, URL-encoded if they contain special characters.
 - The database name selects the [Nimbus tenant](/reference/mongodb/tenant-isolation/).
   If you omit it, you land in the tenant `default`.
-- `directConnection=true` is required — Nimbus is a single endpoint, and
-  without it the driver attempts replica-set discovery and times out.
+- Nimbus is a single endpoint, not a replica set — never pass a
+  `replicaSet` option. With a single host the driver connects directly;
+  appending `?directConnection=true` is harmless but not required.
 
 If your project uses the Nimbus CLI, the `@nimbus/mongodb` helper package
 builds the string for you. Provision it into your project:

@@ -1,6 +1,6 @@
 ---
 title: Use DynamoDB SDKs with Nimbus
-description: Enable the Nimbus DynamoDB-compatible endpoint and point official AWS SDKs at it with an endpoint override.
+description: Point official AWS SDKs at the Nimbus DynamoDB-compatible endpoint — served by default on every server, with nimbus dev writing endpoint and credentials to .env.local.
 sidebar:
   label: Overview
   order: 1
@@ -11,10 +11,15 @@ official AWS SDKs connect to it the same way they connect to DynamoDB
 Local: override the endpoint URL, keep everything else stock. No Nimbus
 SDK, no code changes beyond client construction.
 
-You enable the endpoint when you start the server — a CLI flag on
-`nimbus start`, or the embedding API if you run Nimbus as a library (see
-[the embedding alternative](#embedding-alternative) below). This guide then
-talks to it with the AWS SDK for JavaScript v3.
+Every Nimbus server serves the endpoint by default — `nimbus start` and
+`nimbus dev` alike (`--no-dynamodb` switches it off; embedders opt in
+through the API — see
+[the embedding alternative](#embedding-alternative) below). In an app
+directory, `nimbus dev` goes further: when it sees an
+`@aws-sdk/client-dynamodb` dependency in your `package.json`, it writes
+the endpoint and a generated access key to your app's `.env.local` as
+`NIMBUS_DYNAMODB_*` keys. This guide talks to the endpoint with the AWS
+SDK for JavaScript v3.
 
 ## How the endpoint works
 
@@ -26,22 +31,33 @@ talks to it with the AWS SDK for JavaScript v3.
 - Each AWS access key ID is bound server-side to one Nimbus tenant.
   Requests authenticated with that key see only that tenant's tables.
 
-## 1. Enable the endpoint
-
-Start the server with the DynamoDB listener and an access-key binding —
-each binding maps one AWS access key ID (with its SigV4 signing secret) to
-one Nimbus tenant:
+## 1. Start the server
 
 ```bash
-nimbus start --dynamodb-port 8000 \
-  --dynamodb-access-key AKIAACME:acme-secret:acme
+nimbus start
+```
+
+The DynamoDB listener comes up on `127.0.0.1:8000` with the rest of the
+server. If another process already holds `8000`, the listener is skipped
+with a warning — pass `--dynamodb-port` to pin a different port (a busy
+explicit port is a hard error instead of a skip).
+
+Every request authenticates. With no access-key flags, the server binds a
+generated access key — persisted at `wire-credentials.json` (owner-only,
+`0600`) in its data directory — to the tenant `default`; `nimbus dev` is
+the shape that hands that key to your app via `.env.local`. To choose
+your own bindings, map an AWS access key ID (with its SigV4 signing
+secret) to a tenant explicitly:
+
+```bash
+nimbus start --dynamodb-access-key AKIAACME:acme-secret:acme
 ```
 
 Repeat `--dynamodb-access-key` for more tenants, or set the
 comma-separated `NIMBUS_DYNAMODB_ACCESS_KEYS` environment variable.
-Requests signed with an access key you did not register are rejected with
-`UnrecognizedClientException` — the registry starts empty and fails
-closed.
+Explicit bindings replace the generated default. Requests signed with an
+access key that is not registered are rejected with
+`UnrecognizedClientException` — the registry fails closed.
 
 ### Embedding alternative
 
@@ -95,6 +111,20 @@ const client = new DynamoDBClient({
   endpoint: "http://127.0.0.1:8000",
   region: "us-east-1",
   credentials: { accessKeyId: "AKIAACME", secretAccessKey: "acme-secret" },
+});
+```
+
+In an app that `nimbus dev` wired, skip the literals and read the
+Nimbus-owned `.env.local` keys instead:
+
+```javascript
+const client = new DynamoDBClient({
+  endpoint: process.env.NIMBUS_DYNAMODB_ENDPOINT,
+  region: "us-east-1",
+  credentials: {
+    accessKeyId: process.env.NIMBUS_DYNAMODB_ACCESS_KEY_ID,
+    secretAccessKey: process.env.NIMBUS_DYNAMODB_SECRET_ACCESS_KEY,
+  },
 });
 ```
 

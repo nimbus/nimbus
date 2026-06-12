@@ -83,8 +83,7 @@ same binary as a long-lived server with `nimbus start`.
   <TabItem label="Firebase">
     ```bash
     # migrate an existing Firebase app
-    nimbus packages provision firebase && npm install
-    nimbus start --firestore
+    nimbus dev
     ```
     ```typescript
     // Your Firebase code, unchanged — stock imports, served by Nimbus
@@ -98,16 +97,18 @@ same binary as a long-lived server with `nimbus start`.
     } from "firebase/firestore";
 
     const db = getFirestore(initializeApp({ projectId: "demo" }));
-    connectFirestoreEmulator(db, "127.0.0.1", 8080);
+    connectFirestoreEmulator(db, "127.0.0.1", 3210);
 
     const messages = collection(db, "messages");
     await addDoc(messages, { body: "hello from nimbus" });
     onSnapshot(messages, (live) => console.log("live size", live.size));
     ```
     Firestore is Firebase's database — Nimbus speaks its wire protocol and
-    ships a drop-in `firebase` package inside the binary. Provisioning
-    rewires your app's `firebase` dependency at it, so your imports stay
-    exactly as they are. See [the Firestore guide](/developers/firebase/).
+    ships a drop-in `firebase` package inside the binary. `nimbus dev`
+    detects the `firebase` dependency, checks every Firebase import in
+    your sources is covered, and rewires the dependency at the drop-in —
+    your imports stay exactly as they are. See
+    [the Firestore guide](/developers/firebase/).
   </TabItem>
   <TabItem label="Cloud Functions">
     ```bash
@@ -138,37 +139,41 @@ same binary as a long-lived server with `nimbus start`.
   <TabItem label="MongoDB">
     ```bash
     # no migration — use your existing driver
-    nimbus start --mongodb-port 27017
+    nimbus dev
     ```
     ```javascript
     // Official MongoDB driver, unchanged — Nimbus speaks the wire protocol
     import { MongoClient } from "mongodb";
 
-    const client = new MongoClient(
-      "mongodb://app-user:app-secret@127.0.0.1:27017/myapp?directConnection=true",
-    );
+    const client = new MongoClient(process.env.NIMBUS_MONGODB_URL);
     await client.connect();
 
     const messages = client.db("myapp").collection("messages");
     await messages.insertOne({ author: "Ada", body: "Hello from Nimbus" });
     const docs = await messages.find({ author: "Ada" }).toArray();
     ```
-    See [the MongoDB guide](/developers/mongodb/) for credential setup and
+    `nimbus dev` sees the `mongodb` dependency and writes
+    `NIMBUS_MONGODB_URL` — the local endpoint plus generated credentials —
+    to your app's `.env.local`. See
+    [the MongoDB guide](/developers/mongodb/) for credential setup and
     the supported command surface.
   </TabItem>
   <TabItem label="DynamoDB">
     ```bash
     # no migration — use your existing AWS SDK
-    nimbus start --dynamodb-port 8000
+    nimbus dev
     ```
     ```javascript
     // Official AWS SDK v3, unchanged — pointed at Nimbus's endpoint
     import { DynamoDBClient, PutItemCommand, GetItemCommand } from "@aws-sdk/client-dynamodb";
 
     const client = new DynamoDBClient({
-      endpoint: "http://127.0.0.1:8000",
+      endpoint: process.env.NIMBUS_DYNAMODB_ENDPOINT,
       region: "us-east-1",
-      credentials: { accessKeyId: "AKIAACME", secretAccessKey: "acme-secret" },
+      credentials: {
+        accessKeyId: process.env.NIMBUS_DYNAMODB_ACCESS_KEY_ID,
+        secretAccessKey: process.env.NIMBUS_DYNAMODB_SECRET_ACCESS_KEY,
+      },
     });
 
     await client.send(new PutItemCommand({
@@ -180,7 +185,10 @@ same binary as a long-lived server with `nimbus start`.
       Key: { pk: { S: "order-1" } },
     }));
     ```
-    See [the DynamoDB guide](/developers/dynamodb/) for registered-key
+    `nimbus dev` sees the `@aws-sdk/client-dynamodb` dependency and writes
+    the endpoint and a generated access key to `.env.local` as
+    `NIMBUS_DYNAMODB_*` keys. See
+    [the DynamoDB guide](/developers/dynamodb/) for registered-key
     credentials and the supported operation surface.
   </TabItem>
   <TabItem label="HTTP API">

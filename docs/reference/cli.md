@@ -60,12 +60,19 @@ Most-used flags:
 | `--tenant-provider` | `NIMBUS_TENANT_PROVIDER` | `sqlite` | Tenant persistence provider: `sqlite`, `libsql-replica`, `redb`, `postgres`, or `mysql`. |
 | `--config` | `NIMBUS_CONFIG` | unset | Optional JSON config file; CLI flags override env vars, which override file values. |
 
+The protocol adapters — Firestore routes on the main listener, plus the
+MongoDB and DynamoDB wire listeners on `27017` and `8000` — are served by
+default; a busy conventional port skips that listener with a warning.
+`--no-firestore`, `--no-mongodb`, and `--no-dynamodb` switch a surface
+off, `--mongodb-port` / `--dynamodb-port` pin an explicit port (busy is
+then a hard error), and credentials come from the generated
+`wire-credentials.json` in the data directory unless overridden —
+`--mongodb-username` with the env-only `NIMBUS_MONGODB_PASSWORD`, and
+repeatable `--dynamodb-access-key KEY_ID:SECRET:TENANT` or
+`NIMBUS_DYNAMODB_ACCESS_KEYS`.
+
 `nimbus start` accepts further flag families — TLS termination
-(`--tls-cert` + `--tls-key`), protocol adapters
-(`--firestore`; `--mongodb-port` with `--mongodb-username` and the env-only
-`NIMBUS_MONGODB_PASSWORD`; `--dynamodb-port` with repeatable
-`--dynamodb-access-key KEY_ID:SECRET:TENANT` or
-`NIMBUS_DYNAMODB_ACCESS_KEYS`), app loading (`--app-dir`,
+(`--tls-cert` + `--tls-key`), app loading (`--app-dir`,
 `--skip-codegen`, `--debug-node-apis`), Compose services (`--compose-file`),
 systemd socket activation (`--systemd-socket-activation`), licensing
 (`--license-file`, falling back to `NIMBUS_LICENSE_FILE` then
@@ -83,10 +90,19 @@ nimbus dev [flags]
 ```
 
 Starts a local development server with dev defaults: watched codegen reruns,
-local generation activation, an auto-created `demo` tenant, and automatic
+local generation activation, an auto-created tenant (`demo`, or the
+discovered Firebase project id for Firestore client apps), and automatic
 browser launch of the operator console. When `--app-dir` is omitted, the app
 directory is auto-detected by walking up from the current directory to the
 nearest `.git` boundary. See [Quickstart](/get-started/quickstart/).
+
+Adapter detection is automatic. `nimbus dev` reads the app's
+`package.json` and sources to pick the adapter (Convex, Cloud Functions,
+or the Firestore client wiring), writes Nimbus-owned `NIMBUS_*` keys to
+the app's `.env.local` when it detects the `mongodb` or
+`@aws-sdk/client-dynamodb` driver, and re-runs detection live when
+`package.json` changes — an adapter added mid-session is adopted without
+a restart. The server keeps serving even when no adapter is detected.
 
 | Flag | Env var | Default | What it does |
 | --- | --- | --- | --- |

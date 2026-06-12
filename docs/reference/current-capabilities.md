@@ -48,9 +48,9 @@ Each capability carries one of three statuses:
 | --- | --- | --- |
 | Convex | Available | Detected by `nimbus dev` and `nimbus start` from your `convex/` directory. See the [guide](/developers/convex/) and [compatibility reference](/reference/convex/compatibility/). |
 | Cloud Functions for Firebase | Available | Detected from `firebase.json`. See the [guide](/developers/cloud-functions/) and [compatibility reference](/reference/cloud-functions/compatibility/). |
-| Firestore | Available | Enable with `nimbus start --firestore`. See the [guide](/developers/firebase/) and [compatibility reference](/reference/firebase/compatibility/). |
-| MongoDB wire protocol | Available | Enable with `nimbus start --mongodb-port` plus SCRAM credentials (`--mongodb-username`, `NIMBUS_MONGODB_PASSWORD`). Loopback-only listener. See the [guide](/developers/mongodb/) and [operations reference](/reference/mongodb/operations/). |
-| DynamoDB API | Available | Enable with `nimbus start --dynamodb-port` and `--dynamodb-access-key KEY_ID:SECRET:TENANT` bindings (dedicated listener, DynamoDB Local convention port 8000). See the [guide](/developers/dynamodb/) and [feature coverage](/reference/dynamodb/feature-coverage/). |
+| Firestore | Available | Served by default on the main listener (`--no-firestore` switches it off); `nimbus dev` wires covered Firebase apps at the drop-in package automatically. See the [guide](/developers/firebase/) and [compatibility reference](/reference/firebase/compatibility/). |
+| MongoDB wire protocol | Available | Served by default on `127.0.0.1:27017` (`--no-mongodb` switches it off); generated SCRAM credentials unless overridden (`--mongodb-username`, `NIMBUS_MONGODB_PASSWORD`); `nimbus dev` writes `NIMBUS_MONGODB_URL` to `.env.local` for detected driver apps. Loopback-only listener. See the [guide](/developers/mongodb/) and [operations reference](/reference/mongodb/operations/). |
+| DynamoDB API | Available | Served by default on `127.0.0.1:8000` (`--no-dynamodb` switches it off); a generated access key bound to tenant `default` unless `--dynamodb-access-key KEY_ID:SECRET:TENANT` bindings are given; `nimbus dev` writes `NIMBUS_DYNAMODB_*` keys to `.env.local` for detected SDK apps. See the [guide](/developers/dynamodb/) and [feature coverage](/reference/dynamodb/feature-coverage/). |
 | Native HTTP and WebSocket API | Available | Always on. See [build on the native API](/developers/native/). |
 | Nimbus JavaScript SDK | Available | Services, sandboxes, and sessions from one client. See the [Agents guides](/agents/). |
 
