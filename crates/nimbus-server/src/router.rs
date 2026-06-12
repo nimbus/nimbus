@@ -859,7 +859,13 @@ fn build_firebase_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     let firestore_grpc_service = ServiceBuilder::new()
         .layer(tonic_web::GrpcWebLayer::new())
         .service(firestore_service.into_server());
-    Router::new()
+    // Every REST route lives behind the shared auth middleware, which
+    // resolves the bearer once and injects the result as a request
+    // extension — a REST route added here cannot skip auth. The gRPC and
+    // WebSocket routes stay outside the layer: they resolve auth from
+    // their own request metadata and must answer failures with gRPC
+    // Status, not HTTP JSON.
+    let rest_routes = Router::new()
         .route(
             "/v1/projects/{project_id}/databases/{database_id}/documents:commit",
             post(firebase::commit),
@@ -896,6 +902,12 @@ fn build_firebase_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/v1/projects/{project_id}/databases/{database_id}/documents/{*document_request}",
             post(firebase::run_document_action_under_parent_document),
         )
+        .route_layer(middleware::from_fn_with_state(
+            state,
+            firebase::require_firebase_rest_auth,
+        ));
+    Router::new()
+        .merge(rest_routes)
         .route(
             "/google.firestore.v1.Firestore/Listen",
             get(firebase::grpc::listen_websocket)
