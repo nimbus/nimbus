@@ -161,13 +161,13 @@ else
   fail "${C}" "missing env_local ownership/no-clobber tests"
 fi
 
-# --- 10. live re-detection -------------------------------------------------------
-C="10. mid-session listener spawn without main-listener restart; no duplicates"
-if bin_has 'fn mid_session_mongodb_adoption_starts_listener_without_main_restart' \
-  && bin_has 'fn repeated_manifest_rescans_do_not_duplicate_listeners'; then
+# --- 10. mid-session adoption under always-available listeners (D6) --------------
+C="10. mid-session adoption refreshes presentation; listeners and subscriptions untouched"
+if bin_has 'fn mid_session_mongodb_adoption_round_trips_with_subscriptions_intact' \
+  && bin_has 'fn repeated_manifest_rescans_are_convergent'; then
   pass "${C}"
 else
-  fail "${C}" "missing live re-detection integration tests"
+  fail "${C}" "missing D6 adoption tests (round-trip with live subscription; convergent rescans)"
 fi
 
 # --- 11. mid-session firebase adoption is scan-gated -----------------------------
