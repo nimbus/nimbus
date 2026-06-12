@@ -738,17 +738,22 @@ export const list = query({
         .expect("convex source fixture should write");
 
         // Adoption → provision → install → root registration → initial
-        // codegen, all while both loops keep running.
+        // codegen, all while both loops keep running. Codegen writes
+        // `_generated/api.ts` before `.nimbus/convex/functions.json`, so the
+        // wait must cover both artifacts or the manifest assertion below
+        // races the tail of the codegen run.
         let generated_api = plan.app_dir.join("convex/_generated/api.ts");
+        let functions_manifest = plan.app_dir.join(".nimbus/convex/functions.json");
         let wait_for_codegen = async {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
             loop {
-                if generated_api.is_file() {
+                if generated_api.is_file() && functions_manifest.is_file() {
                     break;
                 }
                 assert!(
                     tokio::time::Instant::now() < deadline,
-                    "the adopted convex sources should earn their initial codegen within 180s"
+                    "the adopted convex sources should earn their initial codegen \
+                     (api.ts and functions.json) within 180s"
                 );
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
