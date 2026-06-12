@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use nimbus_engine::Engine;
 
-use crate::adapters;
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
 use crate::adapters::convex::ConvexRegistry;
 use crate::adapters::dynamodb::DynamoDbConfig;
 use crate::adapters::firebase::FirebaseConfig;
 use crate::adapters::mongodb::MongoDbConfig;
+use crate::adapters::wire::WireProtocolAdapter;
 use crate::license::LicenseState;
 use crate::local_server::LocalServerSecurityState;
 use crate::machine_lifecycle::MachineLifecycleManager;
@@ -20,8 +20,7 @@ use nimbus_services::ServiceManager;
 /// Canonical public option bundle for serving Nimbus on a listener.
 pub struct ServeOptions {
     router_options: RouterOptions,
-    mongodb_config: Option<MongoDbConfig>,
-    dynamodb_config: Option<DynamoDbConfig>,
+    wire_adapters: Vec<Box<dyn WireProtocolAdapter>>,
     tls_config: Option<TlsConfig>,
 }
 
@@ -33,8 +32,7 @@ impl ServeOptions {
     pub fn from_router_options(router_options: RouterOptions) -> Self {
         Self {
             router_options,
-            mongodb_config: None,
-            dynamodb_config: None,
+            wire_adapters: Vec::new(),
             tls_config: None,
         }
     }
@@ -66,13 +64,17 @@ impl ServeOptions {
         self
     }
 
+    /// Register a sibling MongoDB wire-protocol listener. Each call adds a
+    /// listener; call at most once per adapter.
     pub fn with_mongodb(mut self, mongodb_config: MongoDbConfig) -> Self {
-        self.mongodb_config = Some(mongodb_config);
+        self.wire_adapters.push(Box::new(mongodb_config));
         self
     }
 
+    /// Register a sibling DynamoDB HTTP listener. Each call adds a listener;
+    /// call at most once per adapter.
     pub fn with_dynamodb(mut self, dynamodb_config: DynamoDbConfig) -> Self {
-        self.dynamodb_config = Some(dynamodb_config);
+        self.wire_adapters.push(Box::new(dynamodb_config));
         self
     }
 
@@ -193,8 +195,7 @@ pub async fn serve(
 ) -> std::io::Result<()> {
     let ServeOptions {
         mut router_options,
-        mongodb_config,
-        dynamodb_config,
+        wire_adapters,
         tls_config,
     } = options;
     let engine = router_options.engine();
@@ -208,77 +209,24 @@ pub async fn serve(
     // task handles so the main HTTP server's return aborts every one of them.
     let mut adapter_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
-    if let Some(mongodb_config) = mongodb_config {
-        let mongodb_listener = tokio::net::TcpListener::bind(mongodb_config.bind_addr).await?;
-        let mongodb_addr = mongodb_listener.local_addr()?;
-        adapters::mongodb::listener::guard_listener_is_loopback_only(mongodb_addr)?;
+    for adapter in wire_adapters {
+        let adapter_listener = tokio::net::TcpListener::bind(adapter.bind_addr()).await?;
+        let adapter_addr = adapter_listener.local_addr()?;
+        // Fail closed: the adapter's guard refuses unsafe bind shapes before
+        // the listener serves a single byte.
+        adapter.guard(adapter_addr)?;
         crate::system_tenant::record_listener_state_async(
             &engine,
-            "mongodb",
-            "tcp",
-            &mongodb_addr.to_string(),
+            adapter.name(),
+            adapter.protocol(),
+            &adapter_addr.to_string(),
             "listening",
             Some(env!("CARGO_PKG_VERSION")),
             None,
         )
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
-        let mongodb_engine = Arc::clone(&engine);
-        let mongodb_auth = mongodb_config.auth;
-        adapter_handles.push(tokio::spawn(async move {
-            adapters::mongodb::listener::run_listener(
-                mongodb_listener,
-                mongodb_engine,
-                mongodb_auth,
-            )
-            .await;
-        }));
-    }
-
-    if let Some(dynamodb_config) = dynamodb_config {
-        let dynamodb_listener = tokio::net::TcpListener::bind(dynamodb_config.bind_addr).await?;
-        let dynamodb_addr = dynamodb_listener.local_addr()?;
-        // The signature-skipping lookup escape hatch is loopback-only: refuse to
-        // expose an unauthenticated DynamoDB surface on a network-reachable
-        // address. Production must use the default Strict mode with signed keys.
-        adapters::dynamodb::listener::guard_lookup_is_loopback_only(
-            dynamodb_addr,
-            &dynamodb_config.access_keys,
-        )?;
-        crate::system_tenant::record_listener_state_async(
-            &engine,
-            "dynamodb",
-            "http",
-            &dynamodb_addr.to_string(),
-            "listening",
-            Some(env!("CARGO_PKG_VERSION")),
-            None,
-        )
-        .await
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
-        let dynamodb_engine = Arc::clone(&engine);
-        let dynamodb_access_keys = dynamodb_config.access_keys;
-        // Spawn the background TTL sweeper before the access-key registry is
-        // moved into the listener task (it shares the same registry + engine).
-        if let Some(interval) = dynamodb_config.ttl_sweep_interval {
-            let sweeper_engine = Arc::clone(&engine);
-            let sweeper_keys = Arc::new(dynamodb_access_keys.clone());
-            adapter_handles.push(tokio::spawn(
-                adapters::dynamodb::ttl_sweeper::run_ttl_sweeper(
-                    sweeper_engine,
-                    sweeper_keys,
-                    interval,
-                ),
-            ));
-        }
-        adapter_handles.push(tokio::spawn(async move {
-            adapters::dynamodb::listener::run_listener(
-                dynamodb_listener,
-                dynamodb_engine,
-                dynamodb_access_keys,
-            )
-            .await;
-        }));
+        adapter_handles.extend(adapter.spawn(adapter_listener, Arc::clone(&engine)));
     }
 
     let http_result = serve_with_router_config(listener, config, tls_config).await;

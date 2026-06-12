@@ -3,6 +3,10 @@ pub mod listener;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use nimbus_engine::Engine;
+
+use super::wire::WireProtocolAdapter;
+
 pub use nimbus_mongodb::AuthConfig;
 pub use nimbus_mongodb::{bson_bridge, wire};
 
@@ -22,5 +26,34 @@ impl MongoDbConfig {
 
     pub fn localhost(port: u16, auth: AuthConfig) -> Self {
         Self::new(SocketAddr::from(([127, 0, 0, 1], port)), auth)
+    }
+}
+
+impl WireProtocolAdapter for MongoDbConfig {
+    fn name(&self) -> &'static str {
+        "mongodb"
+    }
+
+    fn protocol(&self) -> &'static str {
+        "tcp"
+    }
+
+    fn bind_addr(&self) -> SocketAddr {
+        self.bind_addr
+    }
+
+    fn guard(&self, addr: SocketAddr) -> std::io::Result<()> {
+        listener::guard_listener_is_loopback_only(addr)
+    }
+
+    fn spawn(
+        self: Box<Self>,
+        listener: tokio::net::TcpListener,
+        engine: Arc<Engine>,
+    ) -> Vec<tokio::task::JoinHandle<()>> {
+        let auth = self.auth;
+        vec![tokio::spawn(async move {
+            listener::run_listener(listener, engine, auth).await;
+        })]
     }
 }
