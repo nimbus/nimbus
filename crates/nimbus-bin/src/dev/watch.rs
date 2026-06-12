@@ -13,34 +13,76 @@ use super::plan::DevWatchPlan;
 const WATCH_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const WATCH_DEBOUNCE_DELAY: Duration = Duration::from_millis(300);
 
+/// The codegen watch loop. Source roots arrive over a watch channel so
+/// mid-session adapter adoption (DXL2) can register the adopted adapter's
+/// sources without restarting anything: a registration announces the new
+/// roots and resets the change baseline to empty, so the adopted sources
+/// count as a change and earn their initial codegen through the same
+/// debounce → codegen → activation path as any edit. While the roots are
+/// empty the loop idles silently on cheap interval polls — no "watching"
+/// line, no snapshot work — and it never returns, because it races the
+/// long-running server in a `select!`.
 pub(super) async fn run_dev_watch_loop(
     plan: DevWatchPlan,
+    mut source_roots: tokio::sync::watch::Receiver<Vec<PathBuf>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if plan.source_roots.is_empty() {
-        std::future::pending::<()>().await;
-        return Ok(());
+    let mut roots = source_roots.borrow_and_update().clone();
+    let mut channel_open = true;
+    let mut tail_note_emitted = false;
+    let mut snapshot = SourceSnapshot::default();
+    if !roots.is_empty() {
+        announce_watch_roots(&plan, &roots, &mut tail_note_emitted);
+        // Boot-time roots baseline on the sources as they are: boot already
+        // ran its codegen preflight, so existing files are not a change.
+        snapshot = match collect_source_snapshot(&plan.app_dir, &roots) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                emit_dev_warning(format!(
+                    "could not snapshot watched sources under {}: {error}",
+                    plan.app_dir.display()
+                ));
+                SourceSnapshot::default()
+            }
+        };
     }
 
-    emit_dev_info(format!(
-        "watching {} for codegen changes",
-        format_watch_roots(&plan.source_roots)
-    ));
-    emit_log_tail_note(plan.tail_logs);
-
-    let mut snapshot = match collect_source_snapshot(&plan.app_dir, &plan.source_roots) {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            emit_dev_warning(format!(
-                "could not snapshot watched sources under {}: {error}",
-                plan.app_dir.display()
-            ));
-            SourceSnapshot::default()
-        }
-    };
-
     loop {
-        tokio::time::sleep(WATCH_POLL_INTERVAL).await;
-        let changed = match collect_source_snapshot(&plan.app_dir, &plan.source_roots) {
+        if channel_open {
+            tokio::select! {
+                _ = tokio::time::sleep(WATCH_POLL_INTERVAL) => {}
+                changed = source_roots.changed() => {
+                    if changed.is_ok() {
+                        roots = source_roots.borrow_and_update().clone();
+                        // Registration baseline is empty, not the current
+                        // sources: the adopted adapter's existing files must
+                        // count as a change so it gets its initial codegen.
+                        snapshot = SourceSnapshot::default();
+                        if roots.is_empty() {
+                            emit_dev_info(
+                                "adapter sources unregistered; codegen watch idled",
+                            );
+                        } else {
+                            announce_watch_roots(&plan, &roots, &mut tail_note_emitted);
+                        }
+                    } else {
+                        // Registration side gone (loop driven standalone in
+                        // tests): keep watching the last known roots on the
+                        // plain poll interval instead of busy-looping on a
+                        // closed channel.
+                        channel_open = false;
+                    }
+                    continue;
+                }
+            }
+        } else {
+            tokio::time::sleep(WATCH_POLL_INTERVAL).await;
+        }
+
+        if roots.is_empty() {
+            continue;
+        }
+
+        let changed = match collect_source_snapshot(&plan.app_dir, &roots) {
             Ok(next) if next != snapshot => true,
             Ok(_) => false,
             Err(error) => {
@@ -57,7 +99,7 @@ pub(super) async fn run_dev_watch_loop(
         }
 
         tokio::time::sleep(WATCH_DEBOUNCE_DELAY).await;
-        let next_snapshot = match collect_source_snapshot(&plan.app_dir, &plan.source_roots) {
+        let next_snapshot = match collect_source_snapshot(&plan.app_dir, &roots) {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 emit_dev_warning(format!(
@@ -123,6 +165,17 @@ async fn activate_dev_generation(
         &request,
     )
     .await
+}
+
+fn announce_watch_roots(plan: &DevWatchPlan, roots: &[PathBuf], tail_note_emitted: &mut bool) {
+    emit_dev_info(format!(
+        "watching {} for codegen changes",
+        format_watch_roots(roots)
+    ));
+    if !*tail_note_emitted {
+        emit_log_tail_note(plan.tail_logs);
+        *tail_note_emitted = true;
+    }
 }
 
 fn emit_dev_info(message: impl AsRef<str>) {

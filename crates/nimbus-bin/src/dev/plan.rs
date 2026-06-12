@@ -40,7 +40,6 @@ pub(super) struct DevPlan {
 #[derive(Debug, Clone)]
 pub(super) struct DevWatchPlan {
     pub(super) app_dir: PathBuf,
-    pub(super) source_roots: Vec<PathBuf>,
     pub(super) debug_node_apis: bool,
     pub(super) tail_logs: DevTailLogsMode,
     pub(super) local_url: String,
@@ -51,11 +50,6 @@ impl DevPlan {
     pub(super) fn watch_plan(&self) -> DevWatchPlan {
         DevWatchPlan {
             app_dir: self.app_dir.clone(),
-            source_roots: self
-                .adapter
-                .as_ref()
-                .map(|adapter| adapter.source_roots().to_vec())
-                .unwrap_or_default(),
             debug_node_apis: self.start_command.debug_node_apis,
             tail_logs: self.tail_logs,
             local_url: self.local_url.clone(),
@@ -65,6 +59,16 @@ impl DevPlan {
                 .clone()
                 .expect("dev plan should configure deploy activation token"),
         }
+    }
+
+    /// The boot-time source roots the codegen watch loop starts with. The
+    /// roots are live state, not plan state: mid-session adapter adoption
+    /// re-registers them through the watch channel seeded with this value.
+    pub(super) fn initial_watch_roots(&self) -> Vec<PathBuf> {
+        self.adapter
+            .as_ref()
+            .map(|adapter| adapter.source_roots().to_vec())
+            .unwrap_or_default()
     }
 }
 
@@ -99,12 +103,14 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         .as_ref()
         .map(|mapping| mapping.tenant.clone())
         .unwrap_or_else(|| DEMO_TENANT.to_string());
-    // A Firestore client app has no server-side authoring surface, so start
-    // gets no app dir: the codegen preflight and registry loads stay off and
-    // nothing ever writes `_generated/` into a client app. The dev-side app
-    // dir (env file, scan-gated wiring, banner) is unaffected.
+    // A Firestore client app has no server-side authoring surface, and an
+    // app with no detected adapter has none yet either (D8 keeps such a
+    // session serving) — start gets no app dir in both shapes: the codegen
+    // preflight and registry loads stay off and nothing ever writes
+    // `_generated/` into the app. The dev-side app dir (env file,
+    // scan-gated wiring, banner, live re-detection) is unaffected.
     let start_app_dir = match &adapter {
-        Some(DevAdapter::FirestoreClient) => None,
+        Some(DevAdapter::FirestoreClient) | None => None,
         _ => Some(app_dir.clone()),
     };
     // The wire plan owns dev's port policy (D4: detected surfaces prefer

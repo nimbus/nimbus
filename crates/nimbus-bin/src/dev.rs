@@ -121,6 +121,9 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
         "detected wire surfaces"
     );
 
+    // D8: no detected adapter is guidance, not an exit. The session serves
+    // anyway — detection never gates serving — so an adapter added to the
+    // app is adopted live by the manifest watch loop below.
     if plan.adapter.is_none() && !skip_codegen {
         cli_ux::write_stderr_line("")?;
         cli_ux::write_stderr_line("No compatible adapter detected.")?;
@@ -128,8 +131,10 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
         cli_ux::write_stderr_line("To get started:")?;
         cli_ux::write_stderr_line("  nimbus init convex          # Convex adapter")?;
         cli_ux::write_stderr_line("  nimbus init cloud-functions # Cloud Functions adapter")?;
-        cli_ux::write_stderr_line("  nimbus dev")?;
-        return Ok(());
+        cli_ux::write_stderr_line("")?;
+        cli_ux::write_stderr_line(
+            "The dev server is starting anyway; an adapter added to this app is adopted live.",
+        )?;
     }
 
     // The Firestore client path is the only dev flow that mutates the app
@@ -181,17 +186,29 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
     }
 
     let watch_plan = plan.watch_plan();
+    let boot_auto_tenant = plan
+        .start_command
+        .auto_tenant
+        .clone()
+        .expect("dev plan should configure an auto tenant");
+    // The codegen watch roots are live state shared between the loops:
+    // seeded from the boot-time adapter, re-registered by the manifest
+    // watch loop when an adapter is adopted or removed mid-session.
+    let (watch_roots_tx, watch_roots_rx) = tokio::sync::watch::channel(plan.initial_watch_roots());
     // Moving `plan.start_command` into the first arm while the manifest
     // watch borrows `plan.app_dir` / `plan.wire` is a disjoint partial
     // move — `DevPlan` has no `Drop`, so the borrow checker allows it.
     tokio::select! {
         result = run_start_command(plan.start_command) => result,
-        result = run_dev_watch_loop(watch_plan) => result,
-        result = redetect::run_manifest_watch_loop(
-            &plan.app_dir,
-            &plan.wire,
-            plan.wire_surfaces,
-        ) => result,
+        result = run_dev_watch_loop(watch_plan, watch_roots_rx) => result,
+        result = redetect::run_manifest_watch_loop(redetect::ManifestWatch {
+            app_dir: &plan.app_dir,
+            wire: &plan.wire,
+            initial_surfaces: plan.wire_surfaces,
+            initial_adapter: plan.adapter,
+            boot_auto_tenant,
+            watch_roots: &watch_roots_tx,
+        }) => result,
     }
 }
 
@@ -726,17 +743,18 @@ mod tests {
             .expect("dev plan should resolve");
         let watch_plan = plan.watch_plan();
         assert!(
-            watch_plan.source_roots.is_empty(),
+            plan.initial_watch_roots().is_empty(),
             "client apps have no server sources to watch"
         );
+        let (_roots_tx, roots_rx) = tokio::sync::watch::channel(plan.initial_watch_roots());
         let outcome = tokio::time::timeout(
             std::time::Duration::from_millis(250),
-            run_dev_watch_loop(watch_plan),
+            run_dev_watch_loop(watch_plan, roots_rx),
         )
         .await;
         assert!(
             outcome.is_err(),
-            "the watch loop must stay pending forever with no source roots"
+            "the watch loop must idle forever with no source roots"
         );
     }
 
@@ -1453,8 +1471,16 @@ mod tests {
         // Drive the real manifest watch loop. Prime it once so the baseline
         // snapshot predates the dependency write — the future is lazy, so
         // without this poll the baseline would already include the change.
-        let manifest_loop =
-            redetect::run_manifest_watch_loop(&plan.app_dir, &plan.wire, plan.wire_surfaces);
+        let (watch_roots_tx, _watch_roots_rx) =
+            tokio::sync::watch::channel(plan.initial_watch_roots());
+        let manifest_loop = redetect::run_manifest_watch_loop(redetect::ManifestWatch {
+            app_dir: &plan.app_dir,
+            wire: &plan.wire,
+            initial_surfaces: plan.wire_surfaces,
+            initial_adapter: plan.adapter.clone(),
+            boot_auto_tenant: auto_tenant.clone(),
+            watch_roots: &watch_roots_tx,
+        });
         tokio::pin!(manifest_loop);
         let primed =
             tokio::time::timeout(std::time::Duration::from_millis(50), &mut manifest_loop).await;
