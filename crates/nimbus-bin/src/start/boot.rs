@@ -54,7 +54,6 @@ pub(crate) async fn run_start_command(
         ensure_host_opt_in(&command.host, command.allow_network)?;
     }
     let cors_allowed_origins = resolve_cors_allowed_origins(&command)?;
-    let adapter_enablement = resolve_adapter_enablement(&command)?;
     let tls_config = match (&command.tls_cert, &command.tls_key) {
         (Some(cert), Some(key)) => Some(nimbus_server::TlsConfig::new(cert, key)),
         _ => None,
@@ -63,6 +62,10 @@ pub(crate) async fn run_start_command(
     let persistence_config = persistence_config_from_start_command(&command)?;
     let compose_control_data_dir =
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
+    // Adapter enablement resolves after the control data dir: default-on
+    // listeners without operator credentials load (or generate) theirs
+    // from the wire-credential store under that dir.
+    let adapter_enablement = resolve_adapter_enablement(&command, &compose_control_data_dir)?;
     // Snapshot first-boot before `Engine::new_with_persistence_config`
     // touches the data dir; otherwise the marker landscape we observe
     // would always say "second boot" because Engine initialization

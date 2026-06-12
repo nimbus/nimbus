@@ -875,6 +875,79 @@ mod tests {
     }
 
     #[test]
+    fn dev_banner_lists_detected_wire_endpoints() {
+        let mut plan = DevPlan {
+            app_dir: PathBuf::from("/workspace"),
+            data_dir: PathBuf::from("/workspace/.nimbus/dev"),
+            deployment_slug: "workspace-abcd1234".to_owned(),
+            compose_selection: None,
+            local_url: "http://localhost:3210/".to_owned(),
+            adapter: None,
+            firestore_tenant: None,
+            wire_surfaces: surfaces::WireSurfaces {
+                mongodb: true,
+                dynamodb: true,
+                aws_sdk_v2_hint: false,
+            },
+            wire: wire::WirePlan::fixture(),
+            once: false,
+            tail_logs: DevTailLogsMode::PauseOnSync,
+            start_command: StartCommand::default(),
+            auto_open_decision: AutoOpenDecision::open(),
+        };
+
+        let lines = dev_banner_lines(&plan);
+        assert!(
+            lines.iter().any(|line| line
+                == "MongoDB:    mongodb://127.0.0.1:27017/ (NIMBUS_MONGODB_URL in .env.local)"),
+            "{lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("new MongoClient(process.env.NIMBUS_MONGODB_URL)")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line
+                == "DynamoDB:   http://127.0.0.1:8000 (NIMBUS_DYNAMODB_ENDPOINT in .env.local)"),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("new DynamoDBClient(")
+                && line.contains("process.env.NIMBUS_DYNAMODB_SECRET_ACCESS_KEY")),
+            "{lines:?}"
+        );
+        // The banner references env keys, never credential values.
+        assert!(
+            lines.iter().all(|line| {
+                !line.contains(&plan.wire.credentials.mongodb_password)
+                    && !line.contains(&plan.wire.credentials.dynamodb_secret_access_key)
+            }),
+            "the banner must never print secrets: {lines:?}"
+        );
+
+        // D3: an aws-sdk v2 import alone earns a hint, not endpoint
+        // promotion.
+        plan.wire_surfaces = surfaces::WireSurfaces {
+            mongodb: false,
+            dynamodb: false,
+            aws_sdk_v2_hint: true,
+        };
+        let lines = dev_banner_lines(&plan);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("Hint:") && line.contains("@aws-sdk/client-dynamodb")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().all(|line| !line.starts_with("DynamoDB:")),
+            "an undetected surface must not be promoted: {lines:?}"
+        );
+    }
+
+    #[test]
     fn dev_start_and_compose_resolve_same_project_from_same_cwd() {
         let temp = tempdir().expect("tempdir should build");
         create_source_root(temp.path(), "convex");
@@ -1009,15 +1082,21 @@ mod tests {
         );
 
         // Resolve through the same enablement path `nimbus start` uses; the
-        // wire listeners stay off (no credentials, deny-by-default intact).
+        // wire listeners are always available too (D6/D7), store-backed on
+        // the plan's ephemeral ports.
         let enablement = crate::start::adapters::resolve_adapter_enablement_with_env(
             &plan.start_command,
+            plan.start_command
+                .control_data_dir
+                .as_deref()
+                .expect("dev plan sets the control data dir"),
             |_| None,
+            |_| true,
         )
         .expect("dev enablement should resolve");
         assert!(enablement.firebase.is_some());
-        assert!(enablement.mongodb.is_none());
-        assert!(enablement.dynamodb.is_none());
+        assert!(enablement.mongodb.is_some());
+        assert!(enablement.dynamodb.is_some());
 
         let engine = std::sync::Arc::new(
             nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"),
@@ -1048,6 +1127,226 @@ mod tests {
             response.status(),
             reqwest::StatusCode::NOT_FOUND,
             "dev must answer the Firestore route family without Firebase markers"
+        );
+
+        task.abort();
+        let _ = task.await;
+        engine.quiesce().await;
+    }
+
+    #[tokio::test]
+    async fn pure_convex_dev_serves_wire_listeners_on_ephemeral_ports() {
+        // D6: a pure-Convex app (no driver deps) still gets both wire
+        // listeners — on ephemeral ports nothing in the app references, so
+        // a real mongod or DynamoDB Local beside it sees zero interference.
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        assert!(!plan.wire_surfaces.mongodb && !plan.wire_surfaces.dynamodb);
+        let mongodb_port = plan
+            .start_command
+            .mongodb_port
+            .expect("dev plan pins the mongodb port");
+        let dynamodb_port = plan
+            .start_command
+            .dynamodb_port
+            .expect("dev plan pins the dynamodb port");
+
+        let enablement = crate::start::adapters::resolve_adapter_enablement_with_env(
+            &plan.start_command,
+            plan.start_command
+                .control_data_dir
+                .as_deref()
+                .expect("dev plan sets the control data dir"),
+            |_| None,
+            |_| true,
+        )
+        .expect("dev enablement should resolve");
+        assert!(enablement.mongodb.is_some());
+        assert!(enablement.dynamodb.is_some());
+
+        let engine = std::sync::Arc::new(
+            nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"),
+        );
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("addr should resolve");
+        let task = tokio::spawn(nimbus_server::serve(
+            listener,
+            enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone())),
+        ));
+        crate::test_support::wait_for_live_server_health(
+            "dev-shaped server should answer /health",
+            addr,
+            &task,
+        )
+        .await;
+
+        assert!(
+            tokio::net::TcpStream::connect(("127.0.0.1", mongodb_port))
+                .await
+                .is_ok(),
+            "the mongodb listener should accept connections on the plan's ephemeral port"
+        );
+        assert!(
+            tokio::net::TcpStream::connect(("127.0.0.1", dynamodb_port))
+                .await
+                .is_ok(),
+            "the dynamodb listener should accept connections on the plan's ephemeral port"
+        );
+
+        task.abort();
+        let _ = task.await;
+        engine.quiesce().await;
+    }
+
+    fn workspace_wire_selftest_dependencies_available(repo_root: &Path) -> bool {
+        let root_node_modules = repo_root.join("node_modules");
+        let has_dependency = |package_dir: &str, scoped_segments: &[&str]| {
+            let candidates = [
+                root_node_modules.clone(),
+                repo_root.join(package_dir).join("node_modules"),
+            ];
+            candidates.iter().any(|node_modules| {
+                let mut path = node_modules.clone();
+                for segment in scoped_segments {
+                    path.push(segment);
+                }
+                path.is_dir()
+            })
+        };
+
+        repo_root
+            .join("packages/mongodb/src/selftest.mjs")
+            .is_file()
+            && repo_root
+                .join("packages/dynamodb/src/selftest.mjs")
+                .is_file()
+            && has_dependency("packages/mongodb", &["mongodb"])
+            && has_dependency("packages/dynamodb", &["@aws-sdk", "client-dynamodb"])
+    }
+
+    #[tokio::test]
+    async fn detected_wire_app_round_trips_mongodb_and_dynamodb_drivers() {
+        // DXW3 live gate: an app declaring both drivers, served by a
+        // dev-shaped server, completes real driver round-trips using
+        // exactly the credentials dev advertises in `.env.local` — and the
+        // selftests' wrong-credential probes prove the listeners reject
+        // anything else.
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root should exist");
+        if !workspace_wire_selftest_dependencies_available(repo_root) {
+            eprintln!(
+                "skipping wire round-trip selftests because JS workspace dependencies are unavailable"
+            );
+            return;
+        }
+
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join(".git")).expect(".git boundary should create");
+        create_source_root(temp.path(), "convex");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"dependencies": {"mongodb": "^6.0.0", "@aws-sdk/client-dynamodb": "^3.600.0"}}"#,
+        )
+        .expect("package.json should write");
+
+        let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        assert!(plan.wire_surfaces.mongodb && plan.wire_surfaces.dynamodb);
+
+        let enablement = crate::start::adapters::resolve_adapter_enablement_with_env(
+            &plan.start_command,
+            plan.start_command
+                .control_data_dir
+                .as_deref()
+                .expect("dev plan sets the control data dir"),
+            |_| None,
+            |_| true,
+        )
+        .expect("dev enablement should resolve");
+        let engine = std::sync::Arc::new(
+            nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"),
+        );
+        // Mirror boot's ensure_auto_tenant: the DynamoDB binding targets it.
+        let auto_tenant = plan
+            .start_command
+            .auto_tenant
+            .clone()
+            .expect("dev plan sets an auto tenant");
+        engine
+            .create_tenant(nimbus::TenantId::new(&auto_tenant).expect("tenant id is valid"))
+            .expect("auto tenant should create");
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("addr should resolve");
+        let task = tokio::spawn(nimbus_server::serve(
+            listener,
+            enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone())),
+        ));
+        crate::test_support::wait_for_live_server_health(
+            "dev-shaped server should answer /health",
+            addr,
+            &task,
+        )
+        .await;
+
+        // MongoDB: real driver CRUD + aggregation with the store
+        // credentials, plus the selftest's wrong-password rejection probe.
+        let mongodb_port = plan
+            .start_command
+            .mongodb_port
+            .expect("dev plan pins the mongodb port");
+        let output = tokio::process::Command::new("node")
+            .current_dir(repo_root)
+            .arg("./packages/mongodb/src/selftest.mjs")
+            .arg("--smoke-only")
+            .arg("--smoke-port")
+            .arg(mongodb_port.to_string())
+            .arg("--smoke-username")
+            .arg(&plan.wire.credentials.mongodb_username)
+            .arg("--smoke-password")
+            .arg(&plan.wire.credentials.mongodb_password)
+            .output()
+            .await
+            .expect("mongodb selftest should run");
+        assert!(
+            output.status.success(),
+            "mongodb round-trip selftest should pass\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        // DynamoDB: real SigV4 driver round-trip with the store access
+        // key, plus the selftest's wrong-secret rejection probe.
+        let dynamodb_port = plan
+            .start_command
+            .dynamodb_port
+            .expect("dev plan pins the dynamodb port");
+        let output = tokio::process::Command::new("node")
+            .current_dir(repo_root)
+            .arg("./packages/dynamodb/src/selftest.mjs")
+            .arg("--smoke-only")
+            .arg("--smoke-port")
+            .arg(dynamodb_port.to_string())
+            .arg("--smoke-access-key-id")
+            .arg(&plan.wire.credentials.dynamodb_access_key_id)
+            .arg("--smoke-secret-access-key")
+            .arg(&plan.wire.credentials.dynamodb_secret_access_key)
+            .output()
+            .await
+            .expect("dynamodb selftest should run");
+        assert!(
+            output.status.success(),
+            "dynamodb round-trip selftest should pass\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
         );
 
         task.abort();
@@ -1121,7 +1420,12 @@ mod tests {
 
         let enablement = crate::start::adapters::resolve_adapter_enablement_with_env(
             &plan.start_command,
+            plan.start_command
+                .control_data_dir
+                .as_deref()
+                .expect("dev plan sets the control data dir"),
             |_| None,
+            |_| true,
         )
         .expect("dev enablement should resolve");
         let engine = std::sync::Arc::new(

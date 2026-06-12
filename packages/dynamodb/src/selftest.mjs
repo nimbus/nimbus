@@ -5,8 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { build } from "esbuild";
-
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const packageJsonPath = fileURLToPath(
   new URL("../package.json", import.meta.url),
@@ -16,7 +14,12 @@ const tscPath = fileURLToPath(
 );
 const buildOnly = process.argv.includes("--build-only");
 const typecheckOnly = process.argv.includes("--typecheck-only");
+// Smoke-only mode skips the build/typecheck stages so callers (e.g. the
+// Rust dev round-trip test) need only `@aws-sdk/client-dynamodb` installed.
+const smokeOnly = process.argv.includes("--smoke-only");
 const smokePort = optionalFlagValue("--smoke-port");
+const smokeAccessKeyId = optionalFlagValue("--smoke-access-key-id");
+const smokeSecretAccessKey = optionalFlagValue("--smoke-secret-access-key");
 
 function optionalFlagValue(flag) {
   const index = process.argv.indexOf(flag);
@@ -29,6 +32,11 @@ function optionalFlagValue(flag) {
 }
 
 async function main() {
+  if (smokeOnly) {
+    await runSmokeSuite();
+    return;
+  }
+
   await assertPackageExports();
   if (buildOnly) {
     await buildPackageSurface();
@@ -44,7 +52,16 @@ async function main() {
   await typecheckSurface();
 
   if (smokePort) {
-    await smokeTestCrud(parseInt(smokePort, 10));
+    await runSmokeSuite();
+  }
+}
+
+async function runSmokeSuite() {
+  assert.ok(smokePort, "the smoke suite requires --smoke-port");
+  const port = parseInt(smokePort, 10);
+  await smokeTestCrud(port);
+  if (smokeAccessKeyId && smokeSecretAccessKey) {
+    await smokeTestWrongSecretRejected(port);
   }
 }
 
@@ -58,6 +75,8 @@ async function assertPackageExports() {
 }
 
 async function buildPackageSurface() {
+  // Lazy so --smoke-only runs never load esbuild.
+  const { build } = await import("esbuild");
   const outDir = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus-dynamodb-"));
   await build({
     entryPoints: [path.join(packageRoot, "src/index.ts")],
@@ -126,9 +145,19 @@ async function typecheckSurface() {
   console.log("  ✓ typecheck passed");
 }
 
+function smokeClientOptions(port) {
+  const options = { port };
+  if (smokeAccessKeyId && smokeSecretAccessKey) {
+    options.accessKeyId = smokeAccessKeyId;
+    options.secretAccessKey = smokeSecretAccessKey;
+  }
+  return options;
+}
+
 // Smoke test against a running Nimbus DynamoDB listener (opt-in via
 // `--smoke-port`). Requires `@aws-sdk/client-dynamodb` to be installed and the
-// server to have an access key bound to a tenant (default "nimbus").
+// server to have an access key bound to a tenant (default "nimbus", or the
+// `--smoke-access-key-id`/`--smoke-secret-access-key` pair when provided).
 async function smokeTestCrud(port) {
   const { clientConfig } = await import("./client.ts");
   const {
@@ -138,7 +167,7 @@ async function smokeTestCrud(port) {
     GetItemCommand,
   } = await import("@aws-sdk/client-dynamodb");
 
-  const client = new DynamoDBClient(clientConfig({ port }));
+  const client = new DynamoDBClient(clientConfig(smokeClientOptions(port)));
   try {
     await client.send(
       new CreateTableCommand({
@@ -165,6 +194,35 @@ async function smokeTestCrud(port) {
     assert.equal(got.Item?.v?.N, "1", "GetItem should round-trip the value");
 
     console.log("  ✓ smoke test: CreateTable/PutItem/GetItem passed");
+  } finally {
+    client.destroy();
+  }
+}
+
+async function smokeTestWrongSecretRejected(port) {
+  const { clientConfig } = await import("./client.ts");
+  const { DynamoDBClient, GetItemCommand } = await import(
+    "@aws-sdk/client-dynamodb"
+  );
+
+  const client = new DynamoDBClient(
+    clientConfig({
+      port,
+      accessKeyId: smokeAccessKeyId,
+      secretAccessKey: "wrong-secret-access-key",
+    }),
+  );
+  try {
+    await assert.rejects(
+      client.send(
+        new GetItemCommand({
+          TableName: "SmokeTable",
+          Key: { pk: { S: "a" } },
+        }),
+      ),
+      "a wrong secret access key must not authenticate",
+    );
+    console.log("  ✓ smoke test: wrong secret rejected");
   } finally {
     client.destroy();
   }

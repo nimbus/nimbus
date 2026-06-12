@@ -2,12 +2,10 @@ use std::io;
 use std::net::TcpListener;
 use std::path::Path;
 
+use crate::start::adapters::{DYNAMODB_CONVENTIONAL_PORT, MONGODB_CONVENTIONAL_PORT};
 use crate::wire_credentials::{WireCredentials, load_or_generate};
 
 use super::surfaces::WireSurfaces;
-
-pub(super) const MONGODB_CONVENTIONAL_PORT: u16 = 27017;
-pub(super) const DYNAMODB_CONVENTIONAL_PORT: u16 = 8000;
 
 /// A resolved wire-listener port under the D4 policy: a *detected* surface
 /// prefers its conventional port (stable, recognizable connection strings)

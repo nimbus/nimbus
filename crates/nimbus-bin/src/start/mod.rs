@@ -73,13 +73,20 @@ pub(crate) struct StartCommand {
     #[arg(long, requires = "tls_cert", value_name = "KEY_PEM")]
     pub(crate) tls_key: Option<PathBuf>,
 
-    /// Mount the Firestore-compatible routes on the main HTTP listener.
-    #[arg(long, default_value_t = false)]
+    /// Disable the Firestore-compatible routes (mounted on the main HTTP
+    /// listener by default).
+    #[arg(long = "no-firestore", action = clap::ArgAction::SetFalse, default_value_t = true)]
     pub(crate) firestore: bool,
 
-    /// Enable the MongoDB wire-protocol listener on this port. Requires
-    /// SCRAM credentials: --mongodb-username (or NIMBUS_MONGODB_USERNAME)
-    /// plus the NIMBUS_MONGODB_PASSWORD environment variable.
+    /// Disable the MongoDB wire-protocol listener (served by default on
+    /// port 27017 when free, with SCRAM credentials from the data dir's
+    /// wire-credential store unless operator credentials are provided).
+    #[arg(long = "no-mongodb", action = clap::ArgAction::SetFalse, default_value_t = true)]
+    pub(crate) mongodb: bool,
+
+    /// Explicit port for the MongoDB wire-protocol listener. Without this
+    /// flag the listener serves on 27017 when free and is skipped (with a
+    /// warning) when busy; an explicit port fails loud instead.
     #[arg(long)]
     pub(crate) mongodb_port: Option<u16>,
 
@@ -91,11 +98,21 @@ pub(crate) struct StartCommand {
     /// SCRAM username for the MongoDB listener. Defaults to
     /// NIMBUS_MONGODB_USERNAME. The password is env-only
     /// (NIMBUS_MONGODB_PASSWORD) so it never appears in process listings.
+    /// With neither flag nor env set, the listener uses generated
+    /// credentials persisted in the data dir's wire-credential store.
     #[arg(long)]
     pub(crate) mongodb_username: Option<String>,
 
-    /// Enable the DynamoDB HTTP listener on this port (DynamoDB Local
-    /// convention is 8000).
+    /// Disable the DynamoDB HTTP listener (served by default on port 8000
+    /// when free, with the generated wire-credential store key bound to
+    /// the `default` tenant unless operator bindings are provided).
+    #[arg(long = "no-dynamodb", action = clap::ArgAction::SetFalse, default_value_t = true)]
+    pub(crate) dynamodb: bool,
+
+    /// Explicit port for the DynamoDB HTTP listener (DynamoDB Local
+    /// convention is 8000). Without this flag the listener serves on 8000
+    /// when free and is skipped (with a warning) when busy; an explicit
+    /// port fails loud instead.
     #[arg(long)]
     pub(crate) dynamodb_port: Option<u16>,
 
@@ -300,6 +317,14 @@ pub(crate) struct StartCommand {
     #[arg(skip)]
     pub(crate) auto_tenant: Option<String>,
 
+    /// Resolve MongoDB listener credentials from the shared wire-credential
+    /// store only, ignoring operator flags/env. `nimbus dev` sets this: its
+    /// `.env.local` advertises the store credentials, so ambient
+    /// NIMBUS_MONGODB_* values in the developer's shell must not desync the
+    /// listener from what the app's env file carries.
+    #[arg(skip)]
+    pub(crate) mongodb_credentials_from_store: bool,
+
     /// Tenant-isolation mode selected by the owning command.
     #[arg(skip = nimbus_server::TenantIsolationMode::Production)]
     pub(crate) tenant_isolation_mode: nimbus_server::TenantIsolationMode,
@@ -323,10 +348,12 @@ impl Default for StartCommand {
             cors_allow_origin: Vec::new(),
             tls_cert: None,
             tls_key: None,
-            firestore: false,
+            firestore: true,
+            mongodb: true,
             mongodb_port: None,
             mongodb_host: "127.0.0.1".to_string(),
             mongodb_username: None,
+            dynamodb: true,
             dynamodb_port: None,
             dynamodb_host: "127.0.0.1".to_string(),
             dynamodb_access_key: Vec::new(),
@@ -372,6 +399,7 @@ impl Default for StartCommand {
             encryption_aws_endpoint_url: None,
             deploy_admin_token: None,
             auto_tenant: None,
+            mongodb_credentials_from_store: false,
             tenant_isolation_mode: nimbus_server::TenantIsolationMode::Production,
         }
     }

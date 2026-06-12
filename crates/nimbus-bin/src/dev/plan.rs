@@ -107,10 +107,10 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         Some(DevAdapter::FirestoreClient) => None,
         _ => Some(app_dir.clone()),
     };
-    // Wire-listener enablement flows into the start command in DXW3
-    // (always-available listeners, D6/D7); this row resolves the ports and
-    // shared credentials so `.env.local` and the run banner can present
-    // stable endpoints first.
+    // The wire plan owns dev's port policy (D4: detected surfaces prefer
+    // conventional ports, undetected go ephemeral) and the shared persisted
+    // credentials (D5); the start command below serves exactly those
+    // endpoints so `.env.local` and the run banner stay truthful.
     let wire = resolve_wire_plan(wire_surfaces, &data_dir)?;
     let start_command = StartCommand {
         port: command.port,
@@ -118,6 +118,22 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         // the main HTTP listener and are inert without callers, so no
         // Firebase markers are required to serve them.
         firestore: true,
+        // Explicit ports pin start's listeners to the wire plan's choices —
+        // start never re-probes or silently skips what dev advertised.
+        mongodb_port: Some(wire.mongodb_port.port),
+        dynamodb_port: Some(wire.dynamodb_port.port),
+        // The store credentials back the listeners directly: MongoDB via
+        // the store-only marker (ambient NIMBUS_MONGODB_* env in the
+        // developer's shell must not desync the listener from what
+        // `.env.local` advertises), DynamoDB via an explicit binding to
+        // the dev auto-tenant (which shadows NIMBUS_DYNAMODB_ACCESS_KEYS).
+        mongodb_credentials_from_store: true,
+        dynamodb_access_key: vec![format!(
+            "{}:{}:{}",
+            wire.credentials.dynamodb_access_key_id,
+            wire.credentials.dynamodb_secret_access_key,
+            auto_tenant
+        )],
         data_dir: Some(data_dir.clone()),
         control_data_dir: Some(data_dir.clone()),
         tenant_provider: Some(CliTenantProvider::Sqlite),
