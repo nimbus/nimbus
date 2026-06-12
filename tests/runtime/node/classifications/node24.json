@@ -475,7 +475,6 @@
         "test/parallel/test-vm-module-cached-data.js",
         "test/parallel/test-vm-module-dynamic-import.js",
         "test/parallel/test-vm-module-errors.js",
-        "test/parallel/test-vm-module-hasasyncgraph.js",
         "test/parallel/test-vm-module-hastoplevelawait.js",
         "test/parallel/test-vm-module-import-meta.js",
         "test/parallel/test-vm-module-referrer-realm.mjs",
