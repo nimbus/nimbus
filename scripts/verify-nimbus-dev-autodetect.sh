@@ -77,14 +77,15 @@ else
   fail "${C}" "need WireSurfaces type, detect_wire_surfaces, and combined-resolution test in ${DEV_DIR}"
 fi
 
-# --- 3. always-on Firestore routes in dev -------------------------------------
-C="3. dev mounts Firestore routes unconditionally; start default unmounted"
+# --- 3. always-on serving: dev unconditional; start default-on with opt-outs ----
+C="3. dev and start serve adapter surfaces by default; opt-outs exist"
 if grep -q 'firestore: true' "${DEV_DIR}/plan.rs" 2>/dev/null \
   && bin_has 'fn dev_serves_firestore_routes_without_firebase_markers' \
-  && grep -q 'fn adapters_stay_off_by_default' "${START_ADAPTERS}"; then
+  && grep -q 'fn start_serves_all_adapters_by_default' "${START_ADAPTERS}" \
+  && grep -q 'fn adapter_opt_out_flags_disable_surfaces' "${START_ADAPTERS}"; then
   pass "${C}"
 else
-  fail "${C}" "need firestore: true in dev plan, dev_serves_firestore_routes_without_firebase_markers test, and intact start default test"
+  fail "${C}" "need dev always-on Firestore + start default-on/opt-out tests (D7)"
 fi
 
 # --- 4. scanner covered set from embedded manifest ----------------------------
