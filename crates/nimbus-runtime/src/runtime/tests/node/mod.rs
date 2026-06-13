@@ -977,6 +977,17 @@ fn should_load_fixture_as_async_main_module(test_relative_path: &str) -> bool {
     )
 }
 
+fn should_use_async_hooks_infra_for_fixture(test_relative_path: &str) -> bool {
+    test_relative_path.contains("async-hooks")
+        || matches!(
+            test_relative_path,
+            // This stream fixture enables an init-counting async_hooks hook and
+            // asserts the exact TickObject count. Keep harness nextTick drains
+            // invisible just like the async-hooks/ fixture family.
+            "test/parallel/test-stream-writable-samecb-singletick.js"
+        )
+}
+
 fn write_node_compat_bundle(
     options: NodeCompatBundleWriteOptions<'_>,
 ) -> (tempfile::TempDir, PathBuf) {
@@ -1060,7 +1071,7 @@ Object.defineProperty(globalThis.global, "gc", {
     // those ids enter `suppressedAsyncIds` and stay invisible to the fixture hook,
     // mirroring how a real Node process has its infrastructure warmed before the
     // test's hooks observe anything.
-    let warmup_infra = test_relative_path.contains("async-hooks");
+    let warmup_infra = should_use_async_hooks_infra_for_fixture(test_relative_path);
     let uses_prelude = prelude_script.is_some();
     let capture_import_error = capture_top_level_skip
         || should_capture_top_level_import_error_for_fixture(test_relative_path)
@@ -3676,3 +3687,4 @@ include!("cases/nds3_cycle37_wave1.rs");
 include!("cases/nds3_cycle38_wave1.rs");
 include!("cases/nds3_cycle39_wave1.rs");
 include!("cases/nds3_cycle40_wave1.rs");
+include!("cases/nds3_cycle41_wave1.rs");

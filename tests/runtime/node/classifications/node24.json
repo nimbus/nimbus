@@ -3078,8 +3078,7 @@
         "test/parallel/test-stream-pipeline-queued-end-in-destroy.js",
         "test/parallel/test-stream-preprocess.js",
         "test/parallel/test-stream-readable-compose.js",
-        "test/parallel/test-stream-readable-unpipe-resume.js",
-        "test/parallel/test-stream-writable-samecb-singletick.js"
+        "test/parallel/test-stream-readable-unpipe-resume.js"
       ]
     },
     {

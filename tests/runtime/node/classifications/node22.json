@@ -157,13 +157,6 @@
       "classification": "rust_watchpoint_expected_failure",
       "owner": "node-compat/unpromoted-surface",
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_node_tools_sqlite_build_preset_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-stream-writable-samecb-singletick.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "streams-local-io/stream",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_stream_writable_samecb_singletick_watchpoint"
     }
   ],
   "groups": [

@@ -1,4 +1,4 @@
-# NDS gate - FORMAL documented blocked state (cycle-40, 2026-06-13)
+# NDS gate - FORMAL documented blocked state (cycle-41, 2026-06-13)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
 **Fork:** nimbus/deno v2.8.3-nimbus.7 (0e5617ac62); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
@@ -6,9 +6,9 @@
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 59**, **node24 = 69**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 58**, **node24 = 68**. Not 0/0.
 
-Session cycles 17-40 reduced the gate 81/87 -> 59/69 by harvesting every cheap/clean/
+Session cycles 17-41 reduced the gate 81/87 -> 58/68 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -21,10 +21,11 @@ calls promotion; assert promotion; assert-deep cycle/CryptoKey parity; default
 Error.prepareStackTrace plus source-map self-exec parity; CommonJS main-module
 uncaughtException stack handling; Node global enumerable surface parity; WebStreams
 BYOB invalid-state error-code parity; fs.WriteStream node:test lifecycle-drain
-parity for uncorked writes; HTTP parser async-resource lifecycle parity; all
+parity for uncorked writes; HTTP parser async-resource lifecycle parity; stream
+writable same-callback TickObject harness-drain isolation; all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 71 unique fixtures remain
-(node22=59, node24=69).
+regression-verified at their promotion surface). 70 unique fixtures remain
+(node22=58, node24=68).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -36,9 +37,8 @@ regression-verified at their promotion surface). 71 unique fixtures remain
 
 ## Tractable but deep (sustained multi-session native deno_core/deno_crypto work — task #61)
 
-### DEEP_behavioral_misc (2) - owner: nimbus/deno (per-fixture deno_node/deno_core)
+### DEEP_behavioral_misc (1) - owner: nimbus/deno (per-fixture deno_node/deno_core)
 - `test/parallel/test-stream-readable-compose.js` (24)
-- `test/parallel/test-stream-writable-samecb-singletick.js` (22+24)
 
 ### DEEP_crypto_provider (15) — owner: nimbus/deno (ext/crypto / deno_node_crypto)
 - `test/parallel/test-crypto-authenticated.js` (22+24)
@@ -126,4 +126,4 @@ regression-verified at their promotion surface). 71 unique fixtures remain
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring, native Ed448/KMAC primitives maybe absent from aws-lc). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=59 / node24=69.
+multi-session effort. Gate held RED and honest at node22=58 / node24=68.
