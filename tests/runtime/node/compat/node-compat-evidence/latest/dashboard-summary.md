@@ -15,14 +15,14 @@
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `node20` | `v20.20.2` | `legacy` | 917 | 3318 | 13 | 3331 | 4248 | 4248 | 0 | 21.6% |
 | `node22` | `v22.22.3` | `supported` | 2317 | 2411 | 20 | 2431 | 4748 | 4748 | 0 | 48.8% |
-| `node24` | `v24.16.0` | `default` | 2346 | 2804 | 48 | 2852 | 5198 | 5198 | 0 | 45.1% |
+| `node24` | `v24.16.0` | `default` | 2347 | 2803 | 48 | 2851 | 5198 | 5198 | 0 | 45.2% |
 | `node26` | `v26.2.0` | `current` | 1009 | 4523 | 46 | 4569 | 5578 | 5578 | 0 | 18.1% |
 
 ### Evidence Tiers
 
 | Tier | Source | Primary count | Passed | Claims | Official denominator? |
 | --- | --- | ---: | ---: | ---: | --- |
-| `official` | `vendored_official_fixture_corpus` | 19772 fixture_count | 6589 | - | yes |
+| `official` | `vendored_official_fixture_corpus` | 19772 fixture_count | 6590 | - | yes |
 | `supplementary` | `node_compat_manifest_test_tier` | 7 fixture_count | - | - | no |
 | `regression` | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/regression` | 26 fixture_count | - | - | no |
 | `canary` | `tests/runtime/node/canary-registry.json` | 37 active_canary_count | - | 79 | no |
@@ -30,7 +30,10 @@
 | `diagnostic` | `tests/runtime/node/expectations/rust-watchpoints.json + tests/runtime/node/canary-registry.json` | 11 diagnostic_count | - | 11 | no |
 
 ### Suite Warnings
-- none
+
+| Kind | Details |
+| --- | --- |
+| `catalog_reason_mismatch` | `{"actual": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-symlink.js still expects the newer invalid-type ERR_INVALID_ARG_VALUE contract, while the current runtime intentionally keeps the older Node22-compatible ERR_FS_INVALID_SYMLINK_TYPE behavior", "expected": "Superseded by NDS3 cycle 53: node24 test-fs-symlink.js is now dynamically green-guarded by node24_default_lane_executes_cycle53_fs_symlink_batch", "kind": "catalog_reason_mismatch", "test_name": "node24_fs_symlink_watchpoint"}` |
 
 ## Fixture Inventory
 

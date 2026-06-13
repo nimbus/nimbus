@@ -46188,23 +46188,23 @@
         "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 5198,
-        "documented_manifested_green_count": 2346,
+        "documented_manifested_green_count": 2347,
         "documented_manifested_green_source": "rust_nonignored_execution_fixture_inventory_minus_classified_red_skip",
         "documented_family_green_count": 926,
-        "path_owned_manifested_green_count": 2346,
-        "classified_red_skip_count": 2852,
-        "classified_total_count": 2852,
-        "known_red_or_gap_count": 2804,
+        "path_owned_manifested_green_count": 2347,
+        "classified_red_skip_count": 2851,
+        "classified_total_count": 2851,
+        "known_red_or_gap_count": 2803,
         "skipped_or_excluded_count": 48,
         "documented_or_classified_count": 5198,
         "unmanifested_or_unclassified_count": 0,
-        "documented_manifested_green_ratio": 0.451327,
+        "documented_manifested_green_ratio": 0.45152,
         "classification_catalog": {
           "catalog_path": "tests/runtime/node/classifications/node24.json",
           "catalog_present": true,
-          "classified_red_skip_count": 2852,
+          "classified_red_skip_count": 2851,
           "by_expectation": {
-            "expected_failure": 6,
+            "expected_failure": 5,
             "expected_gap": 2798,
             "expected_skip": 48
           },
@@ -46215,7 +46215,7 @@
             "requires_sequential_host_state_harness": 119,
             "requires_unpromoted_node_surface": 2506,
             "requires_wpt_harness": 23,
-            "rust_watchpoint_expected_failure": 6,
+            "rust_watchpoint_expected_failure": 5,
             "support_fixture_not_top_level_test": 47,
             "upstream_known_issue_or_platform_boundary": 24
           },
@@ -46241,13 +46241,6 @@
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/crypto",
               "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
-            },
-            {
-              "test_path": "test/parallel/test-fs-symlink.js",
-              "expectation": "expected_failure",
-              "classification": "rust_watchpoint_expected_failure",
-              "owner": "streams-local-io/fs-host-io",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_fs_symlink_watchpoint"
             },
             {
               "test_path": "test/parallel/test-module-loading-error.js",
@@ -105647,7 +105640,7 @@
         "source": "vendored_official_fixture_corpus",
         "primary_count_label": "fixture_count",
         "primary_count": 19772,
-        "passed_count": 6589,
+        "passed_count": 6590,
         "counts_in_official_denominator": true,
         "notes": "Byte-identical Node upstream test-* fixtures under lane-local nodeNN/test roots; pass percentages use only this denominator."
       },
@@ -105697,7 +105690,14 @@
       }
     ],
     "rust_ignore_count": 134,
-    "warnings": []
+    "warnings": [
+      {
+        "kind": "catalog_reason_mismatch",
+        "test_name": "node24_fs_symlink_watchpoint",
+        "expected": "Superseded by NDS3 cycle 53: node24 test-fs-symlink.js is now dynamically green-guarded by node24_default_lane_executes_cycle53_fs_symlink_batch",
+        "actual": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-symlink.js still expects the newer invalid-type ERR_INVALID_ARG_VALUE contract, while the current runtime intentionally keeps the older Node22-compatible ERR_FS_INVALID_SYMLINK_TYPE behavior"
+      }
+    ]
   },
   "inventory_reports": [],
   "slice_reports": [],

@@ -9,8 +9,8 @@
 | Lane | Upstream | Passed | Passed Delta | Pass Rate | Pass Rate Delta Points | Unclassified | Unclassified Delta |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `node20` | `v20.20.2` | 917 | +0 | 21.6% | +0.0 | 0 | +0 |
-| `node22` | `v22.22.3` | 2317 | +1 | 48.8% | +0.0 | 0 | +0 |
-| `node24` | `v24.16.0` | 2346 | +1 | 45.1% | +0.0 | 0 | +0 |
+| `node22` | `v22.22.3` | 2317 | +0 | 48.8% | +0.0 | 0 | +0 |
+| `node24` | `v24.16.0` | 2347 | +1 | 45.2% | +0.0 | 0 | +0 |
 | `node26` | `v26.2.0` | 1009 | +0 | 18.1% | +0.0 | 0 | +0 |
 
 ## Evidence Trends
@@ -24,4 +24,4 @@
 | `rust_ignore_count` | 134 | 134 | +0 |
 | `slice_report_count` | 0 | 0 | +0 |
 | `unexpected_pass_count` | 0 | 0 | +0 |
-| `warning_count` | 0 | 0 | +0 |
+| `warning_count` | 1 | 0 | +1 |

@@ -4819,7 +4819,7 @@ fn node24_fs_write_stream_autoclose_option_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-symlink.js still expects the newer invalid-type ERR_INVALID_ARG_VALUE contract, while the current runtime intentionally keeps the older Node22-compatible ERR_FS_INVALID_SYMLINK_TYPE behavior"]
+#[ignore = "Superseded by NDS3 cycle 53: node24 test-fs-symlink.js is now dynamically green-guarded by node24_default_lane_executes_cycle53_fs_symlink_batch"]
 fn node24_fs_symlink_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-symlink.js",

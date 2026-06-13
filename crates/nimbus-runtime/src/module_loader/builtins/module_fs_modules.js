@@ -1,3 +1,49 @@
+function nimbusNodeRuntimeMajor() {
+  const processMajor = globalThis.process?.__nimbusNodeRuntimeMajor;
+  if (typeof processMajor === "number" && Number.isFinite(processMajor)) {
+    return processMajor;
+  }
+  const globalMajor = globalThis.__nimbusNodeRuntimeMajor;
+  if (typeof globalMajor === "number" && Number.isFinite(globalMajor)) {
+    return globalMajor;
+  }
+  const version = globalThis.process?.versions?.node;
+  if (typeof version === "string") {
+    const major = Number.parseInt(version, 10);
+    if (Number.isFinite(major)) {
+      return major;
+    }
+  }
+  return 0;
+}
+
+function createNode24SymlinkTypeValueError(value) {
+  const display = typeof value === "string" ? `'${value}'` : String(value);
+  const error = new TypeError(
+    "The argument 'type' must be one of: 'dir', 'file', 'junction', null, " +
+      `undefined. Received ${display}`,
+  );
+  error.code = "ERR_INVALID_ARG_VALUE";
+  return error;
+}
+
+function validateSymlinkTypeForRuntime(type) {
+  if (nimbusNodeRuntimeMajor() < 24) {
+    internalFsUtils.stringToSymlinkType(type);
+    return;
+  }
+  if (
+    type === "dir" ||
+    type === "file" ||
+    type === "junction" ||
+    type === null ||
+    type === undefined
+  ) {
+    return;
+  }
+  throw createNode24SymlinkTypeValueError(type);
+}
+
 function createNimbusFsPromisesModule() {
   const fsBuiltin = denoGetBuiltinModule("fs");
   const fsPromisesBuiltin = fsBuiltin?.promises;
@@ -52,6 +98,10 @@ function createNimbusFsPromisesModule() {
   });
   fsPromisesModule.opendir = async function opendir(path, options) {
     return wrapDirHandle(await fsPromisesBuiltin.opendir(path, options));
+  };
+  fsPromisesModule.symlink = async function symlink(target, path, type) {
+    validateSymlinkTypeForRuntime(type);
+    return fsPromisesBuiltin.symlink(target, path, type);
   };
   return fsPromisesModule;
 }
@@ -847,12 +897,12 @@ function createNimbusFsModule(fsPromisesModule) {
       callback = type;
       type = undefined;
     } else {
-      internalFsUtils.stringToSymlinkType(type);
+      validateSymlinkTypeForRuntime(type);
     }
     return fsBuiltin.symlink(target, path, type, callback);
   };
   fsModule.symlinkSync = function symlinkSync(target, path, type) {
-    internalFsUtils.stringToSymlinkType(type);
+    validateSymlinkTypeForRuntime(type);
     return fsBuiltin.symlinkSync(target, path, type);
   };
   fsModule.opendir = function opendir(path, options, callback) {
