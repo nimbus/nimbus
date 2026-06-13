@@ -1311,7 +1311,6 @@
         "test/async-hooks/test-graph.tcp.js",
         "test/async-hooks/test-graph.tls-write-12.js",
         "test/async-hooks/test-graph.tls-write.js",
-        "test/async-hooks/test-httpparser-reuse.js",
         "test/async-hooks/test-httpparser.request.js",
         "test/async-hooks/test-httpparser.response.js",
         "test/async-hooks/test-pipeconnectwrap.js",

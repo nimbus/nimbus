@@ -2,7 +2,7 @@
 
 This directory is the checked-in latest snapshot of the generated Node.js runtime support evidence outputs.
 
-- evidence_generated_at: `2026-06-13T11:04:49.730824+00:00`
+- evidence_generated_at: `2026-06-13T11:29:06.974110+00:00`
 - publish_root: `tests/runtime/node/compat/node-compat-evidence/latest`
 - status source: `target/node-compat/status/status-summary.json`
 - dashboard source: `target/node-compat/dashboard/dashboard-summary.json`
@@ -12,8 +12,8 @@ This directory is the checked-in latest snapshot of the generated Node.js runtim
 | Lane | Upstream | Vendored test files | Documented passed | Unclassified | Pass rate |
 | --- | --- | ---: | ---: | ---: | ---: |
 | `node20` | `v20.20.2` | 4248 | 917 | 0 | 21.6% |
-| `node22` | `v22.22.3` | 4748 | 2314 | 0 | 48.7% |
-| `node24` | `v24.16.0` | 5198 | 2342 | 0 | 45.1% |
+| `node22` | `v22.22.3` | 4748 | 2315 | 0 | 48.8% |
+| `node24` | `v24.16.0` | 5198 | 2343 | 0 | 45.1% |
 | `node26` | `v26.2.0` | 5578 | 1009 | 0 | 18.1% |
 
 ## Expectation Coverage
