@@ -1569,7 +1569,6 @@
         "test/node-api/test_make_callback/test-async-hooks.js",
         "test/node-api/test_worker_buffer_callback/test-free-called.js",
         "test/parallel/test-abortcontroller-internal.js",
-        "test/parallel/test-abortcontroller.js",
         "test/parallel/test-aborted-util.js",
         "test/parallel/test-abortsignal-any.mjs",
         "test/parallel/test-abortsignal-cloneable.js",
