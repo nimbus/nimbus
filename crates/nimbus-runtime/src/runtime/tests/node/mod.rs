@@ -1940,7 +1940,9 @@ fn node_compat_fixture_requires_runtime_self_exec(test_relative_path: &str) -> b
         || test_relative_path.starts_with("test/wasi/test-wasi-")
         || matches!(
             test_relative_path,
-            "test/parallel/test-process-finalization.mjs" | "test/parallel/test-sqlite.js"
+            "test/parallel/test-error-prepare-stack-trace.js"
+                | "test/parallel/test-process-finalization.mjs"
+                | "test/parallel/test-sqlite.js"
         )
 }
 
@@ -2019,6 +2021,20 @@ fn node_compat_runtime_limits_only_grant_self_exec_to_known_respawn_fixtures() {
         ordinary_limits.grants.run,
         vec!["$runtime_self_exec"],
         "test-runner fixtures currently opt into the compat self-exec seam as a family",
+    );
+
+    let source_map_respawn_limits = runtime_limits_for_node_compat_fixture(
+        "test/parallel/test-error-prepare-stack-trace.js",
+        Some(NodeCompatLane::Node24),
+    );
+    assert_eq!(
+        source_map_respawn_limits.compatibility_target,
+        RuntimeCompatibilityTarget::Node24
+    );
+    assert_eq!(
+        source_map_respawn_limits.grants.run,
+        vec!["$runtime_self_exec"],
+        "prepareStackTrace source-map verification respawns only the compat runtime target",
     );
 
     let non_respawn_limits =
@@ -3564,3 +3580,4 @@ include!("cases/nds3_cycle31_wave1.rs");
 include!("cases/nds3_cycle32_wave1.rs");
 include!("cases/nds3_cycle33_wave1.rs");
 include!("cases/nds3_cycle34_wave1.rs");
+include!("cases/nds3_cycle35_wave1.rs");

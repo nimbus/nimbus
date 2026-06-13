@@ -1939,7 +1939,6 @@
         "test/parallel/test-env-var-no-warnings.js",
         "test/parallel/test-err-name-deprecation.js",
         "test/parallel/test-error-format-list.js",
-        "test/parallel/test-error-prepare-stack-trace.js",
         "test/parallel/test-error-reporting.js",
         "test/parallel/test-error-value-type-detection.mjs",
         "test/parallel/test-errors-systemerror.js",

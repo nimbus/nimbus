@@ -581,7 +581,13 @@ if (
         cli_args,
     } => {
         let main_script_path = if plan.source_bundle_root.is_some() && !plan.permission_restricted {
-            script_path.clone()
+            rewrite_bundle_path(
+                script_path,
+                plan.source_bundle_root
+                    .as_deref()
+                    .expect("source bundle root should be present"),
+                bundle_dir,
+            )
         } else if let Some(relative_path) = relative_path {
             let bundle_script_path = bundle_dir.join(relative_path);
             if let Some(source) = source {
