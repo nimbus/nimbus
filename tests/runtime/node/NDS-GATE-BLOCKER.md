@@ -1,4 +1,4 @@
-# NDS gate - FORMAL documented blocked state (cycle-38, 2026-06-13)
+# NDS gate - FORMAL documented blocked state (cycle-39, 2026-06-13)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
 **Fork:** nimbus/deno v2.8.3-nimbus.6 (7a0edfb282); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
@@ -6,9 +6,9 @@
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 61**, **node24 = 71**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 60**, **node24 = 70**. Not 0/0.
 
-Session cycles 17-38 reduced the gate 81/87 -> 61/71 by harvesting every cheap/clean/
+Session cycles 17-39 reduced the gate 81/87 -> 60/70 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -20,10 +20,11 @@ source-map URL tolerance; console symbol-property inspect parity; assert calltra
 calls promotion; assert promotion; assert-deep cycle/CryptoKey parity; default
 Error.prepareStackTrace plus source-map self-exec parity; CommonJS main-module
 uncaughtException stack handling; Node global enumerable surface parity; WebStreams
-BYOB invalid-state error-code parity; all
+BYOB invalid-state error-code parity; fs.WriteStream node:test lifecycle-drain
+parity for uncorked writes; all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 73 unique fixtures remain
-(node22=61, node24=71).
+regression-verified at their promotion surface). 72 unique fixtures remain
+(node22=60, node24=70).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -35,9 +36,8 @@ regression-verified at their promotion surface). 73 unique fixtures remain
 
 ## Tractable but deep (sustained multi-session native deno_core/deno_crypto work — task #61)
 
-### DEEP_behavioral_misc (4) - owner: nimbus/deno (per-fixture deno_node/deno_core)
+### DEEP_behavioral_misc (3) - owner: nimbus/deno (per-fixture deno_node/deno_core)
 - `test/async-hooks/test-httpparser-reuse.js` (22+24)
-- `test/parallel/test-file-write-stream5.js` (22+24)
 - `test/parallel/test-stream-readable-compose.js` (24)
 - `test/parallel/test-stream-writable-samecb-singletick.js` (22+24)
 

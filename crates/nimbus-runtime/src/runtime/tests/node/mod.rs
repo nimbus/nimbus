@@ -3116,6 +3116,12 @@ pub(super) fn default_postlude_behavior_for_fixture(
         "test/parallel/test-worker-ref.js" => {
             Some(NodeCompatNamedPostludeBehavior::ProcessBeforeExitReentry)
         }
+        // fs.WriteStream finish/write callbacks are real loop work kicked off
+        // by a sync node:test body. Reenter beforeExit only after those stream
+        // callbacks have drained, matching Node's process-liveness behavior.
+        "test/parallel/test-file-write-stream5.js" => {
+            Some(NodeCompatNamedPostludeBehavior::ProcessBeforeExitReentry)
+        }
         // Canonical repeatable-beforeExit cascade: each `.once('beforeExit')`
         // handler reschedules real loop work (setImmediate/setTimeout/net), so
         // the loop must run between emits. The reentry loop settles false once
@@ -3136,7 +3142,6 @@ pub(super) fn default_postlude_behavior_for_fixture(
         // these fixtures must not fire, which holds because the loop is idle.
         "test/parallel/test-timers-unrefed-in-beforeexit.js"
         | "test/parallel/test-process-exit-from-before-exit.js"
-        | "test/parallel/test-file-write-stream5.js"
         | "test/parallel/test-stream-writable-samecb-singletick.js"
         | "test/parallel/test-process-env-deprecation.js"
         // test-async-wrap-uncaughtexception registers a single
@@ -3669,3 +3674,4 @@ include!("cases/nds3_cycle35_wave1.rs");
 include!("cases/nds3_cycle36_wave1.rs");
 include!("cases/nds3_cycle37_wave1.rs");
 include!("cases/nds3_cycle38_wave1.rs");
+include!("cases/nds3_cycle39_wave1.rs");

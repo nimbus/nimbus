@@ -1904,7 +1904,6 @@
         "test/parallel/test-fetch.mjs",
         "test/parallel/test-file-read-noexist.js",
         "test/parallel/test-file-validate-mode-flag.js",
-        "test/parallel/test-file-write-stream5.js",
         "test/parallel/test-file.js",
         "test/parallel/test-filehandle-autoclose.mjs",
         "test/parallel/test-filehandle-close.js",
