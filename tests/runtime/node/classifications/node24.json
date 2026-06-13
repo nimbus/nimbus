@@ -346,7 +346,6 @@
       "owner": "core-semantics/assert",
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
-        "test/parallel/test-assert-calltracker-calls.js",
         "test/parallel/test-assert-deep.js"
       ]
     },
