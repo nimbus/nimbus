@@ -1,14 +1,14 @@
-# NDS gate - FORMAL documented blocked state (cycle-63, 2026-06-13)
+# NDS gate - FORMAL documented blocked state (cycle-64, 2026-06-13)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
-**Fork:** nimbus/deno v2.8.3-nimbus.16 (ee32c71874); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
+**Fork:** nimbus/deno v2.8.3-nimbus.17 (5c0197035b); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
 **Verifier:** `bash scripts/verify-node-default-runtime-support-hardening.sh` step 9
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 32**, **node24 = 39**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 31**, **node24 = 38**. Not 0/0.
 
-Session cycles 17-63 reduced the gate 81/87 -> 32/39 by harvesting every cheap/clean/
+Session cycles 17-64 reduced the gate 81/87 -> 31/38 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -51,10 +51,11 @@ module load; and public `node:v8` promiseHooks API/ordering parity for
 `microtaskMode: "afterEvaluate"` Promise queue isolation for
 `test-vm-script-after-evaluate.js` while preserving normal domain/VM Promise
 propagation; and the same afterEvaluate queue fix promoted
-`test-vm-module-after-evaluate.js`; all
+`test-vm-module-after-evaluate.js`; and Node-style weak domain retention in the
+async-id pairing map promoted `test-domain-async-id-map-leak.js`; all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 41 unique fixtures remain
-(node22=32, node24=39).
+regression-verified at their promotion surface). 40 unique fixtures remain
+(node22=31, node24=38).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -82,8 +83,7 @@ regression-verified at their promotion surface). 41 unique fixtures remain
 - `test/parallel/test-webcrypto-sign-verify.js` (22+24)
 - `test/parallel/test-webcrypto-wrap-unwrap.js` (22+24)
 
-### DEEP_domain_regression_risk (2) — owner: nimbus/deno (ext/node domain.ts — regression-risky)
-- `test/parallel/test-domain-async-id-map-leak.js` (22+24)
+### DEEP_domain_regression_risk (1) — owner: nimbus/deno (ext/node domain.ts — regression-risky)
 - `test/parallel/test-domain-stack-empty-in-process-uncaughtexception.js` (22+24)
 
 ### DEEP_esm_loader (10) — owner: nimbus/deno (deno_core module loader)
@@ -120,4 +120,4 @@ regression-verified at their promotion surface). 41 unique fixtures remain
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring, native Ed448/KMAC primitives maybe absent from aws-lc). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=32 / node24=39.
+multi-session effort. Gate held RED and honest at node22=31 / node24=38.

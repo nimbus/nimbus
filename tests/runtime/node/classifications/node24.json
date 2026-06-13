@@ -376,7 +376,6 @@
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
         "test/parallel/test-domain-abort-on-uncaught.js",
-        "test/parallel/test-domain-async-id-map-leak.js",
         "test/parallel/test-domain-dep0097.js",
         "test/parallel/test-domain-no-error-handler-abort-on-uncaught-0.js",
         "test/parallel/test-domain-no-error-handler-abort-on-uncaught-1.js",
