@@ -442,7 +442,6 @@
         "test/parallel/test-vm-api-handles-getter-errors.js",
         "test/parallel/test-vm-cached-data.js",
         "test/parallel/test-vm-global-property-enumerator.js",
-        "test/parallel/test-vm-global-property-interceptors.js",
         "test/parallel/test-vm-measure-memory-lazy.js",
         "test/parallel/test-vm-measure-memory-multi-context.js",
         "test/parallel/test-vm-measure-memory.js",
