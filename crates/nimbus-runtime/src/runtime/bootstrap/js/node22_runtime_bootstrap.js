@@ -2607,19 +2607,7 @@ function createNodeCompatibleSetImmediate(setImmediateImpl) {
 
     let handle;
     handle = setImmediateImpl(function (...callbackArgs) {
-      try {
-        return Reflect.apply(callback, handle, callbackArgs);
-      } catch (error) {
-        const processObject = globalThis.process;
-        if (
-          processObject &&
-          typeof processObject._fatalException === "function" &&
-          processObject._fatalException(error) === true
-        ) {
-          return;
-        }
-        throw error;
-      }
+      return Reflect.apply(callback, handle, callbackArgs);
     }, ...args);
     return handle;
   }

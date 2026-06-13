@@ -1,14 +1,14 @@
-# NDS gate - FORMAL documented blocked state (cycle-58, 2026-06-13)
+# NDS gate - FORMAL documented blocked state (cycle-59, 2026-06-13)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
-**Fork:** nimbus/deno v2.8.3-nimbus.12 (a7777aeece); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
+**Fork:** nimbus/deno v2.8.3-nimbus.13 (a470e7d56); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
 **Verifier:** `bash scripts/verify-node-default-runtime-support-hardening.sh` step 9
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 41**, **node24 = 48**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 39**, **node24 = 46**. Not 0/0.
 
-Session cycles 17-58 reduced the gate 81/87 -> 41/48 by harvesting every cheap/clean/
+Session cycles 17-59 reduced the gate 81/87 -> 39/46 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -43,11 +43,12 @@ symlink fixtures; and fs.promises FileHandle/assert/chown/lchmod parity for
 `test-fs-promises.js`; vm dynamic-import missing-flag callback error parity
 for `test-vm-dynamic-import-callback-missing-flag.js`; and vm module
 dynamic-import callback option/attributes/invalid-result parity for
-`test-vm-module-dynamic-import.js`; and deno_core event-loop liveness parity
-for unrefed setImmediate fixtures; all
+`test-vm-module-dynamic-import.js`; deno_core event-loop liveness parity
+for unrefed setImmediate fixtures; and setImmediate queue-throw plus timer/domain
+reset semantics; all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 50 unique fixtures remain
-(node22=41, node24=48).
+regression-verified at their promotion surface). 48 unique fixtures remain
+(node22=39, node24=46).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -92,10 +93,6 @@ regression-verified at their promotion surface). 50 unique fixtures remain
 - `test/parallel/test-performance-many-marks.js` (22+24)
 - `test/parallel/test-v8-serialize-leak.js` (22+24)
 
-### DEEP_eventloop_timers (2) — owner: nimbus/deno (deno_core event loop)
-- `test/parallel/test-timers-immediate-queue-throw.js` (22+24)
-- `test/parallel/test-timers-reset-process-domain-on-throw.js` (22+24)
-
 ### DEEP_hang_timeout (3) — owner: nimbus/deno + nimbus-runtime
 - `test/parallel/test-perf-hooks-eventlooputilization.js` (24)
 - `test/parallel/test-performance-eventlooputil.js` (22)
@@ -124,4 +121,4 @@ regression-verified at their promotion surface). 50 unique fixtures remain
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring, native Ed448/KMAC primitives maybe absent from aws-lc). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=41 / node24=48.
+multi-session effort. Gate held RED and honest at node22=39 / node24=46.

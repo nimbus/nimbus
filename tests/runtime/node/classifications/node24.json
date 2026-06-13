@@ -2929,11 +2929,9 @@
       "test_paths": [
         "test/parallel/test-timers-fast-calls.js",
         "test/parallel/test-timers-immediate-promisified.js",
-        "test/parallel/test-timers-immediate-queue-throw.js",
         "test/parallel/test-timers-interval-promisified.js",
         "test/parallel/test-timers-linked-list.js",
         "test/parallel/test-timers-now.js",
-        "test/parallel/test-timers-reset-process-domain-on-throw.js",
         "test/parallel/test-timers-socket-timeout-removes-other-socket-unref-timer.js",
         "test/parallel/test-timers-timeout-promisified.js"
       ]
