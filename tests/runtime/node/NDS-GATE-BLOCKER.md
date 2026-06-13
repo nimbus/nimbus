@@ -1,4 +1,4 @@
-# NDS gate - FORMAL documented blocked state (cycle-48, 2026-06-13)
+# NDS gate - FORMAL documented blocked state (cycle-49, 2026-06-13)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
 **Fork:** nimbus/deno v2.8.3-nimbus.8 (2ebf5b82b5); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
@@ -6,9 +6,9 @@
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 53**, **node24 = 61**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 52**, **node24 = 60**. Not 0/0.
 
-Session cycles 17-48 reduced the gate 81/87 -> 53/61 by harvesting every cheap/clean/
+Session cycles 17-49 reduced the gate 81/87 -> 52/60 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -32,10 +32,11 @@ for a real localhost server/client fixture; and source-confirmed host-owned TCP
 listener/client reclassification for a stream-base socket fixture; and
 source-confirmed host-owned loopback HTTP server/client reclassification for a
 WebAssembly streaming fixture; and source-confirmed host process beforeExit plus
-TCP-listener reclassification for a process lifecycle fixture; all
+TCP-listener reclassification for a process lifecycle fixture; and source-confirmed
+host subprocess/platform-probe reclassification for an fs utimes fixture; all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 63 unique fixtures remain
-(node22=53, node24=61).
+regression-verified at their promotion surface). 62 unique fixtures remain
+(node22=52, node24=60).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -87,7 +88,7 @@ regression-verified at their promotion surface). 63 unique fixtures remain
 - `test/parallel/test-timers-immediate-unref.js` (22+24)
 - `test/parallel/test-timers-reset-process-domain-on-throw.js` (22+24)
 
-### DEEP_fs_sandbox (8) — owner: nimbus/deno (deno_fs) + nimbus-runtime sandbox
+### DEEP_fs_sandbox (7) — owner: nimbus/deno (deno_fs) + nimbus-runtime sandbox
 - `test/parallel/test-fs-promises.js` (22+24)
 - `test/parallel/test-fs-read-stream.js` (22+24)
 - `test/parallel/test-fs-realpath.js` (22+24)
@@ -95,7 +96,6 @@ regression-verified at their promotion surface). 63 unique fixtures remain
 - `test/parallel/test-fs-symlink-dir-junction-relative.js` (22+24)
 - `test/parallel/test-fs-symlink-dir-junction.js` (22+24)
 - `test/parallel/test-fs-symlink.js` (24)
-- `test/parallel/test-fs-utimes-y2K38.js` (22+24)
 
 ### DEEP_hang_timeout (3) — owner: nimbus/deno + nimbus-runtime
 - `test/parallel/test-perf-hooks-eventlooputilization.js` (24)
@@ -127,4 +127,4 @@ regression-verified at their promotion surface). 63 unique fixtures remain
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring, native Ed448/KMAC primitives maybe absent from aws-lc). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=53 / node24=61.
+multi-session effort. Gate held RED and honest at node22=52 / node24=60.

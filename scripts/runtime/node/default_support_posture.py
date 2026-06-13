@@ -135,6 +135,13 @@ HOST_PROCESS_CONTROL_PATHS = {
     # is tested earlier in the same file; the subprocess postlude is host
     # process control and must fail closed in the default multi-tenant isolate.
     "test/parallel/test-aborted-util.js",
+    # NDS3 cycle-49 (2026-06-13): source-confirmed against identical node22/node24
+    # fixture bodies. Before asserting fs.utimes precision, the fixture probes
+    # host filesystem Y2K38 support by running host `touch -t ...` and
+    # `date -r ...` via `child_process.spawnSync`. Ambient subprocess execution
+    # and host filesystem capability probing are outside the default
+    # multi-tenant isolate contract.
+    "test/parallel/test-fs-utimes-y2K38.js",
 }
 
 HOST_PROCESS_CONTROL_PREFIXES = (
