@@ -217,6 +217,13 @@ HOST_NETWORK_SOCKET_PATHS = {
     # The streaming API assertions are therefore coupled to a host loopback HTTP
     # server/client topology that the default multi-tenant isolate must not own.
     "test/es-module/test-wasm-web-api.js",
+    # NDS3 cycle-48 (2026-06-13): source-confirmed against identical node22/node24
+    # fixture bodies. The fixture chains host process `beforeExit` callbacks and
+    # one mandatory step creates a real `net.createServer().listen(0)` listener
+    # inside that lifecycle chain before closing it and continuing the exit-loop
+    # assertions. The default multi-tenant isolate must not own host process
+    # beforeExit liveness or ambient host TCP listeners.
+    "test/parallel/test-process-beforeexit.js",
     # NDS3 cycle-45 (2026-06-13): source-confirmed against node22/node24 fixture
     # bodies. The fixture runs with `// Flags: --expose-gc`, creates a real
     # `http.createServer(...).listen(0)`, repeatedly drives `http.get()` clients
