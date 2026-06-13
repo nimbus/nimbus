@@ -28,6 +28,7 @@ mod local_admin;
 mod machines;
 mod metadata;
 mod queries;
+mod resource_control;
 mod sandbox_spec;
 mod sandboxes;
 mod scheduling;

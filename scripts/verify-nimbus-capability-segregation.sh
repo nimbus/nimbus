@@ -108,6 +108,7 @@ condition_3_js_sdk_boundary() {
   node --input-type=module - <<'NODE' || return 1
 import fs from "node:fs";
 import {
+  NIMBUS_ROOT_SDK_CONTROL_PLANE_ROUTE_FRAGMENTS,
   NIMBUS_ROOT_SDK_ARTIFACT_PATHS,
   NIMBUS_ROOT_SDK_FORBIDDEN_FRAGMENTS,
   NIMBUS_ROOT_SDK_METHOD_FRAGMENTS,
@@ -130,6 +131,7 @@ const pkg = readJson("packages/nimbus/package.json");
 const distPkg = readJson("packages/nimbus/dist/package.json");
 const embeddedPkg = readJson("crates/nimbus-assets/embedded/packages/@nimbus/nimbus/package.json");
 const sdk = read("packages/nimbus/src/index.ts");
+const sdkRoutes = read("packages/nimbus/src/control_plane_routes.ts");
 const provisionedExportsOk = (manifest) =>
   manifest.name === "@nimbus/nimbus" &&
   manifest.exports &&
@@ -165,9 +167,12 @@ const ok =
   sdk.includes("new NimbusRestClient") &&
   sdk.includes("createDefaultRestClient") &&
   sdk.includes("async #controlPlaneRequest") &&
+  sdk.includes("async #controlPlaneRouteRequest") &&
   sdk.includes("async #resolveRestClient") &&
   includesAll(sdk, NIMBUS_ROOT_SDK_METHOD_FRAGMENTS) &&
-  sdk.includes("/api/tenants/") &&
+  includesAll(sdkRoutes, NIMBUS_ROOT_SDK_CONTROL_PLANE_ROUTE_FRAGMENTS) &&
+  !sdk.includes("/api/tenants/") &&
+  !sdk.includes("/api/sessions") &&
   excludesAll(sdk, NIMBUS_ROOT_SDK_FORBIDDEN_FRAGMENTS) &&
   !sdk.includes("fromWorkloadIdentity") &&
   rootSdkArtifactsOk;

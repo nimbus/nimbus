@@ -3,6 +3,12 @@ import {
   type FetchLike,
   type RequestOptions,
 } from "./transports/rest.ts";
+import {
+  controlPlaneRoutePath,
+  controlPlaneRouteVerb,
+  type NimbusControlPlaneRouteName,
+  type NimbusControlPlaneRouteParams,
+} from "./control_plane_routes.ts";
 
 export type NimbusCredential =
   | { kind: "bearer"; token: string }
@@ -413,9 +419,15 @@ const dynamicImport = new Function(
   "return import(specifier)",
 ) as (specifier: string) => Promise<unknown>;
 
-type ControlPlaneRequest = <T = unknown>(
-  path: string,
-  options?: RequestOptions,
+type ControlPlaneRouteRequestOptions = {
+  params?: NimbusControlPlaneRouteParams;
+  query?: URLSearchParams;
+  body?: unknown;
+};
+
+type ControlPlaneRouteRequest = <T = unknown>(
+  route: NimbusControlPlaneRouteName,
+  options?: ControlPlaneRouteRequestOptions,
 ) => Promise<T>;
 
 export class Nimbus {
@@ -432,15 +444,15 @@ export class Nimbus {
     this.tenantId = stringOrUndefined(options.tenantId);
     this.services = new NimbusServices(
       this,
-      this.#controlPlaneRequest.bind(this),
+      this.#controlPlaneRouteRequest.bind(this),
     );
     this.sandboxes = new NimbusSandboxes(
       this,
-      this.#controlPlaneRequest.bind(this),
+      this.#controlPlaneRouteRequest.bind(this),
     );
     this.sessions = new NimbusSessions(
       this,
-      this.#controlPlaneRequest.bind(this),
+      this.#controlPlaneRouteRequest.bind(this),
     );
   }
 
@@ -458,6 +470,22 @@ export class Nimbus {
     return client.request<T>(path, options);
   }
 
+  async #controlPlaneRouteRequest<T = unknown>(
+    route: NimbusControlPlaneRouteName,
+    options: ControlPlaneRouteRequestOptions = {},
+  ): Promise<T> {
+    const requestOptions: RequestOptions = {
+      method: controlPlaneRouteVerb(route),
+    };
+    if (options.body !== undefined) {
+      requestOptions.body = JSON.stringify(options.body);
+    }
+    return this.#controlPlaneRequest<T>(
+      controlPlaneRoutePath(route, options.params, options.query),
+      requestOptions,
+    );
+  }
+
   async #resolveRestClient(): Promise<NimbusRestClient> {
     this.#clientPromise ??= createDefaultRestClient(this.#options);
     return this.#clientPromise;
@@ -467,7 +495,7 @@ export class Nimbus {
 class NimbusServices {
   constructor(
     private readonly client: Nimbus,
-    private readonly sendControlPlaneRequest: ControlPlaneRequest,
+    private readonly sendControlPlaneRequest: ControlPlaneRouteRequest,
   ) {}
 
   async start(input: NimbusServiceStartRequest): Promise<NimbusService> {
@@ -504,22 +532,22 @@ class NimbusServices {
   }
 
   get(selector: NimbusServiceSelector): Promise<NimbusService> {
-    return this.sendControlPlaneRequest(serviceResourcePath(this.client, selector), {
-      method: "GET",
+    return this.sendControlPlaneRequest("services.get", {
+      params: serviceResourceParams(this.client, selector),
     });
   }
 
   create(input: NimbusServiceCreateRequest): Promise<NimbusServiceDefinition> {
-    return this.sendControlPlaneRequest(serviceCollectionPath(this.client, input), {
-      method: "POST",
-      body: JSON.stringify(serviceDefinitionRequestBody(input, input.name)),
+    return this.sendControlPlaneRequest("services.create", {
+      params: serviceCollectionParams(this.client, input),
+      body: serviceDefinitionRequestBody(input, input.name),
     });
   }
 
   update(input: NimbusServiceUpdateRequest): Promise<NimbusServiceDefinition> {
-    return this.sendControlPlaneRequest(serviceResourcePath(this.client, input), {
-      method: "PUT",
-      body: JSON.stringify(serviceDefinitionRequestBody(input, input.name, input.ifMatchGeneration)),
+    return this.sendControlPlaneRequest("services.update", {
+      params: serviceResourceParams(this.client, input),
+      body: serviceDefinitionRequestBody(input, input.name, input.ifMatchGeneration),
     });
   }
 
@@ -530,21 +558,20 @@ class NimbusServices {
     if (input.force !== undefined) {
       query.set("force", String(input.force));
     }
-    return this.sendControlPlaneRequest(
-      `${serviceResourcePath(this.client, input)}?${query.toString()}`,
-      { method: "DELETE" },
-    );
+    return this.sendControlPlaneRequest("services.delete", {
+      params: serviceResourceParams(this.client, input),
+      query,
+    });
   }
 
   list(input: NimbusServiceListRequest = {}): Promise<NimbusServiceDefinitionCollection> {
     const query = new URLSearchParams();
     if (input.limit !== undefined) query.set("limit", String(input.limit));
     if (input.pageToken !== undefined) query.set("pageToken", input.pageToken);
-    const suffix = query.size > 0 ? `?${query.toString()}` : "";
-    return this.sendControlPlaneRequest(
-      `${serviceCollectionPath(this.client, input)}${suffix}`,
-      { method: "GET" },
-    );
+    return this.sendControlPlaneRequest("services.list", {
+      params: serviceCollectionParams(this.client, input),
+      query,
+    });
   }
 
   async wait(input: NimbusServiceWaitRequest): Promise<NimbusService> {
@@ -577,8 +604,8 @@ class NimbusServices {
     verb: "start" | "stop" | "restart",
     input: NimbusServiceLifecycleRequest,
   ): Promise<NimbusService> {
-    return this.sendControlPlaneRequest(serviceResourcePath(this.client, input, `/${verb}`), {
-      method: "POST",
+    return this.sendControlPlaneRequest(SERVICE_LIFECYCLE_ROUTES[verb], {
+      params: serviceResourceParams(this.client, input),
     });
   }
 }
@@ -586,23 +613,23 @@ class NimbusServices {
 class NimbusSandboxes {
   constructor(
     private readonly client: Nimbus,
-    private readonly sendControlPlaneRequest: ControlPlaneRequest,
+    private readonly sendControlPlaneRequest: ControlPlaneRouteRequest,
   ) {}
 
   create(input: NimbusSandboxCreateRequest): Promise<NimbusSandboxResource> {
-    return this.sendControlPlaneRequest(sandboxCollectionPath(this.client, input), {
-      method: "POST",
-      body: JSON.stringify({
+    return this.sendControlPlaneRequest("sandboxes.create", {
+      params: sandboxCollectionParams(this.client, input),
+      body: {
         profile: input.profile,
         spec: input.spec,
         labels: input.labels ?? {},
-      }),
+      },
     });
   }
 
   get(input: NimbusSandboxSelector): Promise<NimbusSandboxResource> {
-    return this.sendControlPlaneRequest(sandboxResourcePath(this.client, input), {
-      method: "GET",
+    return this.sendControlPlaneRequest("sandboxes.get", {
+      params: sandboxResourceParams(this.client, input),
     });
   }
 
@@ -613,17 +640,15 @@ class NimbusSandboxes {
     if (input.status !== undefined) query.set("status", input.status);
     if (input.labelKey !== undefined) query.set("labelKey", input.labelKey);
     if (input.labelValue !== undefined) query.set("labelValue", input.labelValue);
-    const encoded = query.toString();
-    const suffix = encoded ? `?${encoded}` : "";
-    return this.sendControlPlaneRequest(
-      `${sandboxCollectionPath(this.client, input)}${suffix}`,
-      { method: "GET" },
-    );
+    return this.sendControlPlaneRequest("sandboxes.list", {
+      params: sandboxCollectionParams(this.client, input),
+      query,
+    });
   }
 
   stop(input: NimbusSandboxSelector): Promise<NimbusSandboxResource> {
-    return this.sendControlPlaneRequest(`${sandboxResourcePath(this.client, input)}/stop`, {
-      method: "POST",
+    return this.sendControlPlaneRequest("sandboxes.stop", {
+      params: sandboxResourceParams(this.client, input),
     });
   }
 }
@@ -631,25 +656,24 @@ class NimbusSandboxes {
 class NimbusSessions {
   constructor(
     private readonly client: Nimbus,
-    private readonly sendControlPlaneRequest: ControlPlaneRequest,
+    private readonly sendControlPlaneRequest: ControlPlaneRouteRequest,
   ) {}
 
   open(input: NimbusSessionOpenRequest): Promise<NimbusSessionResource> {
     const tenantId = resolveTenantId(this.client, input, "session open request");
-    return this.sendControlPlaneRequest(sessionCollectionPath(), {
-      method: "POST",
-      body: JSON.stringify({
+    return this.sendControlPlaneRequest("sessions.open", {
+      body: {
         tenantId,
         target: input.target,
         channels: input.channels,
         ...(input.requestedTtlMs === undefined ? {} : { requestedTtlMs: input.requestedTtlMs }),
-      }),
+      },
     });
   }
 
   get(input: NimbusSessionSelector): Promise<NimbusSessionResource> {
-    return this.sendControlPlaneRequest(sessionResourcePath(input), {
-      method: "GET",
+    return this.sendControlPlaneRequest("sessions.get", {
+      params: sessionResourceParams(input),
     });
   }
 
@@ -659,18 +683,15 @@ class NimbusSessions {
     if (input.limit !== undefined) query.set("limit", String(input.limit));
     if (input.pageToken !== undefined) query.set("pageToken", input.pageToken);
     if (input.state !== undefined) query.set("state", input.state);
-    return this.sendControlPlaneRequest(
-      `${sessionCollectionPath()}?${query.toString()}`,
-      { method: "GET" },
-    );
+    return this.sendControlPlaneRequest("sessions.list", { query });
   }
 
   close(input: NimbusSessionCloseRequest): Promise<NimbusSessionResource> {
-    return this.sendControlPlaneRequest(`${sessionResourcePath(input)}/close`, {
-      method: "POST",
-      body: JSON.stringify({
+    return this.sendControlPlaneRequest("sessions.close", {
+      params: sessionResourceParams(input),
+      body: {
         ...(input.reason === undefined ? {} : { reason: input.reason }),
-      }),
+      },
     });
   }
 }
@@ -842,52 +863,51 @@ function clientTenantId(client: Nimbus): string | undefined {
   return client.tenantId;
 }
 
-function serviceResourcePath(
+const SERVICE_LIFECYCLE_ROUTES = {
+  start: "services.start",
+  stop: "services.stop",
+  restart: "services.restart",
+} as const;
+
+function serviceResourceParams(
   client: Nimbus,
   selector: NimbusServiceSelector,
-  suffix = "",
-): string {
-  const tenantId = resolveTenantId(client, selector, "service request");
-  const tenant = encodeResourceName(tenantId, "tenant");
-  const name = encodeResourceName(selector.name, "service");
-  return `/api/tenants/${tenant}/services/${name}${suffix}`;
+): NimbusControlPlaneRouteParams {
+  return {
+    ...serviceCollectionParams(client, selector),
+    service_name: selector.name,
+  };
 }
 
-function serviceCollectionPath(
+function serviceCollectionParams(
   client: Nimbus,
   input: NimbusServiceListRequest,
-): string {
+): NimbusControlPlaneRouteParams {
   const tenantId = resolveTenantId(client, input, "service collection request");
-  const tenant = encodeResourceName(tenantId, "tenant");
-  return `/api/tenants/${tenant}/services`;
+  return { tenant_id: tenantId };
 }
 
-function sandboxCollectionPath(
+function sandboxCollectionParams(
   client: Nimbus,
   input: { tenantId?: string },
-): string {
+): NimbusControlPlaneRouteParams {
   const tenantId = resolveTenantId(client, input, "sandbox collection request");
-  const tenant = encodeResourceName(tenantId, "tenant");
-  return `/api/tenants/${tenant}/sandboxes`;
+  return { tenant_id: tenantId };
 }
 
-function sandboxResourcePath(
+function sandboxResourceParams(
   client: Nimbus,
   selector: NimbusSandboxSelector,
-): string {
+): NimbusControlPlaneRouteParams {
   const tenantId = resolveTenantId(client, selector, "sandbox request");
-  const tenant = encodeResourceName(tenantId, "tenant");
-  const id = encodeResourceName(selector.id, "sandbox");
-  return `/api/tenants/${tenant}/sandboxes/${id}`;
+  return {
+    tenant_id: tenantId,
+    sandbox_id: selector.id,
+  };
 }
 
-function sessionCollectionPath(): string {
-  return "/api/sessions";
-}
-
-function sessionResourcePath(selector: NimbusSessionSelector): string {
-  const id = encodeResourceName(selector.id, "session");
-  return `/api/sessions/${id}`;
+function sessionResourceParams(selector: NimbusSessionSelector): NimbusControlPlaneRouteParams {
+  return { session_id: selector.id };
 }
 
 function resolveTenantId(
@@ -920,12 +940,6 @@ function serviceDefinitionRequestBody(
       backend: input.backend,
     },
   };
-}
-
-function encodeResourceName(value: string, label: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) throw new Error(`Nimbus ${label} name must not be empty`);
-  return encodeURIComponent(trimmed);
 }
 
 function positiveFiniteNumber(value: unknown, fallback: number, label: string): number {

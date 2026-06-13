@@ -3,6 +3,7 @@ use crate::context::RuntimeInvocationContext;
 use crate::error::Result;
 use crate::limits::{RuntimeLimits, RuntimePoolKind};
 use crate::runtime::{NimbusRuntime, RuntimeBundle, RuntimeBundleIdentity};
+use crate::runtime_capabilities::RuntimePermissionProfile;
 
 use super::{embedder::JsRuntime, startup::V8RuntimeConstructionMode};
 
@@ -25,6 +26,7 @@ pub(crate) struct RuntimePoolPartitionKey {
     bundle_identity: RuntimeBundleIdentity,
     affinity_key: Option<RuntimeAffinityKey>,
     runtime_limits: RuntimeLimits,
+    permission_profile: RuntimePermissionProfile,
     construction_mode: V8RuntimeConstructionMode,
     exact_service_grants: Vec<String>,
 }
@@ -37,10 +39,12 @@ impl RuntimePoolPartitionKey {
         construction_mode: V8RuntimeConstructionMode,
     ) -> Self {
         let runtime_limits = runtime_owner.policy().limits().clone();
+        let permission_profile = RuntimePermissionProfile::for_limits(&runtime_limits);
         Self {
             bundle_identity: bundle.identity().clone(),
             affinity_key: runtime_affinity_key(runtime_limits.routing_affinity, context, bundle),
             exact_service_grants: runtime_limits.grants.sorted_service_grants(),
+            permission_profile,
             runtime_limits,
             construction_mode,
         }
@@ -53,6 +57,7 @@ impl RuntimePoolPartitionKey {
     fn matches_bundle_and_runtime_shape(&self, other: &Self) -> bool {
         self.bundle_identity == other.bundle_identity
             && self.runtime_limits == other.runtime_limits
+            && self.permission_profile == other.permission_profile
             && self.construction_mode == other.construction_mode
             && self.exact_service_grants == other.exact_service_grants
     }

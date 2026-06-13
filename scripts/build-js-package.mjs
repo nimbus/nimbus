@@ -17,7 +17,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { assertNimbusRootSdkArtifactText } from "./nimbus-root-sdk-artifact-policy.mjs";
+import {
+  assertNimbusRootSdkArtifactText,
+  assertNimbusRootSdkRouteArtifactText,
+} from "./nimbus-root-sdk-artifact-policy.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TSC = path.join(REPO_ROOT, "node_modules", ".bin", "tsc");
@@ -168,6 +171,8 @@ fs.writeFileSync(path.join(distDir, "package.json"), `${JSON.stringify(provision
 if (manifest.name === "@nimbus/nimbus") {
   verifyNimbusRootSdkArtifact(path.join(distDir, "index.js"), true);
   verifyNimbusRootSdkArtifact(path.join(distDir, "index.d.ts"), false);
+  verifyNimbusRootSdkRouteArtifact(path.join(distDir, "control_plane_routes.js"));
+  verifyNimbusRootSdkRouteArtifact(path.join(distDir, "control_plane_routes.d.ts"));
 }
 
 const emitted = fs.readdirSync(distDir).sort().join(", ");
@@ -179,6 +184,18 @@ function verifyNimbusRootSdkArtifact(filePath, runtime) {
     assertNimbusRootSdkArtifactText(path.relative(REPO_ROOT, filePath), artifact, {
       runtime,
     });
+  } catch (error) {
+    if (error instanceof Error) {
+      fail(error.message);
+    }
+    throw error;
+  }
+}
+
+function verifyNimbusRootSdkRouteArtifact(filePath) {
+  const artifact = fs.readFileSync(filePath, "utf8");
+  try {
+    assertNimbusRootSdkRouteArtifactText(path.relative(REPO_ROOT, filePath), artifact);
   } catch (error) {
     if (error instanceof Error) {
       fail(error.message);

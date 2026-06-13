@@ -24,6 +24,8 @@ async function main() {
     return;
   }
   const indexBundle = await bundleModule("index.ts", "neutral");
+  const controlPlaneRoutesBundle = await bundleModule("control_plane_routes.ts", "neutral");
+  await assertControlPlaneRouteManifest(controlPlaneRoutesBundle);
   await bundleModule("browser.ts", "browser");
   await bundleModule("react.ts", "browser");
   await bundleModule("server.ts", "neutral");
@@ -36,6 +38,78 @@ async function main() {
   await assertSandboxRoutes(indexBundle);
   await assertSessionRoutes(indexBundle);
   await typecheckNimbusAuthExtension();
+}
+
+async function assertControlPlaneRouteManifest(controlPlaneRoutesBundle) {
+  const { NIMBUS_CONTROL_PLANE_ROUTES } = await import(
+    `${pathToFileURL(controlPlaneRoutesBundle).href}?routes=${Date.now()}`
+  );
+  assert.deepEqual(NIMBUS_CONTROL_PLANE_ROUTES, {
+    "services.get": {
+      verb: "GET",
+      path: "/api/tenants/{tenant_id}/services/{service_name}",
+    },
+    "services.create": {
+      verb: "POST",
+      path: "/api/tenants/{tenant_id}/services",
+    },
+    "services.update": {
+      verb: "PUT",
+      path: "/api/tenants/{tenant_id}/services/{service_name}",
+    },
+    "services.delete": {
+      verb: "DELETE",
+      path: "/api/tenants/{tenant_id}/services/{service_name}",
+    },
+    "services.list": {
+      verb: "GET",
+      path: "/api/tenants/{tenant_id}/services",
+    },
+    "services.start": {
+      verb: "POST",
+      path: "/api/tenants/{tenant_id}/services/{service_name}/start",
+    },
+    "services.stop": {
+      verb: "POST",
+      path: "/api/tenants/{tenant_id}/services/{service_name}/stop",
+    },
+    "services.restart": {
+      verb: "POST",
+      path: "/api/tenants/{tenant_id}/services/{service_name}/restart",
+    },
+    "sandboxes.create": {
+      verb: "POST",
+      path: "/api/tenants/{tenant_id}/sandboxes",
+    },
+    "sandboxes.get": {
+      verb: "GET",
+      path: "/api/tenants/{tenant_id}/sandboxes/{sandbox_id}",
+    },
+    "sandboxes.list": {
+      verb: "GET",
+      path: "/api/tenants/{tenant_id}/sandboxes",
+    },
+    "sandboxes.stop": {
+      verb: "POST",
+      path: "/api/tenants/{tenant_id}/sandboxes/{sandbox_id}/stop",
+    },
+    "sessions.open": {
+      verb: "POST",
+      path: "/api/sessions",
+    },
+    "sessions.get": {
+      verb: "GET",
+      path: "/api/sessions/{session_id}",
+    },
+    "sessions.list": {
+      verb: "GET",
+      path: "/api/sessions",
+    },
+    "sessions.close": {
+      verb: "POST",
+      path: "/api/sessions/{session_id}/close",
+    },
+  });
 }
 
 async function bundleModule(relativePath, platform) {

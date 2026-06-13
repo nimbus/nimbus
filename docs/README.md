@@ -20,7 +20,9 @@ published behavior claims to the source files that implement them — update it
 when a page's load-bearing claim changes.
 
 `private/` is internal working state (plans, research, proofs, reviews,
-prompts) and is never published or linked from the groups above.
+prompts) and is never published or linked from the groups above. Internal SDK
+resource-model examples live at
+[`private/examples/nimbus-sdk-resource-model.md`](private/examples/nimbus-sdk-resource-model.md).
 
 Start with the root [README.md](../README.md) for what Nimbus is and
 [ARCHITECTURE.md](../ARCHITECTURE.md) for the contributor-level deep dive.
