@@ -2425,7 +2425,6 @@
         "test/parallel/test-stream2-unpipe-leak.js",
         "test/parallel/test-stream3-pipeline-async-iterator.js",
         "test/parallel/test-structuredClone-domexception.js",
-        "test/parallel/test-structuredClone-global.js",
         "test/parallel/test-sync-fileread.js",
         "test/parallel/test-sync-io-option.js",
         "test/parallel/test-tcp-wrap-connect.js",

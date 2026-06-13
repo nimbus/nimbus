@@ -1,20 +1,21 @@
-# NDS gate — FORMAL documented blocked state (cycle-26, 2026-06-12)
+# NDS gate — FORMAL documented blocked state (cycle-27, 2026-06-12)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
-**Fork:** nimbus/deno v2.8.2-nimbus.33 (f4994a93); nimbus/rusty_v8 stock v149.2.0-nimbus.1  
+**Fork:** nimbus/deno v2.8.2-nimbus.34 (5cf89404); nimbus/rusty_v8 stock v149.2.0-nimbus.1  
 **Verifier:** `bash scripts/verify-node-default-runtime-support-hardening.sh` step 9
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Committed posture: **node22 = 73**, **node24 = 81**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Committed posture: **node22 = 72**, **node24 = 80**. Not 0/0.
 
-Session cycles 17-26 reduced the gate 81/87 -> 73/81 by harvesting every cheap/clean/
+Session cycles 17-27 reduced the gate 81/87 -> 72/80 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
-for aborted-util; promotions; all dynamically green-guarded or structurally
-source-confirmed, zero false greens, regression-verified). 85 unique fixtures
-remain (node22=73, node24=81).
+for aborted-util; structuredClone option errors, Blob transfer rejection, and
+MessagePort unref parity; promotions; all dynamically green-guarded or
+structurally source-confirmed, zero false greens, regression-verified). 84 unique
+fixtures remain (node22=72, node24=80).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -26,7 +27,7 @@ remain (node22=73, node24=81).
 
 ## Tractable but deep (sustained multi-session native deno_core/deno_crypto work — task #61)
 
-### DEEP_behavioral_misc (16) — owner: nimbus/deno (per-fixture deno_node/deno_core)
+### DEEP_behavioral_misc (15) — owner: nimbus/deno (per-fixture deno_node/deno_core)
 - `test/async-hooks/test-httpparser-reuse.js` (22+24)
 - `test/parallel/test-assert-calltracker-calls.js` (22+24)
 - `test/parallel/test-assert-deep.js` (22+24)
@@ -40,7 +41,6 @@ remain (node22=73, node24=81).
 - `test/parallel/test-source-map-invalid-url.js` (22+24)
 - `test/parallel/test-stream-readable-compose.js` (24)
 - `test/parallel/test-stream-writable-samecb-singletick.js` (22+24)
-- `test/parallel/test-structuredClone-global.js` (22+24)
 - `test/parallel/test-util-styletext.js` (22+24)
 - `test/parallel/test-whatwg-readablebytestream-bad-buffers-and-views.js` (22+24)
 
@@ -130,4 +130,4 @@ remain (node22=73, node24=81).
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring, native Ed448/KMAC primitives maybe absent from aws-lc). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=73 / node24=81.
+multi-session effort. Gate held RED and honest at node22=72 / node24=80.
