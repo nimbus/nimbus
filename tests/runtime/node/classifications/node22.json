@@ -2466,7 +2466,6 @@
         "test/parallel/test-whatwg-encoding-custom-interop.js",
         "test/parallel/test-whatwg-encoding-custom-textdecoder.js",
         "test/parallel/test-whatwg-events-add-event-listener-options-signal.js",
-        "test/parallel/test-whatwg-readablebytestream-bad-buffers-and-views.js",
         "test/parallel/test-whatwg-readablebytestream.js",
         "test/parallel/test-whatwg-readablestream.js",
         "test/parallel/test-whatwg-transformstream.js",
