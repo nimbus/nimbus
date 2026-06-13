@@ -1,14 +1,14 @@
-# NDS gate - FORMAL documented blocked state (cycle-67, 2026-06-13)
+# NDS gate - FORMAL documented blocked state (cycle-68, 2026-06-13)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
-**Fork:** nimbus/deno v2.8.3-nimbus.20 (23941445d0); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
+**Fork:** nimbus/deno v2.8.3-nimbus.21 (b810e8b662); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
 **Verifier:** `bash scripts/verify-node-default-runtime-support-hardening.sh` step 9
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 28**, **node24 = 35**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 27**, **node24 = 34**. Not 0/0.
 
-Session cycles 17-67 reduced the gate 81/87 -> 28/35 by harvesting every cheap/clean/
+Session cycles 17-68 reduced the gate 81/87 -> 27/34 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -60,10 +60,12 @@ global query-trap semantics that keep outer sandbox prototype properties out of
 `Object.hasOwn()` and `in` while preserving read resolution, promoted
 `test-vm-global-property-prototype.js`; and Node-style VM sandbox
 non-configurable property redefine failures promoted
-`test-vm-global-property-interceptors.js`; all
+`test-vm-global-property-interceptors.js`; and SourceTextModule evaluate timeout,
+context-scoped generated module identifiers, public `util.inspect()` surface,
+and abstract `Module` constructor parity promoted `test-vm-module-basic.js`; all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 37 unique fixtures remain
-(node22=28, node24=35).
+regression-verified at their promotion surface). 36 unique fixtures remain
+(node22=27, node24=34).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -112,8 +114,7 @@ regression-verified at their promotion surface). 37 unique fixtures remain
 - `test/parallel/test-heapdump-async-hooks-init-promise.js` (22+24)
 - `test/parallel/test-promise-swallowed-event.js` (22+24)
 
-### DEEP_vm_semantics (3) — owner: nimbus/deno (ext/node/ops/vm.rs + deno_core)
-- `test/parallel/test-vm-module-basic.js` (22+24)
+### DEEP_vm_semantics (2) — owner: nimbus/deno (ext/node/ops/vm.rs + deno_core)
 - `test/parallel/test-vm-module-referrer-realm.mjs` (22+24)
 - `test/parallel/test-vm-timeout-escape-promise-module.js` (22+24)
 
@@ -123,4 +124,4 @@ regression-verified at their promotion surface). 37 unique fixtures remain
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring, native Ed448/KMAC primitives maybe absent from aws-lc). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=28 / node24=35.
+multi-session effort. Gate held RED and honest at node22=27 / node24=34.
