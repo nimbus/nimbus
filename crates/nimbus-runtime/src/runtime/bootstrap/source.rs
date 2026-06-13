@@ -37,7 +37,7 @@ globalThis.__nimbusSyncHostValue = function(opName, payload) {
   return response.value;
 };
 
-function __nimbusFormatHostError(error) {
+const __nimbusFormatHostError = function __nimbusFormatHostError(error) {
   if (error === null || error === undefined) {
     return "unknown host error";
   }
@@ -49,7 +49,7 @@ function __nimbusFormatHostError(error) {
   } catch (_error) {
     return String(error);
   }
-}
+};
 
 globalThis.__nimbusAsyncHostValue = async function(opName, payload) {
   const operation = __nimbusCoreOps[opName];
@@ -69,7 +69,7 @@ globalThis.__nimbusAsyncHostValue = async function(opName, payload) {
 "#;
 
 const NIMBUS_CONTEXT_CONTRACT_SOURCE: &str = r#"
-function __nimbusNormalizeFieldName(field) {
+const __nimbusNormalizeFieldName = function __nimbusNormalizeFieldName(field) {
   if (typeof field === "string" && field.length > 0) {
     return field;
   }
@@ -82,9 +82,9 @@ function __nimbusNormalizeFieldName(field) {
     return field.__fieldName;
   }
   throw new Error("ctx.db field constraints require a non-empty field name");
-}
+};
 
-function __nimbusCreateConstraintBuilder() {
+const __nimbusCreateConstraintBuilder = function __nimbusCreateConstraintBuilder() {
   const filters = [];
   const builder = {
     field(name) {
@@ -116,18 +116,18 @@ function __nimbusCreateConstraintBuilder() {
     },
   };
   return Object.assign(builder, { __filters: filters });
-}
+};
 
-function __nimbusCollectConstraintFilters(builderFn, label) {
+const __nimbusCollectConstraintFilters = function __nimbusCollectConstraintFilters(builderFn, label) {
   const builder = __nimbusCreateConstraintBuilder();
   const result = builderFn ? builderFn(builder) : builder;
   if (result !== undefined && result !== builder && result?.__filters !== builder.__filters) {
     throw new Error(`ctx.db.${label}(...) must return the provided builder`);
   }
   return [...builder.__filters];
-}
+};
 
-function __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, hostCallSessionId) {
+const __nimbusCreateQueryBuilder = function __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, hostCallSessionId) {
   return Object.freeze({
     __builderId: builderId,
     withIndex(indexName, builderFn) {
@@ -205,9 +205,9 @@ function __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, ho
       });
     },
   });
-}
+};
 
-function __nimbusNormalizeFunctionReference(functionRef, label) {
+const __nimbusNormalizeFunctionReference = function __nimbusNormalizeFunctionReference(functionRef, label) {
   if (!functionRef || typeof functionRef !== "object") {
     throw new Error(`ctx.${label}(...) requires a generated function reference`);
   }
@@ -218,9 +218,9 @@ function __nimbusNormalizeFunctionReference(functionRef, label) {
     name: functionRef.name,
     visibility: typeof functionRef.visibility === "string" ? functionRef.visibility : "public",
   };
-}
+};
 
-async function __nimbusRunNamedFunction(
+const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
   syncHostValue,
   asyncOpName,
   hostCallSessionId,
@@ -259,7 +259,7 @@ async function __nimbusRunNamedFunction(
     host_call_session_id: hostCallSessionId,
     ...(nestedAuthContext ? { auth: nestedAuthContext } : {}),
   });
-}
+};
 
 let __nimbusNextHostCallSessionId = 1;
 let __nimbusInvocationGeneration = 0;
@@ -469,21 +469,21 @@ if (globalThis[__nimbusRuntimeEnvOverlaySymbol] === undefined) {
   });
 }
 
-function __nimbusRuntimeEnvOverlay() {
+const __nimbusRuntimeEnvOverlay = function __nimbusRuntimeEnvOverlay() {
   return globalThis[__nimbusRuntimeEnvOverlaySymbol];
-}
+};
 
 // Node rejects accessor descriptors and partial data descriptors on
 // `process.env` with an `ERR_INVALID_OBJECT_DEFINE_PROPERTY` TypeError. Build
 // the same error shape (a TypeError carrying that `code`) for the proxy's
 // defineProperty trap.
-function __nimbusErrInvalidObjectDefineProperty(message) {
+const __nimbusErrInvalidObjectDefineProperty = function __nimbusErrInvalidObjectDefineProperty(message) {
   const error = new TypeError(message);
   error.code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
   return error;
-}
+};
 
-function __nimbusCreateProcessEnvProxy() {
+const __nimbusCreateProcessEnvProxy = function __nimbusCreateProcessEnvProxy() {
   const snapshot = __nimbusCoreOps.op_nimbus_runtime_env_snapshot();
   const target = Object.assign(Object.create(null), snapshot);
   return new Proxy(target, {
@@ -624,18 +624,18 @@ function __nimbusCreateProcessEnvProxy() {
       return true;
     },
   });
-}
+};
 
-function __nimbusDefineNodeFeature(target, property, value) {
+const __nimbusDefineNodeFeature = function __nimbusDefineNodeFeature(target, property, value) {
   Object.defineProperty(target, property, {
     value,
     configurable: true,
     enumerable: true,
     writable: true,
   });
-}
+};
 
-function __nimbusDefineNodeFeatureGetter(target, property, value) {
+const __nimbusDefineNodeFeatureGetter = function __nimbusDefineNodeFeatureGetter(target, property, value) {
   Object.defineProperty(target, property, {
     get() {
       return value;
@@ -643,13 +643,13 @@ function __nimbusDefineNodeFeatureGetter(target, property, value) {
     configurable: true,
     enumerable: true,
   });
-}
+};
 
-function __nimbusNodeFeatureBoolean(source, property) {
+const __nimbusNodeFeatureBoolean = function __nimbusNodeFeatureBoolean(source, property) {
   return source && typeof source === "object" && source[property] === true;
-}
+};
 
-function __nimbusCreateNodeProcessFeatures(source, nodeMajor) {
+const __nimbusCreateNodeProcessFeatures = function __nimbusCreateNodeProcessFeatures(source, nodeMajor) {
   const features = {};
   __nimbusDefineNodeFeature(
     features,
@@ -719,9 +719,9 @@ function __nimbusCreateNodeProcessFeatures(source, nodeMajor) {
     );
   }
   return features;
-}
+};
 
-function __nimbusSyncNodeProcessFeatures(target, source) {
+const __nimbusSyncNodeProcessFeatures = function __nimbusSyncNodeProcessFeatures(target, source) {
   if (!target || typeof target !== "object") {
     return source;
   }
@@ -741,9 +741,9 @@ function __nimbusSyncNodeProcessFeatures(target, source) {
     }
   }
   return target;
-}
+};
 
-function __nimbusInstallRuntimeContractGlobals(contract) {
+const __nimbusInstallRuntimeContractGlobals = function __nimbusInstallRuntimeContractGlobals(contract) {
   if (!contract || typeof contract !== "object") {
     return;
   }
@@ -880,7 +880,7 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
   delete globalThis.Buffer;
   delete globalThis.global;
   delete globalThis.process;
-}
+};
 
 Object.freeze(__nimbusInstallRuntimeContractGlobals);
 "#;
@@ -913,7 +913,7 @@ delete globalThis.bootstrap;
 __nimbusInstallRuntimeContractGlobals(__nimbusRuntimeContract);
 if (Promise.reject.__nimbusDomainAware !== true) {
   const __nimbusOriginalPromiseReject = Promise.reject;
-  function __nimbusDomainAwarePromiseReject(reason) {
+  const __nimbusDomainAwarePromiseReject = function __nimbusDomainAwarePromiseReject(reason) {
     const promise = __nimbusOriginalPromiseReject.apply(this, arguments);
     const domain = globalThis.process?.domain;
     if (domain !== null && domain !== undefined) {
@@ -936,7 +936,7 @@ if (Promise.reject.__nimbusDomainAware !== true) {
       }
     }
     return promise;
-  }
+  };
   Object.defineProperty(__nimbusDomainAwarePromiseReject, "__nimbusDomainAware", {
     configurable: false,
     enumerable: false,
@@ -949,6 +949,25 @@ if (Promise.reject.__nimbusDomainAware !== true) {
     value: __nimbusDomainAwarePromiseReject,
     writable: true,
   });
+}
+{
+  for (const __nimbusGlobalName of Object.keys(globalThis)) {
+    if (!__nimbusGlobalName.startsWith("__nimbus")) {
+      continue;
+    }
+    const __nimbusGlobalDescriptor =
+      Object.getOwnPropertyDescriptor(globalThis, __nimbusGlobalName);
+    if (
+      __nimbusGlobalDescriptor &&
+      __nimbusGlobalDescriptor.configurable === true &&
+      __nimbusGlobalDescriptor.enumerable === true
+    ) {
+      Object.defineProperty(globalThis, __nimbusGlobalName, {
+        ...__nimbusGlobalDescriptor,
+        enumerable: false,
+      });
+    }
+  }
 }
 "#;
 

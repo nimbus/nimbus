@@ -1987,7 +1987,6 @@
         "test/parallel/test-gc-net-timeout.js",
         "test/parallel/test-global-customevent.js",
         "test/parallel/test-global-webcrypto-classes.js",
-        "test/parallel/test-global.js",
         "test/parallel/test-h2-large-header-cause-client-to-hangup.js",
         "test/parallel/test-h2leak-destroy-session-on-socket-ended.js",
         "test/parallel/test-handle-wrap-hasref.js",

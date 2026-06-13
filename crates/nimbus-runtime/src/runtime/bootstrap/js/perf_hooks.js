@@ -791,9 +791,19 @@ function installGcPerformanceHook() {
     enumerable: false,
     writable: false,
   });
-  globalThis.gc = performanceGc;
+  Object.defineProperty(globalThis, "gc", {
+    value: performanceGc,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
   if (globalThis.global && globalThis.global.gc === originalGc) {
-    globalThis.global.gc = performanceGc;
+    Object.defineProperty(globalThis.global, "gc", {
+      value: performanceGc,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
   }
 }
 

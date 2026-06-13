@@ -63,11 +63,19 @@ if (
   };
 }
 const internalFsBinding = getNodeInternalBinding("fs");
-const internalTestBindingState = globalThis.__nimbusInternalTestBindingState ??= {
-  warningEmitted: false,
-  overrides: new Map(),
-  readlineBuiltin: undefined,
-};
+if (globalThis.__nimbusInternalTestBindingState === undefined) {
+  Object.defineProperty(globalThis, "__nimbusInternalTestBindingState", {
+    value: {
+      warningEmitted: false,
+      overrides: new Map(),
+      readlineBuiltin: undefined,
+    },
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+}
+const internalTestBindingState = globalThis.__nimbusInternalTestBindingState;
 const {
   assertEncoding,
   constants: internalFsConstants,

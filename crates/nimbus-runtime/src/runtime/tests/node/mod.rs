@@ -1034,8 +1034,18 @@ fn write_node_compat_bundle(
             r#"const __nimbusTestGc = function gc() {
   return globalThis.__nimbusSyncHostValue("op_nimbus_runtime_test_force_gc");
 };
-globalThis.gc = __nimbusTestGc;
-globalThis.global.gc = __nimbusTestGc;"#
+Object.defineProperty(globalThis, "gc", {
+  value: __nimbusTestGc,
+  configurable: true,
+  enumerable: false,
+  writable: true,
+});
+Object.defineProperty(globalThis.global, "gc", {
+  value: __nimbusTestGc,
+  configurable: true,
+  enumerable: false,
+  writable: true,
+});"#
         }
         NodeCompatBundleMode::Oracle => "void 0;",
     };
@@ -1264,7 +1274,12 @@ try {{
     let lane_prelude = lane
         .map(|lane| {
             format!(
-                "globalThis.__nimbusNodeCompatLane = {:?};",
+                r#"Object.defineProperty(globalThis, "__nimbusNodeCompatLane", {{
+  value: {:?},
+  configurable: true,
+  enumerable: false,
+  writable: true,
+}});"#,
                 node_compat_lane_name(lane)
             )
         })
@@ -3652,3 +3667,4 @@ include!("cases/nds3_cycle33_wave1.rs");
 include!("cases/nds3_cycle34_wave1.rs");
 include!("cases/nds3_cycle35_wave1.rs");
 include!("cases/nds3_cycle36_wave1.rs");
+include!("cases/nds3_cycle37_wave1.rs");

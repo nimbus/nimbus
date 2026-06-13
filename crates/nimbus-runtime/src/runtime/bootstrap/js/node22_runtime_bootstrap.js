@@ -64,6 +64,7 @@ const {
   saveGlobalThisReference: saveWebGlobalThisReference,
 } = core.loadExtScript("ext:deno_web/02_event.js");
 core.loadExtScript("ext:deno_web/04_global_interfaces.js");
+const { atob: webAtob, btoa: webBtoa } = core.loadExtScript("ext:deno_web/05_base64.js");
 const {
   ByteLengthQueuingStrategy: webByteLengthQueuingStrategy,
   CountQueuingStrategy: webCountQueuingStrategy,
@@ -3709,6 +3710,54 @@ function seedGlobalIfMissing(name, value) {
   }
 }
 
+function setGlobalEnumerable(name, enumerable) {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+  if (!descriptor || descriptor.enumerable === enumerable || !descriptor.configurable) {
+    return;
+  }
+  Object.defineProperty(globalThis, name, {
+    ...descriptor,
+    enumerable,
+  });
+}
+
+function alignNodeGlobalEnumerableSurface() {
+  for (const name of Object.keys(globalThis)) {
+    if (name.startsWith("__nimbus")) {
+      setGlobalEnumerable(name, false);
+    }
+  }
+
+  for (const name of [
+    "EventSource",
+    "gc",
+    "onunhandledrejection",
+    "reportError",
+  ]) {
+    setGlobalEnumerable(name, false);
+  }
+
+  for (const name of [
+    "global",
+    "queueMicrotask",
+    "clearImmediate",
+    "clearInterval",
+    "clearTimeout",
+    "atob",
+    "btoa",
+    "performance",
+    "setImmediate",
+    "setInterval",
+    "setTimeout",
+    "structuredClone",
+    "fetch",
+    "crypto",
+    "navigator",
+  ]) {
+    setGlobalEnumerable(name, true);
+  }
+}
+
 const runtimeTargetTriple = core.ops.op_nimbus_runtime_target_triple();
 if (typeof runtimeTargetTriple === "string" && runtimeTargetTriple.length > 0) {
   core.setBuildInfo(runtimeTargetTriple);
@@ -3847,6 +3896,8 @@ if (
   });
 }
 seedGlobalIfMissing("structuredClone", webStructuredClone);
+seedGlobalIfMissing("atob", webAtob);
+seedGlobalIfMissing("btoa", webBtoa);
 seedGlobalIfMissing("ByteLengthQueuingStrategy", webByteLengthQueuingStrategy);
 seedGlobalIfMissing("CountQueuingStrategy", webCountQueuingStrategy);
 seedGlobalIfMissing("ReadableByteStreamController", webReadableByteStreamController);
@@ -3867,6 +3918,7 @@ seedGlobalIfMissing("DecompressionStream", webDecompressionStream);
 seedGlobalIfMissing("MessageChannel", webMessageChannel);
 seedGlobalIfMissing("MessagePort", webMessagePort);
 upgradeGlobalConsole(globalThis.process);
+alignNodeGlobalEnumerableSurface();
 
 if (typeof internals.requireImpl?.setUsesLocalNodeModulesDir === "function") {
   internals.requireImpl.setUsesLocalNodeModulesDir();
