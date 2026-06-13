@@ -6,6 +6,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use base64::DecodeError;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 
@@ -772,7 +773,7 @@ fn data_url_module_source_bytes(
                 "invalid base64 data module specifier {module_specifier}: {error}"
             ))
         })?;
-        BASE64_STANDARD.decode(encoded).map_err(|error| {
+        decode_data_url_base64(encoded).map_err(|error| {
             JsErrorBox::generic(format!(
                 "invalid base64 data module specifier {module_specifier}: {error}"
             ))
@@ -830,6 +831,24 @@ fn data_url_media_type_is_base64(media_type: &str) -> bool {
         .split(';')
         .skip(1)
         .any(|parameter| parameter.trim().eq_ignore_ascii_case("base64"))
+}
+
+fn decode_data_url_base64(encoded: &str) -> Result<Vec<u8>, DecodeError> {
+    let mut normalized = String::with_capacity(encoded.len() + 3);
+    for byte in encoded.bytes() {
+        match byte {
+            b'-' => normalized.push('+'),
+            b'_' => normalized.push('/'),
+            b'\t' | b'\n' | b'\x0c' | b'\r' | b' ' => {}
+            _ => normalized.push(byte as char),
+        }
+    }
+    match normalized.len() % 4 {
+        2 => normalized.push_str("=="),
+        3 => normalized.push('='),
+        _ => {}
+    }
+    BASE64_STANDARD.decode(normalized)
 }
 
 fn percent_decode_data_url_bytes(
@@ -1073,6 +1092,23 @@ mod tests {
     fn data_url_module_source_decodes_base64_javascript() {
         let specifier =
             ModuleSpecifier::parse("data:text/javascript;base64,ZXhwb3J0IGRlZmF1bHQgNw==").unwrap();
+        let options = ModuleLoadOptions {
+            requested_module_type: RequestedModuleType::None,
+            is_dynamic_import: false,
+            is_synchronous: false,
+        };
+
+        let (module_type, source) =
+            data_url_module_source_bytes(&specifier, &options, None).unwrap();
+
+        assert_eq!(module_type, ModuleType::JavaScript);
+        assert_eq!(source, b"export default 7");
+    }
+
+    #[test]
+    fn data_url_module_source_decodes_unpadded_base64url_javascript() {
+        let specifier =
+            ModuleSpecifier::parse("data:text/javascript;base64,ZXhwb3J0IGRlZmF1bHQgNw").unwrap();
         let options = ModuleLoadOptions {
             requested_module_type: RequestedModuleType::None,
             is_dynamic_import: false,

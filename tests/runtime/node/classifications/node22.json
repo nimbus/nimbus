@@ -2385,7 +2385,6 @@
         "test/parallel/test-source-map-api.js",
         "test/parallel/test-source-map-cjs-require-cache.js",
         "test/parallel/test-source-map-enable.js",
-        "test/parallel/test-source-map-invalid-url.js",
         "test/parallel/test-spawn-cmd-named-pipe.js",
         "test/parallel/test-sqlite-aggregate-function.mjs",
         "test/parallel/test-sqlite-backup.mjs",

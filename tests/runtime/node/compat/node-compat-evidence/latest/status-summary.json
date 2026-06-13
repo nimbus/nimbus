@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "generated_at": "2026-06-13T07:11:20.414653+00:00",
+  "generated_at": "2026-06-13T07:22:25.208925+00:00",
   "report_kind": "node_compat_suite_status",
   "status_contract": "Counts every official vendored lane-local test-* JS/CJS/MJS fixture, then compares that denominator to the documented manifested passed subset plus explicit lane classification catalogs. Supported lanes use non-ignored Rust tests that execute node-compat fixtures for the matching lane minus explicit expected-failure, known-gap, and skipped classifications as the passed numerator. Ignored watchpoints never count as passed. Expected failures, known gaps, and skipped/excluded entries are not pass claims; the remaining remainder is intentionally reported as unmanifested_or_unclassified, not as pass or fail. Supplementary, regression, canary, watchpoint, and diagnostic evidence is reported in separate evidence tiers and never changes official pass denominators.",
   "lane_count": 4,
@@ -26,7 +26,7 @@
       "source": "vendored_official_fixture_corpus",
       "primary_count_label": "fixture_count",
       "primary_count": 19772,
-      "passed_count": 6564,
+      "passed_count": 6566,
       "counts_in_official_denominator": true,
       "notes": "Byte-identical Node upstream test-* fixtures under lane-local nodeNN/test roots; pass percentages use only this denominator."
     },
@@ -76,7 +76,7 @@
     }
   ],
   "total_vendored_test_file_count": 19772,
-  "total_documented_manifested_green_count": 6564,
+  "total_documented_manifested_green_count": 6566,
   "lane_summaries": [
     {
       "lane": "node20",
@@ -26776,24 +26776,24 @@
       "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
       "denominator_kind": "vendored_fixture_root_test_files",
       "vendored_test_file_count": 4748,
-      "documented_manifested_green_count": 2304,
+      "documented_manifested_green_count": 2305,
       "documented_manifested_green_source": "rust_nonignored_execution_fixture_inventory_minus_classified_red_skip",
       "documented_family_green_count": 988,
-      "path_owned_manifested_green_count": 2304,
-      "classified_red_skip_count": 2444,
-      "classified_total_count": 2444,
-      "known_red_or_gap_count": 2424,
+      "path_owned_manifested_green_count": 2305,
+      "classified_red_skip_count": 2443,
+      "classified_total_count": 2443,
+      "known_red_or_gap_count": 2423,
       "skipped_or_excluded_count": 20,
       "documented_or_classified_count": 4748,
       "unmanifested_or_unclassified_count": 0,
-      "documented_manifested_green_ratio": 0.485257,
+      "documented_manifested_green_ratio": 0.485468,
       "classification_catalog": {
         "catalog_path": "tests/runtime/node/classifications/node22.json",
         "catalog_present": true,
-        "classified_red_skip_count": 2444,
+        "classified_red_skip_count": 2443,
         "by_expectation": {
           "expected_failure": 24,
-          "expected_gap": 2400,
+          "expected_gap": 2399,
           "expected_skip": 20
         },
         "by_classification": {
@@ -26801,7 +26801,7 @@
           "requires_pseudo_tty_host_harness": 31,
           "requires_pummel_stress_harness": 55,
           "requires_sequential_host_state_harness": 115,
-          "requires_unpromoted_node_surface": 2122,
+          "requires_unpromoted_node_surface": 2121,
           "requires_wpt_harness": 22,
           "rust_watchpoint_expected_failure": 24,
           "support_fixture_not_top_level_test": 20,
@@ -42954,14 +42954,6 @@
             "group_id": "node22-requires_unpromoted_node_surface-24"
           },
           {
-            "test_path": "test/parallel/test-source-map-invalid-url.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node22-requires_unpromoted_node_surface-24"
-          },
-          {
             "test_path": "test/parallel/test-spawn-cmd-named-pipe.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
@@ -46358,24 +46350,24 @@
       "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
       "denominator_kind": "vendored_fixture_root_test_files",
       "vendored_test_file_count": 5198,
-      "documented_manifested_green_count": 2334,
+      "documented_manifested_green_count": 2335,
       "documented_manifested_green_source": "rust_nonignored_execution_fixture_inventory_minus_classified_red_skip",
       "documented_family_green_count": 926,
-      "path_owned_manifested_green_count": 2334,
-      "classified_red_skip_count": 2864,
-      "classified_total_count": 2864,
-      "known_red_or_gap_count": 2816,
+      "path_owned_manifested_green_count": 2335,
+      "classified_red_skip_count": 2863,
+      "classified_total_count": 2863,
+      "known_red_or_gap_count": 2815,
       "skipped_or_excluded_count": 48,
       "documented_or_classified_count": 5198,
       "unmanifested_or_unclassified_count": 0,
-      "documented_manifested_green_ratio": 0.449019,
+      "documented_manifested_green_ratio": 0.449211,
       "classification_catalog": {
         "catalog_path": "tests/runtime/node/classifications/node24.json",
         "catalog_present": true,
-        "classified_red_skip_count": 2864,
+        "classified_red_skip_count": 2863,
         "by_expectation": {
           "expected_failure": 6,
-          "expected_gap": 2810,
+          "expected_gap": 2809,
           "expected_skip": 48
         },
         "by_classification": {
@@ -46383,7 +46375,7 @@
           "requires_pseudo_tty_host_harness": 32,
           "requires_pummel_stress_harness": 64,
           "requires_sequential_host_state_harness": 119,
-          "requires_unpromoted_node_surface": 2518,
+          "requires_unpromoted_node_surface": 2517,
           "requires_wpt_harness": 23,
           "rust_watchpoint_expected_failure": 6,
           "support_fixture_not_top_level_test": 47,
@@ -64363,14 +64355,6 @@
           },
           {
             "test_path": "test/parallel/test-source-map-enable.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node24-requires_unpromoted_node_surface-24"
-          },
-          {
-            "test_path": "test/parallel/test-source-map-invalid-url.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "node-compat/unpromoted-surface",
