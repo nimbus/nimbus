@@ -1,4 +1,4 @@
-# NDS gate - FORMAL documented blocked state (cycle-43, 2026-06-13)
+# NDS gate - FORMAL documented blocked state (cycle-44, 2026-06-13)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
 **Fork:** nimbus/deno v2.8.3-nimbus.8 (2ebf5b82b5); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
@@ -6,9 +6,9 @@
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 58**, **node24 = 66**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 57**, **node24 = 65**. Not 0/0.
 
-Session cycles 17-43 reduced the gate 81/87 -> 58/66 by harvesting every cheap/clean/
+Session cycles 17-44 reduced the gate 81/87 -> 57/65 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -25,10 +25,11 @@ parity for uncorked writes; HTTP parser async-resource lifecycle parity; stream
 writable same-callback TickObject harness-drain isolation; Readable compose
 operator shape, Node-stream tail pumping, and async-generator destroy parity; and
 source-confirmed native crypto provider-composition reclassification for the
-OpenSSL-gated `SubtleCrypto.supports()` matrix; all
+OpenSSL-gated `SubtleCrypto.supports()` matrix; and source-confirmed host-owned
+TLSWRAP async-hook graph reclassification for a real TLS server/client fixture; all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 68 unique fixtures remain
-(node22=58, node24=66).
+regression-verified at their promotion surface). 67 unique fixtures remain
+(node22=57, node24=65).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -81,8 +82,7 @@ regression-verified at their promotion surface). 68 unique fixtures remain
 - `test/parallel/test-timers-immediate-unref.js` (22+24)
 - `test/parallel/test-timers-reset-process-domain-on-throw.js` (22+24)
 
-### DEEP_fs_sandbox (10) — owner: nimbus/deno (deno_fs) + nimbus-runtime sandbox
-- `test/async-hooks/test-tlswrap.js` (22+24)
+### DEEP_fs_sandbox (9) — owner: nimbus/deno (deno_fs) + nimbus-runtime sandbox
 - `test/es-module/test-wasm-web-api.js` (22+24)
 - `test/parallel/test-fs-promises.js` (22+24)
 - `test/parallel/test-fs-read-stream.js` (22+24)
@@ -125,4 +125,4 @@ regression-verified at their promotion surface). 68 unique fixtures remain
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring, native Ed448/KMAC primitives maybe absent from aws-lc). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=58 / node24=66.
+multi-session effort. Gate held RED and honest at node22=57 / node24=65.

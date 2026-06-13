@@ -156,6 +156,7 @@ HOST_PROCESS_CONTROL_PREFIXES = (
 #   async-hooks/test-graph.tls-write.js   -> tls.createServer/connect
 #   async-hooks/test-graph.tls-write-12.js-> tls.createServer/connect (TLSv1.2)
 #   async-hooks/test-tcpwrap.js           -> net.createServer() TCPWRAP graph
+#   async-hooks/test-tlswrap.js           -> tls.createServer/connect TLSWRAP graph
 #   parallel/test-double-tls-client.js    -> tls.connect double-TLS client
 #   parallel/test-double-tls-server.js    -> tls.createServer double-TLS server
 #   parallel/test-dgram-error-message-address.js -> dgram bind to '1.1.1.1'
@@ -176,6 +177,7 @@ HOST_NETWORK_SOCKET_PATHS = {
     "test/async-hooks/test-graph.tls-write.js",
     "test/async-hooks/test-graph.tls-write-12.js",
     "test/async-hooks/test-tcpwrap.js",
+    "test/async-hooks/test-tlswrap.js",
     "test/parallel/test-double-tls-client.js",
     "test/parallel/test-double-tls-server.js",
     "test/parallel/test-dgram-error-message-address.js",
