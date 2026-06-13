@@ -1,4 +1,4 @@
-# NDS gate — FORMAL documented blocked state (cycle-32, 2026-06-13)
+# NDS gate — FORMAL documented blocked state (cycle-33, 2026-06-13)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
 **Fork:** nimbus/deno v2.8.3-nimbus.3 (7bd83bd7); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
@@ -6,9 +6,9 @@
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 67**, **node24 = 76**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 66**, **node24 = 76**. Not 0/0.
 
-Session cycles 17-32 reduced the gate 81/87 -> 67/76 by harvesting every cheap/clean/
+Session cycles 17-33 reduced the gate 81/87 -> 66/76 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -17,9 +17,9 @@ MessagePort unref parity; source-confirmed host-TTY reclassification for
 util.styleText stream validation; Deno/rusty_v8 v2.8.3/v149.4.0 foundation bump;
 process.getBuiltinModule identity; tolerant data-url base64url decoding for invalid
 source-map URL tolerance; console symbol-property inspect parity; assert calltracker
-calls promotion; all
+calls promotion; assert promotion; all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified). 79 unique fixtures remain (node22=67, node24=76).
+regression-verified). 78 unique fixtures remain (node22=66, node24=76).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -31,10 +31,9 @@ regression-verified). 79 unique fixtures remain (node22=67, node24=76).
 
 ## Tractable but deep (sustained multi-session native deno_core/deno_crypto work — task #61)
 
-### DEEP_behavioral_misc (10) — owner: nimbus/deno (per-fixture deno_node/deno_core)
+### DEEP_behavioral_misc (9) — owner: nimbus/deno (per-fixture deno_node/deno_core)
 - `test/async-hooks/test-httpparser-reuse.js` (22+24)
 - `test/parallel/test-assert-deep.js` (22+24)
-- `test/parallel/test-assert.js` (22)
 - `test/parallel/test-error-prepare-stack-trace.js` (22+24)
 - `test/parallel/test-events-uncaught-exception-stack.js` (22+24)
 - `test/parallel/test-file-write-stream5.js` (22+24)
@@ -129,4 +128,4 @@ regression-verified). 79 unique fixtures remain (node22=67, node24=76).
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring, native Ed448/KMAC primitives maybe absent from aws-lc). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=67 / node24=76.
+multi-session effort. Gate held RED and honest at node22=66 / node24=76.

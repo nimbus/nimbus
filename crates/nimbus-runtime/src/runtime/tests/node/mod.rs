@@ -3562,3 +3562,4 @@ include!("cases/nds3_cycle29_wave1.rs");
 include!("cases/nds3_cycle30_wave1.rs");
 include!("cases/nds3_cycle31_wave1.rs");
 include!("cases/nds3_cycle32_wave1.rs");
+include!("cases/nds3_cycle33_wave1.rs");
