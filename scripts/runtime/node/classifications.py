@@ -26,7 +26,25 @@ RUST_EXECUTION_MARKERS = {
     "run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(",
 }
 FORCED_LANE_CLASSIFICATIONS: dict[str, dict[str, dict[str, str]]] = {
+    "node22": {
+        # Source-confirmed: test-util-styletext.js calls common.getTTYfd(),
+        # which probes existing TTY fds and falls back to opening /dev/tty.
+        "test/parallel/test-util-styletext.js": {
+            "expectation": "expected_gap",
+            "classification": "requires_pseudo_tty_host_harness",
+            "owner": "process-and-timing/tty-host",
+            "reason": "The fixture's styleText stream validation section requires a host TTY fd from common.getTTYfd(), so it is terminal-harness evidence rather than a multi-tenant isolate support claim.",
+        },
+    },
     "node24": {
+        # Source-confirmed: test-util-styletext.js calls common.getTTYfd(),
+        # which probes existing TTY fds and falls back to opening /dev/tty.
+        "test/parallel/test-util-styletext.js": {
+            "expectation": "expected_gap",
+            "classification": "requires_pseudo_tty_host_harness",
+            "owner": "process-and-timing/tty-host",
+            "reason": "The fixture's styleText stream validation section requires a host TTY fd from common.getTTYfd(), so it is terminal-harness evidence rather than a multi-tenant isolate support claim.",
+        },
         "test/parallel/test-buffer-tostring-rangeerror.js": {
             "expectation": "expected_skip",
             "classification": "upstream_known_issue_or_platform_boundary",

@@ -217,6 +217,16 @@
       "expectation": "expected_gap",
       "classification": "requires_pseudo_tty_host_harness",
       "owner": "process-and-timing/tty-host",
+      "reason": "The fixture's styleText stream validation section requires a host TTY fd from common.getTTYfd(), so it is terminal-harness evidence rather than a multi-tenant isolate support claim.",
+      "test_paths": [
+        "test/parallel/test-util-styletext.js"
+      ]
+    },
+    {
+      "id": "node22-requires_pseudo_tty_host_harness-3",
+      "expectation": "expected_gap",
+      "classification": "requires_pseudo_tty_host_harness",
+      "owner": "process-and-timing/tty-host",
       "reason": "This official fixture requires a dedicated host, ordering, stress, native, or standards harness before it can become a green support claim.",
       "test_paths": [
         "test/pseudo-tty/test-assert-colors.js",
@@ -252,7 +262,7 @@
       ]
     },
     {
-      "id": "node22-requires_pummel_stress_harness-3",
+      "id": "node22-requires_pummel_stress_harness-4",
       "expectation": "expected_gap",
       "classification": "requires_pummel_stress_harness",
       "owner": "node-compat/stress-harness",
@@ -316,7 +326,7 @@
       ]
     },
     {
-      "id": "node22-requires_sequential_host_state_harness-4",
+      "id": "node22-requires_sequential_host_state_harness-5",
       "expectation": "expected_gap",
       "classification": "requires_sequential_host_state_harness",
       "owner": "node-compat/sequential-host-state",
@@ -440,7 +450,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-5",
+      "id": "node22-requires_unpromoted_node_surface-6",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/assert",
@@ -451,7 +461,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-6",
+      "id": "node22-requires_unpromoted_node_surface-7",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/buffer",
@@ -466,7 +476,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-7",
+      "id": "node22-requires_unpromoted_node_surface-8",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/console",
@@ -476,7 +486,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-8",
+      "id": "node22-requires_unpromoted_node_surface-9",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/events",
@@ -486,7 +496,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-9",
+      "id": "node22-requires_unpromoted_node_surface-10",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/path",
@@ -496,7 +506,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-10",
+      "id": "node22-requires_unpromoted_node_surface-11",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/domain",
@@ -524,7 +534,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-11",
+      "id": "node22-requires_unpromoted_node_surface-12",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/module",
@@ -540,7 +550,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-12",
+      "id": "node22-requires_unpromoted_node_surface-13",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/util",
@@ -554,13 +564,12 @@
         "test/parallel/test-util-promisify.js",
         "test/parallel/test-util-sigint-watchdog.js",
         "test/parallel/test-util-sleep.js",
-        "test/parallel/test-util-styletext.js",
         "test/parallel/test-util-types.js",
         "test/parallel/test-util.js"
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-13",
+      "id": "node22-requires_unpromoted_node_surface-14",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/vm",
@@ -592,7 +601,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-14",
+      "id": "node22-requires_unpromoted_node_surface-15",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/workers",
@@ -728,7 +737,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-15",
+      "id": "node22-requires_unpromoted_node_surface-16",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/crypto",
@@ -801,7 +810,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-16",
+      "id": "node22-requires_unpromoted_node_surface-17",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/dgram",
@@ -819,7 +828,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-17",
+      "id": "node22-requires_unpromoted_node_surface-18",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/http",
@@ -907,7 +916,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-18",
+      "id": "node22-requires_unpromoted_node_surface-19",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/http2",
@@ -993,7 +1002,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-19",
+      "id": "node22-requires_unpromoted_node_surface-20",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/https",
@@ -1035,7 +1044,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-20",
+      "id": "node22-requires_unpromoted_node_surface-21",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/net",
@@ -1108,7 +1117,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-21",
+      "id": "node22-requires_unpromoted_node_surface-22",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/tls",
@@ -1329,7 +1338,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-22",
+      "id": "node22-requires_unpromoted_node_surface-23",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/zlib",
@@ -1351,7 +1360,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-23",
+      "id": "node22-requires_unpromoted_node_surface-24",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "node-compat/unpromoted-surface",
@@ -2584,7 +2593,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-24",
+      "id": "node22-requires_unpromoted_node_surface-25",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/diagnostics-channel",
@@ -2598,7 +2607,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-25",
+      "id": "node22-requires_unpromoted_node_surface-26",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/os",
@@ -2612,7 +2621,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-26",
+      "id": "node22-requires_unpromoted_node_surface-27",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/perf-hooks",
@@ -2622,7 +2631,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-27",
+      "id": "node22-requires_unpromoted_node_surface-28",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/process-host",
@@ -2684,7 +2693,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-28",
+      "id": "node22-requires_unpromoted_node_surface-29",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/timers",
@@ -2705,7 +2714,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-29",
+      "id": "node22-requires_unpromoted_node_surface-30",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "runtime/v8",
@@ -2725,7 +2734,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-30",
+      "id": "node22-requires_unpromoted_node_surface-31",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/fs-host-io",
@@ -2769,7 +2778,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-31",
+      "id": "node22-requires_unpromoted_node_surface-32",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/readline-tty",
@@ -2790,7 +2799,7 @@
       ]
     },
     {
-      "id": "node22-requires_unpromoted_node_surface-32",
+      "id": "node22-requires_unpromoted_node_surface-33",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/stream",
@@ -2816,7 +2825,7 @@
       ]
     },
     {
-      "id": "node22-requires_wpt_harness-33",
+      "id": "node22-requires_wpt_harness-34",
       "expectation": "expected_gap",
       "classification": "requires_wpt_harness",
       "owner": "node-compat/wpt-harness",
@@ -2847,7 +2856,7 @@
       ]
     },
     {
-      "id": "node22-upstream_known_issue_or_platform_boundary-34",
+      "id": "node22-upstream_known_issue_or_platform_boundary-35",
       "expectation": "expected_gap",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "node-compat/platform-boundary",
@@ -2882,7 +2891,7 @@
       ]
     },
     {
-      "id": "node22-support_fixture_not_top_level_test-35",
+      "id": "node22-support_fixture_not_top_level_test-36",
       "expectation": "expected_skip",
       "classification": "support_fixture_not_top_level_test",
       "owner": "node-compat-denominator/fixture-sync",
