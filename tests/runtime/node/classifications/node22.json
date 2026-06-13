@@ -2712,8 +2712,6 @@
         "test/parallel/test-fs-realpath-pipe.js",
         "test/parallel/test-fs-rm.js",
         "test/parallel/test-fs-stream-construct-compat-error-read.js",
-        "test/parallel/test-fs-symlink-dir-junction-relative.js",
-        "test/parallel/test-fs-symlink-dir-junction.js",
         "test/parallel/test-fs-syncwritestream.js",
         "test/parallel/test-fs-utimes-y2K38.js",
         "test/parallel/test-fs-watch-recursive-assert-leaks.js",

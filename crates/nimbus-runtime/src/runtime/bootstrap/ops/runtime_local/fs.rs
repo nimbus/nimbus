@@ -672,7 +672,7 @@ pub(in super::super) async fn op_nimbus_runtime_remove(
             .clone()
     };
     let path = path_policy
-        .ensure_write_path(Path::new(&payload.path))
+        .ensure_write_link_path(Path::new(&payload.path))
         .map_err(capability_denied_error)?;
     let recursive = payload.recursive;
     let path_for_task = path.clone();
@@ -698,7 +698,7 @@ pub(in super::super) fn op_nimbus_runtime_remove_sync(
         .paths
         .clone();
     let path = path_policy
-        .ensure_write_path(Path::new(&payload.path))
+        .ensure_write_link_path(Path::new(&payload.path))
         .map_err(capability_denied_error)?;
     let result = remove_path(&path, payload.recursive);
     Ok(match result {

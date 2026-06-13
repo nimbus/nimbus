@@ -3001,8 +3001,6 @@
         "test/parallel/test-fs-realpath.js",
         "test/parallel/test-fs-rm.js",
         "test/parallel/test-fs-stream-construct-compat-error-read.js",
-        "test/parallel/test-fs-symlink-dir-junction-relative.js",
-        "test/parallel/test-fs-symlink-dir-junction.js",
         "test/parallel/test-fs-syncwritestream.js",
         "test/parallel/test-fs-utils-get-dirents.js",
         "test/parallel/test-fs-utimes-y2K38.js",

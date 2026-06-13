@@ -231,6 +231,24 @@ impl RuntimePathPolicy {
         Ok(canonical)
     }
 
+    pub(crate) fn ensure_write_link_path(&self, path: &Path) -> Result<PathBuf> {
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.cwd.join(path)
+        };
+        let normalized = normalize_absolute_path_lexically(&absolute);
+        let Some(name) = normalized.file_name() else {
+            self.ensure_within_roots(&normalized, &self.write_roots, "write")?;
+            return Ok(normalized);
+        };
+        let parent = normalized.parent().unwrap_or(self.cwd.as_path());
+        let canonical_parent = canonicalize_preserving_missing_suffix_from_base(parent, &self.cwd)?;
+        let canonical_link = canonical_parent.join(name);
+        self.ensure_within_roots(&canonical_link, &self.write_roots, "write")?;
+        Ok(canonical_link)
+    }
+
     pub(crate) fn ensure_symlink_target_path(
         &self,
         target: &Path,
@@ -1251,6 +1269,34 @@ mod tests {
             .canonicalize()
             .expect("bundle root should canonicalize")
             .join("test11/test12");
+        assert_eq!(checked, expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_write_link_path_authorizes_entry_without_following_symlink_target() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let bundle_root = app_root.join(".nimbus/convex");
+        let outside_root = tempdir.path().join("outside");
+        std::fs::create_dir_all(&bundle_root).expect("bundle root should build");
+        std::fs::create_dir_all(&outside_root).expect("outside root should build");
+        let bundle_path = bundle_root.join("bundle.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        std::os::unix::fs::symlink(&outside_root, bundle_root.join("outside-link"))
+            .expect("symlink should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+
+        let paths = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::application_node22())
+            .expect("path policy should build");
+
+        let checked = paths
+            .ensure_write_link_path(Path::new("outside-link"))
+            .expect("link entry should be removable inside the writable root");
+        let expected = bundle_root
+            .canonicalize()
+            .expect("bundle root should canonicalize")
+            .join("outside-link");
         assert_eq!(checked, expected);
     }
 

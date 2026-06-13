@@ -1353,7 +1353,7 @@
       "lane": "node24",
       "expectation": "expected_failure",
       "classification": "watchpoint",
-      "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-symlink.js still expects the newer invalid-type ERR_INVALID_ARG_VALUE contract, while the current runtime intentionally keeps the older Node22-compatible ERR_FS_INVALID_SYMLINK_TYPE behavior",
+      "reason": "Superseded by NDS3 cycle 53: node24 test-fs-symlink.js is now dynamically green-guarded by node24_default_lane_executes_cycle53_fs_symlink_batch",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 4822,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
