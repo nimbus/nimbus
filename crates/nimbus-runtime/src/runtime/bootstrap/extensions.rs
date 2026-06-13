@@ -75,7 +75,7 @@ pub(crate) fn execution_extensions(
             deno_telemetry::deno_telemetry::init(),
             deno_webidl::deno_webidl::init(),
             deno_web::deno_web::init(
-                Default::default(),
+                deno_web::BlobStore::default_arc(),
                 Default::default(),
                 false,
                 InMemoryBroadcastChannel::default(),

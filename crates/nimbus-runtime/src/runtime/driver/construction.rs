@@ -224,7 +224,11 @@ fn node_json_module_evaluator(
         .then(|| Box::new(evaluate_node_json_module_default_export) as JsonModuleEvaluationCb)
 }
 
-fn validate_node_import_attributes(scope: &mut v8::PinScope, attributes: &HashMap<String, String>) {
+fn validate_node_import_attributes(
+    scope: &mut v8::PinScope,
+    attributes: &HashMap<String, String>,
+    _context: &deno_core::ImportAttributesContext,
+) {
     for (key, value) in attributes {
         if key == "type" {
             continue;

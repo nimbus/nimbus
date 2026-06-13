@@ -483,7 +483,7 @@ impl ModuleLoader for RestrictedModuleLoader {
             let module_specifier = module_specifier.clone();
             return ModuleLoadResponse::Async(Box::pin(async move {
                 match receiver.await {
-                    Ok(Ok((_, Some(format))))
+                    Ok(Ok((_, Some(format), _)))
                         if format == "builtin" && module_specifier.scheme() == "node" =>
                     {
                         Ok(ModuleSource::new(
@@ -493,7 +493,7 @@ impl ModuleLoader for RestrictedModuleLoader {
                             None,
                         ))
                     }
-                    Ok(Ok((Some(source), format))) => {
+                    Ok(Ok((Some(source), format, _))) => {
                         let source = if format.as_deref() == Some("commonjs") {
                             wrap_hook_commonjs_source(&module_specifier, &source)?
                         } else {
@@ -506,8 +506,14 @@ impl ModuleLoader for RestrictedModuleLoader {
                             None,
                         ))
                     }
-                    Ok(Ok((None, format))) => {
+                    Ok(Ok((None, format, effective_url))) => {
                         let hook_format = format.as_deref().or(resolved_hook_format.as_deref());
+                        let module_specifier = effective_url
+                            .as_deref()
+                            .map(ModuleSpecifier::parse)
+                            .transpose()
+                            .map_err(JsErrorBox::from_err)?
+                            .unwrap_or(module_specifier);
                         loader
                             .load_module_source(&module_specifier, options, hook_format)
                             .await
