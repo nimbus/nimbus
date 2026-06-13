@@ -539,7 +539,6 @@
         "test/parallel/test-vm-measure-memory-lazy.js",
         "test/parallel/test-vm-measure-memory-multi-context.js",
         "test/parallel/test-vm-measure-memory.js",
-        "test/parallel/test-vm-module-after-evaluate.js",
         "test/parallel/test-vm-module-basic.js",
         "test/parallel/test-vm-module-import-meta.js",
         "test/parallel/test-vm-module-modulerequests.js",

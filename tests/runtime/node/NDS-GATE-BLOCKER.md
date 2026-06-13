@@ -1,4 +1,4 @@
-# NDS gate - FORMAL documented blocked state (cycle-62, 2026-06-13)
+# NDS gate - FORMAL documented blocked state (cycle-63, 2026-06-13)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
 **Fork:** nimbus/deno v2.8.3-nimbus.16 (ee32c71874); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
@@ -6,9 +6,9 @@
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 33**, **node24 = 40**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 32**, **node24 = 39**. Not 0/0.
 
-Session cycles 17-62 reduced the gate 81/87 -> 33/40 by harvesting every cheap/clean/
+Session cycles 17-63 reduced the gate 81/87 -> 32/39 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -50,10 +50,11 @@ module load; and public `node:v8` promiseHooks API/ordering parity for
 `createHook`, `onAfter`, `onSettled`, and hook exception routing; and VM
 `microtaskMode: "afterEvaluate"` Promise queue isolation for
 `test-vm-script-after-evaluate.js` while preserving normal domain/VM Promise
-propagation; all
+propagation; and the same afterEvaluate queue fix promoted
+`test-vm-module-after-evaluate.js`; all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 42 unique fixtures remain
-(node22=33, node24=40).
+regression-verified at their promotion surface). 41 unique fixtures remain
+(node22=32, node24=39).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -106,10 +107,9 @@ regression-verified at their promotion surface). 42 unique fixtures remain
 - `test/parallel/test-heapdump-async-hooks-init-promise.js` (22+24)
 - `test/parallel/test-promise-swallowed-event.js` (22+24)
 
-### DEEP_vm_semantics (6) — owner: nimbus/deno (ext/node/ops/vm.rs + deno_core)
+### DEEP_vm_semantics (5) — owner: nimbus/deno (ext/node/ops/vm.rs + deno_core)
 - `test/parallel/test-vm-global-property-interceptors.js` (22+24)
 - `test/parallel/test-vm-global-property-prototype.js` (22+24)
-- `test/parallel/test-vm-module-after-evaluate.js` (22+24)
 - `test/parallel/test-vm-module-basic.js` (22+24)
 - `test/parallel/test-vm-module-referrer-realm.mjs` (22+24)
 - `test/parallel/test-vm-timeout-escape-promise-module.js` (22+24)
@@ -120,4 +120,4 @@ regression-verified at their promotion surface). 42 unique fixtures remain
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring, native Ed448/KMAC primitives maybe absent from aws-lc). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=33 / node24=40.
+multi-session effort. Gate held RED and honest at node22=32 / node24=39.
