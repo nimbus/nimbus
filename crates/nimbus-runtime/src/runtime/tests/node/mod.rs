@@ -1540,9 +1540,21 @@ if (typeof globalThis.process === "object" && globalThis.process !== null) {{
   }}
 }}
 {infra_warmup_script}
-{preloaded_common_for_assert_script}
 {lane_prelude}
+{preloaded_common_for_assert_script}
 {prelude_script}
+if (globalThis.__nimbusNodeCompatLane === "node22") {{
+  const __nimbusAssertRequire = createRequire(import.meta.url);
+  for (const __nimbusAssertSpecifier of ["assert", "node:assert"]) {{
+    const __nimbusAssert = __nimbusAssertRequire(__nimbusAssertSpecifier);
+    if (typeof __nimbusAssert === "function") {{
+      Object.defineProperty(__nimbusAssert, "__nimbusRejectsStackReceiverName", {{
+        configurable: true,
+        value: "Function",
+      }});
+    }}
+  }}
+}}
 {import_preamble}
 
 const __nimbusNodeCompatResult = (skipped) => Object.assign(
@@ -1557,6 +1569,17 @@ const __nimbusNodeCompatResult = (skipped) => Object.assign(
 {invoke_signature}
   let __nimbusInvokeStep = "create require";
   const require = createRequire(import.meta.url);
+  if (globalThis.__nimbusNodeCompatLane === "node22") {{
+    for (const __nimbusAssertSpecifier of ["assert", "node:assert"]) {{
+      const __nimbusAssert = require(__nimbusAssertSpecifier);
+      if (typeof __nimbusAssert === "function") {{
+        Object.defineProperty(__nimbusAssert, "__nimbusRejectsStackReceiverName", {{
+          configurable: true,
+          value: "Function",
+        }});
+      }}
+    }}
+  }}
   try {{
     __nimbusInvokeStep = "import guard";
 {invoke_import_guard}
@@ -3692,3 +3715,4 @@ include!("cases/nds3_cycle42_wave1.rs");
 include!("cases/nds3_cycle52_wave1.rs");
 include!("cases/nds3_cycle53_wave1.rs");
 include!("cases/nds3_cycle54_wave1.rs");
+include!("cases/nds3_cycle55_wave1.rs");

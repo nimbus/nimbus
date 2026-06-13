@@ -2984,7 +2984,6 @@
         "test/parallel/test-fs-promises-watch-ignore-mixed.mjs",
         "test/parallel/test-fs-promises-watch-ignore-regexp.mjs",
         "test/parallel/test-fs-promises-watch-iterator.js",
-        "test/parallel/test-fs-promises.js",
         "test/parallel/test-fs-read-file-sync-hostname.js",
         "test/parallel/test-fs-read-stream.js",
         "test/parallel/test-fs-readdir-buffer.js",

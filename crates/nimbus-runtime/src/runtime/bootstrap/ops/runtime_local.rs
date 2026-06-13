@@ -15,9 +15,10 @@ pub(super) use env::{
     op_nimbus_runtime_shared_env_set, op_nimbus_runtime_shared_env_snapshot,
 };
 pub(super) use fs::{
-    op_nimbus_runtime_chmod, op_nimbus_runtime_chmod_sync, op_nimbus_runtime_copy_file,
-    op_nimbus_runtime_copy_file_sync, op_nimbus_runtime_fs_read_file,
-    op_nimbus_runtime_fs_write_file, op_nimbus_runtime_link, op_nimbus_runtime_link_sync,
+    op_nimbus_runtime_chmod, op_nimbus_runtime_chmod_sync, op_nimbus_runtime_chown,
+    op_nimbus_runtime_chown_sync, op_nimbus_runtime_copy_file, op_nimbus_runtime_copy_file_sync,
+    op_nimbus_runtime_fs_read_file, op_nimbus_runtime_fs_write_file, op_nimbus_runtime_lchmod,
+    op_nimbus_runtime_lchmod_sync, op_nimbus_runtime_link, op_nimbus_runtime_link_sync,
     op_nimbus_runtime_mkdir, op_nimbus_runtime_mkdir_sync, op_nimbus_runtime_read_dir,
     op_nimbus_runtime_read_dir_sync, op_nimbus_runtime_read_link, op_nimbus_runtime_read_link_sync,
     op_nimbus_runtime_remove, op_nimbus_runtime_remove_sync, op_nimbus_runtime_rename,

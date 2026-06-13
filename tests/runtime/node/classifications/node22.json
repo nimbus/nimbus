@@ -2697,7 +2697,6 @@
         "test/parallel/test-fs-long-path.js",
         "test/parallel/test-fs-promises-file-handle-read-worker.js",
         "test/parallel/test-fs-promises-watch-iterator.js",
-        "test/parallel/test-fs-promises.js",
         "test/parallel/test-fs-read-file-sync-hostname.js",
         "test/parallel/test-fs-read-stream.js",
         "test/parallel/test-fs-readdir-pipe.js",

@@ -692,6 +692,29 @@ async function runtimeFsChmod(path, mode) {
   }
 }
 
+async function runtimeFsLchmod(path, mode) {
+  try {
+    await globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_lchmod", {
+      path: runtimeFsPathToString(path),
+      mode,
+    });
+  } catch (error) {
+    throw runtimeFsMapThrownError(error);
+  }
+}
+
+async function runtimeFsChown(path, uid, gid) {
+  try {
+    await globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_chown", {
+      path: runtimeFsPathToString(path),
+      uid,
+      gid,
+    });
+  } catch (error) {
+    throw runtimeFsMapThrownError(error);
+  }
+}
+
 async function runtimeFsCopyFile(from, to) {
   try {
     await globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_copy_file", {
@@ -824,6 +847,29 @@ function runtimeFsChmodSync(path, mode) {
     globalThis.__nimbusSyncHostValue("op_nimbus_runtime_chmod_sync", {
       path: runtimeFsPathToString(path),
       mode,
+    });
+  } catch (error) {
+    throw runtimeFsMapThrownError(error);
+  }
+}
+
+function runtimeFsLchmodSync(path, mode) {
+  try {
+    globalThis.__nimbusSyncHostValue("op_nimbus_runtime_lchmod_sync", {
+      path: runtimeFsPathToString(path),
+      mode,
+    });
+  } catch (error) {
+    throw runtimeFsMapThrownError(error);
+  }
+}
+
+function runtimeFsChownSync(path, uid, gid) {
+  try {
+    globalThis.__nimbusSyncHostValue("op_nimbus_runtime_chown_sync", {
+      path: runtimeFsPathToString(path),
+      uid,
+      gid,
     });
   } catch (error) {
     throw runtimeFsMapThrownError(error);
@@ -2362,15 +2408,7 @@ function patchNodeFsReadSemantics(nodeProcess) {
         if (typeof path === "number" || isNimbusFileHandle(path)) {
           return Reflect.apply(originalLchmod, this, arguments);
         }
-        const symlinkFlags = (nodeFs.constants?.O_WRONLY ?? 1) | (nodeFs.constants?.O_SYMLINK ?? 0);
-        return nodeFsPromises
-          .open(path, symlinkFlags, mode)
-          .then((handle) =>
-            handleFsPromisePathClose(
-              handle.chmod(mode),
-              () => closeNimbusFileHandle(handle),
-            )
-          );
+        return deno.lchmod(path, mode);
       };
       Object.defineProperties(patchedLchmod, Object.getOwnPropertyDescriptors(originalLchmod));
       nodeFsPromises.lchmod = patchedLchmod;
@@ -3527,6 +3565,30 @@ Object.defineProperty(deno, "chmod", {
 });
 Object.defineProperty(deno, "chmodSync", {
   value: runtimeFsChmodSync,
+  configurable: true,
+  enumerable: true,
+  writable: false,
+});
+Object.defineProperty(deno, "lchmod", {
+  value: runtimeFsLchmod,
+  configurable: true,
+  enumerable: true,
+  writable: false,
+});
+Object.defineProperty(deno, "lchmodSync", {
+  value: runtimeFsLchmodSync,
+  configurable: true,
+  enumerable: true,
+  writable: false,
+});
+Object.defineProperty(deno, "chown", {
+  value: runtimeFsChown,
+  configurable: true,
+  enumerable: true,
+  writable: false,
+});
+Object.defineProperty(deno, "chownSync", {
+  value: runtimeFsChownSync,
   configurable: true,
   enumerable: true,
   writable: false,

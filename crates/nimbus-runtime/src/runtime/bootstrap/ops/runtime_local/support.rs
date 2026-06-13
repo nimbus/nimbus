@@ -372,3 +372,54 @@ pub(super) fn apply_fs_mode(path: &Path, mode: u32) -> std::io::Result<()> {
 pub(super) fn apply_fs_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
     Ok(())
 }
+
+#[cfg(target_os = "macos")]
+pub(super) fn apply_link_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    unsafe extern "C" {
+        fn lchmod(path: *const libc::c_char, mode: libc::mode_t) -> libc::c_int;
+    }
+
+    let path = CString::new(path.as_os_str().as_bytes()).map_err(|error| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string())
+    })?;
+    let result = unsafe { lchmod(path.as_ptr(), mode as libc::mode_t) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+pub(super) fn apply_link_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
+    Err(std::io::Error::from_raw_os_error(libc::ENOSYS))
+}
+
+#[cfg(not(unix))]
+pub(super) fn apply_link_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
+    Err(std::io::Error::from_raw_os_error(38))
+}
+
+#[cfg(unix)]
+pub(super) fn apply_fs_chown(path: &Path, uid: i64, gid: i64) -> std::io::Result<()> {
+    std::fs::metadata(path)?;
+
+    let runtime_uid = i64::from(unsafe { libc::getuid() });
+    let runtime_gid = i64::from(unsafe { libc::getgid() });
+    let uid_is_virtual_noop = uid == -1 || uid == runtime_uid;
+    let gid_is_virtual_noop = gid == -1 || gid == runtime_gid;
+
+    if uid_is_virtual_noop && gid_is_virtual_noop {
+        return Ok(());
+    }
+
+    Err(std::io::Error::from_raw_os_error(libc::EPERM))
+}
+
+#[cfg(not(unix))]
+pub(super) fn apply_fs_chown(_path: &Path, _uid: i64, _gid: i64) -> std::io::Result<()> {
+    Ok(())
+}

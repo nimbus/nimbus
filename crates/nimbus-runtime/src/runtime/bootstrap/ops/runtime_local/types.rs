@@ -67,6 +67,13 @@ pub(super) struct RuntimeFsChmodPayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct RuntimeFsChownPayload {
+    pub(super) path: String,
+    pub(super) uid: i64,
+    pub(super) gid: i64,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct RuntimeFsUtimePayload {
     pub(super) path: String,
     pub(super) atime_secs: i64,
