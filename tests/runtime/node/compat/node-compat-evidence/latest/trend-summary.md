@@ -9,8 +9,8 @@
 | Lane | Upstream | Passed | Passed Delta | Pass Rate | Pass Rate Delta Points | Unclassified | Unclassified Delta |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `node20` | `v20.20.2` | 917 | +0 | 21.6% | +0.0 | 0 | +0 |
-| `node22` | `v22.22.3` | 2310 | +1 | 48.7% | +0.0 | 0 | +0 |
-| `node24` | `v24.16.0` | 2338 | +1 | 45.0% | +0.0 | 0 | +0 |
+| `node22` | `v22.22.3` | 2311 | +1 | 48.7% | +0.0 | 0 | +0 |
+| `node24` | `v24.16.0` | 2339 | +1 | 45.0% | +0.0 | 0 | +0 |
 | `node26` | `v26.2.0` | 1009 | +0 | 18.1% | +0.0 | 0 | +0 |
 
 ## Evidence Trends
@@ -18,10 +18,10 @@
 | Metric | Current | Baseline | Delta |
 | --- | ---: | ---: | ---: |
 | `canary_report_count` | 0 | 0 | +0 |
-| `expectation_catalog_entry_count` | 134 | 135 | -1 |
+| `expectation_catalog_entry_count` | 134 | 134 | +0 |
 | `oracle_report_count` | 0 | 0 | +0 |
 | `required_canary_gap_count` | 0 | 0 | +0 |
-| `rust_ignore_count` | 134 | 135 | -1 |
+| `rust_ignore_count` | 134 | 134 | +0 |
 | `slice_report_count` | 0 | 0 | +0 |
 | `unexpected_pass_count` | 0 | 0 | +0 |
 | `warning_count` | 0 | 0 | +0 |

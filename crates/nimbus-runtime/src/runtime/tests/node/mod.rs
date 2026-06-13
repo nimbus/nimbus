@@ -963,6 +963,13 @@ fn should_load_fixture_with_commonjs_require(test_relative_path: &str) -> bool {
         || should_force_commonjs_package_scope_for_fixture(test_relative_path)
 }
 
+fn should_load_fixture_as_commonjs_main_module(test_relative_path: &str) -> bool {
+    matches!(
+        test_relative_path,
+        "test/parallel/test-events-uncaught-exception-stack.js"
+    )
+}
+
 fn should_load_fixture_as_async_main_module(test_relative_path: &str) -> bool {
     matches!(
         test_relative_path,
@@ -1060,6 +1067,32 @@ globalThis.global.gc = __nimbusTestGc;"#
         && should_load_fixture_as_async_main_module(test_relative_path)
     {
         String::new()
+    } else if should_load_fixture_as_commonjs_main_module(test_relative_path) {
+        // This fixture intentionally throws from the top-level CommonJS main
+        // script and expects `process.on("uncaughtException")` to observe it.
+        // Loading it through an ESM `import` or nested `createRequire(...)`
+        // makes the throw look like a module-load failure instead of a main
+        // script fatal exception. Use Node's own `Module._load(..., isMain)`,
+        // matching Deno's existing CJS-main fatal-exception path.
+        let main_module_load = format!(
+            r#"createRequire(import.meta.url)("module")._load(
+  new URL("./{test_relative_path}", import.meta.url).pathname,
+  null,
+  true,
+);"#
+        );
+        if capture_import_error {
+            format!(
+                r#"let __nimbusImportError = null;
+try {{
+  {main_module_load}
+}} catch (error) {{
+  __nimbusImportError = error;
+}}"#
+            )
+        } else {
+            main_module_load
+        }
     } else if should_load_fixture_with_commonjs_require(test_relative_path) {
         // Load the fixture with a synchronous CommonJS require instead of
         // `await import(...)`. The fixture body runs in place (just like a real
@@ -1885,6 +1918,43 @@ fn node_compat_diagnostics_module_import_fixture_uses_commonjs_entry() {
     let package_json =
         std::fs::read_to_string(package_json_path).expect("fixture package scope should read");
     assert_eq!(package_json, r#"{"type":"commonjs"}"#);
+}
+
+#[test]
+fn node_compat_uncaught_exception_stack_fixture_uses_commonjs_main_entry() {
+    let (_tempdir, bundle_path) = write_node_compat_bundle(NodeCompatBundleWriteOptions {
+        test_relative_path: "test/parallel/test-events-uncaught-exception-stack.js",
+        test_source: "process.on('uncaughtException', () => {}); throw new Error();",
+        extra_files: &[],
+        capture_top_level_skip: true,
+        lane: None,
+        prelude_script: None,
+        postlude_script: None,
+        node_options: &[],
+        mode: NodeCompatBundleMode::Runtime,
+    });
+    let bundle_source = std::fs::read_to_string(&bundle_path).expect("bundle should read");
+    assert!(
+        bundle_source.contains(r#"createRequire(import.meta.url)("module")._load("#),
+        "uncaught-exception main fixture should load through Module._load:\n{bundle_source}"
+    );
+    assert!(
+        bundle_source.contains(
+            r#"new URL("./test/parallel/test-events-uncaught-exception-stack.js", import.meta.url).pathname"#
+        ),
+        "uncaught-exception main fixture should resolve the real fixture path:\n{bundle_source}"
+    );
+    assert!(
+        !bundle_source.contains(
+            r#"await import("./test/parallel/test-events-uncaught-exception-stack.js");"#
+        ),
+        "uncaught-exception main fixture should not load through ESM import:\n{bundle_source}"
+    );
+    assert!(
+        !bundle_source
+            .contains(r#"createRequire(import.meta.url)("./test/parallel/test-events-uncaught-exception-stack.js");"#),
+        "uncaught-exception main fixture should not load as a nested require:\n{bundle_source}"
+    );
 }
 
 #[test]
@@ -3581,3 +3651,4 @@ include!("cases/nds3_cycle32_wave1.rs");
 include!("cases/nds3_cycle33_wave1.rs");
 include!("cases/nds3_cycle34_wave1.rs");
 include!("cases/nds3_cycle35_wave1.rs");
+include!("cases/nds3_cycle36_wave1.rs");
