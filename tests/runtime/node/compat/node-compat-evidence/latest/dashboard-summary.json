@@ -26708,24 +26708,24 @@
         "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 4748,
-        "documented_manifested_green_count": 2322,
+        "documented_manifested_green_count": 2325,
         "documented_manifested_green_source": "rust_nonignored_execution_fixture_inventory_minus_classified_red_skip",
         "documented_family_green_count": 988,
-        "path_owned_manifested_green_count": 2322,
-        "classified_red_skip_count": 2426,
-        "classified_total_count": 2426,
-        "known_red_or_gap_count": 2406,
+        "path_owned_manifested_green_count": 2325,
+        "classified_red_skip_count": 2423,
+        "classified_total_count": 2423,
+        "known_red_or_gap_count": 2403,
         "skipped_or_excluded_count": 20,
         "documented_or_classified_count": 4748,
         "unmanifested_or_unclassified_count": 0,
-        "documented_manifested_green_ratio": 0.489048,
+        "documented_manifested_green_ratio": 0.48968,
         "classification_catalog": {
           "catalog_path": "tests/runtime/node/classifications/node22.json",
           "catalog_present": true,
-          "classified_red_skip_count": 2426,
+          "classified_red_skip_count": 2423,
           "by_expectation": {
             "expected_failure": 22,
-            "expected_gap": 2384,
+            "expected_gap": 2381,
             "expected_skip": 20
           },
           "by_classification": {
@@ -26733,7 +26733,7 @@
             "requires_pseudo_tty_host_harness": 31,
             "requires_pummel_stress_harness": 55,
             "requires_sequential_host_state_harness": 115,
-            "requires_unpromoted_node_surface": 2106,
+            "requires_unpromoted_node_surface": 2103,
             "requires_wpt_harness": 22,
             "rust_watchpoint_expected_failure": 22,
             "support_fixture_not_top_level_test": 20,
@@ -44944,30 +44944,6 @@
               "group_id": "node22-requires_unpromoted_node_surface-26"
             },
             {
-              "test_path": "test/parallel/test-timers-immediate-unref-nested-once.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "process-and-timing/timers",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node22-requires_unpromoted_node_surface-26"
-            },
-            {
-              "test_path": "test/parallel/test-timers-immediate-unref-simple.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "process-and-timing/timers",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node22-requires_unpromoted_node_surface-26"
-            },
-            {
-              "test_path": "test/parallel/test-timers-immediate-unref.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "process-and-timing/timers",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node22-requires_unpromoted_node_surface-26"
-            },
-            {
               "test_path": "test/parallel/test-timers-interval-promisified.js",
               "expectation": "expected_gap",
               "classification": "requires_unpromoted_node_surface",
@@ -46148,24 +46124,24 @@
         "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 5198,
-        "documented_manifested_green_count": 2352,
+        "documented_manifested_green_count": 2355,
         "documented_manifested_green_source": "rust_nonignored_execution_fixture_inventory_minus_classified_red_skip",
         "documented_family_green_count": 926,
-        "path_owned_manifested_green_count": 2352,
-        "classified_red_skip_count": 2846,
-        "classified_total_count": 2846,
-        "known_red_or_gap_count": 2798,
+        "path_owned_manifested_green_count": 2355,
+        "classified_red_skip_count": 2843,
+        "classified_total_count": 2843,
+        "known_red_or_gap_count": 2795,
         "skipped_or_excluded_count": 48,
         "documented_or_classified_count": 5198,
         "unmanifested_or_unclassified_count": 0,
-        "documented_manifested_green_ratio": 0.452482,
+        "documented_manifested_green_ratio": 0.453059,
         "classification_catalog": {
           "catalog_path": "tests/runtime/node/classifications/node24.json",
           "catalog_present": true,
-          "classified_red_skip_count": 2846,
+          "classified_red_skip_count": 2843,
           "by_expectation": {
             "expected_failure": 5,
-            "expected_gap": 2793,
+            "expected_gap": 2790,
             "expected_skip": 48
           },
           "by_classification": {
@@ -46173,7 +46149,7 @@
             "requires_pseudo_tty_host_harness": 32,
             "requires_pummel_stress_harness": 64,
             "requires_sequential_host_state_harness": 119,
-            "requires_unpromoted_node_surface": 2501,
+            "requires_unpromoted_node_surface": 2498,
             "requires_wpt_harness": 23,
             "rust_watchpoint_expected_failure": 5,
             "support_fixture_not_top_level_test": 47,
@@ -67394,30 +67370,6 @@
             },
             {
               "test_path": "test/parallel/test-timers-immediate-queue-throw.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "process-and-timing/timers",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node24-requires_unpromoted_node_surface-27"
-            },
-            {
-              "test_path": "test/parallel/test-timers-immediate-unref-nested-once.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "process-and-timing/timers",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node24-requires_unpromoted_node_surface-27"
-            },
-            {
-              "test_path": "test/parallel/test-timers-immediate-unref-simple.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "process-and-timing/timers",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node24-requires_unpromoted_node_surface-27"
-            },
-            {
-              "test_path": "test/parallel/test-timers-immediate-unref.js",
               "expectation": "expected_gap",
               "classification": "requires_unpromoted_node_surface",
               "owner": "process-and-timing/timers",
@@ -105560,7 +105512,7 @@
         "source": "vendored_official_fixture_corpus",
         "primary_count_label": "fixture_count",
         "primary_count": 19772,
-        "passed_count": 6600,
+        "passed_count": 6606,
         "counts_in_official_denominator": true,
         "notes": "Byte-identical Node upstream test-* fixtures under lane-local nodeNN/test roots; pass percentages use only this denominator."
       },
