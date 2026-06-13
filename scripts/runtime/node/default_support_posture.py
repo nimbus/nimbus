@@ -202,6 +202,13 @@ HOST_NETWORK_SOCKET_PATHS = {
     #     family.js directly above.
     "test/parallel/test-https-localaddress-bind-error.js",
     "test/parallel/test-https-agent-additional-options.js",
+    # NDS3 cycle-46 (2026-06-13): source-confirmed against node22/node24 fixture
+    # bodies. The assertion is a stream base TypeError, but the fixture only
+    # reaches it after creating a real `net.createServer().listen(0)` listener
+    # and connecting a real `net.connect(server.address().port)` client socket.
+    # That host TCP listener/client topology is the same host-owned socket
+    # surface as the async-hooks TCP graph fixtures.
+    "test/parallel/test-stream-base-typechecking.js",
     # NDS3 cycle-45 (2026-06-13): source-confirmed against node22/node24 fixture
     # bodies. The fixture runs with `// Flags: --expose-gc`, creates a real
     # `http.createServer(...).listen(0)`, repeatedly drives `http.get()` clients
