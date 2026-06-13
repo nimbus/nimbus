@@ -204,9 +204,16 @@ function runtimeFsSymlinkTargetToString(path) {
 }
 
 function runtimeFsToUnixTimeFromEpoch(value) {
-  const unixSeconds = nodeFsToUnixTimestamp(value);
-  const seconds = Math.trunc(unixSeconds);
-  const nanoseconds = Math.trunc((unixSeconds * 1e3) - (seconds * 1e3)) * 1e6;
+  let unixSeconds;
+  try {
+    unixSeconds = Date.prototype.getTime.call(value) / 1e3;
+  } catch {
+    unixSeconds = typeof value === "number" && Number.isFinite(value)
+      ? value
+      : nodeFsToUnixTimestamp(value);
+  }
+  const seconds = Math.floor(unixSeconds);
+  const nanoseconds = Math.trunc((unixSeconds - seconds) * 1e9);
   return {
     seconds,
     nanoseconds,

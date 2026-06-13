@@ -77,22 +77,46 @@ pub(super) fn create_runtime_symlink(
 }
 
 fn system_time_to_unix_millis(value: Option<SystemTime>) -> Option<i64> {
-    value.and_then(|time| {
-        time.duration_since(SystemTime::UNIX_EPOCH)
-            .ok()
-            .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+    value.and_then(|time| match time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(duration) => i64::try_from(duration.as_millis()).ok(),
+        Err(error) => {
+            let millis = i64::try_from(error.duration().as_millis()).ok()?;
+            Some(-millis)
+        }
     })
 }
 
 fn system_time_from_unix_parts(seconds: i64, nanos: u32) -> std::io::Result<SystemTime> {
-    if seconds < 0 {
+    if nanos >= 1_000_000_000 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "timestamp must be non-negative",
+            "timestamp nanoseconds are out of range",
         ));
     }
+
+    if seconds >= 0 {
+        return SystemTime::UNIX_EPOCH
+            .checked_add(Duration::new(seconds as u64, nanos))
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "timestamp is out of range",
+                )
+            });
+    }
+
+    let seconds_before_epoch = seconds.unsigned_abs();
+    let duration_before_epoch = if nanos == 0 {
+        Duration::new(seconds_before_epoch, 0)
+    } else {
+        Duration::new(
+            seconds_before_epoch.saturating_sub(1),
+            1_000_000_000 - nanos,
+        )
+    };
+
     SystemTime::UNIX_EPOCH
-        .checked_add(Duration::new(seconds as u64, nanos))
+        .checked_sub(duration_before_epoch)
         .ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,

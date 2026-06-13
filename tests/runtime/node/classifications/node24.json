@@ -3007,7 +3007,6 @@
         "test/parallel/test-fs-realpath-pipe.js",
         "test/parallel/test-fs-realpath.js",
         "test/parallel/test-fs-rm.js",
-        "test/parallel/test-fs-stat-date.mjs",
         "test/parallel/test-fs-stream-construct-compat-error-read.js",
         "test/parallel/test-fs-symlink-dir-junction-relative.js",
         "test/parallel/test-fs-symlink-dir-junction.js",
