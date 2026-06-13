@@ -12,13 +12,6 @@
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_supported_lane_esm_data_url_cluster_watchpoint"
     },
     {
-      "test_path": "test/parallel/test-assert-deep.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "core-semantics/assert",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_assert_deep_watchpoint"
-    },
-    {
       "test_path": "test/parallel/test-crypto-authenticated.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",

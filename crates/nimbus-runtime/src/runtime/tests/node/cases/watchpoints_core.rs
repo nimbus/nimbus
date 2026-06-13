@@ -19,17 +19,7 @@ fn node20_process_env_delete_application_preset_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned official Node20/Node22 assert gap: current runtime still disagrees with the shared test-assert-deep.js circular/deep-diff expectations"]
-fn node22_assert_deep_watchpoint() {
-    run_node_compat_watchpoint(
-        "test/parallel/test-assert-deep.js",
-        "test/parallel/test-assert-deep.js",
-        &[],
-    );
-}
-
-#[test]
-#[ignore = "Pinned official Node20/Node22 assert gap: current runtime still disagrees with the shared test-assert-deep.js circular/deep-diff expectations"]
+#[ignore = "Pinned official Node20 assert gap: current runtime still disagrees with the legacy test-assert-deep.js circular/deep-diff expectations"]
 fn node20_assert_deep_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-assert-deep.js",
