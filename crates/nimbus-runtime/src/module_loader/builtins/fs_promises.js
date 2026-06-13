@@ -551,19 +551,7 @@ function watchPromise(path, options) {
   };
 }
 
-const fsPromisesModule = {
-  ...fsPromisesBuiltin,
-  appendFile,
-  lstat,
-  mkdir,
-  open,
-  readFile,
-  readdir,
-  rmdir,
-  stat,
-  watch: watchPromise,
-  writeFile,
-};
+const fsPromisesModule = fsPromisesBuiltin;
 
 const {
   access,

@@ -721,6 +721,28 @@ function __nimbusCreateNodeProcessFeatures(source, nodeMajor) {
   return features;
 }
 
+function __nimbusSyncNodeProcessFeatures(target, source) {
+  if (!target || typeof target !== "object") {
+    return source;
+  }
+  for (const property of Reflect.ownKeys(target)) {
+    if (!Reflect.has(source, property)) {
+      try {
+        delete target[property];
+      } catch (_error) {}
+    }
+  }
+  for (const property of Reflect.ownKeys(source)) {
+    const descriptor = Object.getOwnPropertyDescriptor(source, property);
+    if (descriptor) {
+      try {
+        Object.defineProperty(target, property, descriptor);
+      } catch (_error) {}
+    }
+  }
+  return target;
+}
+
 function __nimbusInstallRuntimeContractGlobals(contract) {
   if (!contract || typeof contract !== "object") {
     return;
@@ -762,81 +784,8 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
     const cwd = typeof contract.paths?.cwd === "string" ? contract.paths.cwd : "/";
     const env = __nimbusCreateProcessEnvProxy();
     const processBase = globalThis.process ?? {};
-    // Deno's Node shim owns non-configurable process fields such as
-    // process.release, so install a Nimbus-owned wrapper for lane metadata.
-    const processTarget = Object.create(
-      Object.getPrototypeOf(processBase) ?? Object.prototype,
-    );
-    const processValue = new Proxy(processTarget, {
-      set(target, property, value, receiver) {
-        const result = Reflect.set(target, property, value, receiver);
-        if (
-          result &&
-          processBase &&
-          typeof processBase === "object"
-        ) {
-          const baseDescriptor = Object.getOwnPropertyDescriptor(processBase, property);
-          if (
-            !baseDescriptor ||
-            baseDescriptor.writable === true ||
-            typeof baseDescriptor.set === "function"
-          ) {
-            try {
-              Reflect.set(processBase, property, value);
-            } catch (_error) {}
-          }
-        }
-        return result;
-      },
-      defineProperty(target, property, descriptor) {
-        const result = Reflect.defineProperty(target, property, descriptor);
-        if (
-          result &&
-          processBase &&
-          typeof processBase === "object"
-        ) {
-          const baseDescriptor = Object.getOwnPropertyDescriptor(processBase, property);
-          if (!baseDescriptor || baseDescriptor.configurable === true) {
-            try {
-              Reflect.defineProperty(processBase, property, descriptor);
-            } catch (_error) {}
-          }
-        }
-        return result;
-      },
-      deleteProperty(target, property) {
-        const result = Reflect.deleteProperty(target, property);
-        if (
-          result &&
-          processBase &&
-          typeof processBase === "object"
-        ) {
-          const baseDescriptor = Object.getOwnPropertyDescriptor(processBase, property);
-          if (!baseDescriptor || baseDescriptor.configurable === true) {
-            try {
-              Reflect.deleteProperty(processBase, property);
-            } catch (_error) {}
-          }
-        }
-        return result;
-      },
-    });
-    for (const property of Reflect.ownKeys(processBase)) {
-      if (
-        property === "cwd" ||
-        property === "env" ||
-        property === "features" ||
-        property === "version" ||
-        property === "versions" ||
-        property === "release"
-      ) {
-        continue;
-      }
-      const descriptor = Object.getOwnPropertyDescriptor(processBase, property);
-      if (descriptor) {
-        Object.defineProperty(processValue, property, descriptor);
-      }
-    }
+    const processValue =
+      processBase && typeof processBase === "object" ? processBase : {};
     const existingVersions =
       processBase.versions && typeof processBase.versions === "object"
         ? processBase.versions
@@ -863,9 +812,13 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
       nextRelease.lts = nodeReleaseLts;
     }
     const release = Object.freeze(nextRelease);
-    const features = __nimbusCreateNodeProcessFeatures(
+    const desiredFeatures = __nimbusCreateNodeProcessFeatures(
       processBase.features,
       nodeMajor,
+    );
+    const features = __nimbusSyncNodeProcessFeatures(
+      processBase.features,
+      desiredFeatures,
     );
     Object.defineProperty(processValue, "cwd", {
       value() {
@@ -911,20 +864,6 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
       enumerable: false,
       writable: true,
     });
-    if (processBase && typeof processBase === "object") {
-      const baseFeaturesDescriptor =
-        Object.getOwnPropertyDescriptor(processBase, "features");
-      if (!baseFeaturesDescriptor || baseFeaturesDescriptor.configurable === true) {
-        try {
-          Reflect.defineProperty(processBase, "features", {
-            value: features,
-            configurable: true,
-            enumerable: true,
-            writable: false,
-          });
-        } catch (_error) {}
-      }
-    }
     let globalProcessValue = processValue;
     Object.defineProperty(globalThis, "process", {
       get() {

@@ -158,7 +158,11 @@ function createNimbusInternalTestBindingModule() {
 
 function cloneBuiltinModuleWithOverrides(builtinModule, overrides = {}) {
   const clone = {};
-  Object.defineProperties(clone, Object.getOwnPropertyDescriptors(builtinModule));
+  const descriptors = Object.getOwnPropertyDescriptors(builtinModule);
+  for (const descriptor of Object.values(descriptors)) {
+    descriptor.configurable = true;
+  }
+  Object.defineProperties(clone, descriptors);
   Object.defineProperties(clone, Object.getOwnPropertyDescriptors(overrides));
   const prototype = Object.getPrototypeOf(builtinModule);
   if (prototype !== null) {
@@ -595,18 +599,33 @@ function createNimbusTtyModule() {
     return loadReadlineBuiltin().clearScreenDown(this, callback);
   };
 
-  return {
-    ...ttyBuiltin,
-    isatty: builtinIsatty,
-    ReadStream,
-    WriteStream,
-    default: {
-      ...ttyBuiltin,
-      isatty: builtinIsatty,
-      ReadStream,
-      WriteStream,
+  Object.defineProperties(ttyBuiltin, {
+    isatty: {
+      configurable: true,
+      enumerable: true,
+      value: builtinIsatty,
+      writable: true,
     },
-  };
+    ReadStream: {
+      configurable: true,
+      enumerable: true,
+      value: ReadStream,
+      writable: true,
+    },
+    WriteStream: {
+      configurable: true,
+      enumerable: true,
+      value: WriteStream,
+      writable: true,
+    },
+    default: {
+      configurable: true,
+      enumerable: true,
+      value: ttyBuiltin,
+      writable: true,
+    },
+  });
+  return ttyBuiltin;
 }
 
 function createNimbusOsModule() {
@@ -859,16 +878,27 @@ function createNimbusReadlineModule() {
     readlineBuiltin.Interface.prototype,
   );
 
-  return {
-    ...readlineBuiltin,
-    Interface,
-    createInterface,
-    default: {
-      ...readlineBuiltin,
-      Interface,
-      createInterface,
+  Object.defineProperties(readlineBuiltin, {
+    Interface: {
+      configurable: true,
+      enumerable: true,
+      value: Interface,
+      writable: true,
     },
-  };
+    createInterface: {
+      configurable: true,
+      enumerable: true,
+      value: createInterface,
+      writable: true,
+    },
+    default: {
+      configurable: true,
+      enumerable: true,
+      value: readlineBuiltin,
+      writable: true,
+    },
+  });
+  return readlineBuiltin;
 }
 
 function createNimbusReadlinePromisesModule() {
@@ -893,14 +923,25 @@ function createNimbusReadlinePromisesModule() {
     readlinePromisesBuiltin.Interface.prototype,
   );
 
-  return {
-    ...readlinePromisesBuiltin,
-    Interface,
-    createInterface,
-    default: {
-      ...readlinePromisesBuiltin,
-      Interface,
-      createInterface,
+  Object.defineProperties(readlinePromisesBuiltin, {
+    Interface: {
+      configurable: true,
+      enumerable: true,
+      value: Interface,
+      writable: true,
     },
-  };
+    createInterface: {
+      configurable: true,
+      enumerable: true,
+      value: createInterface,
+      writable: true,
+    },
+    default: {
+      configurable: true,
+      enumerable: true,
+      value: readlinePromisesBuiltin,
+      writable: true,
+    },
+  });
+  return readlinePromisesBuiltin;
 }

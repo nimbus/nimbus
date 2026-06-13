@@ -198,6 +198,14 @@ if (Array.isArray(builtinModules)) {
       builtinModules.push(specifier);
     }
   }
+  const nodeMajor = Number.parseInt(processModule?.versions?.node ?? "", 10);
+  if (nodeMajor <= 22) {
+    for (let index = builtinModules.length - 1; index >= 0; index -= 1) {
+      if (String(builtinModules[index]).startsWith("node:")) {
+        builtinModules.splice(index, 1);
+      }
+    }
+  }
 }
 
 const denoFsBuiltin = denoGetBuiltinModule("fs");
