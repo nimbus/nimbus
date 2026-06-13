@@ -209,6 +209,14 @@ HOST_NETWORK_SOCKET_PATHS = {
     # That host TCP listener/client topology is the same host-owned socket
     # surface as the async-hooks TCP graph fixtures.
     "test/parallel/test-stream-base-typechecking.js",
+    # NDS3 cycle-47 (2026-06-13): source-confirmed against node22/node24
+    # test/es-module fixture bodies. The WebAssembly streaming cases call a
+    # helper that creates a real `http.createServer(...).unref().listen(0)`,
+    # waits for the listening event, reads `server.address().port`, and drives
+    # `fetch("http://127.0.0.1:${port}/foo.wasm")` against that host listener.
+    # The streaming API assertions are therefore coupled to a host loopback HTTP
+    # server/client topology that the default multi-tenant isolate must not own.
+    "test/es-module/test-wasm-web-api.js",
     # NDS3 cycle-45 (2026-06-13): source-confirmed against node22/node24 fixture
     # bodies. The fixture runs with `// Flags: --expose-gc`, creates a real
     # `http.createServer(...).listen(0)`, repeatedly drives `http.get()` clients
