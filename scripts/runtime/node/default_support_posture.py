@@ -142,6 +142,12 @@ HOST_PROCESS_CONTROL_PATHS = {
     # and host filesystem capability probing are outside the default
     # multi-tenant isolate contract.
     "test/parallel/test-fs-utimes-y2K38.js",
+    # NDS3 cycle-50 (2026-06-13): source-confirmed against identical node22/node24
+    # fixture bodies. The non-seekable read-stream subtest creates a host FIFO by
+    # running `child_process.spawnSync("mkfifo", [filename])`, then feeds it with
+    # `child_process.exec(...)`. Host subprocess execution and FIFO creation are
+    # host process/filesystem topology, not default isolate Application API.
+    "test/parallel/test-fs-read-stream.js",
 }
 
 HOST_PROCESS_CONTROL_PREFIXES = (
