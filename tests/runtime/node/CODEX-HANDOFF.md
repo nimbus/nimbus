@@ -16,8 +16,8 @@ prove the fixture goes dynamically green, then promote it. There is no shortcut:
 you cannot make a fixture "pass" by skipping, weakening an assertion, or editing
 the derived posture.
 
-**Current gate (already done): node22 = 75, node24 = 83.** Session cycles 17–24
-took it from 81/87 → 75/83 (3 published fork tags, reclassifications, promotions,
+**Current gate (already done): node22 = 33, node24 = 40.** Session cycles 17–62
+took it from 81/87 → 33/40 (published fork tags, reclassifications, promotions,
 zero false greens). Your job is to keep going, one fixture at a time.
 
 ## THE HONESTY CONTRACT (non-negotiable — a false green is worse than a red gate)
@@ -40,7 +40,7 @@ committed input). When unsure, leave it red.
 | --- | --- |
 | Work in this worktree | `/Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening` |
 | Branch (push every cycle) | `codex/node-default-runtime-support-hardening` → PR **#10** |
-| Nimbus Deno fork | `/Users/jack/src/github.com/nimbus/deno`, branch `nimbus/v2.8.2-nimbus.18-chown-negative-one`, currently tag `v2.8.2-nimbus.32` |
+| Nimbus Deno fork | `/Users/jack/src/github.com/nimbus/deno`, branch `nimbus/v2.8.3`, currently tag `v2.8.3-nimbus.16` |
 | rusty_v8 fork | `/Users/jack/src/github.com/nimbus/rusty_v8` (prebuilt; editing its `binding.cc` → from-source V8 build → **OOMs this host** → blocked) |
 | Vendored fixtures | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/<lane>/test/parallel/test-*.js` (lanes: node20/22/24/26) |
 | Test `mod.rs` (add `include!`s here) | `crates/nimbus-runtime/src/runtime/tests/node/mod.rs` (the `include!("cases/...")` block near the end) |
@@ -172,11 +172,12 @@ cargo clean -p deno_node          # REQUIRED for polyfill .js/.ts edits to recom
 # (b) build + census the target via the probe (or a promotion wave) until passed=1/skipped=0/failed=0
 # (c) publish the fork:
 cd /Users/jack/src/github.com/nimbus/deno
-git add -A && git commit -m "node(...): <what>" && git tag v2.8.2-nimbus.NN && git push origin HEAD && git push origin v2.8.2-nimbus.NN
+git add ext/node/polyfills/domain.ts ext/node/polyfills/vm.js  # replace with exact edited files
+git commit -m "node(...): <what>" && git tag v2.8.3-nimbus.NN && git push origin HEAD && git push origin v2.8.3-nimbus.NN
 # (d) repin Nimbus to the published tag + drop the override:
 cd <worktree>
 git checkout .cargo/config.toml
-perl -pi -e 's/v2\.8\.2-nimbus\.32/v2.8.2-nimbus.NN/g' Cargo.toml   # bump PREV->NN
+perl -pi -e 's/v2\.8\.3-nimbus\.16/v2.8.3-nimbus.NN/g' Cargo.toml   # bump PREV->NN
 cargo update -p deno_node
 # (e) RE-VERIFY on the published tag (rebuild from git, not the local path) — census must stay green
 ```
@@ -248,7 +249,8 @@ git push origin codex/node-default-runtime-support-hardening
   panic + needs cross-boundary `initializeImportMeta` wiring); `test-webcrypto-sign-verify-eddsa`
   (Ed448), `test-webcrypto-keygen-kmac`, `test-webcrypto-sign-verify-kmac` (KMAC) —
   native crypto primitives possibly absent from aws-lc.
-- **~82 tractable-but-deep** by category (owner = `nimbus/deno` unless noted):
+- **42 unique required fixtures remain, with 5 genuinely blocked and the rest
+  tractable-but-deep** by category (owner = `nimbus/deno` unless noted):
   behavioral-misc (console/assert/error-message/stream parity — usually deno_node TS,
   lowest risk, **start here**), crypto-provider (mostly native — verify before
   committing a build), vm-semantics (deno_node `ext/node/{polyfills/vm.js,ops/vm.rs}`;

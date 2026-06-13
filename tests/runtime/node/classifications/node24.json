@@ -454,7 +454,6 @@
         "test/parallel/test-vm-module-hastoplevelawait.js",
         "test/parallel/test-vm-module-import-meta.js",
         "test/parallel/test-vm-module-referrer-realm.mjs",
-        "test/parallel/test-vm-script-after-evaluate.js",
         "test/parallel/test-vm-sigint-existing-handler.js",
         "test/parallel/test-vm-sigint.js",
         "test/parallel/test-vm-syntax-error-message.js",
