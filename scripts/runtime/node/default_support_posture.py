@@ -128,6 +128,13 @@ HOST_PROCESS_CONTROL_PATHS = {
     # state), followed by process.exit(). The isolate does not own process.report,
     # so the assertion mechanism is host process control, not in-isolate API.
     "test/parallel/test-http-agent-reuse-drained-socket-only.js",
+    # NDS3 cycle-26 disposition (2026-06-12): the remaining blocker in the
+    # official file is the "Does not hang forever" case, which runs
+    # child_process.spawn(process.execPath, ["--input-type=module"]) and asserts
+    # the spawned host process exit code. The in-isolate util.aborted() behavior
+    # is tested earlier in the same file; the subprocess postlude is host
+    # process control and must fail closed in the default multi-tenant isolate.
+    "test/parallel/test-aborted-util.js",
 }
 
 HOST_PROCESS_CONTROL_PREFIXES = (
