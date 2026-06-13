@@ -243,6 +243,7 @@ fn node_compat_supported_node_options_flag(token: &str) -> bool {
     token == "--pending-deprecation"
         || token == "--no-warnings"
         || token == "--trace-warnings"
+        || token == "--experimental-vm-modules"
         || token == "--experimental-require-module"
         || token == "--require-module"
         || token == "--no-experimental-require-module"
@@ -326,7 +327,7 @@ pub(super) fn fixture_requests_pending_deprecation(test_source: &str) -> bool {
 fn fixture_requested_node_options_filters_and_preserves_order() {
     let source = r#"
 // Flags: --trace-warnings --inspect --conditions=custom --unhandled-rejections=warn
-// Flags: --no-warnings -C another --trace-warnings --pending-deprecation --preserve-symlinks
+// Flags: --no-warnings -C another --trace-warnings --pending-deprecation --preserve-symlinks --experimental-vm-modules
 // Flags: --preserve-symlinks-main --no-preserve-symlinks-main
 "#;
 
@@ -341,6 +342,7 @@ fn fixture_requested_node_options_filters_and_preserves_order() {
             "--conditions=another".to_string(),
             "--pending-deprecation".to_string(),
             "--preserve-symlinks".to_string(),
+            "--experimental-vm-modules".to_string(),
             "--preserve-symlinks-main".to_string(),
             "--no-preserve-symlinks-main".to_string(),
         ]
@@ -3717,3 +3719,4 @@ include!("cases/nds3_cycle53_wave1.rs");
 include!("cases/nds3_cycle54_wave1.rs");
 include!("cases/nds3_cycle55_wave1.rs");
 include!("cases/nds3_cycle56_wave1.rs");
+include!("cases/nds3_cycle57_wave1.rs");
