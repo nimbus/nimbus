@@ -202,6 +202,15 @@ HOST_NETWORK_SOCKET_PATHS = {
     #     family.js directly above.
     "test/parallel/test-https-localaddress-bind-error.js",
     "test/parallel/test-https-agent-additional-options.js",
+    # NDS3 cycle-45 (2026-06-13): source-confirmed against node22/node24 fixture
+    # bodies. The fixture runs with `// Flags: --expose-gc`, creates a real
+    # `http.createServer(...).listen(0)`, repeatedly drives `http.get()` clients
+    # to localhost, destroys each accepted socket via `res.connection.destroy()`,
+    # then requires every ClientRequest object to surface an async_hooks
+    # GC-tracker destroy event after `globalThis.gc()`. This is host-owned HTTP
+    # socket teardown plus exact exposed-GC async-resource topology, not portable
+    # multi-tenant V8 isolate Application API support.
+    "test/parallel/test-gc-http-client-connaborted.js",
 }
 
 NODE_CLI_TOPOLOGY_PATHS = {
