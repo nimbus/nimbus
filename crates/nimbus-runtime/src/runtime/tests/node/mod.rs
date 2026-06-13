@@ -969,6 +969,7 @@ fn should_load_fixture_as_commonjs_main_module(test_relative_path: &str) -> bool
     matches!(
         test_relative_path,
         "test/parallel/test-events-uncaught-exception-stack.js"
+            | "test/parallel/test-domain-stack-empty-in-process-uncaughtexception.js"
     )
 }
 
@@ -2005,6 +2006,44 @@ fn node_compat_uncaught_exception_stack_fixture_uses_commonjs_main_entry() {
         !bundle_source
             .contains(r#"createRequire(import.meta.url)("./test/parallel/test-events-uncaught-exception-stack.js");"#),
         "uncaught-exception main fixture should not load as a nested require:\n{bundle_source}"
+    );
+}
+
+#[test]
+fn node_compat_domain_uncaught_exception_stack_fixture_uses_commonjs_main_entry() {
+    let (_tempdir, bundle_path) = write_node_compat_bundle(NodeCompatBundleWriteOptions {
+        test_relative_path: "test/parallel/test-domain-stack-empty-in-process-uncaughtexception.js",
+        test_source: "require('domain').create().run(() => { throw new Error('boom'); });",
+        extra_files: &[],
+        capture_top_level_skip: true,
+        lane: None,
+        prelude_script: None,
+        postlude_script: None,
+        node_options: &[],
+        mode: NodeCompatBundleMode::Runtime,
+    });
+    let bundle_source = std::fs::read_to_string(&bundle_path).expect("bundle should read");
+    assert!(
+        bundle_source.contains(r#"createRequire(import.meta.url)("module")._load("#),
+        "domain uncaught-exception fixture should load through Module._load:\n{bundle_source}"
+    );
+    assert!(
+        bundle_source.contains(
+            r#"new URL("./test/parallel/test-domain-stack-empty-in-process-uncaughtexception.js", import.meta.url).pathname"#
+        ),
+        "domain uncaught-exception fixture should resolve the real fixture path:\n{bundle_source}"
+    );
+    assert!(
+        !bundle_source.contains(
+            r#"await import("./test/parallel/test-domain-stack-empty-in-process-uncaughtexception.js");"#
+        ),
+        "domain uncaught-exception fixture should not load through ESM import:\n{bundle_source}"
+    );
+    assert!(
+        !bundle_source.contains(
+            r#"createRequire(import.meta.url)("./test/parallel/test-domain-stack-empty-in-process-uncaughtexception.js");"#
+        ),
+        "domain uncaught-exception fixture should not load as a nested require:\n{bundle_source}"
     );
 }
 
@@ -3180,6 +3219,7 @@ pub(super) fn default_postlude_behavior_for_fixture(
         | "test/parallel/test-process-exit-from-before-exit.js"
         | "test/parallel/test-stream-writable-samecb-singletick.js"
         | "test/parallel/test-process-env-deprecation.js"
+        | "test/parallel/test-domain-stack-empty-in-process-uncaughtexception.js"
         // test-async-wrap-uncaughtexception registers a single
         // `process.on('beforeExit', mustCall())` whose handler runs the
         // terminal asserts (call_id is a number; call_log deep-equals
@@ -3727,3 +3767,4 @@ include!("cases/nds3_cycle61_wave1.rs");
 include!("cases/nds3_cycle62_wave1.rs");
 include!("cases/nds3_cycle63_wave1.rs");
 include!("cases/nds3_cycle64_wave1.rs");
+include!("cases/nds3_cycle65_wave1.rs");
