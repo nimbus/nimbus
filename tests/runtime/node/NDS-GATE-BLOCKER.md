@@ -1,4 +1,4 @@
-# NDS gate - FORMAL documented blocked state (cycle-42, 2026-06-13)
+# NDS gate - FORMAL documented blocked state (cycle-43, 2026-06-13)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
 **Fork:** nimbus/deno v2.8.3-nimbus.8 (2ebf5b82b5); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
@@ -6,9 +6,9 @@
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 58**, **node24 = 67**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 58**, **node24 = 66**. Not 0/0.
 
-Session cycles 17-42 reduced the gate 81/87 -> 58/67 by harvesting every cheap/clean/
+Session cycles 17-43 reduced the gate 81/87 -> 58/66 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -23,10 +23,12 @@ uncaughtException stack handling; Node global enumerable surface parity; WebStre
 BYOB invalid-state error-code parity; fs.WriteStream node:test lifecycle-drain
 parity for uncorked writes; HTTP parser async-resource lifecycle parity; stream
 writable same-callback TickObject harness-drain isolation; Readable compose
-operator shape, Node-stream tail pumping, and async-generator destroy parity; all
+operator shape, Node-stream tail pumping, and async-generator destroy parity; and
+source-confirmed native crypto provider-composition reclassification for the
+OpenSSL-gated `SubtleCrypto.supports()` matrix; all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 69 unique fixtures remain
-(node22=58, node24=67).
+regression-verified at their promotion surface). 68 unique fixtures remain
+(node22=58, node24=66).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -38,7 +40,7 @@ regression-verified at their promotion surface). 69 unique fixtures remain
 
 ## Tractable but deep (sustained multi-session native deno_core/deno_crypto work — task #61)
 
-### DEEP_crypto_provider (15) — owner: nimbus/deno (ext/crypto / deno_node_crypto)
+### DEEP_crypto_provider (14) — owner: nimbus/deno (ext/crypto / deno_node_crypto)
 - `test/parallel/test-crypto-authenticated.js` (22+24)
 - `test/parallel/test-crypto-des3-wrap.js` (22+24)
 - `test/parallel/test-webcrypto-deduplicate-usages.js` (24)
@@ -52,7 +54,6 @@ regression-verified at their promotion surface). 69 unique fixtures remain
 - `test/parallel/test-webcrypto-keygen.js` (22+24)
 - `test/parallel/test-webcrypto-promise-prototype-pollution.mjs` (24)
 - `test/parallel/test-webcrypto-sign-verify.js` (22+24)
-- `test/parallel/test-webcrypto-supports.mjs` (24)
 - `test/parallel/test-webcrypto-wrap-unwrap.js` (22+24)
 
 ### DEEP_domain_regression_risk (3) — owner: nimbus/deno (ext/node domain.ts — regression-risky)
@@ -124,4 +125,4 @@ regression-verified at their promotion surface). 69 unique fixtures remain
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring, native Ed448/KMAC primitives maybe absent from aws-lc). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=58 / node24=67.
+multi-session effort. Gate held RED and honest at node22=58 / node24=66.

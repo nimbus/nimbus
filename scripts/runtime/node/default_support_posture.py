@@ -596,6 +596,20 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         'test/parallel/test-process-hrtime-bigint.js',
         'test/parallel/test-process-hrtime.js',
         'test/parallel/test-process-versions.js',
+        # NDS3 cycle-43 (2026-06-13): source-confirmed. The fixture imports
+        # test/fixtures/webcrypto/supports-modern-algorithms.mjs, which derives
+        # its expected SubtleCrypto.supports() matrix from Node's exact OpenSSL
+        # version gates (`hasOpenSSL(3)`, `hasOpenSSL(3, 5)`) rather than from
+        # pure WebCrypto algorithm syntax. Nimbus/Deno's native provider is
+        # aws-lc/BoringSSL-shaped: the process polyfill reports
+        # openssl_is_boringssl, AES-OCB exists in deno_crypto, ML-DSA/ML-KEM
+        # exist through aws-lc unstable hooks, and KMAC128/256 are not registered
+        # in deno_crypto's WebCrypto tables. Focused cycle-43 census confirmed
+        # the fixture first wanted AES-OCB true, then failed on the provider
+        # matrix skew (ML-DSA expected false under OpenSSL<3.5; KMAC object
+        # support expected true under OpenSSL>=3). That is Node's native crypto
+        # dependency composition, not a portable isolate API guarantee.
+        'test/parallel/test-webcrypto-supports.mjs',
         'test/parallel/test-strace-openat-openssl.js',
         'test/parallel/test-util-getcallsites.js',
         'test/parallel/test-util-types.js',
