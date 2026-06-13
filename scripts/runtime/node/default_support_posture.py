@@ -467,6 +467,12 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         # capability denial would weaken the host fs boundary.
         'test/parallel/test-fs-open.js',
         'test/parallel/test-fs-stream-construct-compat-error-read.js',
+        # NDS3 cycle 51 (2026-06-13): source-confirmed against identical
+        # node22/node24 fixture bodies. The fixture asserts realpath("/") and
+        # realpath("..") relative to the host cwd, plus absolute /tmp symlink
+        # graphs. That is host-root filesystem topology, not bounded default
+        # isolate filesystem behavior.
+        'test/parallel/test-fs-realpath.js',
     }),
     ('diagnostic_only_non_isolate', 'host_filesystem_ownership_boundary', 'diagnostic_stub'): frozenset({
         # NDS3 cycle 13 (2026-06-08): source-confirmed. After in-isolate
@@ -996,6 +1002,11 @@ WATCHPOINT_STRUCTURAL_RECLASSIFICATIONS = {
     "test/es-module/test-esm-import-assertion-warning.mjs": _WP_CLI_TOPOLOGY,
     "test/parallel/test-sqlite.js": _WP_NATIVE_BACKED_OPTIONAL,
     "test/parallel/test-fs-open.js": _WP_ABSOLUTE_HOST_PATH_POLICY,
+    # NDS3 cycle 51 (2026-06-13): mirrors the node24 requires_unpromoted
+    # disposition. The official fixture asserts host-root realpath("/") and
+    # realpath("..") against the process cwd, plus absolute /tmp symlink graphs,
+    # which crosses the default isolate's bounded filesystem policy.
+    "test/parallel/test-fs-realpath.js": _WP_ABSOLUTE_HOST_PATH_POLICY,
     "test/parallel/test-dgram-cluster-bind-error.js": _WP_HOST_PROCESS_CONTROL,
     "test/parallel/test-dgram-cluster-close-during-bind.js": _WP_HOST_PROCESS_CONTROL,
     "test/parallel/test-dgram-exclusive-implicit-bind.js": _WP_HOST_PROCESS_CONTROL,
