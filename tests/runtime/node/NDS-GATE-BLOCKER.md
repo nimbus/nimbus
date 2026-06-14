@@ -1,14 +1,14 @@
-# NDS gate - FORMAL documented blocked state (cycle-96, 2026-06-14)
+# NDS gate - FORMAL documented blocked state (cycle-97, 2026-06-14)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
-**Fork:** nimbus/deno v2.8.3-nimbus.43 (782994513c); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
+**Fork:** nimbus/deno v2.8.3-nimbus.45 (d23b4c5c47); nimbus/rusty_v8 v149.4.0-nimbus.2 (8f70a59)  
 **Verifier:** `bash scripts/verify-node-default-runtime-support-hardening.sh` step 9
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 1**, **node24 = 2**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 1**, **node24 = 1**. Not 0/0.
 
-Session cycles 17-96 reduced the gate 81/87 -> 1/2 by harvesting every cheap/clean/
+Session cycles 17-97 reduced the gate 81/87 -> 1/1 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -145,22 +145,22 @@ Node's `ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`, promoting
 `module.register()` hooks plus a register-only sync import path that can load the
 hook module during an in-flight dynamic import graph, promoting
 `test-esm-loader-mock.mjs` and `test-esm-virtual-json.mjs` in both required
-lanes;
+lanes; and nimbus/rusty_v8 `v149.4.0-nimbus.2` plus nimbus/deno
+`v2.8.3-nimbus.45` expose V8 module top-level-await metadata through the
+Node `vm.SourceTextModule` surface, promoting
+`test-vm-module-hastoplevelawait.js` in node24;
 all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 2 unique fixtures remain
-(node22=1, node24=2).
+regression-verified at their promotion surface). 1 unique fixture remains
+(node22=1, node24=1).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
-- `test/parallel/test-vm-module-hastoplevelawait.js` (24) — owner: nimbus/rusty_v8 (Module::HasTopLevelAwait binding -> from-source V8 -> OOM)
 - `test/parallel/test-vm-module-import-meta.js` (22+24) — owner: nimbus/deno (libs/core/runtime/bindings.rs:1104 + ext/node vm initializeImportMeta wiring)
 
 ## Conclusion
 
 0/0 is not reachable on this host without work outside the allowed/current
-runtime scope. The remaining subset is a true blocker set: rusty_v8
-`Module::HasTopLevelAwait` requires a binding and prebuilt archive refresh that
-forces a from-source V8 build on this 32 GB host, and VM module import-meta still
-panics in deno_core / needs cross-boundary `initializeImportMeta` wiring. Gate
-held RED and honest at node22=1 / node24=2.
+runtime scope. The remaining subset is a true blocker set: VM module import-meta
+still panics in deno_core / needs cross-boundary `initializeImportMeta` wiring.
+Gate held RED and honest at node22=1 / node24=1.
