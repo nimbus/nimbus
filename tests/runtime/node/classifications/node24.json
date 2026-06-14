@@ -2184,7 +2184,6 @@
         "test/parallel/test-primordials-regexp.js",
         "test/parallel/test-priority-queue.js",
         "test/parallel/test-promise-reject-callback-exception.js",
-        "test/parallel/test-promise-swallowed-event.js",
         "test/parallel/test-promise-unhandled-flag.js",
         "test/parallel/test-queue-microtask.js",
         "test/parallel/test-quic-alpn-h3.mjs",

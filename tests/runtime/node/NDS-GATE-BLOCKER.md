@@ -1,14 +1,14 @@
-# NDS gate - FORMAL documented blocked state (cycle-76, 2026-06-14)
+# NDS gate - FORMAL documented blocked state (cycle-77, 2026-06-14)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
-**Fork:** nimbus/deno v2.8.3-nimbus.25 (374f984410); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
+**Fork:** nimbus/deno v2.8.3-nimbus.26 (b5cb5b4d95); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
 **Verifier:** `bash scripts/verify-node-default-runtime-support-hardening.sh` step 9
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 20**, **node24 = 26**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 19**, **node24 = 25**. Not 0/0.
 
-Session cycles 17-76 reduced the gate 81/87 -> 20/26 by harvesting every cheap/clean/
+Session cycles 17-77 reduced the gate 81/87 -> 19/25 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -80,11 +80,15 @@ promoted the node22 `test-performance-eventlooputil.js` and node24
 `test-perf-hooks-eventlooputilization.js` hang-timeout pair; and
 nimbus/deno `v2.8.3-nimbus.25` unrefs the internal transferred-WebStreams
 MessagePorts after cross-realm bridge setup, promoting
-`test-webstreams-clone-unref.js` in both required lanes;
+`test-webstreams-clone-unref.js` in both required lanes; and
+nimbus/deno `v2.8.3-nimbus.26` preserves duplicate promise settle callbacks
+through deno_core and maps them to Node's deprecated process
+`multipleResolves` event with DEP0160 warning behavior, promoting
+`test-promise-swallowed-event.js` in both required lanes;
 all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 27 unique fixtures remain
-(node22=20, node24=26).
+regression-verified at their promotion surface). 26 unique fixtures remain
+(node22=19, node24=25).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -120,9 +124,8 @@ regression-verified at their promotion surface). 27 unique fixtures remain
 - `test/es-module/test-esm-snapshot.mjs` (22+24)
 - `test/es-module/test-esm-virtual-json.mjs` (22+24)
 
-### DEEP_promise_hooks (2) — owner: nimbus/deno (deno_core promise hooks)
+### DEEP_promise_hooks (1) — owner: nimbus/deno (deno_core promise hooks)
 - `test/parallel/test-heapdump-async-hooks-init-promise.js` (22+24)
-- `test/parallel/test-promise-swallowed-event.js` (22+24)
 
 ## Conclusion
 
@@ -130,4 +133,4 @@ regression-verified at their promotion surface). 27 unique fixtures remain
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring, native Ed448/KMAC primitives maybe absent from aws-lc). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=20 / node24=26.
+multi-session effort. Gate held RED and honest at node22=19 / node24=25.

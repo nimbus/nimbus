@@ -16,8 +16,8 @@ prove the fixture goes dynamically green, then promote it. There is no shortcut:
 you cannot make a fixture "pass" by skipping, weakening an assertion, or editing
 the derived posture.
 
-**Current gate (already done): node22 = 20, node24 = 26.** Session cycles 17-76
-took it from 81/87 -> 20/26 (published fork tags, reclassifications, promotions,
+**Current gate (already done): node22 = 19, node24 = 25.** Session cycles 17-77
+took it from 81/87 -> 19/25 (published fork tags, reclassifications, promotions,
 zero false greens). Your job is to keep going, one fixture at a time.
 
 ## THE HONESTY CONTRACT (non-negotiable — a false green is worse than a red gate)
@@ -40,7 +40,7 @@ committed input). When unsure, leave it red.
 | --- | --- |
 | Work in this worktree | `/Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening` |
 | Branch (push every cycle) | `codex/node-default-runtime-support-hardening` → PR **#10** |
-| Nimbus Deno fork | `/Users/jack/src/github.com/nimbus/deno`, branch `nimbus/v2.8.3`, currently tag `v2.8.3-nimbus.25` |
+| Nimbus Deno fork | `/Users/jack/src/github.com/nimbus/deno`, branch `nimbus/v2.8.3`, currently tag `v2.8.3-nimbus.26` |
 | rusty_v8 fork | `/Users/jack/src/github.com/nimbus/rusty_v8` (prebuilt; editing its `binding.cc` → from-source V8 build → **OOMs this host** → blocked) |
 | Vendored fixtures | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/<lane>/test/parallel/test-*.js` (lanes: node20/22/24/26) |
 | Test `mod.rs` (add `include!`s here) | `crates/nimbus-runtime/src/runtime/tests/node/mod.rs` (the `include!("cases/...")` block near the end) |
@@ -249,10 +249,10 @@ git push origin codex/node-default-runtime-support-hardening
   panic + needs cross-boundary `initializeImportMeta` wiring); `test-webcrypto-sign-verify-eddsa`
   (Ed448), `test-webcrypto-keygen-kmac`, `test-webcrypto-sign-verify-kmac` (KMAC) —
   native crypto primitives possibly absent from aws-lc.
-- **27 unique required fixtures remain, with 5 genuinely blocked and the rest
+- **26 unique required fixtures remain, with 5 genuinely blocked and the rest
   tractable-but-deep** by category (owner = `nimbus/deno` unless noted):
   crypto-provider (mostly native — verify primitives before committing a build),
-  esm-loader (deno_core), and promise-hooks (deno_core).
+  esm-loader (deno_core), and one remaining promise-hooks fixture (deno_core).
 - **Suggested order:** crypto primitive feasibility/probes, then ESM loader, then
   promise-hooks. Cycle71 promoted the Node24
   WebCrypto promise-prototype-pollution fixture; a same-cluster
@@ -260,7 +260,10 @@ git push origin codex/node-default-runtime-support-hardening
   support and stayed red. Cycle72 promoted ESM CJS named export errors; cycle73
   source-confirmed `test-performance-many-marks.js` as an isolate watchdog
   fairness boundary; cycle74 source-confirmed `test-v8-serialize-leak.js` as a
-  host-process RSS/GC diagnostic.
+  host-process RSS/GC diagnostic. Cycle77 promoted
+  `test-promise-swallowed-event.js` by preserving duplicate promise settle
+  callbacks through deno_core and emitting Node's deprecated
+  `process` `multipleResolves` event from the node polyfill.
 
 ## Verify (the goal)
 
