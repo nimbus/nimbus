@@ -75,6 +75,8 @@ queries and mutations from a single local process.
 
 ## Next steps
 
+- [Deploy to production](/get-started/deploy/) — take this app from
+  `nimbus dev` to a production server with one command.
 - [Developers](/developers/) — functions, schema, scheduling, file storage,
   auth, and the per-adapter guides.
 - [Concepts](/concepts/) — how the engine, data model, and tenancy work.

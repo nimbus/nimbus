@@ -47,12 +47,9 @@ for the upstream one.
 
 ## 2. Keep your imports unchanged
 
-No import rewrite step exists in this migration:
-
-| Firebase today | After migration |
-| --- | --- |
-| `import { ... } from "firebase/app"` | unchanged |
-| `import { ... } from "firebase/firestore"` | unchanged |
+No import rewrite step exists in this migration: your `firebase/app` and
+`firebase/firestore` import lines are byte-identical before and after — only
+the dependency resolution changes.
 
 Common Firestore helpers keep the same names and signatures:
 

@@ -1,6 +1,6 @@
 ---
 title: Current capabilities
-description: An honest snapshot of what Nimbus implements today — every major capability with a status and a link to its documentation.
+description: A snapshot of what Nimbus implements today — every major capability with a status and a link to its documentation.
 sidebar:
   label: Current capabilities
   order: 5
@@ -64,7 +64,7 @@ Each capability carries one of three statuses:
 | libSQL / Turso backend | Available | Local replica reads against a remote libSQL primary, with replica-freshness diagnostics. |
 | redb backend | Available | Retained embedded key-value backend; prefer SQLite otherwise. |
 | Encryption at rest | Available | Per-file data keys with master-key-file, key-directory, or AWS KMS providers, plus key-rotation commands. See [encryption](/operators/encryption/). |
-| Backup and restore | Available with caveats | Storage-level procedures only — no first-class backup command and no point-in-time recovery. See [backup & restore](/operators/backup-restore/). |
+| Backup and restore | Available with caveats | `nimbus backup create`/`restore` for the embedded SQLite and redb providers — one offline, per-tenant archive captured at each tenant's latest committed sequence (server stopped), verified by fingerprint on restore. External backends and encrypted data directories use native or cold-copy procedures; there is no continuous point-in-time recovery. See [backup & restore](/operators/backup-restore/). |
 | Production deployment | Available | [Linux servers](/operators/deploy-linux/), the official [container image](/operators/container-image/), and a [desktop install](/operators/desktop-install/) for the operator console. |
 
 ## Services, sandboxes, and machines
@@ -81,6 +81,6 @@ Each capability carries one of three statuses:
 | Capability | Status | Notes |
 | --- | --- | --- |
 | Multi-node clustering and horizontal scale-out | Not yet | A Nimbus deployment is a single process today. See [scaling](/concepts/scaling/). |
-| First-class backup command and point-in-time recovery | Not yet | Back up the storage layer directly; see [backup & restore](/operators/backup-restore/). |
+| Continuous point-in-time recovery and external-backend backup command | Not yet | `nimbus backup` covers the embedded providers offline; external backends use their native tooling, and there is no continuous or arbitrary-timestamp recovery. See [backup & restore](/operators/backup-restore/). |
 | MongoDB change streams | Not yet | See [MongoDB operations](/reference/mongodb/operations/). |
 | Automatic updates | Not yet | The server checks for new versions but never upgrades itself. See [updates](/operators/updates/). |

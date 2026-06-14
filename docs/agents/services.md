@@ -51,7 +51,7 @@ console.log(created.metadata.generation, created.status.lifecycleState);
 
 Responses are resource objects with `metadata` (name, `generation`,
 `resourceVersion`, timestamps, labels), `spec`, and `status` (lifecycle
-state, readiness, health, and Kubernetes-style `conditions`).
+state, readiness, health, and `conditions`).
 
 The owner metadata must name the owning service — launch is rejected if
 they disagree. The service is not its sandbox: applications address the
@@ -94,9 +94,12 @@ await nimbus.services.update({
   ifMatchGeneration: current.metadata.generation,
 });
 
+// Each successful update bumps the generation, so re-read before deleting.
+const updated = await nimbus.services.get({ name: "worker" });
+
 await nimbus.services.delete({
   name: "worker",
-  ifMatchGeneration: current.metadata.generation + 1,
+  ifMatchGeneration: updated.metadata.generation,
 });
 ```
 
@@ -132,10 +135,8 @@ backend: {
 }
 ```
 
-Today only sandbox-backed services can actually be launched by the
-service manager; built-in and external services exist as validated
-definitions and report a `declared` lifecycle state rather than a running
-one.
+For which backend kinds actually launch today versus report a `declared`
+state, see [Services, sandboxes, and sessions](/concepts/resource-model/).
 
 ## Related pages
 

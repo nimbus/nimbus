@@ -16,8 +16,8 @@ wins and the page gets fixed.
   environment variable, and config key.
 - [Deploy & admin API](/reference/deploy-admin-api/) — staging, diff, and
   activation.
-- [Current capabilities](/reference/current-capabilities/) — the honest
-  snapshot of what works today.
+- [Current capabilities](/reference/current-capabilities/) — a snapshot
+  of what works today, with a status on every capability.
 
 ## JavaScript SDK
 

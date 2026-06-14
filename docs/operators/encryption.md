@@ -3,7 +3,7 @@ title: Encryption at rest
 description: Enable encryption for Nimbus-owned local data, choose a key provider, rotate keys, and recover encrypted databases.
 sidebar:
   label: Encryption at rest
-  order: 5
+  order: 7
 ---
 
 Nimbus encrypts the local database files it owns: embedded SQLite and redb

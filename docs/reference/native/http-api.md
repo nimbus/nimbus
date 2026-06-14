@@ -101,6 +101,47 @@ Paginated query body:
 | `page_size` | number | yes | Documents per page |
 | `after` | string | no | Cursor from a previous page's `next_cursor` |
 
+## Journal
+
+The journal exposes a tenant's durable mutation log — the ordered record of
+applied writes — for replication and replay. Both routes are read-only.
+
+| Method | Path | Success | Response body |
+| --- | --- | --- | --- |
+| GET | `/api/tenants/{tenant_id}/journal` | 200 | Journal stream page (see below) |
+| GET | `/api/tenants/{tenant_id}/journal/bootstrap` | 200 | Bootstrap payload (see below) |
+
+`GET .../journal` streams records after a cursor. Query parameters:
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `after` | number | no | Sequence cursor; records *after* it are returned (default `0`, from the start) |
+| `limit` | number | no | Maximum records per page (default `100`) |
+
+Response body:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `records` | array | Journal records, oldest first (see below) |
+| `next_cursor` | number | Sequence to pass as the next call's `after` |
+| `latest_sequence` | number | Highest sequence currently durable |
+| `cursor_floor` | number | Lowest sequence still retained |
+| `has_more` | boolean | Whether more records remain past this page |
+
+Each record carries `version`, `sequence`, `timestamp` (epoch milliseconds),
+`events`, `writes`, `scheduled_execution_id` (string or null), and
+`integrity_sha256`.
+
+`GET .../journal/bootstrap` returns a materialized snapshot plus the cursor
+to resume streaming from, for replaying a tenant from scratch:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `snapshot` | object | Materialized state: `version`, `applied_sequence`, `durable_head`, `schema`, `documents`, `scheduled_execution_ids` |
+| `resume_after_sequence` | number | Pass as `after` to `.../journal` to continue from the snapshot |
+| `bootstrap_cut_sequence` | number | Sequence the snapshot was cut at |
+| `cursor_floor_sequence` | number | Lowest sequence still retained |
+
 ## Schema
 
 Schemas are optional: a table without a schema accepts any document.

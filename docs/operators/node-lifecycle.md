@@ -3,7 +3,7 @@ title: Run Nimbus as a service
 description: Install, inspect, and remove the systemd or Podman Quadlet service that runs a Nimbus node — generated units, socket activation, diagnostics, and Compose export.
 sidebar:
   label: Run Nimbus as a service
-  order: 9
+  order: 10
 ---
 
 Nimbus does not self-daemonize. A node is either a foreground process or a

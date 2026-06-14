@@ -31,7 +31,19 @@ need Node.js 22 or newer for the script below.
 nimbus start --port 8080 --data-dir ./data
 ```
 
-## 3. Grab the admin token and create a tenant
+## 3. macOS / WSL2: start the machine first
+
+Sandboxes execute on a Linux host. On Linux you can skip this step. On macOS
+or WSL2, start the managed Linux VM that hosts sandboxes before creating one:
+
+```bash
+nimbus machine start
+```
+
+See the [CLI reference](/reference/cli/) for `nimbus machine` flags
+(`--cpus`, `--memory`, and named machines).
+
+## 4. Grab the admin token and create a tenant
 
 The native API is protected by a local admin token, created on first boot:
 
@@ -48,14 +60,14 @@ curl -s -X POST http://localhost:8080/api/tenants \
   -d '{"id": "demo"}'
 ```
 
-## 4. Install the SDK
+## 5. Install the SDK
 
 ```bash
 mkdir agent-sandbox && cd agent-sandbox
 npm init -y && npm install @nimbus/nimbus
 ```
 
-## 5. Create a sandbox and lease a session
+## 6. Create a sandbox and lease a session
 
 Save this as `sandbox.mjs`:
 
@@ -106,7 +118,7 @@ await nimbus.sandboxes.stop({ id: sandbox.metadata.id });
 console.log("stopped");
 ```
 
-## 6. Run it
+## 7. Run it
 
 ```bash
 node sandbox.mjs

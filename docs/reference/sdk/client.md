@@ -336,7 +336,7 @@ Types:
 
 | Type | Description |
 | --- | --- |
-| `CronJobRequest` | Cron creation body; see the caveat under "Methods to avoid". |
+| `CronJobRequest` | Cron creation body: `{ name, schedule: { type: "interval", seconds }, mutation: { type, table, fields } }`. |
 | `FetchLike` | Fetch-compatible function type. |
 | `NimbusRestClientOptions` | Constructor options for `NimbusRestClient`. |
 | `RequestOptions` | `RequestInit` with plain-object headers. |
@@ -344,4 +344,4 @@ Types:
 | `SubscribeQuery` | Query shape: `{ table, filters?, order?, limit? }` (always pass `filters`). |
 | `Subscription` | `{ subscriptionId, unsubscribe }`. |
 | `SubscriptionClientOptions` | `{ onLog? }`. |
-| `TableSchema` | Schema body; see the caveat under "Methods to avoid". |
+| `TableSchema` | Schema body: `{ table, fields: [{ name, field_type, required }], indexes: [{ name, fields }] }`. `field_type` is `"string" \| "number" \| "boolean" \| "array" \| "object" \| "any"`. |

@@ -5,6 +5,9 @@ sidebar:
   order: 2
 ---
 
+Served by default on `127.0.0.1:27017` (loopback only); opt out with
+`--no-mongodb`; SCRAM credentials.
+
 The Nimbus MongoDB endpoint implements a defined subset of the MongoDB
 command surface. Anything outside this page is rejected with an explicit
 error — an unknown command returns `CommandNotFound` (code 59), and an

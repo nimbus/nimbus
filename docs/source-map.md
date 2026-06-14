@@ -43,7 +43,7 @@ sources exist.
 | `developers/auth.md` | `ConvexProviderWithAuth` / `useConvexAuth` / `setAuth` / `clearAuth` client surface | `packages/convex/src/react.ts`, `packages/nimbus/src/browser.ts`, `packages/nimbus/src/react.ts` |
 | `developers/auth.md` | No token → `getUserIdentity()` null; invalid token → request rejected | `crates/nimbus-server/src/application_auth.rs`, `crates/nimbus-runtime/src/runtime/bootstrap/source.rs` |
 | `agents/index.md`, `agents/sandbox-quickstart.md` | `Nimbus` client options, endpoint/credential discovery, sandbox create/get/stop, session open/close, ready-state gating | `packages/nimbus/src/index.ts` |
-| `agents/sandboxes.md`, `agents/services.md`, `agents/sessions.md` | services/sandboxes/sessions CRUD + lifecycle, `waitUntil`/`wait` polling, `ifMatchGeneration` checks, session channels/TTLs, launch-input redaction | `packages/nimbus/src/index.ts` |
+| `agents/sandboxes.md`, `agents/services.md`, `agents/sessions.md` | services/sandboxes/sessions CRUD + lifecycle, `waitUntil`/`wait` polling, `ifMatchGeneration` checks, session channels/TTLs, session state via `status.lifecycleState` (`open`/`closed`/`expired`) + `state` list filter, generation re-read after update, launch-input redaction | `packages/nimbus/src/index.ts` |
 | `agents/index.md`, `agents/sandbox-quickstart.md`, `agents/sandboxes.md` | Linux-host sandbox execution, container vs krun posture, `nimbus machine` on macOS/WSL2 (restates the verified rows for the pages below) | `docs/reference/current-capabilities.md`, `docs/concepts/resource-model.md` |
 
 ## Developers + Reference — Convex
@@ -87,6 +87,7 @@ sources exist.
 | `developers/cloud-functions/index.md` | `nimbus init cloud-functions` scaffold; serves on main port | `crates/nimbus-bin/src/init.rs`, `crates/nimbus-assets/embedded/templates/cloud-functions/`, `crates/nimbus-server/src/router.rs` |
 | `developers/cloud-functions/index.md` | Walk-up rules (`nimbus dev` bounded by `.git`; `firebase.json` root marker) | `crates/nimbus-bin/src/start/boot.rs`, `crates/nimbus-bin/src/dev/plan.rs` |
 | `developers/cloud-functions/index.md` | Artifact set `artifact.json`/`targets.json`/`bundle.mjs`/`bundle.sha256` | `crates/nimbus-cloud-functions/src/lib.rs` |
+| `developers/cloud-functions/index.md` | Authoring needs Node 22 or newer: external Node major below 22 rejected, 22 exact, newer majors allowed with a warning | `crates/nimbus-bin/src/node.rs` |
 | `developers/cloud-functions/migrate.md` | Version-1 `targets.json` schema; service-account execution for Firestore bindings | `crates/nimbus-cloud-functions/src/lib.rs`, `packages/codegen/src/selftest/cloud_functions_fixtures.mjs` |
 | `developers/cloud-functions/migrate.md` | `nimbus deploy --url/--token` + env vars | `crates/nimbus-bin/src/deploy.rs` |
 | `reference/cloud-functions/compatibility.md` | Path rules; at-least-once delivery, replay, chain-depth limit | `packages/codegen/src/cloud_functions/runtime_sources.mjs`, `crates/nimbus-engine/src/triggers/execution.rs`, `crates/nimbus-server/src/adapters/cloud_functions/execution.rs` |
@@ -123,6 +124,7 @@ sources exist.
 | `developers/native/index.md` | Admin token requirement, header forms, 401 behavior, token file locations | `crates/nimbus-operator/src/access_policy.rs`, `crates/nimbus-operator/src/paths.rs`, `crates/nimbus-operator/src/token.rs` |
 | `developers/native/index.md` | Tenant/document/query endpoints + status codes | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/http/` |
 | `reference/native/http-api.md` | Loopback origin rule; system fields; query/schema/scheduling shapes; service-control routes | `crates/nimbus-operator/src/access_policy.rs`, `crates/nimbus-core/src/document.rs`, `crates/nimbus-core/src/query.rs`, `crates/nimbus-core/src/schema.rs`, `crates/nimbus-core/src/scheduled.rs`, `crates/nimbus-server/src/router.rs` |
+| `reference/native/http-api.md` | Journal routes `GET …/journal` (`after`/`limit`, default 100; `records`/`next_cursor`/`latest_sequence`/`cursor_floor`/`has_more`) and `…/journal/bootstrap` (snapshot + resume/cut/floor sequences); SDK `readJournal`/`bootstrapJournal` | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/protocol.rs`, `crates/nimbus-server/src/http/queries.rs`, `crates/nimbus-storage/src/store/journal_stream.rs`, `packages/nimbus/src/rest.ts` |
 | `reference/native/websocket-protocol.md` | `nimbus.v2` negotiation, handshake, frame catalog, close codes | `crates/nimbus-server/src/ws/`, `crates/nimbus-server/src/protocol.rs`, `crates/nimbus-server/src/error_envelope.rs` |
 | `reference/native/errors.md` | Error envelope, code catalog, status mapping | `crates/nimbus-server/src/error_envelope.rs`, `crates/nimbus-core/src/error.rs` |
 
@@ -249,6 +251,8 @@ sources exist.
 | `reference/sdk/client.md` | `NimbusRestClient` method/route table pinned by native_rest_routes.json parity guard; request types match server shapes | `packages/nimbus/src/rest.ts`, `packages/nimbus/src/native_rest_routes.json`, `crates/nimbus-server/src/router.rs` |
 | `reference/sdk/client.md` | `SubscribeQuery.filters` required (typed required); `PaginatedQuery` nested `{query, page_size, after}`; `{patch}` update body; interval cron schedule; `{name, fields}` indexes | `crates/nimbus-core/src/query.rs`, `crates/nimbus-core/src/scheduled.rs`, `crates/nimbus-core/src/schema.rs`, `crates/nimbus-server/src/protocol.rs` |
 | `reference/sdk/resources.md` | `Nimbus` class, services/sandboxes/sessions verbs + paths, wait defaults, credential/endpoint discovery order | `packages/nimbus/src/index.ts`, `crates/nimbus-server/src/router.rs` |
+| `reference/sdk/resources.md` | `NimbusSandboxResource.status` shape (`lifecycleState` incl. `"ready"`, `readiness`, `health`, `backend`, `endpoints`, `conditions`); `backend: "container"` for process workloads (krun execute fails closed) | `packages/nimbus/src/index.ts`, `crates/nimbus-sandbox/src/backends/krun/vm/launch.rs` |
+| `reference/sdk/resources.md` | Session `requestedTtlMs` optional; default TTL 15 min, hard cap 1 h, zero rejected | `crates/nimbus-services/src/manager/sessions.rs` |
 | `reference/sdk/react.md` | Providers, hooks, skip semantics, paginated status machine, auth-state semantics | `packages/nimbus/src/react.ts` |
 
 ## Concepts — system, data, runtime
@@ -282,7 +286,7 @@ sources exist.
 | `concepts/resource-model.md` | Backend kinds (sandbox/built-in/external); built-in provider allowlist; only sandbox-backed services launch | `crates/nimbus-services/src/catalog.rs`, `crates/nimbus-services/src/manager/definitions.rs`, `crates/nimbus-services/src/manager/launch.rs` |
 | `concepts/resource-model.md` | Sandbox root (rootfs/OCI), profiles worker/desktop, container + krun backends, krun execute fail-closed | `crates/nimbus-sandbox/src/spec.rs`, `crates/nimbus-server/src/http/sandboxes.rs`, `crates/nimbus-sandbox/src/backend.rs`, `crates/nimbus-sandbox/src/backends/krun/vm/launch.rs` |
 | `concepts/resource-model.md` | Deny-by-default egress; API redacts launch inputs | `crates/nimbus-sandbox/src/egress.rs`, `crates/nimbus-server/src/http/sandbox_spec.rs` |
-| `concepts/resource-model.md` | Session TTL default 15 min / cap 1 h; per-target channel rules; generation-pinned target snapshots | `crates/nimbus-services/src/manager/sessions.rs` |
+| `concepts/resource-model.md` | Bounded default session TTL with a hard cap (literal values stated only in `reference/sdk/resources.md`); per-target channel rules; generation-pinned target snapshots | `crates/nimbus-services/src/manager/sessions.rs` |
 | `concepts/resource-model.md` | Exact service grant / sandbox reach required; session ops audited | `crates/nimbus-server/src/http/sessions.rs` |
 | `concepts/scaling.md` | No clustering/coordination substrate exists (single-process baseline) | workspace `Cargo.toml`/`Cargo.lock` (absence) |
 | `concepts/scaling.md` | Per-tenant admission queue, shedding, journal/apply lag; invocation caps → 429 | `crates/nimbus-engine/src/tenant/mutation/admission.rs`, `crates/nimbus-runtime/src/executor/admission.rs`, `crates/nimbus-server/src/error_envelope.rs` |
@@ -292,6 +296,7 @@ sources exist.
 | `reference/current-capabilities.md` | Single-field + composite index planning, backfill lifecycle; index-aware subscriptions | `crates/nimbus-core/src/schema.rs`, `crates/nimbus-engine/src/tenant/query_planning.rs`, `crates/nimbus-engine/src/subscriptions/` |
 | `reference/current-capabilities.md` | Adapter statuses (Convex/Cloud Functions detected from the app; Firestore/MongoDB/DynamoDB served by default; `nimbus dev` writes `.env.local` keys for detected driver/SDK apps) | `crates/nimbus-bin/src/start/boot.rs`, `crates/nimbus-server/src/construction.rs`, `crates/nimbus-server/src/adapters/`, `crates/nimbus-bin/src/dev/wire.rs` |
 | `reference/current-capabilities.md` | Storage/encryption/sandbox/machine/resource API statuses | `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-sandbox/src/backends/`, `crates/nimbus-bin/src/machine/mod.rs`, `crates/nimbus-server/src/router.rs` |
+| `reference/current-capabilities.md` | Backup status: `nimbus backup create/restore` for embedded sqlite/redb only (offline, per-tenant, fingerprint-verified); external backends + encrypted dirs use native/cold-copy; no continuous point-in-time recovery | `crates/nimbus-bin/src/backup.rs` |
 
 ## Concepts — architecture (request path)
 
@@ -402,7 +407,7 @@ sources exist.
 | `concepts/architecture/node-lifecycle.md` | Signal ordering (Subscribe → JobRemoved stream → StartTransientUnit/StopUnit → match by job path); done/skipped = success, unknown results = failure; 30s default timeout | `crates/nimbus-node/src/systemd_transient/zbus_client/signals.rs`, `crates/nimbus-node/src/systemd_transient/zbus_client/mod.rs` |
 | `concepts/architecture/node-lifecycle.md` | State mapping (activating→submitted, active+running→running, active+other→ready, inactive→stopped, failed→failed); missing unit reported as stopped | `crates/nimbus-node/src/systemd_transient.rs`, `crates/nimbus-node/src/systemd_transient/zbus_client/mod.rs` |
 | `concepts/architecture/node-lifecycle.md` | Reconciler desired-state derivation (active→running, deleting→stopped); inspect-first outcomes; status-evidence writer seam | `crates/nimbus-node/src/reconciler.rs` |
-| `concepts/architecture/node-lifecycle.md` | Reconciler/systemd backend have no production caller; admission/binding types are wired into the server | `crates/nimbus-node/src/reconciler.rs`, `crates/nimbus-system/src/tests.rs`, `crates/nimbus-server/src/local_enforcement.rs`, `crates/nimbus-services/src/manager/launch.rs`, `crates/nimbus-bridge/src/lib.rs` |
+| `concepts/architecture/node-lifecycle.md` | `nimbus node run` is the production caller: constructs `SystemdTransientUnitBackend` + `NodeWorkloadReconciler` and runs the reconcile loop (`--once` for a single pass), Linux-systemd-gated; multi-node scheduling/assignment is out of scope for a single process | `crates/nimbus-bin/src/node_run.rs`, `crates/nimbus-node/src/reconciler.rs`, `crates/nimbus-node/src/systemd_transient.rs` |
 | `concepts/architecture/node-lifecycle.md` | `DirectProcessBackend` in-memory test implementation | `crates/nimbus-node/src/direct_process.rs` |
 | `concepts/architecture/cli-codegen.md` | clap command tree (start/dev/deploy/codegen/init/token/auth/ui/machine/node/compose/policy/encryption/packages + hidden sandbox-supervisor) | `crates/nimbus-bin/src/main.rs` |
 | `concepts/architecture/cli-codegen.md` | Boot sequence; registry wiring gated on `.nimbus/convex/functions.json` / `.nimbus/firebase/artifact.json`; generation-zero start without app dir; two-stage bind gate; license resolution order | `crates/nimbus-bin/src/start/boot.rs` |

@@ -3,7 +3,7 @@ title: Manage tenants
 description: Create and administer tenants, choose where each tenant's data lives, and verify isolation on a running Nimbus server.
 sidebar:
   label: Manage tenants
-  order: 8
+  order: 9
 ---
 
 This guide covers the day-to-day tenant tasks: creating, listing, and

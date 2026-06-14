@@ -6,8 +6,7 @@ sidebar:
 ---
 
 Nimbus intentionally differs from AWS DynamoDB in the places listed here.
-Every divergence is deliberate, documented, and pinned by a regression test
-in the Nimbus codebase, so the behavior is stable — none of these are
+Every divergence is deliberate, documented, and stable — none of these are
 accidental gaps. Divergence codes (`DDB-DIV-*`) are stable identifiers and
 are not necessarily contiguous.
 

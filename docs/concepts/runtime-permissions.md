@@ -19,21 +19,21 @@ A function starts with no filesystem access, no network access, no
 environment variables, no subprocesses, no native code, and no
 background workers. Capability comes only from **grants**, and grants
 are exact — a list of named resources, not an on/off switch per
-category:
+category. A representative few:
 
 | Grant family | What it names |
 | --- | --- |
-| `read` / `write` | Filesystem roots, including symbolic roots like the function's generated-bundle directory and temp/cache roots. |
+| `read` / `write` | Filesystem roots, individually — including symbolic roots like the function's bundle directory and temp/cache roots. |
 | `net_connect` / `net_listen` | Network hosts, individually. Outbound access to one host does not imply another. |
 | `env_read` / `env_write` | Environment variables, by exact name. |
 | `service` | Managed services the function may look up, by exact name. |
-| `run` | Subprocess executables, by exact name or symbolic target. |
-| `sys` | Narrow system metadata such as hostname. |
-| `worker` | Background worker concurrency (thread workers). |
-| `ffi` | Native library access. |
-| `secret`, `identity`, `tool` | Declared but not yet capability-bearing: today these grants expose nothing at runtime. Declaring a secret grant does not put secret material in `process.env`, and declaring an identity grant does not synthesize an authenticated identity — request auth stays request-owned. |
 
-Database access is deliberately *not* in this table. Reading and
+Other families name subprocesses, system metadata, native libraries, and
+worker concurrency on the same exact-naming principle. A handful of
+families — covering secrets, identity, and tooling — are reserved: they
+are accepted in a policy but expose nothing at runtime today.
+
+Database access is deliberately *not* in this list. Reading and
 writing documents goes through host calls bound to the invocation's
 tenant and principal — the same engine path every API request uses (see
 [the adapter boundary](/concepts/adapter-boundary/)) — so data access

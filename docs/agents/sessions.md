@@ -53,12 +53,15 @@ actually offer:
 ## Set the TTL and close when done
 
 The requested TTL is optional; the server applies a default of fifteen
-minutes and caps every session at one hour. Sessions move through `open`,
-`closed` (explicitly closed, with a recorded reason), and `expired`
-states:
+minutes and caps every session at one hour. A session's state lives in
+`session.status.lifecycleState`, which moves through `open`, `closed`
+(explicitly closed, with a recorded reason), and `expired`. List with the
+`state` filter to find sessions in a given state:
 
 ```typescript
 const open = await nimbus.sessions.list({ state: "open" });
+
+console.log(session.status.lifecycleState); // "open" | "closed" | "expired"
 
 await nimbus.sessions.close({ id: session.metadata.id, reason: "done" });
 ```

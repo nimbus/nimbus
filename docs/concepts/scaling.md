@@ -1,6 +1,6 @@
 ---
 title: Scaling
-description: How a single Nimbus binary scales today — the tenant as the unit of isolation and growth, sandbox-backed services for heavy compute, external storage backends, and the honest limits of horizontal scale.
+description: How a single Nimbus binary scales today — the tenant as the unit of isolation and growth, sandbox-backed services for heavy compute, external storage backends, and the limits of horizontal scale.
 sidebar:
   label: Scaling
   order: 9

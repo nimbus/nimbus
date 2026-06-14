@@ -1,6 +1,6 @@
 ---
 title: Coming from Convex
-description: What Convex compatibility means in Nimbus — what works today, what differs, and how to try an existing project.
+description: What Convex compatibility means in Nimbus — what carries over, what differs, and which route to take for a fresh or existing project.
 sidebar:
   order: 4
 ---
@@ -20,34 +20,30 @@ subscriptions — self-hosted in a single binary.
 - **Workflow.** `nimbus dev` watches, runs codegen, and serves reactive
   updates the way `npx convex dev` does — entirely locally.
 
-## Try it
+## Pick your route
 
-With an existing Convex project, run Nimbus from its root:
-
-```bash
-# in your existing Convex app directory
-nimbus dev
-```
-
-`nimbus dev` recognizes the `convex/` directory, provisions the
-Convex-compatible package from inside the binary, and rewires the app's
-`convex` dependency in `package.json` to the provisioned copy — no
-registry access and no manual dependency edit.
-
-Starting fresh instead? Scaffold a new app:
-
-```bash
-nimbus init convex my-app
-cd my-app
-nimbus dev
-```
+- **Starting fresh?** Follow the
+  [5-minute quickstart](/get-started/quickstart/) to scaffold a new Convex
+  app on Nimbus and get reactive queries running.
+- **Have an existing Convex project?** Follow
+  [Migrate from Convex](/developers/convex/migrate/) to point its `convex/`
+  directory at Nimbus and rewire the `convex` dependency to the
+  provisioned drop-in package.
 
 ## What differs
 
-Nimbus is pre-launch and tracks compatibility honestly rather than claiming
-parity: some surfaces are complete, some are bounded, and Node-runtime
-coverage is documented per version. The compatibility matrix in
-[Reference](/reference/) is the source of truth for what is supported today.
+Compatibility is per-surface: some are complete, some are bounded.
+
+- **Node-runtime coverage is per-version and bounded.** `"use node"`
+  actions run on the Node compatibility runtime, whose support is
+  documented per Node major — see
+  [current capabilities](/reference/current-capabilities/).
+- **A deployment is a single process today.** There is no clustering layer;
+  one Nimbus binary serves the workload — see
+  [Scaling](/concepts/scaling/).
+
+The [Convex compatibility matrix](/reference/convex/compatibility/) is the
+source of truth for what is supported today.
 
 ## Next steps
 

@@ -7,7 +7,11 @@ sidebar:
 
 This reference records the currently implemented Firebase / Firestore
 compatibility surface in Nimbus. It is intentionally narrower than a generic
-"Firestore-compatible" claim: every row reflects shipped, tested behavior.
+"Firestore-compatible" claim. Anything not listed as supported should be
+assumed unsupported.
+
+Firestore routes are served by default on the main listener; opt out with
+`--no-firestore`.
 
 Nimbus has three distinct Firebase-facing stories:
 

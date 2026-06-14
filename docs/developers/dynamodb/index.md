@@ -77,11 +77,9 @@ let options = ServeOptions::new(engine).with_dynamodb(dynamodb);
 ```
 
 The embedding API additionally offers a signature-skipping
-`insecure_dev_auth()` lookup mode for local development; the server
-refuses to bind it to a non-loopback address.
-
-In this mode any signature is accepted for a registered key, so the server
-refuses to bind it to anything but a loopback address.
+`insecure_dev_auth()` lookup mode for local development — any signature is
+accepted for a registered key, so the server refuses to bind it to a
+non-loopback address.
 
 ## 2. Point the AWS SDK at it
 

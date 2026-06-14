@@ -3,7 +3,7 @@ title: Storage backends
 description: Run Nimbus on SQLite, Postgres, MySQL, libSQL/Turso, or redb — flags, connection strings, and how to pick a backend.
 sidebar:
   label: Storage backends
-  order: 4
+  order: 6
 ---
 
 Nimbus selects its tenant storage backend with the `--tenant-provider` flag

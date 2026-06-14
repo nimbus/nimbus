@@ -129,19 +129,19 @@ API need no Node at all. Full walkthrough:
 ## Protocol compatibility
 
 Every adapter shares the same engine — same storage, same mutation path, same
-real-time subscriptions. Current status, stated honestly:
+real-time subscriptions. Current status:
 
 | Protocol | Status | Docs |
 |----------|--------|------|
 | **Convex** (functions, reactive queries, React hooks) | Available | [guide](https://nimbusdocs.com/developers/convex/) · [compatibility](https://nimbusdocs.com/reference/convex/compatibility/) |
-| **Firestore** (SDKs, real-time listeners) | Available — enable with `nimbus start --firestore` | [guide](https://nimbusdocs.com/developers/firebase/) · [compatibility](https://nimbusdocs.com/reference/firebase/compatibility/) |
+| **Firestore** (SDKs, real-time listeners) | Available — on by default; opt out with `--no-firestore` | [guide](https://nimbusdocs.com/developers/firebase/) · [compatibility](https://nimbusdocs.com/reference/firebase/compatibility/) |
 | **Cloud Functions** (v2 triggers, Functions Framework) | Available | [guide](https://nimbusdocs.com/developers/cloud-functions/) · [compatibility](https://nimbusdocs.com/reference/cloud-functions/compatibility/) |
-| **MongoDB** (stock drivers, wire protocol) | Available — enable with `nimbus start --mongodb-port` (SCRAM credentials required) | [guide](https://nimbusdocs.com/developers/mongodb/) · [operations](https://nimbusdocs.com/reference/mongodb/operations/) |
-| **DynamoDB** (AWS SDKs, dedicated listener) | Available — enable with `nimbus start --dynamodb-port` (per-tenant signed access keys) | [guide](https://nimbusdocs.com/developers/dynamodb/) · [coverage](https://nimbusdocs.com/reference/dynamodb/feature-coverage/) |
+| **MongoDB** (stock drivers, wire protocol) | Available — on by default on `127.0.0.1:27017`; opt out with `--no-mongodb` | [guide](https://nimbusdocs.com/developers/mongodb/) · [operations](https://nimbusdocs.com/reference/mongodb/operations/) |
+| **DynamoDB** (AWS SDKs, dedicated listener) | Available — on by default on `127.0.0.1:8000`; opt out with `--no-dynamodb` | [guide](https://nimbusdocs.com/developers/dynamodb/) · [coverage](https://nimbusdocs.com/reference/dynamodb/feature-coverage/) |
 | **Native HTTP/WebSocket** (just curl) | Available — always on | [guide](https://nimbusdocs.com/developers/native/) · [API](https://nimbusdocs.com/reference/native/http-api/) |
 
 See [current capabilities](https://nimbusdocs.com/reference/current-capabilities/)
-for the full honest-status matrix, including what is not built yet.
+for the full status matrix, including what is not built yet.
 
 ## Built for agents
 

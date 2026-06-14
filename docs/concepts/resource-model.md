@@ -48,8 +48,8 @@ how the capability is provided, and there are three kinds:
   each Compose `services:` entry becomes a sandbox-backed service
   definition in the tenant's catalog.
 - **Built-in** — the capability is implemented by the Nimbus server
-  itself. The accepted providers are `loadBalancer`, `serviceDiscovery`,
-  `browser`, and `modelGateway`.
+  itself. These are a small fixed set — for example a browser service
+  and a model gateway.
 - **External** — an endpoint Nimbus does not run. The definition records
   an absolute `http(s)` URL (embedded credentials are rejected), an auth
   policy, and an HTTP health-check path. Nimbus owns the definition,
@@ -116,9 +116,11 @@ shell or stdio stream into a running workload, file exchange, or a
 browser-control channel. It is a lease, not a registry entry:
 
 - **Every session expires.** Opening one takes an optional requested TTL;
-  the server applies a default of fifteen minutes and caps every session
-  at one hour. Sessions move through `open`, `closed` (explicitly closed,
-  with a recorded reason), and `expired` states.
+  the server applies a bounded default TTL with a hard cap. Sessions move
+  through `open`, `closed` (explicitly closed, with a recorded reason),
+  and `expired` states. See
+  [the resources reference](/reference/sdk/resources/) for the session
+  lifecycle.
 - **Channels are declared up front** and validated against what the
   target can actually offer: sandbox targets and sandbox-backed services
   support `stdio` and `files`; the built-in `browser` service supports

@@ -127,11 +127,11 @@ separate:
   default, and binding a non-loopback interface requires both an explicit
   opt-in flag and a recently rotated admin token.
 - **Applications** authenticate with bearer tokens on application-facing
-  surfaces. When an application principal carries a tenant claim
-  (`tenant_id`, `tenantId`, `nimbus_tenant_id`, or `nimbusTenantId`), the
+  surfaces. When an application principal carries a tenant claim, the
   claim must match the tenant the route addresses; a mismatch is a
   rejection. A token minted for one tenant cannot be replayed against
-  another.
+  another. See [authenticate users](/developers/auth/) for how identities
+  are verified.
 - **The system tenant** (`_nimbus`) accepts only operator authority.
   Application and unauthenticated callers cannot reach it on any
   surface.

@@ -3,7 +3,7 @@ title: Security hardening
 description: A checklist for locking down a self-hosted Nimbus server — network exposure, admin token handling, TLS, systemd sandboxing, and encryption at rest.
 sidebar:
   label: Hardening
-  order: 11
+  order: 12
 ---
 
 Each item below stands alone — work through them in any order. Items marked

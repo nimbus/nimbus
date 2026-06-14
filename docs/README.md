@@ -8,6 +8,8 @@ Pages are plain Markdown rendered by the Astro Starlight project in
   the self-host quickstart, and the Convex on-ramp
 - [`developers/`](developers/) — tutorials and how-to guides for building
   apps on Nimbus
+- [`agents/`](agents/) — building AI agents on Nimbus: services, sandboxes,
+  and sessions through the JavaScript SDK
 - [`operators/`](operators/) — self-hosting: deploy, tenants, storage
   backends, encryption, networking, observability
 - [`concepts/`](concepts/) — how Nimbus works, including the source-verified

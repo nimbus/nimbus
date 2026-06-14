@@ -5,23 +5,15 @@ sidebar:
   order: 1
 ---
 
-Nimbus is a backend AI agents can **run**, **inspect**, and get **isolated
-compute** from — without adding a second vendor next to the database.
+Nimbus gives AI agents isolated compute next to their data through three
+resources — **sandboxes**, **services**, and **sessions** — managed through
+the `@nimbus/nimbus` SDK or plain HTTP. The
+[sandbox quickstart](/agents/sandbox-quickstart/) is the fastest way in; the
+[resource model](/concepts/resource-model/) explains the design.
 
-- **Run.** The whole backend is one binary. An agent (or the human
-  supervising it) starts it with `nimbus start` and has storage, functions,
-  realtime, scheduling, and sandbox execution in a single process — there
-  is no service mesh to assemble before the first task runs.
-- **Inspect.** The docs ship as [llms.txt](/llms.txt) artifacts, every API
-  returns structured errors from a published
-  [error catalog](/reference/native/errors/), and
-  [current capabilities](/reference/current-capabilities/) is a plain
-  table of what works today.
-- **Isolate.** Agent workloads get three purpose-built resources, managed
-  through the `@nimbus/nimbus` SDK or plain HTTP: **sandboxes** (isolated
-  execution environments addressed by id), **services** (named workloads
-  other code can depend on), and **sessions** (scoped, expiring connections
-  for stdio, files, and browser control).
+Sandboxes execute on a Linux host. On macOS or WSL2, run `nimbus machine`
+first to start the managed Linux VM that hosts them — see the
+[CLI reference](/reference/cli/).
 
 The shape to remember: reach for a **sandbox** when an agent needs an
 isolated world for one task — it has an id, a lifecycle, and session

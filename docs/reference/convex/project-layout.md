@@ -66,9 +66,9 @@ my-app/
 | File | Contents |
 | --- | --- |
 | `api.ts` | The `api` and `internal` function-reference trees. |
-| `server.ts` | Re-exports the function registrars (`query`, `mutation`, `action`, `httpAction`, `internalQuery`, `internalMutation`, `internalAction`, `paginatedQuery`, `internalPaginatedQuery`, plus `defineSchema`, `defineTable`, `httpRouter`) and the `QueryCtx`, `MutationCtx`, and `ActionCtx` types. |
+| `server.ts` | Re-exports the function registrars (`query`, `mutation`, `action`, `httpAction`, `internalQuery`, `internalMutation`, `internalAction`, `paginatedQuery`, `internalPaginatedQuery`, plus `defineSchema`, `defineTable`, `httpRouter`) and the `QueryCtx`, `MutationCtx`, and `ActionCtx` types. `paginatedQuery` and `internalPaginatedQuery` are a Nimbus extension — not in upstream Convex. |
 | `scheduled_functions.ts` | References for schedulable (mutation) functions. |
-| `dataModel.d.ts` | `Doc`, `Id`, `TableNames`, and `DataModel` types derived from the schema, including the `_id`, `_creationTime`, and `_updateTime` system fields. |
+| `dataModel.d.ts` | `Doc`, `Id`, `TableNames`, and `DataModel` types derived from the schema, including the `_id`, `_creationTime`, and `_updateTime` system fields. `_updateTime` is a Nimbus extension — not in upstream Convex. |
 
 `.nimbus/convex/` holds the build artifacts the server executes:
 

@@ -27,8 +27,8 @@ haven't run a server yet, then work through
   Postgres, MySQL, and libSQL topologies.
 - [Encryption at rest](/operators/encryption/) — key providers, migration,
   and rotation.
-- [Backup and restore](/operators/backup-restore/) — what to capture per
-  backend and how to restore it.
+- [Backup and restore](/operators/backup-restore/) — `nimbus backup` for the
+  embedded providers, plus what to capture per backend and how to restore it.
 
 ## Administration
 
