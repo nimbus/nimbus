@@ -1,14 +1,14 @@
-# NDS gate - FORMAL documented blocked state (cycle-87, 2026-06-14)
+# NDS gate - FORMAL documented blocked state (cycle-88, 2026-06-14)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
-**Fork:** nimbus/deno v2.8.3-nimbus.35 (d3e5ab6eff); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
+**Fork:** nimbus/deno v2.8.3-nimbus.36 (82e2afd177); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
 **Verifier:** `bash scripts/verify-node-default-runtime-support-hardening.sh` step 9
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 10**, **node24 = 11**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 9**, **node24 = 11**. Not 0/0.
 
-Session cycles 17-87 reduced the gate 81/87 -> 10/11 by harvesting every cheap/clean/
+Session cycles 17-88 reduced the gate 81/87 -> 9/11 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -118,11 +118,13 @@ too-short-derived-bit error text, and returns copied RSA publicExponent
 metadata, promoting node24 `test-webcrypto-keygen-kmac.js`,
 `test-webcrypto-sign-verify-kmac.js`, `test-webcrypto-deduplicate-usages.js`,
 `test-webcrypto-derivekey.js`, `test-webcrypto-export-import.js`, and
-`test-webcrypto-keygen.js`;
+`test-webcrypto-keygen.js`; and nimbus/deno `v2.8.3-nimbus.36` adds WebCrypto
+Ed448 sign/verify support and aligns EdDSA wrong-key/wrong-algorithm error text,
+promoting node22 `test-webcrypto-sign-verify-eddsa.js`;
 all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 12 unique fixtures remain
-(node22=10, node24=11).
+regression-verified at their promotion surface). 11 unique fixtures remain
+(node22=9, node24=11).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -131,9 +133,8 @@ regression-verified at their promotion surface). 12 unique fixtures remain
 
 ## Tractable but deep (sustained multi-session native deno_core/deno_crypto work — task #61)
 
-### DEEP_crypto_provider (3 unique fixtures / 5 lane gaps) — owner: nimbus/deno (ext/crypto / deno_node_crypto)
+### DEEP_crypto_provider (2 unique fixtures / 4 lane gaps) — owner: nimbus/deno (ext/crypto / deno_node_crypto)
 - `test/parallel/test-crypto-authenticated.js` (22+24)
-- `test/parallel/test-webcrypto-sign-verify-eddsa.js` (22)
 - `test/parallel/test-webcrypto-sign-verify.js` (22+24) — after KMAC support,
   the published-tag fixture still exceeds the 35s harness wall-clock and needs a
   narrower native-provider/performance peel before promotion.
@@ -153,4 +154,4 @@ regression-verified at their promotion surface). 12 unique fixtures remain
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=10 / node24=11.
+multi-session effort. Gate held RED and honest at node22=9 / node24=11.

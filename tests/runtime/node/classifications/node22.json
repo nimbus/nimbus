@@ -2416,7 +2416,6 @@
         "test/parallel/test-watch-mode-kill-signal-override.mjs",
         "test/parallel/test-weakref.js",
         "test/parallel/test-webcrypto-cryptokey-workers.js",
-        "test/parallel/test-webcrypto-sign-verify-eddsa.js",
         "test/parallel/test-webcrypto-sign-verify.js",
         "test/parallel/test-webcrypto-util.js",
         "test/parallel/test-webcrypto-webidl.js",

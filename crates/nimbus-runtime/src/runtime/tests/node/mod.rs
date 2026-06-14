@@ -3822,3 +3822,4 @@ include!("cases/nds3_cycle83_heapdump_async_hooks.rs");
 include!("cases/nds3_cycle84_webcrypto_wrap_unwrap.rs");
 include!("cases/nds3_cycle85_webcrypto_aes_encrypt_decrypt.rs");
 include!("cases/nds3_cycle87_webcrypto_kmac_usage.rs");
+include!("cases/nds3_cycle88_webcrypto_eddsa.rs");
