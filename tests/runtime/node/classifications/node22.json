@@ -541,8 +541,7 @@
         "test/parallel/test-vm-sigint-existing-handler.js",
         "test/parallel/test-vm-sigint.js",
         "test/parallel/test-vm-syntax-error-message.js",
-        "test/parallel/test-vm-syntax-error-stderr.js",
-        "test/parallel/test-vm-timeout-escape-promise-module.js"
+        "test/parallel/test-vm-syntax-error-stderr.js"
       ]
     },
     {

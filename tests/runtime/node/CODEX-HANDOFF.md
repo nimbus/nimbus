@@ -16,8 +16,8 @@ prove the fixture goes dynamically green, then promote it. There is no shortcut:
 you cannot make a fixture "pass" by skipping, weakening an assertion, or editing
 the derived posture.
 
-**Current gate (already done): node22 = 27, node24 = 34.** Session cycles 17-68
-took it from 81/87 -> 27/34 (published fork tags, reclassifications, promotions,
+**Current gate (already done): node22 = 26, node24 = 33.** Session cycles 17-69
+took it from 81/87 -> 26/33 (published fork tags, reclassifications, promotions,
 zero false greens). Your job is to keep going, one fixture at a time.
 
 ## THE HONESTY CONTRACT (non-negotiable — a false green is worse than a red gate)
@@ -249,7 +249,7 @@ git push origin codex/node-default-runtime-support-hardening
   panic + needs cross-boundary `initializeImportMeta` wiring); `test-webcrypto-sign-verify-eddsa`
   (Ed448), `test-webcrypto-keygen-kmac`, `test-webcrypto-sign-verify-kmac` (KMAC) —
   native crypto primitives possibly absent from aws-lc.
-- **36 unique required fixtures remain, with 5 genuinely blocked and the rest
+- **35 unique required fixtures remain, with 5 genuinely blocked and the rest
   tractable-but-deep** by category (owner = `nimbus/deno` unless noted):
   crypto-provider (mostly native — verify primitives before committing a build),
   vm-semantics (deno_node `ext/node/{polyfills/vm.js,ops/vm.rs}` plus deno_core
