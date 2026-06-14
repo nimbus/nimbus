@@ -1914,7 +1914,6 @@
         "test/parallel/test-heap-prof-loop-drained.js",
         "test/parallel/test-heap-prof-name.js",
         "test/parallel/test-heap-prof-sigint.js",
-        "test/parallel/test-heapdump-async-hooks-init-promise.js",
         "test/parallel/test-heapsnapshot-near-heap-limit-by-api-in-worker.js",
         "test/parallel/test-heapsnapshot-near-heap-limit-worker.js",
         "test/parallel/test-icu-data-dir.js",

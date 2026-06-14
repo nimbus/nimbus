@@ -1,14 +1,14 @@
-# NDS gate - FORMAL documented blocked state (cycle-82, 2026-06-14)
+# NDS gate - FORMAL documented blocked state (cycle-83, 2026-06-14)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
-**Fork:** nimbus/deno v2.8.3-nimbus.31 (4a54d34322); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
+**Fork:** nimbus/deno v2.8.3-nimbus.32 (eb468bcfaa); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
 **Verifier:** `bash scripts/verify-node-default-runtime-support-hardening.sh` step 9
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 13**, **node24 = 21**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 12**, **node24 = 20**. Not 0/0.
 
-Session cycles 17-82 reduced the gate 81/87 -> 13/21 by harvesting every cheap/clean/
+Session cycles 17-83 reduced the gate 81/87 -> 12/20 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -99,11 +99,14 @@ node22 `test-webcrypto-keygen.js` while the node24 copy still reaches KMAC
 native-provider support; and nimbus/deno `v2.8.3-nimbus.31` aligns WebCrypto
 HKDF `deriveBits()`/`deriveKey()` length, missing-option, usage, mismatch, and
 AES-OCB derived-key parity, promoting `test-webcrypto-derivebits-hkdf.js` in
-both required lanes;
+both required lanes; and nimbus/deno `v2.8.3-nimbus.32` hides native parentless
+implementation promises from user async_hooks while keeping real user-created
+nested promises visible, promoting
+`test-heapdump-async-hooks-init-promise.js` in both required lanes;
 all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 22 unique fixtures remain
-(node22=13, node24=21).
+regression-verified at their promotion surface). 21 unique fixtures remain
+(node22=12, node24=20).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -135,13 +138,10 @@ regression-verified at their promotion surface). 22 unique fixtures remain
 - `test/es-module/test-esm-snapshot.mjs` (22+24)
 - `test/es-module/test-esm-virtual-json.mjs` (22+24)
 
-### DEEP_promise_hooks (1) — owner: nimbus/deno (deno_core promise hooks)
-- `test/parallel/test-heapdump-async-hooks-init-promise.js` (22+24)
-
 ## Conclusion
 
 0/0 is not reachable within a single session. The genuinely-blocked subset is a true
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring, native Ed448/KMAC primitives maybe absent from aws-lc). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=13 / node24=21.
+multi-session effort. Gate held RED and honest at node22=12 / node24=20.
