@@ -1,17 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-18 -78.5 358 358" role="img" aria-label="Nimbus" preserveAspectRatio="xMidYMid meet">
   <title>Nimbus</title>
   <style>
-    /* Sky-cycle favicon: Warm by day, Night Blue by night — the same
-       surfaces and mark colors the page renders. Square canvas centered
-       on the cloud's ink bounds with a rounded brand tile so the mark
-       reads at 16px. */
-    .nimbus-tile { fill: #FFFAF2; }
+    /* Favicon: the cloud floats on a brand "sky" tile — bright blue by
+       day, dark blue by night — chosen so the mark reads as a solid shape
+       at 16px (matching-tone tiles let the cloud wash out). Day: golden
+       cloud on blue. Night: white cool-blue cloud on dark blue, à la
+       Cloudflare's cream-on-orange. Rounded brand tile. */
+    .nimbus-tile { fill: #3B82F6; }
     .nimbus-fill { fill: #FFE7B3; }
     .nimbus-stroke { fill: #0F172A; }
     @media (prefers-color-scheme: dark) {
-      .nimbus-tile { fill: #0B1220; }
-      .nimbus-fill { fill: #1E293B; }
-      .nimbus-stroke { fill: #60A5FA; }
+      .nimbus-tile { fill: #1E3A8A; }
+      .nimbus-fill { fill: #FFFFFF; }
+      .nimbus-stroke { fill: #3B82F6; }
     }
   </style>
   <rect class="nimbus-tile" x="-18" y="-78.5" width="358" height="358" rx="64"/>
