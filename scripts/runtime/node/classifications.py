@@ -60,7 +60,6 @@ FORCED_LANE_CLASSIFICATIONS: dict[str, dict[str, dict[str, str]]] = {
             "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
         }
         for path in {
-            "test/parallel/test-async-hooks-enable-recursive.js",
             "test/parallel/test-buffer-indexof.js",
             "test/parallel/test-buffer-tostring-rangeerror.js",
             "test/parallel/test-crypto-default-shake-lengths-oneshot.js",

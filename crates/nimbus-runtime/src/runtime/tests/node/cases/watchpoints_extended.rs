@@ -2182,6 +2182,82 @@ const ASYNC_HOOKS_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
     "test/async-hooks/test-track-promises-validation.js",
 ];
 
+const ASYNC_HOOKS_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/async-hooks/test-async-await.js",
+    "test/async-hooks/test-async-exec-resource-match.js",
+    "test/async-hooks/test-async-local-storage-args.js",
+    "test/async-hooks/test-async-local-storage-async-await.js",
+    "test/async-hooks/test-async-local-storage-async-functions.js",
+    "test/async-hooks/test-async-local-storage-enable-disable.js",
+    "test/async-hooks/test-async-local-storage-enter-with.js",
+    "test/async-hooks/test-async-local-storage-errors.js",
+    "test/async-hooks/test-async-local-storage-gcable.js",
+    "test/async-hooks/test-async-local-storage-http-agent.js",
+    "test/async-hooks/test-async-local-storage-http.js",
+    "test/async-hooks/test-async-local-storage-misc-stores.js",
+    "test/async-hooks/test-async-local-storage-nested.js",
+    "test/async-hooks/test-async-local-storage-no-mix-contexts.js",
+    "test/async-hooks/test-async-local-storage-promises.js",
+    "test/async-hooks/test-async-local-storage-stream-finished.js",
+    "test/async-hooks/test-async-local-storage-thenable.js",
+    "test/async-hooks/test-async-wrap-providers.js",
+    "test/async-hooks/test-callback-error.js",
+    "test/async-hooks/test-destroy-not-blocked.js",
+    "test/async-hooks/test-disable-in-init.js",
+    "test/async-hooks/test-embedder.api.async-resource-no-type.js",
+    "test/async-hooks/test-embedder.api.async-resource.js",
+    "test/async-hooks/test-embedder.api.async-resource.runInAsyncScope.js",
+    "test/async-hooks/test-emit-after-on-destroyed.js",
+    "test/async-hooks/test-emit-before-after.js",
+    "test/async-hooks/test-emit-before-on-destroyed.js",
+    "test/async-hooks/test-emit-init.js",
+    "test/async-hooks/test-enable-disable.js",
+    "test/async-hooks/test-enable-in-init.js",
+    "test/async-hooks/test-filehandle-no-reuse.js",
+    "test/async-hooks/test-fseventwrap.js",
+    "test/async-hooks/test-fsreqcallback-access.js",
+    "test/async-hooks/test-fsreqcallback-readFile.js",
+    "test/async-hooks/test-graph.fsreq-readFile.js",
+    "test/async-hooks/test-graph.intervals.js",
+    "test/async-hooks/test-graph.statwatcher.js",
+    "test/async-hooks/test-graph.timeouts.js",
+    "test/async-hooks/test-immediate.js",
+    "test/async-hooks/test-improper-order.js",
+    "test/async-hooks/test-improper-unwind.js",
+    "test/async-hooks/test-late-hook-enable.js",
+    "test/async-hooks/test-nexttick-default-trigger.js",
+    "test/async-hooks/test-no-assert-when-disabled.js",
+    "test/async-hooks/test-promise.chain-promise-before-init-hooks.js",
+    "test/async-hooks/test-promise.js",
+    "test/async-hooks/test-promise.promise-before-init-hooks.js",
+    "test/async-hooks/test-queue-microtask.js",
+    "test/async-hooks/test-shutdownwrap.js",
+    "test/async-hooks/test-statwatcher.js",
+    "test/async-hooks/test-timers.setInterval.js",
+    "test/async-hooks/test-timers.setTimeout.js",
+    "test/async-hooks/test-track-promises-default.js",
+    "test/async-hooks/test-track-promises-false-check.js",
+    "test/async-hooks/test-track-promises-false.js",
+    "test/async-hooks/test-track-promises-true.js",
+    "test/async-hooks/test-track-promises-validation.js",
+    "test/async-hooks/test-unhandled-exception-valid-ids.js",
+    "test/async-hooks/test-unhandled-rejection-context.js",
+    "test/async-hooks/test-writewrap.js",
+    "test/parallel/test-async-hooks-close-during-destroy.js",
+    "test/parallel/test-async-hooks-destroy-on-gc.js",
+    "test/parallel/test-async-hooks-disable-gc-tracking.js",
+    "test/parallel/test-async-hooks-enable-recursive.js",
+    "test/parallel/test-async-hooks-enabledhooksexits.js",
+    "test/parallel/test-async-hooks-http-agent-destroy.js",
+    "test/parallel/test-async-hooks-http-agent.js",
+    "test/parallel/test-async-hooks-prevent-double-destroy.js",
+    "test/parallel/test-async-hooks-run-in-async-scope-caught-exception.js",
+    "test/parallel/test-async-hooks-stack-overflow-nested-async.js",
+    "test/parallel/test-async-hooks-stack-overflow.js",
+    "test/parallel/test-async-hooks-top-level-clearimmediate.js",
+    "test/parallel/test-async-hooks-vm-gc.js",
+];
+
 #[test]
 fn node22_async_hooks_enable_recursive_fsreqcallback_regression() {
     run_node_compat_watchpoint_for_lane(
@@ -2227,6 +2303,21 @@ fn node24_default_lane_executes_async_hooks_promoted_batch_fixture() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-executes-async-hooks-promoted-batch",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node26_current_lane_executes_async_hooks_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = ASYNC_HOOKS_PROMOTED_NODE26_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-async-hooks-promoted-batch",
+        NodeCompatLane::Node26,
         &fixture_paths,
         ASYNC_HOOKS_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
         ASYNC_HOOKS_REQUIRED_GAP_EXTRA_DIRS,
@@ -2706,6 +2797,22 @@ fn node24_default_lane_async_hooks_nonblocking_required_gap_watchpoint() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-async-hooks-nonblocking-required-gap-watchpoint",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
+        ASYNC_HOOKS_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: async_hooks required-gap fixtures with socket-bind networking excluded; promote only dynamically green lifecycle fixtures"]
+fn node26_current_lane_async_hooks_nonblocking_required_gap_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node26,
+        async_hooks_nonblocking_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-async-hooks-nonblocking-required-gap-watchpoint",
+        NodeCompatLane::Node26,
         &fixture_paths,
         ASYNC_HOOKS_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
         ASYNC_HOOKS_REQUIRED_GAP_EXTRA_DIRS,
@@ -4980,7 +5087,6 @@ fn node24_default_lane_executes_core_semantics_subset() {
 
 fn node26_current_broad_residual_paths() -> &'static [&'static str] {
     &[
-        "test/parallel/test-async-hooks-enable-recursive.js",
         "test/parallel/test-buffer-indexof.js",
         "test/parallel/test-buffer-tostring-rangeerror.js",
         "test/parallel/test-crypto-default-shake-lengths-oneshot.js",
