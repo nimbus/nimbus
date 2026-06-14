@@ -2,7 +2,7 @@
 
 This directory is the checked-in latest snapshot of the generated Node.js runtime support evidence outputs.
 
-- evidence_generated_at: `2026-06-14T02:26:06.713611+00:00`
+- evidence_generated_at: `2026-06-14T02:32:55.600860+00:00`
 - publish_root: `tests/runtime/node/compat/node-compat-evidence/latest`
 - status source: `target/node-compat/status/status-summary.json`
 - dashboard source: `target/node-compat/dashboard/dashboard-summary.json`

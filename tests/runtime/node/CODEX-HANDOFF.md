@@ -16,8 +16,8 @@ prove the fixture goes dynamically green, then promote it. There is no shortcut:
 you cannot make a fixture "pass" by skipping, weakening an assertion, or editing
 the derived posture.
 
-**Current gate (already done): node22 = 23, node24 = 29.** Session cycles 17-73
-took it from 81/87 -> 23/29 (published fork tags, reclassifications, promotions,
+**Current gate (already done): node22 = 22, node24 = 28.** Session cycles 17-74
+took it from 81/87 -> 22/28 (published fork tags, reclassifications, promotions,
 zero false greens). Your job is to keep going, one fixture at a time.
 
 ## THE HONESTY CONTRACT (non-negotiable — a false green is worse than a red gate)
@@ -249,7 +249,7 @@ git push origin codex/node-default-runtime-support-hardening
   panic + needs cross-boundary `initializeImportMeta` wiring); `test-webcrypto-sign-verify-eddsa`
   (Ed448), `test-webcrypto-keygen-kmac`, `test-webcrypto-sign-verify-kmac` (KMAC) —
   native crypto primitives possibly absent from aws-lc.
-- **31 unique required fixtures remain, with 5 genuinely blocked and the rest
+- **30 unique required fixtures remain, with 5 genuinely blocked and the rest
   tractable-but-deep** by category (owner = `nimbus/deno` unless noted):
   crypto-provider (mostly native — verify primitives before committing a build),
   esm-loader (deno_core), promise-hooks (deno_core), and the hang-timeout/event-loop
@@ -260,7 +260,8 @@ git push origin codex/node-default-runtime-support-hardening
   `test-webcrypto-deduplicate-usages.js` probe peeled to KMAC/native-provider
   support and stayed red. Cycle72 promoted ESM CJS named export errors; cycle73
   source-confirmed `test-performance-many-marks.js` as an isolate watchdog
-  fairness boundary.
+  fairness boundary; cycle74 source-confirmed `test-v8-serialize-leak.js` as a
+  host-process RSS/GC diagnostic.
 
 ## Verify (the goal)
 

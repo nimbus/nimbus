@@ -497,8 +497,17 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         #     memory (systemMemoryInfo); exposing host RAM stats to tenant code is
         #     a host-info leak the sandbox denies. A fabricated value would be a
         #     false green, so the honest disposition is host-owned fail-closed.
+        #   test-v8-serialize-leak.js: source-confirmed in cycle74. The fixture
+        #     is a host-process leak diagnostic, not an Application API assertion:
+        #     it requires --expose-gc, performs 1,000,000 v8.serialize('')
+        #     calls, then polls process.memoryUsage.rss() inside gcUntil() until
+        #     host RSS falls below a threshold. Existing diagnostics show both
+        #     required lanes terminate under the isolate execution deadline
+        #     before the RSS/GC diagnostic can converge. Exposing host-process
+        #     memory convergence as required support would be a false green.
         'test/parallel/test-os.js',
         'test/parallel/test-process-available-memory.js',
+        'test/parallel/test-v8-serialize-leak.js',
     }),
     ('test_harness_only', 'exact_node_cli_or_tooling_topology', 'test_harness_emulation'): frozenset({
         'test/es-module/test-cjs-esm-warn.js',
@@ -933,7 +942,7 @@ WAVE2_REASON_TEXT = {
     'upstream_or_platform_boundary': "fixture is gated by V8 native-syntax intrinsics, host-platform skips, host-specific filesystem/watch backends, or Node's exact native build/dependency composition, so it cannot run as public Application API behavior inside the Nimbus V8 isolate",
     'experimental_shadow_realm_flag_gated': "fixture is gated by --experimental-shadow-realm and asserts the ShadowRealm global, an experimental off-by-default Node feature the pinned deno_core fork (and upstream Deno) does not enable via the harmony flag set; the multi-tenant isolate cannot honor a per-invocation experimental opt-in flag, so the global is intentionally absent and the assertion is not part of the required default Application surface",
     'host_owned_network_socket_surface': "fixture binds or connects a real host TCP/UDP/TLS socket (or listening server) and asserts the host libuv async-resource handle graph or socket-level address/error behavior; the default multi-tenant V8 isolate denies ambient host network access, so the socket-backed behavior is host-owned and must fail closed unless a host-capable (sandbox-backed service / microVM) backend is selected",
-    'host_owned_system_resource_surface': "fixture reads or mutates a host-owned system resource (host process scheduling priority via os.getPriority/os.setPriority, or host free-memory introspection via process.availableMemory) that the default multi-tenant isolate denies as host sys access; isolate-safe-capable only through a host-capable backend, so it is a host-owned non-isolate surface rather than required default support",
+    'host_owned_system_resource_surface': "fixture reads or mutates a host-owned system resource (host process scheduling priority via os.getPriority/os.setPriority, host free-memory introspection via process.availableMemory, or host-process RSS/GC leak convergence via process.memoryUsage.rss() plus explicit GC loops) that the default multi-tenant isolate denies as host sys access; isolate-safe-capable only through a host-capable backend, so it is a host-owned non-isolate surface rather than required default support",
     'host_network_name_resolution_required': "fixture performs host network name resolution (dns.lookupService/getnameinfo reverse-DNS against a live resolver) and asserts the resolved service/hostname; the default multi-tenant isolate denies ambient host network access (the call fails closed with EPERM), so the name-resolution behavior is host-owned and not part of the required default Application surface",
     'host_global_timezone_mutation_sandboxed': "fixture mutates the process-global timezone via process.env.TZ and asserts Date formatting reflects the change, which requires re-running the host tzset/ICU timezone-change notification; Nimbus replaces process.env with a tenant-scoped shared-env proxy so a single tenant cannot mutate process-global ICU timezone state shared across all tenants in the isolate, making the assertion a multi-tenant isolation boundary rather than required default behavior",
     'isolate_execution_termination_watchdog': "fixture deliberately drives an unbounded or host-scale operation (such as a 1000-deep circular graph through util.inspect with depth:Infinity, or one million synchronous performance timeline marks) that trips the multi-tenant isolate's execution-termination watchdog ('JavaScript execution has been terminated'); the wall-clock execution deadline is a Nimbus fairness invariant the isolate must enforce, so the fixture cannot complete as default Application behavior",
