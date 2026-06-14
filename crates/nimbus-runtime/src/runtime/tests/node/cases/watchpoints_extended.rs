@@ -1329,6 +1329,81 @@ const STREAMS_WEB_PLATFORM_PROMOTED_NODE24_EXTRA_PATHS: &[&str] = &[
     "test/parallel/test-webstreams-duplex-fromweb-writev-unhandled-rejection.js",
 ];
 
+const STREAMS_WEB_PLATFORM_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/parallel/test-fastutf8stream-destroy.js",
+    "test/parallel/test-fastutf8stream-end.js",
+    "test/parallel/test-fastutf8stream-flush-mocks.js",
+    "test/parallel/test-fastutf8stream-flush-sync.js",
+    "test/parallel/test-fastutf8stream-flush.js",
+    "test/parallel/test-fastutf8stream-fsync.js",
+    "test/parallel/test-fastutf8stream-minlength.js",
+    "test/parallel/test-fastutf8stream-mode.js",
+    "test/parallel/test-fastutf8stream-partial-write-utf8.js",
+    "test/parallel/test-fastutf8stream-periodicflush.js",
+    "test/parallel/test-fastutf8stream-reopen.js",
+    "test/parallel/test-fastutf8stream-retry.js",
+    "test/parallel/test-fastutf8stream-sync.js",
+    "test/parallel/test-fastutf8stream-write.js",
+    "test/parallel/test-file-write-stream.js",
+    "test/parallel/test-file-write-stream2.js",
+    "test/parallel/test-file-write-stream3.js",
+    "test/parallel/test-file-write-stream4.js",
+    "test/parallel/test-file-write-stream5.js",
+    "test/parallel/test-filehandle-readablestream.js",
+    "test/parallel/test-global-webstreams.js",
+    "test/parallel/test-js-stream-call-properties.js",
+    "test/parallel/test-stream-destroy.js",
+    "test/parallel/test-stream-finished-default-path.js",
+    "test/parallel/test-stream-iterator-helpers-test262-tests.mjs",
+    "test/parallel/test-stream-readable-async-iterators.js",
+    "test/parallel/test-stream-readable-compose.js",
+    "test/parallel/test-stream-readable-to-web-byob.js",
+    "test/parallel/test-stream-readable-to-web-termination-byob.js",
+    "test/parallel/test-stream-readable-to-web.mjs",
+    "test/parallel/test-stream-readableListening-state.js",
+    "test/parallel/test-stream-some-find-every.mjs",
+    "test/parallel/test-stream-toWeb-allows-server-response.js",
+    "test/parallel/test-stream-transform-destroy.js",
+    "test/parallel/test-stream-wrap-drain.js",
+    "test/parallel/test-stream-wrap-encoding.js",
+    "test/parallel/test-stream-wrap.js",
+    "test/parallel/test-stream-writable-samecb-singletick.js",
+    "test/parallel/test-stream2-base64-single-char-read-end.js",
+    "test/parallel/test-stream2-compatibility.js",
+    "test/parallel/test-stream2-decode-partial.js",
+    "test/parallel/test-stream2-httpclient-response-end.js",
+    "test/parallel/test-stream2-large-read-stall.js",
+    "test/parallel/test-stream2-objects.js",
+    "test/parallel/test-stream2-push.js",
+    "test/parallel/test-stream2-read-correct-num-bytes-in-utf8.js",
+    "test/parallel/test-stream2-read-sync-stack.js",
+    "test/parallel/test-stream2-readable-empty-buffer-no-eof.js",
+    "test/parallel/test-stream2-readable-legacy-drain.js",
+    "test/parallel/test-stream2-readable-non-empty-end.js",
+    "test/parallel/test-stream2-readable-wrap-destroy.js",
+    "test/parallel/test-stream2-readable-wrap-empty.js",
+    "test/parallel/test-stream2-readable-wrap-error.js",
+    "test/parallel/test-stream2-readable-wrap.js",
+    "test/parallel/test-stream2-set-encoding.js",
+    "test/parallel/test-stream2-writable.js",
+    "test/parallel/test-stream3-cork-end.js",
+    "test/parallel/test-stream3-cork-uncork.js",
+    "test/parallel/test-stream3-pause-then-read.js",
+    "test/parallel/test-streams-highwatermark.js",
+    "test/parallel/test-webstream-string-tag.js",
+    "test/parallel/test-webstreams-adapters-sync-write-error.js",
+    "test/parallel/test-webstreams-adapters-writable-buffer-sources.js",
+    "test/parallel/test-webstreams-compose.js",
+    "test/parallel/test-webstreams-compression-bad-chunks.js",
+    "test/parallel/test-webstreams-compression-buffer-source.js",
+    "test/parallel/test-webstreams-decompression-reject-trailing.js",
+    "test/parallel/test-webstreams-duplex-fromweb-writev-unhandled-rejection.js",
+    "test/parallel/test-webstreams-finished.js",
+    "test/parallel/test-wrap-js-stream-destroy.js",
+    "test/parallel/test-wrap-js-stream-duplex.js",
+    "test/parallel/test-wrap-js-stream-read-stop.js",
+];
+
 fn streams_web_platform_unpromoted_surface_path(path: &str) -> bool {
     path.contains("stream")
 }
@@ -1462,6 +1537,21 @@ fn node24_default_lane_executes_streams_web_platform_promoted_batch_fixture() {
 }
 
 #[test]
+fn node26_current_lane_executes_streams_web_platform_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = STREAMS_WEB_PLATFORM_PROMOTED_NODE26_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-streams-web-platform-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        STREAMS_WEB_PLATFORM_EXTRA_DIRS,
+    );
+}
+
+#[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked streams/WebStreams required-gap inventory; excludes pinned hang diagnostics for stream-base-typechecking, webstreams-clone-unref, and WHATWG transform-stream-members"]
 fn node22_supported_lane_streams_web_platform_watchpoint() {
     let fixture_paths = streams_web_platform_required_fixture_paths(NodeCompatLane::Node22);
@@ -1481,6 +1571,19 @@ fn node24_default_lane_streams_web_platform_watchpoint() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-streams-web-platform-watchpoint",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        STREAMS_WEB_PLATFORM_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: ROI-ranked streams/WebStreams required-gap inventory; excludes pinned hang diagnostics for stream-base-typechecking, webstreams-clone-unref, and WHATWG transform-stream-members"]
+fn node26_current_lane_streams_web_platform_watchpoint() {
+    let fixture_paths = streams_web_platform_required_fixture_paths(NodeCompatLane::Node26);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-streams-web-platform-watchpoint",
+        NodeCompatLane::Node26,
         &fixture_paths,
         &[],
         STREAMS_WEB_PLATFORM_EXTRA_DIRS,
