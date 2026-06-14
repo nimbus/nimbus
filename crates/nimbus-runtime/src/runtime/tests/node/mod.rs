@@ -3776,3 +3776,4 @@ include!("cases/nds3_cycle70_wave1.rs");
 include!("cases/nds3_cycle71_wave1.rs");
 include!("cases/nds3_cycle72_esm_cjs_named_error.rs");
 include!("cases/nds3_cycle75_event_loop_utilization.rs");
+include!("cases/nds3_cycle76_webstreams_clone_unref.rs");

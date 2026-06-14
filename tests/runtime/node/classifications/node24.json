@@ -2587,7 +2587,6 @@
         "test/parallel/test-webstorage-without-sqlite.js",
         "test/parallel/test-webstorage.js",
         "test/parallel/test-webstream-readablestream-pipeto.js",
-        "test/parallel/test-webstreams-clone-unref.js",
         "test/parallel/test-webstreams-pipeline.js",
         "test/parallel/test-whatwg-encoding-custom-internals.js",
         "test/parallel/test-whatwg-encoding-custom-interop.js",
