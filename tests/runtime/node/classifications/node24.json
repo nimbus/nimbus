@@ -438,7 +438,6 @@
         "test/parallel/test-vm-measure-memory-lazy.js",
         "test/parallel/test-vm-measure-memory-multi-context.js",
         "test/parallel/test-vm-measure-memory.js",
-        "test/parallel/test-vm-module-import-meta.js",
         "test/parallel/test-vm-sigint-existing-handler.js",
         "test/parallel/test-vm-sigint.js",
         "test/parallel/test-vm-syntax-error-message.js",
