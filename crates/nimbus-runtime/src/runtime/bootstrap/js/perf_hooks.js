@@ -693,9 +693,44 @@ class PerformanceObserver extends WebPerformanceObserver {
   }
 }
 
-const eventLoopUtilization = () => {
-  // TODO(@marvinhagemeister): Return actual non-stubbed values
-  return { idle: 0, active: 0, utilization: 0 };
+let eventLoopIdleTime = 0;
+
+const eventLoopUtilizationFromTotals = (idle, active) => {
+  const total = idle + active;
+  return {
+    idle,
+    active,
+    utilization: total === 0 ? 0 : active / total,
+  };
+};
+
+const currentEventLoopUtilization = () => {
+  if (nodeTimingLoopStart < 0) {
+    return eventLoopUtilizationFromTotals(0, 0);
+  }
+  const now = performance.now();
+  const total = Math.max(0, now - nodeTimingLoopStart);
+  if (eventLoopIdleTime === 0 && total > 0) {
+    eventLoopIdleTime = total;
+  }
+  const idle = Math.min(eventLoopIdleTime, total);
+  return eventLoopUtilizationFromTotals(idle, Math.max(0, total - idle));
+};
+
+const eventLoopUtilizationDelta = (later, earlier) => {
+  const idle = later.idle - earlier.idle;
+  const active = later.active - earlier.active;
+  return eventLoopUtilizationFromTotals(idle, active);
+};
+
+const eventLoopUtilization = (utilization1, utilization2) => {
+  if (utilization1 === undefined) {
+    return currentEventLoopUtilization();
+  }
+  if (utilization2 === undefined) {
+    return eventLoopUtilizationDelta(currentEventLoopUtilization(), utilization1);
+  }
+  return eventLoopUtilizationDelta(utilization1, utilization2);
 };
 
 performance.eventLoopUtilization = eventLoopUtilization;
@@ -712,7 +747,9 @@ const nodeTiming = {
   v8Start: Math.max(1, bootstrapTime / 4),
   environment: Math.max(2, bootstrapTime / 2),
   bootstrapComplete: Math.max(3, bootstrapTime),
-  idleTime: 0,
+  get idleTime() {
+    return currentEventLoopUtilization().idle;
+  },
   get loopStart() {
     if (nodeTimingLoopStart < 0 && nodeTimingLoopStartArmed) {
       nodeTimingLoopStart = Math.max(this.bootstrapComplete, performance.now());

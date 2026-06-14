@@ -2053,7 +2053,6 @@
         "test/parallel/test-outgoing-message-pipe.js",
         "test/parallel/test-parse-args.mjs",
         "test/parallel/test-pending-deprecation.js",
-        "test/parallel/test-performance-eventlooputil.js",
         "test/parallel/test-performance-many-marks.js",
         "test/parallel/test-performance-nodetiming-uvmetricsinfo.js",
         "test/parallel/test-permission-allow-addons-cli.js",

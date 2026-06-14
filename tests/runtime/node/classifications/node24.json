@@ -2837,7 +2837,6 @@
       "owner": "process-and-timing/perf-hooks",
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
-        "test/parallel/test-perf-hooks-eventlooputilization.js",
         "test/parallel/test-perf-hooks-histogram-fast-calls.js",
         "test/parallel/test-perf-hooks-worker-timeorigin.js"
       ]
