@@ -1355,7 +1355,6 @@
         "test/es-module/test-esm-child-process-fork-main.mjs",
         "test/es-module/test-esm-cjs-load-error-note.mjs",
         "test/es-module/test-esm-detect-ambiguous.mjs",
-        "test/es-module/test-esm-dynamic-import-commonjs.js",
         "test/es-module/test-esm-dynamic-import-commonjs.mjs",
         "test/es-module/test-esm-dynamic-import-mutating-fs.mjs",
         "test/es-module/test-esm-dynamic-import.js",
