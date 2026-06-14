@@ -9,24 +9,24 @@
 
 ## Suite Status
 - source: `target/node-compat/status/status-summary.json`
-- rust ignored tests: `141`
+- rust ignored tests: `142`
 
 | Lane | Upstream | Role | Passed | Expected failure / known gap | Skipped / excluded | Classified total | Classified coverage count | Vendored | Unclassified | Pass rate |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `node20` | `v20.20.2` | `legacy` | 917 | 3318 | 13 | 3331 | 4248 | 4248 | 0 | 21.6% |
 | `node22` | `v22.22.3` | `supported` | 2363 | 2365 | 20 | 2385 | 4748 | 4748 | 0 | 49.8% |
 | `node24` | `v24.16.0` | `default` | 2400 | 2750 | 48 | 2798 | 5198 | 5198 | 0 | 46.2% |
-| `node26` | `v26.2.0` | `current` | 1416 | 4116 | 46 | 4162 | 5578 | 5578 | 0 | 25.4% |
+| `node26` | `v26.2.0` | `current` | 1455 | 4077 | 46 | 4123 | 5578 | 5578 | 0 | 26.1% |
 
 ### Evidence Tiers
 
 | Tier | Source | Primary count | Passed | Claims | Official denominator? |
 | --- | --- | ---: | ---: | ---: | --- |
-| `official` | `vendored_official_fixture_corpus` | 19772 fixture_count | 7096 | - | yes |
+| `official` | `vendored_official_fixture_corpus` | 19772 fixture_count | 7135 | - | yes |
 | `supplementary` | `node_compat_manifest_test_tier` | 7 fixture_count | - | - | no |
 | `regression` | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/regression` | 26 fixture_count | - | - | no |
 | `canary` | `tests/runtime/node/canary-registry.json` | 37 active_canary_count | - | 79 | no |
-| `watchpoint` | `tests/runtime/node/expectations/rust-watchpoints.json` | 141 catalog_entry_count | - | - | no |
+| `watchpoint` | `tests/runtime/node/expectations/rust-watchpoints.json` | 142 catalog_entry_count | - | - | no |
 | `diagnostic` | `tests/runtime/node/expectations/rust-watchpoints.json + tests/runtime/node/canary-registry.json` | 11 diagnostic_count | - | 11 | no |
 
 ### Suite Warnings

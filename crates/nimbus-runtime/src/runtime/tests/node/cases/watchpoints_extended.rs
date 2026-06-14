@@ -878,6 +878,48 @@ const PROCESS_TIMERS_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
     "test/parallel/test-timers-unenroll-unref-interval.js",
 ];
 
+const PROCESS_TIMERS_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/parallel/test-timers-clearImmediate-als.js",
+    "test/parallel/test-timers-destroyed.js",
+    "test/parallel/test-timers-dispose.js",
+    "test/parallel/test-timers-immediate-queue-throw.js",
+    "test/parallel/test-timers-immediate-queue.js",
+    "test/parallel/test-timers-immediate-unref-nested-once.js",
+    "test/parallel/test-timers-immediate-unref-simple.js",
+    "test/parallel/test-timers-immediate-unref.js",
+    "test/parallel/test-timers-interval-throw.js",
+    "test/parallel/test-timers-invalid-clear.js",
+    "test/parallel/test-timers-max-duration-warning.js",
+    "test/parallel/test-timers-nan-duration-emit-once-per-process.js",
+    "test/parallel/test-timers-nan-duration-warning-promises.js",
+    "test/parallel/test-timers-nan-duration-warning.js",
+    "test/parallel/test-timers-negative-duration-warning-emit-once-per-process.js",
+    "test/parallel/test-timers-negative-duration-warning.js",
+    "test/parallel/test-timers-nested.js",
+    "test/parallel/test-timers-next-tick.js",
+    "test/parallel/test-timers-not-emit-duration-zero.js",
+    "test/parallel/test-timers-ordering.js",
+    "test/parallel/test-timers-process-tampering.js",
+    "test/parallel/test-timers-promises-scheduler.js",
+    "test/parallel/test-timers-promises.js",
+    "test/parallel/test-timers-refresh-in-callback.js",
+    "test/parallel/test-timers-refresh.js",
+    "test/parallel/test-timers-reset-process-domain-on-throw.js",
+    "test/parallel/test-timers-same-timeout-wrong-list-deleted.js",
+    "test/parallel/test-timers-setimmediate-infinite-loop.js",
+    "test/parallel/test-timers-timeout-to-interval.js",
+    "test/parallel/test-timers-timeout-with-non-integer.js",
+    "test/parallel/test-timers-to-primitive.js",
+    "test/parallel/test-timers-uncaught-exception.js",
+    "test/parallel/test-timers-unenroll-unref-interval.js",
+    "test/parallel/test-timers-unref-throw-then-ref.js",
+    "test/parallel/test-timers-unref.js",
+    "test/parallel/test-timers-unrefd-interval-still-fires.js",
+    "test/parallel/test-timers-unrefed-in-beforeexit.js",
+    "test/parallel/test-timers-unrefed-in-callback.js",
+    "test/parallel/test-timers-user-call.js",
+];
+
 const PROCESS_TIMING_RUNTIME_RESIDUAL_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-perf-gc-crash.js",
     "test/parallel/test-promise-unhandled-error-with-reading-file.js",
@@ -954,6 +996,19 @@ fn node24_default_lane_executes_process_timers_promoted_batch_fixture() {
 }
 
 #[test]
+fn node26_current_lane_executes_process_timers_promoted_batch_fixture() {
+    let fixture_paths =
+        process_timers_promoted_fixture_paths(&[PROCESS_TIMERS_PROMOTED_NODE26_PATHS]);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-process-timers-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        PROCESS_TIMERS_EXTRA_RUNTIME_FILES,
+        PROCESS_TIMERS_EXTRA_DIRS,
+    );
+}
+
+#[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked process-and-timing/timers required-gap inventory; classify async-hooks, domain, beforeExit, and unref/ref root causes after the first wide run"]
 fn node22_supported_lane_process_timers_watchpoint() {
     let fixture_paths = process_timers_runnable_fixture_paths(NodeCompatLane::Node22);
@@ -973,6 +1028,19 @@ fn node24_default_lane_process_timers_watchpoint() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-process-timers-watchpoint",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        PROCESS_TIMERS_EXTRA_RUNTIME_FILES,
+        PROCESS_TIMERS_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: ROI-ranked process-and-timing/timers required-gap inventory; classify async-hooks, domain, beforeExit, and unref/ref root causes after the first wide run"]
+fn node26_current_lane_process_timers_watchpoint() {
+    let fixture_paths = process_timers_runnable_fixture_paths(NodeCompatLane::Node26);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-process-timers-watchpoint",
+        NodeCompatLane::Node26,
         &fixture_paths,
         PROCESS_TIMERS_EXTRA_RUNTIME_FILES,
         PROCESS_TIMERS_EXTRA_DIRS,
