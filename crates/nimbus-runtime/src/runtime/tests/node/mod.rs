@@ -2134,6 +2134,13 @@ fn runtime_limits_for_node_compat_fixture(
         // harness.
         limits.execution_timeout = Duration::from_secs(120);
     }
+    if test_relative_path == "test/parallel/test-webcrypto-wrap-unwrap.js" {
+        // This official fixture runs a broad WebCrypto wrap/unwrap matrix; the
+        // Node 22 version is larger, and even the Node 24 version sits close to
+        // the default budget on loaded hosts. Keep a finite fixture-only
+        // evidence budget so the official assertions can complete.
+        limits.execution_timeout = Duration::from_secs(120);
+    }
     if test_relative_path == "test/parallel/test-vm-access-process-env.js" {
         // The fixture asserts a vm context can read `process.env.PATH`, which
         // is present in any real Node process environment. Grant PATH read to
@@ -2230,6 +2237,34 @@ fn node_compat_harness_wall_clock_timeout_tracks_fixture_runtime_budget() {
         node_compat_fixture_wall_clock_timeout(&nested_runner_limits),
         Duration::from_secs(125),
         "long-running subprocess fixtures still have a finite wall-clock budget",
+    );
+
+    let node22_webcrypto_wrap_unwrap_limits = runtime_limits_for_node_compat_fixture(
+        "test/parallel/test-webcrypto-wrap-unwrap.js",
+        Some(NodeCompatLane::Node22),
+    );
+    assert_eq!(
+        node22_webcrypto_wrap_unwrap_limits.execution_timeout,
+        Duration::from_secs(120),
+        "the broad WebCrypto wrap/unwrap matrix gets a finite slow-fixture budget in each lane",
+    );
+    assert_eq!(
+        node_compat_fixture_wall_clock_timeout(&node22_webcrypto_wrap_unwrap_limits),
+        Duration::from_secs(125),
+    );
+
+    let node24_webcrypto_wrap_unwrap_limits = runtime_limits_for_node_compat_fixture(
+        "test/parallel/test-webcrypto-wrap-unwrap.js",
+        Some(NodeCompatLane::Node24),
+    );
+    assert_eq!(
+        node24_webcrypto_wrap_unwrap_limits.execution_timeout,
+        Duration::from_secs(120),
+        "the broad WebCrypto wrap/unwrap matrix gets a finite slow-fixture budget in each lane",
+    );
+    assert_eq!(
+        node_compat_fixture_wall_clock_timeout(&node24_webcrypto_wrap_unwrap_limits),
+        Duration::from_secs(125),
     );
 }
 
@@ -3784,3 +3819,4 @@ include!("cases/nds3_cycle80_webcrypto_hmac_import_export.rs");
 include!("cases/nds3_cycle81_webcrypto_keygen.rs");
 include!("cases/nds3_cycle82_webcrypto_hkdf_derivebits.rs");
 include!("cases/nds3_cycle83_heapdump_async_hooks.rs");
+include!("cases/nds3_cycle84_webcrypto_wrap_unwrap.rs");

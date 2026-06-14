@@ -2575,7 +2575,6 @@
         "test/parallel/test-webcrypto-supports.mjs",
         "test/parallel/test-webcrypto-util.js",
         "test/parallel/test-webcrypto-webidl.js",
-        "test/parallel/test-webcrypto-wrap-unwrap.js",
         "test/parallel/test-websocket-disabled.js",
         "test/parallel/test-websocket.js",
         "test/parallel/test-webstorage-without-sqlite.js",
