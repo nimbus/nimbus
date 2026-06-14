@@ -8,7 +8,7 @@
 
 Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 1**, **node24 = 2**. Not 0/0.
 
-Session cycles 17-95 reduced the gate 81/87 -> 3/4 by harvesting every cheap/clean/
+Session cycles 17-96 reduced the gate 81/87 -> 1/2 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
