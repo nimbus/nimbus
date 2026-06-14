@@ -1,14 +1,14 @@
-# NDS gate - FORMAL documented blocked state (cycle-69, 2026-06-13)
+# NDS gate - FORMAL documented blocked state (cycle-70, 2026-06-14)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
-**Fork:** nimbus/deno v2.8.3-nimbus.21 (b810e8b662); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
+**Fork:** nimbus/deno v2.8.3-nimbus.22 (7c0004b48e); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
 **Verifier:** `bash scripts/verify-node-default-runtime-support-hardening.sh` step 9
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 26**, **node24 = 33**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 25**, **node24 = 32**. Not 0/0.
 
-Session cycles 17-69 reduced the gate 81/87 -> 26/33 by harvesting every cheap/clean/
+Session cycles 17-70 reduced the gate 81/87 -> 25/32 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -64,10 +64,12 @@ non-configurable property redefine failures promoted
 context-scoped generated module identifiers, public `util.inspect()` surface,
 and abstract `Module` constructor parity promoted `test-vm-module-basic.js`;
 the same module timeout parity dynamically greened and promoted
-`test-vm-timeout-escape-promise-module.js`; all
+`test-vm-timeout-escape-promise-module.js`; and VM no-referrer dynamic import
+fallback now routes through the context-level `importModuleDynamically` callback,
+promoting `test-vm-module-referrer-realm.mjs`; all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 35 unique fixtures remain
-(node22=26, node24=33).
+regression-verified at their promotion surface). 34 unique fixtures remain
+(node22=25, node24=32).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -116,13 +118,10 @@ regression-verified at their promotion surface). 35 unique fixtures remain
 - `test/parallel/test-heapdump-async-hooks-init-promise.js` (22+24)
 - `test/parallel/test-promise-swallowed-event.js` (22+24)
 
-### DEEP_vm_semantics (1) — owner: nimbus/deno (ext/node/ops/vm.rs + deno_core)
-- `test/parallel/test-vm-module-referrer-realm.mjs` (22+24)
-
 ## Conclusion
 
 0/0 is not reachable within a single session. The genuinely-blocked subset is a true
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring, native Ed448/KMAC primitives maybe absent from aws-lc). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=26 / node24=33.
+multi-session effort. Gate held RED and honest at node22=25 / node24=32.

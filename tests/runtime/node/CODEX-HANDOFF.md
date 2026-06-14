@@ -16,8 +16,8 @@ prove the fixture goes dynamically green, then promote it. There is no shortcut:
 you cannot make a fixture "pass" by skipping, weakening an assertion, or editing
 the derived posture.
 
-**Current gate (already done): node22 = 26, node24 = 33.** Session cycles 17-69
-took it from 81/87 -> 26/33 (published fork tags, reclassifications, promotions,
+**Current gate (already done): node22 = 25, node24 = 32.** Session cycles 17-70
+took it from 81/87 -> 25/32 (published fork tags, reclassifications, promotions,
 zero false greens). Your job is to keep going, one fixture at a time.
 
 ## THE HONESTY CONTRACT (non-negotiable — a false green is worse than a red gate)
@@ -40,7 +40,7 @@ committed input). When unsure, leave it red.
 | --- | --- |
 | Work in this worktree | `/Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening` |
 | Branch (push every cycle) | `codex/node-default-runtime-support-hardening` → PR **#10** |
-| Nimbus Deno fork | `/Users/jack/src/github.com/nimbus/deno`, branch `nimbus/v2.8.3`, currently tag `v2.8.3-nimbus.21` |
+| Nimbus Deno fork | `/Users/jack/src/github.com/nimbus/deno`, branch `nimbus/v2.8.3`, currently tag `v2.8.3-nimbus.22` |
 | rusty_v8 fork | `/Users/jack/src/github.com/nimbus/rusty_v8` (prebuilt; editing its `binding.cc` → from-source V8 build → **OOMs this host** → blocked) |
 | Vendored fixtures | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/<lane>/test/parallel/test-*.js` (lanes: node20/22/24/26) |
 | Test `mod.rs` (add `include!`s here) | `crates/nimbus-runtime/src/runtime/tests/node/mod.rs` (the `include!("cases/...")` block near the end) |
@@ -249,15 +249,14 @@ git push origin codex/node-default-runtime-support-hardening
   panic + needs cross-boundary `initializeImportMeta` wiring); `test-webcrypto-sign-verify-eddsa`
   (Ed448), `test-webcrypto-keygen-kmac`, `test-webcrypto-sign-verify-kmac` (KMAC) —
   native crypto primitives possibly absent from aws-lc.
-- **35 unique required fixtures remain, with 5 genuinely blocked and the rest
+- **34 unique required fixtures remain, with 5 genuinely blocked and the rest
   tractable-but-deep** by category (owner = `nimbus/deno` unless noted):
   crypto-provider (mostly native — verify primitives before committing a build),
-  vm-semantics (deno_node `ext/node/{polyfills/vm.js,ops/vm.rs}` plus deno_core
-  where needed), esm-loader (deno_core), promise-hooks (deno_core), and the
-  hang-timeout/event-loop surfaces.
-- **Suggested order:** behavioral-misc TS-parity fixtures first (cheap, low-risk),
-  then the vm-semantics deno_node fixtures (you have the most context there), then
-  reclassify genuine host-capability fs/tty fixtures, then the deep deno_core clusters.
+  esm-loader (deno_core), promise-hooks (deno_core), and the hang-timeout/event-loop
+  surfaces.
+- **Suggested order:** crypto primitive feasibility/probes, then ESM loader, then
+  promise-hooks / hang-timeout clusters. The previous vm-semantics residual
+  (`test-vm-module-referrer-realm.mjs`) was promoted in cycle70.
 
 ## Verify (the goal)
 
