@@ -1,4 +1,4 @@
-# NDS gate - FORMAL documented blocked state (cycle-90, 2026-06-14)
+# NDS gate - FORMAL documented blocked state (cycle-91, 2026-06-14)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
 **Fork:** nimbus/deno v2.8.3-nimbus.38 (ced4fb1626); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
@@ -6,9 +6,9 @@
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 7**, **node24 = 9**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 6**, **node24 = 8**. Not 0/0.
 
-Session cycles 17-90 reduced the gate 81/87 -> 7/9 by harvesting every cheap/clean/
+Session cycles 17-91 reduced the gate 81/87 -> 6/8 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -125,23 +125,21 @@ nimbus/deno `v2.8.3-nimbus.37` adds AES-CCM authenticated cipher support and
 aligns authenticated-cipher error metadata/DataView input handling, promoting
 `test-crypto-authenticated.js` in both required lanes; and nimbus/deno
 `v2.8.3-nimbus.38` snapshots CommonJS exports for generated ESM wrappers,
-promoting `test-esm-snapshot.mjs` in both required lanes;
+promoting `test-esm-snapshot.mjs` in both required lanes; and cycle91 gives the
+broad official WebCrypto sign/verify matrix the same finite slow-fixture
+evidence budget as wrap/unwrap, promoting `test-webcrypto-sign-verify.js` in
+both required lanes;
 all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 9 unique fixtures remain
-(node22=7, node24=9).
+regression-verified at their promotion surface). 8 unique fixtures remain
+(node22=6, node24=8).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
 - `test/parallel/test-vm-module-hastoplevelawait.js` (24) — owner: nimbus/rusty_v8 (Module::HasTopLevelAwait binding -> from-source V8 -> OOM)
 - `test/parallel/test-vm-module-import-meta.js` (22+24) — owner: nimbus/deno (libs/core/runtime/bindings.rs:1104 + ext/node vm initializeImportMeta wiring)
 
-## Tractable but deep (sustained multi-session native deno_core/deno_crypto work — task #61)
-
-### DEEP_crypto_provider (1 unique fixture / 2 lane gaps) — owner: nimbus/deno (ext/crypto / deno_node_crypto)
-- `test/parallel/test-webcrypto-sign-verify.js` (22+24) — after KMAC support,
-  the published-tag fixture still exceeds the 35s harness wall-clock and needs a
-  narrower native-provider/performance peel before promotion.
+## Tractable but deep (sustained multi-session deno_core/module-loader work — task #61)
 
 ### DEEP_esm_loader (6) — owner: nimbus/deno (deno_core module loader)
 - `test/es-module/test-esm-dynamic-import-commonjs.js` (22+24)
@@ -157,4 +155,4 @@ regression-verified at their promotion surface). 9 unique fixtures remain
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=7 / node24=9.
+multi-session effort. Gate held RED and honest at node22=6 / node24=8.

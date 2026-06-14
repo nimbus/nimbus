@@ -2556,7 +2556,6 @@
         "test/parallel/test-web-locks.js",
         "test/parallel/test-webapi-sharedarraybuffer-rejection.js",
         "test/parallel/test-webcrypto-cryptokey-workers.js",
-        "test/parallel/test-webcrypto-sign-verify.js",
         "test/parallel/test-webcrypto-supports.mjs",
         "test/parallel/test-webcrypto-util.js",
         "test/parallel/test-webcrypto-webidl.js",
