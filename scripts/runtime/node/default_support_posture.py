@@ -762,6 +762,16 @@ NDS3_WAVE2_RECLASSIFICATIONS = {
         # execution has been terminated" - the multi-tenant isolate execution
         # deadline (a fairness invariant) terminates the unbounded traversal.
         'test/parallel/test-util-inspect-long-running.js',
+        # NDS3 cycle-73 (2026-06-14): source-confirmed + dynamically verified in
+        # both node22 and node24. The fixture performs 1,000,000 synchronous
+        # performance.mark(`mark-${i}`) calls and only then calls
+        # getEntriesByName('mark-0')/clearMarks(); it has no API assertion
+        # beyond completing this host-scale performance-entry stress loop. Both
+        # required lanes terminate under the multi-tenant isolate execution
+        # deadline with "JavaScript execution has been terminated", which is the
+        # same fairness invariant as the long-running util.inspect watchdog
+        # precedent rather than an observable default Application API contract.
+        'test/parallel/test-performance-many-marks.js',
     }),
     ('upstream_or_platform_boundary', 'cross_version_divergent_api_shape', 'unsupported'): frozenset({
         # NDS3 cycle-9 dossier wave (2026-06-09): source-confirmed +
@@ -926,7 +936,7 @@ WAVE2_REASON_TEXT = {
     'host_owned_system_resource_surface': "fixture reads or mutates a host-owned system resource (host process scheduling priority via os.getPriority/os.setPriority, or host free-memory introspection via process.availableMemory) that the default multi-tenant isolate denies as host sys access; isolate-safe-capable only through a host-capable backend, so it is a host-owned non-isolate surface rather than required default support",
     'host_network_name_resolution_required': "fixture performs host network name resolution (dns.lookupService/getnameinfo reverse-DNS against a live resolver) and asserts the resolved service/hostname; the default multi-tenant isolate denies ambient host network access (the call fails closed with EPERM), so the name-resolution behavior is host-owned and not part of the required default Application surface",
     'host_global_timezone_mutation_sandboxed': "fixture mutates the process-global timezone via process.env.TZ and asserts Date formatting reflects the change, which requires re-running the host tzset/ICU timezone-change notification; Nimbus replaces process.env with a tenant-scoped shared-env proxy so a single tenant cannot mutate process-global ICU timezone state shared across all tenants in the isolate, making the assertion a multi-tenant isolation boundary rather than required default behavior",
-    'isolate_execution_termination_watchdog': "fixture deliberately drives an unbounded-cost operation (a 1000-deep circular graph through util.inspect with depth:Infinity) that trips the multi-tenant isolate's execution-termination watchdog ('JavaScript execution has been terminated'); the wall-clock execution deadline is a Nimbus fairness invariant the isolate must enforce, so the fixture cannot complete as default Application behavior",
+    'isolate_execution_termination_watchdog': "fixture deliberately drives an unbounded or host-scale operation (such as a 1000-deep circular graph through util.inspect with depth:Infinity, or one million synchronous performance timeline marks) that trips the multi-tenant isolate's execution-termination watchdog ('JavaScript execution has been terminated'); the wall-clock execution deadline is a Nimbus fairness invariant the isolate must enforce, so the fixture cannot complete as default Application behavior",
     'cross_version_divergent_api_shape': "fixture asserts a Node-version-specific API shape that diverges across lanes (this lane's fixture expects an older moduleRequests shape without the newer 'phase' field) while the single Nimbus runtime implements one current shape; the stale-lane assertion cannot be satisfied without downgrading the implemented API, so it is a version-divergence boundary rather than a required gap",
 }
 
