@@ -12,13 +12,6 @@
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_default_lane_esm_data_url_cluster_watchpoint"
     },
     {
-      "test_path": "test/parallel/test-crypto-authenticated.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "networking/crypto",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
-    },
-    {
       "test_path": "test/parallel/test-crypto-des3-wrap.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",

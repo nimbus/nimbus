@@ -26708,23 +26708,23 @@
         "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 4748,
-        "documented_manifested_green_count": 2354,
+        "documented_manifested_green_count": 2355,
         "documented_manifested_green_source": "rust_nonignored_execution_fixture_inventory_minus_classified_red_skip",
         "documented_family_green_count": 988,
-        "path_owned_manifested_green_count": 2354,
-        "classified_red_skip_count": 2394,
-        "classified_total_count": 2394,
-        "known_red_or_gap_count": 2374,
+        "path_owned_manifested_green_count": 2355,
+        "classified_red_skip_count": 2393,
+        "classified_total_count": 2393,
+        "known_red_or_gap_count": 2373,
         "skipped_or_excluded_count": 20,
         "documented_or_classified_count": 4748,
         "unmanifested_or_unclassified_count": 0,
-        "documented_manifested_green_ratio": 0.495788,
+        "documented_manifested_green_ratio": 0.495998,
         "classification_catalog": {
           "catalog_path": "tests/runtime/node/classifications/node22.json",
           "catalog_present": true,
-          "classified_red_skip_count": 2394,
+          "classified_red_skip_count": 2393,
           "by_expectation": {
-            "expected_failure": 22,
+            "expected_failure": 21,
             "expected_gap": 2352,
             "expected_skip": 20
           },
@@ -26735,7 +26735,7 @@
             "requires_sequential_host_state_harness": 115,
             "requires_unpromoted_node_surface": 2074,
             "requires_wpt_harness": 22,
-            "rust_watchpoint_expected_failure": 22,
+            "rust_watchpoint_expected_failure": 21,
             "support_fixture_not_top_level_test": 20,
             "upstream_known_issue_or_platform_boundary": 26
           },
@@ -26747,13 +26747,6 @@
               "classification": "rust_watchpoint_expected_failure",
               "owner": "node-compat/unpromoted-surface",
               "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_supported_lane_esm_data_url_cluster_watchpoint"
-            },
-            {
-              "test_path": "test/parallel/test-crypto-authenticated.js",
-              "expectation": "expected_failure",
-              "classification": "rust_watchpoint_expected_failure",
-              "owner": "networking/crypto",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
             },
             {
               "test_path": "test/parallel/test-crypto-des3-wrap.js",
@@ -45892,23 +45885,23 @@
         "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 5198,
-        "documented_manifested_green_count": 2389,
+        "documented_manifested_green_count": 2390,
         "documented_manifested_green_source": "rust_nonignored_execution_fixture_inventory_minus_classified_red_skip",
         "documented_family_green_count": 926,
-        "path_owned_manifested_green_count": 2389,
-        "classified_red_skip_count": 2809,
-        "classified_total_count": 2809,
-        "known_red_or_gap_count": 2761,
+        "path_owned_manifested_green_count": 2390,
+        "classified_red_skip_count": 2808,
+        "classified_total_count": 2808,
+        "known_red_or_gap_count": 2760,
         "skipped_or_excluded_count": 48,
         "documented_or_classified_count": 5198,
         "unmanifested_or_unclassified_count": 0,
-        "documented_manifested_green_ratio": 0.4596,
+        "documented_manifested_green_ratio": 0.459792,
         "classification_catalog": {
           "catalog_path": "tests/runtime/node/classifications/node24.json",
           "catalog_present": true,
-          "classified_red_skip_count": 2809,
+          "classified_red_skip_count": 2808,
           "by_expectation": {
-            "expected_failure": 5,
+            "expected_failure": 4,
             "expected_gap": 2756,
             "expected_skip": 48
           },
@@ -45919,7 +45912,7 @@
             "requires_sequential_host_state_harness": 119,
             "requires_unpromoted_node_surface": 2464,
             "requires_wpt_harness": 23,
-            "rust_watchpoint_expected_failure": 5,
+            "rust_watchpoint_expected_failure": 4,
             "support_fixture_not_top_level_test": 47,
             "upstream_known_issue_or_platform_boundary": 24
           },
@@ -45931,13 +45924,6 @@
               "classification": "rust_watchpoint_expected_failure",
               "owner": "node-compat/unpromoted-surface",
               "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_default_lane_esm_data_url_cluster_watchpoint"
-            },
-            {
-              "test_path": "test/parallel/test-crypto-authenticated.js",
-              "expectation": "expected_failure",
-              "classification": "rust_watchpoint_expected_failure",
-              "owner": "networking/crypto",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
             },
             {
               "test_path": "test/parallel/test-crypto-des3-wrap.js",
@@ -105008,7 +104994,7 @@
         "source": "vendored_official_fixture_corpus",
         "primary_count_label": "fixture_count",
         "primary_count": 19772,
-        "passed_count": 6669,
+        "passed_count": 6671,
         "counts_in_official_denominator": true,
         "notes": "Byte-identical Node upstream test-* fixtures under lane-local nodeNN/test roots; pass percentages use only this denominator."
       },
