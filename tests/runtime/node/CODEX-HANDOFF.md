@@ -10,15 +10,16 @@ Drive the Nimbus **node-default-runtime-support** gate to a literal **0/0**,
 honestly. The gate has two lanes (node22, node24). Each must reach
 `v8_isolate_required.gaps == 0` **and** `pass_rate_percent == 100`.
 
-Each remaining "gap" is a **real fork bug or missing feature**. You fix it in the
-Nimbus Deno fork (deno_node TypeScript polyfills, deno_core Rust, or deno_crypto),
-prove the fixture goes dynamically green, then promote it. There is no shortcut:
-you cannot make a fixture "pass" by skipping, weakening an assertion, or editing
-the derived posture.
+Each non-blocked "gap" is a **real fork bug or missing feature**. You fix it in
+the Nimbus Deno fork (deno_node TypeScript polyfills, deno_core Rust, or
+deno_crypto), prove the fixture goes dynamically green, then promote it. There
+is no shortcut: you cannot make a fixture "pass" by skipping, weakening an
+assertion, or editing the derived posture.
 
-**Current gate (already done): node22 = 11, node24 = 19.** Session cycles 17-84
-took it from 81/87 -> 11/19 (published fork tags, reclassifications, promotions,
-zero false greens). Your job is to keep going, one fixture at a time.
+**Current gate (cycle 96): node22 = 1, node24 = 2.** Session cycles 17-96 took
+it from 81/87 -> 1/2 (published fork tags, reclassifications, promotions, zero
+false greens). The remaining generated gaps are the documented blocked subset
+in `tests/runtime/node/NDS-GATE-BLOCKER.md`.
 
 ## THE HONESTY CONTRACT (non-negotiable — a false green is worse than a red gate)
 
@@ -40,7 +41,7 @@ committed input). When unsure, leave it red.
 | --- | --- |
 | Work in this worktree | `/Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening` |
 | Branch (push every cycle) | `codex/node-default-runtime-support-hardening` → PR **#10** |
-| Nimbus Deno fork | `/Users/jack/src/github.com/nimbus/deno`, branch `nimbus/v2.8.3`, currently tag `v2.8.3-nimbus.33` |
+| Nimbus Deno fork | `/Users/jack/src/github.com/nimbus/deno`, branch `nimbus/v2.8.3`, currently tag `v2.8.3-nimbus.43` |
 | rusty_v8 fork | `/Users/jack/src/github.com/nimbus/rusty_v8` (prebuilt; editing its `binding.cc` → from-source V8 build → **OOMs this host** → blocked) |
 | Vendored fixtures | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/<lane>/test/parallel/test-*.js` (lanes: node20/22/24/26) |
 | Test `mod.rs` (add `include!`s here) | `crates/nimbus-runtime/src/runtime/tests/node/mod.rs` (the `include!("cases/...")` block near the end) |
@@ -244,36 +245,21 @@ git push origin codex/node-default-runtime-support-hardening
 
 ## What's left (read `tests/runtime/node/NDS-GATE-BLOCKER.md` for the full per-fixture list)
 
-- **5 genuinely blocked — DO NOT chase:** `test-vm-module-hastoplevelawait` (needs a
-  rusty_v8 binding → OOM); `test-vm-module-import-meta` (deno_core `bindings.rs:1104`
-  panic + needs cross-boundary `initializeImportMeta` wiring); `test-webcrypto-sign-verify-eddsa`
-  (Ed448), `test-webcrypto-keygen-kmac`, `test-webcrypto-sign-verify-kmac` (KMAC) —
-  native crypto primitives possibly absent from aws-lc.
-- **20 unique required fixtures remain, with 5 genuinely blocked and the rest
-  tractable-but-deep** by category (owner = `nimbus/deno` unless noted):
-  crypto-provider (mostly native — verify primitives before committing a build),
-- **Suggested order:** crypto primitive feasibility/probes, then ESM loader.
-  Cycle71 promoted the Node24
-  WebCrypto promise-prototype-pollution fixture; a same-cluster
-  `test-webcrypto-deduplicate-usages.js` probe peeled to KMAC/native-provider
-  support and stayed red. Cycle72 promoted ESM CJS named export errors; cycle73
-  source-confirmed `test-performance-many-marks.js` as an isolate watchdog
-  fairness boundary; cycle74 source-confirmed `test-v8-serialize-leak.js` as a
-  host-process RSS/GC diagnostic. Cycle77 promoted
-  `test-promise-swallowed-event.js` by preserving duplicate promise settle
-  callbacks through deno_core and emitting Node's deprecated
-  `process` `multipleResolves` event from the node polyfill. Cycle78 promoted
-  `test-webcrypto-export-import-ec.js` and
-  `test-webcrypto-export-import-rsa.js` in both required lanes by aligning
-  Deno WebCrypto EC/RSA import/export validation and error text with Node.
-  Cycle79 removed `test-webcrypto-export-import-cfrg.js` from both lanes,
-  cycle80 removed node22 `test-webcrypto-export-import.js`, cycle81 removed
-  node22 `test-webcrypto-keygen.js` while the node24 copy remains blocked on KMAC
-  algorithm support, and cycle82 removed `test-webcrypto-derivebits-hkdf.js`
-  from both lanes with `v2.8.3-nimbus.31`. Cycle83 removed
-  `test-heapdump-async-hooks-init-promise.js` from both lanes with
-  `v2.8.3-nimbus.32`. Cycle84 removed
-  `test-webcrypto-wrap-unwrap.js` from both lanes with `v2.8.3-nimbus.33`.
+Only the documented blocked subset remains:
+
+- `test/parallel/test-vm-module-hastoplevelawait.js` (node24): needs V8's
+  `Module::HasTopLevelAwait()` through `rusty_v8`. Adding the binding requires
+  rebuilding the prebuilt `librusty_v8.a`; from-source V8 builds OOM on this
+  32 GB host. Do **not** chase this in this worktree.
+- `test/parallel/test-vm-module-import-meta.js` (node22 + node24): deno_core
+  still panics at `libs/core/runtime/bindings.rs:1104` for vm modules and needs
+  deep cross-boundary `initializeImportMeta` wiring between deno_core and
+  `ext/node/ops/vm.rs`. Leave red unless explicitly taking on that
+  cross-boundary native/runtime task.
+
+All previously listed WebCrypto Ed448/KMAC, crypto-provider, performance,
+WebStreams, async lifecycle, ESM/CJS, and vm-semantics non-blocked fixtures were
+either dynamically promoted or structurally reclassified by cycles 17-96.
 
 ## Verify (the goal)
 
