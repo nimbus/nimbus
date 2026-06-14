@@ -3824,3 +3824,4 @@ include!("cases/nds3_cycle85_webcrypto_aes_encrypt_decrypt.rs");
 include!("cases/nds3_cycle87_webcrypto_kmac_usage.rs");
 include!("cases/nds3_cycle88_webcrypto_eddsa.rs");
 include!("cases/nds3_cycle89_crypto_authenticated.rs");
+include!("cases/nds3_cycle90_esm_cjs_snapshot.rs");

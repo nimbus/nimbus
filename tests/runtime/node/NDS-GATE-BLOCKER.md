@@ -1,14 +1,14 @@
-# NDS gate - FORMAL documented blocked state (cycle-89, 2026-06-14)
+# NDS gate - FORMAL documented blocked state (cycle-90, 2026-06-14)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
-**Fork:** nimbus/deno v2.8.3-nimbus.37 (e909e14ea7); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
+**Fork:** nimbus/deno v2.8.3-nimbus.38 (ced4fb1626); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
 **Verifier:** `bash scripts/verify-node-default-runtime-support-hardening.sh` step 9
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 8**, **node24 = 10**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 7**, **node24 = 9**. Not 0/0.
 
-Session cycles 17-89 reduced the gate 81/87 -> 8/10 by harvesting every cheap/clean/
+Session cycles 17-90 reduced the gate 81/87 -> 7/9 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -123,11 +123,13 @@ Ed448 sign/verify support and aligns EdDSA wrong-key/wrong-algorithm error text,
 promoting node22 `test-webcrypto-sign-verify-eddsa.js`; and
 nimbus/deno `v2.8.3-nimbus.37` adds AES-CCM authenticated cipher support and
 aligns authenticated-cipher error metadata/DataView input handling, promoting
-`test-crypto-authenticated.js` in both required lanes;
+`test-crypto-authenticated.js` in both required lanes; and nimbus/deno
+`v2.8.3-nimbus.38` snapshots CommonJS exports for generated ESM wrappers,
+promoting `test-esm-snapshot.mjs` in both required lanes;
 all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 10 unique fixtures remain
-(node22=8, node24=10).
+regression-verified at their promotion surface). 9 unique fixtures remain
+(node22=7, node24=9).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -141,13 +143,12 @@ regression-verified at their promotion surface). 10 unique fixtures remain
   the published-tag fixture still exceeds the 35s harness wall-clock and needs a
   narrower native-provider/performance peel before promotion.
 
-### DEEP_esm_loader (7) — owner: nimbus/deno (deno_core module loader)
+### DEEP_esm_loader (6) — owner: nimbus/deno (deno_core module loader)
 - `test/es-module/test-esm-dynamic-import-commonjs.js` (22+24)
 - `test/es-module/test-esm-dynamic-import-commonjs.mjs` (22+24)
 - `test/es-module/test-esm-dynamic-import.js` (22+24)
 - `test/es-module/test-esm-loader-mock.mjs` (22+24)
 - `test/es-module/test-esm-require-race-condition.js` (24)
-- `test/es-module/test-esm-snapshot.mjs` (22+24)
 - `test/es-module/test-esm-virtual-json.mjs` (22+24)
 
 ## Conclusion
@@ -156,4 +157,4 @@ regression-verified at their promotion surface). 10 unique fixtures remain
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=8 / node24=10.
+multi-session effort. Gate held RED and honest at node22=7 / node24=9.

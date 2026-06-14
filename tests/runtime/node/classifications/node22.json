@@ -1436,7 +1436,6 @@
         "test/es-module/test-esm-repl-imports.js",
         "test/es-module/test-esm-repl.js",
         "test/es-module/test-esm-resolve-type.mjs",
-        "test/es-module/test-esm-snapshot.mjs",
         "test/es-module/test-esm-source-map.mjs",
         "test/es-module/test-esm-tla-syntax-errors-not-recognized-as-tla-error.mjs",
         "test/es-module/test-esm-tla-unfinished.mjs",
