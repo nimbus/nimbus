@@ -3773,3 +3773,4 @@ include!("cases/nds3_cycle67_wave1.rs");
 include!("cases/nds3_cycle68_wave1.rs");
 include!("cases/nds3_cycle69_wave1.rs");
 include!("cases/nds3_cycle70_wave1.rs");
+include!("cases/nds3_cycle71_wave1.rs");

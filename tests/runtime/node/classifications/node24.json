@@ -2577,7 +2577,6 @@
         "test/parallel/test-webcrypto-export-import.js",
         "test/parallel/test-webcrypto-keygen-kmac.js",
         "test/parallel/test-webcrypto-keygen.js",
-        "test/parallel/test-webcrypto-promise-prototype-pollution.mjs",
         "test/parallel/test-webcrypto-sign-verify-kmac.js",
         "test/parallel/test-webcrypto-sign-verify.js",
         "test/parallel/test-webcrypto-supports.mjs",

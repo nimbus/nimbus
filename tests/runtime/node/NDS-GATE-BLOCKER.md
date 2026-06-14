@@ -1,14 +1,14 @@
-# NDS gate - FORMAL documented blocked state (cycle-70, 2026-06-14)
+# NDS gate - FORMAL documented blocked state (cycle-71, 2026-06-14)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
-**Fork:** nimbus/deno v2.8.3-nimbus.22 (7c0004b48e); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
+**Fork:** nimbus/deno v2.8.3-nimbus.23 (08e20a0bdc); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
 **Verifier:** `bash scripts/verify-node-default-runtime-support-hardening.sh` step 9
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 25**, **node24 = 32**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 25**, **node24 = 31**. Not 0/0.
 
-Session cycles 17-70 reduced the gate 81/87 -> 25/32 by harvesting every cheap/clean/
+Session cycles 17-71 reduced the gate 81/87 -> 25/31 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -66,10 +66,13 @@ and abstract `Module` constructor parity promoted `test-vm-module-basic.js`;
 the same module timeout parity dynamically greened and promoted
 `test-vm-timeout-escape-promise-module.js`; and VM no-referrer dynamic import
 fallback now routes through the context-level `importModuleDynamically` callback,
-promoting `test-vm-module-referrer-realm.mjs`; all
+promoting `test-vm-module-referrer-realm.mjs`; and WebCrypto AES
+`generateKey()` avoids userland Promise prototype pollution while preserving the
+native-op await path, promoting `test-webcrypto-promise-prototype-pollution.mjs`;
+all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 34 unique fixtures remain
-(node22=25, node24=32).
+regression-verified at their promotion surface). 33 unique fixtures remain
+(node22=25, node24=31).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -81,7 +84,7 @@ regression-verified at their promotion surface). 34 unique fixtures remain
 
 ## Tractable but deep (sustained multi-session native deno_core/deno_crypto work — task #61)
 
-### DEEP_crypto_provider (14) — owner: nimbus/deno (ext/crypto / deno_node_crypto)
+### DEEP_crypto_provider (13) — owner: nimbus/deno (ext/crypto / deno_node_crypto)
 - `test/parallel/test-crypto-authenticated.js` (22+24)
 - `test/parallel/test-crypto-des3-wrap.js` (22+24)
 - `test/parallel/test-webcrypto-deduplicate-usages.js` (24)
@@ -93,7 +96,6 @@ regression-verified at their promotion surface). 34 unique fixtures remain
 - `test/parallel/test-webcrypto-export-import-rsa.js` (22+24)
 - `test/parallel/test-webcrypto-export-import.js` (22+24)
 - `test/parallel/test-webcrypto-keygen.js` (22+24)
-- `test/parallel/test-webcrypto-promise-prototype-pollution.mjs` (24)
 - `test/parallel/test-webcrypto-sign-verify.js` (22+24)
 - `test/parallel/test-webcrypto-wrap-unwrap.js` (22+24)
 
@@ -124,4 +126,4 @@ regression-verified at their promotion surface). 34 unique fixtures remain
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring, native Ed448/KMAC primitives maybe absent from aws-lc). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=25 / node24=32.
+multi-session effort. Gate held RED and honest at node22=25 / node24=31.
