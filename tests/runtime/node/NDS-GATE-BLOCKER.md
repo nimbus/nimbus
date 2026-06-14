@@ -1,14 +1,14 @@
-# NDS gate - FORMAL documented blocked state (cycle-80, 2026-06-14)
+# NDS gate - FORMAL documented blocked state (cycle-81, 2026-06-14)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
-**Fork:** nimbus/deno v2.8.3-nimbus.29 (1a8b16bab4); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
+**Fork:** nimbus/deno v2.8.3-nimbus.30 (4bcf836240); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
 **Verifier:** `bash scripts/verify-node-default-runtime-support-hardening.sh` step 9
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 15**, **node24 = 22**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 14**, **node24 = 22**. Not 0/0.
 
-Session cycles 17-80 reduced the gate 81/87 -> 15/22 by harvesting every cheap/clean/
+Session cycles 17-81 reduced the gate 81/87 -> 14/22 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -92,11 +92,15 @@ validation and error text with Node, promoting
 nimbus/deno `v2.8.3-nimbus.28` adds Ed448 import/export support and fixes X448
 public-key derivation, promoting `test-webcrypto-export-import-cfrg.js` in both
 required lanes; and nimbus/deno `v2.8.3-nimbus.29` aligns WebCrypto HMAC import
-error codes/messages, promoting node22 `test-webcrypto-export-import.js`;
+error codes/messages, promoting node22 `test-webcrypto-export-import.js`; and
+nimbus/deno `v2.8.3-nimbus.30` aligns WebCrypto `generateKey()` RSA/AES
+validation, Ed448 key generation, and node:crypto utility parity, promoting
+node22 `test-webcrypto-keygen.js` while the node24 copy still reaches KMAC
+native-provider support;
 all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
 regression-verified at their promotion surface). 23 unique fixtures remain
-(node22=15, node24=22).
+(node22=14, node24=22).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -116,7 +120,7 @@ regression-verified at their promotion surface). 23 unique fixtures remain
 - `test/parallel/test-webcrypto-derivekey.js` (24)
 - `test/parallel/test-webcrypto-encrypt-decrypt-aes.js` (24)
 - `test/parallel/test-webcrypto-export-import.js` (24)
-- `test/parallel/test-webcrypto-keygen.js` (22+24)
+- `test/parallel/test-webcrypto-keygen.js` (24)
 - `test/parallel/test-webcrypto-sign-verify.js` (22+24)
 - `test/parallel/test-webcrypto-wrap-unwrap.js` (22+24)
 
@@ -138,4 +142,4 @@ regression-verified at their promotion surface). 23 unique fixtures remain
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring, native Ed448/KMAC primitives maybe absent from aws-lc). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=15 / node24=22.
+multi-session effort. Gate held RED and honest at node22=14 / node24=22.

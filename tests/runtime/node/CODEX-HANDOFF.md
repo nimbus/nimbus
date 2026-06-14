@@ -16,8 +16,8 @@ prove the fixture goes dynamically green, then promote it. There is no shortcut:
 you cannot make a fixture "pass" by skipping, weakening an assertion, or editing
 the derived posture.
 
-**Current gate (already done): node22 = 15, node24 = 22.** Session cycles 17-80
-took it from 81/87 -> 15/22 (published fork tags, reclassifications, promotions,
+**Current gate (already done): node22 = 14, node24 = 22.** Session cycles 17-81
+took it from 81/87 -> 14/22 (published fork tags, reclassifications, promotions,
 zero false greens). Your job is to keep going, one fixture at a time.
 
 ## THE HONESTY CONTRACT (non-negotiable — a false green is worse than a red gate)
@@ -40,7 +40,7 @@ committed input). When unsure, leave it red.
 | --- | --- |
 | Work in this worktree | `/Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening` |
 | Branch (push every cycle) | `codex/node-default-runtime-support-hardening` → PR **#10** |
-| Nimbus Deno fork | `/Users/jack/src/github.com/nimbus/deno`, branch `nimbus/v2.8.3`, currently tag `v2.8.3-nimbus.29` |
+| Nimbus Deno fork | `/Users/jack/src/github.com/nimbus/deno`, branch `nimbus/v2.8.3`, currently tag `v2.8.3-nimbus.30` |
 | rusty_v8 fork | `/Users/jack/src/github.com/nimbus/rusty_v8` (prebuilt; editing its `binding.cc` → from-source V8 build → **OOMs this host** → blocked) |
 | Vendored fixtures | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/<lane>/test/parallel/test-*.js` (lanes: node20/22/24/26) |
 | Test `mod.rs` (add `include!`s here) | `crates/nimbus-runtime/src/runtime/tests/node/mod.rs` (the `include!("cases/...")` block near the end) |
@@ -267,9 +267,10 @@ git push origin codex/node-default-runtime-support-hardening
   `test-webcrypto-export-import-ec.js` and
   `test-webcrypto-export-import-rsa.js` in both required lanes by aligning
   Deno WebCrypto EC/RSA import/export validation and error text with Node.
-  Cycle79 removed `test-webcrypto-export-import-cfrg.js` from both lanes, and
-  cycle80 removed node22 `test-webcrypto-export-import.js`; the node24 copy
-  remains blocked on KMAC algorithm support.
+  Cycle79 removed `test-webcrypto-export-import-cfrg.js` from both lanes,
+  cycle80 removed node22 `test-webcrypto-export-import.js`, and cycle81 removed
+  node22 `test-webcrypto-keygen.js`; the node24 copies remain blocked on KMAC
+  algorithm support.
 
 ## Verify (the goal)
 
