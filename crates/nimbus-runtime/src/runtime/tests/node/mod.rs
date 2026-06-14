@@ -3860,3 +3860,4 @@ include!("cases/nds3_cycle92_esm_require_race.rs");
 include!("cases/nds3_cycle93_esm_dynamic_import_commonjs.rs");
 include!("cases/nds3_cycle94_esm_dynamic_import_commonjs_mjs.rs");
 include!("cases/nds3_cycle95_esm_dynamic_import.rs");
+include!("cases/nds3_cycle96_esm_async_loader_hooks.rs");

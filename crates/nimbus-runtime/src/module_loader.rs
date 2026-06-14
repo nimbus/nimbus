@@ -273,6 +273,94 @@ impl RestrictedModuleLoader {
         ))
     }
 
+    async fn load_after_async_resolve(
+        &self,
+        requested_specifier: ModuleSpecifier,
+        receiver: deno_node::ops::module_hooks::ResolveReceiver,
+        options: ModuleLoadOptions,
+    ) -> Result<ModuleSource, JsErrorBox> {
+        let (resolved_url, resolved_format) = receiver
+            .await
+            .map_err(|_| JsErrorBox::generic("module resolve hook cancelled"))?
+            .map_err(JsErrorBox::generic)?;
+        let resolved_specifier =
+            ModuleSpecifier::parse(&resolved_url).map_err(JsErrorBox::from_err)?;
+        let options = match resolved_format.as_deref() {
+            Some(format) => module_load_options_with_resolved_hook_format(options, format),
+            None => options,
+        };
+        let requested_module_type_for_hooks = options.requested_module_type.clone();
+        if let Some(registry) = &self.loader_hook_registry
+            && registry.load_active.get()
+            && !options.is_synchronous
+        {
+            let receiver = registry.push_load(
+                resolved_specifier.to_string(),
+                &requested_module_type_for_hooks,
+            );
+            match receiver.await {
+                Ok(Ok((_, Some(format), _)))
+                    if format == "builtin" && resolved_specifier.scheme() == "node" =>
+                {
+                    return Ok(ModuleSource::new_with_redirect(
+                        ModuleType::JavaScript,
+                        ModuleSourceCode::String(String::new().into()),
+                        &requested_specifier,
+                        &resolved_specifier,
+                        None,
+                    ));
+                }
+                Ok(Ok((Some(source), format, _))) => {
+                    let source = if format.as_deref() == Some("commonjs") {
+                        wrap_hook_commonjs_source(&resolved_specifier, &source)?
+                    } else {
+                        source
+                    };
+                    return Ok(ModuleSource::new_with_redirect(
+                        module_type_from_hook_format(format.as_deref()),
+                        ModuleSourceCode::String(source.into()),
+                        &requested_specifier,
+                        &resolved_specifier,
+                        None,
+                    ));
+                }
+                Ok(Ok((None, format, effective_url))) => {
+                    let hook_format = format.as_deref().or(resolved_format.as_deref());
+                    let found_specifier = effective_url
+                        .as_deref()
+                        .map(ModuleSpecifier::parse)
+                        .transpose()
+                        .map_err(JsErrorBox::from_err)?
+                        .unwrap_or(resolved_specifier);
+                    if let Err(error) = self.ensure_allowed_specifier(&found_specifier) {
+                        return Err(error);
+                    }
+                    let source = self
+                        .load_module_source(&found_specifier, options, hook_format)
+                        .await?;
+                    return Ok(redirect_module_source(
+                        source,
+                        &requested_specifier,
+                        &found_specifier,
+                    ));
+                }
+                Ok(Err(error)) => return Err(JsErrorBox::generic(error)),
+                Err(_) => return Err(JsErrorBox::generic("module load hook cancelled")),
+            }
+        }
+        if let Err(error) = self.ensure_allowed_specifier(&resolved_specifier) {
+            return Err(error);
+        }
+        let source = self
+            .load_module_source(&resolved_specifier, options, resolved_format.as_deref())
+            .await?;
+        Ok(redirect_module_source(
+            source,
+            &requested_specifier,
+            &resolved_specifier,
+        ))
+    }
+
     fn supported_node_builtin_source(&self, specifier: &str) -> Option<&'static str> {
         source_for_supported_node_builtin(specifier, self.compatibility_target.is_node())
     }
@@ -463,6 +551,17 @@ impl ModuleLoader for RestrictedModuleLoader {
         _maybe_referrer: Option<&ModuleLoadReferrer>,
         options: ModuleLoadOptions,
     ) -> ModuleLoadResponse {
+        if let Some(registry) = &self.loader_hook_registry
+            && let Some(receiver) = registry.take_async_resolve(module_specifier.as_str())
+        {
+            let loader = self.clone();
+            let requested_specifier = module_specifier.clone();
+            return ModuleLoadResponse::Async(Box::pin(async move {
+                loader
+                    .load_after_async_resolve(requested_specifier, receiver, options)
+                    .await
+            }));
+        }
         let requested_module_type_for_hooks = options.requested_module_type.clone();
         let resolved_hook_format = self.loader_hook_registry.as_ref().and_then(|registry| {
             registry
@@ -557,6 +656,26 @@ impl ModuleLoader for RestrictedModuleLoader {
             .as_ref()
             .is_some_and(|registry| registry.load_active.get() && specifier.starts_with("node:"))
     }
+
+    fn pump_event_loop_during_load(&self) -> bool {
+        self.loader_hook_registry
+            .as_ref()
+            .is_some_and(|registry| registry.load_active.get() || registry.resolve_active())
+    }
+}
+
+fn redirect_module_source(
+    source: ModuleSource,
+    requested_specifier: &ModuleSpecifier,
+    found_specifier: &ModuleSpecifier,
+) -> ModuleSource {
+    ModuleSource::new_with_redirect(
+        source.module_type,
+        source.code,
+        requested_specifier,
+        found_specifier,
+        source.code_cache,
+    )
 }
 
 fn module_type_from_hook_format(format: Option<&str>) -> ModuleType {
