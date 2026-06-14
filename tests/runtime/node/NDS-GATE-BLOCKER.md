@@ -1,14 +1,14 @@
-# NDS gate - FORMAL documented blocked state (cycle-93, 2026-06-14)
+# NDS gate - FORMAL documented blocked state (cycle-94, 2026-06-14)
 
 **Branch/PR:** worktree node-default-runtime-support-hardening -> PR #10  
-**Fork:** nimbus/deno v2.8.3-nimbus.40 (41f65d2c7f); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
+**Fork:** nimbus/deno v2.8.3-nimbus.41 (5c8d394b76); nimbus/rusty_v8 stock v149.4.0-nimbus.1  
 **Verifier:** `bash scripts/verify-node-default-runtime-support-hardening.sh` step 9
 
 ## Unsatisfied gate
 
-Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 5**, **node24 = 6**. Not 0/0.
+Step 9 needs both lanes `gaps==0` AND `pass_rate==100`. Current generated posture: **node22 = 4**, **node24 = 5**. Not 0/0.
 
-Session cycles 17-93 reduced the gate 81/87 -> 5/6 by harvesting every cheap/clean/
+Session cycles 17-94 reduced the gate 81/87 -> 4/5 by harvesting every cheap/clean/
 TS-tractable lever (published fork fixes hasAsyncGraph, createCachedData, the
 SourceTextModule error-semantics parity set, and AbortController/AbortSignal
 inspect + timeout reachability; source-confirmed host-process reclassification
@@ -133,11 +133,15 @@ both required lanes; and nimbus/deno `v2.8.3-nimbus.39` adds Node-style
 an ES module while a dynamic import graph is still pending, promoting node24
 `test-esm-require-race-condition.js`; and nimbus/deno `v2.8.3-nimbus.40`
 defers nextTick draining while a traced CommonJS dynamic import settles,
-promoting `test-esm-dynamic-import-commonjs.js` in both required lanes;
+promoting `test-esm-dynamic-import-commonjs.js` in both required lanes; and
+nimbus/deno `v2.8.3-nimbus.41` shares that nextTick deferral counter with
+deno_core so ESM-origin dynamic imports of CommonJS modules resume their import
+continuation before `process.nextTick`, promoting
+`test-esm-dynamic-import-commonjs.mjs` in both required lanes;
 all
 dynamically green-guarded or structurally source-confirmed, zero false greens,
-regression-verified at their promotion surface). 6 unique fixtures remain
-(node22=5, node24=6).
+regression-verified at their promotion surface). 5 unique fixtures remain
+(node22=4, node24=5).
 
 ## Genuinely blocked (cannot be reached in the V8-isolate/runtime/fork scope on this host)
 
@@ -146,8 +150,7 @@ regression-verified at their promotion surface). 6 unique fixtures remain
 
 ## Tractable but deep (sustained multi-session deno_core/module-loader work — task #61)
 
-### DEEP_esm_loader (4) — owner: nimbus/deno (deno_core module loader)
-- `test/es-module/test-esm-dynamic-import-commonjs.mjs` (22+24)
+### DEEP_esm_loader (3) — owner: nimbus/deno (deno_core module loader)
 - `test/es-module/test-esm-dynamic-import.js` (22+24)
 - `test/es-module/test-esm-loader-mock.mjs` (22+24)
 - `test/es-module/test-esm-virtual-json.mjs` (22+24)
@@ -158,4 +161,4 @@ regression-verified at their promotion surface). 6 unique fixtures remain
 blocker (rusty_v8 OOM binding, deno_core import-meta panic needing cross-boundary
 initializeImportMeta wiring). The
 DEEP categories are individually tractable via the proven fork-owner flow but constitute a
-multi-session effort. Gate held RED and honest at node22=5 / node24=6.
+multi-session effort. Gate held RED and honest at node22=4 / node24=5.
