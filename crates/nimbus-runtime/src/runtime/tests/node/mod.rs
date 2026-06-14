@@ -3780,3 +3780,4 @@ include!("cases/nds3_cycle76_webstreams_clone_unref.rs");
 include!("cases/nds3_cycle77_multiple_resolves.rs");
 include!("cases/nds3_cycle78_webcrypto_import_export.rs");
 include!("cases/nds3_cycle79_webcrypto_cfrg_import_export.rs");
+include!("cases/nds3_cycle80_webcrypto_hmac_import_export.rs");

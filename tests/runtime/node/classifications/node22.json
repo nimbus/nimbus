@@ -2418,7 +2418,6 @@
         "test/parallel/test-weakref.js",
         "test/parallel/test-webcrypto-cryptokey-workers.js",
         "test/parallel/test-webcrypto-derivebits-hkdf.js",
-        "test/parallel/test-webcrypto-export-import.js",
         "test/parallel/test-webcrypto-keygen.js",
         "test/parallel/test-webcrypto-sign-verify-eddsa.js",
         "test/parallel/test-webcrypto-sign-verify.js",
