@@ -2419,8 +2419,6 @@
         "test/parallel/test-webcrypto-cryptokey-workers.js",
         "test/parallel/test-webcrypto-derivebits-hkdf.js",
         "test/parallel/test-webcrypto-export-import-cfrg.js",
-        "test/parallel/test-webcrypto-export-import-ec.js",
-        "test/parallel/test-webcrypto-export-import-rsa.js",
         "test/parallel/test-webcrypto-export-import.js",
         "test/parallel/test-webcrypto-keygen.js",
         "test/parallel/test-webcrypto-sign-verify-eddsa.js",

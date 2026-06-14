@@ -3778,3 +3778,4 @@ include!("cases/nds3_cycle72_esm_cjs_named_error.rs");
 include!("cases/nds3_cycle75_event_loop_utilization.rs");
 include!("cases/nds3_cycle76_webstreams_clone_unref.rs");
 include!("cases/nds3_cycle77_multiple_resolves.rs");
+include!("cases/nds3_cycle78_webcrypto_import_export.rs");

@@ -7,15 +7,15 @@ Counts every official vendored lane-local test-* JS/CJS/MJS fixture, then compar
 | Lane | Role | Upstream | Vendored test files | Passed | Expected failure / known gap | Skipped / excluded | Classified total | Classified coverage count | Unclassified | Pass rate |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `node20` | `legacy` | `v20.20.2` | 4248 | 917 | 3318 | 13 | 3331 | 4248 | 0 | 21.6% |
-| `node22` | `supported` | `v22.22.3` | 4748 | 2345 | 2383 | 20 | 2403 | 4748 | 0 | 49.4% |
-| `node24` | `default` | `v24.16.0` | 5198 | 2376 | 2774 | 48 | 2822 | 5198 | 0 | 45.7% |
+| `node22` | `supported` | `v22.22.3` | 4748 | 2347 | 2381 | 20 | 2401 | 4748 | 0 | 49.4% |
+| `node24` | `default` | `v24.16.0` | 5198 | 2378 | 2772 | 48 | 2820 | 5198 | 0 | 45.7% |
 | `node26` | `current` | `v26.2.0` | 5578 | 1009 | 4523 | 46 | 4569 | 5578 | 0 | 18.1% |
 
 ## Evidence Tiers
 
 | Tier | Source | Primary count | Passed | Claims | Official denominator? | Notes |
 | --- | --- | ---: | ---: | ---: | --- | --- |
-| `official` | `vendored_official_fixture_corpus` | 19772 fixture_count | 6647 | - | yes | Byte-identical Node upstream test-* fixtures under lane-local nodeNN/test roots; pass percentages use only this denominator. |
+| `official` | `vendored_official_fixture_corpus` | 19772 fixture_count | 6651 | - | yes | Byte-identical Node upstream test-* fixtures under lane-local nodeNN/test roots; pass percentages use only this denominator. |
 | `supplementary` | `node_compat_manifest_test_tier` | 7 fixture_count | - | - | no | Nimbus-authored support fixtures that explain behavior beyond official Node corpus pass claims. |
 | `regression` | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/regression` | 26 fixture_count | - | - | no | Nimbus-authored or adapted regression fixtures separated from official lane roots. |
 | `canary` | `tests/runtime/node/canary-registry.json` | 37 active_canary_count | - | 79 | no | Package and app probes that support developer-facing claims without changing official fixture denominators. |
@@ -27,8 +27,8 @@ Counts every official vendored lane-local test-* JS/CJS/MJS fixture, then compar
 | Lane | Catalog | Expected failure / known gap | Skipped / excluded | Classified total | By expectation | By classification |
 | --- | --- | ---: | ---: | ---: | --- | --- |
 | `node20` | `tests/runtime/node/classifications/node20.json` | 3318 | 13 | 3331 | `{"Expected failure": 22, "Known gap": 3296, "Skipped / excluded": 13}` | `{"Requires Native Addon Harness": 24, "Requires Pseudo Tty Host Harness": 28, "Requires Pummel Stress Harness": 60, "Requires Sequential Host State Harness": 119, "Requires Unpromoted Node Surface": 3025, "Requires Wpt Harness": 20, "Rust Watchpoint Expected Failure": 22, "Support Fixture Not Top Level Test": 13, "Upstream Known Issue Or Platform Boundary": 20}` |
-| `node22` | `tests/runtime/node/classifications/node22.json` | 2383 | 20 | 2403 | `{"Expected failure": 22, "Known gap": 2361, "Skipped / excluded": 20}` | `{"Requires Native Addon Harness": 29, "Requires Pseudo Tty Host Harness": 31, "Requires Pummel Stress Harness": 55, "Requires Sequential Host State Harness": 115, "Requires Unpromoted Node Surface": 2083, "Requires Wpt Harness": 22, "Rust Watchpoint Expected Failure": 22, "Support Fixture Not Top Level Test": 20, "Upstream Known Issue Or Platform Boundary": 26}` |
-| `node24` | `tests/runtime/node/classifications/node24.json` | 2774 | 48 | 2822 | `{"Expected failure": 5, "Known gap": 2769, "Skipped / excluded": 48}` | `{"Requires Native Addon Harness": 31, "Requires Pseudo Tty Host Harness": 32, "Requires Pummel Stress Harness": 64, "Requires Sequential Host State Harness": 119, "Requires Unpromoted Node Surface": 2477, "Requires Wpt Harness": 23, "Rust Watchpoint Expected Failure": 5, "Support Fixture Not Top Level Test": 47, "Upstream Known Issue Or Platform Boundary": 24}` |
+| `node22` | `tests/runtime/node/classifications/node22.json` | 2381 | 20 | 2401 | `{"Expected failure": 22, "Known gap": 2359, "Skipped / excluded": 20}` | `{"Requires Native Addon Harness": 29, "Requires Pseudo Tty Host Harness": 31, "Requires Pummel Stress Harness": 55, "Requires Sequential Host State Harness": 115, "Requires Unpromoted Node Surface": 2081, "Requires Wpt Harness": 22, "Rust Watchpoint Expected Failure": 22, "Support Fixture Not Top Level Test": 20, "Upstream Known Issue Or Platform Boundary": 26}` |
+| `node24` | `tests/runtime/node/classifications/node24.json` | 2772 | 48 | 2820 | `{"Expected failure": 5, "Known gap": 2767, "Skipped / excluded": 48}` | `{"Requires Native Addon Harness": 31, "Requires Pseudo Tty Host Harness": 32, "Requires Pummel Stress Harness": 64, "Requires Sequential Host State Harness": 119, "Requires Unpromoted Node Surface": 2475, "Requires Wpt Harness": 23, "Rust Watchpoint Expected Failure": 5, "Support Fixture Not Top Level Test": 47, "Upstream Known Issue Or Platform Boundary": 24}` |
 | `node26` | `tests/runtime/node/classifications/node26.json` | 4523 | 46 | 4569 | `{"Expected failure": 35, "Known gap": 4488, "Skipped / excluded": 46}` | `{"Node26 Current Broad Pre Run Residual": 35, "Requires Native Addon Harness": 33, "Requires Pseudo Tty Host Harness": 31, "Requires Pummel Stress Harness": 65, "Requires Sequential Host State Harness": 119, "Requires Unpromoted Node Surface": 4192, "Requires Wpt Harness": 25, "Support Fixture Not Top Level Test": 46, "Upstream Known Issue Or Platform Boundary": 23}` |
 
 ## Family Passed Denominator
