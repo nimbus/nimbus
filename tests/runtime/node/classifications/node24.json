@@ -2566,7 +2566,6 @@
         "test/parallel/test-webapi-sharedarraybuffer-rejection.js",
         "test/parallel/test-webcrypto-cryptokey-workers.js",
         "test/parallel/test-webcrypto-deduplicate-usages.js",
-        "test/parallel/test-webcrypto-derivebits-hkdf.js",
         "test/parallel/test-webcrypto-derivekey.js",
         "test/parallel/test-webcrypto-encrypt-decrypt-aes.js",
         "test/parallel/test-webcrypto-export-import.js",

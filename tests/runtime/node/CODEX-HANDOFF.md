@@ -16,8 +16,8 @@ prove the fixture goes dynamically green, then promote it. There is no shortcut:
 you cannot make a fixture "pass" by skipping, weakening an assertion, or editing
 the derived posture.
 
-**Current gate (already done): node22 = 14, node24 = 22.** Session cycles 17-81
-took it from 81/87 -> 14/22 (published fork tags, reclassifications, promotions,
+**Current gate (already done): node22 = 13, node24 = 21.** Session cycles 17-82
+took it from 81/87 -> 13/21 (published fork tags, reclassifications, promotions,
 zero false greens). Your job is to keep going, one fixture at a time.
 
 ## THE HONESTY CONTRACT (non-negotiable — a false green is worse than a red gate)
@@ -40,7 +40,7 @@ committed input). When unsure, leave it red.
 | --- | --- |
 | Work in this worktree | `/Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening` |
 | Branch (push every cycle) | `codex/node-default-runtime-support-hardening` → PR **#10** |
-| Nimbus Deno fork | `/Users/jack/src/github.com/nimbus/deno`, branch `nimbus/v2.8.3`, currently tag `v2.8.3-nimbus.30` |
+| Nimbus Deno fork | `/Users/jack/src/github.com/nimbus/deno`, branch `nimbus/v2.8.3`, currently tag `v2.8.3-nimbus.31` |
 | rusty_v8 fork | `/Users/jack/src/github.com/nimbus/rusty_v8` (prebuilt; editing its `binding.cc` → from-source V8 build → **OOMs this host** → blocked) |
 | Vendored fixtures | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/<lane>/test/parallel/test-*.js` (lanes: node20/22/24/26) |
 | Test `mod.rs` (add `include!`s here) | `crates/nimbus-runtime/src/runtime/tests/node/mod.rs` (the `include!("cases/...")` block near the end) |
@@ -249,7 +249,7 @@ git push origin codex/node-default-runtime-support-hardening
   panic + needs cross-boundary `initializeImportMeta` wiring); `test-webcrypto-sign-verify-eddsa`
   (Ed448), `test-webcrypto-keygen-kmac`, `test-webcrypto-sign-verify-kmac` (KMAC) —
   native crypto primitives possibly absent from aws-lc.
-- **23 unique required fixtures remain, with 5 genuinely blocked and the rest
+- **22 unique required fixtures remain, with 5 genuinely blocked and the rest
   tractable-but-deep** by category (owner = `nimbus/deno` unless noted):
   crypto-provider (mostly native — verify primitives before committing a build),
   esm-loader (deno_core), and one remaining promise-hooks fixture (deno_core).
@@ -268,9 +268,10 @@ git push origin codex/node-default-runtime-support-hardening
   `test-webcrypto-export-import-rsa.js` in both required lanes by aligning
   Deno WebCrypto EC/RSA import/export validation and error text with Node.
   Cycle79 removed `test-webcrypto-export-import-cfrg.js` from both lanes,
-  cycle80 removed node22 `test-webcrypto-export-import.js`, and cycle81 removed
-  node22 `test-webcrypto-keygen.js`; the node24 copies remain blocked on KMAC
-  algorithm support.
+  cycle80 removed node22 `test-webcrypto-export-import.js`, cycle81 removed
+  node22 `test-webcrypto-keygen.js` while the node24 copy remains blocked on KMAC
+  algorithm support, and cycle82 removed `test-webcrypto-derivebits-hkdf.js`
+  from both lanes with `v2.8.3-nimbus.31`.
 
 ## Verify (the goal)
 
