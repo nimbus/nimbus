@@ -2569,7 +2569,6 @@
         "test/parallel/test-webcrypto-derivebits-hkdf.js",
         "test/parallel/test-webcrypto-derivekey.js",
         "test/parallel/test-webcrypto-encrypt-decrypt-aes.js",
-        "test/parallel/test-webcrypto-export-import-cfrg.js",
         "test/parallel/test-webcrypto-export-import.js",
         "test/parallel/test-webcrypto-keygen-kmac.js",
         "test/parallel/test-webcrypto-keygen.js",
