@@ -1388,7 +1388,6 @@
         "test/es-module/test-esm-cjs-load-error-note.mjs",
         "test/es-module/test-esm-detect-ambiguous.mjs",
         "test/es-module/test-esm-dynamic-import-mutating-fs.mjs",
-        "test/es-module/test-esm-dynamic-import.js",
         "test/es-module/test-esm-encoded-path-native.js",
         "test/es-module/test-esm-experimental-warnings.mjs",
         "test/es-module/test-esm-export-not-found.mjs",
