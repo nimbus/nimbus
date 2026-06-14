@@ -131,6 +131,54 @@ const WHATWG_WEB_PLATFORM_PROMOTED_COMMON_PATHS: &[&str] = &[
 const WHATWG_WEB_PLATFORM_PROMOTED_NODE24_COMMON_EXTRA_PATHS: &[&str] =
     &["test/parallel/test-whatwg-transformstream-cancel-write-race.js"];
 
+const WHATWG_WEB_PLATFORM_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/parallel/test-whatwg-encoding-custom-api-basics.js",
+    "test/parallel/test-whatwg-encoding-custom-fatal-streaming.js",
+    "test/parallel/test-whatwg-encoding-custom-textdecoder-api-invalid-label.js",
+    "test/parallel/test-whatwg-encoding-custom-textdecoder-fatal.js",
+    "test/parallel/test-whatwg-encoding-custom-textdecoder-ignorebom.js",
+    "test/parallel/test-whatwg-encoding-custom-textdecoder-invalid-arg.js",
+    "test/parallel/test-whatwg-encoding-custom-textdecoder-streaming.js",
+    "test/parallel/test-whatwg-encoding-custom-textdecoder-utf16-surrogates.js",
+    "test/parallel/test-whatwg-events-add-event-listener-options-passive.js",
+    "test/parallel/test-whatwg-events-customevent.js",
+    "test/parallel/test-whatwg-events-event-constructors.js",
+    "test/parallel/test-whatwg-events-eventtarget-this-of-listener.js",
+    "test/parallel/test-whatwg-readablebytestream-bad-buffers-and-views.js",
+    "test/parallel/test-whatwg-readablebytestreambyob.js",
+    "test/parallel/test-whatwg-readablestream.mjs",
+    "test/parallel/test-whatwg-transformstream-cancel-write-race.js",
+    "test/parallel/test-whatwg-url-custom-deepequal.js",
+    "test/parallel/test-whatwg-url-custom-global.js",
+    "test/parallel/test-whatwg-url-custom-href-side-effect.js",
+    "test/parallel/test-whatwg-url-custom-parsing.js",
+    "test/parallel/test-whatwg-url-custom-properties.js",
+    "test/parallel/test-whatwg-url-custom-searchparams-append.js",
+    "test/parallel/test-whatwg-url-custom-searchparams-constructor.js",
+    "test/parallel/test-whatwg-url-custom-searchparams-delete.js",
+    "test/parallel/test-whatwg-url-custom-searchparams-entries.js",
+    "test/parallel/test-whatwg-url-custom-searchparams-foreach.js",
+    "test/parallel/test-whatwg-url-custom-searchparams-get.js",
+    "test/parallel/test-whatwg-url-custom-searchparams-getall.js",
+    "test/parallel/test-whatwg-url-custom-searchparams-has.js",
+    "test/parallel/test-whatwg-url-custom-searchparams-inspect.js",
+    "test/parallel/test-whatwg-url-custom-searchparams-keys.js",
+    "test/parallel/test-whatwg-url-custom-searchparams-set.js",
+    "test/parallel/test-whatwg-url-custom-searchparams-sort.js",
+    "test/parallel/test-whatwg-url-custom-searchparams-stringifier.js",
+    "test/parallel/test-whatwg-url-custom-searchparams-values.js",
+    "test/parallel/test-whatwg-url-custom-searchparams.js",
+    "test/parallel/test-whatwg-url-custom-setters.js",
+    "test/parallel/test-whatwg-url-custom-tostringtag.js",
+    "test/parallel/test-whatwg-url-invalidthis.js",
+    "test/parallel/test-whatwg-url-override-hostname.js",
+    "test/parallel/test-whatwg-url-properties.js",
+    "test/parallel/test-whatwg-webstreams-adapters-to-readablestream.js",
+    "test/parallel/test-whatwg-webstreams-compression.js",
+    "test/parallel/test-whatwg-webstreams-encoding.js",
+    "test/parallel/test-whatwg-writablestream-close.js",
+];
+
 fn whatwg_web_platform_common_fixture_paths(lane: NodeCompatLane) -> Vec<String> {
     let mut fixture_paths =
         node_compat_required_gap_paths_for_owner(lane, "node-compat/unpromoted-surface");
@@ -208,6 +256,21 @@ fn node24_default_lane_executes_whatwg_web_platform_encoding_promoted_batch_fixt
 }
 
 #[test]
+fn node26_current_lane_executes_whatwg_web_platform_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = WHATWG_WEB_PLATFORM_PROMOTED_NODE26_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-whatwg-web-platform-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        WHATWG_WEB_PLATFORM_COMMON_EXTRA_DIRS,
+    );
+}
+
+#[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked WHATWG/web-platform common required-gap inventory; excludes stress/hang paths and the lane-specific encoding fixture side batch"]
 fn node22_supported_lane_whatwg_web_platform_watchpoint() {
     let fixture_paths = whatwg_web_platform_common_fixture_paths(NodeCompatLane::Node22);
@@ -227,6 +290,19 @@ fn node24_default_lane_whatwg_web_platform_watchpoint() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-whatwg-web-platform-watchpoint",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        WHATWG_WEB_PLATFORM_COMMON_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: WHATWG/web-platform common required-gap inventory; promote only dynamically green fixtures"]
+fn node26_current_lane_whatwg_web_platform_watchpoint() {
+    let fixture_paths = whatwg_web_platform_common_fixture_paths(NodeCompatLane::Node26);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-whatwg-web-platform-watchpoint",
+        NodeCompatLane::Node26,
         &fixture_paths,
         &[],
         WHATWG_WEB_PLATFORM_COMMON_EXTRA_DIRS,
