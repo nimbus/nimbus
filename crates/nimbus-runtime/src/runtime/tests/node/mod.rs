@@ -3820,3 +3820,4 @@ include!("cases/nds3_cycle81_webcrypto_keygen.rs");
 include!("cases/nds3_cycle82_webcrypto_hkdf_derivebits.rs");
 include!("cases/nds3_cycle83_heapdump_async_hooks.rs");
 include!("cases/nds3_cycle84_webcrypto_wrap_unwrap.rs");
+include!("cases/nds3_cycle85_webcrypto_aes_encrypt_decrypt.rs");
