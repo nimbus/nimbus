@@ -1020,6 +1020,17 @@ WATCHPOINT_STRUCTURAL_RECLASSIFICATIONS = {
     "test/parallel/test-module-loading-error.js": _WP_NATIVE_ADDON,
     "test/es-module/test-esm-import-assertion-warning.mjs": _WP_CLI_TOPOLOGY,
     "test/parallel/test-sqlite.js": _WP_NATIVE_BACKED_OPTIONAL,
+    # NDS3 cycle 86 (2026-06-14): both required lanes pin this fixture as a
+    # rust_watchpoint expected-failure, but the official source immediately
+    # gates the assertions on Node's native crypto provider composition:
+    # `crypto.getCiphers().includes("des3-wrap")`, otherwise
+    # `common.skip("des3-wrap cipher is not available")`. Focused cycle-85
+    # diagnostics observed exactly that official self-skip in both lanes. This
+    # is Node/OpenSSL native cipher inventory, not a portable V8-isolate
+    # Application API guarantee, so mirror the existing provider-composition
+    # upstream/platform disposition while keeping the ignored watchpoint as a
+    # tripwire.
+    "test/parallel/test-crypto-des3-wrap.js": _WP_UPSTREAM_PLATFORM,
     "test/parallel/test-fs-open.js": _WP_ABSOLUTE_HOST_PATH_POLICY,
     # NDS3 cycle 51 (2026-06-13): mirrors the node24 requires_unpromoted
     # disposition. The official fixture asserts host-root realpath("/") and
