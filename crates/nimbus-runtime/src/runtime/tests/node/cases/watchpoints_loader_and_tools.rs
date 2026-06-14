@@ -278,6 +278,55 @@ const LOADER_CONTEXT_MODULE_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
     "test/module-hooks/test-module-hooks-resolve-require-resolve-redirect.js",
 ];
 
+const LOADER_CONTEXT_MODULE_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/module-hooks/test-module-hooks-builtin-require.js",
+    "test/module-hooks/test-module-hooks-custom-conditions-cjs.js",
+    "test/module-hooks/test-module-hooks-custom-conditions-special-values.js",
+    "test/module-hooks/test-module-hooks-custom-conditions.mjs",
+    "test/module-hooks/test-module-hooks-load-buffers.js",
+    "test/module-hooks/test-module-hooks-load-builtin-override-commonjs.js",
+    "test/module-hooks/test-module-hooks-load-builtin-override-json.js",
+    "test/module-hooks/test-module-hooks-load-context-merged-esm.mjs",
+    "test/module-hooks/test-module-hooks-load-context-merged.js",
+    "test/module-hooks/test-module-hooks-load-context-optional-esm.mjs",
+    "test/module-hooks/test-module-hooks-load-context-optional.js",
+    "test/module-hooks/test-module-hooks-load-esm-mock.js",
+    "test/module-hooks/test-module-hooks-load-esm.js",
+    "test/module-hooks/test-module-hooks-load-invalid.js",
+    "test/module-hooks/test-module-hooks-load-mock.js",
+    "test/module-hooks/test-module-hooks-load-short-circuit-required-middle.js",
+    "test/module-hooks/test-module-hooks-load-short-circuit-required-start.js",
+    "test/module-hooks/test-module-hooks-load-short-circuit.js",
+    "test/module-hooks/test-module-hooks-load-url-change-import.mjs",
+    "test/module-hooks/test-module-hooks-require-wasm.js",
+    "test/module-hooks/test-module-hooks-resolve-builtin-on-disk-import.mjs",
+    "test/module-hooks/test-module-hooks-resolve-context-merged-esm.mjs",
+    "test/module-hooks/test-module-hooks-resolve-context-merged.js",
+    "test/module-hooks/test-module-hooks-resolve-context-optional-esm.mjs",
+    "test/module-hooks/test-module-hooks-resolve-context-optional.js",
+    "test/module-hooks/test-module-hooks-resolve-import-cjs.js",
+    "test/module-hooks/test-module-hooks-resolve-invalid.js",
+    "test/module-hooks/test-module-hooks-resolve-load-import-inline-typescript-override.mjs",
+    "test/module-hooks/test-module-hooks-resolve-load-import-inline-typescript.mjs",
+    "test/module-hooks/test-module-hooks-resolve-load-require-inline-typescript-override.js",
+    "test/module-hooks/test-module-hooks-resolve-load-require-inline-typescript.js",
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-builtin.js",
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-consistency.js",
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-create-require.js",
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-fallthrough.js",
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-imported-cjs.js",
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-paths.js",
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-redirect.js",
+    "test/module-hooks/test-module-hooks-resolve-short-circuit-required-middle.js",
+    "test/module-hooks/test-module-hooks-resolve-short-circuit-required-start.js",
+    "test/module-hooks/test-module-hooks-resolve-short-circuit.js",
+    "test/parallel/test-module-circular-symlinks.js",
+    "test/parallel/test-module-globalpaths-nodepath.js",
+    "test/parallel/test-module-parent-setter-deprecation.js",
+    "test/parallel/test-module-setsourcemapssupport.js",
+    "test/parallel/test-module-symlinked-peer-modules.js",
+];
+
 fn loader_context_module_promoted_fixture_paths(groups: &[&[&str]]) -> Vec<String> {
     groups
         .iter()
@@ -315,6 +364,19 @@ fn node24_default_lane_executes_loader_context_module_promoted_batch_fixture() {
 }
 
 #[test]
+fn node26_current_lane_executes_loader_context_module_promoted_batch_fixture() {
+    let fixture_paths =
+        loader_context_module_promoted_fixture_paths(&[LOADER_CONTEXT_MODULE_PROMOTED_NODE26_PATHS]);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-loader-context-module-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        LOADER_CONTEXT_MODULE_EXTRA_RUNTIME_FILES,
+        LOADER_CONTEXT_MODULE_EXTRA_DIRS,
+    );
+}
+
+#[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked loader-context/module required-gap inventory; native/self-exec CLI paths are excluded by the kill rule and remain gaps"]
 fn node22_supported_lane_loader_context_module_watchpoint() {
     let fixture_paths = loader_context_module_runnable_fixture_paths(NodeCompatLane::Node22);
@@ -334,6 +396,19 @@ fn node24_default_lane_loader_context_module_watchpoint() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-loader-context-module-watchpoint",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        LOADER_CONTEXT_MODULE_EXTRA_RUNTIME_FILES,
+        LOADER_CONTEXT_MODULE_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: ROI-ranked loader-context/module required-gap inventory; promote only dynamically green fixtures"]
+fn node26_current_lane_loader_context_module_watchpoint() {
+    let fixture_paths = loader_context_module_runnable_fixture_paths(NodeCompatLane::Node26);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-loader-context-module-watchpoint",
+        NodeCompatLane::Node26,
         &fixture_paths,
         LOADER_CONTEXT_MODULE_EXTRA_RUNTIME_FILES,
         LOADER_CONTEXT_MODULE_EXTRA_DIRS,

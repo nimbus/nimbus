@@ -453,7 +453,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked loader-context/module required-gap inventory; native/self-exec CLI paths are excluded by the kill rule and remain gaps",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
-      "source_line": 318,
+      "source_line": 380,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -464,7 +464,18 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked loader-context/module required-gap inventory; native/self-exec CLI paths are excluded by the kill rule and remain gaps",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
-      "source_line": 331,
+      "source_line": 393,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node26_current_lane_loader_context_module_watchpoint",
+      "test_name": "node26_current_lane_loader_context_module_watchpoint",
+      "lane": "node26",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "NDS3 node26 broad pre-run: ROI-ranked loader-context/module required-gap inventory; promote only dynamically green fixtures",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
+      "source_line": 406,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -475,7 +486,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked loader-context/vm required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
-      "source_line": 694,
+      "source_line": 769,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -486,7 +497,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked loader-context/vm required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
-      "source_line": 707,
+      "source_line": 782,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -497,7 +508,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked loader-context/domain required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
-      "source_line": 772,
+      "source_line": 847,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -508,7 +519,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked loader-context/domain required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
-      "source_line": 785,
+      "source_line": 860,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -519,7 +530,7 @@
       "classification": "watchpoint",
       "reason": "Pinned V8 wire-format boundary: Nimbus runs on the v8_deno_core V8 build, so Node's exact serialized-byte fixture remains a platform boundary even though the functional v8 helper subset is green",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
-      "source_line": 852,
+      "source_line": 927,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
