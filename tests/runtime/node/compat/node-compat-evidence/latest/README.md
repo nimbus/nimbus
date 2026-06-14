@@ -2,7 +2,7 @@
 
 This directory is the checked-in latest snapshot of the generated Node.js runtime support evidence outputs.
 
-- evidence_generated_at: `2026-06-14T13:33:15.511900+00:00`
+- evidence_generated_at: `2026-06-14T14:25:03.739547+00:00`
 - publish_root: `tests/runtime/node/compat/node-compat-evidence/latest`
 - status source: `target/node-compat/status/status-summary.json`
 - dashboard source: `target/node-compat/dashboard/dashboard-summary.json`
@@ -13,7 +13,7 @@ This directory is the checked-in latest snapshot of the generated Node.js runtim
 | --- | --- | ---: | ---: | ---: | ---: |
 | `node20` | `v20.20.2` | 4248 | 917 | 0 | 21.6% |
 | `node22` | `v22.22.3` | 4748 | 2357 | 0 | 49.6% |
-| `node24` | `v24.16.0` | 5198 | 2392 | 0 | 46.0% |
+| `node24` | `v24.16.0` | 5198 | 2393 | 0 | 46.0% |
 | `node26` | `v26.2.0` | 5578 | 1009 | 0 | 18.1% |
 
 ## Expectation Coverage

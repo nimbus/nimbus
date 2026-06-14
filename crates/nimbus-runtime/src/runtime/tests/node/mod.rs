@@ -3856,3 +3856,4 @@ include!("cases/nds3_cycle88_webcrypto_eddsa.rs");
 include!("cases/nds3_cycle89_crypto_authenticated.rs");
 include!("cases/nds3_cycle90_esm_cjs_snapshot.rs");
 include!("cases/nds3_cycle91_webcrypto_sign_verify.rs");
+include!("cases/nds3_cycle92_esm_require_race.rs");

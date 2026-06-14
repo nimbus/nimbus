@@ -1402,7 +1402,6 @@
         "test/es-module/test-esm-preserve-symlinks-not-found.mjs",
         "test/es-module/test-esm-repl-imports.js",
         "test/es-module/test-esm-repl.js",
-        "test/es-module/test-esm-require-race-condition.js",
         "test/es-module/test-esm-resolve-type.mjs",
         "test/es-module/test-esm-source-map.mjs",
         "test/es-module/test-esm-tla-syntax-errors-not-recognized-as-tla-error.mjs",
