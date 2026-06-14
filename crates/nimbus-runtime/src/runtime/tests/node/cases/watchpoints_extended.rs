@@ -4792,6 +4792,76 @@ const FS_HOST_IO_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
     "test/parallel/test-fs-writesync-crash.js",
 ];
 
+const FS_HOST_IO_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/parallel/test-fs-chown-negative-one.js",
+    "test/parallel/test-fs-constants.js",
+    "test/parallel/test-fs-cp-async-invalid-mode-range.mjs",
+    "test/parallel/test-fs-cp-async-invalid-options-type.mjs",
+    "test/parallel/test-fs-cp-promises-invalid-mode.mjs",
+    "test/parallel/test-fs-cp-promises-options-validation.mjs",
+    "test/parallel/test-fs-cp-sync-dereference.js",
+    "test/parallel/test-fs-cp-sync-incompatible-options-error.mjs",
+    "test/parallel/test-fs-cp-sync-mode-invalid.mjs",
+    "test/parallel/test-fs-cp-sync-options-invalid-type-error.mjs",
+    "test/parallel/test-fs-cp-sync-unicode-dest.mjs",
+    "test/parallel/test-fs-cp-sync-verbatim-symlinks-invalid.mjs",
+    "test/parallel/test-fs-fchown-negative-one.js",
+    "test/parallel/test-fs-filehandle-use-after-close.js",
+    "test/parallel/test-fs-fmap.js",
+    "test/parallel/test-fs-glob-throw.mjs",
+    "test/parallel/test-fs-internal-assertencoding.js",
+    "test/parallel/test-fs-lchown-negative-one.js",
+    "test/parallel/test-fs-make-callback.js",
+    "test/parallel/test-fs-makeStatsCallback.js",
+    "test/parallel/test-fs-mkdir-recursive-eaccess.js",
+    "test/parallel/test-fs-mkdtempDisposableSync.js",
+    "test/parallel/test-fs-open-flags.js",
+    "test/parallel/test-fs-promises-mkdtempDisposable.js",
+    "test/parallel/test-fs-promises-statfs-validate-path.js",
+    "test/parallel/test-fs-read-position-validation.mjs",
+    "test/parallel/test-fs-read-promises-position-validation.mjs",
+    "test/parallel/test-fs-read-stream-concurrent-reads.js",
+    "test/parallel/test-fs-read-stream-err.js",
+    "test/parallel/test-fs-read-stream-fd-leak.js",
+    "test/parallel/test-fs-read-stream-inherit.js",
+    "test/parallel/test-fs-read-stream-patch-open.js",
+    "test/parallel/test-fs-read-stream-pos.js",
+    "test/parallel/test-fs-read-stream-resume.js",
+    "test/parallel/test-fs-read-stream-throw-type-error.js",
+    "test/parallel/test-fs-readSync-position-validation.mjs",
+    "test/parallel/test-fs-readdir-recursive.js",
+    "test/parallel/test-fs-readdir-stack-overflow.js",
+    "test/parallel/test-fs-readdir-types-symlinks.js",
+    "test/parallel/test-fs-rmSync-special-char.js",
+    "test/parallel/test-fs-stat-abort-test.js",
+    "test/parallel/test-fs-stat-bigint.js",
+    "test/parallel/test-fs-stream-construct-compat-error-write.js",
+    "test/parallel/test-fs-stream-construct-compat-graceful-fs.js",
+    "test/parallel/test-fs-stream-construct-compat-old-node.js",
+    "test/parallel/test-fs-stream-destroy-emit-error.js",
+    "test/parallel/test-fs-stream-double-close.js",
+    "test/parallel/test-fs-stream-fs-options.js",
+    "test/parallel/test-fs-stream-options.js",
+    "test/parallel/test-fs-symlink-dir-junction-relative.js",
+    "test/parallel/test-fs-symlink-dir.js",
+    "test/parallel/test-fs-symlink-longpath.js",
+    "test/parallel/test-fs-truncate-sync.js",
+    "test/parallel/test-fs-truncate.js",
+    "test/parallel/test-fs-write-file-sync.js",
+    "test/parallel/test-fs-write-reuse-callback.js",
+    "test/parallel/test-fs-write-stream-change-open.js",
+    "test/parallel/test-fs-write-stream-close-without-callback.js",
+    "test/parallel/test-fs-write-stream-eagain.mjs",
+    "test/parallel/test-fs-write-stream-err.js",
+    "test/parallel/test-fs-write-stream-file-handle-2.js",
+    "test/parallel/test-fs-write-stream-flush.js",
+    "test/parallel/test-fs-write-stream-fs.js",
+    "test/parallel/test-fs-write-stream-throw-type-error.js",
+    "test/parallel/test-fs-write-stream.js",
+    "test/parallel/test-fs-writestream-open-write.js",
+    "test/parallel/test-fs-writesync-crash.js",
+];
+
 fn fs_host_io_promoted_fixture_paths(groups: &[&[&str]]) -> Vec<String> {
     groups
         .iter()
@@ -4831,6 +4901,19 @@ fn node24_default_lane_executes_fs_host_io_promoted_batch_fixture() {
 }
 
 #[test]
+fn node26_current_lane_executes_fs_host_io_promoted_batch_fixture() {
+    let fixture_paths =
+        fs_host_io_promoted_fixture_paths(&[FS_HOST_IO_PROMOTED_NODE26_PATHS]);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-fs-host-io-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        FS_HOST_IO_EXTRA_RUNTIME_FILES,
+        FS_HOST_IO_EXTRA_DIRS,
+    );
+}
+
+#[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked fs-host-io required-gap inventory; watch/stress/crash paths are excluded by the kill rule and remain gaps"]
 fn node22_supported_lane_fs_host_io_watchpoint() {
     let fixture_paths = fs_host_io_runnable_fixture_paths(NodeCompatLane::Node22);
@@ -4850,6 +4933,19 @@ fn node24_default_lane_fs_host_io_watchpoint() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-fs-host-io-watchpoint",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        FS_HOST_IO_EXTRA_RUNTIME_FILES,
+        FS_HOST_IO_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: ROI-ranked fs-host-io required-gap inventory; watch/stress/crash paths are excluded by the kill rule and remain gaps"]
+fn node26_current_lane_fs_host_io_watchpoint() {
+    let fixture_paths = fs_host_io_runnable_fixture_paths(NodeCompatLane::Node26);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-fs-host-io-watchpoint",
+        NodeCompatLane::Node26,
         &fixture_paths,
         FS_HOST_IO_EXTRA_RUNTIME_FILES,
         FS_HOST_IO_EXTRA_DIRS,
