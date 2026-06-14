@@ -486,7 +486,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked loader-context/vm required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
-      "source_line": 769,
+      "source_line": 848,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -497,7 +497,18 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked loader-context/vm required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
-      "source_line": 782,
+      "source_line": 861,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node26_current_lane_loader_context_vm_watchpoint",
+      "test_name": "node26_current_lane_loader_context_vm_watchpoint",
+      "lane": "node26",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "NDS3 node26 broad pre-run: ROI-ranked loader-context/vm required-gap inventory; promote only dynamically green fixtures",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
+      "source_line": 874,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -508,7 +519,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked loader-context/domain required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
-      "source_line": 847,
+      "source_line": 939,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -519,7 +530,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked loader-context/domain required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
-      "source_line": 860,
+      "source_line": 952,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -530,7 +541,7 @@
       "classification": "watchpoint",
       "reason": "Pinned V8 wire-format boundary: Nimbus runs on the v8_deno_core V8 build, so Node's exact serialized-byte fixture remains a platform boundary even though the functional v8 helper subset is green",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
-      "source_line": 927,
+      "source_line": 1019,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {

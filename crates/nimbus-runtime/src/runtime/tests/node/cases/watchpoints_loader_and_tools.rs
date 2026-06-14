@@ -729,6 +729,72 @@ const LOADER_CONTEXT_VM_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
     "test/parallel/test-vm-global-contextual-store.js",
 ];
 
+const LOADER_CONTEXT_VM_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/es-module/test-vm-compile-function-leak.js",
+    "test/es-module/test-vm-compile-function-lineoffset.js",
+    "test/es-module/test-vm-contextified-script-leak.js",
+    "test/es-module/test-vm-source-text-module-leak.js",
+    "test/es-module/test-vm-synthetic-module-leak.js",
+    "test/parallel/test-vm-access-process-env.js",
+    "test/parallel/test-vm-attributes-property-not-on-sandbox.js",
+    "test/parallel/test-vm-codegen.js",
+    "test/parallel/test-vm-context-async-script.js",
+    "test/parallel/test-vm-context-dont-contextify.js",
+    "test/parallel/test-vm-context-property-forwarding.js",
+    "test/parallel/test-vm-context.js",
+    "test/parallel/test-vm-create-and-run-in-context.js",
+    "test/parallel/test-vm-create-context-accessors.js",
+    "test/parallel/test-vm-create-context-circular-reference.js",
+    "test/parallel/test-vm-createcacheddata.js",
+    "test/parallel/test-vm-cross-context.js",
+    "test/parallel/test-vm-data-property-writable.js",
+    "test/parallel/test-vm-deleting-property.js",
+    "test/parallel/test-vm-dynamic-import-callback-missing-flag.js",
+    "test/parallel/test-vm-function-declaration.js",
+    "test/parallel/test-vm-function-redefinition.js",
+    "test/parallel/test-vm-getters.js",
+    "test/parallel/test-vm-global-assignment.js",
+    "test/parallel/test-vm-global-configurable-properties.js",
+    "test/parallel/test-vm-global-contextual-store.js",
+    "test/parallel/test-vm-global-define-property.js",
+    "test/parallel/test-vm-global-get-own.js",
+    "test/parallel/test-vm-global-identity.js",
+    "test/parallel/test-vm-global-non-writable-properties.js",
+    "test/parallel/test-vm-global-property-interceptors.js",
+    "test/parallel/test-vm-global-property-prototype.js",
+    "test/parallel/test-vm-global-setter.js",
+    "test/parallel/test-vm-harmony-symbols.js",
+    "test/parallel/test-vm-indexed-properties.js",
+    "test/parallel/test-vm-inherited_properties.js",
+    "test/parallel/test-vm-is-context.js",
+    "test/parallel/test-vm-low-stack-space.js",
+    "test/parallel/test-vm-new-script-new-context.js",
+    "test/parallel/test-vm-new-script-this-context.js",
+    "test/parallel/test-vm-no-dynamic-import-callback.js",
+    "test/parallel/test-vm-options-validation.js",
+    "test/parallel/test-vm-ownkeys.js",
+    "test/parallel/test-vm-ownpropertynames.js",
+    "test/parallel/test-vm-ownpropertysymbols.js",
+    "test/parallel/test-vm-parse-abort-on-uncaught-exception.js",
+    "test/parallel/test-vm-preserves-property.js",
+    "test/parallel/test-vm-property-not-on-sandbox.js",
+    "test/parallel/test-vm-proxies.js",
+    "test/parallel/test-vm-proxy-failure-CP.js",
+    "test/parallel/test-vm-script-after-evaluate.js",
+    "test/parallel/test-vm-script-throw-in-tostring.js",
+    "test/parallel/test-vm-set-property-proxy.js",
+    "test/parallel/test-vm-set-proto-null-on-globalthis.js",
+    "test/parallel/test-vm-source-map-url.js",
+    "test/parallel/test-vm-static-this.js",
+    "test/parallel/test-vm-strict-assign.js",
+    "test/parallel/test-vm-symbols.js",
+    "test/parallel/test-vm-timeout-escape-promise-2.js",
+    "test/parallel/test-vm-timeout-escape-promise-module.js",
+    "test/parallel/test-vm-timeout-escape-promise.js",
+    "test/parallel/test-vm-timeout.js",
+    "test/parallel/test-vm-util-lazy-properties.js",
+];
+
 fn loader_context_vm_promoted_fixture_paths(groups: &[&[&str]]) -> Vec<String> {
     groups
         .iter()
@@ -766,6 +832,19 @@ fn node24_default_lane_executes_loader_context_vm_promoted_batch_fixture() {
 }
 
 #[test]
+fn node26_current_lane_executes_loader_context_vm_promoted_batch_fixture() {
+    let fixture_paths =
+        loader_context_vm_promoted_fixture_paths(&[LOADER_CONTEXT_VM_PROMOTED_NODE26_PATHS]);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-loader-context-vm-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        LOADER_CONTEXT_VM_EXTRA_DIRS,
+    );
+}
+
+#[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked loader-context/vm required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified"]
 fn node22_supported_lane_loader_context_vm_watchpoint() {
     let fixture_paths = loader_context_vm_runnable_fixture_paths(NodeCompatLane::Node22);
@@ -785,6 +864,19 @@ fn node24_default_lane_loader_context_vm_watchpoint() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-loader-context-vm-watchpoint",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        LOADER_CONTEXT_VM_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: ROI-ranked loader-context/vm required-gap inventory; promote only dynamically green fixtures"]
+fn node26_current_lane_loader_context_vm_watchpoint() {
+    let fixture_paths = loader_context_vm_runnable_fixture_paths(NodeCompatLane::Node26);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-loader-context-vm-watchpoint",
+        NodeCompatLane::Node26,
         &fixture_paths,
         &[],
         LOADER_CONTEXT_VM_EXTRA_DIRS,

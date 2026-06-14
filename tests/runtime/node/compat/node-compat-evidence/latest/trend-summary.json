@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-14T22:09:18.833566+00:00",
+  "generated_at": "2026-06-14T22:19:56.895287+00:00",
   "report_kind": "node_compat_trend_snapshot",
   "baseline_available": true,
   "current_sources": {
@@ -57,12 +57,12 @@
       "baseline_upstream_tag": "v26.2.0",
       "vendored_test_file_count": 5578,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 1055,
-      "documented_manifested_green_count_delta": 0,
+      "documented_manifested_green_count": 1118,
+      "documented_manifested_green_count_delta": 63,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.189136,
-      "documented_manifested_green_ratio_delta": 0.0
+      "documented_manifested_green_ratio": 0.20043,
+      "documented_manifested_green_ratio_delta": 0.011293999999999998
     }
   ],
   "evidence_trends": {
@@ -72,9 +72,9 @@
       "delta": 0
     },
     "expectation_catalog_entry_count": {
-      "current": 135,
+      "current": 136,
       "baseline": 135,
-      "delta": 0
+      "delta": 1
     },
     "oracle_report_count": {
       "current": 0,
@@ -87,9 +87,9 @@
       "delta": 0
     },
     "rust_ignore_count": {
-      "current": 135,
+      "current": 136,
       "baseline": 135,
-      "delta": 0
+      "delta": 1
     },
     "slice_report_count": {
       "current": 0,
