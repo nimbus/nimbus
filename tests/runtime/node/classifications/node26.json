@@ -339,11 +339,7 @@
       "owner": "core-semantics/assert",
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
-        "test/parallel/test-assert-class.js",
         "test/parallel/test-assert-deep.js",
-        "test/parallel/test-assert-esm-cjs-message-verify.js",
-        "test/parallel/test-assert-myers-diff.js",
-        "test/parallel/test-assert-partial-deep-equal.js",
         "test/parallel/test-assert.js"
       ]
     },
@@ -359,17 +355,8 @@
         "test/parallel/test-buffer-backing-arraybuffer.js",
         "test/parallel/test-buffer-constructor-node-modules-paths.js",
         "test/parallel/test-buffer-constructor-node-modules.js",
-        "test/parallel/test-buffer-constructor-outside-node-modules.js",
-        "test/parallel/test-buffer-generic-methods.js",
-        "test/parallel/test-buffer-isascii.js",
-        "test/parallel/test-buffer-isutf8.js",
-        "test/parallel/test-buffer-pool-untransferable.js",
         "test/parallel/test-buffer-swap-fast.js",
-        "test/parallel/test-buffer-tostring-4gb.js",
-        "test/parallel/test-buffer-write-fast.js",
-        "test/parallel/test-buffer-zero-fill-cli.js",
-        "test/parallel/test-buffer-zero-fill-reset.js",
-        "test/parallel/test-buffer-zero-fill.js"
+        "test/parallel/test-buffer-write-fast.js"
       ]
     },
     {
@@ -390,38 +377,24 @@
       "id": "node26-requires_unpromoted_node_surface-9",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
-      "owner": "core-semantics/events",
+      "owner": "core-semantics/path",
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
-        "test/parallel/test-events-customevent.js",
-        "test/parallel/test-events-on-async-iterator.js",
-        "test/parallel/test-events-uncaught-exception-stack.js"
+        "test/parallel/test-path-win32-normalize-device-names.js"
       ]
     },
     {
       "id": "node26-requires_unpromoted_node_surface-10",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
-      "owner": "core-semantics/path",
-      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-      "test_paths": [
-        "test/parallel/test-path-resolve.js",
-        "test/parallel/test-path-win32-normalize-device-names.js"
-      ]
-    },
-    {
-      "id": "node26-requires_unpromoted_node_surface-11",
-      "expectation": "expected_gap",
-      "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/url",
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
-        "test/parallel/test-url-is-url-internal.js",
         "test/parallel/test-url-parse-deprecation.js"
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-12",
+      "id": "node26-requires_unpromoted_node_surface-11",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/domain",
@@ -464,7 +437,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-13",
+      "id": "node26-requires_unpromoted_node_surface-12",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/module",
@@ -504,7 +477,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-14",
+      "id": "node26-requires_unpromoted_node_surface-13",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/util",
@@ -512,31 +485,22 @@
       "test_paths": [
         "test/parallel/test-util-callbackify.js",
         "test/parallel/test-util-convert-signal-to-exit-code.mjs",
-        "test/parallel/test-util-emit-experimental-warning.js",
-        "test/parallel/test-util-getcallsites-preparestacktrace.js",
         "test/parallel/test-util-getcallsites.js",
-        "test/parallel/test-util-inspect-getters-accessing-this.js",
         "test/parallel/test-util-inspect-long-running.js",
-        "test/parallel/test-util-inspect-namespace.js",
         "test/parallel/test-util-inspect-proxy.js",
         "test/parallel/test-util-inspect-regexp.js",
         "test/parallel/test-util-inspect.js",
         "test/parallel/test-util-internal.js",
-        "test/parallel/test-util-isDeepStrictEqual.js",
-        "test/parallel/test-util-primordial-monkeypatching.js",
-        "test/parallel/test-util-promisify-custom-names.mjs",
         "test/parallel/test-util-promisify.js",
         "test/parallel/test-util-sigint-watchdog.js",
         "test/parallel/test-util-sleep.js",
-        "test/parallel/test-util-stripvtcontrolcharacters.js",
-        "test/parallel/test-util-styletext-hex.js",
         "test/parallel/test-util-styletext.js",
         "test/parallel/test-util-types.js",
         "test/parallel/test-util.js"
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-15",
+      "id": "node26-requires_unpromoted_node_surface-14",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/vm",
@@ -581,7 +545,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-16",
+      "id": "node26-requires_unpromoted_node_surface-15",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/workers",
@@ -719,7 +683,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-17",
+      "id": "node26-requires_unpromoted_node_surface-16",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/crypto",
@@ -823,7 +787,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-18",
+      "id": "node26-requires_unpromoted_node_surface-17",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/dgram",
@@ -851,7 +815,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-19",
+      "id": "node26-requires_unpromoted_node_surface-18",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/http",
@@ -1244,7 +1208,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-20",
+      "id": "node26-requires_unpromoted_node_surface-19",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/http2",
@@ -1336,7 +1300,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-21",
+      "id": "node26-requires_unpromoted_node_surface-20",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/https",
@@ -1384,7 +1348,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-22",
+      "id": "node26-requires_unpromoted_node_surface-21",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/net",
@@ -1530,7 +1494,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-23",
+      "id": "node26-requires_unpromoted_node_surface-22",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/tls",
@@ -1750,7 +1714,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-24",
+      "id": "node26-requires_unpromoted_node_surface-23",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/zlib",
@@ -1776,7 +1740,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-25",
+      "id": "node26-requires_unpromoted_node_surface-24",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "node-compat/unpromoted-surface",
@@ -2635,41 +2599,8 @@
         "test/parallel/test-eval-disallow-code-generation-from-strings.js",
         "test/parallel/test-eval-strict-referenceerror.js",
         "test/parallel/test-eval.js",
-        "test/parallel/test-event-capture-rejections.js",
-        "test/parallel/test-event-emitter-add-listeners.js",
-        "test/parallel/test-event-emitter-check-listener-leaks.js",
-        "test/parallel/test-event-emitter-emit-context.js",
-        "test/parallel/test-event-emitter-error-monitor.js",
-        "test/parallel/test-event-emitter-errors.js",
-        "test/parallel/test-event-emitter-get-max-listeners.js",
-        "test/parallel/test-event-emitter-invalid-listener.js",
-        "test/parallel/test-event-emitter-listener-count.js",
-        "test/parallel/test-event-emitter-listeners-side-effects.js",
-        "test/parallel/test-event-emitter-listeners.js",
-        "test/parallel/test-event-emitter-max-listeners-warning-for-null.js",
-        "test/parallel/test-event-emitter-max-listeners-warning-for-symbol.js",
-        "test/parallel/test-event-emitter-max-listeners-warning.js",
-        "test/parallel/test-event-emitter-max-listeners.js",
-        "test/parallel/test-event-emitter-method-names.js",
-        "test/parallel/test-event-emitter-modify-in-emit.js",
-        "test/parallel/test-event-emitter-no-error-provided-to-error-event.js",
-        "test/parallel/test-event-emitter-num-args.js",
-        "test/parallel/test-event-emitter-once.js",
-        "test/parallel/test-event-emitter-prepend.js",
-        "test/parallel/test-event-emitter-remove-all-listeners.js",
-        "test/parallel/test-event-emitter-remove-listeners.js",
-        "test/parallel/test-event-emitter-set-max-listeners-side-effects.js",
-        "test/parallel/test-event-emitter-special-event-names.js",
-        "test/parallel/test-event-emitter-subclass.js",
-        "test/parallel/test-event-emitter-symbols.js",
-        "test/parallel/test-event-target.js",
-        "test/parallel/test-eventemitter-asyncresource.js",
-        "test/parallel/test-eventsource-disabled.js",
         "test/parallel/test-eventsource.js",
-        "test/parallel/test-eventtarget-brandcheck.js",
-        "test/parallel/test-eventtarget-custom-inspect-does-not-throw.js",
         "test/parallel/test-eventtarget-memoryleakwarning.js",
-        "test/parallel/test-eventtarget-once-twice.js",
         "test/parallel/test-eventtarget.js",
         "test/parallel/test-exception-handler.js",
         "test/parallel/test-exception-handler2.js",
@@ -3905,7 +3836,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-26",
+      "id": "node26-requires_unpromoted_node_surface-25",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/diagnostics-channel",
@@ -3934,7 +3865,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-27",
+      "id": "node26-requires_unpromoted_node_surface-26",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/os",
@@ -3949,7 +3880,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-28",
+      "id": "node26-requires_unpromoted_node_surface-27",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/perf-hooks",
@@ -3970,7 +3901,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-29",
+      "id": "node26-requires_unpromoted_node_surface-28",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/process-host",
@@ -4065,7 +3996,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-30",
+      "id": "node26-requires_unpromoted_node_surface-29",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/timers",
@@ -4081,7 +4012,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-31",
+      "id": "node26-requires_unpromoted_node_surface-30",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "runtime/v8",
@@ -4109,7 +4040,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-32",
+      "id": "node26-requires_unpromoted_node_surface-31",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/fs-host-io",
@@ -4246,7 +4177,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-33",
+      "id": "node26-requires_unpromoted_node_surface-32",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/readline-tty",
@@ -4268,7 +4199,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-34",
+      "id": "node26-requires_unpromoted_node_surface-33",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/stream",
@@ -4340,7 +4271,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-35",
+      "id": "node26-requires_unpromoted_node_surface-34",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/tty-host",
@@ -4350,7 +4281,7 @@
       ]
     },
     {
-      "id": "node26-requires_wpt_harness-36",
+      "id": "node26-requires_wpt_harness-35",
       "expectation": "expected_gap",
       "classification": "requires_wpt_harness",
       "owner": "node-compat/wpt-harness",
@@ -4384,7 +4315,7 @@
       ]
     },
     {
-      "id": "node26-upstream_known_issue_or_platform_boundary-37",
+      "id": "node26-upstream_known_issue_or_platform_boundary-36",
       "expectation": "expected_gap",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "node-compat/platform-boundary",
@@ -4416,7 +4347,7 @@
       ]
     },
     {
-      "id": "node26-support_fixture_not_top_level_test-38",
+      "id": "node26-support_fixture_not_top_level_test-37",
       "expectation": "expected_skip",
       "classification": "support_fixture_not_top_level_test",
       "owner": "node-compat-denominator/fixture-sync",

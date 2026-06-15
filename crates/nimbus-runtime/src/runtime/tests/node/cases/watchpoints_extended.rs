@@ -3323,6 +3323,60 @@ fn node24_default_lane_executes_event_promoted_batch_fixture() {
     );
 }
 
+const EVENT_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/parallel/test-event-capture-rejections.js",
+    "test/parallel/test-event-emitter-add-listeners.js",
+    "test/parallel/test-event-emitter-check-listener-leaks.js",
+    "test/parallel/test-event-emitter-emit-context.js",
+    "test/parallel/test-event-emitter-error-monitor.js",
+    "test/parallel/test-event-emitter-errors.js",
+    "test/parallel/test-event-emitter-get-max-listeners.js",
+    "test/parallel/test-event-emitter-invalid-listener.js",
+    "test/parallel/test-event-emitter-listener-count.js",
+    "test/parallel/test-event-emitter-listeners-side-effects.js",
+    "test/parallel/test-event-emitter-listeners.js",
+    "test/parallel/test-event-emitter-max-listeners-warning-for-null.js",
+    "test/parallel/test-event-emitter-max-listeners-warning-for-symbol.js",
+    "test/parallel/test-event-emitter-max-listeners-warning.js",
+    "test/parallel/test-event-emitter-max-listeners.js",
+    "test/parallel/test-event-emitter-method-names.js",
+    "test/parallel/test-event-emitter-modify-in-emit.js",
+    "test/parallel/test-event-emitter-no-error-provided-to-error-event.js",
+    "test/parallel/test-event-emitter-num-args.js",
+    "test/parallel/test-event-emitter-once.js",
+    "test/parallel/test-event-emitter-prepend.js",
+    "test/parallel/test-event-emitter-remove-all-listeners.js",
+    "test/parallel/test-event-emitter-remove-listeners.js",
+    "test/parallel/test-event-emitter-set-max-listeners-side-effects.js",
+    "test/parallel/test-event-emitter-special-event-names.js",
+    "test/parallel/test-event-emitter-subclass.js",
+    "test/parallel/test-event-emitter-symbols.js",
+    "test/parallel/test-event-target.js",
+    "test/parallel/test-eventemitter-asyncresource.js",
+    "test/parallel/test-events-customevent.js",
+    "test/parallel/test-events-on-async-iterator.js",
+    "test/parallel/test-events-uncaught-exception-stack.js",
+    "test/parallel/test-eventsource-disabled.js",
+    "test/parallel/test-eventtarget-brandcheck.js",
+    "test/parallel/test-eventtarget-custom-inspect-does-not-throw.js",
+    "test/parallel/test-eventtarget-once-twice.js",
+];
+
+#[test]
+fn node26_current_lane_executes_event_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = EVENT_PROMOTED_NODE26_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-event-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        EVENT_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
 #[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked EventEmitter/EventTarget/EventSource required-gap inventory; classify clean event semantics, async resource context, web event targets, and host-only EventSource cases after the first wide run"]
 fn node22_supported_lane_event_required_gap_watchpoint() {
@@ -3345,6 +3399,20 @@ fn node24_default_lane_event_required_gap_watchpoint() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-event-required-gap-watchpoint",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        EVENT_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: ROI-ranked EventEmitter/EventTarget/EventSource required-gap inventory; promote only dynamically green Current-lane fixtures"]
+fn node26_current_lane_event_required_gap_watchpoint() {
+    let fixture_paths =
+        node_compat_required_gap_paths_for_selector(NodeCompatLane::Node26, event_required_gap_path);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-event-required-gap-watchpoint",
+        NodeCompatLane::Node26,
         &fixture_paths,
         &[],
         EVENT_REQUIRED_GAP_EXTRA_DIRS,
@@ -4842,6 +4910,33 @@ const CORE_SEMANTICS_UTIL_PROMOTED_NODE24_EXTRA_PATHS: &[&str] = &[
     "test/parallel/test-util-styletext-hex.js",
 ];
 
+const CORE_SEMANTICS_UTIL_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/parallel/test-assert-class.js",
+    "test/parallel/test-assert-esm-cjs-message-verify.js",
+    "test/parallel/test-assert-myers-diff.js",
+    "test/parallel/test-assert-partial-deep-equal.js",
+    "test/parallel/test-buffer-constructor-outside-node-modules.js",
+    "test/parallel/test-buffer-generic-methods.js",
+    "test/parallel/test-buffer-isascii.js",
+    "test/parallel/test-buffer-isutf8.js",
+    "test/parallel/test-buffer-pool-untransferable.js",
+    "test/parallel/test-buffer-tostring-4gb.js",
+    "test/parallel/test-buffer-zero-fill-cli.js",
+    "test/parallel/test-buffer-zero-fill-reset.js",
+    "test/parallel/test-buffer-zero-fill.js",
+    "test/parallel/test-path-resolve.js",
+    "test/parallel/test-url-is-url-internal.js",
+    "test/parallel/test-util-emit-experimental-warning.js",
+    "test/parallel/test-util-getcallsites-preparestacktrace.js",
+    "test/parallel/test-util-inspect-getters-accessing-this.js",
+    "test/parallel/test-util-inspect-namespace.js",
+    "test/parallel/test-util-isDeepStrictEqual.js",
+    "test/parallel/test-util-primordial-monkeypatching.js",
+    "test/parallel/test-util-promisify-custom-names.mjs",
+    "test/parallel/test-util-stripvtcontrolcharacters.js",
+    "test/parallel/test-util-styletext-hex.js",
+];
+
 #[test]
 fn node22_supported_lane_executes_core_semantics_util_promoted_batch_fixture() {
     let mut fixture_paths: Vec<String> = CORE_SEMANTICS_UTIL_PROMOTED_COMMON_PATHS
@@ -4883,6 +4978,21 @@ fn node24_default_lane_executes_core_semantics_util_promoted_batch_fixture() {
 }
 
 #[test]
+fn node26_current_lane_executes_core_semantics_util_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = CORE_SEMANTICS_UTIL_PROMOTED_NODE26_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-core-semantics-util-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        CORE_SEMANTICS_UTIL_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked core semantics and util required-gap inventory; classify assert, buffer, path, URL, and util failures before focused fixes"]
 fn node22_supported_lane_core_semantics_util_required_gap_watchpoint() {
     let fixture_paths = core_semantics_util_required_gap_paths(NodeCompatLane::Node22);
@@ -4902,6 +5012,19 @@ fn node24_default_lane_core_semantics_util_required_gap_watchpoint() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-core-semantics-util-required-gap-watchpoint",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        CORE_SEMANTICS_UTIL_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: ROI-ranked core semantics and util required-gap inventory; promote only dynamically green Current-lane fixtures"]
+fn node26_current_lane_core_semantics_util_required_gap_watchpoint() {
+    let fixture_paths = core_semantics_util_required_gap_paths(NodeCompatLane::Node26);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-core-semantics-util-required-gap-watchpoint",
+        NodeCompatLane::Node26,
         &fixture_paths,
         &[],
         CORE_SEMANTICS_UTIL_REQUIRED_GAP_EXTRA_DIRS,
