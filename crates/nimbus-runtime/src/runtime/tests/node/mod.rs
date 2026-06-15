@@ -241,12 +241,15 @@ impl Drop for ScopedProcessEnvVar {
 
 fn node_compat_supported_node_options_flag(token: &str) -> bool {
     token == "--pending-deprecation"
+        || token == "--async-context-frame"
         || token == "--no-warnings"
         || token == "--trace-warnings"
         || token == "--experimental-vm-modules"
         || token == "--experimental-require-module"
+        || token == "--experimental-stream-iter"
         || token == "--require-module"
         || token == "--no-experimental-require-module"
+        || token == "--no-async-context-frame"
         || token == "--no-require-module"
         || token == "--preserve-symlinks"
         || token == "--preserve-symlinks-main"
@@ -327,8 +330,8 @@ pub(super) fn fixture_requests_pending_deprecation(test_source: &str) -> bool {
 fn fixture_requested_node_options_filters_and_preserves_order() {
     let source = r#"
 // Flags: --trace-warnings --inspect --conditions=custom --unhandled-rejections=warn
-// Flags: --no-warnings -C another --trace-warnings --pending-deprecation --preserve-symlinks --experimental-vm-modules
-// Flags: --preserve-symlinks-main --no-preserve-symlinks-main
+// Flags: --no-warnings -C another --trace-warnings --pending-deprecation --preserve-symlinks --experimental-vm-modules --experimental-stream-iter
+// Flags: --preserve-symlinks-main --no-preserve-symlinks-main --no-async-context-frame
 "#;
 
     let flags = fixture_requested_node_options(source);
@@ -343,8 +346,10 @@ fn fixture_requested_node_options_filters_and_preserves_order() {
             "--pending-deprecation".to_string(),
             "--preserve-symlinks".to_string(),
             "--experimental-vm-modules".to_string(),
+            "--experimental-stream-iter".to_string(),
             "--preserve-symlinks-main".to_string(),
             "--no-preserve-symlinks-main".to_string(),
+            "--no-async-context-frame".to_string(),
         ]
     );
     assert_eq!(

@@ -23,10 +23,13 @@ fn resolve_runtime_test_spawn_path(path: &Path, cwd: Option<&Path>) -> PathBuf {
 fn push_supported_node_option(exec_argv: &mut Vec<String>, token: &str) {
     match token {
         "--expose-internals"
+        | "--async-context-frame"
         | "--enable-source-maps"
         | "--experimental-print-required-tla"
         | "--experimental-require-module"
+        | "--experimental-stream-iter"
         | "--experimental-vm-modules"
+        | "--no-async-context-frame"
         | "--no-enable-source-maps"
         | "--no-experimental-require-module"
         | "--no-experimental-sqlite"
@@ -274,10 +277,13 @@ pub(super) fn runtime_test_spawn_mode(
                 index += 2;
             }
             "--expose-internals"
+            | "--async-context-frame"
             | "--enable-source-maps"
             | "--experimental-print-required-tla"
             | "--experimental-require-module"
+            | "--experimental-stream-iter"
             | "--experimental-vm-modules"
+            | "--no-async-context-frame"
             | "--no-enable-source-maps"
             | "--no-experimental-require-module"
             | "--no-experimental-sqlite"

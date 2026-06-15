@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-15T00:56:44.638279+00:00",
+  "generated_at": "2026-06-15T05:19:14.998658+00:00",
   "report_kind": "node_compat_trend_snapshot",
   "baseline_available": true,
   "current_sources": {
@@ -57,12 +57,12 @@
       "baseline_upstream_tag": "v26.2.0",
       "vendored_test_file_count": 5578,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 1595,
-      "documented_manifested_green_count_delta": 65,
+      "documented_manifested_green_count": 1641,
+      "documented_manifested_green_count_delta": 46,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.285945,
-      "documented_manifested_green_ratio_delta": 0.011653000000000024
+      "documented_manifested_green_ratio": 0.294191,
+      "documented_manifested_green_ratio_delta": 0.008245999999999976
     }
   ],
   "evidence_trends": {

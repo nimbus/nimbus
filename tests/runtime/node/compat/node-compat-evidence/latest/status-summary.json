@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "generated_at": "2026-06-15T00:56:27.842029+00:00",
+  "generated_at": "2026-06-15T05:18:49.530506+00:00",
   "report_kind": "node_compat_suite_status",
   "status_contract": "Counts every official vendored lane-local test-* JS/CJS/MJS fixture, then compares that denominator to the documented manifested passed subset plus explicit lane classification catalogs. Supported lanes use non-ignored Rust tests that execute node-compat fixtures for the matching lane minus explicit expected-failure, known-gap, and skipped classifications as the passed numerator. Ignored watchpoints never count as passed. Expected failures, known gaps, and skipped/excluded entries are not pass claims; the remaining remainder is intentionally reported as unmanifested_or_unclassified, not as pass or fail. Supplementary, regression, canary, watchpoint, and diagnostic evidence is reported in separate evidence tiers and never changes official pass denominators.",
   "lane_count": 4,
@@ -26,7 +26,7 @@
       "source": "vendored_official_fixture_corpus",
       "primary_count_label": "fixture_count",
       "primary_count": 19772,
-      "passed_count": 7275,
+      "passed_count": 7321,
       "counts_in_official_denominator": true,
       "notes": "Byte-identical Node upstream test-* fixtures under lane-local nodeNN/test roots; pass percentages use only this denominator."
     },
@@ -76,7 +76,7 @@
     }
   ],
   "total_vendored_test_file_count": 19772,
-  "total_documented_manifested_green_count": 7275,
+  "total_documented_manifested_green_count": 7321,
   "lane_summaries": [
     {
       "lane": "node20",
@@ -68323,24 +68323,24 @@
       "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node26/test",
       "denominator_kind": "vendored_fixture_root_test_files",
       "vendored_test_file_count": 5578,
-      "documented_manifested_green_count": 1595,
+      "documented_manifested_green_count": 1641,
       "documented_manifested_green_source": "rust_nonignored_execution_fixture_inventory_minus_classified_red_skip",
       "documented_family_green_count": 883,
-      "path_owned_manifested_green_count": 1595,
-      "classified_red_skip_count": 3983,
-      "classified_total_count": 3983,
-      "known_red_or_gap_count": 3937,
+      "path_owned_manifested_green_count": 1641,
+      "classified_red_skip_count": 3937,
+      "classified_total_count": 3937,
+      "known_red_or_gap_count": 3891,
       "skipped_or_excluded_count": 46,
       "documented_or_classified_count": 5578,
       "unmanifested_or_unclassified_count": 0,
-      "documented_manifested_green_ratio": 0.285945,
+      "documented_manifested_green_ratio": 0.294191,
       "classification_catalog": {
         "catalog_path": "tests/runtime/node/classifications/node26.json",
         "catalog_present": true,
-        "classified_red_skip_count": 3983,
+        "classified_red_skip_count": 3937,
         "by_expectation": {
           "expected_failure": 34,
-          "expected_gap": 3903,
+          "expected_gap": 3857,
           "expected_skip": 46
         },
         "by_classification": {
@@ -68349,7 +68349,7 @@
           "requires_pseudo_tty_host_harness": 31,
           "requires_pummel_stress_harness": 65,
           "requires_sequential_host_state_harness": 119,
-          "requires_unpromoted_node_surface": 3607,
+          "requires_unpromoted_node_surface": 3561,
           "requires_wpt_harness": 25,
           "support_fixture_not_top_level_test": 46,
           "upstream_known_issue_or_platform_boundary": 23
@@ -94325,14 +94325,6 @@
             "group_id": "node26-requires_unpromoted_node_surface-24"
           },
           {
-            "test_path": "test/parallel/test-stream2-transform.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-24"
-          },
-          {
             "test_path": "test/parallel/test-stream2-unpipe-drain.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
@@ -95229,39 +95221,7 @@
             "group_id": "node26-requires_unpromoted_node_surface-24"
           },
           {
-            "test_path": "test/parallel/test-webstream-encoding-inspect.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-24"
-          },
-          {
-            "test_path": "test/parallel/test-webstream-readable-from.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-24"
-          },
-          {
             "test_path": "test/parallel/test-webstream-readablestream-pipeto.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-24"
-          },
-          {
-            "test_path": "test/parallel/test-webstream-structured-clone-no-leftovers.mjs",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "node-compat/unpromoted-surface",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-24"
-          },
-          {
-            "test_path": "test/parallel/test-webstreams-abort-controller.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "node-compat/unpromoted-surface",
@@ -98965,150 +98925,6 @@
             "group_id": "node26-requires_unpromoted_node_surface-33"
           },
           {
-            "test_path": "test/parallel/test-stream-finished-async-local-storage.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-finished-bindAsyncResource-path.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-broadcast-backpressure.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-broadcast-basic.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-broadcast-coverage.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-broadcast-from.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-consumers-bytes.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-consumers-merge.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-consumers-tap.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-consumers-text.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-cross-realm.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-disabled.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-duplex.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-from-async.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-from-coverage.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-from-sync.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-from-writable-cache-options.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-namespace.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
             "test_path": "test/parallel/test-stream-iter-pipeto-edge.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
@@ -99134,182 +98950,6 @@
           },
           {
             "test_path": "test/parallel/test-stream-iter-pipeto.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-pull-async.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-pull-sync.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-push-backpressure.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-push-basic.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-push-writer.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-readable-interop-disabled.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-readable-interop.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-share-async.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-share-coverage.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-share-from.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-share-sync.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-sharedarraybuffer.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-to-readable.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-transform-compat.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-transform-coverage.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-transform-errors.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-transform-output.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-transform-roundtrip.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-transform-sync.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-validation.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-writable-from.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-iter-writable-interop.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "streams-local-io/stream",
@@ -99438,14 +99078,6 @@
           },
           {
             "test_path": "test/parallel/test-stream-preprocess.js",
-            "expectation": "expected_gap",
-            "classification": "requires_unpromoted_node_surface",
-            "owner": "streams-local-io/stream",
-            "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-            "group_id": "node26-requires_unpromoted_node_surface-33"
-          },
-          {
-            "test_path": "test/parallel/test-stream-readable-readable-one.js",
             "expectation": "expected_gap",
             "classification": "requires_unpromoted_node_surface",
             "owner": "streams-local-io/stream",
@@ -100728,439 +100360,439 @@
       "test_name": "node22_supported_lane_web_platform_residual_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked WHATWG/web-platform residual inventory; prior hang/stress paths are excluded by the kill rule",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1542
+      "source_line": 1588
     },
     {
       "test_name": "node24_default_lane_web_platform_residual_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked WHATWG/web-platform residual inventory; prior hang/stress paths are excluded by the kill rule",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1555
+      "source_line": 1601
     },
     {
       "test_name": "node22_supported_lane_streams_web_platform_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked streams/WebStreams required-gap inventory; excludes pinned hang diagnostics for stream-base-typechecking, webstreams-clone-unref, and WHATWG transform-stream-members",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1623
+      "source_line": 1669
     },
     {
       "test_name": "node24_default_lane_streams_web_platform_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked streams/WebStreams required-gap inventory; excludes pinned hang diagnostics for stream-base-typechecking, webstreams-clone-unref, and WHATWG transform-stream-members",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1636
+      "source_line": 1682
     },
     {
       "test_name": "node26_current_lane_streams_web_platform_watchpoint",
       "reason": "NDS3 node26 broad pre-run: ROI-ranked streams/WebStreams required-gap inventory; excludes pinned hang diagnostics for stream-base-typechecking, webstreams-clone-unref, and WHATWG transform-stream-members",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1649
+      "source_line": 1695
     },
     {
       "test_name": "node22_stream_writable_samecb_singletick_watchpoint",
       "reason": "Pinned later-family dependency: test-stream-writable-samecb-singletick.js asserts async_hooks TickObject allocation counts, which are owned by the broader async_hooks/task-accounting family rather than the current pure-stream contract",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1662
+      "source_line": 1708
     },
     {
       "test_name": "node24_stream_pipeline_watchpoint",
       "reason": "Pinned Node24 default-lane divergence: test-stream-pipeline.js currently returns an AbortError-style 'The operation was aborted' message where the staged Node24 fixture still expects the inner 'Boom!' pipeline error message",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1699
+      "source_line": 1745
     },
     {
       "test_name": "node22_supported_lane_process_host_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked process-host required-gap inventory; host/native/subprocess-only paths are excluded by the kill rule and remain gaps",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1882
+      "source_line": 1928
     },
     {
       "test_name": "node24_default_lane_process_host_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked process-host required-gap inventory; host/native/subprocess-only paths are excluded by the kill rule and remain gaps",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1895
+      "source_line": 1941
     },
     {
       "test_name": "node22_supported_lane_esm_module_loader_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked ESM/module-loader required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2208
+      "source_line": 2254
     },
     {
       "test_name": "node24_default_lane_esm_module_loader_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked ESM/module-loader required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2224
+      "source_line": 2270
     },
     {
       "test_name": "node22_supported_lane_esm_inprocess_module_loader_watchpoint",
       "reason": "NDS3 diagnostic: refined ESM/package-semantics inventory; keep ignored until a real module-loader implementation wave is selected",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2240
+      "source_line": 2286
     },
     {
       "test_name": "node24_default_lane_esm_inprocess_module_loader_watchpoint",
       "reason": "NDS3 diagnostic: refined ESM/package-semantics inventory; keep ignored until a real module-loader implementation wave is selected",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2254
+      "source_line": 2300
     },
     {
       "test_name": "node22_supported_lane_esm_data_url_cluster_watchpoint",
       "reason": "NDS3 focused root-cause closure: data URL ESM imports; promote only after the broad ESM batch confirms the cluster is green",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2268
+      "source_line": 2314
     },
     {
       "test_name": "node24_default_lane_esm_data_url_cluster_watchpoint",
       "reason": "NDS3 focused root-cause closure: data URL ESM imports; promote only after the broad ESM batch confirms the cluster is green",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2284
+      "source_line": 2330
     },
     {
       "test_name": "node22_supported_lane_esm_json_data_import_attributes_required_surface_watchpoint",
       "reason": "NDS3 focused pre-run: JSON/data URL/import-attributes required-surface slice; promote only after the broad module-loader batch confirms the pass delta",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2300
+      "source_line": 2346
     },
     {
       "test_name": "node24_default_lane_esm_json_data_import_attributes_required_surface_watchpoint",
       "reason": "NDS3 focused pre-run: JSON/data URL/import-attributes required-surface slice; promote only after the broad module-loader batch confirms the pass delta",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2314
+      "source_line": 2360
     },
     {
       "test_name": "node22_supported_lane_async_hooks_required_gap_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked async_hooks required-gap inventory; classify AsyncLocalStorage, promise hooks, provider lifecycle, graph/network, timer/task, GC, and host-owned failures after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2987
+      "source_line": 3033
     },
     {
       "test_name": "node24_default_lane_async_hooks_required_gap_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked async_hooks required-gap inventory; classify AsyncLocalStorage, promise hooks, provider lifecycle, graph/network, timer/task, GC, and host-owned failures after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3003
+      "source_line": 3049
     },
     {
       "test_name": "node22_supported_lane_async_hooks_nonblocking_required_gap_watchpoint",
       "reason": "NDS3 P3 measure: async_hooks required-gap fixtures with the socket-bind networking subset excluded, so the batch completes and writes an honest summary on the v2.8.2-nimbus.2 promise-lifecycle wiring; the excluded networking fixtures are the structural-networking tension owned separately",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3019
+      "source_line": 3065
     },
     {
       "test_name": "node24_default_lane_async_hooks_nonblocking_required_gap_watchpoint",
       "reason": "NDS3 P3 measure: async_hooks required-gap fixtures with the socket-bind networking subset excluded, so the batch completes and writes an honest summary on the v2.8.2-nimbus.2 promise-lifecycle wiring; the excluded networking fixtures are the structural-networking tension owned separately",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3035
+      "source_line": 3081
     },
     {
       "test_name": "node26_current_lane_async_hooks_nonblocking_required_gap_watchpoint",
       "reason": "NDS3 node26 broad pre-run: async_hooks required-gap fixtures with socket-bind networking excluded; promote only dynamically green lifecycle fixtures",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3051
+      "source_line": 3097
     },
     {
       "test_name": "node22_supported_lane_webcrypto_required_gap_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked WebCrypto required-gap inventory; classify algorithms, key import/export, error shape, host-policy, and Node24-only fixtures after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3209
+      "source_line": 3255
     },
     {
       "test_name": "node24_default_lane_webcrypto_required_gap_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked WebCrypto required-gap inventory; classify algorithms, key import/export, error shape, host-policy, and Node24-only fixtures after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3225
+      "source_line": 3271
     },
     {
       "test_name": "node26_current_lane_webcrypto_required_gap_watchpoint",
       "reason": "NDS3 node26 broad pre-run: ROI-ranked WebCrypto required-gap inventory; promote only dynamically green Current-lane fixtures",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3241
+      "source_line": 3287
     },
     {
       "test_name": "node22_supported_lane_event_required_gap_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked EventEmitter/EventTarget/EventSource required-gap inventory; classify clean event semantics, async resource context, web event targets, and host-only EventSource cases after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3431
+      "source_line": 3477
     },
     {
       "test_name": "node24_default_lane_event_required_gap_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked EventEmitter/EventTarget/EventSource required-gap inventory; classify clean event semantics, async resource context, web event targets, and host-only EventSource cases after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3445
+      "source_line": 3491
     },
     {
       "test_name": "node26_current_lane_event_required_gap_watchpoint",
       "reason": "NDS3 node26 broad pre-run: ROI-ranked EventEmitter/EventTarget/EventSource required-gap inventory; promote only dynamically green Current-lane fixtures",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3459
+      "source_line": 3505
     },
     {
       "test_name": "node22_supported_lane_networking_crypto_required_gap_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked networking/crypto required-gap inventory; classify clean crypto semantics, host-provider boundaries, Node24-only algorithms, async callbacks, worker/messageport behavior, and error-shape failures after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3521
+      "source_line": 3567
     },
     {
       "test_name": "node24_default_lane_networking_crypto_required_gap_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked networking/crypto required-gap inventory; classify clean crypto semantics, host-provider boundaries, Node24-only algorithms, async callbacks, worker/messageport behavior, and error-shape failures after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3537
+      "source_line": 3583
     },
     {
       "test_name": "node22_supported_lane_http_client_agent_diagnostic_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked diagnostic-only HTTP client/agent core inventory; leak/GC lifecycle paths are excluded by the kill rule and remain diagnostics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3587
+      "source_line": 3633
     },
     {
       "test_name": "node24_default_lane_http_client_agent_diagnostic_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked diagnostic-only HTTP client/agent core inventory; leak/GC lifecycle paths are excluded by the kill rule and remain diagnostics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3600
+      "source_line": 3646
     },
     {
       "test_name": "node22_supported_lane_http_server_request_response_diagnostic_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked diagnostic-only HTTP server/request/response inventory; cluster, leak, and GC lifecycle paths are excluded by the kill rule",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3655
+      "source_line": 3701
     },
     {
       "test_name": "node24_default_lane_http_server_request_response_diagnostic_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked diagnostic-only HTTP server/request/response inventory; cluster, leak, and GC lifecycle paths are excluded by the kill rule",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3668
+      "source_line": 3714
     },
     {
       "test_name": "node22_supported_lane_http_remaining_diagnostic_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked remaining HTTP diagnostic core inventory; prior client/agent/server residuals and proxy/internet/TLS/Unix/cluster/leak/GC paths are excluded",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3855
+      "source_line": 3901
     },
     {
       "test_name": "node24_default_lane_http_remaining_diagnostic_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked remaining HTTP diagnostic core inventory; prior client/agent/server residuals and proxy/internet/TLS/Unix/cluster/leak/GC paths are excluded",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3868
+      "source_line": 3914
     },
     {
       "test_name": "node22_supported_lane_http2_diagnostic_core_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked HTTP/2 diagnostic core inventory; internet/TLS/secure/file-serving/leak/stress/host-topology paths are excluded",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4113
+      "source_line": 4159
     },
     {
       "test_name": "node24_default_lane_http2_diagnostic_core_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked HTTP/2 diagnostic core inventory; internet/TLS/secure/file-serving/leak/stress/host-topology paths are excluded",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4126
+      "source_line": 4172
     },
     {
       "test_name": "node22_supported_lane_net_diagnostic_core_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked net diagnostic core inventory; internet/autoselect/DNS/cluster/fd/path/pipe/multi-address/large/stress host-topology paths are excluded",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4386
+      "source_line": 4432
     },
     {
       "test_name": "node24_default_lane_net_diagnostic_core_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked net diagnostic core inventory; internet/autoselect/DNS/cluster/fd/path/pipe/multi-address/large/stress host-topology paths are excluded",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4399
+      "source_line": 4445
     },
     {
       "test_name": "node22_supported_lane_module_hooks_required_gap_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked module-hooks required-gap inventory; classify Node24-only hooks, shared loader-hook semantics, error-shape failures, and harness topology after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4612
+      "source_line": 4658
     },
     {
       "test_name": "node24_default_lane_module_hooks_required_gap_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked module-hooks required-gap inventory; classify Node24-only hooks, shared loader-hook semantics, error-shape failures, and harness topology after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4628
+      "source_line": 4674
     },
     {
       "test_name": "node22_supported_lane_module_loader_required_surface_blocker_watchpoint",
       "reason": "NDS3 required-surface implementation wave: exact module-loader blocker inventory; keep ignored until broad root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4644
+      "source_line": 4690
     },
     {
       "test_name": "node24_default_lane_module_loader_required_surface_blocker_watchpoint",
       "reason": "NDS3 required-surface implementation wave: exact module-loader blocker inventory; keep ignored until broad root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4657
+      "source_line": 4703
     },
     {
       "test_name": "node22_supported_lane_module_loader_package_core_watchpoint",
       "reason": "NDS3 focused implementation wave: package/CJS/ESM loader core; run after exact broad pre-run and before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4670
+      "source_line": 4716
     },
     {
       "test_name": "node24_default_lane_module_loader_package_core_watchpoint",
       "reason": "NDS3 focused implementation wave: package/CJS/ESM loader core; run after exact broad pre-run and before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4683
+      "source_line": 4729
     },
     {
       "test_name": "node22_supported_lane_parallel_js_platform_required_gap_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked parallel JS platform required-gap inventory; classify util, global, errors, promises, performance, abort, and EventTarget failures before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4772
+      "source_line": 4818
     },
     {
       "test_name": "node24_default_lane_parallel_js_platform_required_gap_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked parallel JS platform required-gap inventory; classify util, global, errors, promises, performance, abort, and EventTarget failures before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4788
+      "source_line": 4834
     },
     {
       "test_name": "node22_supported_lane_unpromoted_parallel_discovery_watchpoint",
       "reason": "NDS3 broad pre-run: generated-posture discovery for remaining unpromoted test/parallel required gaps after excluding already killed host/native/CLI/stress/fatal families",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4861
+      "source_line": 4907
     },
     {
       "test_name": "node24_default_lane_unpromoted_parallel_discovery_watchpoint",
       "reason": "NDS3 broad pre-run: generated-posture discovery for remaining unpromoted test/parallel required gaps after excluding already killed host/native/CLI/stress/fatal families",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4874
+      "source_line": 4920
     },
     {
       "test_name": "node22_supported_lane_unpromoted_internal_helper_watchpoint",
       "reason": "NDS3 post-2000 broad pre-run: internal helper/module/process/WebIDL slice from node-compat/unpromoted-surface; classify internal helper failures before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4887
+      "source_line": 4933
     },
     {
       "test_name": "node24_default_lane_unpromoted_internal_helper_watchpoint",
       "reason": "NDS3 post-2000 broad pre-run: internal helper/module/process/WebIDL slice from node-compat/unpromoted-surface; classify internal helper failures before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4900
+      "source_line": 4946
     },
     {
       "test_name": "node22_supported_lane_core_semantics_util_required_gap_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked core semantics and util required-gap inventory; classify assert, buffer, path, URL, and util failures before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5046
+      "source_line": 5092
     },
     {
       "test_name": "node24_default_lane_core_semantics_util_required_gap_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked core semantics and util required-gap inventory; classify assert, buffer, path, URL, and util failures before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5059
+      "source_line": 5105
     },
     {
       "test_name": "node26_current_lane_core_semantics_util_required_gap_watchpoint",
       "reason": "NDS3 node26 broad pre-run: ROI-ranked core semantics and util required-gap inventory; promote only dynamically green Current-lane fixtures",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5072
+      "source_line": 5118
     },
     {
       "test_name": "node22_supported_lane_fs_host_io_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked fs-host-io required-gap inventory; watch/stress/crash paths are excluded by the kill rule and remain gaps",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5399
+      "source_line": 5445
     },
     {
       "test_name": "node24_default_lane_fs_host_io_watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked fs-host-io required-gap inventory; watch/stress/crash paths are excluded by the kill rule and remain gaps",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5412
+      "source_line": 5458
     },
     {
       "test_name": "node26_current_lane_fs_host_io_watchpoint",
       "reason": "NDS3 node26 broad pre-run: ROI-ranked fs-host-io required-gap inventory; watch/stress/crash paths are excluded by the kill rule and remain gaps",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5425
+      "source_line": 5471
     },
     {
       "test_name": "node20_fs_stat_watchpoint",
       "reason": "Pinned Node20 divergence: official v20.20.2 test-fs-stat.js still requires the older JSON.stringify(Stats) field shape that the current runtime no longer preserves while matching the newer Node22/Node24 file contract",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5447
+      "source_line": 5493
     },
     {
       "test_name": "node24_fs_write_stream_watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-write-stream.js now also requires fs.close() to be observed when destroying WriteStream directly, while the current older Node22-compatible contract still follows the older file semantics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5487
+      "source_line": 5533
     },
     {
       "test_name": "node24_fs_write_stream_autoclose_option_watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-write-stream-autoclose-option.js now also asserts ERR_INVALID_THIS when probing WriteStream.prototype.autoClose, while the current older Node22-compatible contract still follows the older surface",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5497
+      "source_line": 5543
     },
     {
       "test_name": "node24_fs_symlink_watchpoint",
       "reason": "Superseded by NDS3 cycle 53: node24 test-fs-symlink.js is now dynamically green-guarded by node24_default_lane_executes_cycle53_fs_symlink_batch",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5507
+      "source_line": 5553
     },
     {
       "test_name": "node24_fs_promises_watch_watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-promises-watch.js adds maxQueue and overflow option validation that Nimbus has not adopted into the default lane yet",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5530
+      "source_line": 5576
     },
     {
       "test_name": "node22_buffer_isascii_watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5540
+      "source_line": 5586
     },
     {
       "test_name": "node20_buffer_isascii_watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5550
+      "source_line": 5596
     },
     {
       "test_name": "node22_buffer_isutf8_watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5560
+      "source_line": 5606
     },
     {
       "test_name": "node20_buffer_isutf8_watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5570
+      "source_line": 5616
     },
     {
       "test_name": "node20_buffer_slow_watchpoint",
       "reason": "Pinned Node20 divergence: official v20.20.2 test-buffer-slow.js still exercises SlowBuffer(buffer.kMaxLength), and the embedded runtime hits its 128 MB heap ceiling before Node-style range semantics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5580
+      "source_line": 5626
     },
     {
       "test_name": "node22_path_normalize_watchpoint",
       "reason": "Pinned Node22-only path gap: official v22.15.0 expects the post-CVE path.win32.normalize() semantics that preserve the test segment in \\\\\\\\? and \\\\\\\\. device paths",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5590
+      "source_line": 5636
     },
     {
       "test_name": "node22_path_makelong_watchpoint",
       "reason": "Pinned Node22 path gap: official v22.15.0 expects path.win32.toNamespacedPath('\\\\\\\\?\\\\\\\\foo') to retain the trailing slash, but the current runtime still returns the older Node20 shape",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5600
+      "source_line": 5646
     },
     {
       "test_name": "node22_path_resolve_watchpoint",
       "reason": "Pinned shared path gap: official Node20/Node22 test-path-resolve.js currently fails because win32.resolve rejects drive-letter-less inputs without a CWD",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5610
+      "source_line": 5656
     },
     {
       "test_name": "node20_path_resolve_watchpoint",
       "reason": "Pinned shared path gap: official Node20/Node22 test-path-resolve.js currently fails because win32.resolve rejects drive-letter-less inputs without a CWD",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5620
+      "source_line": 5666
     },
     {
       "test_name": "node22_url_parse_deprecation_watchpoint",
       "reason": "Pinned vendored fixture tracks post-22 url.parse deprecation semantics; official Node22 v22.15.0 has no counterpart",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5630
+      "source_line": 5676
     }
   ],
   "warnings": []
