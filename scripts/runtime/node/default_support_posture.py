@@ -925,6 +925,19 @@ NDS3_WAVE2_PREFIXES = {
     ('test_harness_only', 'exact_node_cli_or_tooling_topology', 'test_harness_emulation'): (
         'test/module-hooks/test-async-loader-hooks-',
     ),
+    ('diagnostic_only_non_isolate', 'host_owned_network_socket_surface', 'diagnostic_stub'): (
+        # NDS3 Node26 cycle-15 (2026-06-15): source-confirmed. The remaining
+        # test/parallel/test-quic-* Current-lane gaps are all gated by
+        # --experimental-quic, import node:quic directly, use ../common/quic.mjs
+        # listen/connect helpers, or check hasQuic before driving the native
+        # QUIC stack. The helper provisions TLS keys/certs and wraps
+        # quic.listen()/quic.connect(), so these fixtures require ambient host
+        # UDP+TLS endpoints, handshakes, diagnostics, H3, stream state, and
+        # socket-level behavior. The default multi-tenant V8 isolate must deny
+        # that host-owned network surface unless a host-capable backend is
+        # selected.
+        'test/parallel/test-quic-',
+    ),
 }
 
 WAVE2_REASON_TEXT = {
