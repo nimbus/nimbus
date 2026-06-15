@@ -31,6 +31,7 @@ fn push_supported_node_option(exec_argv: &mut Vec<String>, token: &str) {
         | "--experimental-vm-modules"
         | "--no-async-context-frame"
         | "--no-enable-source-maps"
+        | "--no-deprecation"
         | "--no-experimental-require-module"
         | "--no-experimental-sqlite"
         | "--no-require-module"
@@ -39,6 +40,7 @@ fn push_supported_node_option(exec_argv: &mut Vec<String>, token: &str) {
         | "--preserve-symlinks"
         | "--preserve-symlinks-main"
         | "--require-module"
+        | "--throw-deprecation"
         | "--trace-warnings"
         | "--trace-events-enabled"
         | "--turbo-fast-api-calls" => exec_argv.push(token.to_string()),
@@ -118,6 +120,9 @@ pub(super) fn runtime_test_spawn_mode(
                         "missing source argument for node_compat subprocess flag `{arg}`"
                     ))
                 })?;
+                if source_bundle_root.is_none() {
+                    source_bundle_root = runtime_test_bundle_root_from_embedded_value(source);
+                }
                 eval_source = Some(source.clone());
                 index += 2;
             }
@@ -127,6 +132,9 @@ pub(super) fn runtime_test_spawn_mode(
                         "missing source argument for node_compat subprocess flag `{arg}`"
                     ))
                 })?;
+                if source_bundle_root.is_none() {
+                    source_bundle_root = runtime_test_bundle_root_from_embedded_value(source);
+                }
                 eval_source = Some(source.clone());
                 eval_print_result = true;
                 index += 2;
@@ -285,6 +293,7 @@ pub(super) fn runtime_test_spawn_mode(
             | "--experimental-vm-modules"
             | "--no-async-context-frame"
             | "--no-enable-source-maps"
+            | "--no-deprecation"
             | "--no-experimental-require-module"
             | "--no-experimental-sqlite"
             | "--no-require-module"
@@ -293,6 +302,7 @@ pub(super) fn runtime_test_spawn_mode(
             | "--preserve-symlinks"
             | "--preserve-symlinks-main"
             | "--require-module"
+            | "--throw-deprecation"
             | "--trace-warnings"
             | "--trace-events-enabled" => {
                 exec_argv.push(arg.to_string());
@@ -642,4 +652,67 @@ fn runtime_test_bundle_root_from_argument(argument: &str) -> Option<PathBuf> {
         return runtime_test_bundle_root_from_path(path);
     }
     None
+}
+
+fn runtime_test_bundle_root_from_embedded_value(value: &str) -> Option<PathBuf> {
+    if let Some(root) = runtime_test_bundle_root_from_argument(value) {
+        return Some(root);
+    }
+
+    let marker = "/app/.nimbus/convex";
+    let marker_index = value.find(marker)?;
+    let root_end = marker_index + marker.len();
+    let prefix = &value[..root_end];
+    let candidate = if let Some(url_start) = prefix.rfind("file://") {
+        &prefix[url_start + "file://".len()..]
+    } else {
+        let path_start = prefix
+            .char_indices()
+            .rev()
+            .find_map(|(index, ch)| {
+                (index < marker_index
+                    && (ch == '"'
+                        || ch == '\''
+                        || ch == '`'
+                        || ch == '('
+                        || ch == ','
+                        || ch == ';'
+                        || ch.is_whitespace()))
+                .then_some(index + ch.len_utf8())
+            })
+            .unwrap_or(0);
+        &prefix[path_start..]
+    };
+    runtime_test_bundle_root_from_path(Path::new(candidate))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_file_url_discovers_parent_bundle_root() {
+        let source = r#"import { register } from "node:module"; register("file:///private/tmp/nvx-parent/app/.nimbus/convex/test/fixtures/loader.mjs");"#;
+
+        let root = runtime_test_bundle_root_from_embedded_value(source)
+            .expect("file URL inside eval source should identify bundle root");
+
+        assert_eq!(
+            root,
+            PathBuf::from("/private/tmp/nvx-parent/app/.nimbus/convex")
+        );
+    }
+
+    #[test]
+    fn embedded_absolute_path_discovers_parent_bundle_root() {
+        let source = r#"throw new Error("/private/tmp/nvx-parent/app/.nimbus/convex/test/fixtures/child.js");"#;
+
+        let root = runtime_test_bundle_root_from_embedded_value(source)
+            .expect("absolute path inside eval source should identify bundle root");
+
+        assert_eq!(
+            root,
+            PathBuf::from("/private/tmp/nvx-parent/app/.nimbus/convex")
+        );
+    }
 }

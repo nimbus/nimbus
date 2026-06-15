@@ -311,7 +311,9 @@ impl RestrictedModuleLoader {
                     ));
                 }
                 Ok(Ok((Some(source), format, _))) => {
-                    let source = if format.as_deref() == Some("commonjs") {
+                    let source = if self
+                        .should_wrap_hook_commonjs_source(&resolved_specifier, format.as_deref())
+                    {
                         wrap_hook_commonjs_source(&resolved_specifier, &source)?
                     } else {
                         source
@@ -478,6 +480,20 @@ impl RestrictedModuleLoader {
             .is_ok_and(|kind| kind == ResolvedNodeModuleKind::CommonJs)
     }
 
+    fn should_wrap_hook_commonjs_source(
+        &self,
+        module_specifier: &ModuleSpecifier,
+        hook_format: Option<&str>,
+    ) -> bool {
+        match hook_format {
+            Some("commonjs") => true,
+            Some(_) => false,
+            None => {
+                self.compatibility_target.is_node() && self.is_commonjs_module(module_specifier)
+            }
+        }
+    }
+
     fn is_synthetic_commonjs_wrapper_import(&self, specifier: &str, referrer: &str) -> bool {
         if specifier != NODE_MODULE_SPECIFIER {
             return false;
@@ -594,7 +610,9 @@ impl ModuleLoader for RestrictedModuleLoader {
                         ))
                     }
                     Ok(Ok((Some(source), format, _))) => {
-                        let source = if format.as_deref() == Some("commonjs") {
+                        let source = if loader
+                            .should_wrap_hook_commonjs_source(&module_specifier, format.as_deref())
+                        {
                             wrap_hook_commonjs_source(&module_specifier, &source)?
                         } else {
                             source
@@ -721,14 +739,46 @@ fn wrap_hook_commonjs_source(
     let filename_literal = js_string_literal(&filename)?;
     let dirname_literal = js_string_literal(&dirname)?;
     let mut wrapped = format!(
-        r#"const __nimbusCjsModule = {{ exports: {{}} }};
+        r#"const __nimbusCjsModuleConstructor =
+  globalThis.process?.getBuiltinModule?.("module")?.Module;
+if (typeof __nimbusCjsModuleConstructor !== "function") {{
+  throw new Error("Nimbus CommonJS hook wrapper requires node:module");
+}}
+const __nimbusCjsModule = {{ exports: {{}} }};
 const __nimbusCjsFilename = {filename_literal};
 const __nimbusCjsDirname = {dirname_literal};
-const __nimbusCjsRequire = typeof globalThis.require === "function"
-  ? globalThis.require
-  : function __nimbusUnsupportedHookRequire(specifier) {{
-      throw new Error("CommonJS load hook source called require(" + JSON.stringify(specifier) + "), but Nimbus cannot synthesize nested require from an async ESM load hook");
-    }};
+const __nimbusCjsRuntimeModule = new __nimbusCjsModuleConstructor(__nimbusCjsFilename);
+__nimbusCjsRuntimeModule.filename = __nimbusCjsFilename;
+__nimbusCjsRuntimeModule.paths =
+  typeof __nimbusCjsModuleConstructor._nodeModulePaths === "function" &&
+    __nimbusCjsDirname !== ""
+    ? __nimbusCjsModuleConstructor._nodeModulePaths(__nimbusCjsDirname)
+    : [];
+const __nimbusCjsRequire = function require(specifier) {{
+  return __nimbusCjsRuntimeModule.require(specifier);
+}};
+__nimbusCjsRequire.resolve = function resolve(request, options) {{
+  return __nimbusCjsModuleConstructor._resolveFilename(
+    request,
+    __nimbusCjsRuntimeModule,
+    false,
+    options == null ? {{}} : {{ __proto__: null, ...options }},
+  );
+}};
+__nimbusCjsRequire.resolve.paths = function paths(request) {{
+  return __nimbusCjsModuleConstructor._resolveLookupPaths(
+    request,
+    __nimbusCjsRuntimeModule,
+  );
+}};
+__nimbusCjsRequire.extensions = __nimbusCjsModuleConstructor._extensions;
+__nimbusCjsRequire.cache = __nimbusCjsModuleConstructor._cache;
+Object.defineProperty(__nimbusCjsRequire, "main", {{
+  configurable: true,
+  enumerable: true,
+  value: globalThis.process?.mainModule,
+  writable: true,
+}});
 (function (exports, require, module, __filename, __dirname) {{
 "#
     );

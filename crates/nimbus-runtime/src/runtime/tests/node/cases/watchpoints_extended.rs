@@ -2122,6 +2122,7 @@ const ESM_MODULE_LOADER_EXTRA_RUNTIME_FILES: &[&str] = &[
     "test/fixtures/recursive-a.cjs",
     "test/fixtures/recursive-b.cjs",
     "test/fixtures/simple.wasm",
+    "test/fixtures/value.cjs",
 ];
 
 const ESM_MODULE_LOADER_EXTRA_DIRS: &[&str] = &[
@@ -2139,6 +2140,7 @@ const ESM_MODULE_LOADER_EXTRA_DIRS: &[&str] = &[
     "test/fixtures/node_modules",
     "test/fixtures/packages",
     "test/fixtures/snapshot",
+    "test/fixtures/syntax",
     "test/fixtures/test-module-loading-globalpaths",
     "test/fixtures/typescript",
     "test/fixtures/uncaught-exceptions",
@@ -2382,6 +2384,55 @@ const ESM_MODULE_LOADER_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-module-main-preserve-symlinks-fail.js",
 ];
 
+const ESM_MODULE_LOADER_NODE26_CYCLE21_PROMOTED_PATHS: &[&str] = &[
+    "test/es-module/test-esm-cjs-named-error.mjs",
+    "test/es-module/test-esm-error-cache.js",
+    "test/es-module/test-esm-in-require-cache.js",
+    "test/es-module/test-esm-register-deprecation.mjs",
+    "test/es-module/test-esm-symlink-type.js",
+    "test/es-module/test-extensionless-esm-type-commonjs.js",
+    "test/es-module/test-require-as-esm-interop.mjs",
+    "test/es-module/test-require-module-conditional-exports-module.js",
+    "test/es-module/test-require-module-cycle-cjs-esm-esm.js",
+    "test/es-module/test-require-module-default-extension.js",
+    "test/es-module/test-require-module-defined-esmodule.js",
+    "test/es-module/test-require-module-dynamic-import-1.js",
+    "test/es-module/test-require-module-dynamic-import-2.js",
+    "test/es-module/test-require-module-dynamic-import-3.js",
+    "test/es-module/test-require-module-error-catching.js",
+    "test/es-module/test-require-module-implicit.js",
+    "test/es-module/test-require-module-instantiated.mjs",
+    "test/es-module/test-require-module-preload.js",
+    "test/es-module/test-require-module-retry-import-errored-2.js",
+    "test/es-module/test-require-module-retry-import-errored.js",
+    "test/es-module/test-require-module-retry-import-evaluating.js",
+    "test/es-module/test-require-module-synchronous-rejection-handling.js",
+    "test/es-module/test-require-module-twice.js",
+    "test/es-module/test-require-module-with-detection.js",
+    "test/es-module/test-require-module.js",
+    "test/module-hooks/test-module-hooks-create-require-with-url.mjs",
+    "test/module-hooks/test-module-hooks-import-wasm.mjs",
+    "test/module-hooks/test-module-hooks-load-builtin-import.mjs",
+    "test/module-hooks/test-module-hooks-load-builtin-override-module.js",
+    "test/module-hooks/test-module-hooks-load-builtin-require.js",
+    "test/module-hooks/test-module-hooks-load-chained.js",
+    "test/module-hooks/test-module-hooks-load-detection.js",
+    "test/module-hooks/test-module-hooks-load-import-cjs-custom-source.js",
+    "test/module-hooks/test-module-hooks-load-import-cjs.js",
+    "test/module-hooks/test-module-hooks-load-url-change-require.js",
+    "test/module-hooks/test-module-hooks-resolve-builtin-builtin-import.mjs",
+    "test/module-hooks/test-module-hooks-resolve-builtin-builtin-require.js",
+    "test/module-hooks/test-module-hooks-resolve-builtin-on-disk-require-with-prefix.js",
+    "test/module-hooks/test-module-hooks-resolve-builtin-on-disk-require.js",
+    "test/module-hooks/test-module-hooks-resolve-load-builtin-override-both-prefix.js",
+    "test/module-hooks/test-module-hooks-resolve-load-builtin-override-both.js",
+    "test/module-hooks/test-module-hooks-resolve-load-builtin-redirect-prefix.js",
+    "test/module-hooks/test-module-hooks-resolve-load-builtin-redirect.js",
+    "test/module-hooks/test-module-hooks-resolve-require-resolve-loaded-with-source.js",
+    "test/parallel/test-util-callbackify.js",
+    "test/parallel/test-util-inspect-regexp.js",
+];
+
 fn esm_module_loader_promoted_fixture_paths(groups: &[&[&str]]) -> Vec<String> {
     groups
         .iter()
@@ -2422,8 +2473,10 @@ fn node24_default_lane_executes_esm_module_loader_promoted_batch_fixture() {
 
 #[test]
 fn node26_current_lane_executes_esm_module_loader_promoted_batch_fixture() {
-    let fixture_paths =
-        esm_module_loader_promoted_fixture_paths(&[ESM_MODULE_LOADER_PROMOTED_NODE26_PATHS]);
+    let fixture_paths = esm_module_loader_promoted_fixture_paths(&[
+        ESM_MODULE_LOADER_PROMOTED_NODE26_PATHS,
+        ESM_MODULE_LOADER_NODE26_CYCLE21_PROMOTED_PATHS,
+    ]);
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node26-current-lane-executes-esm-module-loader-promoted-batch",
         NodeCompatLane::Node26,

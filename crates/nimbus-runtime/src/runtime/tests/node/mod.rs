@@ -1555,10 +1555,12 @@ const __nimbusRejectsStackReceiverName =
   globalThis.__nimbusNodeCompatLane === "node22" ? "Function" :
   globalThis.__nimbusNodeCompatLane === "node26" ? "assert" :
   null;
+const __nimbusAssertModulesForStackReceiver = [];
 if (__nimbusRejectsStackReceiverName !== null) {{
   const __nimbusAssertRequire = createRequire(import.meta.url);
   for (const __nimbusAssertSpecifier of ["assert", "node:assert"]) {{
     const __nimbusAssert = __nimbusAssertRequire(__nimbusAssertSpecifier);
+    __nimbusAssertModulesForStackReceiver.push(__nimbusAssert);
     if (typeof __nimbusAssert === "function") {{
       Object.defineProperty(__nimbusAssert, "__nimbusRejectsStackReceiverName", {{
         configurable: true,
@@ -1582,8 +1584,7 @@ const __nimbusNodeCompatResult = (skipped) => Object.assign(
   let __nimbusInvokeStep = "create require";
   const require = createRequire(import.meta.url);
   if (__nimbusRejectsStackReceiverName !== null) {{
-    for (const __nimbusAssertSpecifier of ["assert", "node:assert"]) {{
-      const __nimbusAssert = require(__nimbusAssertSpecifier);
+    for (const __nimbusAssert of __nimbusAssertModulesForStackReceiver) {{
       if (typeof __nimbusAssert === "function") {{
         Object.defineProperty(__nimbusAssert, "__nimbusRejectsStackReceiverName", {{
           configurable: true,
@@ -2649,10 +2650,10 @@ fn module_loader_required_surface_blocker_paths(lane: NodeCompatLane) -> Vec<Str
         node_compat_posture_paths_for_selector(lane, module_loader_required_surface_blocker_entry);
     // This selector follows the live generated required-surface blocker
     // population, which intentionally shrinks as module-loader fixtures are
-    // promoted or reclassified. Keep the upper bound as a runaway guard, but
-    // allow the floor to drain all the way to the last residual gap.
+    // promoted or reclassified. Keep the upper bound as a runaway guard, and
+    // allow the floor to drain to zero when the cluster is fully burned down.
     assert!(
-        (1..=260).contains(&fixture_paths.len()),
+        (0..=260).contains(&fixture_paths.len()),
         "module-loader required-surface blocker selector should stay broad but reviewable; selected {} fixtures",
         fixture_paths.len()
     );

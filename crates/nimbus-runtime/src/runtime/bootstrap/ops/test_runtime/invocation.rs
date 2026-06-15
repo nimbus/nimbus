@@ -52,6 +52,14 @@ pub(super) fn prepare_runtime_test_spawn_invocation(
         )
     };
     let (tempdir, bundle_path, file_output_syncs) = write_runtime_test_spawn_bundle(&plan)?;
+    let output_path_rewrites = if let Some(source_bundle_root) = plan.source_bundle_root.as_ref()
+        && !plan.permission_restricted
+        && let Some(bundle_root) = bundle_path.parent()
+    {
+        vec![(bundle_root.to_path_buf(), source_bundle_root.clone())]
+    } else {
+        Vec::new()
+    };
     let mut limits = contract.limits;
     if let Some(source_bundle_root) = plan.source_bundle_root.as_ref()
         && !plan.permission_restricted
@@ -78,6 +86,7 @@ pub(super) fn prepare_runtime_test_spawn_invocation(
         runtime,
         bundle_path,
         file_output_syncs,
+        output_path_rewrites,
         request,
         process_state_snapshot,
     })
@@ -119,6 +128,18 @@ pub(super) fn runtime_test_spawn_result_from_value(
                 signal: None,
             })
         }
+    }
+}
+
+pub(super) fn normalize_runtime_test_spawn_result_paths(
+    result: &mut RuntimeTestSpawnResult,
+    rewrites: &[(PathBuf, PathBuf)],
+) {
+    for (from, to) in rewrites {
+        let from = from.to_string_lossy();
+        let to = to.to_string_lossy();
+        result.stdout = result.stdout.replace(from.as_ref(), to.as_ref());
+        result.stderr = result.stderr.replace(from.as_ref(), to.as_ref());
     }
 }
 
@@ -242,5 +263,34 @@ mod tests {
         })))
         .expect("spawn result should deserialize");
         assert_eq!(result.stderr, "Error: child\n");
+    }
+
+    #[test]
+    fn spawn_result_paths_normalize_child_bundle_root_to_parent_root() {
+        let mut result = RuntimeTestSpawnResult {
+            pid: 0,
+            code: 1,
+            stdout: "/private/var/folders/tmp/app/.nimbus/convex/test/out.js\n".to_string(),
+            stderr: "Error: /private/var/folders/tmp/app/.nimbus/convex/test/child.js\n"
+                .to_string(),
+            signal: None,
+        };
+
+        normalize_runtime_test_spawn_result_paths(
+            &mut result,
+            &[(
+                PathBuf::from("/private/var/folders/tmp/app/.nimbus/convex"),
+                PathBuf::from("/private/tmp/nvx-parent/app/.nimbus/convex"),
+            )],
+        );
+
+        assert_eq!(
+            result.stdout,
+            "/private/tmp/nvx-parent/app/.nimbus/convex/test/out.js\n"
+        );
+        assert_eq!(
+            result.stderr,
+            "Error: /private/tmp/nvx-parent/app/.nimbus/convex/test/child.js\n"
+        );
     }
 }

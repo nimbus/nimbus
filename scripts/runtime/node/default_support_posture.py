@@ -1535,8 +1535,16 @@ def main() -> int:
     args = parser.parse_args()
 
     repo = repo_root()
-    json_path = repo / "docs/private/architecture/runtime/node-default-support-posture.json"
-    md_path = repo / "docs/private/architecture/runtime/node-default-support-posture.md"
+    generated_paths = (
+        (
+            repo / "docs/private/architecture/runtime/node-default-support-posture.json",
+            repo / "docs/private/architecture/runtime/node-default-support-posture.md",
+        ),
+        (
+            repo / "docs/architecture/runtime/node-default-support-posture.json",
+            repo / "docs/architecture/runtime/node-default-support-posture.md",
+        ),
+    )
     posture = build_posture(repo)
     errors = validate(posture)
     if errors:
@@ -1546,20 +1554,22 @@ def main() -> int:
 
     if args.check:
         expected_json = json.dumps(posture, indent=2, sort_keys=True) + "\n"
-        if not json_path.exists() or json_path.read_text(encoding="utf-8") != expected_json:
-            print(f"error: {json_path} is stale", file=sys.stderr)
-            return 1
         expected_md = render_markdown(posture)
-        if not md_path.exists() or md_path.read_text(encoding="utf-8") != expected_md:
-            print(f"error: {md_path} is stale", file=sys.stderr)
-            return 1
+        for json_path, md_path in generated_paths:
+            if not json_path.exists() or json_path.read_text(encoding="utf-8") != expected_json:
+                print(f"error: {json_path} is stale", file=sys.stderr)
+                return 1
+            if not md_path.exists() or md_path.read_text(encoding="utf-8") != expected_md:
+                print(f"error: {md_path} is stale", file=sys.stderr)
+                return 1
         print("node default support posture: pass")
         return 0
 
-    write_json(json_path, posture)
-    write_markdown(md_path, posture)
-    print(f"wrote {json_path}")
-    print(f"wrote {md_path}")
+    for json_path, md_path in generated_paths:
+        write_json(json_path, posture)
+        write_markdown(md_path, posture)
+        print(f"wrote {json_path}")
+        print(f"wrote {md_path}")
     return 0
 
 

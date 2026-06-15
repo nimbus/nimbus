@@ -128,6 +128,10 @@ pub(super) fn rewrite_bundle_path(
     source_root: &Path,
     target_root: &Path,
 ) -> PathBuf {
+    if let Ok(relative) = candidate.strip_prefix(source_root) {
+        return target_root.join(relative);
+    }
+
     let canonical_candidate =
         std::fs::canonicalize(candidate).unwrap_or_else(|_| candidate.to_path_buf());
     let canonical_source_root =
@@ -382,4 +386,36 @@ pub(super) fn write_runtime_test_spawn_bundle(
     })?;
 
     Ok((tempdir, bundle_path, file_output_syncs))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn rewrite_bundle_path_preserves_symlink_source_path() {
+        let source_tempdir = tempdir().expect("source tempdir");
+        let source_root = source_tempdir.path().join("app/.nimbus/convex");
+        let target_tempdir = tempdir().expect("target tempdir");
+        let target_root = target_tempdir.path().join("app/.nimbus/convex");
+
+        let fixture_target =
+            source_root.join("test/fixtures/es-modules/package-type-module/index.js");
+        std::fs::create_dir_all(fixture_target.parent().expect("fixture target parent"))
+            .expect("fixture target parent should build");
+        std::fs::write(&fixture_target, "export default 1;").expect("fixture target should write");
+
+        let symlink_path =
+            source_root.join("test/.tmp.0/extensionless-symlink-to-file-in-module-scope");
+        std::fs::create_dir_all(symlink_path.parent().expect("symlink parent"))
+            .expect("symlink parent should build");
+        std::os::unix::fs::symlink(&fixture_target, &symlink_path)
+            .expect("absolute symlink should build");
+
+        assert_eq!(
+            rewrite_bundle_path(&symlink_path, &source_root, &target_root),
+            target_root.join("test/.tmp.0/extensionless-symlink-to-file-in-module-scope")
+        );
+    }
 }

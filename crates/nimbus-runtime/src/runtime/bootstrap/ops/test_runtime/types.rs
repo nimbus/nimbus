@@ -91,6 +91,7 @@ pub(super) struct PreparedRuntimeTestSpawnInvocation {
     pub(super) runtime: NimbusRuntime,
     pub(super) bundle_path: PathBuf,
     pub(super) file_output_syncs: Vec<(PathBuf, PathBuf)>,
+    pub(super) output_path_rewrites: Vec<(PathBuf, PathBuf)>,
     pub(super) request: InvocationRequest,
     pub(super) process_state_snapshot: RuntimeTestProcessStateSnapshot,
 }

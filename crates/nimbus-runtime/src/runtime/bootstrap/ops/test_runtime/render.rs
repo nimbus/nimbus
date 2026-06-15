@@ -832,8 +832,31 @@ function __nimbusResolveCliImportSpecifier(specifier) {{
   }}
   return specifier;
 }}
+function __nimbusResolveCliRequireSpecifier(specifier) {{
+  if (
+    specifier.startsWith("node:") ||
+    specifier.startsWith("data:") ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(specifier)
+  ) {{
+    return specifier;
+  }}
+  if (__nimbusPath.isAbsolute(specifier)) {{
+    return specifier;
+  }}
+  if (
+    specifier.startsWith("./") ||
+    specifier.startsWith("../") ||
+    specifier === "." ||
+    specifier === ".."
+  ) {{
+    return __nimbusPath.resolve(process.cwd(), specifier);
+  }}
+  return specifier;
+}}
 if (__nimbusPreloadRequires.length > 0) {{
-  require("node:module").Module._preloadModules(__nimbusPreloadRequires);
+  require("node:module").Module._preloadModules(
+    __nimbusPreloadRequires.map(__nimbusResolveCliRequireSpecifier),
+  );
 }}
 for (const __nimbusPreloadImport of __nimbusPreloadImports) {{
   await import(__nimbusResolveCliImportSpecifier(__nimbusPreloadImport));

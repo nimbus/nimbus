@@ -53,6 +53,16 @@
       "expectation": "expected_gap",
       "classification": "requires_native_addon_harness",
       "owner": "loader-context/native-addon-host",
+      "reason": "The fixture requires a .node native addon through CommonJS require(), which would dlopen host-native code outside the V8 isolate and must remain fail-closed unless a host-capable backend is selected.",
+      "test_paths": [
+        "test/parallel/test-module-loading-error.js"
+      ]
+    },
+    {
+      "id": "node26-requires_native_addon_harness-3",
+      "expectation": "expected_gap",
+      "classification": "requires_native_addon_harness",
+      "owner": "loader-context/native-addon-host",
       "reason": "This official fixture requires a dedicated host, ordering, stress, native, or standards harness before it can become a green support claim.",
       "test_paths": [
         "test/addons/async-hello-world/test-makecallback-uncaught.js",
@@ -91,7 +101,17 @@
       ]
     },
     {
-      "id": "node26-requires_pseudo_tty_host_harness-3",
+      "id": "node26-requires_pseudo_tty_host_harness-4",
+      "expectation": "expected_gap",
+      "classification": "requires_pseudo_tty_host_harness",
+      "owner": "process-and-timing/tty-host",
+      "reason": "The fixture's styleText stream validation section requires a host TTY fd from common.getTTYfd(), so it is terminal-harness evidence rather than a multi-tenant isolate support claim.",
+      "test_paths": [
+        "test/parallel/test-util-styletext.js"
+      ]
+    },
+    {
+      "id": "node26-requires_pseudo_tty_host_harness-5",
       "expectation": "expected_gap",
       "classification": "requires_pseudo_tty_host_harness",
       "owner": "process-and-timing/tty-host",
@@ -131,7 +151,7 @@
       ]
     },
     {
-      "id": "node26-requires_pummel_stress_harness-4",
+      "id": "node26-requires_pummel_stress_harness-6",
       "expectation": "expected_gap",
       "classification": "requires_pummel_stress_harness",
       "owner": "node-compat/stress-harness",
@@ -205,7 +225,7 @@
       ]
     },
     {
-      "id": "node26-requires_sequential_host_state_harness-5",
+      "id": "node26-requires_sequential_host_state_harness-7",
       "expectation": "expected_gap",
       "classification": "requires_sequential_host_state_harness",
       "owner": "node-compat/sequential-host-state",
@@ -333,7 +353,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-6",
+      "id": "node26-requires_unpromoted_node_surface-8",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/assert",
@@ -344,7 +364,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-7",
+      "id": "node26-requires_unpromoted_node_surface-9",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/buffer",
@@ -360,7 +380,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-8",
+      "id": "node26-requires_unpromoted_node_surface-10",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/console",
@@ -374,7 +394,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-9",
+      "id": "node26-requires_unpromoted_node_surface-11",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/path",
@@ -384,7 +404,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-10",
+      "id": "node26-requires_unpromoted_node_surface-12",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/url",
@@ -394,7 +414,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-11",
+      "id": "node26-requires_unpromoted_node_surface-13",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/domain",
@@ -437,35 +457,15 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-12",
+      "id": "node26-requires_unpromoted_node_surface-14",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/module",
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
-        "test/module-hooks/test-module-hooks-create-require-with-url.mjs",
-        "test/module-hooks/test-module-hooks-import-wasm.mjs",
         "test/module-hooks/test-module-hooks-load-async-and-sync.js",
-        "test/module-hooks/test-module-hooks-load-builtin-import.mjs",
-        "test/module-hooks/test-module-hooks-load-builtin-override-module.js",
-        "test/module-hooks/test-module-hooks-load-builtin-require.js",
-        "test/module-hooks/test-module-hooks-load-chained.js",
-        "test/module-hooks/test-module-hooks-load-detection.js",
-        "test/module-hooks/test-module-hooks-load-import-cjs-custom-source.js",
-        "test/module-hooks/test-module-hooks-load-import-cjs.js",
-        "test/module-hooks/test-module-hooks-load-url-change-require.js",
         "test/module-hooks/test-module-hooks-preload.js",
         "test/module-hooks/test-module-hooks-require-esm.js",
-        "test/module-hooks/test-module-hooks-resolve-builtin-builtin-import.mjs",
-        "test/module-hooks/test-module-hooks-resolve-builtin-builtin-require.js",
-        "test/module-hooks/test-module-hooks-resolve-builtin-on-disk-require-with-prefix.js",
-        "test/module-hooks/test-module-hooks-resolve-builtin-on-disk-require.js",
-        "test/module-hooks/test-module-hooks-resolve-load-builtin-override-both-prefix.js",
-        "test/module-hooks/test-module-hooks-resolve-load-builtin-override-both.js",
-        "test/module-hooks/test-module-hooks-resolve-load-builtin-redirect-prefix.js",
-        "test/module-hooks/test-module-hooks-resolve-load-builtin-redirect.js",
-        "test/module-hooks/test-module-hooks-resolve-require-resolve-loaded-with-source.js",
-        "test/parallel/test-module-loading-error.js",
         "test/parallel/test-module-parent-deprecation.js",
         "test/parallel/test-module-print-timing.mjs",
         "test/parallel/test-module-readonly.js",
@@ -475,30 +475,27 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-13",
+      "id": "node26-requires_unpromoted_node_surface-15",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/util",
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
-        "test/parallel/test-util-callbackify.js",
         "test/parallel/test-util-convert-signal-to-exit-code.mjs",
         "test/parallel/test-util-getcallsites.js",
         "test/parallel/test-util-inspect-long-running.js",
         "test/parallel/test-util-inspect-proxy.js",
-        "test/parallel/test-util-inspect-regexp.js",
         "test/parallel/test-util-inspect.js",
         "test/parallel/test-util-internal.js",
         "test/parallel/test-util-promisify.js",
         "test/parallel/test-util-sigint-watchdog.js",
         "test/parallel/test-util-sleep.js",
-        "test/parallel/test-util-styletext.js",
         "test/parallel/test-util-types.js",
         "test/parallel/test-util.js"
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-14",
+      "id": "node26-requires_unpromoted_node_surface-16",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/vm",
@@ -543,7 +540,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-15",
+      "id": "node26-requires_unpromoted_node_surface-17",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/workers",
@@ -681,7 +678,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-16",
+      "id": "node26-requires_unpromoted_node_surface-18",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/crypto",
@@ -785,7 +782,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-17",
+      "id": "node26-requires_unpromoted_node_surface-19",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/dgram",
@@ -813,7 +810,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-18",
+      "id": "node26-requires_unpromoted_node_surface-20",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/http",
@@ -1206,7 +1203,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-19",
+      "id": "node26-requires_unpromoted_node_surface-21",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/http2",
@@ -1298,7 +1295,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-20",
+      "id": "node26-requires_unpromoted_node_surface-22",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/https",
@@ -1346,7 +1343,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-21",
+      "id": "node26-requires_unpromoted_node_surface-23",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/net",
@@ -1492,7 +1489,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-22",
+      "id": "node26-requires_unpromoted_node_surface-24",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/tls",
@@ -1712,7 +1709,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-23",
+      "id": "node26-requires_unpromoted_node_surface-25",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/zlib",
@@ -1738,7 +1735,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-24",
+      "id": "node26-requires_unpromoted_node_surface-26",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "node-compat/unpromoted-surface",
@@ -1845,11 +1842,9 @@
         "test/es-module/test-esm-assertionless-json-import.js",
         "test/es-module/test-esm-child-process-fork-main.mjs",
         "test/es-module/test-esm-cjs-load-error-note.mjs",
-        "test/es-module/test-esm-cjs-named-error.mjs",
         "test/es-module/test-esm-detect-ambiguous.mjs",
         "test/es-module/test-esm-dynamic-import-mutating-fs.mjs",
         "test/es-module/test-esm-encoded-path-native.js",
-        "test/es-module/test-esm-error-cache.js",
         "test/es-module/test-esm-experimental-warnings.mjs",
         "test/es-module/test-esm-export-not-found.mjs",
         "test/es-module/test-esm-exports-deprecations.mjs",
@@ -1861,7 +1856,6 @@
         "test/es-module/test-esm-import-meta-main-eval.mjs",
         "test/es-module/test-esm-import-meta-resolve.mjs",
         "test/es-module/test-esm-imports-deprecations.mjs",
-        "test/es-module/test-esm-in-require-cache.js",
         "test/es-module/test-esm-initialization.mjs",
         "test/es-module/test-esm-invalid-pjson.js",
         "test/es-module/test-esm-loader-chaining.mjs",
@@ -1891,12 +1885,10 @@
         "test/es-module/test-esm-preserve-symlinks-main.js",
         "test/es-module/test-esm-preserve-symlinks-not-found-plain.mjs",
         "test/es-module/test-esm-preserve-symlinks-not-found.mjs",
-        "test/es-module/test-esm-register-deprecation.mjs",
         "test/es-module/test-esm-repl-imports.js",
         "test/es-module/test-esm-repl.js",
         "test/es-module/test-esm-resolve-type.mjs",
         "test/es-module/test-esm-source-map.mjs",
-        "test/es-module/test-esm-symlink-type.js",
         "test/es-module/test-esm-tla-syntax-errors-not-recognized-as-tla-error.mjs",
         "test/es-module/test-esm-tla-unfinished.mjs",
         "test/es-module/test-esm-type-field-errors-2.js",
@@ -1922,36 +1914,16 @@
         "test/es-module/test-esm-wasm-top-level-execution.mjs",
         "test/es-module/test-esm-wasm-vm-source-phase-dynamic.mjs",
         "test/es-module/test-esm-wasm-vm-source-phase-static.mjs",
-        "test/es-module/test-extensionless-esm-type-commonjs.js",
         "test/es-module/test-loaders-unknown-builtin-module.mjs",
         "test/es-module/test-loaders-workers-spawned.mjs",
-        "test/es-module/test-require-as-esm-interop.mjs",
-        "test/es-module/test-require-module-conditional-exports-module.js",
-        "test/es-module/test-require-module-cycle-cjs-esm-esm.js",
         "test/es-module/test-require-module-cycle-esm-cjs-esm-esm.js",
         "test/es-module/test-require-module-cycle-esm-cjs-esm.js",
         "test/es-module/test-require-module-cycle-esm-esm-cjs-esm-esm.js",
         "test/es-module/test-require-module-cycle-esm-esm-cjs-esm.js",
-        "test/es-module/test-require-module-default-extension.js",
-        "test/es-module/test-require-module-defined-esmodule.js",
-        "test/es-module/test-require-module-dynamic-import-1.js",
-        "test/es-module/test-require-module-dynamic-import-2.js",
-        "test/es-module/test-require-module-dynamic-import-3.js",
-        "test/es-module/test-require-module-error-catching.js",
         "test/es-module/test-require-module-errors.js",
         "test/es-module/test-require-module-feature-detect.js",
-        "test/es-module/test-require-module-implicit.js",
-        "test/es-module/test-require-module-instantiated.mjs",
-        "test/es-module/test-require-module-preload.js",
-        "test/es-module/test-require-module-retry-import-errored-2.js",
-        "test/es-module/test-require-module-retry-import-errored.js",
-        "test/es-module/test-require-module-retry-import-evaluating.js",
-        "test/es-module/test-require-module-synchronous-rejection-handling.js",
         "test/es-module/test-require-module-tla-print-execution.js",
-        "test/es-module/test-require-module-twice.js",
         "test/es-module/test-require-module-warning.js",
-        "test/es-module/test-require-module-with-detection.js",
-        "test/es-module/test-require-module.js",
         "test/es-module/test-require-node-modules-warning.js",
         "test/es-module/test-typescript-commonjs.mjs",
         "test/es-module/test-typescript-eval.mjs",
@@ -3628,7 +3600,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-25",
+      "id": "node26-requires_unpromoted_node_surface-27",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/diagnostics-channel",
@@ -3643,7 +3615,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-26",
+      "id": "node26-requires_unpromoted_node_surface-28",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/os",
@@ -3658,7 +3630,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-27",
+      "id": "node26-requires_unpromoted_node_surface-29",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/perf-hooks",
@@ -3669,7 +3641,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-28",
+      "id": "node26-requires_unpromoted_node_surface-30",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/process-host",
@@ -3737,7 +3709,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-29",
+      "id": "node26-requires_unpromoted_node_surface-31",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/timers",
@@ -3753,7 +3725,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-30",
+      "id": "node26-requires_unpromoted_node_surface-32",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "runtime/v8",
@@ -3781,7 +3753,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-31",
+      "id": "node26-requires_unpromoted_node_surface-33",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/fs-host-io",
@@ -3843,7 +3815,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-32",
+      "id": "node26-requires_unpromoted_node_surface-34",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/readline-tty",
@@ -3865,7 +3837,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-33",
+      "id": "node26-requires_unpromoted_node_surface-35",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/stream",
@@ -3896,7 +3868,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-34",
+      "id": "node26-requires_unpromoted_node_surface-36",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/tty-host",
@@ -3906,7 +3878,7 @@
       ]
     },
     {
-      "id": "node26-requires_wpt_harness-35",
+      "id": "node26-requires_wpt_harness-37",
       "expectation": "expected_gap",
       "classification": "requires_wpt_harness",
       "owner": "node-compat/wpt-harness",
@@ -3940,7 +3912,7 @@
       ]
     },
     {
-      "id": "node26-upstream_known_issue_or_platform_boundary-36",
+      "id": "node26-upstream_known_issue_or_platform_boundary-38",
       "expectation": "expected_gap",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "node-compat/platform-boundary",
@@ -3972,7 +3944,7 @@
       ]
     },
     {
-      "id": "node26-support_fixture_not_top_level_test-37",
+      "id": "node26-support_fixture_not_top_level_test-39",
       "expectation": "expected_skip",
       "classification": "support_fixture_not_top_level_test",
       "owner": "node-compat-denominator/fixture-sync",

@@ -7,8 +7,8 @@ use crate::runtime::bootstrap::payloads::RuntimeHostCallEnvelope;
 
 use super::bundle::sync_runtime_test_spawn_file_outputs;
 use super::invocation::{
-    prepare_runtime_test_spawn_invocation, runtime_test_spawn_envelope,
-    runtime_test_spawn_result_from_value,
+    normalize_runtime_test_spawn_result_paths, prepare_runtime_test_spawn_invocation,
+    runtime_test_spawn_envelope, runtime_test_spawn_result_from_value,
 };
 use super::types::RuntimeTestSpawnPayload;
 
@@ -19,7 +19,7 @@ pub(in super::super) async fn op_nimbus_runtime_test_spawn(
     #[serde] payload: RuntimeTestSpawnPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
     let prepared = prepare_runtime_test_spawn_invocation(state, payload)?;
-    let result = runtime_test_spawn_result_from_value(
+    let mut result = runtime_test_spawn_result_from_value(
         prepared
             .runtime
             .invoke_bundle(
@@ -28,6 +28,9 @@ pub(in super::super) async fn op_nimbus_runtime_test_spawn(
             )
             .await,
     );
+    if let Ok(result) = result.as_mut() {
+        normalize_runtime_test_spawn_result_paths(result, &prepared.output_path_rewrites);
+    }
     sync_runtime_test_spawn_file_outputs(&prepared.file_output_syncs)?;
     prepared.process_state_snapshot.restore()?;
     runtime_test_spawn_envelope(result?)
@@ -40,10 +43,13 @@ pub(in super::super) fn op_nimbus_runtime_test_spawn_sync(
     #[serde] payload: RuntimeTestSpawnPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
     let prepared = prepare_runtime_test_spawn_invocation(state, payload)?;
-    let result = runtime_test_spawn_result_from_value(prepared.runtime.invoke_bundle_blocking(
+    let mut result = runtime_test_spawn_result_from_value(prepared.runtime.invoke_bundle_blocking(
         &RuntimeBundle::with_side_entrypoint(&prepared.bundle_path),
         &prepared.request,
     ));
+    if let Ok(result) = result.as_mut() {
+        normalize_runtime_test_spawn_result_paths(result, &prepared.output_path_rewrites);
+    }
     sync_runtime_test_spawn_file_outputs(&prepared.file_output_syncs)?;
     prepared.process_state_snapshot.restore()?;
     runtime_test_spawn_envelope(result?)
