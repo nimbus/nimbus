@@ -1,20 +1,20 @@
 {
   "schema_version": 2,
-  "generated_at": "2026-06-15T22:10:51.664870+00:00",
+  "generated_at": "2026-06-15T22:28:05.236234+00:00",
   "report_kind": "node_compat_suite_status",
   "status_contract": "Counts every official vendored lane-local test-* JS/CJS/MJS fixture, then compares that denominator to the documented manifested passed subset plus explicit lane classification catalogs. Supported lanes use non-ignored Rust tests that execute node-compat fixtures for the matching lane minus explicit expected-failure, known-gap, and skipped classifications as the passed numerator. Ignored watchpoints never count as passed. Expected failures, known gaps, and skipped/excluded entries are not pass claims; the remaining remainder is intentionally reported as unmanifested_or_unclassified, not as pass or fail. Supplementary, regression, canary, watchpoint, and diagnostic evidence is reported in separate evidence tiers and never changes official pass denominators.",
   "lane_count": 4,
   "family_count": 5,
-  "rust_ignore_count": 150,
+  "rust_ignore_count": 151,
   "expectation_catalog": {
     "catalog_path": "tests/runtime/node/expectations/rust-watchpoints.json",
     "catalog_present": true,
-    "catalog_entry_count": 150,
+    "catalog_entry_count": 151,
     "by_expectation": {
-      "expected_failure": 150
+      "expected_failure": 151
     },
     "by_classification": {
-      "watchpoint": 150
+      "watchpoint": 151
     },
     "validation_errors": [],
     "observed_results_path": null,
@@ -26,7 +26,7 @@
       "source": "vendored_official_fixture_corpus",
       "primary_count_label": "fixture_count",
       "primary_count": 19772,
-      "passed_count": 7643,
+      "passed_count": 7656,
       "counts_in_official_denominator": true,
       "notes": "Byte-identical Node upstream test-* fixtures under lane-local nodeNN/test roots; pass percentages use only this denominator."
     },
@@ -61,7 +61,7 @@
       "tier": "watchpoint",
       "source": "tests/runtime/node/expectations/rust-watchpoints.json",
       "primary_count_label": "catalog_entry_count",
-      "primary_count": 150,
+      "primary_count": 151,
       "counts_in_official_denominator": false,
       "notes": "Ignored Rust watchpoints and expectation catalog entries used to preserve known failures and unexpected-pass diagnostics."
     },
@@ -76,7 +76,7 @@
     }
   ],
   "total_vendored_test_file_count": 19772,
-  "total_documented_manifested_green_count": 7643,
+  "total_documented_manifested_green_count": 7656,
   "lane_summaries": [
     {
       "lane": "node20",
@@ -68323,28 +68323,28 @@
       "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node26/test",
       "denominator_kind": "vendored_fixture_root_test_files",
       "vendored_test_file_count": 5578,
-      "documented_manifested_green_count": 1963,
+      "documented_manifested_green_count": 1976,
       "documented_manifested_green_source": "rust_nonignored_execution_fixture_inventory_minus_classified_red_skip",
-      "documented_family_green_count": 883,
-      "path_owned_manifested_green_count": 1963,
-      "classified_red_skip_count": 3615,
-      "classified_total_count": 3615,
-      "known_red_or_gap_count": 3569,
-      "skipped_or_excluded_count": 46,
+      "documented_family_green_count": 889,
+      "path_owned_manifested_green_count": 1976,
+      "classified_red_skip_count": 3602,
+      "classified_total_count": 3602,
+      "known_red_or_gap_count": 3550,
+      "skipped_or_excluded_count": 52,
       "documented_or_classified_count": 5578,
       "unmanifested_or_unclassified_count": 0,
-      "documented_manifested_green_ratio": 0.351918,
+      "documented_manifested_green_ratio": 0.354249,
       "classification_catalog": {
         "catalog_path": "tests/runtime/node/classifications/node26.json",
         "catalog_present": true,
-        "classified_red_skip_count": 3615,
+        "classified_red_skip_count": 3602,
         "by_expectation": {
-          "expected_failure": 34,
+          "expected_failure": 15,
           "expected_gap": 3535,
-          "expected_skip": 46
+          "expected_skip": 52
         },
         "by_classification": {
-          "node26_current_broad_pre_run_residual": 34,
+          "node26_current_broad_pre_run_residual": 15,
           "requires_native_addon_harness": 34,
           "requires_pseudo_tty_host_harness": 32,
           "requires_pummel_stress_harness": 65,
@@ -68352,52 +68352,12 @@
           "requires_unpromoted_node_surface": 3237,
           "requires_wpt_harness": 25,
           "support_fixture_not_top_level_test": 46,
-          "upstream_known_issue_or_platform_boundary": 23
+          "upstream_known_issue_or_platform_boundary": 29
         },
         "validation_errors": [],
         "entries": [
           {
             "test_path": "test/parallel/test-buffer-indexof.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-buffer-tostring-rangeerror.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-crypto-default-shake-lengths-oneshot.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-crypto-dh-group-setters.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-crypto-dh-modp2-views.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-crypto-dh-modp2.js",
             "expectation": "expected_failure",
             "classification": "node26_current_broad_pre_run_residual",
             "owner": "node-compat/current-lane",
@@ -68421,14 +68381,6 @@
             "group_id": "node26-node26_current_broad_pre_run_residual-1"
           },
           {
-            "test_path": "test/parallel/test-crypto-oneshot-hash-xof.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
             "test_path": "test/parallel/test-crypto-scrypt.js",
             "expectation": "expected_failure",
             "classification": "node26_current_broad_pre_run_residual",
@@ -68438,46 +68390,6 @@
           },
           {
             "test_path": "test/parallel/test-fs-glob.mjs",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-fs-opendir.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-fs-promises-file-handle-dispose.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-fs-promises-file-handle-readLines.mjs",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-fs-symlink.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-fs-write-stream-autoclose-option.js",
             "expectation": "expected_failure",
             "classification": "node26_current_broad_pre_run_residual",
             "owner": "node-compat/current-lane",
@@ -68517,23 +68429,7 @@
             "group_id": "node26-node26_current_broad_pre_run_residual-1"
           },
           {
-            "test_path": "test/parallel/test-module-multi-extensions.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
             "test_path": "test/parallel/test-process-load-env-file.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-readline-promises-csi.mjs",
             "expectation": "expected_failure",
             "classification": "node26_current_broad_pre_run_residual",
             "owner": "node-compat/current-lane",
@@ -68549,55 +68445,7 @@
             "group_id": "node26-node26_current_broad_pre_run_residual-1"
           },
           {
-            "test_path": "test/parallel/test-stream-compose.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
             "test_path": "test/parallel/test-stream-duplex.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-stream-pipeline.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-stream-readable-emittedReadable.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-stream-readable-infinite-read.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-stream-typedarray.js",
-            "expectation": "expected_failure",
-            "classification": "node26_current_broad_pre_run_residual",
-            "owner": "node-compat/current-lane",
-            "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            "group_id": "node26-node26_current_broad_pre_run_residual-1"
-          },
-          {
-            "test_path": "test/parallel/test-stream-uint8array.js",
             "expectation": "expected_failure",
             "classification": "node26_current_broad_pre_run_residual",
             "owner": "node-compat/current-lane",
@@ -97275,6 +97123,54 @@
             "owner": "node-compat-denominator/fixture-sync",
             "reason": "This file lives under test/fixtures and is support data for other official Node tests, not a top-level runnable compatibility test.",
             "group_id": "node26-support_fixture_not_top_level_test-39"
+          },
+          {
+            "test_path": "test/parallel/test-buffer-tostring-rangeerror.js",
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "core-semantics/buffer",
+            "reason": "The official Node26 fixture self-skips through common.enoughTestMem because it requires allocating buffers larger than MAX_STRING_LENGTH, so it is host-memory stress evidence rather than a default V8-isolate support claim.",
+            "group_id": "node26-upstream_known_issue_or_platform_boundary-40"
+          },
+          {
+            "test_path": "test/parallel/test-crypto-oneshot-hash-xof.js",
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "networking/crypto-provider",
+            "reason": "The official Node26 fixture self-skips when process.features.openssl_is_boringssl is true because BoringSSL does not support XOF hash functions.",
+            "group_id": "node26-upstream_known_issue_or_platform_boundary-41"
+          },
+          {
+            "test_path": "test/parallel/test-crypto-default-shake-lengths-oneshot.js",
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "networking/crypto-provider",
+            "reason": "The official Node26 fixture self-skips when process.features.openssl_is_boringssl is true because default SHAKE XOF lengths are not supported by the linked BoringSSL-family provider.",
+            "group_id": "node26-upstream_known_issue_or_platform_boundary-42"
+          },
+          {
+            "test_path": "test/parallel/test-crypto-dh-modp2-views.js",
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "networking/crypto-provider",
+            "reason": "The official Node26 fixture self-skips when process.features.openssl_is_boringssl is true because the Diffie-Hellman MODP2 surface is unsupported by the linked BoringSSL-family provider.",
+            "group_id": "node26-upstream_known_issue_or_platform_boundary-43"
+          },
+          {
+            "test_path": "test/parallel/test-crypto-dh-modp2.js",
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "networking/crypto-provider",
+            "reason": "The official Node26 fixture self-skips when process.features.openssl_is_boringssl is true because the Diffie-Hellman MODP2 surface is unsupported by the linked BoringSSL-family provider.",
+            "group_id": "node26-upstream_known_issue_or_platform_boundary-43"
+          },
+          {
+            "test_path": "test/parallel/test-crypto-dh-group-setters.js",
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "networking/crypto-provider",
+            "reason": "The official Node26 fixture self-skips when process.features.openssl_is_boringssl is true because the Diffie-Hellman group surface is unsupported by the linked BoringSSL-family provider.",
+            "group_id": "node26-upstream_known_issue_or_platform_boundary-44"
           }
         ]
       }
@@ -97302,7 +97198,7 @@
         "node20": 173,
         "node22": 232,
         "node24": 180,
-        "node26": 171
+        "node26": 172
       },
       "has_complete_lane_counts": true,
       "missing_count_lanes": []
@@ -97341,7 +97237,7 @@
         "node20": 311,
         "node22": 317,
         "node24": 308,
-        "node26": 286
+        "node26": 291
       },
       "has_complete_lane_counts": true,
       "missing_count_lanes": []
@@ -98247,6 +98143,12 @@
       "reason": "Pinned vendored fixture tracks post-22 url.parse deprecation semantics; official Node22 v22.15.0 has no counterpart",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
       "source_line": 6144
+    },
+    {
+      "test_name": "node26_current_lane_broad_residual_watchpoint",
+      "reason": "NDS3 node26 broad pre-run: Current-lane residual batch from Node26 broad pre-run; classify crypto, fs, stream, http2, loader, process, url, and util root causes before focused fixes",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
+      "source_line": 6232
     }
   ],
   "warnings": []

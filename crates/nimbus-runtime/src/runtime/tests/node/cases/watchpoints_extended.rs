@@ -6180,37 +6180,68 @@ fn node24_default_lane_executes_core_semantics_subset() {
 fn node26_current_broad_residual_paths() -> &'static [&'static str] {
     &[
         "test/parallel/test-buffer-indexof.js",
-        "test/parallel/test-buffer-tostring-rangeerror.js",
-        "test/parallel/test-crypto-default-shake-lengths-oneshot.js",
-        "test/parallel/test-crypto-dh-group-setters.js",
-        "test/parallel/test-crypto-dh-modp2-views.js",
-        "test/parallel/test-crypto-dh-modp2.js",
         "test/parallel/test-crypto-dh.js",
         "test/parallel/test-crypto-gcm-implicit-short-tag.js",
-        "test/parallel/test-crypto-oneshot-hash-xof.js",
         "test/parallel/test-crypto-scrypt.js",
         "test/parallel/test-fs-glob.mjs",
-        "test/parallel/test-fs-opendir.js",
-        "test/parallel/test-fs-promises-file-handle-dispose.js",
-        "test/parallel/test-fs-promises-file-handle-readLines.mjs",
-        "test/parallel/test-fs-symlink.js",
-        "test/parallel/test-fs-write-stream-autoclose-option.js",
+        "test/parallel/test-http2-misbehaving-flow-control-paused.js",
+        "test/parallel/test-http2-misbehaving-flow-control.js",
+        "test/parallel/test-http2-options-max-headers-exceeds-nghttp2.js",
         "test/parallel/test-https-agent-session-reuse.js",
-        "test/parallel/test-module-multi-extensions.js",
         "test/parallel/test-process-load-env-file.js",
-        "test/parallel/test-readline-promises-csi.mjs",
         "test/parallel/test-runner-get-test-context.js",
-        "test/parallel/test-stream-compose.js",
         "test/parallel/test-stream-duplex.js",
-        "test/parallel/test-stream-pipeline.js",
-        "test/parallel/test-stream-readable-emittedReadable.js",
-        "test/parallel/test-stream-readable-infinite-read.js",
-        "test/parallel/test-stream-typedarray.js",
-        "test/parallel/test-stream-uint8array.js",
         "test/parallel/test-trace-events-dynamic-enable.js",
         "test/parallel/test-url-parse-invalid-input.js",
         "test/parallel/test-util-parse-env.js",
     ]
+}
+
+const NODE26_CURRENT_RESIDUAL_PROMOTED_PATHS: &[&str] = &[
+    "test/parallel/test-fs-opendir.js",
+    "test/parallel/test-fs-promises-file-handle-dispose.js",
+    "test/parallel/test-fs-promises-file-handle-readLines.mjs",
+    "test/parallel/test-fs-symlink.js",
+    "test/parallel/test-fs-write-stream-autoclose-option.js",
+    "test/parallel/test-module-multi-extensions.js",
+    "test/parallel/test-readline-promises-csi.mjs",
+    "test/parallel/test-stream-compose.js",
+    "test/parallel/test-stream-pipeline.js",
+    "test/parallel/test-stream-readable-emittedReadable.js",
+    "test/parallel/test-stream-readable-infinite-read.js",
+    "test/parallel/test-stream-typedarray.js",
+    "test/parallel/test-stream-uint8array.js",
+];
+
+#[test]
+fn node26_current_lane_executes_current_residual_promoted_batch_fixture() {
+    let fixture_paths = NODE26_CURRENT_RESIDUAL_PROMOTED_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-current-residual-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        UNPROMOTED_PARALLEL_DISCOVERY_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: Current-lane residual batch from Node26 broad pre-run; classify crypto, fs, stream, http2, loader, process, url, and util root causes before focused fixes"]
+fn node26_current_lane_broad_residual_watchpoint() {
+    let fixture_paths = node26_current_broad_residual_paths()
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-broad-residual-watchpoint",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        UNPROMOTED_PARALLEL_DISCOVERY_EXTRA_DIRS,
+    );
 }
 
 #[test]

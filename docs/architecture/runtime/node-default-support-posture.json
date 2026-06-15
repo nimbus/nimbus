@@ -102368,8 +102368,8 @@
       }
     },
     "node26": {
-      "current_pass_rate": 0.351918,
-      "current_passed": 1963,
+      "current_pass_rate": 0.354249,
+      "current_passed": 1976,
       "diagnostic_only_non_isolate": {
         "gaps": 2065
       },
@@ -102385,66 +102385,6 @@
           "source_expectation": "expected_failure",
           "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-buffer-indexof.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-buffer-tostring-rangeerror.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-crypto-default-shake-lengths-oneshot.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-crypto-dh-group-setters.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-crypto-dh-modp2-views.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-crypto-dh-modp2.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -102480,18 +102420,6 @@
           "source_classification": "node26_current_broad_pre_run_residual",
           "source_expectation": "expected_failure",
           "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-crypto-oneshot-hash-xof.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-crypto-scrypt.js"
         },
         {
@@ -102505,66 +102433,6 @@
           "source_expectation": "expected_failure",
           "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-fs-glob.mjs"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-fs-opendir.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-fs-promises-file-handle-dispose.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-fs-promises-file-handle-readLines.mjs"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-fs-symlink.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-fs-write-stream-autoclose-option.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -102624,31 +102492,7 @@
           "source_classification": "node26_current_broad_pre_run_residual",
           "source_expectation": "expected_failure",
           "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-module-multi-extensions.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-process-load-env-file.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-readline-promises-csi.mjs"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -102672,79 +102516,7 @@
           "source_classification": "node26_current_broad_pre_run_residual",
           "source_expectation": "expected_failure",
           "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-stream-compose.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-stream-duplex.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-stream-pipeline.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-stream-readable-emittedReadable.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-stream-readable-infinite-read.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-stream-typedarray.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/current-lane",
-          "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains a required-surface red path until focused Current-lane promotion proves it green",
-          "reason_code": "node26_current_required_residual",
-          "shim_classification": "unsupported",
-          "source_classification": "node26_current_broad_pre_run_residual",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-stream-uint8array.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -145753,13 +145525,85 @@
           "source_expectation": "expected_skip",
           "support_denominator": "test_harness_only",
           "test_path": "test/fixtures/wpt/streams/resources/test-utils.js"
+        },
+        {
+          "docs_cross_check": "docs must link upstream/platform rationale when excluding from support",
+          "evidence_path": "tests/runtime/node/classifications/node26.json",
+          "owner": "core-semantics/buffer",
+          "reason": "fixture is blocked by upstream, version-specific, or host-platform behavior",
+          "reason_code": "upstream_or_platform_boundary",
+          "shim_classification": "unsupported",
+          "source_classification": "upstream_known_issue_or_platform_boundary",
+          "source_expectation": "expected_skip",
+          "support_denominator": "upstream_or_platform_boundary",
+          "test_path": "test/parallel/test-buffer-tostring-rangeerror.js"
+        },
+        {
+          "docs_cross_check": "docs must link upstream/platform rationale when excluding from support",
+          "evidence_path": "tests/runtime/node/classifications/node26.json",
+          "owner": "networking/crypto-provider",
+          "reason": "fixture is blocked by upstream, version-specific, or host-platform behavior",
+          "reason_code": "upstream_or_platform_boundary",
+          "shim_classification": "unsupported",
+          "source_classification": "upstream_known_issue_or_platform_boundary",
+          "source_expectation": "expected_skip",
+          "support_denominator": "upstream_or_platform_boundary",
+          "test_path": "test/parallel/test-crypto-oneshot-hash-xof.js"
+        },
+        {
+          "docs_cross_check": "docs must link upstream/platform rationale when excluding from support",
+          "evidence_path": "tests/runtime/node/classifications/node26.json",
+          "owner": "networking/crypto-provider",
+          "reason": "fixture is blocked by upstream, version-specific, or host-platform behavior",
+          "reason_code": "upstream_or_platform_boundary",
+          "shim_classification": "unsupported",
+          "source_classification": "upstream_known_issue_or_platform_boundary",
+          "source_expectation": "expected_skip",
+          "support_denominator": "upstream_or_platform_boundary",
+          "test_path": "test/parallel/test-crypto-default-shake-lengths-oneshot.js"
+        },
+        {
+          "docs_cross_check": "docs must link upstream/platform rationale when excluding from support",
+          "evidence_path": "tests/runtime/node/classifications/node26.json",
+          "owner": "networking/crypto-provider",
+          "reason": "fixture is blocked by upstream, version-specific, or host-platform behavior",
+          "reason_code": "upstream_or_platform_boundary",
+          "shim_classification": "unsupported",
+          "source_classification": "upstream_known_issue_or_platform_boundary",
+          "source_expectation": "expected_skip",
+          "support_denominator": "upstream_or_platform_boundary",
+          "test_path": "test/parallel/test-crypto-dh-modp2-views.js"
+        },
+        {
+          "docs_cross_check": "docs must link upstream/platform rationale when excluding from support",
+          "evidence_path": "tests/runtime/node/classifications/node26.json",
+          "owner": "networking/crypto-provider",
+          "reason": "fixture is blocked by upstream, version-specific, or host-platform behavior",
+          "reason_code": "upstream_or_platform_boundary",
+          "shim_classification": "unsupported",
+          "source_classification": "upstream_known_issue_or_platform_boundary",
+          "source_expectation": "expected_skip",
+          "support_denominator": "upstream_or_platform_boundary",
+          "test_path": "test/parallel/test-crypto-dh-modp2.js"
+        },
+        {
+          "docs_cross_check": "docs must link upstream/platform rationale when excluding from support",
+          "evidence_path": "tests/runtime/node/classifications/node26.json",
+          "owner": "networking/crypto-provider",
+          "reason": "fixture is blocked by upstream, version-specific, or host-platform behavior",
+          "reason_code": "upstream_or_platform_boundary",
+          "shim_classification": "unsupported",
+          "source_classification": "upstream_known_issue_or_platform_boundary",
+          "source_expectation": "expected_skip",
+          "support_denominator": "upstream_or_platform_boundary",
+          "test_path": "test/parallel/test-crypto-dh-group-setters.js"
         }
       ],
       "feasibility": {
-        "current_passed": 1963,
-        "estimated_reachable_pass_ceiling": 2615,
+        "current_passed": 1976,
+        "estimated_reachable_pass_ceiling": 2609,
         "optional_promotable_gap_count": 512,
-        "required_gap_count": 140,
+        "required_gap_count": 121,
         "target_pass_count": null,
         "target_reachable_in_this_plan": null
       },
@@ -145768,7 +145612,7 @@
       "remaining_requires_unpromoted_node_surface_count": 0,
       "role": "current",
       "source_classification_counts": {
-        "node26_current_broad_pre_run_residual": 34,
+        "node26_current_broad_pre_run_residual": 15,
         "requires_native_addon_harness": 34,
         "requires_pseudo_tty_host_harness": 32,
         "requires_pummel_stress_harness": 65,
@@ -145776,15 +145620,15 @@
         "requires_unpromoted_node_surface": 3237,
         "requires_wpt_harness": 25,
         "support_fixture_not_top_level_test": 46,
-        "upstream_known_issue_or_platform_boundary": 23
+        "upstream_known_issue_or_platform_boundary": 29
       },
       "source_requires_unpromoted_node_surface_count": 3237,
       "support_denominator_counts": {
         "diagnostic_only_non_isolate": 2065,
         "test_harness_only": 814,
-        "upstream_or_platform_boundary": 84,
+        "upstream_or_platform_boundary": 90,
         "v8_isolate_optional": 512,
-        "v8_isolate_required": 140
+        "v8_isolate_required": 121
       },
       "test_harness_only": {
         "gaps": 814
@@ -145798,16 +145642,16 @@
         "tag_object": "30ffe3cfc2fda3684c38ec43aa79c381d398bf14"
       },
       "upstream_or_platform_boundary": {
-        "gaps": 84
+        "gaps": 90
       },
       "v8_isolate_optional": {
         "gaps": 512
       },
       "v8_isolate_required": {
-        "gaps": 140,
-        "pass_rate_percent": 93.34,
-        "passed": 1963,
-        "total": 2103
+        "gaps": 121,
+        "pass_rate_percent": 94.23,
+        "passed": 1976,
+        "total": 2097
       }
     }
   },
