@@ -4997,6 +4997,40 @@ const UNPROMOTED_PARALLEL_DISCOVERY_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
     "test/parallel/test-async-local-storage-weak-asyncwrap-leak.js",
 ];
 
+const UNPROMOTED_PARALLEL_DISCOVERY_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/parallel/test-async-local-storage-enter-with.js",
+    "test/parallel/test-async-local-storage-http-agent.js",
+    "test/parallel/test-async-local-storage-http-multiclients.js",
+    "test/parallel/test-async-local-storage-http-parser-leak.js",
+    "test/parallel/test-async-local-storage-isolation.js",
+    "test/parallel/test-async-wrap-constructor.js",
+    "test/parallel/test-async-wrap-promise-after-enabled.js",
+    "test/parallel/test-async-wrap-trigger-id.js",
+    "test/parallel/test-async-wrap-uncaughtexception.js",
+    "test/parallel/test-asyncresource-bind.js",
+    "test/parallel/test-beforeexit-event-exit.js",
+    "test/parallel/test-binding-constants.js",
+    "test/parallel/test-constants.js",
+    "test/parallel/test-handle-wrap-close-abort.js",
+    "test/parallel/test-icu-stringwidth.js",
+    "test/parallel/test-internal-modules.js",
+    "test/parallel/test-internal-process-binding.js",
+    "test/parallel/test-internal-util-normalizeencoding.js",
+    "test/parallel/test-internal-util-weakreference.js",
+    "test/parallel/test-messageevent-brandcheck.js",
+    "test/parallel/test-next-tick-domain.js",
+    "test/parallel/test-nodeeventtarget.js",
+    "test/parallel/test-queue-microtask-uncaught-asynchooks.js",
+    "test/parallel/test-require-process.js",
+    "test/parallel/test-require-resolve-invalid-paths.js",
+    "test/parallel/test-require-resolve-opts-paths-relative.js",
+    "test/parallel/test-source-map-invalid-url.js",
+    "test/parallel/test-stringbytes-external.js",
+    "test/parallel/test-tojson-perf_hooks.js",
+    "test/parallel/test-warn-tls-common-deprecation.js",
+    "test/parallel/test-warn-tls-wrap-deprecation.js",
+];
+
 #[test]
 fn node22_supported_lane_executes_unpromoted_parallel_discovery_promoted_batch_fixture() {
     let fixture_paths: Vec<String> = UNPROMOTED_PARALLEL_DISCOVERY_PROMOTED_COMMON_PATHS
@@ -5033,6 +5067,21 @@ fn node24_default_lane_executes_unpromoted_parallel_discovery_promoted_batch_fix
 }
 
 #[test]
+fn node26_current_lane_executes_unpromoted_parallel_discovery_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = UNPROMOTED_PARALLEL_DISCOVERY_PROMOTED_NODE26_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-unpromoted-parallel-discovery-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        UNPROMOTED_PARALLEL_DISCOVERY_EXTRA_DIRS,
+    );
+}
+
+#[test]
 #[ignore = "NDS3 broad pre-run: generated-posture discovery for remaining unpromoted test/parallel required gaps after excluding already killed host/native/CLI/stress/fatal families"]
 fn node22_supported_lane_unpromoted_parallel_discovery_watchpoint() {
     let fixture_paths = unpromoted_parallel_discovery_fixture_paths(NodeCompatLane::Node22);
@@ -5052,6 +5101,19 @@ fn node24_default_lane_unpromoted_parallel_discovery_watchpoint() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-unpromoted-parallel-discovery-watchpoint",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        UNPROMOTED_PARALLEL_DISCOVERY_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: generated-posture discovery for remaining unpromoted test/parallel required gaps after excluding already killed host/native/CLI/stress/fatal families"]
+fn node26_current_lane_unpromoted_parallel_discovery_watchpoint() {
+    let fixture_paths = unpromoted_parallel_discovery_fixture_paths(NodeCompatLane::Node26);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-unpromoted-parallel-discovery-watchpoint",
+        NodeCompatLane::Node26,
         &fixture_paths,
         &[],
         UNPROMOTED_PARALLEL_DISCOVERY_EXTRA_DIRS,
