@@ -1959,6 +1959,7 @@ const PROCESS_HOST_PROMOTED_NODE26_EXTRA_PATHS: &[&str] = &[
     "test/parallel/test-process-env-ignore-getter-setter.js",
     "test/parallel/test-process-exit-from-before-exit.js",
     "test/parallel/test-process-exit-recursive.js",
+    "test/parallel/test-process-get-builtin.mjs",
     "test/parallel/test-process-ref-unref.js",
 ];
 

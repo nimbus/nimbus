@@ -3707,7 +3707,6 @@
         "test/parallel/test-process-external-stdio-close-spawn.js",
         "test/parallel/test-process-external-stdio-close.js",
         "test/parallel/test-process-finalization.mjs",
-        "test/parallel/test-process-get-builtin.mjs",
         "test/parallel/test-process-getactivehandles.js",
         "test/parallel/test-process-getactiverequests.js",
         "test/parallel/test-process-getactiveresources-track-active-handles.js",
