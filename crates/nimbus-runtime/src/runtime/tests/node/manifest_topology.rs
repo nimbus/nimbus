@@ -676,7 +676,7 @@ fn node_compat_named_preludes_catalog_matches_default_behavior_registry() {
         ),
         (
             "test/parallel/test-file-write-stream5.js",
-            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
+            Some(NodeCompatNamedPostludeBehavior::ProcessBeforeExitReentry),
         ),
         (
             "test/parallel/test-stream-writable-samecb-singletick.js",
@@ -684,6 +684,18 @@ fn node_compat_named_preludes_catalog_matches_default_behavior_registry() {
         ),
         (
             "test/parallel/test-process-env-deprecation.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
+        ),
+        (
+            "test/parallel/test-diagnostics-channel-bounded-channel-run-transform-error.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
+        ),
+        (
+            "test/parallel/test-diagnostics-channel-bounded-channel-scope-transform-error.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
+        ),
+        (
+            "test/parallel/test-diagnostics-channel-run-stores-scope-transform-error.js",
             Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
         ),
         // `.on('beforeExit')` against an already-settled loop -> emit once.

@@ -3290,6 +3290,12 @@ pub(super) fn default_postlude_behavior_for_fixture(
         | "test/parallel/test-stream-writable-samecb-singletick.js"
         | "test/parallel/test-process-env-deprecation.js"
         | "test/parallel/test-domain-stack-empty-in-process-uncaughtexception.js"
+        // These diagnostics_channel fixtures schedule transform failures
+        // through process.nextTick(triggerUncaughtException) and assert the
+        // resulting uncaughtException from a single beforeExit handler.
+        | "test/parallel/test-diagnostics-channel-bounded-channel-run-transform-error.js"
+        | "test/parallel/test-diagnostics-channel-bounded-channel-scope-transform-error.js"
+        | "test/parallel/test-diagnostics-channel-run-stores-scope-transform-error.js"
         // test-async-wrap-uncaughtexception registers a single
         // `process.on('beforeExit', mustCall())` whose handler runs the
         // terminal asserts (call_id is a number; call_log deep-equals
