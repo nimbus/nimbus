@@ -1908,6 +1908,19 @@ const PROCESS_HOST_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-process-umask.js",
 ];
 
+const PROCESS_HOST_PROMOTED_NODE26_EXTRA_PATHS: &[&str] = &[
+    "test/parallel/test-process-beforeexit-throw-exit.js",
+    "test/parallel/test-process-binding-util.js",
+    "test/parallel/test-process-constants-noatime.js",
+    "test/parallel/test-process-cpuUsage.js",
+    "test/parallel/test-process-emit.js",
+    "test/parallel/test-process-env-deprecation.js",
+    "test/parallel/test-process-env-ignore-getter-setter.js",
+    "test/parallel/test-process-exit-from-before-exit.js",
+    "test/parallel/test-process-exit-recursive.js",
+    "test/parallel/test-process-ref-unref.js",
+];
+
 #[test]
 fn node22_supported_lane_executes_process_host_promoted_batch_fixture() {
     let fixture_paths: Vec<String> = PROCESS_HOST_PROMOTED_COMMON_PATHS
@@ -1939,6 +1952,26 @@ fn node24_default_lane_executes_process_host_promoted_batch_fixture() {
 }
 
 #[test]
+fn node26_current_lane_executes_process_host_promoted_batch_fixture() {
+    let mut fixture_paths: Vec<String> = PROCESS_HOST_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| path.to_string())
+        .collect();
+    fixture_paths.extend(
+        PROCESS_HOST_PROMOTED_NODE26_EXTRA_PATHS
+            .iter()
+            .map(|path| path.to_string()),
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-process-host-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        PROCESS_HOST_EXTRA_DIRS,
+    );
+}
+
+#[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked process-host required-gap inventory; host/native/subprocess-only paths are excluded by the kill rule and remain gaps"]
 fn node22_supported_lane_process_host_watchpoint() {
     let fixture_paths = process_host_runnable_fixture_paths(NodeCompatLane::Node22);
@@ -1958,6 +1991,19 @@ fn node24_default_lane_process_host_watchpoint() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-process-host-watchpoint",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        PROCESS_HOST_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: ROI-ranked process-host required-gap inventory; host/native/subprocess-only paths are excluded by the kill rule and remain gaps"]
+fn node26_current_lane_process_host_watchpoint() {
+    let fixture_paths = process_host_runnable_fixture_paths(NodeCompatLane::Node26);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-process-host-watchpoint",
+        NodeCompatLane::Node26,
         &fixture_paths,
         &[],
         PROCESS_HOST_EXTRA_DIRS,
@@ -4922,6 +4968,58 @@ const PARALLEL_JS_PLATFORM_PROMOTED_COMMON_PATHS: &[&str] = &[
 const PARALLEL_JS_PLATFORM_PROMOTED_NODE22_EXTRA_PATHS: &[&str] =
     &["test/parallel/test-performance-function.js"];
 
+const PARALLEL_JS_PLATFORM_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/parallel/test-abort-controller-any-timeout.js",
+    "test/parallel/test-abortcontroller.js",
+    "test/parallel/test-error-aggregateTwoErrors.js",
+    "test/parallel/test-error-prepare-stack-trace.js",
+    "test/parallel/test-errors-aborterror.js",
+    "test/parallel/test-errors-hide-stack-frames.js",
+    "test/parallel/test-errors-systemerror-frozen-intrinsics.js",
+    "test/parallel/test-errors-systemerror-stackTraceLimit-custom-setter.js",
+    "test/parallel/test-errors-systemerror-stackTraceLimit-deleted-and-Error-sealed.js",
+    "test/parallel/test-errors-systemerror-stackTraceLimit-deleted.js",
+    "test/parallel/test-errors-systemerror-stackTraceLimit-has-only-a-getter.js",
+    "test/parallel/test-errors-systemerror-stackTraceLimit-not-writable.js",
+    "test/parallel/test-global-console-exists.js",
+    "test/parallel/test-global-domexception.js",
+    "test/parallel/test-global-encoder.js",
+    "test/parallel/test-global-setters.js",
+    "test/parallel/test-global-webcrypto.js",
+    "test/parallel/test-performance-function-async.js",
+    "test/parallel/test-performance-gc.js",
+    "test/parallel/test-performance-global.js",
+    "test/parallel/test-performance-measure-detail.js",
+    "test/parallel/test-performance-measure.js",
+    "test/parallel/test-performance-nodetiming.js",
+    "test/parallel/test-performance-resourcetimingbufferfull.js",
+    "test/parallel/test-performance-timeline.mjs",
+    "test/parallel/test-performanceobserver-gc.js",
+    "test/parallel/test-performanceobserver.js",
+    "test/parallel/test-promise-handled-rejection-no-warning.js",
+    "test/parallel/test-promise-hook-create-hook.js",
+    "test/parallel/test-promise-hook-exceptions.js",
+    "test/parallel/test-promise-hook-on-after.js",
+    "test/parallel/test-promise-hook-on-before.js",
+    "test/parallel/test-promise-hook-on-init.js",
+    "test/parallel/test-promise-hook-on-resolve.js",
+    "test/parallel/test-promise-race-memory-leak.js",
+    "test/parallel/test-promise-unhandled-default.js",
+    "test/parallel/test-promise-unhandled-error-with-reading-file.js",
+    "test/parallel/test-promise-unhandled-error.js",
+    "test/parallel/test-promise-unhandled-issue-43655.js",
+    "test/parallel/test-promise-unhandled-silent-no-hook.js",
+    "test/parallel/test-promise-unhandled-silent.js",
+    "test/parallel/test-promise-unhandled-throw-handler.js",
+    "test/parallel/test-promise-unhandled-throw.js",
+    "test/parallel/test-promise-unhandled-warn-no-hook.js",
+    "test/parallel/test-promise-unhandled-warn.js",
+    "test/parallel/test-promises-unhandled-proxy-rejections.js",
+    "test/parallel/test-promises-unhandled-rejections.js",
+    "test/parallel/test-promises-unhandled-symbol-rejections.js",
+    "test/parallel/test-promises-warning-on-unhandled-rejection.js",
+];
+
 #[test]
 fn node22_supported_lane_executes_parallel_js_platform_promoted_batch_fixture() {
     let mut fixture_paths: Vec<String> = PARALLEL_JS_PLATFORM_PROMOTED_COMMON_PATHS
@@ -4958,6 +5056,21 @@ fn node24_default_lane_executes_parallel_js_platform_promoted_batch_fixture() {
 }
 
 #[test]
+fn node26_current_lane_executes_parallel_js_platform_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = PARALLEL_JS_PLATFORM_PROMOTED_NODE26_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-parallel-js-platform-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        PARALLEL_JS_PLATFORM_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked parallel JS platform required-gap inventory; classify util, global, errors, promises, performance, abort, and EventTarget failures before focused fixes"]
 fn node22_supported_lane_parallel_js_platform_required_gap_watchpoint() {
     let fixture_paths = node_compat_required_gap_paths_for_selector(
@@ -4983,6 +5096,22 @@ fn node24_default_lane_parallel_js_platform_required_gap_watchpoint() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-parallel-js-platform-required-gap-watchpoint",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        PARALLEL_JS_PLATFORM_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: ROI-ranked parallel JS platform required-gap inventory; promote only dynamically green fixtures"]
+fn node26_current_lane_parallel_js_platform_required_gap_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node26,
+        parallel_js_platform_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-parallel-js-platform-required-gap-watchpoint",
+        NodeCompatLane::Node26,
         &fixture_paths,
         &[],
         PARALLEL_JS_PLATFORM_REQUIRED_GAP_EXTRA_DIRS,
