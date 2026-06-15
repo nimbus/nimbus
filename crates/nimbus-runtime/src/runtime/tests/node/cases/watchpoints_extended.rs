@@ -3109,6 +3109,24 @@ const WEBCRYPTO_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
     "test/parallel/test-webcrypto-sign-verify-eddsa.js",
 ];
 
+const WEBCRYPTO_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/parallel/test-webcrypto-aead-decrypt-detached-buffer.js",
+    "test/parallel/test-webcrypto-deduplicate-usages.js",
+    "test/parallel/test-webcrypto-derivebits.js",
+    "test/parallel/test-webcrypto-derivekey.js",
+    "test/parallel/test-webcrypto-encrypt-decrypt-aes.js",
+    "test/parallel/test-webcrypto-encrypt-decrypt-rsa.js",
+    "test/parallel/test-webcrypto-encrypt-decrypt.js",
+    "test/parallel/test-webcrypto-export-import.js",
+    "test/parallel/test-webcrypto-getRandomValues.js",
+    "test/parallel/test-webcrypto-keygen-kmac.js",
+    "test/parallel/test-webcrypto-keygen.js",
+    "test/parallel/test-webcrypto-random.js",
+    "test/parallel/test-webcrypto-sign-verify-kmac.js",
+    "test/parallel/test-webcrypto-sign-verify.js",
+    "test/parallel/test-webcrypto-wrap-unwrap.js",
+];
+
 #[test]
 fn node22_supported_lane_executes_webcrypto_promoted_batch_fixture() {
     let fixture_paths = WEBCRYPTO_PROMOTED_COMMON_PATHS
@@ -3137,6 +3155,22 @@ fn node24_default_lane_executes_webcrypto_promoted_batch_fixture() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-executes-webcrypto-promoted-batch",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        WEBCRYPTO_REQUIRED_GAP_NODE24_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node26_current_lane_executes_webcrypto_promoted_batch_fixture() {
+    let fixture_paths = WEBCRYPTO_PROMOTED_NODE26_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-webcrypto-promoted-batch",
+        NodeCompatLane::Node26,
         &fixture_paths,
         &[],
         WEBCRYPTO_REQUIRED_GAP_NODE24_EXTRA_DIRS,
@@ -3197,6 +3231,22 @@ fn node24_default_lane_webcrypto_required_gap_watchpoint() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-webcrypto-required-gap-watchpoint",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        WEBCRYPTO_REQUIRED_GAP_NODE24_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: ROI-ranked WebCrypto required-gap inventory; promote only dynamically green Current-lane fixtures"]
+fn node26_current_lane_webcrypto_required_gap_watchpoint() {
+    let fixture_paths = node_compat_required_gap_paths_for_selector(
+        NodeCompatLane::Node26,
+        webcrypto_required_gap_path,
+    );
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-webcrypto-required-gap-watchpoint",
+        NodeCompatLane::Node26,
         &fixture_paths,
         &[],
         WEBCRYPTO_REQUIRED_GAP_NODE24_EXTRA_DIRS,
