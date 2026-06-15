@@ -959,6 +959,18 @@ const PROCESS_TIMING_RUNTIME_RESIDUAL_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
     "test/parallel/test-trace-events-process-exit.js",
 ];
 
+const PROCESS_TIMING_RUNTIME_RESIDUAL_PROMOTED_NODE26_EXTRA_PATHS: &[&str] = &[
+    "test/parallel/test-perf-hooks-eventlooputilization.js",
+    "test/parallel/test-perf-hooks-timerify-basic.js",
+    "test/parallel/test-perf-hooks-timerify-constructor.js",
+    "test/parallel/test-perf-hooks-timerify-error.js",
+    "test/parallel/test-perf-hooks-timerify-histogram-async.mjs",
+    "test/parallel/test-perf-hooks-timerify-histogram-sync.mjs",
+    "test/parallel/test-perf-hooks-timerify-invalid-args.js",
+    "test/parallel/test-perf-hooks-timerify-multiple-wrapping.js",
+    "test/parallel/test-perf-hooks-timerify-return-value.js",
+];
+
 fn process_timers_promoted_fixture_paths(groups: &[&[&str]]) -> Vec<String> {
     groups
         .iter()
@@ -1077,6 +1089,21 @@ fn node24_default_lane_executes_process_timing_runtime_residual_promoted_batch_f
 }
 
 #[test]
+fn node26_current_lane_executes_process_timing_runtime_residual_promoted_batch_fixture() {
+    let fixture_paths = process_timers_promoted_fixture_paths(&[
+        PROCESS_TIMING_RUNTIME_RESIDUAL_PROMOTED_COMMON_PATHS,
+        PROCESS_TIMING_RUNTIME_RESIDUAL_PROMOTED_NODE26_EXTRA_PATHS,
+    ]);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-process-timing-runtime-residual-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        PROCESS_TIMERS_EXTRA_RUNTIME_FILES,
+        PROCESS_TIMING_RUNTIME_RESIDUAL_EXTRA_DIRS,
+    );
+}
+
+#[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked process/timing runtime residual inventory; classify timers, diagnostics_channel, perf_hooks, promise tracking, trace_events, os, and microtask root causes before focused fixes"]
 fn node22_supported_lane_process_timing_runtime_residual_watchpoint() {
     let fixture_paths =
@@ -1098,6 +1125,20 @@ fn node24_default_lane_process_timing_runtime_residual_watchpoint() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-process-timing-runtime-residual-watchpoint",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        PROCESS_TIMERS_EXTRA_RUNTIME_FILES,
+        PROCESS_TIMING_RUNTIME_RESIDUAL_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: ROI-ranked process/timing runtime residual inventory; classify perf_hooks, trace_events, promise tracking, and os root causes before focused fixes"]
+fn node26_current_lane_process_timing_runtime_residual_watchpoint() {
+    let fixture_paths =
+        process_timing_runtime_residual_fixture_paths(NodeCompatLane::Node26);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-process-timing-runtime-residual-watchpoint",
+        NodeCompatLane::Node26,
         &fixture_paths,
         PROCESS_TIMERS_EXTRA_RUNTIME_FILES,
         PROCESS_TIMING_RUNTIME_RESIDUAL_EXTRA_DIRS,
@@ -5146,6 +5187,7 @@ const UNPROMOTED_PARALLEL_DISCOVERY_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-async-local-storage-http-multiclients.js",
     "test/parallel/test-async-local-storage-http-parser-leak.js",
     "test/parallel/test-async-local-storage-isolation.js",
+    "test/parallel/test-async-local-storage-run-scope.js",
     "test/parallel/test-async-wrap-constructor.js",
     "test/parallel/test-async-wrap-promise-after-enabled.js",
     "test/parallel/test-async-wrap-trigger-id.js",
