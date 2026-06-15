@@ -87,6 +87,8 @@ pub(super) struct RuntimeFsRemovePayload {
     pub(super) path: String,
     #[serde(default)]
     pub(super) recursive: bool,
+    #[serde(default)]
+    pub(super) directory_only: bool,
 }
 
 #[derive(Debug, Deserialize)]

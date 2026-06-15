@@ -766,7 +766,10 @@ pub(in super::super) fn op_nimbus_runtime_read_dir_sync(
     })
 }
 
-fn remove_path(path: &Path, recursive: bool) -> std::io::Result<()> {
+fn remove_path(path: &Path, recursive: bool, directory_only: bool) -> std::io::Result<()> {
+    if directory_only {
+        return std::fs::remove_dir(path);
+    }
     let metadata = std::fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || metadata.is_file() {
         std::fs::remove_file(path)
@@ -794,10 +797,12 @@ pub(in super::super) async fn op_nimbus_runtime_remove(
         .ensure_write_link_path(Path::new(&payload.path))
         .map_err(capability_denied_error)?;
     let recursive = payload.recursive;
+    let directory_only = payload.directory_only;
     let path_for_task = path.clone();
-    let result = tokio::task::spawn_blocking(move || remove_path(&path_for_task, recursive))
-        .await
-        .map_err(|error| JsErrorBox::generic(error.to_string()))?;
+    let result =
+        tokio::task::spawn_blocking(move || remove_path(&path_for_task, recursive, directory_only))
+            .await
+            .map_err(|error| JsErrorBox::generic(error.to_string()))?;
     Ok(match result {
         Ok(()) => RuntimeHostCallEnvelope::Ok { value: Value::Null },
         Err(error) => RuntimeHostCallEnvelope::Error {
@@ -819,7 +824,7 @@ pub(in super::super) fn op_nimbus_runtime_remove_sync(
     let path = path_policy
         .ensure_write_link_path(Path::new(&payload.path))
         .map_err(capability_denied_error)?;
-    let result = remove_path(&path, payload.recursive);
+    let result = remove_path(&path, payload.recursive, payload.directory_only);
     Ok(match result {
         Ok(()) => RuntimeHostCallEnvelope::Ok { value: Value::Null },
         Err(error) => RuntimeHostCallEnvelope::Error {

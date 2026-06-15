@@ -124,7 +124,11 @@ const {
   AbortError: nodeAbortError,
   ERR_FS_INVALID_SYMLINK_TYPE: nodeErrFsInvalidSymlinkType,
   ERR_FS_FILE_TOO_LARGE: nodeErrFsFileTooLarge,
+  ERR_INVALID_ARG_VALUE: nodeErrInvalidArgValue,
 } = core.loadExtScript("ext:deno_node/internal/errors.ts");
+const { parseFileMode: nodeParseFileMode } = core.loadExtScript(
+  "ext:deno_node/internal/validators.mjs",
+);
 const denoProcessModule = core.loadExtScript("ext:deno_process/40_process.js");
 
 Object.defineProperties(globalThis, windowOrWorkerGlobalScope);
@@ -675,6 +679,30 @@ function runtimeFsRemoveSync(path, options = undefined) {
     globalThis.__nimbusSyncHostValue("op_nimbus_runtime_remove_sync", {
       path: runtimeFsPathToString(path),
       recursive: normalizedOptions.recursive === true,
+    });
+  } catch (error) {
+    throw runtimeFsMapThrownError(error);
+  }
+}
+
+async function runtimeFsRmdir(path) {
+  try {
+    await globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_remove", {
+      path: runtimeFsPathToString(path),
+      recursive: false,
+      directory_only: true,
+    });
+  } catch (error) {
+    throw runtimeFsMapThrownError(error);
+  }
+}
+
+function runtimeFsRmdirSync(path) {
+  try {
+    globalThis.__nimbusSyncHostValue("op_nimbus_runtime_remove_sync", {
+      path: runtimeFsPathToString(path),
+      recursive: false,
+      directory_only: true,
     });
   } catch (error) {
     throw runtimeFsMapThrownError(error);
@@ -1691,6 +1719,20 @@ function getFsPromisesFlag(options, fallbackFlag) {
   return fallbackFlag;
 }
 
+function hasRemovedRmdirRecursiveOption(options) {
+  return options !== null &&
+    typeof options === "object" &&
+    options.recursive !== undefined;
+}
+
+function createRemovedRmdirRecursiveError(recursive) {
+  return new nodeErrInvalidArgValue(
+    "options.recursive",
+    recursive,
+    "is no longer supported",
+  );
+}
+
 function createFsPromisesWatchTypeError(name, expected, value) {
   const receivedType = value === null ? "null" : typeof value;
   const error = new TypeError(
@@ -2210,6 +2252,53 @@ function patchNodeFsReadSemantics(nodeProcess) {
     nodeFs.truncate = patchedTruncate;
   }
 
+  const originalRmdir = nodeFs.rmdir;
+  if (typeof originalRmdir === "function" && originalRmdir.__nimbusRemovedRecursive !== true) {
+    const patchedRmdir = function (path, options = undefined, callback = undefined) {
+      const normalizedOptions = typeof options === "function" ? undefined : options;
+      const normalizedCallback = typeof options === "function" ? options : callback;
+      if (hasRemovedRmdirRecursiveOption(normalizedOptions)) {
+        throw createRemovedRmdirRecursiveError(normalizedOptions.recursive);
+      }
+      if (typeof normalizedCallback !== "function") {
+        return Reflect.apply(originalRmdir, this, arguments);
+      }
+      PromiseResolve(runtimeFsRmdir(path)).then(
+        () => normalizedCallback(),
+        (error) => normalizedCallback(error),
+      );
+    };
+    Object.defineProperties(patchedRmdir, Object.getOwnPropertyDescriptors(originalRmdir));
+    Object.defineProperty(patchedRmdir, "__nimbusRemovedRecursive", {
+      value: true,
+      configurable: true,
+      enumerable: false,
+      writable: false,
+    });
+    nodeFs.rmdir = patchedRmdir;
+  }
+
+  const originalRmdirSync = nodeFs.rmdirSync;
+  if (
+    typeof originalRmdirSync === "function" &&
+    originalRmdirSync.__nimbusRemovedRecursive !== true
+  ) {
+    const patchedRmdirSync = function (path, options = undefined) {
+      if (hasRemovedRmdirRecursiveOption(options)) {
+        throw createRemovedRmdirRecursiveError(options.recursive);
+      }
+      return runtimeFsRmdirSync(path);
+    };
+    Object.defineProperties(patchedRmdirSync, Object.getOwnPropertyDescriptors(originalRmdirSync));
+    Object.defineProperty(patchedRmdirSync, "__nimbusRemovedRecursive", {
+      value: true,
+      configurable: true,
+      enumerable: false,
+      writable: false,
+    });
+    nodeFs.rmdirSync = patchedRmdirSync;
+  }
+
   const originalWatch = nodeFs.watch;
   if (typeof originalWatch === "function" && originalWatch[nimbusFsWatchPatched] !== true) {
     const patchedWatch = function (filename, optionsOrListener = undefined, listener = undefined) {
@@ -2404,14 +2493,37 @@ function patchNodeFsReadSemantics(nodeProcess) {
 
     const originalLchmod = nodeFsPromises.lchmod;
     if (typeof originalLchmod === "function") {
-      const patchedLchmod = function (path, mode) {
+      const patchedLchmod = async function (path, mode) {
         if (typeof path === "number" || isNimbusFileHandle(path)) {
-          return Reflect.apply(originalLchmod, this, arguments);
+          return await Reflect.apply(originalLchmod, this, arguments);
         }
-        return deno.lchmod(path, mode);
+        const validatedPath = nodeFsGetValidatedPathToString(path);
+        const validatedMode = nodeParseFileMode(mode, "mode");
+        return await deno.lchmod(validatedPath, validatedMode);
       };
       Object.defineProperties(patchedLchmod, Object.getOwnPropertyDescriptors(originalLchmod));
       nodeFsPromises.lchmod = patchedLchmod;
+    }
+
+    const originalRmdir = nodeFsPromises.rmdir;
+    if (
+      typeof originalRmdir === "function" &&
+      originalRmdir.__nimbusRemovedRecursive !== true
+    ) {
+      const patchedRmdir = async function (path, options = undefined) {
+        if (hasRemovedRmdirRecursiveOption(options)) {
+          throw createRemovedRmdirRecursiveError(options.recursive);
+        }
+        return await runtimeFsRmdir(path);
+      };
+      Object.defineProperties(patchedRmdir, Object.getOwnPropertyDescriptors(originalRmdir));
+      Object.defineProperty(patchedRmdir, "__nimbusRemovedRecursive", {
+        value: true,
+        configurable: true,
+        enumerable: false,
+        writable: false,
+      });
+      nodeFsPromises.rmdir = patchedRmdir;
     }
 
     const originalWatch = nodeFsPromises.watch;

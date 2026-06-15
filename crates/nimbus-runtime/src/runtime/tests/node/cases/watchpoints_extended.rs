@@ -5515,7 +5515,8 @@ const FS_HOST_IO_EXTRA_RUNTIME_FILES: &[&str] = &[
     "test/fixtures/utf8_test_text.txt",
 ];
 
-const FS_HOST_IO_EXTRA_DIRS: &[&str] = &["test/common", "test/fixtures/copy"];
+const FS_HOST_IO_EXTRA_DIRS: &[&str] =
+    &["test/common", "test/fixtures/copy", "test/fixtures/cycles"];
 
 const FS_HOST_IO_LOW_ROI_PATHS: &[&str] = &[
     "test/parallel/test-fs-existssync-memleak-longpath.js",
@@ -5715,14 +5716,19 @@ const FS_HOST_IO_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-fs-fmap.js",
     "test/parallel/test-fs-glob-throw.mjs",
     "test/parallel/test-fs-internal-assertencoding.js",
+    "test/parallel/test-fs-lchmod.js",
     "test/parallel/test-fs-lchown-negative-one.js",
     "test/parallel/test-fs-make-callback.js",
     "test/parallel/test-fs-makeStatsCallback.js",
     "test/parallel/test-fs-mkdir-recursive-eaccess.js",
     "test/parallel/test-fs-mkdtempDisposableSync.js",
     "test/parallel/test-fs-open-flags.js",
+    "test/parallel/test-fs-promises-file-handle-pull.js",
+    "test/parallel/test-fs-promises-file-handle-pullsync.js",
+    "test/parallel/test-fs-promises-file-handle-writer.js",
     "test/parallel/test-fs-promises-mkdtempDisposable.js",
     "test/parallel/test-fs-promises-statfs-validate-path.js",
+    "test/parallel/test-fs-promises.js",
     "test/parallel/test-fs-read-position-validation.mjs",
     "test/parallel/test-fs-read-promises-position-validation.mjs",
     "test/parallel/test-fs-read-stream-concurrent-reads.js",
@@ -5738,8 +5744,12 @@ const FS_HOST_IO_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-fs-readdir-stack-overflow.js",
     "test/parallel/test-fs-readdir-types-symlinks.js",
     "test/parallel/test-fs-rmSync-special-char.js",
+    "test/parallel/test-fs-rmdir-recursive-error.js",
+    "test/parallel/test-fs-rmdir-throws-not-found.js",
+    "test/parallel/test-fs-rmdir-throws-on-file.js",
     "test/parallel/test-fs-stat-abort-test.js",
     "test/parallel/test-fs-stat-bigint.js",
+    "test/parallel/test-fs-stat-date.mjs",
     "test/parallel/test-fs-stream-construct-compat-error-write.js",
     "test/parallel/test-fs-stream-construct-compat-graceful-fs.js",
     "test/parallel/test-fs-stream-construct-compat-old-node.js",
@@ -5747,6 +5757,7 @@ const FS_HOST_IO_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-fs-stream-double-close.js",
     "test/parallel/test-fs-stream-fs-options.js",
     "test/parallel/test-fs-stream-options.js",
+    "test/parallel/test-fs-symlink-dir-junction.js",
     "test/parallel/test-fs-symlink-dir-junction-relative.js",
     "test/parallel/test-fs-symlink-dir.js",
     "test/parallel/test-fs-symlink-longpath.js",

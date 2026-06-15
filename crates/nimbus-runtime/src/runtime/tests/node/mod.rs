@@ -1551,14 +1551,18 @@ if (typeof globalThis.process === "object" && globalThis.process !== null) {{
 {lane_prelude}
 {preloaded_common_for_assert_script}
 {prelude_script}
-if (globalThis.__nimbusNodeCompatLane === "node22") {{
+const __nimbusRejectsStackReceiverName =
+  globalThis.__nimbusNodeCompatLane === "node22" ? "Function" :
+  globalThis.__nimbusNodeCompatLane === "node26" ? "assert" :
+  null;
+if (__nimbusRejectsStackReceiverName !== null) {{
   const __nimbusAssertRequire = createRequire(import.meta.url);
   for (const __nimbusAssertSpecifier of ["assert", "node:assert"]) {{
     const __nimbusAssert = __nimbusAssertRequire(__nimbusAssertSpecifier);
     if (typeof __nimbusAssert === "function") {{
       Object.defineProperty(__nimbusAssert, "__nimbusRejectsStackReceiverName", {{
         configurable: true,
-        value: "Function",
+        value: __nimbusRejectsStackReceiverName,
       }});
     }}
   }}
@@ -1577,13 +1581,13 @@ const __nimbusNodeCompatResult = (skipped) => Object.assign(
 {invoke_signature}
   let __nimbusInvokeStep = "create require";
   const require = createRequire(import.meta.url);
-  if (globalThis.__nimbusNodeCompatLane === "node22") {{
+  if (__nimbusRejectsStackReceiverName !== null) {{
     for (const __nimbusAssertSpecifier of ["assert", "node:assert"]) {{
       const __nimbusAssert = require(__nimbusAssertSpecifier);
       if (typeof __nimbusAssert === "function") {{
         Object.defineProperty(__nimbusAssert, "__nimbusRejectsStackReceiverName", {{
           configurable: true,
-          value: "Function",
+          value: __nimbusRejectsStackReceiverName,
         }});
       }}
     }}
