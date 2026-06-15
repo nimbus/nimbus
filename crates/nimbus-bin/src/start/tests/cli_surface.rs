@@ -190,6 +190,8 @@ fn cli_help_describes_codegen_machine_and_compose_surface() {
     assert!(rendered.contains("token"));
     assert!(rendered.contains("machine     Manage local developer machines"));
     assert!(rendered.contains("compose"));
+    assert!(!rendered.contains("node-workload-executor"));
+    assert!(!rendered.contains("sandbox-supervisor"));
 }
 
 #[test]

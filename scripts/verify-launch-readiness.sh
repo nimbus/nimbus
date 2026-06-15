@@ -14,7 +14,7 @@
 #         public_bind_restart_does_not_retrip_freshness
 #   LR7:  rest_client_route_parity            (JS test, packages/nimbus)
 #   LR9:  backup_restore_round_trip
-#   LR12: node_run_converges_transient_unit   (Linux-gated)
+#   LR12: node_workload_executor_converges_transient_unit   (Linux-gated)
 #
 # Checks are static/cheap (greps, file existence) plus `cargo fmt --check`.
 # Heavy gates (make check/clippy/test, npm test) live in phase completion
@@ -184,7 +184,7 @@ fi
 # --- 13. reconciler production caller (LR12) ----------------------------------------------
 C="13. NodeWorkloadReconciler constructed in production bin/server code; Linux-gated test exists"
 if grep -rq 'NodeWorkloadReconciler' "${BIN_SRC}" "${SERVER_SRC}" 2>/dev/null \
-  && crates_grep 'node_run_converges_transient_unit'; then
+  && crates_grep 'node_workload_executor_converges_transient_unit'; then
   pass "${C}"
 else
   fail "${C}" "no production NodeWorkloadReconciler caller or canonical LR12 test missing"

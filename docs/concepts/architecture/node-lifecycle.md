@@ -151,14 +151,18 @@ otherwise it issues a start and re-inspects. The stopped path is
 symmetric. Each pass writes status evidence through a writer seam so the
 observation that justified the outcome is recorded alongside it.
 
-The live entry point is `nimbus node run`
-(`crates/nimbus-bin/src/node_run.rs`), which constructs a
+The live implementation entry point is the hidden node workload executor
+(`crates/nimbus-bin/src/node_workload_executor.rs`), which constructs a
 `NodeWorkloadReconciler` over the systemd transient backend and runs the
-reconcile loop against a node's assigned workloads. What stays out of
-scope here is the control plane that decides *which* workloads land on a
-node: multi-node scheduling and assignment are not part of a single
-Nimbus process. The reconciler converges a node toward the specs it has
-been given; it does not distribute them across a cluster.
+reconcile loop for one assigned workload per invocation. It is not part
+of the public workload CLI. User-facing commands declare workload intent
+through higher-level run, deploy, service, or sandbox resources; the node
+executor is the mechanism that converges an assigned spec on a host.
+What stays out of scope here is the control plane that decides *which*
+workloads land on a node: multi-node scheduling and assignment are not
+part of a single Nimbus process. The reconciler converges a node toward
+the spec it has been given; it does not distribute workloads across a
+cluster.
 
 ## Related pages
 

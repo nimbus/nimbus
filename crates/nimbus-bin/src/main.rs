@@ -14,8 +14,8 @@ mod init;
 mod local_server_client;
 mod machine;
 mod node;
-mod node_run;
 mod node_service;
+mod node_workload_executor;
 mod path_boundary;
 mod policy;
 mod provision;
@@ -85,6 +85,9 @@ enum Command {
     Machine(MachineCommand),
     /// Manage Nimbus node service-manager installation artifacts.
     Node(NodeCommand),
+    /// Internal node-local workload executor entrypoint.
+    #[command(name = "node-workload-executor", hide = true)]
+    NodeWorkloadExecutor(node_workload_executor::NodeWorkloadExecutorCommand),
     /// Compose-backed local service lifecycle commands.
     #[command(name = "compose")]
     Compose(ComposeCommand),
@@ -120,6 +123,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_machine_command(command).await?;
         }
         Command::Node(command) => run_node_command(command).await?,
+        Command::NodeWorkloadExecutor(command) => {
+            node_workload_executor::run_node_workload_executor_command(command).await?
+        }
         Command::Compose(command) => {
             let persistence_config =
                 persistence_config_from_start_command(&StartCommand::default())?;
@@ -188,6 +194,28 @@ mod tests {
         assert!(
             matches!(cli.command, Command::SandboxSupervisor(_)),
             "sandbox-supervisor should parse as the packaged internal entrypoint"
+        );
+    }
+
+    #[test]
+    fn node_workload_executor_command_parses_as_hidden_internal_entrypoint() {
+        let cli = Cli::parse_from([
+            "nimbus",
+            "node-workload-executor",
+            "--tenant",
+            "demo",
+            "--workload",
+            "worker",
+            "--exec",
+            "/usr/bin/true",
+            "--status-path",
+            "status.jsonl",
+            "--once",
+        ]);
+
+        assert!(
+            matches!(cli.command, Command::NodeWorkloadExecutor(_)),
+            "node-workload-executor should parse as the packaged internal entrypoint"
         );
     }
 }

@@ -56,7 +56,7 @@ If you find yourself writing compatibility code, stop and make the breaking chan
 - Launch-readiness gap closure (deploy admin handshake, `X-Nimbus-Api-Key`
   decision, admin-token rotation gate, configurable CORS, CLI wiring for
   Firestore/MongoDB/DynamoDB, `rest.ts` parity, TLS termination, backup
-  command, systemd unit, apt channel, `nimbus node run` reconciler
+  command, systemd unit, apt channel, hidden node workload executor
   caller): `docs/private/plans/archive/launch-readiness-plan.md` is the
   completed baseline (LR0..LR13, closed 2026-06-11), gated on
   `bash scripts/verify-launch-readiness.sh` (14 conditions). Promote a
@@ -364,13 +364,18 @@ The repo is a Rust workspace + npm monorepo. Names overlap — know which you me
 | Name | Path | What it is |
 | --- | --- | --- |
 | `nimbus` (facade crate) | `crates/nimbus/` | Re-exports public types for embedders |
+| `nimbus-adapters` | `crates/nimbus-adapters/` | Optional adapter-family aggregation crate |
+| `nimbus-auth` | `crates/nimbus-auth/` | Shared auth and identity primitives |
 | `nimbus-bin` | `crates/nimbus-bin/` | CLI binary entry point |
 | `nimbus-core` | `crates/nimbus-core/` | Shared types and validation (zero I/O) |
 | `nimbus-engine` | `crates/nimbus-engine/` | Central coordinator (`Service`) |
+| `nimbus-node` | `crates/nimbus-node/` | Host-local workload reconciliation and systemd integration |
 | `nimbus-runtime` | `crates/nimbus-runtime/` | V8 execution (zero workspace deps) |
 | `nimbus-sandbox` | `crates/nimbus-sandbox/` | Generic sandbox and isolation seam |
 | `nimbus-server` | `crates/nimbus-server/` | HTTP/WebSocket transport |
+| `nimbus-services` | `crates/nimbus-services/` | Service, sandbox, and session resource manager |
 | `nimbus-storage` | `crates/nimbus-storage/` | Persistence layer |
+| `nimbus-tenant` | `crates/nimbus-tenant/` | Tenant policy and workload admission decisions |
 | `nimbus-testing` | `crates/nimbus-testing/` | Shared test fixtures and deterministic harness helpers |
 | `nimbus` (JS SDK) | `packages/nimbus/` | Nimbus-native JavaScript SDK |
 | `convex` (JS compat) | `packages/convex/` | Convex compatibility package |

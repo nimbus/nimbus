@@ -40,8 +40,6 @@ pub(crate) struct NodeCommand {
 enum NodeSubcommand {
     /// Install or render Nimbus node service-manager artifacts.
     Install(NodeInstallCommand),
-    /// Reconcile a tenant workload to its desired state via systemd.
-    Run(crate::node_run::NodeRunCommand),
     /// Show the Nimbus node service status through systemd.
     Status(NodeStatusCommand),
     /// Print Nimbus node service logs through journalctl.
@@ -189,9 +187,6 @@ struct NodeUninstallCommand {
 
 pub(crate) async fn run_node_command(command: NodeCommand) -> Result<()> {
     match command.command {
-        NodeSubcommand::Run(run) => crate::node_run::run_node_run_command(run)
-            .await
-            .map_err(|error| Error::Internal(error.to_string())),
         NodeSubcommand::Install(command) => run_install(command),
         NodeSubcommand::Status(command) => run_status(command),
         NodeSubcommand::Logs(command) => run_logs(command),
@@ -1118,5 +1113,24 @@ mod tests {
             ),
             "container node install should parse"
         );
+    }
+
+    #[test]
+    fn node_run_is_not_a_public_node_subcommand() {
+        let error = crate::Cli::try_parse_from([
+            "nimbus",
+            "node",
+            "run",
+            "--tenant",
+            "demo",
+            "--workload",
+            "worker",
+            "--exec",
+            "/usr/bin/true",
+            "--status-path",
+            "status.jsonl",
+        ])
+        .expect_err("node run must not parse as a public command");
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
     }
 }
