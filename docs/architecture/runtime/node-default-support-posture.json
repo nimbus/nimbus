@@ -102368,8 +102368,8 @@
       }
     },
     "node26": {
-      "current_pass_rate": 0.347078,
-      "current_passed": 1936,
+      "current_pass_rate": 0.351918,
+      "current_passed": 1963,
       "diagnostic_only_non_isolate": {
         "gaps": 2065
       },
@@ -139431,66 +139431,6 @@
           "test_path": "test/parallel/test-webapi-sharedarraybuffer-rejection.js"
         },
         {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-constructors.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-cryptokey-brand-check.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-cryptokey-clone-transfer.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-cryptokey-hidden-slots.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-cryptokey-no-own-symbols.js"
-        },
-        {
           "docs_cross_check": "docs must describe fail-closed diagnostic or service/microVM route",
           "evidence_path": "tests/runtime/node/classifications/node26.json",
           "owner": "node-compat/unpromoted-surface",
@@ -139513,270 +139453,6 @@
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-webcrypto-derivebits-argon2.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-derivebits-cfrg.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-derivebits-ecdh.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-derivebits-hkdf.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-derivekey-cfrg.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-derivekey-ecdh.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-digest-turboshake-rfc.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-digest-turboshake.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-digest.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-encap-decap-ml-kem.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-encrypt-decrypt-chacha20-poly1305.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-export-import-cfrg.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-export-import-ec.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-export-import-ml-dsa.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-export-import-ml-kem.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-export-import-rsa.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-get-public-key.mjs"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-internal-slots.mjs"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-sign-verify-ecdsa.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-sign-verify-eddsa.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-sign-verify-hmac.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-sign-verify-ml-dsa.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-sign-verify-rsa.js"
         },
         {
           "docs_cross_check": "docs must link upstream/platform rationale when excluding from support",
@@ -146080,15 +145756,15 @@
         }
       ],
       "feasibility": {
-        "current_passed": 1936,
+        "current_passed": 1963,
         "estimated_reachable_pass_ceiling": 2615,
         "optional_promotable_gap_count": 512,
-        "required_gap_count": 167,
+        "required_gap_count": 140,
         "target_pass_count": null,
         "target_reachable_in_this_plan": null
       },
       "full_official_fixture_corpus": 5578,
-      "reclassified_requires_unpromoted_node_surface_count": 3264,
+      "reclassified_requires_unpromoted_node_surface_count": 3237,
       "remaining_requires_unpromoted_node_surface_count": 0,
       "role": "current",
       "source_classification_counts": {
@@ -146097,18 +145773,18 @@
         "requires_pseudo_tty_host_harness": 32,
         "requires_pummel_stress_harness": 65,
         "requires_sequential_host_state_harness": 119,
-        "requires_unpromoted_node_surface": 3264,
+        "requires_unpromoted_node_surface": 3237,
         "requires_wpt_harness": 25,
         "support_fixture_not_top_level_test": 46,
         "upstream_known_issue_or_platform_boundary": 23
       },
-      "source_requires_unpromoted_node_surface_count": 3264,
+      "source_requires_unpromoted_node_surface_count": 3237,
       "support_denominator_counts": {
         "diagnostic_only_non_isolate": 2065,
         "test_harness_only": 814,
         "upstream_or_platform_boundary": 84,
         "v8_isolate_optional": 512,
-        "v8_isolate_required": 167
+        "v8_isolate_required": 140
       },
       "test_harness_only": {
         "gaps": 814
@@ -146128,9 +145804,9 @@
         "gaps": 512
       },
       "v8_isolate_required": {
-        "gaps": 167,
-        "pass_rate_percent": 92.06,
-        "passed": 1936,
+        "gaps": 140,
+        "pass_rate_percent": 93.34,
+        "passed": 1963,
         "total": 2103
       }
     }
