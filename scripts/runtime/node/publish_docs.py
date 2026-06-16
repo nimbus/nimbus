@@ -639,16 +639,53 @@ def latest_lines(
             "| --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
-    for result in canary_results(dashboard):
-        lines.append(
-            f"| `{result.get('package', result.get('id', 'unknown'))}` | "
-            f"{result.get('runtime_preset', 'unknown')} | "
-            f"{lane_title(result.get('lane', 'unknown'))} | "
-            f"`{result.get('pinned_version', 'unknown')}` | "
-            f"{evidence_label(result.get('evidence_kind', 'positive_support'))} | "
-            f"{support_status_label(result.get('support_status', 'supported'))} | "
-            f"{status_label(result.get('status', 'unknown'))} |"
-        )
+    canary_rows = canary_results(dashboard)
+    if canary_rows:
+        for result in canary_rows:
+            lines.append(
+                f"| `{result.get('package', result.get('id', 'unknown'))}` | "
+                f"{result.get('runtime_preset', 'unknown')} | "
+                f"{lane_title(result.get('lane', 'unknown'))} | "
+                f"`{result.get('pinned_version', 'unknown')}` | "
+                f"{evidence_label(result.get('evidence_kind', 'positive_support'))} | "
+                f"{support_status_label(result.get('support_status', 'supported'))} | "
+                f"{status_label(result.get('status', 'unknown'))} |"
+            )
+    else:
+        seen_claim_rows: set[
+            tuple[str, str, str, str, str, str]
+        ] = set()
+        for claim in claim_summaries(dashboard):
+            required_lanes = ", ".join(
+                lane_title(lane) for lane in claim.get("lane_coverage", [])
+            )
+            package = claim.get("package", claim.get("id", "unknown"))
+            runtime_preset = claim.get("runtime_preset", "unknown")
+            evidence = evidence_label(claim.get("evidence_kind", "positive_support"))
+            support_boundary = support_status_label(
+                claim.get("support_status", "supported")
+            )
+            status = status_label(claim.get("status", "unknown"))
+            row_key = (
+                package,
+                runtime_preset,
+                required_lanes,
+                evidence,
+                support_boundary,
+                status,
+            )
+            if row_key in seen_claim_rows:
+                continue
+            seen_claim_rows.add(row_key)
+            lines.append(
+                f"| `{package}` | "
+                f"{runtime_preset} | "
+                f"{required_lanes or 'none'} | "
+                "n/a | "
+                f"{evidence} | "
+                f"{support_boundary} | "
+                f"{status} |"
+            )
     lines.extend(
         [
             "",

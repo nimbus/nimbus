@@ -23,6 +23,43 @@ It is a support summary, not a blanket Node.js compatibility claim.
 
 | Package | Preset | Lane | Pinned version | Evidence | Support boundary | Status |
 | --- | --- | --- | --- | --- | --- | --- |
+| `node-platform-builtins` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `express` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `fastify` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `socket.io` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `undici` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `axios` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `convex-use-node-action` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `convex-use-node-real-app` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `openai` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `@anthropic-ai/sdk` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `ai` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `stripe` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `resend` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `@aws-sdk/client-s3` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `@slack/web-api` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `octokit` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `jose` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `zod` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `uuid` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `nanoid` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `@upstash/redis` | Application | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `node:child_process` | Application | Node22, Node24 | n/a | Diagnostic | Service/microVM required | Missing Observation |
+| `node:worker_threads` | Application | Node22, Node24 | n/a | Diagnostic | Service/microVM required | Missing Observation |
+| `node:inspector` | Application | Node22, Node24 | n/a | Diagnostic | Service/microVM required | Missing Observation |
+| `node:repl` | Application | Node22, Node24 | n/a | Diagnostic | Service/microVM required | Missing Observation |
+| `node --test` | Application | Node22, Node24 | n/a | Diagnostic | Service/microVM required | Missing Observation |
+| `native-addon` | Application | Node22, Node24 | n/a | Diagnostic | Service/microVM required | Missing Observation |
+| `persistent-filesystem` | Application | Node22, Node24 | n/a | Diagnostic | Service/microVM required | Missing Observation |
+| `raw-server-listen` | Application | Node22, Node24 | n/a | Diagnostic | Service/microVM required | Missing Observation |
+| `prisma` | Application | Node22, Node24 | n/a | Diagnostic | Service/microVM required | Missing Observation |
+| `sharp` | Application | Node22, Node24 | n/a | Diagnostic | Service/microVM required | Missing Observation |
+| `esbuild` | Application | Node22, Node24 | n/a | Diagnostic | Service/microVM required | Missing Observation |
+| `tsx` | Tooling | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `ts-node` | Tooling | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `jest` | Tooling | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `prisma` | Tooling | Node22, Node24 | n/a | Support | Supported | Missing Observation |
+| `next` | Tooling | Node22, Node24 | n/a | Support | Supported | Missing Observation |
 
 ## Oracle Checks
 

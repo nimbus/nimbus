@@ -896,14 +896,24 @@ Object.freeze(__nimbusInstallRuntimeContractGlobals);
 const POST_BOOTSTRAP_SOURCE: &str = r#"
 const __nimbusRuntimeContract =
   __nimbusCoreOps.op_nimbus_runtime_contract();
-const __nimbusWasmStreamingCore = Deno.core;
-const __nimbusWasmStreamingFetchModule =
-  __nimbusWasmStreamingCore.loadExtScript("ext:deno_fetch/26_fetch.js");
-__nimbusWasmStreamingCore.setWasmStreamingCallback(
-  function __nimbusWasmStreamingCallback(source, rid) {
-    return __nimbusWasmStreamingFetchModule.handleWasmStreaming(source, rid);
-  },
-);
+const __nimbusCompatibilityTarget =
+  __nimbusRuntimeContract?.compatibility_target;
+const __nimbusCompatibilityMatch =
+  typeof __nimbusCompatibilityTarget === "string"
+    ? /^node(\d+)$/.exec(__nimbusCompatibilityTarget)
+    : null;
+if (__nimbusCompatibilityMatch !== null) {
+  const __nimbusWasmStreamingCore = Deno.core;
+  const __nimbusWasmStreamingFetchModule =
+    globalThis.__nimbusDenoFetchModule ??
+      __nimbusWasmStreamingCore.loadExtScript("ext:deno_fetch/26_fetch.js");
+  __nimbusWasmStreamingCore.setWasmStreamingCallback(
+    function __nimbusWasmStreamingCallback(source, rid) {
+      return __nimbusWasmStreamingFetchModule.handleWasmStreaming(source, rid);
+    },
+  );
+}
+delete globalThis.__nimbusDenoFetchModule;
 if (globalThis.__nimbusRetainDenoForNodeLazyScripts !== true) {
   delete globalThis.Deno;
 }
@@ -911,12 +921,6 @@ delete globalThis.__nimbusRetainDenoForNodeLazyScripts;
 delete globalThis.__bootstrap;
 delete globalThis.bootstrap;
 __nimbusInstallRuntimeContractGlobals(__nimbusRuntimeContract);
-const __nimbusCompatibilityTarget =
-  __nimbusRuntimeContract?.compatibility_target;
-const __nimbusCompatibilityMatch =
-  typeof __nimbusCompatibilityTarget === "string"
-    ? /^node(\d+)$/.exec(__nimbusCompatibilityTarget)
-    : null;
 const __nimbusNodeVersion =
   __nimbusRuntimeContract?.node_api_contract?.version_number;
 const __nimbusNodeRuntimeMajor = __nimbusCompatibilityMatch

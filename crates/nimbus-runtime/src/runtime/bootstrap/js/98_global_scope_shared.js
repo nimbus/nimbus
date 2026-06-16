@@ -25,6 +25,13 @@ const {
   QuotaExceededError,
 } = core.loadExtScript("ext:deno_web/01_dom_exception.js");
 
+Object.defineProperty(globalThis, "__nimbusDenoFetchModule", {
+  value: fetch,
+  configurable: true,
+  enumerable: false,
+  writable: true,
+});
+
 // Register the WebCrypto / Web platform DOMException op-error builders.
 //
 // deno_core's `to_v8_error` rehydrates a Rust op error tagged with
