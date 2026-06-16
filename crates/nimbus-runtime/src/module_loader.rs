@@ -442,6 +442,9 @@ impl RestrictedModuleLoader {
                 return ModuleSpecifier::parse(NIMBUS_NODE_MODULE_SPECIFIER)
                     .map_err(JsErrorBox::from_err);
             }
+            if specifier == "node:repl" {
+                return Err(self.unsupported_node_builtin_error(specifier));
+            }
             if self.supported_node_builtin_source(specifier).is_some()
                 || self.supports_extension_backed_node_builtin(specifier)
             {
