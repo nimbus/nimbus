@@ -40,9 +40,11 @@ nimbus dev
 ```
 
 `nimbus dev` auto-runs `npm install` when declared packages are missing,
-creates a `demo` tenant, and serves on `localhost:3210`. It watches the
-TypeScript files, re-runs codegen on change, and activates updated functions
-with reactive subscriptions.
+creates a `demo` tenant, and serves on `localhost:3210`. Adapter detection is
+automatic — here it picks Convex from the `convex/` directory; a Firebase,
+MongoDB-driver, or DynamoDB-SDK app is detected the same way, with no flag. It
+watches the TypeScript files, re-runs codegen on change, and activates updated
+functions with reactive subscriptions.
 
 ## 4. Write functions
 
@@ -73,6 +75,8 @@ queries and mutations from a single local process.
 
 ## Next steps
 
+- [Deploy to production](/get-started/deploy/) — take this app from
+  `nimbus dev` to a production server with one command.
 - [Developers](/developers/) — functions, schema, scheduling, file storage,
   auth, and the per-adapter guides.
 - [Concepts](/concepts/) — how the engine, data model, and tenancy work.

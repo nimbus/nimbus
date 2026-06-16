@@ -103,7 +103,13 @@ pub(crate) fn firebase_functions_project(
         return Ok(None);
     }
     let config = read_firebase_project_config(&firebase_json_path)?;
-    let codebases = normalize_firebase_functions_codebases(config.functions)?;
+    // A `firebase.json` without a `functions` key is not a Functions
+    // project: firestore/hosting/emulators-only configs belong to client
+    // apps, which `nimbus dev` detects separately (FirestoreClient).
+    let Some(functions) = config.functions else {
+        return Ok(None);
+    };
+    let codebases = normalize_firebase_functions_codebases(functions)?;
     let canonical_app_dir = app_dir.canonicalize().map_err(|error| {
         io::Error::new(
             error.kind(),
@@ -465,23 +471,19 @@ fn read_firebase_project_config(firebase_json_path: &Path) -> io::Result<Firebas
 }
 
 fn normalize_firebase_functions_codebases(
-    functions: Option<FirebaseFunctionsConfig>,
+    functions: FirebaseFunctionsConfig,
 ) -> io::Result<Vec<NormalizedFirebaseFunctionsCodebase>> {
     let descriptors = match functions {
-        None => vec![NormalizedFirebaseFunctionsCodebase {
-            source: DEFAULT_FIREBASE_FUNCTIONS_SOURCE.to_string(),
-            codebase: DEFAULT_FIREBASE_FUNCTIONS_CODEBASE.to_string(),
-        }],
-        Some(FirebaseFunctionsConfig::Source(source)) => {
+        FirebaseFunctionsConfig::Source(source) => {
             vec![NormalizedFirebaseFunctionsCodebase {
                 source: normalize_non_empty_string(source, "firebase.json functions source")?,
                 codebase: DEFAULT_FIREBASE_FUNCTIONS_CODEBASE.to_string(),
             }]
         }
-        Some(FirebaseFunctionsConfig::Descriptor(descriptor)) => {
+        FirebaseFunctionsConfig::Descriptor(descriptor) => {
             vec![normalize_firebase_functions_descriptor(descriptor)?]
         }
-        Some(FirebaseFunctionsConfig::Descriptors(descriptors)) => descriptors
+        FirebaseFunctionsConfig::Descriptors(descriptors) => descriptors
             .into_iter()
             .map(normalize_firebase_functions_descriptor)
             .collect::<io::Result<Vec<_>>>()?,
@@ -820,9 +822,25 @@ mod tests {
     }
 
     #[test]
-    fn firebase_functions_project_defaults_to_functions() {
+    fn firebase_json_without_functions_config_is_not_a_functions_project() {
         let temp = tempfile::tempdir().unwrap();
-        std::fs::write(temp.path().join("firebase.json"), "{}").unwrap();
+        std::fs::write(
+            temp.path().join("firebase.json"),
+            r#"{"firestore": {"rules": "firestore.rules"}, "hosting": {"public": "dist"}}"#,
+        )
+        .unwrap();
+        // Even with a `functions/` directory on disk, the config declares no
+        // Functions deployment — a firestore/hosting-only project must not
+        // resolve to a default codebase.
+        std::fs::create_dir_all(temp.path().join("functions")).unwrap();
+
+        assert_eq!(firebase_functions_project(temp.path()).unwrap(), None);
+    }
+
+    #[test]
+    fn firebase_functions_empty_descriptor_defaults_to_functions() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("firebase.json"), r#"{"functions": {}}"#).unwrap();
         std::fs::create_dir_all(temp.path().join("functions")).unwrap();
 
         assert_eq!(

@@ -5,8 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { build } from "esbuild";
-
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const packageJsonPath = fileURLToPath(
   new URL("../package.json", import.meta.url),
@@ -16,6 +14,9 @@ const tscPath = fileURLToPath(
 );
 const buildOnly = process.argv.includes("--build-only");
 const typecheckOnly = process.argv.includes("--typecheck-only");
+// Smoke-only mode skips the build/typecheck stages so callers (e.g. the
+// Rust dev round-trip test) need only the `mongodb` driver installed.
+const smokeOnly = process.argv.includes("--smoke-only");
 const smokePort = optionalFlagValue("--smoke-port");
 const smokeUsername = optionalFlagValue("--smoke-username");
 const smokePassword = optionalFlagValue("--smoke-password");
@@ -31,6 +32,11 @@ function optionalFlagValue(flag) {
 }
 
 async function main() {
+  if (smokeOnly) {
+    await runSmokeSuite();
+    return;
+  }
+
   await assertPackageExports();
   if (buildOnly) {
     await buildPackageSurface();
@@ -46,17 +52,19 @@ async function main() {
   await typecheckSurface();
 
   if (smokePort) {
-    assert.ok(
-      smokeUsername && smokePassword,
-      "--smoke-port requires --smoke-username and --smoke-password",
-    );
-    await smokeTestCrud(parseInt(smokePort, 10), smokeUsername, smokePassword);
-    await smokeTestAggregation(
-      parseInt(smokePort, 10),
-      smokeUsername,
-      smokePassword,
-    );
+    await runSmokeSuite();
   }
+}
+
+async function runSmokeSuite() {
+  assert.ok(
+    smokePort && smokeUsername && smokePassword,
+    "the smoke suite requires --smoke-port, --smoke-username, and --smoke-password",
+  );
+  const port = parseInt(smokePort, 10);
+  await smokeTestCrud(port, smokeUsername, smokePassword);
+  await smokeTestAggregation(port, smokeUsername, smokePassword);
+  await smokeTestWrongPasswordRejected(port, smokeUsername);
 }
 
 async function assertPackageExports() {
@@ -69,6 +77,8 @@ async function assertPackageExports() {
 }
 
 async function buildPackageSurface() {
+  // Lazy so --smoke-only runs never load esbuild.
+  const { build } = await import("esbuild");
   const outDir = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus-mongodb-"));
   await build({
     entryPoints: [path.join(packageRoot, "src/index.ts")],
@@ -232,6 +242,29 @@ async function smokeTestAggregation(port, username, password) {
     assert.equal(matchResults[0].total, 2);
 
     console.log("  ✓ smoke test: aggregation pipeline passed");
+  } finally {
+    await client.close();
+  }
+}
+
+async function smokeTestWrongPasswordRejected(port, username) {
+  const { mongoUri } = await import("./uri.ts");
+  const { MongoClient } = await import("mongodb");
+  const client = new MongoClient(
+    mongoUri({
+      port,
+      database: "smoketest",
+      username,
+      password: "wrong-password",
+    }),
+    { serverSelectionTimeoutMS: 2000 },
+  );
+  try {
+    await assert.rejects(async () => {
+      await client.connect();
+      await client.db("smoketest").collection("smoke_crud").findOne({});
+    }, "a wrong password must not authenticate");
+    console.log("  ✓ smoke test: wrong password rejected");
   } finally {
     await client.close();
   }

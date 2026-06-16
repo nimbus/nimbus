@@ -151,16 +151,18 @@ otherwise it issues a start and re-inspects. The stopped path is
 symmetric. Each pass writes status evidence through a writer seam so the
 observation that justified the outcome is recorded alongside it.
 
-One honest caveat: the reconciler and the systemd transient backend are
-a complete, tested library seam, but no production code path constructs
-them yet. What the server consumes from `crates/nimbus-node` in
-production today are the admission and binding types (tenant workload
-specs and local enforcement bindings); wiring the reconciler into a
-running node is the designed next step, not the current behavior.
+The live entry point is `nimbus node run`
+(`crates/nimbus-bin/src/node_run.rs`), which constructs a
+`NodeWorkloadReconciler` over the systemd transient backend and runs the
+reconcile loop against a node's assigned workloads. What stays out of
+scope here is the control plane that decides *which* workloads land on a
+node: multi-node scheduling and assignment are not part of a single
+Nimbus process. The reconciler converges a node toward the specs it has
+been given; it does not distribute them across a cluster.
 
 ## Related pages
 
-- [Node lifecycle (operators)](/operators/node-lifecycle/) — installing,
+- [Run Nimbus as a service](/operators/node-lifecycle/) — installing,
   inspecting, and removing the node service.
 - [Deploy to Linux](/operators/deploy-linux/) — a hand-written service
   unit, step by step.

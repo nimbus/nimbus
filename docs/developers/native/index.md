@@ -201,5 +201,5 @@ status mappings is in the [error reference](/reference/native/errors/).
   the `nimbus.v2` frame contract.
 - [Error reference](/reference/native/errors/) — error codes, severities,
   and status mappings.
-- [Manage services, sandboxes, and sessions](/developers/sdk/resource-model/)
-  — the same server's resource APIs through the JavaScript SDK.
+- [Agents](/agents/) — the same server's resource APIs through the
+  JavaScript SDK.

@@ -2,7 +2,7 @@
 title: How the Node runtime works
 description: Why Nimbus's Node.js support is a measured, in-process compatibility contract rather than a Node process.
 sidebar:
-  order: 9
+  order: 7
 ---
 
 Nimbus's Node.js support is an explicit compatibility contract for function
@@ -65,19 +65,10 @@ intended error instead of an undefined failure mode.
 
 ## Support claims are evidence-backed
 
-Nimbus does not use runtime names as blanket compatibility claims. A Node
-surface is documented as supported only when it has checked-in fixture,
-canary, oracle, or classification evidence:
-
-- **Fixtures** are official upstream Node test files executed against the
-  Nimbus runtime, with every non-passing fixture explicitly classified.
-- **Canaries** are real packages and application scenarios exercised
-  end-to-end on the supported Node versions.
-- **Oracle checks** compare runtime behavior against a real Node binary on
-  the same input.
-
-Expected failures, known gaps, and skips are recorded boundaries, not
-support claims. The
+Nimbus does not use runtime names as blanket compatibility claims:
+supported surfaces are backed by executed upstream Node tests and real
+package checks, and known gaps are recorded boundaries rather than support
+claims. The
 [Node compatibility reference](/reference/runtimes/node-compat/) publishes
 the current contract and headline numbers.
 

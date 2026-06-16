@@ -1,5 +1,5 @@
 ---
-title: SDK Resources
+title: SDK resources
 description: Reference for the root @nimbus/nimbus entry — the Nimbus control-plane client, credential discovery, and the services, sandboxes, and sessions APIs.
 sidebar:
   label: Resources
@@ -8,8 +8,9 @@ sidebar:
 
 The root entry point exports the `Nimbus` class — the control-plane client
 for managing **services**, **sandboxes**, and **sessions** — along with the
-request and resource types those APIs use. For concepts and worked examples,
-see the [resource model guide](/developers/sdk/resource-model/).
+request and resource types those APIs use. For concepts, see
+[Services, sandboxes, and sessions](/concepts/resource-model/); for worked
+examples, see the [Agents guides](/agents/).
 
 ```typescript
 import { Nimbus } from "@nimbus/nimbus";
@@ -126,9 +127,9 @@ All service paths are rooted at `/api/tenants/{tenant}/services`.
 
 `update` and `delete` require `ifMatchGeneration` — the `metadata.generation`
 of the definition you read. If the resource changed in the meantime, the
-server rejects the write and the call throws; re-read and retry. See the
-[resource model guide](/developers/sdk/resource-model/) for the full
-read-modify-write pattern.
+server rejects the write and the call throws; re-read and retry. See
+[Manage services](/agents/services/) for the full read-modify-write
+pattern.
 
 ### Backend specs
 
@@ -169,7 +170,7 @@ const sandbox = await nimbus.sandboxes.create({
   profile: "worker",
   spec: {
     owner: { kind: "standalone", displayName: "batch-job" },
-    backend: "krun",
+    backend: "container",
     root: {
       kind: "oci_image",
       source: { kind: "reference", reference: "docker.io/library/node:22" },
@@ -182,6 +183,8 @@ const sandbox = await nimbus.sandboxes.create({
 - `owner` (`NimbusSandboxOwnerSpec`) is `{ kind: "service", serviceName? }`
   or `{ kind: "standalone", displayName? }`.
 - `backend` (`NimbusSandboxBackendKind`) is `"krun"` or `"container"`.
+  Use `"container"` for workloads that run a process: the `"krun"` microVM
+  backend fails closed for process execution today.
 - `root` (`NimbusSandboxRootSpec`) currently takes an OCI image reference
   (`NimbusSandboxOciImageReferenceSource`).
 - `process` (`NimbusSandboxProcessSpec`) has optional `argv`, `args`,
@@ -191,6 +194,23 @@ Responses redact launch inputs: `NimbusSandboxProcessResponse` returns
 `argv`, `entrypoint`, `command`, and `environment` as `NimbusRedactedValues`
 (`{ redacted: true, valueCount }`), and `NimbusSandboxRootResponse` may be
 `{ kind: "redacted", redacted: true, reason: "operatorOnlyLaunchInput" }`.
+
+`NimbusSandboxResource.status` reports the running view:
+
+```typescript
+status: {
+  lifecycleState: string;   // "ready" once the sandbox accepts sessions
+  readiness: string;
+  health: string;
+  backend: string;
+  endpoints: NimbusServiceEndpoint[];
+  conditions: NimbusCondition[];
+}
+```
+
+Poll `status.lifecycleState` until it reaches `"ready"` before opening a
+session against the sandbox — that is the readiness check the
+[sandbox quickstart](/agents/sandbox-quickstart/) runs.
 
 ## Sessions — `nimbus.sessions`
 
@@ -213,6 +233,8 @@ const session = await nimbus.sessions.open({
 - Session state (`status.lifecycleState`) is `"open" | "closed" | "expired"`;
   `spec.expiresAt` carries the expiry. Sessions cannot be renewed or
   extended — open a new one.
+- `requestedTtlMs` is optional: the default TTL is 15 minutes, and any
+  request is clamped to a hard cap of 1 hour. A zero TTL is rejected.
 - `spec.targetSnapshot` records what the session bound to at open time
   (service name/generation/backend, or sandbox id/generation/profile).
 

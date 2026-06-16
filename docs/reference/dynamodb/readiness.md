@@ -74,10 +74,10 @@ provides its own — see [Operators](/operators/).
 
 ## Operational limits
 
-- **No provisioned-capacity throttling.** Requests are never throttled
-  against configured capacity units.
 - **Key size.** The combined primary key supports roughly 1,100 raw bytes
-  (DDB-DIV-001), below AWS's 3,072.
+  (DDB-DIV-001), below AWS's 3,072 (2,048 + 1,024).
+- **Capacity.** No provisioned-capacity throttling; see
+  [divergences](/reference/dynamodb/divergences/).
 - **Streams.** One shard per stream; the 24-hour record retention is
   enforced at read time, and storage for expired records is reclaimed on
   the next poll of the stream.

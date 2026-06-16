@@ -9,9 +9,11 @@
    Mode (light/dark/system) toggles the neutral foundation.
    Palette (blue/mono/warm) swaps brand + accent + link identity.
    Each palette maps to a brand-canonical swatch from the Nimbus Color Palette:
-     blue  → Cool Blue (light) / Night Blue (dark)         — product default
+     warm  → Warm (light) / Night Blue (dark)              — product default
+     blue  → Cool Blue (light) / Night Blue (dark)         — cool alternative
      mono  → Monochrome (light) / Reverse Mono (dark)      — minimal/enterprise
-     warm  → Warm (light) / Golden Hour (dark)             — friendly/marketing
+   The default is the "sky cycle": golden daylight, night-blue dark. Dark mode
+   is Night Blue for every palette except mono (Reverse Mono).
    Semantic state colors (success/warning/danger/starting/draining/queued/stale)
    stay constant across palettes so "Running = green" everywhere.
 */
@@ -33,21 +35,21 @@
 }
 
 @layer base {
-  /* Defaults: Blue palette, Light mode (Cool Blue per brand usage guidelines) */
+  /* Defaults: Warm palette, Light mode (golden daylight — sky-cycle default) */
   :root {
     color-scheme: light;
 
-    --color-bg: oklch(96.5% 0.008 248);
+    --color-bg: oklch(96.5% 0.020 82);
     --color-surface: oklch(100% 0 0);
-    --color-surface-2: oklch(96% 0.008 248);
-    --color-border: oklch(91% 0.013 252);
-    --color-border-strong: oklch(82% 0.020 250);
-    --color-text: oklch(20% 0.035 263);
-    --color-muted: oklch(48% 0.028 255);
+    --color-surface-2: oklch(96% 0.025 82);
+    --color-border: oklch(90% 0.025 82);
+    --color-border-strong: oklch(82% 0.040 78);
+    --color-text: oklch(20% 0.020 60);
+    --color-muted: oklch(53% 0.013 75);
 
-    --color-brand: oklch(62% 0.20 258);     /* #3B82F6 — Cool Blue primary */
-    --color-accent: oklch(70% 0.13 207);    /* #06B6D4 — brand teal (cyan-500) */
-    --color-link: oklch(54% 0.22 264);      /* #2563EB — Cool Blue primary-dark */
+    --color-brand: oklch(73% 0.17 65);      /* #F59E0B — amber-500 */
+    --color-accent: oklch(80% 0.14 70);     /* #FFB84D */
+    --color-link: oklch(62% 0.17 55);       /* #D97706 — Golden Hour primary */
 
     /* Semantic state — stable across palettes for consistent affordances. */
     --color-success: oklch(52% 0.14 145);
@@ -60,7 +62,22 @@
     --color-violet: oklch(55% 0.18 295);
   }
 
-  /* Blue palette, Dark mode (Night Blue per brand usage guidelines) */
+  /* Blue palette, Light mode (Cool Blue — explicit cool alternative) */
+  [data-palette="blue"] {
+    --color-bg: oklch(96.5% 0.008 248);
+    --color-surface: oklch(100% 0 0);
+    --color-surface-2: oklch(96% 0.008 248);
+    --color-border: oklch(91% 0.013 252);
+    --color-border-strong: oklch(82% 0.020 250);
+    --color-text: oklch(20% 0.035 263);
+    --color-muted: oklch(48% 0.028 255);
+
+    --color-brand: oklch(62% 0.20 258);     /* #3B82F6 — Cool Blue primary */
+    --color-accent: oklch(70% 0.13 207);    /* #06B6D4 — brand teal (cyan-500) */
+    --color-link: oklch(54% 0.22 264);      /* #2563EB — Cool Blue primary-dark */
+  }
+
+  /* Dark mode (Night Blue) — default dark for every palette except mono. */
   [data-theme="dark"] {
     color-scheme: dark;
 
@@ -116,35 +133,8 @@
     --color-link: oklch(91% 0.008 257);     /* #E5E7EB */
   }
 
-  /* Warm palette, Light mode (Warm) */
-  [data-palette="warm"] {
-    --color-bg: oklch(96.5% 0.020 82);
-    --color-surface: oklch(100% 0 0);
-    --color-surface-2: oklch(96% 0.025 82);
-    --color-border: oklch(90% 0.025 82);
-    --color-border-strong: oklch(82% 0.040 78);
-    --color-text: oklch(20% 0.020 60);
-    --color-muted: oklch(53% 0.013 75);
-
-    --color-brand: oklch(73% 0.17 65);      /* #F59E0B — amber-500 */
-    --color-accent: oklch(80% 0.14 70);     /* #FFB84D */
-    --color-link: oklch(62% 0.17 55);       /* #D97706 — amber-600 */
-  }
-
-  /* Warm palette, Dark mode (Golden Hour on warm-dark surfaces) */
-  [data-palette="warm"][data-theme="dark"] {
-    --color-bg: oklch(17% 0.020 50);
-    --color-surface: oklch(22% 0.025 55);
-    --color-surface-2: oklch(28% 0.030 60);
-    --color-border: oklch(38% 0.022 55);
-    --color-border-strong: oklch(48% 0.022 55);
-    --color-text: oklch(96% 0.020 82);
-    --color-muted: oklch(75% 0.040 75);
-
-    --color-brand: oklch(82% 0.16 80);      /* #FBBF24 — amber-400 */
-    --color-accent: oklch(80% 0.14 65);     /* #FDBA74 — orange-300 */
-    --color-link: oklch(73% 0.17 65);       /* #F59E0B */
-  }
+  /* Warm palette, Light mode = the :root default above; Warm dark mode =
+     the Night Blue default dark. No warm-specific overrides needed. */
 
   html,
   body,

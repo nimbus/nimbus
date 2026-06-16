@@ -11,19 +11,19 @@ export const PALETTES: ReadonlyArray<{
   description: string;
 }> = [
   {
+    id: "warm",
+    label: "Warm",
+    description: "Warm · Night Blue — product default",
+  },
+  {
     id: "blue",
     label: "Blue",
-    description: "Cool Blue · Night Blue — product default",
+    description: "Cool Blue · Night Blue — cool alternative",
   },
   {
     id: "mono",
     label: "Mono",
     description: "Monochrome · Reverse Mono — minimal, enterprise",
-  },
-  {
-    id: "warm",
-    label: "Warm",
-    description: "Warm · Golden Hour — friendly, marketing",
   },
 ];
 
@@ -78,12 +78,12 @@ function readStoredMode(): ThemeMode {
 }
 
 function readStoredPalette(): Palette {
-  if (typeof window === "undefined") return "blue";
+  if (typeof window === "undefined") return "warm";
   const stored = window.localStorage.getItem(PALETTE_STORAGE_KEY);
   if (stored === "blue" || stored === "mono" || stored === "warm") {
     return stored;
   }
-  return "blue";
+  return "warm";
 }
 
 export function readLastView(): NavView {

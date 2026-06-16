@@ -3,7 +3,7 @@ title: Troubleshooting
 description: Symptom-to-fix entries for common Nimbus self-hosting failures, matched to the exact error messages the server emits.
 sidebar:
   label: "Troubleshooting"
-  order: 12
+  order: 13
 ---
 
 Each entry below quotes the real error text the server or CLI emits, so you

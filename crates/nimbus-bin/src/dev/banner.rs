@@ -6,6 +6,7 @@ use crate::compose::discovery::compose_selection_summary;
 
 use super::launch::operator_console_url;
 use super::plan::DevPlan;
+use super::wire::AWS_SDK_V2_HINT;
 
 pub(super) fn emit_dev_banner(plan: &DevPlan) -> io::Result<()> {
     for line in dev_banner_lines(plan) {
@@ -29,6 +30,36 @@ pub(super) fn dev_banner_lines(plan: &DevPlan) -> Vec<String> {
     if let Some(adapter) = &plan.adapter {
         lines.push(format!("Adapter:    {}", adapter.name()));
     }
+    if let Some(mapping) = &plan.firestore_tenant {
+        lines.push(format!(
+            "Tenant:     {} ({})",
+            mapping.tenant,
+            mapping.describe_source()
+        ));
+        lines.push(format!(
+            "Firestore:  {}v1/projects/{}/databases/(default)/documents",
+            plan.local_url, mapping.tenant
+        ));
+    }
+    // Detected wire surfaces get an endpoint line plus a copy-paste client
+    // snippet. The snippets reference the Nimbus-owned `.env.local` keys —
+    // the banner never prints credential values.
+    for surface in plan.wire.surface_presentations(plan.wire_surfaces) {
+        if !surface.detected {
+            continue;
+        }
+        let label = format!("{}:", surface.display_name);
+        lines.push(format!(
+            "{label:<12}{} ({} in .env.local)",
+            surface.endpoint, surface.primary_env_key
+        ));
+        lines.push(format!("{:<12}{}", "", surface.client_snippet));
+    }
+    if !plan.wire_surfaces.dynamodb && plan.wire_surfaces.aws_sdk_v2_hint {
+        // D3: aws-sdk v2 alone never promotes the endpoint — the v2 import
+        // shape is too ambiguous (S3, SQS, …) — but it earns a hint.
+        lines.push(format!("{:<12}{AWS_SDK_V2_HINT}", "Hint:"));
+    }
     if let Some(selection) = plan.compose_selection.as_ref() {
         lines.push(format!(
             "Compose:    {}",
@@ -36,6 +67,9 @@ pub(super) fn dev_banner_lines(plan: &DevPlan) -> Vec<String> {
         ));
     }
     match plan.adapter.as_ref() {
+        // A client app has no server-side sources: the watch loop never
+        // runs, so a Watch line would describe a loop that does not exist.
+        Some(adapter) if adapter.source_roots().is_empty() => {}
         Some(adapter) if plan.once => lines.push(format!(
             "Watch:      disabled by --once; detected {}",
             format_watch_roots(adapter.source_roots())

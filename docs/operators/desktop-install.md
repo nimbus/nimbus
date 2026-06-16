@@ -3,7 +3,7 @@ title: Desktop install
 description: Install Nimbus Desktop — the native shell for the operator console — via Homebrew Cask on macOS, or AppImage, deb, rpm, and NSIS installers from GitHub Releases.
 sidebar:
   label: Desktop install
-  order: 13
+  order: 4
 ---
 
 Nimbus Desktop (`nimbus-desktop`) is the native shell for the Nimbus

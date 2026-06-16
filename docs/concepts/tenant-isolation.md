@@ -3,7 +3,7 @@ title: Tenant isolation
 description: The isolation model between Nimbus tenants — storage scoping, runtime isolation, sandbox boundaries, and auth — and the reasoning behind it.
 sidebar:
   label: Tenant isolation
-  order: 3
+  order: 4
 ---
 
 A single Nimbus server hosts many tenants. Each tenant is a complete,
@@ -127,11 +127,11 @@ separate:
   default, and binding a non-loopback interface requires both an explicit
   opt-in flag and a recently rotated admin token.
 - **Applications** authenticate with bearer tokens on application-facing
-  surfaces. When an application principal carries a tenant claim
-  (`tenant_id`, `tenantId`, `nimbus_tenant_id`, or `nimbusTenantId`), the
+  surfaces. When an application principal carries a tenant claim, the
   claim must match the tenant the route addresses; a mismatch is a
   rejection. A token minted for one tenant cannot be replayed against
-  another.
+  another. See [authenticate users](/developers/auth/) for how identities
+  are verified.
 - **The system tenant** (`_nimbus`) accepts only operator authority.
   Application and unauthenticated callers cannot reach it on any
   surface.
@@ -170,7 +170,7 @@ The boundary is deliberate about its edges:
 
 ## Related pages
 
-- [Tenant isolation operator guide](/operators/tenant-isolation/) —
+- [Manage tenants](/operators/tenant-isolation/) —
   create and administer tenants, configure storage scoping, verify
   isolation.
 - [MongoDB tenant isolation](/reference/mongodb/tenant-isolation/) — how

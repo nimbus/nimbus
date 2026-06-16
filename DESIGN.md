@@ -608,29 +608,35 @@ Palette pairs (light → dark):
 
 | Palette | Light variant     | Dark variant     | Use                              |
 | ---     | ---               | ---              | ---                              |
-| `blue`  | Cool Blue         | Night Blue       | Product default                  |
+| `warm`  | Warm              | Night Blue       | Product default — the "sky cycle": golden daylight, night-blue dark |
+| `blue`  | Cool Blue         | Night Blue       | Cool alternative                 |
 | `mono`  | Monochrome        | Reverse Mono     | Minimal / enterprise / print     |
-| `warm`  | Warm              | Golden Hour      | Friendly / marketing-leaning     |
+
+Dark mode is Night Blue for every palette except `mono` (Reverse Mono).
+The light-mode choice is the palette's identity; night looks the same
+sky for everyone.
 
 Colors are defined in OKLCH so light and dark perceptual lightness stay
 parity-matched. Semantic state tokens (`--success`, `--warning`, `--danger`,
 `--starting`, `--draining`, `--queued`, `--stale`, `--violet`) are stable
 across all palettes — "Running = green" holds in every theme.
 
-Tokens that swap per palette (Blue shown as the default):
+Tokens that swap per palette (the default shown: Warm light / Night Blue
+dark; the Cool Blue light column lives in `globals.css` under
+`[data-palette="blue"]`):
 
-| Token | Blue light (OKLCH) | Blue dark (OKLCH) | Use |
+| Token | Default light (Warm, OKLCH) | Default dark (Night Blue, OKLCH) | Use |
 | --- | --- | --- | --- |
-| `--bg` | `oklch(98% 0.005 248)` | `oklch(13% 0.026 263)` | App background |
+| `--bg` | `oklch(96.5% 0.020 82)` | `oklch(13% 0.026 263)` | App background |
 | `--surface` | `oklch(100% 0 0)` | `oklch(19% 0.030 258)` | Panels, tables, popovers |
-| `--surface-2` | `oklch(96% 0.008 248)` | `oklch(24% 0.030 258)` | Secondary panels, selected rows |
-| `--border` | `oklch(91% 0.013 252)` | `oklch(32% 0.030 258)` | Hairline borders and dividers |
-| `--border-strong` | `oklch(82% 0.020 250)` | `oklch(40% 0.030 258)` | Emphasis borders |
-| `--text` | `oklch(20% 0.035 263)` | `oklch(91% 0.014 252)` | Primary text |
-| `--muted` | `oklch(48% 0.028 255)` | `oklch(67% 0.026 248)` | Secondary text |
-| `--brand` | `oklch(62% 0.20 258)` (`#3B82F6`) | `oklch(72% 0.17 248)` (`#60A5FA`) | Primary identity: active nav stripe, primary CTA fill, connection-state dot |
-| `--accent` | `oklch(70% 0.13 207)` (`#06B6D4`) | `oklch(85% 0.10 197)` (`#67E8F9`) | Interactive feedback: focus ring, selection, `Running` state |
-| `--link` | `oklch(54% 0.22 264)` (`#2563EB`) | `oklch(82% 0.11 247)` (`#93C5FD`) | Hyperlinks only — not a secondary accent |
+| `--surface-2` | `oklch(96% 0.025 82)` | `oklch(24% 0.030 258)` | Secondary panels, selected rows |
+| `--border` | `oklch(90% 0.025 82)` | `oklch(32% 0.030 258)` | Hairline borders and dividers |
+| `--border-strong` | `oklch(82% 0.040 78)` | `oklch(40% 0.030 258)` | Emphasis borders |
+| `--text` | `oklch(20% 0.020 60)` | `oklch(91% 0.014 252)` | Primary text |
+| `--muted` | `oklch(53% 0.013 75)` | `oklch(67% 0.026 248)` | Secondary text |
+| `--brand` | `oklch(73% 0.17 65)` (`#F59E0B`) | `oklch(72% 0.17 248)` (`#60A5FA`) | Primary identity: active nav stripe, primary CTA fill, connection-state dot |
+| `--accent` | `oklch(80% 0.14 70)` (`#FFB84D`) | `oklch(85% 0.10 197)` (`#67E8F9`) | Interactive feedback: focus ring, selection, `Running` state |
+| `--link` | `oklch(62% 0.17 55)` (`#D97706`) | `oklch(82% 0.11 247)` (`#93C5FD`) | Hyperlinks only — not a secondary accent |
 
 Semantic tokens (stable across all palettes):
 
@@ -683,18 +689,22 @@ surface, pick the equivalent product-tier token instead.
 
 #### Two-Tier Bridge
 
-Three values cross tiers, by design:
+Four values cross tiers, by design:
 
-- **Brand.** Brand `#3B82F6` (Cool Blue primary, solid form, brand tier)
-  drives `--brand` `oklch(62% 0.20 258)` / `oklch(72% 0.17 248)` in the
-  product tier — same hex, used as primary identity inside the app.
+- **Golden Hour.** Brand `#D97706` (Golden Hour stroke) drives the
+  default light `--link` `oklch(62% 0.17 55)`, with the amber family
+  (`#F59E0B` / `#FFB84D`) as the default light `--brand` / `--accent`.
+  The Warm logo variant's golden fill `#FFE7B3` stays brand-tier.
+- **Brand blue.** Brand `#3B82F6` (Cool Blue primary, solid form) drives
+  `--brand` in the `blue` palette's light variant; Night Blue `#60A5FA`
+  drives the default dark `--brand` — same hexes inside the app.
 - **Teal accent.** Brand "Interactive Elements" gradient
-  `#67E8F9 → #06B6D4` (Tailwind cyan-300 → cyan-500) drives `--accent`
-  `oklch(70% 0.13 207)` / `oklch(85% 0.10 197)` in solid form. The brand
-  gradient is reserved for logos and marketing; the solid form is the
-  in-app accent.
+  `#67E8F9 → #06B6D4` (Tailwind cyan-300 → cyan-500) drives the dark
+  `--accent` `oklch(85% 0.10 197)` (and the blue palette's light accent)
+  in solid form. The brand gradient is reserved for logos and marketing;
+  the solid form is the in-app accent.
 - **Ink.** Hex `#0F172A` is shared across tiers as primary text on light
-  surfaces.
+  surfaces and as the Warm logo variant's stroke.
 
 No other color crosses tiers.
 
@@ -715,17 +725,24 @@ No other color crosses tiers.
 The canonical logo SVG (`packages/nimbus-ui/public/nimbus-logo.svg`) and
 tight mark (`nimbus-mark.svg`) accept `--logo-stroke` and `--logo-fill` as
 CSS variables. Variant rendering is parameter substitution — the path data
-is identical across all variants.
+is identical across all variants. `gen-variants.sh` also emits a
+`-transparent` companion for every variant (same colors, no background
+rect, viewBox cropped to the ink bounds so lockups control their own
+spacing) for placement on surfaces that own their own background: the
+docs hero, the docs top-nav, README badges. The wordmark is lowercase
+`nimbus` whenever it is set next to the mark.
 
 #### Usage Guidelines
 
-- **Warm** or **Golden Hour** — marketing pages, brand-forward touchpoints,
-  app icon (the most marketing-facing in-product surface). Default for the
+- **Warm** — the light-mode identity of the sky-cycle default: product UI
+  and docs light-mode favicon/logo, marketing pages, app icon, and the
   desktop setup card.
-- **Cool Blue** — product UI light-mode favicon. Matches the operator
-  console's overall light-mode feel.
-- **Night Blue** — product UI dark-mode favicon. Matches the operator
-  console's overall dark-mode feel.
+- **Golden Hour** — brand-forward marketing accents; its `#D97706` stroke
+  is the tier bridge into the default light `--link`.
+- **Cool Blue** — the `blue` palette's light variant (explicit choice in
+  Settings → Appearance), and cool-toned marketing touchpoints.
+- **Night Blue** — the dark-mode identity everywhere: product UI and docs
+  dark-mode favicon/logo, and the default dark palette.
 - **Monochrome** / **Reverse Mono** — minimal, enterprise, print. Tray
   icon uses monochrome on light menu bars; macOS auto-inverts for dark.
 - **Sunset Red**, **Soft Purple**, **Slate** — reserved for future
@@ -743,24 +760,33 @@ governing rule: **the doc body is product-tier; the splash hero is the
 site's single brand-tier moment.** Renderer: Astro Starlight in
 `website/`; tokens live in `website/src/styles/custom.css`.
 
-- **Doc body = product tier.** Starlight's gray scale maps to the Blue
-  palette OKLCH neutrals (`--bg`/`--surface`/`--border`/`--text`/`--muted`,
-  light and dark columns verbatim). Starlight has a single accent family,
-  so `--sl-color-accent` ← `--brand` (#3B82F6 light / #60A5FA dark) and
-  `--sl-color-accent-high` ← `--link`; the product tier's brand/accent/link
-  three-way split intentionally collapses to the brand family in docs —
-  teal stays out of the doc body. No gradients in the doc body.
+- **Doc body = product tier.** Starlight's gray scale maps to the default
+  palette's OKLCH neutrals — Warm light / Night Blue dark
+  (`--bg`/`--surface`/`--border`/`--text`/`--muted`, the sky-cycle columns
+  verbatim). Starlight has a single accent family: light
+  `--sl-color-accent` ← warm `--link` (#D97706) with accent-high deepened
+  to amber-800 strength for link text on paper; dark `--sl-color-accent`
+  ← `--brand` (#60A5FA) with accent-high ← `--link`. The product tier's
+  brand/accent/link three-way split intentionally collapses to one
+  identity family per mode in docs — teal stays out of the doc body. No
+  gradients in the doc body.
 - **Splash hero = brand tier, once.** Dark mode renders the hero title in
-  the canonical brand "Interactive Elements" gradient `#67E8F9 → #06B6D4`.
-  That gradient has **no light-mode-safe form** (cyan-300 fails contrast on
-  white), so light mode composes the two tier-bridge solids instead:
-  `#06B6D4 → #3B82F6` (accent → brand). These are the only gradient sites
-  on the docs surface.
-- **Logo + favicon.** Hero image and favicon use `cool-blue` (light) /
-  `night-blue` (dark) — the product-adjacent variants. The baked background
-  rect in the generated variants reads as a card in the hero but disqualifies
-  them for the top-nav strip; the nav stays text-title until a
-  transparent-background variant is added to `gen-variants.sh`.
+  the canonical brand "Interactive Elements" gradient `#67E8F9 → #06B6D4`
+  over Night Blue. Light mode is golden daylight, so its hero composes
+  the warm identity instead: `#F59E0B → #B45309` (amber-500 → amber-700)
+  on warm paper. These are the only gradient sites on the docs surface.
+- **Logo + wordmark + favicon.** The top nav renders the transparent mark
+  next to the lowercase wordmark `nimbus` (Starlight `title` +
+  `logo.light/dark`). Hero and nav use `warm-transparent` (light) /
+  `night-blue-transparent` (dark) so the mark sits on the page's own
+  background. The favicon follows the **page's resolved theme**, not the
+  OS scheme: a head script swaps `favicon-warm.svg` / `favicon-night.svg`
+  on `data-theme` changes (an SVG `prefers-color-scheme` query can only
+  see the OS, so a light page on a dark OS would otherwise show the night
+  favicon). The auto media-query `favicon.svg` stays as the no-JS
+  fallback. All three files are byte-identical to the operator console
+  set under `packages/nimbus-ui/public/`, and the console's
+  `ThemeController` does the same swap.
 - **Typography.** Body uses the system UI stack; code/IDs/paths use
   JetBrains Mono (`@fontsource-variable/jetbrains-mono`) with `-0.01em`
   letter spacing; tables apply `tabular-nums`. Radius 6px default / 8px

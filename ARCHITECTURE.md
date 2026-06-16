@@ -51,7 +51,7 @@ All 27 workspace members, per the root `Cargo.toml`.
 | `packages/codegen` (`@nimbus/codegen`) | Internal codegen embedded in the `nimbus` binary; generates TypeScript types and runtime artifacts. Not published. |
 | `packages/convex` (`convex`) | Drop-in `convex` package that points an existing Convex app at Nimbus with no source changes. |
 | `packages/dynamodb` (`@nimbus/dynamodb`) | Connection helpers for pointing the official AWS SDK at a Nimbus DynamoDB endpoint. |
-| `packages/firebase` (`@nimbus/firebase`) | First-party SDK mirroring the modular `firebase/app` + `firebase/firestore` API against Nimbus. |
+| `packages/firebase` (`firebase`) | Drop-in `firebase` package mirroring the modular `firebase/app` + `firebase/firestore` API against Nimbus; stock imports work unchanged. |
 | `packages/mongodb` (`@nimbus/mongodb`) | Connection-string helper for pointing the official MongoDB Node.js driver at Nimbus. |
 | `packages/nimbus` (`@nimbus/nimbus`) | First-party JavaScript/TypeScript SDK (`NimbusClient`, `NimbusProvider`, `useNimbus`). |
 | `packages/nimbus-ui` (`nimbus-ui`) | Embedded operator console SPA served by `nimbus-server` at `/ui/*`. |

@@ -12,10 +12,51 @@ export default defineConfig({
   site: 'https://nimbusdocs.com',
   integrations: [
     starlight({
-      title: 'Nimbus',
+      // The wordmark is lowercase "nimbus" next to the cloud mark
+      // (DESIGN.md §Brand Palette). Transparent logo variants so the mark
+      // sits on the nav's own background in both modes.
+      title: 'nimbus',
+      logo: {
+        light: '../docs/brand/logo/nimbus-warm-transparent.svg',
+        dark: '../docs/brand/logo/nimbus-night-blue-transparent.svg',
+      },
       description:
         'The single-binary backend for apps and AI agents. Drop-in compatible with Convex, Firestore, MongoDB, and DynamoDB.',
       favicon: '/favicon.svg',
+      head: [
+        // The favicon must follow the page's resolved theme, not the OS:
+        // an SVG prefers-color-scheme query only sees the OS scheme, so a
+        // light page on a dark OS would show the night favicon. Starlight
+        // resolves data-theme in a blocking head script before this runs;
+        // /favicon.svg (media-query auto) stays as the no-JS fallback.
+        {
+          tag: 'script',
+          content: `(function () {
+  var init = function () {
+    var link = document.querySelector('link[rel*="icon"]');
+    if (!link) return;
+    var update = function () {
+      link.href =
+        document.documentElement.dataset.theme === 'dark'
+          ? '/favicon-night.svg'
+          : '/favicon-warm.svg';
+    };
+    update();
+    new MutationObserver(update).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
+  };
+  // Head order is not guaranteed: this script can precede the favicon
+  // <link> in the parsed head, so wait for the DOM when it does.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();`,
+        },
+      ],
       social: [
         {
           icon: 'github',
@@ -45,22 +86,25 @@ export default defineConfig({
             { label: 'DynamoDB', items: [{ autogenerate: { directory: 'developers/dynamodb' } }] },
             { label: 'Native API', items: [{ autogenerate: { directory: 'developers/native' } }] },
             { label: 'Node.js runtime', items: [{ autogenerate: { directory: 'developers/runtimes/nodejs' } }] },
-            { label: 'SDK', items: [{ autogenerate: { directory: 'developers/sdk' } }] },
           ],
         },
+        { label: 'Agents', items: [{ autogenerate: { directory: 'agents' } }] },
         { label: 'Operators', items: [{ autogenerate: { directory: 'operators' } }] },
         {
           label: 'Concepts',
+          // Pedagogical order — primitives before composites: engine, then
+          // data, then isolation, then the surfaces and runtimes built on
+          // them, then the resource model, then how it all scales.
           items: [
             'concepts',
             'concepts/how-nimbus-works',
-            'concepts/tenant-isolation',
             'concepts/data-and-mutations',
+            'concepts/tenant-isolation',
             'concepts/adapter-boundary',
             'concepts/runtime-permissions',
+            'concepts/nodejs-runtime',
             'concepts/resource-model',
             'concepts/scaling',
-            'concepts/nodejs-runtime',
             { label: 'Architecture', items: [{ autogenerate: { directory: 'concepts/architecture' } }] },
           ],
         },

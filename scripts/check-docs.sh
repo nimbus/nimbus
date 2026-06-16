@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Honesty gates for the public docs corpus (nimbusdocs.com).
 #
-# 1. Dead links — every internal link in the five public groups (and the
+# 1. Dead links — every internal link in the six public groups (and the
 #    landing page) resolves to a published page or shipped asset.
 # 2. Source map — every doc page and every cited source path in
 #    docs/source-map.md exists in the repository.
 # 3. docs/private fence — nothing published references docs/private/, and
-#    the website content loader exposes only the five public groups.
+#    the website content loader exposes only the six public groups.
+# 4. Title uniqueness — every published page has a frontmatter title that
+#    is unique across the corpus (case-insensitive).
 #
 # Run from anywhere: bash scripts/check-docs.sh
 set -euo pipefail
@@ -17,7 +19,7 @@ cd "${ROOT}"
 python3 - <<'PYEOF'
 import os, re, sys, glob
 
-GROUPS = ["get-started", "developers", "operators", "concepts", "reference"]
+GROUPS = ["get-started", "developers", "agents", "operators", "concepts", "reference"]
 LANDING = "website/src/content/docs/index.mdx"
 # Build-emitted artifacts that are valid link targets but have no .md source.
 EMITTED = {"/llms.txt", "/llms-full.txt", "/llms-small.txt", "/sitemap-index.xml"}
@@ -130,11 +132,36 @@ if os.path.isdir("website/dist"):
         if "docs/private" in open(llms, encoding="utf-8", errors="replace").read():
             fail("fence", f"{llms} references docs/private")
 
+# --- 4. title uniqueness ------------------------------------------------------------
+title_re = re.compile(r"^title:\s*(.+?)\s*$")
+seen_titles = {}
+for f in files:
+    lines = open(f, encoding="utf-8").read().splitlines()
+    if not lines or lines[0].strip() != "---":
+        fail("titles", f"{f}: missing frontmatter block")
+        continue
+    title = None
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        m = title_re.match(line)
+        if m:
+            title = m.group(1).strip("'\"")
+            break
+    if not title:
+        fail("titles", f"{f}: missing frontmatter title")
+        continue
+    key = title.lower()
+    if key in seen_titles:
+        fail("titles", f"{f}: duplicate title {title!r} (also in {seen_titles[key]})")
+    else:
+        seen_titles[key] = f
+
 # --- report -----------------------------------------------------------------------
 if failures:
     print(f"check-docs: FAIL ({len(failures)})")
     for f in failures:
         print("  " + f)
     sys.exit(1)
-print(f"check-docs: PASS — {len(files)} pages link-clean, source map resolves, private fence intact")
+print(f"check-docs: PASS — {len(files)} pages link-clean, source map resolves, private fence intact, titles unique")
 PYEOF

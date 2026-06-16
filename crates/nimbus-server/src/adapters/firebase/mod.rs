@@ -25,13 +25,15 @@ pub(crate) use nimbus_firebase::{
 
 use std::sync::Arc;
 
-use axum::Json;
 use axum::body::Bytes;
-use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::extract::{Path, Request, State};
+use axum::http::{StatusCode, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use axum::{Extension, Json};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use nimbus_auth::ResolvedApplicationAuth;
 use nimbus_core::{Error, Result};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -62,15 +64,37 @@ fn firebase_error_response(error: Error) -> (StatusCode, Json<Value>) {
     (status, Json(body))
 }
 
+/// Auth context for one Firestore REST request, resolved once by
+/// [`require_firebase_rest_auth`] and injected as a request extension.
+#[derive(Clone)]
+pub(crate) struct FirebaseRestAuth(pub(crate) Arc<ResolvedApplicationAuth>);
+
+/// Route-layer middleware for every Firestore REST route: the adapter
+/// enabled-check, bearer resolution, and usage recording run here, before
+/// any handler — a REST route added to the firebase router cannot skip
+/// auth. The gRPC and WebSocket routes stay outside this layer: they
+/// resolve auth from their own request metadata and must answer failures
+/// with gRPC Status, not HTTP JSON.
+pub(crate) async fn require_firebase_rest_auth(
+    State(state): State<Arc<AppState>>,
+    mut request: Request,
+    next: Next,
+) -> std::result::Result<Response, AppError> {
+    ensure_firebase_enabled(&state)?;
+    let auth = resolve_application_auth_from_headers(&state, request.headers()).await?;
+    record_authenticated_usage(&state, auth.auth.as_ref()).await;
+    request
+        .extensions_mut()
+        .insert(FirebaseRestAuth(Arc::new(auth)));
+    Ok(next.run(request).await)
+}
+
 pub(crate) async fn commit(
     Path(params): Path<FirestoreRouteParams>,
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(FirebaseRestAuth(auth)): Extension<FirebaseRestAuth>,
     body: Bytes,
 ) -> std::result::Result<(StatusCode, Json<Value>), AppError> {
-    ensure_firebase_enabled(&state)?;
-    let auth = resolve_application_auth_from_headers(&state, &headers).await?;
-    record_authenticated_usage(&state, auth.auth.as_ref()).await;
     let request_json = parse_json_body(&body).map_err(firebase_error_to_app)?;
     let route_database =
         resource_names::decode_rest_database(&params.project_id, &params.database_id)
@@ -111,12 +135,9 @@ pub(crate) async fn commit(
 pub(crate) async fn batch_write(
     Path(params): Path<FirestoreRouteParams>,
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(FirebaseRestAuth(auth)): Extension<FirebaseRestAuth>,
     body: Bytes,
 ) -> std::result::Result<(StatusCode, Json<Value>), AppError> {
-    ensure_firebase_enabled(&state)?;
-    let auth = resolve_application_auth_from_headers(&state, &headers).await?;
-    record_authenticated_usage(&state, auth.auth.as_ref()).await;
     let request_json = match parse_json_body(&body) {
         Ok(json) => json,
         Err(error) => return Ok(firebase_error_response(error)),
@@ -170,12 +191,9 @@ pub(crate) async fn batch_write(
 pub(crate) async fn batch_get_documents(
     Path(params): Path<FirestoreRouteParams>,
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(FirebaseRestAuth(auth)): Extension<FirebaseRestAuth>,
     body: Bytes,
 ) -> std::result::Result<Response, AppError> {
-    ensure_firebase_enabled(&state)?;
-    let auth = resolve_application_auth_from_headers(&state, &headers).await?;
-    record_authenticated_usage(&state, auth.auth.as_ref()).await;
     let route_database =
         match resource_names::decode_rest_database(&params.project_id, &params.database_id) {
             Ok(database) => database,
@@ -252,12 +270,9 @@ pub(crate) async fn batch_get_documents(
 pub(crate) async fn begin_transaction(
     Path(params): Path<FirestoreRouteParams>,
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(FirebaseRestAuth(auth)): Extension<FirebaseRestAuth>,
     body: Bytes,
 ) -> std::result::Result<(StatusCode, Json<Value>), AppError> {
-    ensure_firebase_enabled(&state)?;
-    let auth = resolve_application_auth_from_headers(&state, &headers).await?;
-    record_authenticated_usage(&state, auth.auth.as_ref()).await;
     let route_database =
         match resource_names::decode_rest_database(&params.project_id, &params.database_id) {
             Ok(database) => database,
@@ -308,12 +323,9 @@ pub(crate) async fn begin_transaction(
 pub(crate) async fn rollback(
     Path(params): Path<FirestoreRouteParams>,
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(FirebaseRestAuth(auth)): Extension<FirebaseRestAuth>,
     body: Bytes,
 ) -> std::result::Result<(StatusCode, Json<Value>), AppError> {
-    ensure_firebase_enabled(&state)?;
-    let auth = resolve_application_auth_from_headers(&state, &headers).await?;
-    record_authenticated_usage(&state, auth.auth.as_ref()).await;
     let route_database =
         match resource_names::decode_rest_database(&params.project_id, &params.database_id) {
             Ok(database) => database,
@@ -355,7 +367,7 @@ pub(crate) async fn rollback(
 pub(crate) async fn list_collection_ids(
     Path(params): Path<FirestoreRouteParams>,
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(FirebaseRestAuth(auth)): Extension<FirebaseRestAuth>,
     body: Bytes,
 ) -> std::result::Result<(StatusCode, Json<Value>), AppError> {
     list_collection_ids_for_parent_document(
@@ -363,7 +375,7 @@ pub(crate) async fn list_collection_ids(
         &params.database_id,
         None,
         state,
-        &headers,
+        auth.as_ref(),
         body,
     )
     .await
@@ -372,7 +384,7 @@ pub(crate) async fn list_collection_ids(
 pub(crate) async fn run_query(
     Path(params): Path<FirestoreRouteParams>,
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(FirebaseRestAuth(auth)): Extension<FirebaseRestAuth>,
     body: Bytes,
 ) -> std::result::Result<Response, AppError> {
     run_query_for_parent_document(
@@ -380,7 +392,7 @@ pub(crate) async fn run_query(
         &params.database_id,
         None,
         state,
-        &headers,
+        auth.as_ref(),
         body,
     )
     .await
@@ -389,7 +401,7 @@ pub(crate) async fn run_query(
 pub(crate) async fn run_aggregation_query(
     Path(params): Path<FirestoreRouteParams>,
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(FirebaseRestAuth(auth)): Extension<FirebaseRestAuth>,
     body: Bytes,
 ) -> std::result::Result<Response, AppError> {
     run_aggregation_query_for_parent_document(
@@ -397,7 +409,7 @@ pub(crate) async fn run_aggregation_query(
         &params.database_id,
         None,
         state,
-        &headers,
+        auth.as_ref(),
         body,
     )
     .await
@@ -406,7 +418,7 @@ pub(crate) async fn run_aggregation_query(
 pub(crate) async fn run_document_action_under_parent_document(
     Path(params): Path<FirestoreDocumentRunQueryRouteParams>,
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(FirebaseRestAuth(auth)): Extension<FirebaseRestAuth>,
     body: Bytes,
 ) -> std::result::Result<Response, AppError> {
     if let Some(parent_document_path) = params.document_request.strip_suffix(":runQuery") {
@@ -415,7 +427,7 @@ pub(crate) async fn run_document_action_under_parent_document(
             &params.database_id,
             Some(parent_document_path),
             state,
-            &headers,
+            auth.as_ref(),
             body,
         )
         .await;
@@ -427,7 +439,7 @@ pub(crate) async fn run_document_action_under_parent_document(
             &params.database_id,
             Some(parent_document_path),
             state,
-            &headers,
+            auth.as_ref(),
             body,
         )
         .await;
@@ -438,7 +450,7 @@ pub(crate) async fn run_document_action_under_parent_document(
             &params.database_id,
             Some(parent_document_path),
             state,
-            &headers,
+            auth.as_ref(),
             body,
         )
         .await
@@ -452,12 +464,9 @@ async fn list_collection_ids_for_parent_document(
     database_id: &str,
     parent_document_path: Option<&str>,
     state: Arc<AppState>,
-    headers: &HeaderMap,
+    auth: &ResolvedApplicationAuth,
     body: Bytes,
 ) -> std::result::Result<(StatusCode, Json<Value>), AppError> {
-    ensure_firebase_enabled(&state)?;
-    let auth = resolve_application_auth_from_headers(&state, headers).await?;
-    record_authenticated_usage(&state, auth.auth.as_ref()).await;
     let route_database = match resource_names::decode_rest_database(project_id, database_id) {
         Ok(database) => database,
         Err(error) => return Ok(firebase_error_response(resource_name_error_to_core(error))),
@@ -519,12 +528,9 @@ async fn run_query_for_parent_document(
     database_id: &str,
     parent_document_path: Option<&str>,
     state: Arc<AppState>,
-    headers: &HeaderMap,
+    auth: &ResolvedApplicationAuth,
     body: Bytes,
 ) -> std::result::Result<Response, AppError> {
-    ensure_firebase_enabled(&state)?;
-    let auth = resolve_application_auth_from_headers(&state, headers).await?;
-    record_authenticated_usage(&state, auth.auth.as_ref()).await;
     let route_database = match resource_names::decode_rest_database(project_id, database_id) {
         Ok(database) => database,
         Err(error) => {
@@ -603,12 +609,9 @@ async fn run_aggregation_query_for_parent_document(
     database_id: &str,
     parent_document_path: Option<&str>,
     state: Arc<AppState>,
-    headers: &HeaderMap,
+    auth: &ResolvedApplicationAuth,
     body: Bytes,
 ) -> std::result::Result<Response, AppError> {
-    ensure_firebase_enabled(&state)?;
-    let auth = resolve_application_auth_from_headers(&state, headers).await?;
-    record_authenticated_usage(&state, auth.auth.as_ref()).await;
     let route_database = match resource_names::decode_rest_database(project_id, database_id) {
         Ok(database) => database,
         Err(error) => {

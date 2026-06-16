@@ -40,7 +40,7 @@ packages:
 | `packages/convex` | `convex` | Convex compatibility wrapper |
 | `packages/codegen` | `@nimbus/codegen` | Code generator behind `nimbus codegen` |
 | `packages/nimbus-ui` | `nimbus-ui` | Admin UI embedded into the server binary |
-| `packages/firebase` | `@nimbus/firebase` | Firebase-style app + Firestore client |
+| `packages/firebase` | `firebase` | Drop-in Firebase app + Firestore client (stock npm name) |
 | `packages/mongodb` | `@nimbus/mongodb` | Connection-string helper for the MongoDB surface |
 | `packages/dynamodb` | `@nimbus/dynamodb` | Client-config helper for the DynamoDB surface |
 
@@ -129,22 +129,29 @@ anywhere — it is compiled into the server binary:
   `crates/nimbus-server/src/http/ui.rs`, falling back to the embedded
   `index.html` for SPA routes.
 
-## Adapter helper packages
+## Adapter packages
 
-Three small packages smooth over client setup for the protocol adapters:
+Three packages support the protocol adapters on the client side:
 
-- `@nimbus/firebase` provides a Firebase-style `initializeApp` surface
+- `firebase` is a drop-in implementation of the modular `firebase/app` +
+  `firebase/firestore` API — an `initializeApp` surface
   (`packages/firebase/src/app.ts`) and a Firestore client
   (`packages/firebase/src/firestore.ts`) speaking the Firestore wire
-  protocol via Connect-Web generated protobuf code.
+  protocol via Connect-Web generated protobuf code. Like `convex`, it
+  takes the stock npm name, so existing imports work unchanged once the
+  app's `firebase` dependency points at the provisioned copy —
+  `nimbus packages provision firebase` rewires the `package.json`
+  dependency to `file:./.nimbus/packages/firebase` itself.
 - `@nimbus/mongodb` exports a single `mongoUri` helper that builds a
   connection string pointed at a Nimbus tenant, for use with the stock
   `mongodb` driver.
 - `@nimbus/dynamodb` exports `clientConfig` and `endpoint` helpers that
   configure the stock AWS SDK client against a Nimbus endpoint.
 
-In each case the official driver or SDK does the real work; the helper
-only points it at Nimbus.
+For MongoDB and DynamoDB the official driver or SDK does the real work and
+the helper only points it at Nimbus; the `firebase` package is a full
+client because Nimbus's Firestore surface replaces the upstream transport
+stack.
 
 ## Packages ship inside the binary
 
@@ -160,7 +167,7 @@ crates/nimbus-assets/embedded/packages/   (rust-embed, version-locked)
       ▼
 <app>/.nimbus/packages/<name>/  +  .version stamp
       ▲
-"convex": "file:./.nimbus/packages/convex"   (scaffolded package.json)
+"convex": "file:./.nimbus/packages/convex"   (scaffolded or auto-wired package.json)
 ```
 
 - A staging script copies each built package — plus three co-provisioned
@@ -175,7 +182,10 @@ crates/nimbus-assets/embedded/packages/   (rust-embed, version-locked)
   rewritten on the next call.
 - Scaffolds reference the payload with `file:` specifiers (for example
   `"convex": "file:./.nimbus/packages/convex"` in the embedded init
-  template), so `npm install` resolves entirely offline.
+  template), so `npm install` resolves entirely offline. For an existing
+  app, adapter provisioning writes the same specifier into the app's
+  `package.json` itself — replacing a registry spec — so migrating needs no
+  manual dependency edit.
 - On a binary upgrade the stamp drifts, provisioning rewrites the payload,
   and the installed copies are invalidated so Node reinstalls from the
   fresh bytes. `nimbus packages verify` re-checks every provisioned file

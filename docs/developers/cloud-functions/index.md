@@ -33,8 +33,8 @@ export const onMessageCreated = onDocumentCreated(
 
 - Install Nimbus — see the [developer quickstart](/get-started/quickstart/)
   for install options.
-- Install Node.js 22 with `npm`. Cloud Functions code generation runs
-  through the external Node toolchain.
+- Install Node.js 22 or newer with `npm`. Cloud Functions code generation
+  runs through the external Node toolchain.
 - The `firebase-functions` and `firebase-admin` packages are your own
   dependencies, installed from the npm registry (or a preinstalled
   `node_modules`).
@@ -55,17 +55,26 @@ codegen, and serves the local deployment, re-running codegen as you edit.
 
 ## Bring an existing Firebase project
 
-Keep your functions source unchanged, then generate artifacts and start the
-server from the project root:
+Keep your functions source unchanged and run `nimbus dev` from anywhere in
+the project:
+
+```bash
+# in your existing Firebase project
+nimbus dev
+```
+
+`nimbus dev` walks up to the `firebase.json` root, detects the Cloud
+Functions app, runs codegen, and serves the local deployment — re-running
+codegen as you edit.
+
+For an explicit or CI-shaped run without a dev session, generate artifacts
+and start the server from the project root, passing `--app-dir`
+explicitly (`nimbus start` does no source-tree discovery):
 
 ```bash
 nimbus codegen
 nimbus start --app-dir .
 ```
-
-`nimbus start` does no source-tree discovery — pass `--app-dir` explicitly.
-(`nimbus dev` does walk up from the current directory, bounded by the
-nearest `.git`.)
 
 Test an HTTP handler — Firebase `onRequest` exports serve at
 `/<exportName>` on the main server port (default `8080`):

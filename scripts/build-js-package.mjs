@@ -17,7 +17,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { assertNimbusRootSdkArtifactText } from "./nimbus-root-sdk-artifact-policy.mjs";
+import {
+  assertNimbusRootSdkArtifactText,
+  assertNimbusRootSdkRouteArtifactText,
+} from "./nimbus-root-sdk-artifact-policy.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TSC = path.join(REPO_ROOT, "node_modules", ".bin", "tsc");
@@ -41,13 +44,15 @@ const SANITIZE = {
   // codegen-time deps: `@nimbus/codegen` (codegen runs in-binary) and `esbuild`
   // (only used by the dev/test scripts, never the shipped surface).
   convex: { dropDependencies: ["@nimbus/codegen", "esbuild"], keepDependencies: ["@nimbus/nimbus"] },
-  // Firebase client. Its three runtime deps are zero-dep pure ESM used only by
-  // internal transport/generated protos (the public surface does not expose
-  // their types), so they are co-provisioned as additional binary-owned roots
-  // rather than bundled — no fragile .d.ts-bundler is needed and the proven
-  // per-file tsc emit applies. (Plan Decision permits "provisioned as
-  // additional binary-owned package roots".)
-  "@nimbus/firebase": {
+  // Firebase client — takes the stock npm name (like `convex`) so provisioned
+  // apps keep stock `firebase/app` + `firebase/firestore` imports. Its three
+  // runtime deps are zero-dep pure ESM used only by internal transport/
+  // generated protos (the public surface does not expose their types), so they
+  // are co-provisioned as additional binary-owned roots rather than bundled —
+  // no fragile .d.ts-bundler is needed and the proven per-file tsc emit
+  // applies. (Plan Decision permits "provisioned as additional binary-owned
+  // package roots".)
+  firebase: {
     dropDependencies: [],
     keepDependencies: ["@bufbuild/protobuf", "@connectrpc/connect", "@connectrpc/connect-web"],
   },
@@ -166,6 +171,8 @@ fs.writeFileSync(path.join(distDir, "package.json"), `${JSON.stringify(provision
 if (manifest.name === "@nimbus/nimbus") {
   verifyNimbusRootSdkArtifact(path.join(distDir, "index.js"), true);
   verifyNimbusRootSdkArtifact(path.join(distDir, "index.d.ts"), false);
+  verifyNimbusRootSdkRouteArtifact(path.join(distDir, "control_plane_routes.js"));
+  verifyNimbusRootSdkRouteArtifact(path.join(distDir, "control_plane_routes.d.ts"));
 }
 
 const emitted = fs.readdirSync(distDir).sort().join(", ");
@@ -177,6 +184,18 @@ function verifyNimbusRootSdkArtifact(filePath, runtime) {
     assertNimbusRootSdkArtifactText(path.relative(REPO_ROOT, filePath), artifact, {
       runtime,
     });
+  } catch (error) {
+    if (error instanceof Error) {
+      fail(error.message);
+    }
+    throw error;
+  }
+}
+
+function verifyNimbusRootSdkRouteArtifact(filePath) {
+  const artifact = fs.readFileSync(filePath, "utf8");
+  try {
+    assertNimbusRootSdkRouteArtifactText(path.relative(REPO_ROOT, filePath), artifact);
   } catch (error) {
     if (error instanceof Error) {
       fail(error.message);

@@ -1,5 +1,5 @@
 ---
-title: SDK React Bindings
+title: SDK React bindings
 description: Reference for @nimbus/nimbus/react — providers and hooks for queries, mutations, actions, pagination, auth, and connection state.
 sidebar:
   label: React

@@ -122,7 +122,11 @@ rmp-serde = "1"
 rusqlite = { version = "0.37", features = ["bundled-sqlcipher-vendored-openssl", "unlock_notify", "session", "modern_sqlite", "limits", "backup"] }
 serial_test = "3"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `raw_value` is additive-only (exposes `serde_json::value::RawValue`); it does
+# NOT change Map ordering or any existing serialization behavior. Used by the
+# CLI's order-preserving package.json dependency wiring. `preserve_order` stays
+# off: storage serializes documents through serde_json and must not reorder.
+serde_json = { version = "1", features = ["raw_value"] }
 serde_yaml = "0.9"
 semver = "1"
 shell-words = "1"

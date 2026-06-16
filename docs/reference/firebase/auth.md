@@ -39,7 +39,7 @@ The covered transports are:
 Compatibility-shape headers such as `x-goog-api-key` and `x-firebase-gmpid`
 are accepted on requests but are not auth inputs.
 
-## Token sources in `@nimbus/firebase`
+## Token sources in the provisioned `firebase` package
 
 The SDK can source auth material from:
 
@@ -65,5 +65,5 @@ The Firebase application-auth contract does **not** include:
 - Firebase Security Rules evaluation — port rules intent into application
   auth checks, see [Migrate from Firebase](/developers/firebase/migrate/)
 - local admin / server-access tokens on Firebase application routes
-- stock upstream SDK auth-behavior parity outside the first-party
-  `@nimbus/firebase` path
+- upstream Google SDK auth-behavior parity outside the first-party
+  provisioned `firebase` package path

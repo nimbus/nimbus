@@ -16,6 +16,7 @@ PLANS_README="docs/private/plans/README.md"
 AGENTS_MD="AGENTS.md"
 SDK_PACKAGE="packages/nimbus/package.json"
 SDK_ROOT="packages/nimbus/src/index.ts"
+SDK_CONTROL_ROUTES="packages/nimbus/src/control_plane_routes.ts"
 SDK_SELFTEST="packages/nimbus/src/selftest.mjs"
 SDK_SURFACE_CONTRACT="packages/nimbus/src/capability_surface_contract.mjs"
 ROOT_SDK_POLICY="scripts/nimbus-root-sdk-artifact-policy.mjs"
@@ -23,10 +24,16 @@ SDK_EXAMPLES_DOC="docs/private/examples/nimbus-sdk-resource-model.md"
 DOCS_README="docs/README.md"
 SDK_README="packages/nimbus/README.md"
 SERVICES_MANAGER="crates/nimbus-services/src/manager.rs"
-SERVICES_MANAGER_DEFINITION_TESTS="crates/nimbus-services/src/manager/tests/definitions.rs"
+SERVICES_MANAGER_DEFINITION_TESTS="crates/nimbus-services/src/manager/tests/definition_lifecycle.rs"
+SERVICES_MANAGER_SANDBOX_RESOURCE_TESTS="crates/nimbus-services/src/manager/tests/sandbox_resources.rs"
+SERVICES_MANAGER_SESSION_TESTS="crates/nimbus-services/src/manager/tests/sessions.rs"
+SERVICES_MANAGER_TENANT_TEARDOWN_TESTS="crates/nimbus-services/src/manager/tests/tenant_teardown.rs"
 SERVER_ROUTER="crates/nimbus-server/src/router.rs"
 SERVER_SERVICE_GRANTS="crates/nimbus-server/src/http/service_grants.rs"
 SERVER_SERVICES="crates/nimbus-server/src/http/services.rs"
+SERVER_RESOURCE_CONTROL_SANDBOXES="crates/nimbus-server/src/http/resource_control/sandboxes.rs"
+SERVER_RESOURCE_CONTROL_SERVICES="crates/nimbus-server/src/http/resource_control/services.rs"
+SERVER_RESOURCE_CONTROL_SESSIONS="crates/nimbus-server/src/http/resource_control/sessions.rs"
 SERVER_SANDBOXES="crates/nimbus-server/src/http/sandboxes.rs"
 SERVER_SANDBOX_SPEC="crates/nimbus-server/src/http/sandbox_spec.rs"
 SERVER_SESSIONS="crates/nimbus-server/src/http/sessions.rs"
@@ -130,6 +137,7 @@ import fs from "node:fs";
 
 const pkg = JSON.parse(fs.readFileSync("packages/nimbus/package.json", "utf8"));
 const sdk = fs.readFileSync("packages/nimbus/src/index.ts", "utf8");
+const routes = fs.readFileSync("packages/nimbus/src/control_plane_routes.ts", "utf8");
 
 const hasCanonicalManifest =
   pkg.name === "@nimbus/nimbus" &&
@@ -146,10 +154,30 @@ const hasCanonicalMethods = [
   "restart(input",
   "get(selector",
   "wait(input",
-  "/api/tenants/",
-  "/services/",
+  "controlPlaneRoutePath",
+  "controlPlaneRouteVerb",
   "createDefaultRestClient",
 ].every((fragment) => sdk.includes(fragment));
+
+const hasCanonicalControlPlaneRoutes = [
+  "NIMBUS_CONTROL_PLANE_ROUTES",
+  "services.start",
+  "services.stop",
+  "services.restart",
+  "services.create",
+  "sandboxes.create",
+  "sandboxes.stop",
+  "sessions.open",
+  "sessions.close",
+  "/api/tenants/{tenant_id}/services/{service_name}",
+  "/api/tenants/{tenant_id}/sandboxes/{sandbox_id}",
+  "/api/sessions/{session_id}/close",
+].every((fragment) => routes.includes(fragment));
+
+const rootAvoidsEmbeddedControlPlaneRoutes = [
+  "/api/tenants/",
+  "/api/sessions",
+].every((fragment) => !sdk.includes(fragment));
 
 const lacksFutureOrStaleRootSurface = [
   "ensureRunning",
@@ -162,7 +190,15 @@ const lacksFutureOrStaleRootSurface = [
   "async resolveRestClient",
 ].every((fragment) => !sdk.includes(fragment));
 
-process.exit(hasCanonicalManifest && hasCanonicalMethods && lacksFutureOrStaleRootSurface ? 0 : 1);
+process.exit(
+  hasCanonicalManifest &&
+  hasCanonicalMethods &&
+  hasCanonicalControlPlaneRoutes &&
+  rootAvoidsEmbeddedControlPlaneRoutes &&
+  lacksFutureOrStaleRootSurface
+    ? 0
+    : 1,
+);
 NODE
 }
 
@@ -200,7 +236,7 @@ condition_srm1_server_routes() {
     grep -q 'pub(crate) async fn start_service' "${SERVER_SERVICES}" &&
     grep -q 'pub(crate) async fn stop_service' "${SERVER_SERVICES}" &&
     grep -q 'pub(crate) async fn restart_service' "${SERVER_SERVICES}" &&
-    grep -q 'requires operator credentials or authenticated tenant/spawned workload identity' "${SERVER_SERVICES}" &&
+    grep -q 'requires operator credentials or authenticated tenant/spawned workload identity' "${SERVER_RESOURCE_CONTROL_SERVICES}" &&
     grep -q 'principal_has_exact_service_grant' "${SERVER_SERVICE_GRANTS}" &&
     grep -q 'service_grant_value_contains_wildcard' "${SERVER_SERVICE_GRANTS}" &&
     grep -q 'services:\*' "${SERVER_SERVICE_GRANTS}"
@@ -299,7 +335,7 @@ condition_srm2_authorization_split_tests() {
     grep -q 'create_service_definition_rejects_malformed_external_endpoint' "${SERVICES_MANAGER_DEFINITION_TESTS}" &&
     grep -q 'open_service_session_rejects_in_flight_definition_delete' "${SERVICES_MANAGER_DEFINITION_TESTS}" &&
     ! grep -q 'yield_now' "${SERVICES_MANAGER_DEFINITION_TESTS}" &&
-    grep -q 'ServiceDefinitionAction::ForceDelete' "${SERVER_SERVICES}" &&
+    grep -q 'ServiceDefinitionAction::ForceDelete' "${SERVER_RESOURCE_CONTROL_SERVICES}" &&
     grep -q 'ServiceDefinitionAction::Inspect' "${SERVER_SERVICES}" &&
     grep -q 'has an active backend; stop the service before updating its definition' crates/nimbus-services/src/manager/definitions.rs &&
     grep -q 'activation in progress' crates/nimbus-services/src/manager/definitions.rs &&
@@ -316,7 +352,7 @@ condition_srm2_authorization_split_tests() {
     grep -q 'service_definition_routes_reject_body_conflicts_and_inline_credentials' "${SERVER_SERVICE_MANAGER_DEFINITION_TESTS}" &&
     grep -q 'hostless external create should send' "${SERVER_SERVICE_MANAGER_DEFINITION_TESTS}" &&
     grep -Fq 'external_body["spec"]["backend"]["endpoint"]["url"]' "${SERVER_SERVICE_MANAGER_TESTS}" &&
-    grep -q 'principal_has_service_definition_permission' "${SERVER_SERVICES}" &&
+    grep -q 'principal_has_service_definition_permission' "${SERVER_RESOURCE_CONTROL_SERVICES}" &&
     grep -q 'principal_has_exact_service_grant' "${SERVER_SERVICE_GRANTS}"
 }
 
@@ -327,7 +363,8 @@ condition_srm3_sdk_sandbox_surface() {
     grep -q 'get(input: NimbusSandboxSelector)' "${SDK_ROOT}" &&
     grep -q 'list(input: NimbusSandboxListRequest' "${SDK_ROOT}" &&
     grep -q 'stop(input: NimbusSandboxSelector)' "${SDK_ROOT}" &&
-    grep -q '/api/tenants/.*/sandboxes' "${SDK_ROOT}" &&
+    grep -q '/api/tenants/{tenant_id}/sandboxes' "${SDK_CONTROL_ROUTES}" &&
+    grep -q '/api/tenants/{tenant_id}/sandboxes/{sandbox_id}' "${SDK_CONTROL_ROUTES}" &&
     grep -q 'sandbox resources are id-addressed, not name-addressed' "${SDK_SELFTEST}" &&
     ! grep -q 'resolveSandboxByName' "${SDK_ROOT}"
 }
@@ -341,9 +378,9 @@ condition_srm3_server_sandbox_routes() {
     grep -q 'SandboxCollectionResponse' "${SERVER_SANDBOXES}" &&
     grep -q 'spec: SandboxSpecInput' "${SERVER_SANDBOXES}" &&
     grep -q 'SandboxSpecResponse::from_spec' "${SERVER_SANDBOXES}" &&
-    grep -q 'principal_has_sandbox_permission' "${SERVER_SANDBOXES}" &&
-    grep -q 'principal_has_sandbox_list_permission' "${SERVER_SANDBOXES}" &&
-    grep -q 'sandbox_permission_scope_is_listable' "${SERVER_SANDBOXES}" &&
+    grep -q 'principal_has_sandbox_permission' "${SERVER_RESOURCE_CONTROL_SANDBOXES}" &&
+    grep -q 'principal_has_sandbox_list_permission' "${SERVER_RESOURCE_CONTROL_SANDBOXES}" &&
+    grep -q 'sandbox_permission_scope_is_listable' "${SERVER_RESOURCE_CONTROL_SANDBOXES}" &&
     grep -q 'label_key' "${SERVER_SANDBOXES}"
 }
 
@@ -356,9 +393,9 @@ condition_srm3_manager_sandbox_state() {
     grep -q 'ensure_sandbox_spec_matches' crates/nimbus-services/src/manager/sandboxes.rs &&
     grep -q 'ensure_sandbox_mounts_match' crates/nimbus-services/src/manager/sandboxes.rs &&
     grep -q 'stop_started_sandbox_resource_after_create_error' crates/nimbus-services/src/manager/sandboxes.rs &&
-    grep -q 'create_sandbox_resource_stops_backend_after_post_start_validation_errors' crates/nimbus-services/src/manager.rs &&
-    grep -q 'create_sandbox_resource_preserves_existing_backend_after_duplicate_started_id' crates/nimbus-services/src/manager.rs &&
-    grep -q 'duplicate-id failure must not stop a tracked sandbox through the create path' crates/nimbus-services/src/manager.rs &&
+    grep -q 'create_sandbox_resource_stops_backend_after_post_start_validation_errors' "${SERVICES_MANAGER_SANDBOX_RESOURCE_TESTS}" &&
+    grep -q 'create_sandbox_resource_preserves_existing_backend_after_duplicate_started_id' "${SERVICES_MANAGER_SANDBOX_RESOURCE_TESTS}" &&
+    grep -q 'duplicate-id failure must not stop a tracked sandbox through the create path' "${SERVICES_MANAGER_SANDBOX_RESOURCE_TESTS}" &&
     grep -q 'get_sandbox_resource_async' crates/nimbus-services/src/manager/sandboxes.rs &&
     grep -q 'stop_sandbox_resource_async' crates/nimbus-services/src/manager/sandboxes.rs &&
     grep -q 'requires standalone sandbox owner metadata' crates/nimbus-services/src/manager/sandboxes.rs &&
@@ -385,7 +422,7 @@ condition_srm4_sdk_session_surface() {
     grep -q 'get(input: NimbusSessionSelector)' "${SDK_ROOT}" &&
     grep -q 'list(input: NimbusSessionListRequest' "${SDK_ROOT}" &&
     grep -q 'close(input: NimbusSessionCloseRequest)' "${SDK_ROOT}" &&
-    grep -q '/api/sessions' "${SDK_ROOT}" &&
+    grep -q '/api/sessions' "${SDK_CONTROL_ROUTES}" &&
     grep -q 'sessions use open, not create' "${SDK_SELFTEST}" &&
     grep -q 'client-managed renewal is not part of the session lifecycle' "${SDK_SELFTEST}" &&
     grep -q 'unsupported channels are not part of the public session channel set' "${SDK_SELFTEST}" &&
@@ -403,16 +440,16 @@ condition_srm4_server_session_routes() {
     grep -q 'SessionCollectionResponse' "${SERVER_SESSIONS}" &&
     grep -q 'authorize_session_resource_lookup' "${SERVER_SESSIONS}" &&
     grep -q 'authorize_session_resource_target' "${SERVER_SESSIONS}" &&
-    grep -q 'session_target_reachable' "${SERVER_SESSIONS}" &&
-    grep -q 'principal_can_list_session' "${SERVER_SESSIONS}" &&
-    grep -q 'principal_has_session_permission' "${SERVER_SESSIONS}" &&
-    grep -q 'principal_has_session_list_permission' "${SERVER_SESSIONS}" &&
-    grep -q 'session_permission_scope_is_listable' "${SERVER_SESSIONS}" &&
+    grep -q 'session_target_reachable' "${SERVER_RESOURCE_CONTROL_SESSIONS}" &&
+    grep -q 'principal_can_list_session' "${SERVER_RESOURCE_CONTROL_SESSIONS}" &&
+    grep -q 'principal_has_session_permission' "${SERVER_RESOURCE_CONTROL_SESSIONS}" &&
+    grep -q 'principal_has_session_list_permission' "${SERVER_RESOURCE_CONTROL_SESSIONS}" &&
+    grep -q 'session_permission_scope_is_listable' "${SERVER_RESOURCE_CONTROL_SESSIONS}" &&
     grep -q 'session open target requires exactly one of `service` or `sandbox`' "${SERVER_SESSIONS}" &&
     grep -q 'principal_has_exact_service_grant' "${SERVER_SERVICE_GRANTS}" &&
-    grep -q 'super::service_grants::principal_has_exact_service_grant' "${SERVER_SESSIONS}" &&
-    grep -q 'principal_has_sandbox_reach' "${SERVER_SESSIONS}" &&
-    grep -q 'session_permission_channels_allow' "${SERVER_SESSIONS}"
+    grep -q 'super::super::service_grants::principal_has_exact_service_grant' "${SERVER_RESOURCE_CONTROL_SESSIONS}" &&
+    grep -q 'principal_has_sandbox_reach' "${SERVER_RESOURCE_CONTROL_SESSIONS}" &&
+    grep -q 'session_permission_channels_allow' "${SERVER_RESOURCE_CONTROL_SESSIONS}"
 }
 
 condition_srm4_manager_session_state() {
@@ -442,7 +479,7 @@ condition_srm4_session_boundary_tests() {
     grep -q 'service-scoped session list should send' "${SERVER_SERVICE_MANAGER_SESSION_TESTS}" &&
     grep -q 'sandbox-scoped session list should send' "${SERVER_SERVICE_MANAGER_SESSION_TESTS}" &&
     grep -q 'service_scoped_close' "${SERVER_SERVICE_MANAGER_SESSION_TESTS}" &&
-    grep -q 'open_session_rejects_not_ready_sandbox_targets' crates/nimbus-services/src/manager.rs &&
+    grep -q 'open_session_rejects_not_ready_sandbox_targets' "${SERVICES_MANAGER_SESSION_TESTS}" &&
     grep -q 'tenant-a-browser-session-service-scope' "${SERVER_SERVICE_MANAGER_TESTS}" &&
     grep -q 'session list must filter sessions whose service target is not reachable by exact grant' "${SERVER_SERVICE_MANAGER_SESSION_TESTS}" &&
     grep -q 'wildcard-grant session open should send' "${SERVER_SERVICE_MANAGER_SESSION_TESTS}" &&
@@ -509,7 +546,7 @@ condition_srm6_closeout_recorded() {
     [ "$(wc -l < "${SERVER_SERVICE_MANAGER_REDACTION_TESTS}")" -lt 2000 ] &&
     [ "$(wc -l < "${SERVER_SERVICE_MANAGER_SANDBOX_TESTS}")" -lt 2000 ] &&
     [ "$(wc -l < "${SERVER_SERVICE_MANAGER_SESSION_TESTS}")" -lt 2000 ] &&
-    grep -q 'teardown_tenant_stops_tracked_sandboxes_and_clears_tenant_resources' crates/nimbus-services/src/manager.rs &&
+    grep -q 'teardown_tenant_stops_tracked_sandboxes_and_clears_tenant_resources' "${SERVICES_MANAGER_TENANT_TEARDOWN_TESTS}" &&
     grep -q 'retain(|key, _| &key.tenant_id != tenant_id)' crates/nimbus-services/src/manager/registry.rs &&
     grep -q 'retain(|_, resource| &resource.tenant_id != tenant_id)' crates/nimbus-services/src/manager/registry.rs &&
     grep -q 'retain(|_, session| &session.tenant_id != tenant_id)' crates/nimbus-services/src/manager/registry.rs &&

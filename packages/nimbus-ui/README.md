@@ -21,8 +21,3 @@ Common commands:
   DU11 disposable-server fixture lands, prefer setting `NIMBUS_E2E_TOKEN_PATH`
   and `NIMBUS_E2E_BASE_URL` explicitly so tests do not depend on the
   operator's real local profile.
-
-The implementation plans are archived as
-`docs/private/plans/archive/desktop-ui-plan.md` (Phase 1 — embedded operator console)
-and `docs/private/plans/archive/desktop-shell-plan.md` (Phase 2 — native Electron
-shell at `nimbus/desktop`).

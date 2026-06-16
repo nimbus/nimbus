@@ -1,6 +1,6 @@
-import { FirestoreError } from "../firestore";
-import type { ListenRequest } from "../gen/google/firestore/v1/firestore_pb";
-import { fromBinary, toBinary, toJson, firestoreV1 } from "./protobuf";
+import { FirestoreError } from "../firestore.ts";
+import type { ListenRequest } from "../gen/google/firestore/v1/firestore_pb.ts";
+import { fromBinary, toBinary, toJson, firestoreV1 } from "./protobuf.ts";
 
 const RETRYABLE_LISTEN_CLOSE_CODES = new Set([1006, 1011]);
 const LISTEN_RECONNECT_DELAYS_MS = [0, 50, 250] as const;

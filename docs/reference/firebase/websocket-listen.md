@@ -1,7 +1,8 @@
 ---
-title: WebSocket Listen
+title: Firestore WebSocket Listen
 description: The browser-oriented Firestore Listen transport — framing, subprotocols, auth tunneling, and close codes.
 sidebar:
+  label: WebSocket Listen
   order: 2
 ---
 
@@ -14,8 +15,8 @@ GET /google.firestore.v1.Firestore/Listen
 
 This endpoint exists because gRPC-Web does not support bidirectional
 streams. Unary Firestore browser traffic uses REST or gRPC-Web; live queries
-(`onSnapshot`) use this WebSocket path. `@nimbus/firebase` selects it
-automatically.
+(`onSnapshot`) use this WebSocket path. Nimbus's provisioned `firebase`
+package selects it automatically.
 
 ## Framing
 

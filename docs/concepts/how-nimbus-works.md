@@ -15,37 +15,34 @@ property rather than a marketing one.
 
 ## One binary, five layers
 
-Inside the single process, responsibilities are split into layers that
-mirror the codebase's crate boundaries:
+Inside the single process, responsibilities are split into layers, each
+with one job:
 
-- **Server / transport** (`nimbus-server`) owns all network I/O: the
-  native HTTP and WebSocket API, plus the routes and listeners that carry
-  each compatibility protocol. It binds to loopback by default and is the
+- **The transport layer** owns all network I/O: the native HTTP and
+  WebSocket API, plus the routes and listeners that carry each
+  compatibility protocol. It binds to loopback by default and is the
   integration point that wires every other layer together.
-- **Protocol adapters** (`nimbus-convex`, `nimbus-firebase`,
-  `nimbus-cloud-functions`, `nimbus-mongodb`, `nimbus-dynamodb`) each own
-  one foreign dialect — wire formats, auth handshakes, error shapes — and
-  translate it into engine operations. Adapters are transport-agnostic
-  libraries; the server decides how each one is exposed.
-- **Engine** (`nimbus-engine`) is the central coordinator. Every read,
-  write, subscription, and scheduled job — from any surface — flows
-  through the `Engine` type. It owns validation, authorization, query
-  planning, the mutation path, and subscription fan-out.
-- **Runtime** (`nimbus-runtime`) executes your functions in-process in V8
-  isolates. It is deliberately standalone: it knows nothing about the rest
-  of Nimbus and declares what it needs from the host through a single
-  `HostBridge` contract. Bundles are SHA-256 integrity-checked before
-  invocation.
-- **Storage** (`nimbus-storage`) is the persistence layer behind one
-  engine-facing contract with multiple providers: embedded SQLite is the
-  default, redb is a second embedded option, and Postgres, MySQL, and
-  libSQL are external options. See
-  [storage backends](/operators/storage-backends/).
+- **The protocol adapters** each own one foreign dialect — wire formats,
+  auth handshakes, error shapes — and translate it into engine
+  operations. Adapters are transport-agnostic libraries; the transport
+  layer decides how each one is exposed.
+- **The engine** is the central coordinator. Every read, write,
+  subscription, and scheduled job — from any surface — flows through it.
+  It owns validation, authorization, query planning, the mutation path,
+  and subscription fan-out.
+- **The runtime** executes your functions in-process in V8 isolates. It
+  is deliberately standalone: it knows nothing about the rest of Nimbus
+  and declares what it needs from the host through a single host-bridge
+  contract. Bundles are SHA-256 integrity-checked before invocation.
+- **The storage layer** sits behind one engine-facing contract with
+  multiple providers: embedded SQLite is the default, redb is a second
+  embedded option, and Postgres, MySQL, and libSQL are external options.
+  See [storage backends](/operators/storage-backends/).
 
-A small shared-types crate (`nimbus-core`) defines the vocabulary —
-documents, tables, mutations, schemas, queries — used across all of them,
-and `nimbus-bin` wraps the whole stack in the CLI: `nimbus start` boots
-the server; `nimbus dev` runs the local development loop.
+A small set of shared types defines the vocabulary — documents, tables,
+mutations, schemas, queries — used across all of them, and the CLI wraps
+the whole stack: `nimbus start` boots the server; `nimbus dev` runs the
+local development loop.
 
 ## How a request flows
 
@@ -65,45 +62,33 @@ travel back out through the same adapter, re-encoded in the dialect the
 client expects.
 
 Function invocations add one loop to this picture, not a second path.
-When a request invokes one of your functions, the server hands the bundle
-to the runtime executor, which runs it in a V8 isolate. Every host call
-the function makes — `ctx.db.insert(...)`, a query, scheduling work —
-crosses the `HostBridge` into a server-owned bridge that calls the same
-engine methods a direct HTTP request would. There is no privileged side
-channel for code running inside the database: a write from a function and
-a write from an HTTP client converge on the identical engine-owned
-mutation path, with the same validation, authorization, and subscription
-fan-out. [Data and mutations](/concepts/data-and-mutations/) covers that
-path in detail.
+When a request invokes one of your functions, the runtime runs it in a V8
+isolate, and every host call it makes crosses the host-bridge contract
+into a server-owned bridge that calls the same engine methods a direct
+HTTP request would. A write from a function and a write from an HTTP
+client converge on one engine-owned mutation path; there is no privileged
+side channel for code running inside the database.
+[Data and mutations](/concepts/data-and-mutations/) covers that path in
+detail.
 
-The runtime's isolation from the rest of the system is structural. The
-runtime crate has no dependency on the engine or storage; it only defines
-the `HostBridge` trait, and the server supplies the implementation. Guest
-code can reach exactly what the bridge exposes — nothing else. Functions
-can also opt into Node.js compatibility targets while keeping the same
-in-process invocation model; see
+The runtime's isolation from the rest of the system is structural: it has
+no dependency on the engine or storage and only defines the host-bridge
+contract, which the rest of the stack supplies. Guest code can reach
+exactly what the bridge exposes — nothing else. Functions can also opt
+into Node.js compatibility targets while keeping the same in-process
+invocation model; see
 [how the Node runtime works](/concepts/nodejs-runtime/).
 
 ## Tenancy is a first-class boundary
 
 A single Nimbus server hosts many tenants, and the tenant boundary is
-built into every layer rather than filtered in at the edges:
-
-- The server admits each request to exactly one tenant before any lower
-  layer sees it.
-- Every engine operation is tenant-scoped — there is no engine API that
-  reads or writes across tenants.
-- Storage gives each tenant its own namespace: a separate database file
-  on the embedded providers, a separate schema on Postgres, a separate
-  database on MySQL, a separate namespace on libSQL. A cross-tenant query
-  is not merely forbidden; it is inexpressible at the storage layer.
-- Function invocations are bound to their tenant before any JavaScript
-  runs; the host bridge they call through carries that binding.
-
-This is also the scaling model: Nimbus scales by distributing tenants,
-not by sharding inside one tenant's data. The full trust model — runtime
-tiers, sandbox boundaries, auth — is in
-[tenant isolation](/concepts/tenant-isolation/), with operational
+built into every layer rather than filtered in at the edges: each request
+is admitted to exactly one tenant before any lower layer sees it, every
+engine operation is tenant-scoped, and each tenant owns a separate storage
+namespace, so a cross-tenant query is inexpressible rather than merely
+forbidden. This is also the scaling model — Nimbus scales by distributing
+tenants, not by sharding inside one tenant's data. The full trust model is
+in [tenant isolation](/concepts/tenant-isolation/), with operational
 procedures in the
 [tenant isolation operator guide](/operators/tenant-isolation/).
 

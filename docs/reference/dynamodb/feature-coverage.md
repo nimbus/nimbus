@@ -5,6 +5,10 @@ sidebar:
   order: 1
 ---
 
+Served by default on `127.0.0.1:8000`; opt out with `--no-dynamodb`;
+per-tenant signed access keys. Anything not listed as supported should be
+assumed unsupported.
+
 The Nimbus DynamoDB endpoint implements the full operation set below,
 grouped into tiers T0–T7. Requests are dispatched on the standard
 `X-Amz-Target` header (`DynamoDB_20120810.*` and
@@ -22,7 +26,7 @@ Status values:
 
 | Operation | Request surface | Response surface | Errors | Status |
 | --- | --- | --- | --- | --- |
-| `CreateTable` | `TableName`, `KeySchema`, `AttributeDefinitions`, `BillingMode`, `StreamSpecification`, `LocalSecondaryIndexes`, `GlobalSecondaryIndexes` | `TableDescription` with `TableStatus`, `TableArn`, `TableId` | `ResourceInUseException`, `ValidationException` | Implemented, with divergence (DDB-DIV-004: tables are `ACTIVE` immediately) |
+| `CreateTable` | `TableName`, `KeySchema`, `AttributeDefinitions`, `BillingMode`, `StreamSpecification`, `LocalSecondaryIndexes`, `GlobalSecondaryIndexes` | `TableDescription` with `TableStatus`, `TableArn`, `TableId` | `ResourceInUseException`, `ValidationException` | Implemented, with divergence (DDB-DIV-004: tables are `ACTIVE` immediately; [DDB-DIV-003](/reference/dynamodb/divergences/#ddb-div-003--the-_ddb_-table-name-prefix-is-reserved): the `_ddb_` name prefix is reserved) |
 | `DescribeTable` | `TableName` | `Table` | `ResourceNotFoundException` | Implemented |
 | `ListTables` | `ExclusiveStartTableName`, `Limit` | `TableNames`, `LastEvaluatedTableName`; paginated | — | Implemented |
 | `UpdateTable` | `TableName`, `BillingMode`, `StreamSpecification`, GSI updates, deletion protection | `TableDescription` | `ResourceNotFoundException`, `ValidationException` | Implemented |
@@ -34,7 +38,7 @@ Status values:
 
 | Operation | Request surface | Response surface | Errors | Status |
 | --- | --- | --- | --- | --- |
-| `PutItem` | `TableName`, `Item`, `ConditionExpression`, `ExpressionAttributeNames`/`Values`, `ReturnValues` | `Attributes` | `ConditionalCheckFailedException`, `ResourceNotFoundException`, `ValidationException` | Implemented, with divergence (DDB-DIV-005: storage format) |
+| `PutItem` | `TableName`, `Item`, `ConditionExpression`, `ExpressionAttributeNames`/`Values`, `ReturnValues` | `Attributes` | `ConditionalCheckFailedException`, `ResourceNotFoundException`, `ValidationException` | Implemented, with divergence (DDB-DIV-005: storage format; [DDB-DIV-001](/reference/dynamodb/divergences/#ddb-div-001--smaller-composite-primary-key-size-limit): smaller composite key-size limit) |
 | `GetItem` | `TableName`, `Key`, `ProjectionExpression`, `ConsistentRead` | `Item` | `ResourceNotFoundException`, `ValidationException` | Implemented |
 | `UpdateItem` | `TableName`, `Key`, `UpdateExpression`, `ConditionExpression`, `ReturnValues` | `Attributes` | `ConditionalCheckFailedException`, `ResourceNotFoundException`, `ValidationException` | Implemented |
 | `DeleteItem` | `TableName`, `Key`, `ConditionExpression`, `ReturnValues` | `Attributes` | `ConditionalCheckFailedException`, `ResourceNotFoundException`, `ValidationException` | Implemented |
@@ -109,8 +113,5 @@ Expired items are reclaimed by a background TTL sweeper (default cadence
 
 ## Not modeled
 
-Nimbus has no provisioned-capacity model: requests are not throttled
-against configured read/write capacity units, so capacity-driven retry
-loops written for AWS simply never trigger. See
-[divergences](/reference/dynamodb/divergences/) for the complete list of
-recorded behavioral differences.
+No provisioned-capacity model and the other recorded behavioral differences
+are listed on the [divergences](/reference/dynamodb/divergences/) page.

@@ -1,9 +1,9 @@
 ---
-title: Updates
+title: Update Nimbus
 description: Update the nimbus binary safely — per-install-method upgrade commands, restart and verify steps, built-in staleness checks, and the air-gapped opt-out.
 sidebar:
   label: Updates
-  order: 7
+  order: 5
 ---
 
 Nimbus never auto-upgrades itself. Updating is always an explicit
@@ -138,7 +138,7 @@ its own version.
 
 - [Backup and restore](/operators/backup-restore/) — take a backup
   before every upgrade.
-- [Node lifecycle](/operators/node-lifecycle/) — the service units that
+- [Run Nimbus as a service](/operators/node-lifecycle/) — the service units that
   restart the new binary.
 - [Troubleshooting](/operators/troubleshooting/) — if the server doesn't
   come back after an upgrade.

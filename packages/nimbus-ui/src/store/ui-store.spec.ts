@@ -67,21 +67,21 @@ describe("ui-store", () => {
     button.remove();
   });
 
-  it("defaults to blue palette when nothing is persisted", async () => {
-    const { useUiStore } = await import("./ui-store");
-    expect(useUiStore.getState().palette).toBe("blue");
-  });
-
-  it("hydrates palette from the persisted key", async () => {
-    window.localStorage.setItem(PALETTE_STORAGE_KEY, "warm");
+  it("defaults to warm palette when nothing is persisted", async () => {
     const { useUiStore } = await import("./ui-store");
     expect(useUiStore.getState().palette).toBe("warm");
   });
 
-  it("falls back to blue when the persisted palette is malformed", async () => {
-    window.localStorage.setItem(PALETTE_STORAGE_KEY, "rainbow");
+  it("hydrates palette from the persisted key", async () => {
+    window.localStorage.setItem(PALETTE_STORAGE_KEY, "blue");
     const { useUiStore } = await import("./ui-store");
     expect(useUiStore.getState().palette).toBe("blue");
+  });
+
+  it("falls back to warm when the persisted palette is malformed", async () => {
+    window.localStorage.setItem(PALETTE_STORAGE_KEY, "rainbow");
+    const { useUiStore } = await import("./ui-store");
+    expect(useUiStore.getState().palette).toBe("warm");
   });
 
   it("setPalette writes through and updates state", async () => {

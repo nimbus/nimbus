@@ -18,12 +18,14 @@ yet, then [build your first app](/developers/first-app/).
   your functions.
 - [Node.js runtime](/developers/runtimes/nodejs/) — `"use node"` actions,
   packages, and bundling.
-- [SDK resource model](/developers/sdk/resource-model/) — services,
-  sandboxes, and sessions with the `nimbus` JS SDK.
+- Building for AI agents? Sandboxes, services, and sessions have their
+  own [Agents](/agents/) section.
 
 ## Adapter guides
 
-Each protocol surface has a front door and a migration guide:
+Each protocol surface has a front door and a migration guide. Every server
+serves these surfaces by default, and `nimbus dev` detects which one your app
+uses and wires the app to it automatically:
 
 - [Convex](/developers/convex/) — the Convex function model, schema, and
   clients; [migrate a Convex app](/developers/convex/migrate/).

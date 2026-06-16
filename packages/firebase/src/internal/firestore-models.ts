@@ -1,4 +1,4 @@
-import type { FirebaseApp } from "../app";
+import type { FirebaseApp } from "../app.ts";
 import type {
   CollectionGroup,
   CollectionReference,
@@ -13,11 +13,11 @@ import type {
   QueryDocumentSnapshot,
   QuerySnapshot,
   SnapshotMetadata,
-} from "../firestore";
+} from "../firestore.ts";
 import {
   readValueAtFieldPath,
   splitFieldPath,
-} from "./document-data";
+} from "./document-data.ts";
 import {
   assertCollectionId,
   assertCollectionPath,
@@ -29,7 +29,7 @@ import {
   isQuery,
   type QuerySource,
   type StructuredQueryShape,
-} from "./firestore-helpers";
+} from "./firestore-helpers.ts";
 
 export const DEFAULT_DATABASE_ID = "(default)";
 const DEFAULT_HOST = "firestore.googleapis.com";

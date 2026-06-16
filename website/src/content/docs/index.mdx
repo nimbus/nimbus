@@ -1,13 +1,19 @@
 ---
-title: Nimbus
+title: nimbus
+# Starlight composes <title> as "<page> | <site>", which would render
+# "nimbus | nimbus" here — the head override gives the home page its own
+# tab title instead.
+head:
+  - tag: title
+    content: nimbus — your cloud, one binary
 description: The single-binary backend for apps and AI agents. Drop-in compatible with Convex, Firestore, MongoDB, and DynamoDB.
 template: splash
 hero:
-  title: Your whole backend in one binary
+  title: Your cloud backend in one binary
   tagline: The single-binary backend for apps and AI agents. Drop-in compatible with Convex, Firestore, MongoDB, and DynamoDB.
   image:
-    light: ../../../../docs/brand/logo/nimbus-cool-blue.svg
-    dark: ../../../../docs/brand/logo/nimbus-night-blue.svg
+    light: ../../../../docs/brand/logo/nimbus-warm-transparent.svg
+    dark: ../../../../docs/brand/logo/nimbus-night-blue-transparent.svg
     alt: Nimbus — BaaS in a binary
   actions:
     - text: Get started
@@ -19,12 +25,40 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/components';
+import { Tabs, TabItem, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## The whole backend in one command
+
+```bash
+nimbus dev
+```
+
+Run it in your project. One process — a single Rust binary — serves
+storage, TypeScript functions, realtime subscriptions, scheduling, and
+agent sandboxes, and reloads your functions as you save. No Compose file,
+no sidecar services, no managed account.
+
+Install it first:
+
+```bash
+brew install nimbus/tap/nimbus
+```
+
+Other platforms ship via the install script and release binaries — see the
+[install options](https://github.com/nimbus/nimbus#install). The
+[5-minute quickstart](/get-started/quickstart/) scaffolds an app around
+`nimbus dev`; the [self-host quickstart](/get-started/self-host/) runs the
+same binary as a long-lived server with `nimbus start`.
 
 ## One binary, your choice of client
 
+<div class="adapter-tabs">
 <Tabs>
   <TabItem label="Convex">
+    ```bash
+    # migrate an existing Convex app
+    nimbus dev
+    ```
     ```typescript
     // convex/messages.ts — server-side functions with reactive queries
     import { query, mutation } from "./_generated/server";
@@ -41,32 +75,46 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
         await ctx.db.insert("messages", { author, body }),
     });
     ```
-    See [the Convex guide](/developers/convex/) — or scaffold this app in
-    the [5-minute quickstart](/get-started/quickstart/).
+    One command in your project root: `nimbus dev` detects the `convex/`
+    directory and repoints the `convex` dependency at the package inside the
+    binary. See [the Convex guide](/developers/convex/) — or scaffold a fresh
+    app in the [5-minute quickstart](/get-started/quickstart/).
   </TabItem>
-  <TabItem label="Firestore">
+  <TabItem label="Firebase">
+    ```bash
+    # migrate an existing Firebase app
+    nimbus dev
+    ```
     ```typescript
-    // Stock Firestore SDK surface, served by Nimbus
-    import { initializeApp } from "@nimbus/firebase/app";
+    // Your Firebase code, unchanged — stock imports, served by Nimbus
+    import { initializeApp } from "firebase/app";
     import {
       addDoc,
       collection,
       connectFirestoreEmulator,
       getFirestore,
       onSnapshot,
-    } from "@nimbus/firebase/firestore";
+    } from "firebase/firestore";
 
     const db = getFirestore(initializeApp({ projectId: "demo" }));
-    connectFirestoreEmulator(db, "127.0.0.1", 8080);
+    connectFirestoreEmulator(db, "127.0.0.1", 3210);
 
     const messages = collection(db, "messages");
     await addDoc(messages, { body: "hello from nimbus" });
     onSnapshot(messages, (live) => console.log("live size", live.size));
     ```
-    See [the Firestore guide](/developers/firebase/) for enabling the
-    routes (`nimbus start --firestore`).
+    Firestore is Firebase's database — Nimbus speaks its wire protocol and
+    ships a drop-in `firebase` package inside the binary. `nimbus dev`
+    detects the `firebase` dependency, checks every Firebase import in
+    your sources is covered, and rewires the dependency at the drop-in —
+    your imports stay exactly as they are. See
+    [the Firestore guide](/developers/firebase/).
   </TabItem>
   <TabItem label="Cloud Functions">
+    ```bash
+    # migrate an existing Functions project
+    nimbus dev
+    ```
     ```typescript
     // functions/src/index.ts — Firebase-style HTTP + Firestore triggers
     import { onRequest } from "firebase-functions/v2/https";
@@ -83,35 +131,49 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
       },
     );
     ```
-    See [the Cloud Functions guide](/developers/cloud-functions/) for the
+    Run `nimbus dev` in your existing Functions project — `firebase.json`
+    marks the root. See
+    [the Cloud Functions guide](/developers/cloud-functions/) for the
     project layout and deploy flow.
   </TabItem>
   <TabItem label="MongoDB">
+    ```bash
+    # no migration — use your existing driver
+    nimbus dev
+    ```
     ```javascript
-    // Official MongoDB driver against Nimbus's wire-protocol endpoint
+    // Official MongoDB driver, unchanged — Nimbus speaks the wire protocol
     import { MongoClient } from "mongodb";
 
-    const client = new MongoClient(
-      "mongodb://app-user:app-secret@127.0.0.1:27017/myapp?directConnection=true",
-    );
+    const client = new MongoClient(process.env.NIMBUS_MONGODB_URL);
     await client.connect();
 
     const messages = client.db("myapp").collection("messages");
     await messages.insertOne({ author: "Ada", body: "Hello from Nimbus" });
     const docs = await messages.find({ author: "Ada" }).toArray();
     ```
-    See [the MongoDB guide](/developers/mongodb/) for enabling the
-    endpoint (`nimbus start --mongodb-port 27017`).
+    `nimbus dev` sees the `mongodb` dependency and writes
+    `NIMBUS_MONGODB_URL` — the local endpoint plus generated credentials —
+    to your app's `.env.local`. See
+    [the MongoDB guide](/developers/mongodb/) for credential setup and
+    the supported command surface.
   </TabItem>
   <TabItem label="DynamoDB">
+    ```bash
+    # no migration — use your existing AWS SDK
+    nimbus dev
+    ```
     ```javascript
-    // AWS SDK v3 pointed at Nimbus's DynamoDB endpoint
+    // Official AWS SDK v3, unchanged — pointed at Nimbus's endpoint
     import { DynamoDBClient, PutItemCommand, GetItemCommand } from "@aws-sdk/client-dynamodb";
 
     const client = new DynamoDBClient({
-      endpoint: "http://127.0.0.1:8000",
+      endpoint: process.env.NIMBUS_DYNAMODB_ENDPOINT,
       region: "us-east-1",
-      credentials: { accessKeyId: "AKIAACME", secretAccessKey: "acme-secret" },
+      credentials: {
+        accessKeyId: process.env.NIMBUS_DYNAMODB_ACCESS_KEY_ID,
+        secretAccessKey: process.env.NIMBUS_DYNAMODB_SECRET_ACCESS_KEY,
+      },
     });
 
     await client.send(new PutItemCommand({
@@ -123,12 +185,19 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
       Key: { pk: { S: "order-1" } },
     }));
     ```
-    See [the DynamoDB guide](/developers/dynamodb/) for enabling the
-    endpoint (`nimbus start --dynamodb-port 8000`).
+    `nimbus dev` sees the `@aws-sdk/client-dynamodb` dependency and writes
+    the endpoint and a generated access key to `.env.local` as
+    `NIMBUS_DYNAMODB_*` keys. See
+    [the DynamoDB guide](/developers/dynamodb/) for registered-key
+    credentials and the supported operation surface.
   </TabItem>
   <TabItem label="HTTP API">
     ```bash
-    # Nimbus's own REST surface — the same engine, no SDK and no codegen
+    # native API — nothing to migrate
+    nimbus start
+    ```
+    ```bash
+    # the same engine over plain REST
     curl -s -X POST http://localhost:8080/api/tenants \
       -H "Authorization: Bearer $NIMBUS_TOKEN" \
       -H "Content-Type: application/json" -d '{"id": "demo"}'
@@ -141,29 +210,98 @@ import { Card, CardGrid, Tabs, TabItem, LinkCard } from '@astrojs/starlight/comp
     See the [native API guide](/developers/native/) and the
     [self-host quickstart](/get-started/self-host/) for the token setup.
   </TabItem>
+  <TabItem label="Sandboxes">
+    ```bash
+    # isolated compute for agents — same binary
+    nimbus start
+    ```
+    ```typescript
+    // @nimbus/nimbus SDK — give an agent its own isolated process
+    import { Nimbus } from "@nimbus/nimbus";
+
+    const nimbus = new Nimbus({
+      endpoint: "http://localhost:8080",
+      tenantId: "demo",
+      token: process.env.NIMBUS_TOKEN,
+    });
+
+    const sandbox = await nimbus.sandboxes.create({
+      profile: "worker",
+      spec: {
+        owner: { kind: "standalone", displayName: "agent-task" },
+        backend: "container",
+        root: {
+          kind: "oci_image",
+          source: { kind: "reference", reference: "docker.io/library/node:22-alpine" },
+        },
+        process: { argv: ["node", "-e", "setInterval(() => {}, 1000)"] },
+      },
+    });
+    ```
+    Sandboxes, services, and sessions live in the same binary as your
+    data — no separate sandbox vendor. Execution runs on Linux hosts;
+    `nimbus machine` hosts them on macOS. Start with the
+    [agent sandbox quickstart](/agents/sandbox-quickstart/).
+  </TabItem>
 </Tabs>
+</div>
 
-Every tab above is the same engine and the same data — five drop-in
-protocol surfaces plus Nimbus's native API. See
-[Developers](/developers/) for all of them side by side.
+Every tab is the same engine and the same data — five drop-in protocols,
+the native API, and the sandbox surface. See [Developers](/developers/)
+for the adapters side by side.
 
-<CardGrid stagger>
-  <Card title="One binary" icon="rocket">
-    Storage, compute, networking, realtime, and scheduling in a single
-    self-hostable Rust binary.
-  </Card>
-  <Card title="Drop-in compatible" icon="puzzle">
-    Speaks Convex, Firestore, Cloud Functions, MongoDB, and DynamoDB wire
-    protocols — bring your existing clients.
-  </Card>
-  <Card title="Built for agents" icon="seti:powershell">
-    A backend AI agents can run, inspect, and build against — with llms.txt
-    and an agent-readable surface.
-  </Card>
-  <Card title="No lock-in" icon="setting">
-    Self-hosted, source-available, and protocol-portable by design.
-  </Card>
+## Production is one more verb
+
+```bash
+nimbus dev      # laptop: watch files, run codegen, reload functions
+nimbus deploy   # production: package, validate, activate atomically
+```
+
+You have already run the first one. Both are the same binary with the
+same configuration surface — no Terraform, no Helm chart, no Dockerfile
+between them. `nimbus deploy` packages your functions, previews a diff
+with `--dry-run`, and activates the new generation atomically on whatever
+server you point it at.
+[Deploy to production](/get-started/deploy/) walks the whole flow.
+
+## Built for agents
+
+Agents need a backend they can **run** (one binary, started in one
+command), **inspect** (docs shipped as [llms.txt](/llms.txt), structured
+errors, and a
+[plain table of what works today](/reference/current-capabilities/)), and
+get **isolated compute** from.
+That last part is first-class: **sandboxes** are isolated worlds addressed
+by id, **services** are named workloads other code can depend on, and
+**sessions** are expiring leases for stdio, file, and browser-control
+access — all managed through the `@nimbus/nimbus` SDK against the same
+server that holds your data.
+
+<CardGrid>
+  <LinkCard
+    title="Agent sandbox quickstart"
+    description="Create a sandbox, lease a session, tear it down — about 5 minutes."
+    href="/agents/sandbox-quickstart/"
+  />
+  <LinkCard
+    title="Agents overview"
+    description="Sandboxes, services, and sessions — the guides and the design rationale."
+    href="/agents/"
+  />
 </CardGrid>
+
+## Scale with tenants and services
+
+The unit of isolation is also the unit of growth. Every tenant gets its
+own storage namespace, its own write queue, and its own function budgets —
+load on one tenant cannot degrade another, and adding load means adding
+tenants. Heavier compute fans out into sandbox-backed services that Nimbus
+launches and supervises next to your data, and storage can move onto
+PostgreSQL, MySQL, or libSQL infrastructure that grows independently. One
+deployment is one process today — no cluster mode;
+[scaling](/concepts/scaling/) spells out the limits and the partitioning
+pattern for growing past one machine. Self-hosted, source-available, and
+protocol-portable by design: no lock-in.
 
 ## Find your path
 
@@ -177,6 +315,16 @@ protocol surfaces plus Nimbus's native API. See
     title="Self-host quickstart"
     description="Run the server and make your first requests with curl — about 2 minutes."
     href="/get-started/self-host/"
+  />
+  <LinkCard
+    title="Agent sandboxes"
+    description="Isolated compute for agents: sandboxes, services, and sessions from one SDK."
+    href="/agents/"
+  />
+  <LinkCard
+    title="Deploy to production"
+    description="One command from laptop to server — preview the diff, activate atomically."
+    href="/get-started/deploy/"
   />
   <LinkCard
     title="Coming from Convex"

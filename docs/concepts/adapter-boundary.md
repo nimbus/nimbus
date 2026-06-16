@@ -56,8 +56,8 @@ allowed.
 
 ## The engine owns semantics
 
-Everything below the translation line is owned once, by the engine
-(`nimbus-engine`) and the storage layer beneath it:
+Everything below the translation line is owned once, by the engine and
+the storage layer beneath it:
 
 - **Documents and tables.** One per-tenant document store, structurally
   scoped per tenant (see [tenant isolation](/concepts/tenant-isolation/)).
@@ -82,22 +82,14 @@ Everything below the translation line is owned once, by the engine
 
 ## No adapter has its own write path
 
-This is the load-bearing rule. There is exactly one mutation path in
-Nimbus, and every surface uses it:
-
-- A MongoDB `insertMany`, a DynamoDB `PutItem`, a Firestore commit, and
-  a Convex mutation all become engine write batches on the same code
-  path.
-- A server-side function calling `ctx.db.insert(...)` goes through the
-  engine host-call bridge into that same path — running inside the
-  runtime does not create a side channel.
-- Function bundles are integrity-checked before execution, and host
-  calls run under a session bound to the admitted tenant and principal.
-
-Because there is no second path, there is no surface where atomicity,
-schema validation, index maintenance, or tenant scoping could quietly
-differ. A guarantee proven once on the engine path holds on every
-protocol.
+This is the load-bearing rule: a MongoDB `insertMany`, a DynamoDB
+`PutItem`, a Firestore commit, a Convex mutation, and a server-side
+function's `ctx.db.insert(...)` all converge on one engine-owned mutation
+path, so there is no surface where atomicity, schema validation, index
+maintenance, or tenant scoping could quietly differ — a guarantee proven
+once on that path holds on every protocol.
+[Data and mutations](/concepts/data-and-mutations/) covers the path in
+detail.
 
 ## What this buys you
 
@@ -114,7 +106,7 @@ same on every surface, because they are implemented once. There is no
 differences are differences of *dialect coverage*, not of storage
 semantics.
 
-**Honest compatibility boundaries.** Since adapters only translate,
+**Compatibility boundaries are a contract.** Since adapters only translate,
 what each one supports is a checkable contract over a known engine. The
 per-surface contracts are published as reference pages —
 [Convex](/reference/convex/compatibility/),

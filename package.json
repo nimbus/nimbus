@@ -20,7 +20,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "build:embedded-packages": "npm run build -w convex -w @nimbus/nimbus -w @nimbus/firebase -w @nimbus/mongodb -w @nimbus/dynamodb -w @nimbus/codegen && node scripts/stage-embedded-packages.mjs",
+    "build:embedded-packages": "npm run build -w convex -w @nimbus/nimbus -w firebase -w @nimbus/mongodb -w @nimbus/dynamodb -w @nimbus/codegen && node scripts/stage-embedded-packages.mjs",
     "lint:capability-boundary": "biome lint --config-path ./biome.json packages/convex/src packages/firebase/src packages/mongodb/src packages/dynamodb/src",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",

@@ -148,7 +148,7 @@ event (scoped `nimbus.tenant_isolation`) is recorded.
 
 - [Tenant isolation](/concepts/tenant-isolation/) — the user-facing trust
   model this machinery implements.
-- [Tenant isolation for operators](/operators/tenant-isolation/) — operating
+- [Manage tenants](/operators/tenant-isolation/) — operating
   the isolation modes.
 - [Sandboxes and machines](/concepts/architecture/sandbox-machines/) — the
   backends behind the `MicroVmService` and container launch paths.

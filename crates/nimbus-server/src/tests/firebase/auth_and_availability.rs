@@ -1055,6 +1055,47 @@ async fn firebase_rest_routes_are_registered_when_adapter_is_enabled() {
 }
 
 #[tokio::test]
+async fn firebase_rest_routes_reject_invalid_bearer_uniformly() {
+    // The shared route-layer middleware is what makes Firestore REST auth
+    // structural: every REST route — including the unknown-action
+    // fallthrough under /documents/{*...} that would otherwise 404 —
+    // answers an unverifiable bearer with 401 before any handler runs.
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server =
+        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
+
+    for path in [
+        "/v1/projects/demo/databases/(default)/documents:commit",
+        "/v1/projects/demo/databases/(default)/documents:batchWrite",
+        "/v1/projects/demo/databases/(default)/documents:batchGet",
+        "/v1/projects/demo/databases/(default)/documents:beginTransaction",
+        "/v1/projects/demo/databases/(default)/documents:rollback",
+        "/v1/projects/demo/databases/(default)/documents:listCollectionIds",
+        "/v1/projects/demo/databases/(default)/documents:runQuery",
+        "/v1/projects/demo/databases/(default)/documents:runAggregationQuery",
+        "/v1/projects/demo/databases/(default)/documents/cities/SF:runQuery",
+        "/v1/projects/demo/databases/(default)/documents/cities/SF:listCollectionIds",
+        "/v1/projects/demo/databases/(default)/documents/cities/SF:unknownAction",
+    ] {
+        let response = server
+            .client()
+            .post(server.http_url(path))
+            .header(header::AUTHORIZATION, "Bearer not-a-real-token")
+            .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+            .body("{}")
+            .send()
+            .await
+            .expect("invalid-bearer firebase request should send");
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "every Firestore REST route must reject an invalid bearer before its handler runs: {path}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn firebase_commit_rejects_malformed_commit_json() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server =

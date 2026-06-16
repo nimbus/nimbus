@@ -1,6 +1,6 @@
 ---
 title: Current capabilities
-description: An honest snapshot of what Nimbus implements today — every major capability with a status and a link to its documentation.
+description: A snapshot of what Nimbus implements today — every major capability with a status and a link to its documentation.
 sidebar:
   label: Current capabilities
   order: 5
@@ -48,11 +48,11 @@ Each capability carries one of three statuses:
 | --- | --- | --- |
 | Convex | Available | Detected by `nimbus dev` and `nimbus start` from your `convex/` directory. See the [guide](/developers/convex/) and [compatibility reference](/reference/convex/compatibility/). |
 | Cloud Functions for Firebase | Available | Detected from `firebase.json`. See the [guide](/developers/cloud-functions/) and [compatibility reference](/reference/cloud-functions/compatibility/). |
-| Firestore | Available | Enable with `nimbus start --firestore`. See the [guide](/developers/firebase/) and [compatibility reference](/reference/firebase/compatibility/). |
-| MongoDB wire protocol | Available | Enable with `nimbus start --mongodb-port` plus SCRAM credentials (`--mongodb-username`, `NIMBUS_MONGODB_PASSWORD`). Loopback-only listener. See the [guide](/developers/mongodb/) and [operations reference](/reference/mongodb/operations/). |
-| DynamoDB API | Available | Enable with `nimbus start --dynamodb-port` and `--dynamodb-access-key KEY_ID:SECRET:TENANT` bindings (dedicated listener, DynamoDB Local convention port 8000). See the [guide](/developers/dynamodb/) and [feature coverage](/reference/dynamodb/feature-coverage/). |
+| Firestore | Available | Served by default on the main listener (`--no-firestore` switches it off); `nimbus dev` wires covered Firebase apps at the drop-in package automatically. See the [guide](/developers/firebase/) and [compatibility reference](/reference/firebase/compatibility/). |
+| MongoDB wire protocol | Available | Served by default on `127.0.0.1:27017` (`--no-mongodb` switches it off); generated SCRAM credentials unless overridden (`--mongodb-username`, `NIMBUS_MONGODB_PASSWORD`); `nimbus dev` writes `NIMBUS_MONGODB_URL` to `.env.local` for detected driver apps. Loopback-only listener. See the [guide](/developers/mongodb/) and [operations reference](/reference/mongodb/operations/). |
+| DynamoDB API | Available | Served by default on `127.0.0.1:8000` (`--no-dynamodb` switches it off); a generated access key bound to tenant `default` unless `--dynamodb-access-key KEY_ID:SECRET:TENANT` bindings are given; `nimbus dev` writes `NIMBUS_DYNAMODB_*` keys to `.env.local` for detected SDK apps. See the [guide](/developers/dynamodb/) and [feature coverage](/reference/dynamodb/feature-coverage/). |
 | Native HTTP and WebSocket API | Available | Always on. See [build on the native API](/developers/native/). |
-| Nimbus JavaScript SDK | Available | Services, sandboxes, and sessions from one client. See the [SDK guide](/developers/sdk/resource-model/). |
+| Nimbus JavaScript SDK | Available | Services, sandboxes, and sessions from one client. See the [Agents guides](/agents/). |
 
 ## Storage and operations
 
@@ -64,7 +64,7 @@ Each capability carries one of three statuses:
 | libSQL / Turso backend | Available | Local replica reads against a remote libSQL primary, with replica-freshness diagnostics. |
 | redb backend | Available | Retained embedded key-value backend; prefer SQLite otherwise. |
 | Encryption at rest | Available | Per-file data keys with master-key-file, key-directory, or AWS KMS providers, plus key-rotation commands. See [encryption](/operators/encryption/). |
-| Backup and restore | Available with caveats | Storage-level procedures only — no first-class backup command and no point-in-time recovery. See [backup & restore](/operators/backup-restore/). |
+| Backup and restore | Available with caveats | `nimbus backup create`/`restore` for the embedded SQLite and redb providers — one offline, per-tenant archive captured at each tenant's latest committed sequence (server stopped), verified by fingerprint on restore. External backends and encrypted data directories use native or cold-copy procedures; there is no continuous point-in-time recovery. See [backup & restore](/operators/backup-restore/). |
 | Production deployment | Available | [Linux servers](/operators/deploy-linux/), the official [container image](/operators/container-image/), and a [desktop install](/operators/desktop-install/) for the operator console. |
 
 ## Services, sandboxes, and machines
@@ -81,6 +81,6 @@ Each capability carries one of three statuses:
 | Capability | Status | Notes |
 | --- | --- | --- |
 | Multi-node clustering and horizontal scale-out | Not yet | A Nimbus deployment is a single process today. See [scaling](/concepts/scaling/). |
-| First-class backup command and point-in-time recovery | Not yet | Back up the storage layer directly; see [backup & restore](/operators/backup-restore/). |
+| Continuous point-in-time recovery and external-backend backup command | Not yet | `nimbus backup` covers the embedded providers offline; external backends use their native tooling, and there is no continuous or arbitrary-timestamp recovery. See [backup & restore](/operators/backup-restore/). |
 | MongoDB change streams | Not yet | See [MongoDB operations](/reference/mongodb/operations/). |
 | Automatic updates | Not yet | The server checks for new versions but never upgrades itself. See [updates](/operators/updates/). |

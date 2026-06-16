@@ -27,16 +27,16 @@ haven't run a server yet, then work through
   Postgres, MySQL, and libSQL topologies.
 - [Encryption at rest](/operators/encryption/) — key providers, migration,
   and rotation.
-- [Backup and restore](/operators/backup-restore/) — what to capture per
-  backend and how to restore it.
+- [Backup and restore](/operators/backup-restore/) — `nimbus backup` for the
+  embedded providers, plus what to capture per backend and how to restore it.
 
 ## Administration
 
-- [Tenant isolation](/operators/tenant-isolation/) — create and administer
+- [Manage tenants](/operators/tenant-isolation/) — create and administer
   tenants on a running server.
-- [Node lifecycle](/operators/node-lifecycle/) — systemd and Quadlet
+- [Run Nimbus as a service](/operators/node-lifecycle/) — systemd and Quadlet
   service management with `nimbus node`.
-- [Observability](/operators/observability/) — health, debug endpoints,
+- [Inspect the server](/operators/observability/) — health, debug endpoints,
   logs, and the access audit log.
 - [Security hardening](/operators/hardening/) — the checklist for exposed
   deployments.

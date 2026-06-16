@@ -1,5 +1,5 @@
 ---
-title: SDK Server Functions
+title: SDK server functions
 description: Reference for @nimbus/nimbus/server and @nimbus/nimbus/values — function builders, context surfaces, schema, pagination, and validators.
 sidebar:
   label: Server functions

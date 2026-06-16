@@ -86,6 +86,9 @@ context when it writes functions for a Nimbus backend.
   `page`, `isDone`, and `continueCursor`.
 - For React's `usePaginatedQuery`, register the function with
   `paginatedQuery` (from `./_generated/server`) instead of `query`.
+  `paginatedQuery` and `internalPaginatedQuery` are a Nimbus extension —
+  not in upstream Convex — so a function registered with them is not
+  portable back to upstream.
 
 ## Schema
 
@@ -94,7 +97,8 @@ context when it writes functions for a Nimbus backend.
 - Every index field must exist in the table definition; index names must
   be unique within a table.
 - Do not declare `_id`, `_creationTime`, or `_updateTime` — system fields
-  are automatic.
+  are automatic. `_updateTime` is a Nimbus extension — not in upstream
+  Convex.
 
 ## HTTP actions
 

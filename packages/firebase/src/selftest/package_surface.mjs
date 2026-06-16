@@ -2,7 +2,9 @@ import { assert, build, fileURLToPath, fs, os, packageJsonPath, packageRoot, pat
 
 export async function assertPackageExports() {
   const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
-  assert.equal(packageJson.name, "@nimbus/firebase");
+  // The stock npm name: provisioned apps install this package as `firebase`
+  // so stock `firebase/app` + `firebase/firestore` imports resolve unchanged.
+  assert.equal(packageJson.name, "firebase");
   assert.deepEqual(packageJson.exports, {
     ".": "./src/index.ts",
     "./app": "./src/app.ts",
@@ -50,7 +52,7 @@ export async function assertGeneratedProtoSurface() {
       await fs.access(path.join(packageRoot, relativePath));
     } catch {
       throw new Error(
-        `Missing generated Firestore protobuf output at ${relativePath}. Run "npm run codegen:proto --workspace @nimbus/firebase" first.`,
+        `Missing generated Firestore protobuf output at ${relativePath}. Run "npm run codegen:proto --workspace firebase" first.`,
       );
     }
   }
@@ -77,9 +79,9 @@ export async function typecheckFirebaseSurface() {
           allowImportingTsExtensions: true,
           lib: ["ES2022", "DOM"],
           paths: {
-            "@nimbus/firebase": [rootEntry],
-            "@nimbus/firebase/app": [appEntry],
-            "@nimbus/firebase/firestore": [firestoreEntry],
+            firebase: [rootEntry],
+            "firebase/app": [appEntry],
+            "firebase/firestore": [firestoreEntry],
           },
         },
         files: ["fixture.ts"],
@@ -100,7 +102,7 @@ import {
   initializeApp,
   type FirebaseApp,
   type FirebaseOptions,
-} from "@nimbus/firebase/app";
+} from "firebase/app";
 import {
   addDoc,
   arrayRemove,
@@ -151,11 +153,11 @@ import {
   type SetOptions,
   type Unsubscribe,
   type WriteBatch,
-} from "@nimbus/firebase/firestore";
+} from "firebase/firestore";
 import {
   getFirestore as getFirestoreFromRoot,
   initializeApp as initializeAppFromRoot,
-} from "@nimbus/firebase";
+} from "firebase";
 
 const options: FirebaseOptions = {
   apiKey: "demo-key",

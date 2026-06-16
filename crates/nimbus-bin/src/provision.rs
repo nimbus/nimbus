@@ -9,6 +9,15 @@
 //! embedded payload (after a binary upgrade); `init`, `dev`, `codegen`, and
 //! `deploy` call it so a changed payload also forces a fresh Node dependency
 //! install (BPD5).
+//!
+//! Adapter provisioning also wires the app's `package.json`: when the selected
+//! adapter's root package (`convex`, `firebase`, …) appears in `dependencies`
+//! with a registry spec — a migrated app — the spec is rewritten in place to
+//! `file:./.nimbus/packages/<dir>`, and the dependency is added when absent.
+//! That makes one command (or `nimbus dev` alone, for app dirs Nimbus already
+//! recognizes) the whole migration: no manual `npm pkg set` step. The rewrite
+//! preserves the order and raw formatting of every untouched `package.json`
+//! entry.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -24,7 +33,8 @@ const STAMP_REL: &str = ".nimbus/packages/.version";
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum PackagesCommand {
-    /// Provision embedded Nimbus JS packages into an app's `.nimbus/packages/`.
+    /// Provision embedded Nimbus JS packages into an app's `.nimbus/packages/`
+    /// and point the app's `package.json` dependency at the provisioned copy.
     Provision(ProvisionArgs),
     /// Verify provisioned package bytes against the binary's embedded checksums.
     Verify(VerifyArgs),
@@ -73,6 +83,24 @@ pub(crate) async fn run_packages_command(
                     "Packages already provisioned in {} (up to date)",
                     where_.display(),
                 ))?;
+            }
+            match wire_app_dependency(&args.app_dir, &selection)? {
+                Some((name, spec)) => {
+                    crate::cli_ux::write_stderr_line(&format!(
+                        "Wired \"{name}\": \"{spec}\" in package.json — run `npm install` to pick it up"
+                    ))?;
+                }
+                None => {
+                    if let Some((name, dir)) = adapter_root(&selection)
+                        && !args.app_dir.join("package.json").is_file()
+                    {
+                        crate::cli_ux::write_stderr_line(&format!(
+                            "No package.json here — add \"{name}\": \"{}\" to your app's \
+                             dependencies, then run `npm install`",
+                            provisioned_spec(&dir),
+                        ))?;
+                    }
+                }
             }
             Ok(())
         }
@@ -249,17 +277,27 @@ pub(crate) fn provision_packages(
 /// with this binary. Provisions when absent (a fresh `init`, or a clone where
 /// `.nimbus/` is gitignored and therefore not committed) and re-provisions on
 /// binary-version drift, forcing a Node dependency reinstall so installed copies
-/// can't go stale. Returns whether anything changed. `init` (after scaffolding),
-/// `dev` (before the install loop), `codegen`, and `deploy` call this so the
-/// supported offline flow never needs a manual `nimbus packages provision`.
+/// can't go stale. For an adapter selection this also wires the app's
+/// `package.json` dependency at the provisioned copy, so a registry-installed
+/// app migrates the first time any app-scoped Nimbus command runs in it.
+/// Returns whether anything changed. `init` (after scaffolding), `dev` (before
+/// the install loop), `codegen`, and `deploy` call this so the supported
+/// offline flow never needs a manual `nimbus packages provision`.
 pub(crate) fn ensure(app_dir: &Path, selection: &Selection) -> io::Result<bool> {
     let outcome = provision_packages(app_dir, selection)?;
-    if !outcome.changed {
+    let wired = wire_app_dependency(app_dir, selection)?;
+    if let Some((name, spec)) = &wired {
+        crate::cli_ux::write_stderr_line(&format!("Wired \"{name}\": \"{spec}\" in package.json"))?;
+    }
+    if !outcome.changed && wired.is_none() {
         return Ok(false);
     }
     // The app's package.json/lockfile (`file:` specifiers) don't change when the
     // provisioned bytes do, so the Node dependency-install fingerprint would Skip
-    // and keep stale copies. Force a reinstall (a no-op before the first install).
+    // and keep stale copies. And a just-wired migrated app may have a registry
+    // copy installed with no recorded fingerprint, which would RecordState
+    // instead of installing. Force a reinstall in both cases (a no-op before
+    // the first install).
     force_node_reinstall(app_dir)?;
     Ok(true)
 }
@@ -279,6 +317,161 @@ fn selection_for_app_dir(app_dir: &Path) -> Option<Selection> {
         return Some(Selection::Adapter("nimbus".to_string()));
     }
     None
+}
+
+/// The embedded root package an adapter selection wires into an app's
+/// `package.json`, as `(npm name, staging dir)`. `Selection::All` has no single
+/// root to wire.
+fn adapter_root(selection: &Selection) -> Option<(String, String)> {
+    let Selection::Adapter(start) = selection else {
+        return None;
+    };
+    js_packages::manifest()
+        .packages
+        .iter()
+        .find(|p| {
+            p.dir == *start || p.name == *start || p.source_dir.as_deref() == Some(start.as_str())
+        })
+        .map(|p| (p.name.clone(), p.dir.clone()))
+}
+
+/// The `file:` specifier apps use to reference a provisioned package (BPD3).
+pub(crate) fn provisioned_spec(dir: &str) -> String {
+    format!("file:./{PACKAGES_REL}/{dir}")
+}
+
+/// Point the app's `package.json` dependency for the selected adapter's root
+/// package at the provisioned copy — the step that turns a registry-installed
+/// app (`"convex": "^1.x"`, `"firebase": "^11.x"`) into a migrated one without
+/// a manual `npm pkg set`. Returns the `(name, spec)` that was written, or
+/// `None` when there is nothing to do: `Selection::All`, no `package.json` in
+/// the app, or the dependency already carries the provisioned spec (scaffolds).
+pub(crate) fn wire_app_dependency(
+    app_dir: &Path,
+    selection: &Selection,
+) -> io::Result<Option<(String, String)>> {
+    let Some((name, dir)) = adapter_root(selection) else {
+        return Ok(None);
+    };
+    let manifest_path = app_dir.join("package.json");
+    let text = match fs::read_to_string(&manifest_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let spec = provisioned_spec(&dir);
+    match set_dependency(&text, &name, &spec) {
+        Ok(Some(rewritten)) => {
+            fs::write(&manifest_path, rewritten)?;
+            Ok(Some((name, spec)))
+        }
+        Ok(None) => Ok(None),
+        Err(error) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "cannot wire \"{name}\" in {}: {error}",
+                manifest_path.display()
+            ),
+        )),
+    }
+}
+
+/// A JSON object's entries in source order; values keep their original raw
+/// text so one entry can be rewritten without reformatting the rest. (The
+/// workspace `serde_json` deliberately does not enable `preserve_order`, so
+/// `serde_json::Map` cannot do this.)
+struct ObjectEntries(Vec<(String, Box<serde_json::value::RawValue>)>);
+
+impl<'de> serde::Deserialize<'de> for ObjectEntries {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct EntriesVisitor;
+        impl<'de> serde::de::Visitor<'de> for EntriesVisitor {
+            type Value = ObjectEntries;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JSON object")
+            }
+
+            fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut entries = Vec::new();
+                while let Some(entry) =
+                    access.next_entry::<String, Box<serde_json::value::RawValue>>()?
+                {
+                    entries.push(entry);
+                }
+                Ok(ObjectEntries(entries))
+            }
+        }
+        deserializer.deserialize_map(EntriesVisitor)
+    }
+}
+
+/// Rewrite `package.json` text so `dependencies[name] = spec`. Existing entries
+/// keep their source order and raw value text; a missing dependency is inserted
+/// at its npm-sorted position, and a missing `dependencies` object is appended.
+/// Returns `Ok(None)` when the dependency already carries exactly `spec`.
+fn set_dependency(text: &str, name: &str, spec: &str) -> Result<Option<String>, String> {
+    let raw_string =
+        |value: String| serde_json::value::RawValue::from_string(value).map_err(|e| e.to_string());
+    let ObjectEntries(mut top) =
+        serde_json::from_str(text).map_err(|e| format!("invalid JSON: {e}"))?;
+    let spec_json = serde_json::Value::String(spec.to_string()).to_string();
+
+    if let Some(deps_value) = top
+        .iter_mut()
+        .find_map(|(key, value)| (key == "dependencies").then_some(value))
+    {
+        let ObjectEntries(mut deps) = serde_json::from_str(deps_value.get())
+            .map_err(|e| format!("invalid `dependencies` object: {e}"))?;
+        if let Some(dep) = deps.iter_mut().find(|(key, _)| key == name) {
+            if dep.1.get() == spec_json {
+                return Ok(None);
+            }
+            dep.1 = raw_string(spec_json)?;
+        } else {
+            let position = deps
+                .iter()
+                .position(|(key, _)| key.as_str() > name)
+                .unwrap_or(deps.len());
+            deps.insert(position, (name.to_string(), raw_string(spec_json)?));
+        }
+        *deps_value = raw_string(render_object(&deps, 2))?;
+    } else {
+        let deps = vec![(name.to_string(), raw_string(spec_json)?)];
+        top.push((
+            "dependencies".to_string(),
+            raw_string(render_object(&deps, 2))?,
+        ));
+    }
+    Ok(Some(format!("{}\n", render_object(&top, 1))))
+}
+
+/// Render object entries with 2-space indentation: entries at `depth` levels,
+/// the closing brace one level out. Raw multi-line values embed as-is.
+fn render_object(entries: &[(String, Box<serde_json::value::RawValue>)], depth: usize) -> String {
+    if entries.is_empty() {
+        return "{}".to_string();
+    }
+    let inner = "  ".repeat(depth);
+    let outer = "  ".repeat(depth - 1);
+    let body = entries
+        .iter()
+        .map(|(key, value)| {
+            format!(
+                "{inner}{}: {}",
+                serde_json::Value::String(key.clone()),
+                value.get()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+    format!("{{\n{body}\n{outer}}}")
 }
 
 /// Drop the installed copies of the provisioned packages and clear the Node
@@ -410,7 +603,7 @@ mod tests {
         provision_packages(app.path(), &Selection::Adapter("firebase".into())).unwrap();
         let root = app.path().join(PACKAGES_REL);
         for dir in [
-            "@nimbus/firebase",
+            "firebase",
             "@bufbuild/protobuf",
             "@connectrpc/connect",
             "@connectrpc/connect-web",
@@ -545,12 +738,7 @@ mod tests {
             "closure is provisioned"
         );
         // The convex closure does not pull unrelated adapters.
-        assert!(
-            !app.path()
-                .join(PACKAGES_REL)
-                .join("@nimbus/firebase")
-                .exists()
-        );
+        assert!(!app.path().join(PACKAGES_REL).join("firebase").exists());
         // A second ensure with the matching stamp is a no-op.
         assert!(!ensure(app.path(), &Selection::Adapter("convex".into())).unwrap());
     }
@@ -618,6 +806,200 @@ mod tests {
         assert!(
             !app.path().join(PACKAGES_REL).join("convex").exists(),
             "convex was not provisioned for a firebase-only selection"
+        );
+    }
+
+    #[test]
+    fn wiring_rewires_registry_spec_preserving_order() {
+        let app = tempfile::tempdir().unwrap();
+        fs::write(
+            app.path().join("package.json"),
+            concat!(
+                "{\n",
+                "  \"name\": \"my-app\",\n",
+                "  \"private\": true,\n",
+                "  \"dependencies\": {\n",
+                "    \"convex\": \"^1.17.0\",\n",
+                "    \"react\": \"^19.0.0\"\n",
+                "  },\n",
+                "  \"devDependencies\": {\n",
+                "    \"typescript\": \"~5.5.0\"\n",
+                "  }\n",
+                "}\n",
+            ),
+        )
+        .unwrap();
+
+        let wired = wire_app_dependency(app.path(), &Selection::Adapter("convex".into()))
+            .unwrap()
+            .expect("registry spec must be rewired");
+        assert_eq!(
+            wired,
+            (
+                "convex".to_string(),
+                "file:./.nimbus/packages/convex".to_string()
+            )
+        );
+        let rewritten = fs::read_to_string(app.path().join("package.json")).unwrap();
+        assert_eq!(
+            rewritten,
+            concat!(
+                "{\n",
+                "  \"name\": \"my-app\",\n",
+                "  \"private\": true,\n",
+                "  \"dependencies\": {\n",
+                "    \"convex\": \"file:./.nimbus/packages/convex\",\n",
+                "    \"react\": \"^19.0.0\"\n",
+                "  },\n",
+                "  \"devDependencies\": {\n",
+                "    \"typescript\": \"~5.5.0\"\n",
+                "  }\n",
+                "}\n",
+            ),
+            "only the convex spec may change; order and formatting must hold"
+        );
+    }
+
+    #[test]
+    fn wiring_is_idempotent_once_spec_matches() {
+        let app = tempfile::tempdir().unwrap();
+        fs::write(
+            app.path().join("package.json"),
+            "{\n  \"dependencies\": {\n    \"convex\": \"^1.17.0\"\n  }\n}\n",
+        )
+        .unwrap();
+        wire_app_dependency(app.path(), &Selection::Adapter("convex".into()))
+            .unwrap()
+            .expect("first call wires");
+        let after_first = fs::read_to_string(app.path().join("package.json")).unwrap();
+
+        let second = wire_app_dependency(app.path(), &Selection::Adapter("convex".into())).unwrap();
+        assert!(second.is_none(), "already-wired spec must be a no-op");
+        assert_eq!(
+            fs::read_to_string(app.path().join("package.json")).unwrap(),
+            after_first,
+            "no-op must not rewrite the file"
+        );
+    }
+
+    #[test]
+    fn wiring_inserts_missing_dependency_at_sorted_position() {
+        let app = tempfile::tempdir().unwrap();
+        fs::write(
+            app.path().join("package.json"),
+            concat!(
+                "{\n",
+                "  \"dependencies\": {\n",
+                "    \"@aws-sdk/client-dynamodb\": \"^3.0.0\",\n",
+                "    \"react\": \"^19.0.0\"\n",
+                "  }\n",
+                "}\n",
+            ),
+        )
+        .unwrap();
+
+        wire_app_dependency(app.path(), &Selection::Adapter("firebase".into()))
+            .unwrap()
+            .expect("missing dependency must be inserted");
+        let rewritten = fs::read_to_string(app.path().join("package.json")).unwrap();
+        assert_eq!(
+            rewritten,
+            concat!(
+                "{\n",
+                "  \"dependencies\": {\n",
+                "    \"@aws-sdk/client-dynamodb\": \"^3.0.0\",\n",
+                "    \"firebase\": \"file:./.nimbus/packages/firebase\",\n",
+                "    \"react\": \"^19.0.0\"\n",
+                "  }\n",
+                "}\n",
+            ),
+            "insert must land at the npm-sorted position"
+        );
+    }
+
+    #[test]
+    fn wiring_creates_dependencies_object_when_absent() {
+        let app = tempfile::tempdir().unwrap();
+        fs::write(
+            app.path().join("package.json"),
+            "{\n  \"name\": \"plain\",\n  \"private\": true\n}\n",
+        )
+        .unwrap();
+
+        wire_app_dependency(app.path(), &Selection::Adapter("firebase".into()))
+            .unwrap()
+            .expect("missing dependencies object must be created");
+        let rewritten = fs::read_to_string(app.path().join("package.json")).unwrap();
+        assert_eq!(
+            rewritten,
+            concat!(
+                "{\n",
+                "  \"name\": \"plain\",\n",
+                "  \"private\": true,\n",
+                "  \"dependencies\": {\n",
+                "    \"firebase\": \"file:./.nimbus/packages/firebase\"\n",
+                "  }\n",
+                "}\n",
+            ),
+        );
+    }
+
+    #[test]
+    fn wiring_skips_without_package_json_and_for_all_selection() {
+        let app = tempfile::tempdir().unwrap();
+        // No package.json: nothing to wire, nothing created.
+        assert!(
+            wire_app_dependency(app.path(), &Selection::Adapter("convex".into()))
+                .unwrap()
+                .is_none()
+        );
+        assert!(!app.path().join("package.json").exists());
+
+        // Selection::All has no single root to wire — even a registry spec stays.
+        let before = "{\n  \"dependencies\": {\n    \"convex\": \"^1.17.0\"\n  }\n}\n";
+        fs::write(app.path().join("package.json"), before).unwrap();
+        assert!(
+            wire_app_dependency(app.path(), &Selection::All)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            fs::read_to_string(app.path().join("package.json")).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn ensure_wires_migrated_registry_dependency_and_forces_reinstall() {
+        let app = tempfile::tempdir().unwrap();
+        // Payload already current — the only pending change is the migrated
+        // app's registry spec and its stale installed copy.
+        provision_packages(app.path(), &Selection::Adapter("convex".into())).unwrap();
+        fs::write(
+            app.path().join("package.json"),
+            "{\n  \"dependencies\": {\n    \"convex\": \"^1.17.0\"\n  }\n}\n",
+        )
+        .unwrap();
+        let installed = app.path().join("node_modules").join("convex");
+        fs::create_dir_all(&installed).unwrap();
+        fs::write(installed.join("package.json"), "{}").unwrap();
+
+        assert!(
+            ensure(app.path(), &Selection::Adapter("convex".into())).unwrap(),
+            "wiring alone must report a change"
+        );
+        let text = fs::read_to_string(app.path().join("package.json")).unwrap();
+        assert!(
+            text.contains("\"convex\": \"file:./.nimbus/packages/convex\""),
+            "registry spec must be repointed at the provisioned copy: {text}"
+        );
+        assert!(
+            !installed.exists(),
+            "stale registry copy must be removed so npm reinstalls the provisioned package"
+        );
+        assert!(
+            !ensure(app.path(), &Selection::Adapter("convex".into())).unwrap(),
+            "already-wired, already-provisioned app must be a no-op"
         );
     }
 

@@ -1,7 +1,7 @@
 # Source map
 
 This page maps user-facing behavior claims in the published docs
-(`docs/{get-started,developers,operators,concepts,reference}/`) to the files
+(`docs/{get-started,developers,agents,operators,concepts,reference}/`) to the files
 that implement them. The docs are descriptive; treat these files as the
 source-backed check before changing any behavior claim. Every page with a
 load-bearing claim gets a row; `scripts/check-docs.sh` verifies the listed
@@ -12,24 +12,28 @@ sources exist.
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
 | `get-started/quickstart.md` | `nimbus init convex` scaffold contents | `crates/nimbus-bin/src/init.rs`, `crates/nimbus-assets/embedded/templates/convex/` |
-| `get-started/quickstart.md` | `nimbus dev` watch / codegen / `demo` tenant / port 3210 | `crates/nimbus-bin/src/dev.rs` |
+| `get-started/quickstart.md` | `nimbus dev` watch / codegen / `demo` tenant / port 3210; automatic adapter detection (Convex `convex/` dir; `firebase`, `mongodb`, `@aws-sdk/client-dynamodb` dependencies) | `crates/nimbus-bin/src/dev.rs`, `crates/nimbus-bin/src/dev/adapter.rs` |
 | `get-started/quickstart.md` | Node 22 floor for npm dependency installs; codegen runs in-binary | `crates/nimbus-bin/src/node.rs`, `crates/nimbus-bin/src/codegen.rs` |
 | `get-started/self-host.md` | `nimbus start` flags, localhost default, SQLite default | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/config.rs` |
+| `get-started/self-host.md` | Protocol adapters served by default (Firestore routes on the main listener, MongoDB `127.0.0.1:27017`, DynamoDB `127.0.0.1:8000`; `--no-firestore`/`--no-mongodb`/`--no-dynamodb` opt-outs) | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-bin/src/start/mod.rs` |
 | `get-started/self-host.md` | `/api/tenants`, `/documents`, `/query` endpoints | `crates/nimbus-server/src/router.rs` |
 | `get-started/self-host.md` | Local admin token required; token file locations | `crates/nimbus-operator/src/paths.rs`, `crates/nimbus-operator/src/token.rs`, `crates/nimbus-operator/src/access_policy.rs` |
 | `get-started/from-convex.md` | Convex function model + `convex/` layout compatibility | `packages/nimbus/src/server.ts`, `packages/convex/src/`, `crates/nimbus-convex/` |
+| `get-started/from-convex.md` | `nimbus dev` in an existing Convex app provisions packages and rewires the `convex` dependency to `file:./.nimbus/packages/convex` | `crates/nimbus-bin/src/provision.rs`, `crates/nimbus-bin/src/dev.rs` |
+| `get-started/deploy.md` | `nimbus deploy` flow: `NIMBUS_DEPLOY_TOKEN` startup enablement, dry-run validate+diff, atomic generation activation, loopback admin-token auto-read, `nimbus auth login` credentials fallback | `crates/nimbus-bin/src/deploy.rs`, `crates/nimbus-server/src/http/deploy.rs` |
 | `index.mdx` (landing) | Speaks Convex / Firestore / Cloud Functions / MongoDB / DynamoDB | `crates/nimbus-convex/`, `crates/nimbus-firebase/`, `crates/nimbus-cloud-functions/`, `crates/nimbus-mongodb/`, `crates/nimbus-dynamodb/` |
 | `index.mdx` (landing) | Single-binary storage/compute/networking/realtime/scheduling | `crates/nimbus-bin/src/main.rs`, `crates/nimbus-engine/`, `crates/nimbus-storage/`, `crates/nimbus-server/` |
-| `index.mdx` (landing) | Firestore tab: `@nimbus/firebase` entry points, `connectFirestoreEmulator` flow, `projectId` → tenant, `--firestore` enablement | `packages/firebase/src/firestore.ts`, `crates/nimbus-bin/src/start/adapters.rs` |
-| `index.mdx` (landing) | Cloud Functions tab: firebase-functions v2 `onRequest`/`onDocumentCreated` handler shapes | `crates/nimbus-cloud-functions/src/lib.rs`, `docs/developers/cloud-functions/index.md` |
-| `index.mdx` (landing) | MongoDB tab: connection string shape, `directConnection=true`, `--mongodb-port` enablement | `packages/mongodb/src/uri.ts`, `crates/nimbus-bin/src/start/adapters.rs` |
-| `index.mdx` (landing) | DynamoDB tab: endpoint `127.0.0.1:8000`, registered-key credentials, `--dynamodb-port` enablement | `crates/nimbus-dynamodb/src/config.rs`, `crates/nimbus-bin/src/start/adapters.rs` |
+| `index.mdx` (landing) | Firebase tab (Firestore surface): stock `firebase/app` + `firebase/firestore` imports via the drop-in `firebase` package; `nimbus dev` detects the `firebase` dependency and rewires it behind the fail-closed import scan; `connectFirestoreEmulator` to port 3210; `projectId` → tenant | `packages/firebase/package.json`, `packages/firebase/src/firestore.ts`, `crates/nimbus-bin/src/dev/firebase_scan.rs`, `crates/nimbus-bin/src/dev/wire.rs`, `crates/nimbus-bin/src/dev.rs` |
+| `index.mdx` (landing) | Cloud Functions tab: firebase-functions v2 `onRequest`/`onDocumentCreated` handler shapes; `nimbus dev` detects an existing Functions project via `firebase.json` | `crates/nimbus-cloud-functions/src/lib.rs`, `crates/nimbus-bin/src/dev/adapter.rs`, `docs/developers/cloud-functions/index.md` |
+| `index.mdx` (landing) | MongoDB tab: `nimbus dev` detects the `mongodb` dependency and writes `NIMBUS_MONGODB_URL` (endpoint + generated credentials) to `.env.local`; client is `new MongoClient(process.env.NIMBUS_MONGODB_URL)` | `crates/nimbus-bin/src/dev/wire.rs`, `crates/nimbus-bin/src/dev/banner.rs` |
+| `index.mdx` (landing) | DynamoDB tab: `nimbus dev` detects `@aws-sdk/client-dynamodb` and writes `NIMBUS_DYNAMODB_ENDPOINT` / `NIMBUS_DYNAMODB_ACCESS_KEY_ID` / `NIMBUS_DYNAMODB_SECRET_ACCESS_KEY` to `.env.local`; client reads those env keys | `crates/nimbus-bin/src/dev/wire.rs`, `crates/nimbus-bin/src/dev/banner.rs` |
 | `index.mdx` (landing) | HTTP API tab: `POST /api/tenants`, `POST /api/tenants/{t}/documents`, bearer auth | `crates/nimbus-server/src/router.rs`, `packages/nimbus/src/native_rest_routes.json` |
 
 ## Developers — platform guides
 
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
+| `developers/index.md` | Adapter surfaces served by default; `nimbus dev` detects the app's adapter and wires it automatically | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-bin/src/dev/adapter.rs`, `crates/nimbus-bin/src/dev/wire.rs` |
 | `developers/first-app.md` | Scaffold contents, schema/messages templates | `crates/nimbus-assets/embedded/templates/convex/` |
 | `developers/first-app.md` | Dev loop: auto npm install, codegen, `demo` tenant, port 3210, watch-and-activate | `crates/nimbus-bin/src/dev.rs` |
 | `developers/first-app.md` | `ConvexClient.onUpdate` live subscriptions, `ConvexHttpClient` | `packages/convex/src/browser.ts`, `demos/convex/node/script.ts` |
@@ -38,7 +42,9 @@ sources exist.
 | `developers/auth.md` | OIDC discovery; `aud` must equal `applicationID`; multi-audience rejected; `tokenIdentifier` = `issuer\|subject` | `crates/nimbus-convex/src/auth/verifier/metadata.rs`, `crates/nimbus-convex/src/auth/verifier/identity.rs`, `crates/nimbus-convex/src/auth/jwt/models/parsed_claims.rs` |
 | `developers/auth.md` | `ConvexProviderWithAuth` / `useConvexAuth` / `setAuth` / `clearAuth` client surface | `packages/convex/src/react.ts`, `packages/nimbus/src/browser.ts`, `packages/nimbus/src/react.ts` |
 | `developers/auth.md` | No token → `getUserIdentity()` null; invalid token → request rejected | `crates/nimbus-server/src/application_auth.rs`, `crates/nimbus-runtime/src/runtime/bootstrap/source.rs` |
-| `developers/sdk/resource-model.md` | `Nimbus` client options, endpoint/credential discovery, services/sandboxes/sessions CRUD + lifecycle | `packages/nimbus/src/index.ts` |
+| `agents/index.md`, `agents/sandbox-quickstart.md` | `Nimbus` client options, endpoint/credential discovery, sandbox create/get/stop, session open/close, ready-state gating | `packages/nimbus/src/index.ts` |
+| `agents/sandboxes.md`, `agents/services.md`, `agents/sessions.md` | services/sandboxes/sessions CRUD + lifecycle, `waitUntil`/`wait` polling, `ifMatchGeneration` checks, session channels/TTLs, session state via `status.lifecycleState` (`open`/`closed`/`expired`) + `state` list filter, generation re-read after update, launch-input redaction | `packages/nimbus/src/index.ts` |
+| `agents/index.md`, `agents/sandbox-quickstart.md`, `agents/sandboxes.md` | Linux-host sandbox execution, container vs krun posture, `nimbus machine` on macOS/WSL2 (restates the verified rows for the pages below) | `docs/reference/current-capabilities.md`, `docs/concepts/resource-model.md` |
 
 ## Developers + Reference — Convex
 
@@ -49,7 +55,7 @@ sources exist.
 | `developers/convex/index.md` | Deployment URL `http://localhost:3210/convex/demo` | `crates/nimbus-server/src/router.rs`, `crates/nimbus-bin/src/dev/plan.rs` |
 | `developers/convex/index.md` | ctx capability split (query read / mutation write+scheduler / action run-only) | `packages/codegen/src/planner/context_api.mjs` |
 | `developers/convex/index.md` | React/HTTP client surface (`ConvexProvider`, `useQuery`, `ConvexHttpClient`) | `packages/convex/src/react.ts`, `packages/convex/src/browser.ts` |
-| `developers/convex/migrate.md` | Dev provisions packages for detected Convex apps; `file:./.nimbus/packages/convex` dependency | `crates/nimbus-bin/src/dev.rs`, `crates/nimbus-bin/src/node.rs` |
+| `developers/convex/migrate.md` | Dev provisions packages for detected Convex apps and rewires the `convex` dependency to `file:./.nimbus/packages/convex` | `crates/nimbus-bin/src/dev.rs`, `crates/nimbus-bin/src/provision.rs`, `crates/nimbus-bin/src/node.rs` |
 | `developers/convex/migrate.md` | Generated files import from `convex/server`/`browser`/`values` | `packages/codegen/src/emit/generated_files.mjs`, `packages/codegen/src/app.mjs` |
 | `developers/convex/migrate.md` | `.env.local` `NIMBUS_DEPLOYMENT=local:<slug>`; `nimbus codegen --app .` | `crates/nimbus-bin/src/dev/env_file.rs`, `crates/nimbus-bin/src/codegen.rs` |
 | `reference/convex/compatibility.md` | Auth providers, OIDC discovery, audience rules, `getUserIdentity`/`getVerifiedIdentity` | `packages/codegen/src/auth_config.mjs`, `crates/nimbus-convex/src/auth/`, `crates/nimbus-runtime/src/runtime/bootstrap/source.rs` |
@@ -65,10 +71,12 @@ sources exist.
 
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
-| `developers/firebase/index.md` | `nimbus packages provision firebase` → `@nimbus/firebase` | `crates/nimbus-bin/src/provision.rs`, `packages/firebase/package.json` |
-| `developers/firebase/index.md` | Firestore routes enabled by `nimbus start --firestore` / `with_firebase_config` | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/construction.rs` |
-| `developers/firebase/index.md` | `projectId` → tenant id; only `(default)` database | `crates/nimbus-firebase/src/operations.rs`, `crates/nimbus-firebase/src/firestore_model.rs` |
-| `developers/firebase/index.md` | `connectFirestoreEmulator` flow; transport options | `packages/firebase/src/firestore.ts`, `crates/nimbus-server/src/tests/firebase/rest_crud.rs` |
+| `developers/firebase/index.md` | `nimbus packages provision firebase` → drop-in `firebase` package under the stock npm name; auto-wires `dependencies.firebase` to `file:./.nimbus/packages/firebase` in the app's `package.json` | `crates/nimbus-bin/src/provision.rs`, `packages/firebase/package.json` |
+| `developers/firebase/index.md` | Firestore routes served by default on `nimbus dev` and `nimbus start` (`--no-firestore` opt-out; embedders `with_firebase_config`); `nimbus dev` wires detected Firebase apps behind the fail-closed import scan | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-server/src/construction.rs`, `crates/nimbus-bin/src/dev/firebase_scan.rs`, `crates/nimbus-bin/src/dev/wire.rs` |
+| `developers/firebase/index.md` | `projectId` → tenant id; only `(default)` database; dev discovers the project id (`.firebaserc` → source literal → `demo`) and creates the tenant | `crates/nimbus-firebase/src/operations.rs`, `crates/nimbus-firebase/src/firestore_model.rs`, `crates/nimbus-bin/src/dev/firebase_project.rs` |
+| `developers/firebase/index.md` | `connectFirestoreEmulator` flow (port 3210 under `nimbus dev`, 8080 default under `nimbus start`); transport options | `packages/firebase/src/firestore.ts`, `crates/nimbus-server/src/tests/firebase/rest_crud.rs`, `crates/nimbus-bin/src/dev.rs` |
+| `developers/firebase/migrate.md` | `nimbus dev` wires the `firebase` dependency behind the import scan (refusal names file, line, and uncovered import); `nimbus packages provision firebase` is the direct path | `crates/nimbus-bin/src/dev/firebase_scan.rs`, `crates/nimbus-bin/src/dev/wire.rs`, `crates/nimbus-bin/src/provision.rs` |
+| `reference/firebase/compatibility.md` | Drop-in `firebase` package wired by `nimbus dev` (scan-gated) or `nimbus packages provision firebase` | `crates/nimbus-bin/src/dev/firebase_scan.rs`, `crates/nimbus-bin/src/dev/wire.rs`, `crates/nimbus-bin/src/provision.rs` |
 | `reference/firebase/websocket-listen.md` | Listen route, subprotocols, close codes, loopback origin policy | `crates/nimbus-server/src/adapters/firebase/grpc/listen_websocket.rs`, `crates/nimbus-server/src/router.rs` |
 | `reference/firebase/auth.md` | `experimentalAuthToken`, `mockUserToken` opt-in, accepted headers | `packages/firebase/src/firestore.ts`, `packages/firebase/src/internal/auth.ts`, `crates/nimbus-firebase/src/lib.rs` |
 
@@ -79,6 +87,7 @@ sources exist.
 | `developers/cloud-functions/index.md` | `nimbus init cloud-functions` scaffold; serves on main port | `crates/nimbus-bin/src/init.rs`, `crates/nimbus-assets/embedded/templates/cloud-functions/`, `crates/nimbus-server/src/router.rs` |
 | `developers/cloud-functions/index.md` | Walk-up rules (`nimbus dev` bounded by `.git`; `firebase.json` root marker) | `crates/nimbus-bin/src/start/boot.rs`, `crates/nimbus-bin/src/dev/plan.rs` |
 | `developers/cloud-functions/index.md` | Artifact set `artifact.json`/`targets.json`/`bundle.mjs`/`bundle.sha256` | `crates/nimbus-cloud-functions/src/lib.rs` |
+| `developers/cloud-functions/index.md` | Authoring needs Node 22 or newer: external Node major below 22 rejected, 22 exact, newer majors allowed with a warning | `crates/nimbus-bin/src/node.rs` |
 | `developers/cloud-functions/migrate.md` | Version-1 `targets.json` schema; service-account execution for Firestore bindings | `crates/nimbus-cloud-functions/src/lib.rs`, `packages/codegen/src/selftest/cloud_functions_fixtures.mjs` |
 | `developers/cloud-functions/migrate.md` | `nimbus deploy --url/--token` + env vars | `crates/nimbus-bin/src/deploy.rs` |
 | `reference/cloud-functions/compatibility.md` | Path rules; at-least-once delivery, replay, chain-depth limit | `packages/codegen/src/cloud_functions/runtime_sources.mjs`, `crates/nimbus-engine/src/triggers/execution.rs`, `crates/nimbus-server/src/adapters/cloud_functions/execution.rs` |
@@ -88,11 +97,11 @@ sources exist.
 
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
-| `developers/mongodb/index.md` | Endpoint enabled by `nimbus start --mongodb-port` (SCRAM via flag/env, password env-only) or `with_mongodb`; loopback-only listener | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-server/src/construction.rs`, `crates/nimbus-server/src/adapters/mongodb/listener.rs` |
+| `developers/mongodb/index.md` | Endpoint served by default on `127.0.0.1:27017` (`--no-mongodb` opt-out; busy conventional port skips with a warning, busy explicit `--mongodb-port` is a hard error); SCRAM via flag/env (password env-only) or generated `wire-credentials.json` (0600); dev writes `NIMBUS_MONGODB_URL` to `.env.local`; loopback-only listener | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-bin/src/wire_credentials.rs`, `crates/nimbus-bin/src/dev/wire.rs`, `crates/nimbus-server/src/adapters/mongodb/listener.rs` |
 | `developers/mongodb/index.md` | `MongoDbAuthConfig` SCRAM-SHA-256; `MongoDbConfig::localhost` | `crates/nimbus-server/src/adapters/mongodb/mod.rs`, `crates/nimbus-mongodb/src/auth.rs` |
-| `developers/mongodb/index.md` | `directConnection=true` required; tenant/collection auto-create | `packages/mongodb/src/uri.ts`, `crates/nimbus-mongodb/src/commands/tenant.rs` |
+| `developers/mongodb/index.md` | Single-host direct connection (`directConnection=true` optional); tenant/collection auto-create | `packages/mongodb/src/uri.ts`, `crates/nimbus-mongodb/src/commands/tenant.rs`, `crates/nimbus-mongodb/src/commands/handshake.rs` |
 | `developers/mongodb/examples.md` | `mongoUri()` defaults; filter/update operator surface; transactions + `WriteConflict`; change streams unsupported | `packages/mongodb/src/uri.ts`, `crates/nimbus-mongodb/src/commands/crud/filter.rs`, `crates/nimbus-mongodb/src/commands/session.rs`, `crates/nimbus-mongodb/src/commands/aggregation/mod.rs` |
-| `reference/mongodb/drivers.md` | OP_MSG, server version 7.0.0, wire versions, SCRAM-only, pre-auth handshake set | `crates/nimbus-mongodb/src/commands/handshake.rs`, `crates/nimbus-mongodb/src/auth.rs`, `crates/nimbus-mongodb/src/commands/mod.rs` |
+| `reference/mongodb/drivers.md` | OP_MSG, server version 7.0.0, wire versions, SCRAM-only, pre-auth handshake set; single-host direct connection (`directConnection=true` accepted, not required) | `crates/nimbus-mongodb/src/commands/handshake.rs`, `crates/nimbus-mongodb/src/auth.rs`, `crates/nimbus-mongodb/src/commands/mod.rs` |
 | `reference/mongodb/operations.md` | Command dispatch table; update operators; aggregation stages; size/session limits | `crates/nimbus-mongodb/src/commands/mod.rs`, `crates/nimbus-mongodb/src/commands/crud/update.rs`, `crates/nimbus-mongodb/src/commands/aggregation/mod.rs`, `crates/nimbus-mongodb/src/commands/handshake.rs`, `crates/nimbus-mongodb/src/commands/session.rs` |
 | `reference/mongodb/tenant-isolation.md` | db→tenant 1:1 mapping; `default` tenant rules; tenant-name constraints | `crates/nimbus-mongodb/src/commands/tenant.rs`, `crates/nimbus-core/src/types.rs` |
 
@@ -101,8 +110,8 @@ sources exist.
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
 | `developers/dynamodb/index.md` | Default `127.0.0.1:8000`; `X-Amz-Target` dispatch; strict-auth default, fail-closed registry | `crates/nimbus-dynamodb/src/config.rs`, `crates/nimbus-server/src/adapters/dynamodb/listener.rs`, `crates/nimbus-dynamodb/src/tenant.rs` |
-| `developers/dynamodb/index.md` | Enabled by `nimbus start --dynamodb-port` + `--dynamodb-access-key`/env bindings or `with_dynamodb`; `insecure_dev_auth` loopback-only (embedding API) | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-server/src/construction.rs`, `crates/nimbus-dynamodb/src/config.rs` |
-| `developers/dynamodb/index.md` | `clientConfig()` defaults; tables ACTIVE immediately | `packages/dynamodb/src/client.ts`, `crates/nimbus-dynamodb/src/commands/control_plane.rs` |
+| `developers/dynamodb/index.md` | Endpoint served by default (`--no-dynamodb` opt-out; busy conventional port skips with a warning, busy explicit `--dynamodb-port` is a hard error); generated access key bound to tenant `default` in `wire-credentials.json` (0600) unless `--dynamodb-access-key`/env bindings replace it; `insecure_dev_auth` loopback-only (embedding API) | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-bin/src/wire_credentials.rs`, `crates/nimbus-server/src/construction.rs`, `crates/nimbus-dynamodb/src/config.rs` |
+| `developers/dynamodb/index.md` | `clientConfig()` defaults; tables ACTIVE immediately; dev writes `NIMBUS_DYNAMODB_*` keys to `.env.local` | `packages/dynamodb/src/client.ts`, `crates/nimbus-dynamodb/src/commands/control_plane.rs`, `crates/nimbus-bin/src/dev/wire.rs` |
 | `reference/dynamodb/feature-coverage.md` | Operation coverage; conditional-write atomicity; TTL sweeper interval | `crates/nimbus-dynamodb/src/dispatch.rs`, `crates/nimbus-dynamodb/src/commands/item.rs`, `crates/nimbus-dynamodb/src/config.rs` |
 | `reference/dynamodb/divergences.md` | Key-size cap, sortable encoding, `_ddb_` reserved, stream semantics, TTL/GSI divergences | `crates/nimbus-core/src/types.rs`, `crates/nimbus-dynamodb/src/key.rs`, `crates/nimbus-dynamodb/src/commands/` |
 | `reference/dynamodb/sdk-compatibility.md` | Rust SDK parity suite; 16 MiB request cap | `crates/nimbus-server/tests/dynamodb_spec/main.rs`, `crates/nimbus-server/src/adapters/dynamodb/listener.rs` |
@@ -115,6 +124,7 @@ sources exist.
 | `developers/native/index.md` | Admin token requirement, header forms, 401 behavior, token file locations | `crates/nimbus-operator/src/access_policy.rs`, `crates/nimbus-operator/src/paths.rs`, `crates/nimbus-operator/src/token.rs` |
 | `developers/native/index.md` | Tenant/document/query endpoints + status codes | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/http/` |
 | `reference/native/http-api.md` | Loopback origin rule; system fields; query/schema/scheduling shapes; service-control routes | `crates/nimbus-operator/src/access_policy.rs`, `crates/nimbus-core/src/document.rs`, `crates/nimbus-core/src/query.rs`, `crates/nimbus-core/src/schema.rs`, `crates/nimbus-core/src/scheduled.rs`, `crates/nimbus-server/src/router.rs` |
+| `reference/native/http-api.md` | Journal routes `GET …/journal` (`after`/`limit`, default 100; `records`/`next_cursor`/`latest_sequence`/`cursor_floor`/`has_more`) and `…/journal/bootstrap` (snapshot + resume/cut/floor sequences); SDK `readJournal`/`bootstrapJournal` | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/protocol.rs`, `crates/nimbus-server/src/http/queries.rs`, `crates/nimbus-storage/src/store/journal_stream.rs`, `packages/nimbus/src/rest.ts` |
 | `reference/native/websocket-protocol.md` | `nimbus.v2` negotiation, handshake, frame catalog, close codes | `crates/nimbus-server/src/ws/`, `crates/nimbus-server/src/protocol.rs`, `crates/nimbus-server/src/error_envelope.rs` |
 | `reference/native/errors.md` | Error envelope, code catalog, status mapping | `crates/nimbus-server/src/error_envelope.rs`, `crates/nimbus-core/src/error.rs` |
 
@@ -208,7 +218,8 @@ sources exist.
 | --- | --- | --- |
 | `reference/cli.md` | Root command list and command map (15 visible commands incl. `backup`) | `crates/nimbus-bin/src/main.rs`, `crates/nimbus-bin/src/backup.rs` |
 | `reference/cli.md` | `start` flags, defaults (port 8080, host 127.0.0.1, `./data`, sqlite), `NIMBUS_*` env names, `--cors-allow-origin`/`NIMBUS_CORS_ALLOW_ORIGINS`, flag > env > config precedence | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-bin/src/start/boot.rs` |
-| `reference/cli.md` | `dev` flags, port 3210, tail-log modes, `--no-open` semantics, `.nimbus/dev` data dir, walk-up bounded at `.git` | `crates/nimbus-bin/src/dev.rs`, `crates/nimbus-bin/src/dev/plan.rs`, `crates/nimbus-bin/src/path_boundary.rs` |
+| `reference/cli.md` | `dev` flags, port 3210, tail-log modes, `--no-open` semantics, `.nimbus/dev` data dir, walk-up bounded at `.git`; automatic adapter detection, `.env.local` `NIMBUS_*` keys, live re-detection on `package.json` change, keeps serving with no adapter; auto-tenant `demo` or discovered Firebase project id | `crates/nimbus-bin/src/dev.rs`, `crates/nimbus-bin/src/dev/plan.rs`, `crates/nimbus-bin/src/dev/watch.rs`, `crates/nimbus-bin/src/dev/wire.rs`, `crates/nimbus-bin/src/dev/firebase_project.rs`, `crates/nimbus-bin/src/path_boundary.rs` |
+| `reference/cli.md` | Adapters served by default (Firestore routes, MongoDB `27017`, DynamoDB `8000`); `--no-firestore`/`--no-mongodb`/`--no-dynamodb` opt-outs; `--mongodb-port`/`--dynamodb-port` pins (busy explicit port is a hard error, busy conventional port skips with a warning); generated `wire-credentials.json` unless credential flags/env override | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-bin/src/wire_credentials.rs` |
 | `reference/cli.md` | `deploy` flags, `NIMBUS_DEPLOY_URL`/`NIMBUS_DEPLOY_TOKEN`/`NIMBUS_ADMIN_TOKEN`, credentials-file fallback, loopback admin-token auto-discovery | `crates/nimbus-bin/src/deploy.rs` |
 | `reference/cli.md` | `codegen`, `init` (adapter values), `token rotate`, `ui` | `crates/nimbus-bin/src/codegen.rs`, `crates/nimbus-bin/src/init.rs`, `crates/nimbus-bin/src/token.rs`, `crates/nimbus-bin/src/ui.rs` |
 | `reference/cli.md` | `auth` subcommands; `rotate-admin` required before `start --allow-network` | `crates/nimbus-bin/src/auth.rs` |
@@ -218,7 +229,7 @@ sources exist.
 | `reference/cli.md` | `policy`, `encryption`, `packages` subcommands and value sets | `crates/nimbus-bin/src/policy.rs`, `crates/nimbus-bin/src/encryption/mod.rs`, `crates/nimbus-bin/src/provision.rs` |
 | `reference/cli.md` | `NIMBUS_LICENSE_FILE` env for `--license-file` | `crates/nimbus-license/src/lib.rs` |
 | `reference/configuration.md` | Precedence CLI > env > config file; JSON keys under `persistence`; unknown keys rejected | `crates/nimbus-bin/src/start/config.rs` |
-| `reference/configuration.md` | Network/bind table; explicit-rotation public-bind gate (30-day age advisory); TLS cert/key startup validation; CORS origin flag/env normalization; adapter enablement flags + listener postures; systemd socket activation (`LISTEN_FDS`/`LISTEN_PID`, fd 3) | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/network_bind.rs`, `crates/nimbus-bin/src/start/boot.rs` |
+| `reference/configuration.md` | Network/bind table; explicit-rotation public-bind gate (30-day age advisory); TLS cert/key startup validation; CORS origin flag/env normalization; adapters on by default with `--no-*` opt-outs, port pins, credential overrides, and generated `wire-credentials.json`; MongoDB loopback-only even with `--allow-network`, DynamoDB non-loopback via `--dynamodb-host` + `--allow-network`; systemd socket activation (`LISTEN_FDS`/`LISTEN_PID`, fd 3) | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/network_bind.rs`, `crates/nimbus-bin/src/start/boot.rs`, `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-bin/src/wire_credentials.rs` |
 | `reference/configuration.md` | Core storage / postgres / mysql / libsql tables (env names, config keys, defaults `nimbus_provider`, `tenant_`); min ≤ max pool rule on both postgres and mysql | `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-engine/src/persistence_config.rs`, `crates/nimbus-storage/src/postgres/config.rs`, `crates/nimbus-storage/src/mysql.rs`, `crates/nimbus-storage/src/libsql.rs` |
 | `reference/configuration.md` | Runtime limit defaults (128 MB heap, 8 MB initial, 30 s timeout, 64 nested; derived instance/worker/in-flight budgets) | `crates/nimbus-bin/src/start/runtime_limits.rs`, `crates/nimbus-runtime/src/limits/resources.rs` |
 | `reference/configuration.md` | App-dir resolution and required app surface; no source-tree discovery without `--app-dir` | `crates/nimbus-bin/src/start/mod.rs`, `crates/nimbus-bin/src/start/boot.rs` |
@@ -240,6 +251,8 @@ sources exist.
 | `reference/sdk/client.md` | `NimbusRestClient` method/route table pinned by native_rest_routes.json parity guard; request types match server shapes | `packages/nimbus/src/rest.ts`, `packages/nimbus/src/native_rest_routes.json`, `crates/nimbus-server/src/router.rs` |
 | `reference/sdk/client.md` | `SubscribeQuery.filters` required (typed required); `PaginatedQuery` nested `{query, page_size, after}`; `{patch}` update body; interval cron schedule; `{name, fields}` indexes | `crates/nimbus-core/src/query.rs`, `crates/nimbus-core/src/scheduled.rs`, `crates/nimbus-core/src/schema.rs`, `crates/nimbus-server/src/protocol.rs` |
 | `reference/sdk/resources.md` | `Nimbus` class, services/sandboxes/sessions verbs + paths, wait defaults, credential/endpoint discovery order | `packages/nimbus/src/index.ts`, `crates/nimbus-server/src/router.rs` |
+| `reference/sdk/resources.md` | `NimbusSandboxResource.status` shape (`lifecycleState` incl. `"ready"`, `readiness`, `health`, `backend`, `endpoints`, `conditions`); `backend: "container"` for process workloads (krun execute fails closed) | `packages/nimbus/src/index.ts`, `crates/nimbus-sandbox/src/backends/krun/vm/launch.rs` |
+| `reference/sdk/resources.md` | Session `requestedTtlMs` optional; default TTL 15 min, hard cap 1 h, zero rejected | `crates/nimbus-services/src/manager/sessions.rs` |
 | `reference/sdk/react.md` | Providers, hooks, skip semantics, paginated status machine, auth-state semantics | `packages/nimbus/src/react.ts` |
 
 ## Concepts — system, data, runtime
@@ -273,16 +286,17 @@ sources exist.
 | `concepts/resource-model.md` | Backend kinds (sandbox/built-in/external); built-in provider allowlist; only sandbox-backed services launch | `crates/nimbus-services/src/catalog.rs`, `crates/nimbus-services/src/manager/definitions.rs`, `crates/nimbus-services/src/manager/launch.rs` |
 | `concepts/resource-model.md` | Sandbox root (rootfs/OCI), profiles worker/desktop, container + krun backends, krun execute fail-closed | `crates/nimbus-sandbox/src/spec.rs`, `crates/nimbus-server/src/http/sandboxes.rs`, `crates/nimbus-sandbox/src/backend.rs`, `crates/nimbus-sandbox/src/backends/krun/vm/launch.rs` |
 | `concepts/resource-model.md` | Deny-by-default egress; API redacts launch inputs | `crates/nimbus-sandbox/src/egress.rs`, `crates/nimbus-server/src/http/sandbox_spec.rs` |
-| `concepts/resource-model.md` | Session TTL default 15 min / cap 1 h; per-target channel rules; generation-pinned target snapshots | `crates/nimbus-services/src/manager/sessions.rs` |
+| `concepts/resource-model.md` | Bounded default session TTL with a hard cap (literal values stated only in `reference/sdk/resources.md`); per-target channel rules; generation-pinned target snapshots | `crates/nimbus-services/src/manager/sessions.rs` |
 | `concepts/resource-model.md` | Exact service grant / sandbox reach required; session ops audited | `crates/nimbus-server/src/http/sessions.rs` |
 | `concepts/scaling.md` | No clustering/coordination substrate exists (single-process baseline) | workspace `Cargo.toml`/`Cargo.lock` (absence) |
 | `concepts/scaling.md` | Per-tenant admission queue, shedding, journal/apply lag; invocation caps → 429 | `crates/nimbus-engine/src/tenant/mutation/admission.rs`, `crates/nimbus-runtime/src/executor/admission.rs`, `crates/nimbus-server/src/error_envelope.rs` |
 | `concepts/scaling.md` | libSQL remote-primary writes + per-tenant replica reads with measured freshness | `crates/nimbus-storage/src/libsql/provider.rs`, `crates/nimbus-storage/src/libsql/freshness.rs` |
 | `reference/current-capabilities.md` | Native API route families (tenants, documents, query, schema, schedule, ws) | `crates/nimbus-server/src/router.rs` |
-| `reference/current-capabilities.md` | Adapter enablement flags (`--firestore`, `--mongodb-port` + SCRAM env, `--dynamodb-port` + key bindings) | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-bin/src/start/mod.rs` |
+| `reference/current-capabilities.md` | Adapter defaults and opt-outs (`--no-firestore`/`--no-mongodb`/`--no-dynamodb`; SCRAM flag/env override; key bindings replace the generated default) | `crates/nimbus-bin/src/start/adapters.rs`, `crates/nimbus-bin/src/start/mod.rs` |
 | `reference/current-capabilities.md` | Single-field + composite index planning, backfill lifecycle; index-aware subscriptions | `crates/nimbus-core/src/schema.rs`, `crates/nimbus-engine/src/tenant/query_planning.rs`, `crates/nimbus-engine/src/subscriptions/` |
-| `reference/current-capabilities.md` | Adapter enablement statuses (Convex/Cloud Functions CLI-wired; Firestore config-gated; MongoDB/DynamoDB embedding API) | `crates/nimbus-bin/src/start/boot.rs`, `crates/nimbus-server/src/construction.rs`, `crates/nimbus-server/src/adapters/` |
+| `reference/current-capabilities.md` | Adapter statuses (Convex/Cloud Functions detected from the app; Firestore/MongoDB/DynamoDB served by default; `nimbus dev` writes `.env.local` keys for detected driver/SDK apps) | `crates/nimbus-bin/src/start/boot.rs`, `crates/nimbus-server/src/construction.rs`, `crates/nimbus-server/src/adapters/`, `crates/nimbus-bin/src/dev/wire.rs` |
 | `reference/current-capabilities.md` | Storage/encryption/sandbox/machine/resource API statuses | `crates/nimbus-bin/src/start/config.rs`, `crates/nimbus-sandbox/src/backends/`, `crates/nimbus-bin/src/machine/mod.rs`, `crates/nimbus-server/src/router.rs` |
+| `reference/current-capabilities.md` | Backup status: `nimbus backup create/restore` for embedded sqlite/redb only (offline, per-tenant, fingerprint-verified); external backends + encrypted dirs use native/cold-copy; no continuous point-in-time recovery | `crates/nimbus-bin/src/backup.rs` |
 
 ## Concepts — architecture (request path)
 
@@ -393,7 +407,7 @@ sources exist.
 | `concepts/architecture/node-lifecycle.md` | Signal ordering (Subscribe → JobRemoved stream → StartTransientUnit/StopUnit → match by job path); done/skipped = success, unknown results = failure; 30s default timeout | `crates/nimbus-node/src/systemd_transient/zbus_client/signals.rs`, `crates/nimbus-node/src/systemd_transient/zbus_client/mod.rs` |
 | `concepts/architecture/node-lifecycle.md` | State mapping (activating→submitted, active+running→running, active+other→ready, inactive→stopped, failed→failed); missing unit reported as stopped | `crates/nimbus-node/src/systemd_transient.rs`, `crates/nimbus-node/src/systemd_transient/zbus_client/mod.rs` |
 | `concepts/architecture/node-lifecycle.md` | Reconciler desired-state derivation (active→running, deleting→stopped); inspect-first outcomes; status-evidence writer seam | `crates/nimbus-node/src/reconciler.rs` |
-| `concepts/architecture/node-lifecycle.md` | Reconciler/systemd backend have no production caller; admission/binding types are wired into the server | `crates/nimbus-node/src/reconciler.rs`, `crates/nimbus-system/src/tests.rs`, `crates/nimbus-server/src/local_enforcement.rs`, `crates/nimbus-services/src/manager/launch.rs`, `crates/nimbus-bridge/src/lib.rs` |
+| `concepts/architecture/node-lifecycle.md` | `nimbus node run` is the production caller: constructs `SystemdTransientUnitBackend` + `NodeWorkloadReconciler` and runs the reconcile loop (`--once` for a single pass), Linux-systemd-gated; multi-node scheduling/assignment is out of scope for a single process | `crates/nimbus-bin/src/node_run.rs`, `crates/nimbus-node/src/reconciler.rs`, `crates/nimbus-node/src/systemd_transient.rs` |
 | `concepts/architecture/node-lifecycle.md` | `DirectProcessBackend` in-memory test implementation | `crates/nimbus-node/src/direct_process.rs` |
 | `concepts/architecture/cli-codegen.md` | clap command tree (start/dev/deploy/codegen/init/token/auth/ui/machine/node/compose/policy/encryption/packages + hidden sandbox-supervisor) | `crates/nimbus-bin/src/main.rs` |
 | `concepts/architecture/cli-codegen.md` | Boot sequence; registry wiring gated on `.nimbus/convex/functions.json` / `.nimbus/firebase/artifact.json`; generation-zero start without app dir; two-stage bind gate; license resolution order | `crates/nimbus-bin/src/start/boot.rs` |
@@ -413,7 +427,7 @@ sources exist.
 | `concepts/architecture/sdk-packages.md` | Codegen emits `_generated/{api.ts,server.ts,scheduled_functions.ts,dataModel.d.ts}` + `.nimbus/convex/{functions.json,schema.json,http_routes.json,auth.config.json,bundle.mjs,bundle.sha256}` | `packages/codegen/src/main.mjs`, `packages/codegen/src/emit/generated_files.mjs` |
 | `concepts/architecture/sdk-packages.md` | Bundle SHA-256 enforced at load and per invocation | `crates/nimbus-convex/src/registry/loading.rs`, `crates/nimbus-runtime/src/runtime/driver/invocation.rs` |
 | `concepts/architecture/sdk-packages.md` | UI embedded via rust-embed of `packages/nimbus-ui/dist/`; build script asserts built UI; served at `/ui` with SPA fallback | `crates/nimbus-assets/src/ui.rs`, `crates/nimbus-assets/build.rs`, `crates/nimbus-server/Cargo.toml`, `crates/nimbus-server/src/http/ui.rs`, `crates/nimbus-server/src/router.rs` |
-| `concepts/architecture/sdk-packages.md` | Adapter helpers: firebase app+firestore over Connect-Web; `mongoUri`; `clientConfig`/`endpoint` | `packages/firebase/src/index.ts`, `packages/firebase/src/app.ts`, `packages/firebase/package.json`, `packages/mongodb/src/index.ts`, `packages/dynamodb/src/index.ts` |
+| `concepts/architecture/sdk-packages.md` | Adapter packages: drop-in `firebase` (stock npm name) app+firestore over Connect-Web; `mongoUri`; `clientConfig`/`endpoint` | `packages/firebase/src/index.ts`, `packages/firebase/src/app.ts`, `packages/firebase/package.json`, `packages/mongodb/src/index.ts`, `packages/dynamodb/src/index.ts` |
 | `concepts/architecture/sdk-packages.md` | Distribution: staged checksummed payload → rust-embed → `.nimbus/packages/` with `.version` stamp, closure resolution, `file:` specifiers, drift-forced reinstall, `nimbus packages verify` | `scripts/stage-embedded-packages.mjs`, `crates/nimbus-assets/src/js_packages.rs`, `crates/nimbus-bin/src/provision.rs`, `crates/nimbus-assets/embedded/templates/convex/package.json.tmpl` |
 | `concepts/architecture/sdk-packages.md` | Codegen tooling embedded but not provisioned (temp-dir materialized) | `crates/nimbus-assets/src/js_packages.rs`, `scripts/stage-embedded-packages.mjs` |
 | `concepts/architecture/observability.md` | `/health` public, unauthenticated `{"ok":true}` | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/http/metadata.rs` |

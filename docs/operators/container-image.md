@@ -141,7 +141,7 @@ nimbus node install --container \
   --user --enable --now
 ```
 
-See [Node lifecycle](/operators/node-lifecycle/) for the generated
+See [Run Nimbus as a service](/operators/node-lifecycle/) for the generated
 artifacts, dry-run review, and diagnostics.
 
 ## Kubernetes
@@ -213,7 +213,7 @@ them.
 
 ## Next steps
 
-- [Node lifecycle](/operators/node-lifecycle/) — systemd and Quadlet
+- [Run Nimbus as a service](/operators/node-lifecycle/) — systemd and Quadlet
   service management for a Nimbus node.
 - [Updates](/operators/updates/) — moving a containerized deployment to a
   new release.

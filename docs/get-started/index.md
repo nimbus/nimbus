@@ -24,6 +24,8 @@ pricing.
   server and talk to it over HTTP. About 2 minutes, `curl` is enough.
 - **[Coming from Convex](/get-started/from-convex/)** — what works today,
   what differs, and how to point an existing Convex project at Nimbus.
+- **[Deploy to production](/get-started/deploy/)** — package your app and
+  activate it against a running Nimbus server.
 
 ## Where to go next
 

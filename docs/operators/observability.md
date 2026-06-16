@@ -1,9 +1,9 @@
 ---
-title: Observability
+title: Inspect the server
 description: Inspect a running Nimbus server — health, debug endpoints, runtime metrics, log configuration, and the access audit log.
 sidebar:
-  label: Observability
-  order: 10
+  label: Inspect the server
+  order: 11
 ---
 
 This guide shows you how to look inside a running Nimbus server: confirm it

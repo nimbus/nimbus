@@ -1,32 +1,44 @@
-# @nimbus/firebase
+# firebase (Nimbus drop-in)
 
-A first-party, tested Firebase SDK that mirrors the modular `firebase/app` and
-`firebase/firestore` API and talks to a [Nimbus](../../README.md) Firestore
-endpoint over REST / gRPC-Web.
+Nimbus's drop-in `firebase` package: a first-party, tested implementation of
+the modular `firebase/app` and `firebase/firestore` API that talks to a
+[Nimbus](../../README.md) Firestore endpoint over REST / gRPC-Web.
 
-Use it where you would use the stock `firebase` package's modular API:
-`initializeApp`, `getFirestore`, `collection`, `doc`, `getDoc`, `setDoc`,
-`query`, `where`, `onSnapshot`, batches, and transactions are all exposed with
-matching signatures.
+It takes the stock npm name — like Nimbus's `convex` package — so existing
+code keeps its imports unchanged: `initializeApp`, `getFirestore`,
+`collection`, `doc`, `getDoc`, `setDoc`, `query`, `where`, `onSnapshot`,
+batches, and transactions are all exposed with matching signatures. The
+`nimbus` binary provisions it locally into an app's `.nimbus/packages/`
+(`nimbus packages provision firebase`); it is never published to a registry.
 
 > The compatibility surface is intentionally narrower than a blanket
 > "Firestore-compatible" claim. Every supported feature is backed by focused
 > server contract tests and the package selftest. Check the
-> [Firebase / Firestore compatibility matrix](../../docs/private/adapters/firebase/compatibility.md)
+> [Firestore compatibility matrix](../../docs/reference/firebase/compatibility.md)
 > before relying on a specific feature.
 
 ## Entry points
 
 | Import | Use it for |
 | --- | --- |
-| `@nimbus/firebase` | Everything (re-exports `./app` and `./firestore`) |
-| `@nimbus/firebase/app` | App lifecycle: `initializeApp`, `getApp`, `getApps`, `deleteApp` |
-| `@nimbus/firebase/firestore` | Firestore: refs, queries, reads/writes, snapshots, batches, transactions |
+| `firebase` | Everything (re-exports `./app` and `./firestore`) |
+| `firebase/app` | App lifecycle: `initializeApp`, `getApp`, `getApps`, `deleteApp` |
+| `firebase/firestore` | Firestore: refs, queries, reads/writes, snapshots, batches, transactions |
 
 ## Usage
 
+Provision the package into an app — this also rewires the app's `firebase`
+dependency in `package.json` to the provisioned copy — then keep stock
+imports:
+
+```bash
+# in your existing app directory
+nimbus packages provision firebase
+npm install
+```
+
 ```ts
-import { initializeApp } from "@nimbus/firebase/app";
+import { initializeApp } from "firebase/app";
 import {
   getFirestore,
   connectFirestoreEmulator,
@@ -38,7 +50,7 @@ import {
   getDocs,
   setDoc,
   onSnapshot,
-} from "@nimbus/firebase/firestore";
+} from "firebase/firestore";
 
 const app = initializeApp({ projectId: "demo-app" });
 const db = getFirestore(app);
@@ -63,7 +75,7 @@ const unsubscribe = onSnapshot(collection(db, "messages"), (snap) => {
 
 Authentication is supplied through `FirestoreSettings`/`initializeFirestore`
 via a token fetcher — see the
-[Firebase application auth contract](../../docs/private/adapters/firebase/auth-contract.md).
+[Firestore auth reference](../../docs/reference/firebase/auth.md).
 
 ## Codegen
 
@@ -71,20 +83,20 @@ The Firestore protobuf bindings under `src/gen/` are generated from upstream
 protos:
 
 ```bash
-npm run codegen:proto --workspace @nimbus/firebase
+npm run codegen:proto --workspace firebase
 ```
 
 ## Scripts
 
 ```bash
-npm run build --workspace @nimbus/firebase      # build-only selftest pass
-npm run test --workspace @nimbus/firebase       # selftest suite
-npm run typecheck --workspace @nimbus/firebase   # type-only selftest pass
+npm run build --workspace firebase      # build-only selftest pass
+npm run test --workspace firebase       # selftest suite
+npm run typecheck --workspace firebase   # type-only selftest pass
 ```
 
 ## Related
 
-- [Firebase / Firestore compatibility](../../docs/private/adapters/firebase/compatibility.md)
-- [Migration guide](../../docs/private/adapters/firebase/migration.md)
-- [Application auth contract](../../docs/private/adapters/firebase/auth-contract.md)
-- [WebSocket `Listen` surface](../../docs/private/adapters/firebase/websocket-listen.md)
+- [Firestore compatibility matrix](../../docs/reference/firebase/compatibility.md)
+- [Migration guide](../../docs/developers/firebase/migrate.md)
+- [Firestore auth reference](../../docs/reference/firebase/auth.md)
+- [WebSocket `Listen` surface](../../docs/reference/firebase/websocket-listen.md)

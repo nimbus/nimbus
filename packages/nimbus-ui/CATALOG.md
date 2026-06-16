@@ -1,14 +1,14 @@
 # nimbus-ui component catalog
 
-The catalog is a Storybook-based fixture surface for the eleven reusable
-components called out in the desktop-ui architecture-hardening plan
-(`docs/private/plans/desktop-ui-architecture-hardening-plan.md`, phase A5).
+The catalog is a Storybook-based fixture surface for the reusable
+components shared across the operator console.
 
 ## Why Storybook (not Ladle)
 
-The plan defaults to Ladle "unless a constraint surfaces". The constraint
+Ladle was the default candidate "unless a constraint surfaces". The constraint
 here is that Storybook was already wired into `package.json`
-(`@storybook/react-vite`, `@storybook/addon-a11y`) before A5 started, and
+(`@storybook/react-vite`, `@storybook/addon-a11y`) before the catalog work
+started, and
 six stories (StateChip, StateDot, CopyChip, Breadcrumb, Time, Kbd) were
 already authored against it. Switching to Ladle would have required
 rewriting the existing stories and removing two devDependencies, which
@@ -32,8 +32,7 @@ The dev server runs on port 6006. The build writes a static bundle to
 
 ## Story coverage
 
-The eleven plan-mandated components each have a `*.stories.tsx` file
-under `src/stories/`:
+Each reusable component has a `*.stories.tsx` file under `src/stories/`:
 
 | Component             | Story file                       |
 |-----------------------|----------------------------------|
@@ -53,7 +52,7 @@ under `src/stories/`:
 
 `SubDrawer` is rendered through a story-only `FakeSubDrawerHost` wrapper
 that re-implements the visual shell without depending on the router
-context. This is the pattern the plan calls out under A5.
+context.
 
 ## Adding a story
 

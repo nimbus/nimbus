@@ -8,7 +8,7 @@ import type {
   FirestoreError,
   Query,
   QuerySnapshot,
-} from "../firestore";
+} from "../firestore.ts";
 import {
   batchGetDocumentsGrpcWeb,
   beginTransactionGrpcWeb,
@@ -17,9 +17,9 @@ import {
   rollbackGrpcWeb,
   runQueryGrpcWeb,
   type FirestoreGrpcWebContext,
-} from "./grpc-web";
-import { encodeFirestoreValue } from "./document-data";
-import { firestoreV1, fromJson, toJson } from "./protobuf";
+} from "./grpc-web.ts";
+import { encodeFirestoreValue } from "./document-data.ts";
+import { firestoreV1, fromJson, toJson } from "./protobuf.ts";
 
 type QueryStructuredShape = Query<unknown>["structuredQuery"];
 

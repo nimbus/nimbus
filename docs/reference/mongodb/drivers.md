@@ -14,7 +14,7 @@ driver is needed.
 | Requirement | Value |
 | --- | --- |
 | Wire protocol | `OP_MSG`; the server reports version `7.0.0` and wire versions 0–21 |
-| Connection mode | Direct connection (`directConnection=true`); Nimbus is a single endpoint, not a replica set |
+| Connection mode | Direct connection to a single host; Nimbus is a single endpoint, not a replica set — never pass a `replicaSet` option (`directConnection=true` is accepted but not required) |
 | Authentication | SCRAM-SHA-256 only; other SASL mechanisms are rejected |
 | Transport | Plain TCP; the listener binds loopback addresses only and refuses non-loopback binds |
 | Database name | Selects the Nimbus tenant; must be ASCII letters, digits, `_`, or `-`, at most 128 characters |
@@ -22,14 +22,15 @@ driver is needed.
 Connection string shape:
 
 ```text
-mongodb://<username>:<password>@<host>:<port>/<database>?directConnection=true
+mongodb://<username>:<password>@<host>:<port>/<database>
 ```
 
 ## Official drivers
 
-The `directConnection=true` URI option is part of the standard MongoDB
-connection string and is honored by all current official drivers, so the
-same connection string works across languages.
+The same connection string works across languages. `directConnection=true`
+is part of the standard connection-string format and honored by all current
+official drivers — include it if you want the direct topology to be
+explicit, but with a single host the drivers connect directly without it.
 
 | Driver | Verification status |
 | --- | --- |

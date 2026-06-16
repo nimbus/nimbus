@@ -3,7 +3,7 @@ title: Services, sandboxes, and sessions
 description: Nimbus's resource model — named services, isolated sandboxes, and scoped sessions — and why each noun is addressed and trusted differently.
 sidebar:
   label: Resource model
-  order: 7
+  order: 8
 ---
 
 Nimbus models long-running and interactive workloads with three nouns:
@@ -12,8 +12,7 @@ Nimbus models long-running and interactive workloads with three nouns:
 connections to a running service or sandbox). This page explains what each
 noun means and why the model is shaped the way it is. For the hands-on
 walkthrough — creating, starting, and connecting to each with the
-JavaScript SDK — see
-[Manage services, sandboxes, and sessions](/developers/sdk/resource-model/).
+JavaScript SDK — see the [Agents guides](/agents/).
 
 ## Three nouns, three addressing rules
 
@@ -49,8 +48,8 @@ how the capability is provided, and there are three kinds:
   each Compose `services:` entry becomes a sandbox-backed service
   definition in the tenant's catalog.
 - **Built-in** — the capability is implemented by the Nimbus server
-  itself. The accepted providers are `loadBalancer`, `serviceDiscovery`,
-  `browser`, and `modelGateway`.
+  itself. These are a small fixed set — for example a browser service
+  and a model gateway.
 - **External** — an endpoint Nimbus does not run. The definition records
   an absolute `http(s)` URL (embedded credentials are rejected), an auth
   policy, and an HTTP health-check path. Nimbus owns the definition,
@@ -117,9 +116,11 @@ shell or stdio stream into a running workload, file exchange, or a
 browser-control channel. It is a lease, not a registry entry:
 
 - **Every session expires.** Opening one takes an optional requested TTL;
-  the server applies a default of fifteen minutes and caps every session
-  at one hour. Sessions move through `open`, `closed` (explicitly closed,
-  with a recorded reason), and `expired` states.
+  the server applies a bounded default TTL with a hard cap. Sessions move
+  through `open`, `closed` (explicitly closed, with a recorded reason),
+  and `expired` states. See
+  [the resources reference](/reference/sdk/resources/) for the session
+  lifecycle.
 - **Channels are declared up front** and validated against what the
   target can actually offer: sandbox targets and sandbox-backed services
   support `stdio` and `files`; the built-in `browser` service supports
@@ -177,11 +178,11 @@ authorization applies regardless of where the call originates.
 
 ## Related pages
 
-- [Manage services, sandboxes, and sessions](/developers/sdk/resource-model/)
-  — the SDK walkthrough for every verb described here.
+- [Agents](/agents/) — quickstart and how-to guides for every verb
+  described here.
 - [Tenant isolation](/concepts/tenant-isolation/) — the admission and
   enforcement model these resources run inside.
-- [Tenant isolation operator guide](/operators/tenant-isolation/) —
+- [Manage tenants](/operators/tenant-isolation/) —
   operating the isolation boundary.
 - [HTTP API reference](/reference/native/http-api/) and
   [error reference](/reference/native/errors/) — the wire surface and

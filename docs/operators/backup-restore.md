@@ -3,7 +3,7 @@ title: Backup and restore
 description: Back up and restore a self-hosted Nimbus server — SQLite data directories, external database backends, encryption keys, and restore verification.
 sidebar:
   label: "Backup & restore"
-  order: 6
+  order: 8
 ---
 
 For the embedded providers, `nimbus backup create` and
@@ -11,8 +11,8 @@ For the embedded providers, `nimbus backup create` and
 archive per tenant, written to a single file and verified by fingerprint
 on restore. The manual procedures on this page remain the path for
 encrypted data directories and for the external database backends, which
-use their own native tooling. A restore returns the server to the moment
-the backup was taken.
+use their own native tooling. A restore brings each tenant back to its
+latest committed state at the moment the backup was taken.
 
 ## Know what you are backing up
 

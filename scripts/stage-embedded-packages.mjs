@@ -14,7 +14,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { assertNimbusRootSdkArtifactText } from "./nimbus-root-sdk-artifact-policy.mjs";
+import {
+  assertNimbusRootSdkArtifactText,
+  assertNimbusRootSdkRouteArtifactText,
+} from "./nimbus-root-sdk-artifact-policy.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT_DIR = path.join(REPO_ROOT, "crates", "nimbus-assets", "embedded", "packages");
@@ -24,7 +27,7 @@ const OUT_DIR = path.join(REPO_ROOT, "crates", "nimbus-assets", "embedded", "pac
 const PROVISIONED = [
   { sourceDir: "convex", stageDir: "convex" },
   { sourceDir: "nimbus", stageDir: "@nimbus/nimbus" },
-  { sourceDir: "firebase", stageDir: "@nimbus/firebase" },
+  { sourceDir: "firebase", stageDir: "firebase" },
   { sourceDir: "mongodb", stageDir: "@nimbus/mongodb" },
   { sourceDir: "dynamodb", stageDir: "@nimbus/dynamodb" },
 ];
@@ -111,6 +114,8 @@ for (const pkg of PROVISIONED) {
   if (distManifest.name === "@nimbus/nimbus") {
     verifyNimbusRootSdkArtifact(path.join(stagedDir, "index.js"), true);
     verifyNimbusRootSdkArtifact(path.join(stagedDir, "index.d.ts"), false);
+    verifyNimbusRootSdkRouteArtifact(path.join(stagedDir, "control_plane_routes.js"));
+    verifyNimbusRootSdkRouteArtifact(path.join(stagedDir, "control_plane_routes.d.ts"));
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
   packages.push({
@@ -205,6 +210,18 @@ function verifyNimbusRootSdkArtifact(filePath, runtime) {
     assertNimbusRootSdkArtifactText(path.relative(REPO_ROOT, filePath), artifact, {
       runtime,
     });
+  } catch (error) {
+    if (error instanceof Error) {
+      fail(error.message);
+    }
+    throw error;
+  }
+}
+
+function verifyNimbusRootSdkRouteArtifact(filePath) {
+  const artifact = fs.readFileSync(filePath, "utf8");
+  try {
+    assertNimbusRootSdkRouteArtifactText(path.relative(REPO_ROOT, filePath), artifact);
   } catch (error) {
     if (error instanceof Error) {
       fail(error.message);

@@ -6,9 +6,12 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 import {
+  NIMBUS_ROOT_SDK_CONTROL_PLANE_ROUTE_FRAGMENTS,
   NIMBUS_ROOT_SDK_ARTIFACT_PATHS,
   NIMBUS_ROOT_SDK_FORBIDDEN_FRAGMENTS,
+  NIMBUS_ROOT_SDK_ROUTE_ARTIFACT_PATHS,
   assertNimbusRootSdkArtifactText,
+  assertNimbusRootSdkRouteArtifactText,
 } from "../../../scripts/nimbus-root-sdk-artifact-policy.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
@@ -34,7 +37,7 @@ const packageContracts = {
       "./transports/rest": "./src/transports/rest.ts",
     },
   },
-  "@nimbus/firebase": {
+  firebase: {
     path: "packages/firebase/package.json",
     exports: {
       ".": "./src/index.ts",
@@ -340,7 +343,7 @@ const entryContracts = {
       "TableSchema",
     ],
   },
-  "@nimbus/firebase": {
+  firebase: {
     path: "packages/firebase/src/index.ts",
     exports: [
       "CollectionGroup",
@@ -413,7 +416,7 @@ const entryContracts = {
       "writeBatch",
     ],
   },
-  "@nimbus/firebase/app": {
+  "firebase/app": {
     path: "packages/firebase/src/app.ts",
     exports: [
       "FirebaseApp",
@@ -425,7 +428,7 @@ const entryContracts = {
       "initializeApp",
     ],
   },
-  "@nimbus/firebase/firestore": {
+  "firebase/firestore": {
     path: "packages/firebase/src/firestore.ts",
     exports: [
       "CollectionGroup",
@@ -570,6 +573,7 @@ async function assertEntryExportSurfaces() {
 
 async function assertNimbusRootSdkBoundary() {
   const source = await fs.readFile(repoPath("packages/nimbus/src/index.ts"), "utf8");
+  const routes = await fs.readFile(repoPath("packages/nimbus/src/control_plane_routes.ts"), "utf8");
   for (const fragment of NIMBUS_ROOT_SDK_FORBIDDEN_FRAGMENTS) {
     assert.equal(
       source.includes(fragment),
@@ -577,10 +581,29 @@ async function assertNimbusRootSdkBoundary() {
       `packages/nimbus/src/index.ts contains forbidden root SDK fragment: ${fragment}`,
     );
   }
+  for (const fragment of NIMBUS_ROOT_SDK_CONTROL_PLANE_ROUTE_FRAGMENTS) {
+    assert.equal(
+      routes.includes(fragment),
+      true,
+      `packages/nimbus/src/control_plane_routes.ts is missing root SDK route fragment: ${fragment}`,
+    );
+  }
+  for (const fragment of ["/api/tenants/", "/api/sessions"]) {
+    assert.equal(
+      source.includes(fragment),
+      false,
+      `packages/nimbus/src/index.ts must use control_plane_routes.ts instead of embedding ${fragment}`,
+    );
+  }
   assert.equal(
     source.includes("async #controlPlaneRequest"),
     true,
     "root SDK control-plane transport must stay an ECMAScript-private implementation detail",
+  );
+  assert.equal(
+    source.includes("async #controlPlaneRouteRequest"),
+    true,
+    "root SDK route expansion must stay an ECMAScript-private implementation detail",
   );
   assert.equal(
     source.includes("async #resolveRestClient"),
@@ -610,6 +633,29 @@ async function assertNimbusRootSdkArtifacts() {
   for (const { path: artifactPath, content: artifact } of artifacts) {
     try {
       assertNimbusRootSdkArtifactText(artifactPath, artifact);
+    } catch (error) {
+      if (error instanceof Error) {
+        assert.fail(error.message);
+      }
+      throw error;
+    }
+  }
+
+  const routeArtifacts = [];
+  for (const artifactPath of NIMBUS_ROOT_SDK_ROUTE_ARTIFACT_PATHS) {
+    const artifact = await readIfExists(repoPath(artifactPath));
+    if (artifact === null) continue;
+    routeArtifacts.push({ path: artifactPath, content: artifact });
+  }
+  if (routeArtifacts.length === 0) return;
+  assert.equal(
+    routeArtifacts.length,
+    NIMBUS_ROOT_SDK_ROUTE_ARTIFACT_PATHS.length,
+    "root SDK route artifacts are partially present; rerun `npm run build:embedded-packages`",
+  );
+  for (const { path: artifactPath, content: artifact } of routeArtifacts) {
+    try {
+      assertNimbusRootSdkRouteArtifactText(artifactPath, artifact);
     } catch (error) {
       if (error instanceof Error) {
         assert.fail(error.message);

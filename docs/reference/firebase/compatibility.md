@@ -7,15 +7,27 @@ sidebar:
 
 This reference records the currently implemented Firebase / Firestore
 compatibility surface in Nimbus. It is intentionally narrower than a generic
-"Firestore-compatible" claim: every row reflects shipped, tested behavior.
+"Firestore-compatible" claim. Anything not listed as supported should be
+assumed unsupported.
+
+Firestore routes are served by default on the main listener; opt out with
+`--no-firestore`.
 
 Nimbus has three distinct Firebase-facing stories:
 
-1. A tested first-party SDK, `@nimbus/firebase`.
+1. A tested first-party drop-in `firebase` package. It takes the stock npm
+   name, so `firebase/app` and `firebase/firestore` imports work unchanged
+   once the app's `firebase` dependency points at the copy provisioned by
+   the `nimbus` binary — `nimbus dev` wires that dependency automatically
+   after its import scan confirms every Firebase import is covered, and
+   `nimbus packages provision firebase` wires it directly.
 2. A live Firestore server surface: REST, selected native gRPC, gRPC-Web,
    and WebSocket `Listen`.
-3. Deferred stock Firebase browser SDK drop-in, because upstream browsers
-   still use WebChannel rather than gRPC-Web for the full Firestore client.
+3. Deferred wire compatibility with the registry-published Google
+   `firebase` package, because upstream browsers still use WebChannel
+   rather than gRPC-Web for the full Firestore client. Stock import paths
+   are covered by the provisioned package; the upstream transport stack is
+   not.
 
 For the adoption path, see
 [Use Firestore SDKs with Nimbus](/developers/firebase/) and
@@ -27,7 +39,7 @@ For the adoption path, see
 | --- | --- |
 | `supported` | Covered by the shipped surface and exercised by tests. |
 | `supported with caveats` | Usable now, but requires explicit settings or has a frozen boundary called out here. |
-| `server-capable, no SDK wrapper yet` | The server implements the underlying Firestore RPCs, but `@nimbus/firebase` does not expose a helper yet. |
+| `server-capable, no SDK wrapper yet` | The server implements the underlying Firestore RPCs, but the provisioned `firebase` package does not expose a helper yet. |
 | `not claimed` | No compatibility promise yet, even if some lower-level RPCs exist. |
 | `deferred` | Explicitly outside the current release target. |
 
@@ -35,15 +47,15 @@ For the adoption path, see
 
 | Surface | Status | Transport(s) | Current claim |
 | --- | --- | --- | --- |
-| `@nimbus/firebase` in browsers | `supported with caveats` | REST unary by default, opt-in gRPC-Web unary, WebSocket `Listen` | Primary supported Firebase-style client for Nimbus. Covers refs, CRUD, queries, snapshots, listeners, write batches, transactions, supported `FieldValue` transforms, and bearer-token auth on the covered routes. No WebChannel, no offline persistence, no bundle/named-query APIs, no `onSnapshotsInSync`, no `waitForPendingWrites`, no long polling. |
-| `@nimbus/firebase` in Node | `supported with caveats` | Same as browser; watch flows may need an explicit `experimentalWebSocketFactory` | Same API surface as the browser package, for tests and server-side JS callers. Not a drop-in replacement for `firebase-admin` or `@google-cloud/firestore`. |
-| Stock `firebase/firestore` browser SDK | `deferred` | Upstream WebChannel stack | No drop-in claim. WebChannel and browser persistence are not implemented; use `@nimbus/firebase` instead. |
+| Provisioned `firebase` package in browsers | `supported with caveats` | REST unary by default, opt-in gRPC-Web unary, WebSocket `Listen` | Primary supported Firebase-style client for Nimbus; stock `firebase/app` + `firebase/firestore` imports resolve to it via the `file:` dependency. Covers refs, CRUD, queries, snapshots, listeners, write batches, transactions, supported `FieldValue` transforms, and bearer-token auth on the covered routes. No WebChannel, no offline persistence, no bundle/named-query APIs, no `onSnapshotsInSync`, no `waitForPendingWrites`, no long polling. |
+| Provisioned `firebase` package in Node | `supported with caveats` | Same as browser; watch flows may need an explicit `experimentalWebSocketFactory` | Same API surface as the browser package, for tests and server-side JS callers. Not a drop-in replacement for `firebase-admin` or `@google-cloud/firestore`. |
+| Registry-published Google `firebase` package | `deferred` | Upstream WebChannel stack | No wire-compatibility claim for Google's npm package against Nimbus. Its WebChannel transport and browser persistence are not implemented; repoint the `firebase` dependency at the provisioned package instead — imports stay unchanged. |
 | Stock `firebase/firestore/lite` | `not claimed` | Upstream browser REST stack | Overlapping unary semantics exist on the server, but no import-path or transport-stack compatibility promise. |
 | Node Admin SDK (`firebase-admin.firestore`) | `not claimed` | Upstream Google Cloud client stack | Many underlying RPCs exist, but Admin SDK parity (BulkWriter, recursive delete, bundles, import/export, emulator control) is broader than the verified surface. |
 | Go / Java / Python server SDKs | `not claimed` | Upstream Firestore gRPC/REST clients | Underlying protocol work exists; no supported-compatibility claim is published. |
 | Android / Apple / C++ / Unity SDKs | `not claimed` | Native mobile transport stacks | No tested claim for auth, reconnect, persistence, or SDK-specific behavior. |
 
-## `@nimbus/firebase` API coverage
+## Provisioned `firebase` package API coverage
 
 | Area | Status | Notes |
 | --- | --- | --- |
@@ -71,8 +83,10 @@ These are intentional, documented boundaries rather than accidental gaps:
 - Only the default Firestore database, `(default)`, is supported end to end.
   The SDK can construct non-default database handles, but the server rejects
   named databases.
-- Browser full-SDK compatibility means `@nimbus/firebase`, not stock
-  `firebase/firestore` drop-in.
+- Browser full-SDK compatibility means the Nimbus-provisioned `firebase`
+  package. Stock import paths work because that package takes the stock npm
+  name; the registry-published Google package itself is not
+  wire-compatible.
 - Unary transport defaults to REST. gRPC-Web is available only through the
   explicit `experimentalUnaryTransport: "grpc-web"` setting.
 - Watch support uses the WebSocket `Listen` channel — not WebChannel and not
