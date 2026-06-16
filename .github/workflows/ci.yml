@@ -499,11 +499,12 @@ jobs:
       - name: Bootstrap tooling canaries
         run: make node-compat-canaries-bootstrap PRESET=tooling
 
-      - name: Gate supported-LTS application canaries
+      - name: Gate supported-LTS and Current application canaries
         run: |
           make node-compat-validate-claims
           make node-compat-canaries PRESET=application LANE=node22
           make node-compat-canaries PRESET=application LANE=node24
+          make node-compat-canaries PRESET=application LANE=node26
 
       - name: Gate supported-LTS tooling canaries
         run: |
