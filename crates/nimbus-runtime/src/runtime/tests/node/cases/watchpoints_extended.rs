@@ -1453,6 +1453,7 @@ const STREAMS_WEB_PLATFORM_PROMOTED_NODE24_EXTRA_PATHS: &[&str] = &[
 ];
 
 const STREAMS_WEB_PLATFORM_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/parallel/test-blob-file-backed.js",
     "test/parallel/test-fastutf8stream-destroy.js",
     "test/parallel/test-fastutf8stream-end.js",
     "test/parallel/test-fastutf8stream-flush-mocks.js",

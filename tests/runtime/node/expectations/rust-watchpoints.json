@@ -827,7 +827,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked WHATWG/web-platform residual inventory; prior hang/stress paths are excluded by the kill rule",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1643,
+      "source_line": 1644,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -838,7 +838,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked WHATWG/web-platform residual inventory; prior hang/stress paths are excluded by the kill rule",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1656,
+      "source_line": 1657,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -849,7 +849,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked streams/WebStreams required-gap inventory; excludes pinned hang diagnostics for stream-base-typechecking, webstreams-clone-unref, and WHATWG transform-stream-members",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1724,
+      "source_line": 1725,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -860,7 +860,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked streams/WebStreams required-gap inventory; excludes pinned hang diagnostics for stream-base-typechecking, webstreams-clone-unref, and WHATWG transform-stream-members",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1737,
+      "source_line": 1738,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -871,7 +871,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 node26 broad pre-run: ROI-ranked streams/WebStreams required-gap inventory; excludes pinned hang diagnostics for stream-base-typechecking, webstreams-clone-unref, and WHATWG transform-stream-members",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1750,
+      "source_line": 1751,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -882,7 +882,7 @@
       "classification": "watchpoint",
       "reason": "Pinned later-family dependency: test-stream-writable-samecb-singletick.js asserts async_hooks TickObject allocation counts, which are owned by the broader async_hooks/task-accounting family rather than the current pure-stream contract",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1763,
+      "source_line": 1764,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -893,7 +893,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node24 default-lane divergence: test-stream-pipeline.js currently returns an AbortError-style 'The operation was aborted' message where the staged Node24 fixture still expects the inner 'Boom!' pipeline error message",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1800,
+      "source_line": 1801,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -904,7 +904,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked process-host required-gap inventory; host/native/subprocess-only paths are excluded by the kill rule and remain gaps",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2017,
+      "source_line": 2018,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -915,7 +915,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked process-host required-gap inventory; host/native/subprocess-only paths are excluded by the kill rule and remain gaps",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2030,
+      "source_line": 2031,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -926,7 +926,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 node26 broad pre-run: ROI-ranked process-host required-gap inventory; host/native/subprocess-only paths are excluded by the kill rule and remain gaps",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2043,
+      "source_line": 2044,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -937,7 +937,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked ESM/module-loader required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2525,
+      "source_line": 2526,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -948,7 +948,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked ESM/module-loader required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2541,
+      "source_line": 2542,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -959,7 +959,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 diagnostic: refined ESM/package-semantics inventory; keep ignored until a real module-loader implementation wave is selected",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2557,
+      "source_line": 2558,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -970,7 +970,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 diagnostic: refined ESM/package-semantics inventory; keep ignored until a real module-loader implementation wave is selected",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2571,
+      "source_line": 2572,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -981,7 +981,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 focused root-cause closure: data URL ESM imports; promote only after the broad ESM batch confirms the cluster is green",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2585,
+      "source_line": 2586,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -992,7 +992,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 focused root-cause closure: data URL ESM imports; promote only after the broad ESM batch confirms the cluster is green",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2601,
+      "source_line": 2602,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1003,7 +1003,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 focused pre-run: JSON/data URL/import-attributes required-surface slice; promote only after the broad module-loader batch confirms the pass delta",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2617,
+      "source_line": 2618,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1014,7 +1014,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 focused pre-run: JSON/data URL/import-attributes required-surface slice; promote only after the broad module-loader batch confirms the pass delta",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 2631,
+      "source_line": 2632,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1025,7 +1025,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked async_hooks required-gap inventory; classify AsyncLocalStorage, promise hooks, provider lifecycle, graph/network, timer/task, GC, and host-owned failures after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3307,
+      "source_line": 3308,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1036,7 +1036,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked async_hooks required-gap inventory; classify AsyncLocalStorage, promise hooks, provider lifecycle, graph/network, timer/task, GC, and host-owned failures after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3323,
+      "source_line": 3324,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1047,7 +1047,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 P3 measure: async_hooks required-gap fixtures with the socket-bind networking subset excluded, so the batch completes and writes an honest summary on the v2.8.2-nimbus.2 promise-lifecycle wiring; the excluded networking fixtures are the structural-networking tension owned separately",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3339,
+      "source_line": 3340,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1058,7 +1058,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 P3 measure: async_hooks required-gap fixtures with the socket-bind networking subset excluded, so the batch completes and writes an honest summary on the v2.8.2-nimbus.2 promise-lifecycle wiring; the excluded networking fixtures are the structural-networking tension owned separately",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3355,
+      "source_line": 3356,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1069,7 +1069,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 node26 broad pre-run: async_hooks required-gap fixtures with socket-bind networking excluded; promote only dynamically green lifecycle fixtures",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3371,
+      "source_line": 3372,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1080,7 +1080,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked WebCrypto required-gap inventory; classify algorithms, key import/export, error shape, host-policy, and Node24-only fixtures after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3556,
+      "source_line": 3557,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1091,7 +1091,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked WebCrypto required-gap inventory; classify algorithms, key import/export, error shape, host-policy, and Node24-only fixtures after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3572,
+      "source_line": 3573,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1102,7 +1102,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 node26 broad pre-run: ROI-ranked WebCrypto required-gap inventory; promote only dynamically green Current-lane fixtures",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3588,
+      "source_line": 3589,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1113,7 +1113,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked EventEmitter/EventTarget/EventSource required-gap inventory; classify clean event semantics, async resource context, web event targets, and host-only EventSource cases after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3779,
+      "source_line": 3780,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1124,7 +1124,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked EventEmitter/EventTarget/EventSource required-gap inventory; classify clean event semantics, async resource context, web event targets, and host-only EventSource cases after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3793,
+      "source_line": 3794,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1135,7 +1135,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 node26 broad pre-run: ROI-ranked EventEmitter/EventTarget/EventSource required-gap inventory; promote only dynamically green Current-lane fixtures",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3807,
+      "source_line": 3808,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1146,7 +1146,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked networking/crypto required-gap inventory; classify clean crypto semantics, host-provider boundaries, Node24-only algorithms, async callbacks, worker/messageport behavior, and error-shape failures after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3869,
+      "source_line": 3870,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1157,7 +1157,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked networking/crypto required-gap inventory; classify clean crypto semantics, host-provider boundaries, Node24-only algorithms, async callbacks, worker/messageport behavior, and error-shape failures after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3885,
+      "source_line": 3886,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1168,7 +1168,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked diagnostic-only HTTP client/agent core inventory; leak/GC lifecycle paths are excluded by the kill rule and remain diagnostics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3935,
+      "source_line": 3936,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1179,7 +1179,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked diagnostic-only HTTP client/agent core inventory; leak/GC lifecycle paths are excluded by the kill rule and remain diagnostics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 3948,
+      "source_line": 3949,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1190,7 +1190,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked diagnostic-only HTTP server/request/response inventory; cluster, leak, and GC lifecycle paths are excluded by the kill rule",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4003,
+      "source_line": 4004,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1201,7 +1201,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked diagnostic-only HTTP server/request/response inventory; cluster, leak, and GC lifecycle paths are excluded by the kill rule",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4016,
+      "source_line": 4017,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1212,7 +1212,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked remaining HTTP diagnostic core inventory; prior client/agent/server residuals and proxy/internet/TLS/Unix/cluster/leak/GC paths are excluded",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4203,
+      "source_line": 4204,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1223,7 +1223,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked remaining HTTP diagnostic core inventory; prior client/agent/server residuals and proxy/internet/TLS/Unix/cluster/leak/GC paths are excluded",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4216,
+      "source_line": 4217,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1234,7 +1234,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked HTTP/2 diagnostic core inventory; internet/TLS/secure/file-serving/leak/stress/host-topology paths are excluded",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4461,
+      "source_line": 4462,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1245,7 +1245,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked HTTP/2 diagnostic core inventory; internet/TLS/secure/file-serving/leak/stress/host-topology paths are excluded",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4474,
+      "source_line": 4475,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1256,7 +1256,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked net diagnostic core inventory; internet/autoselect/DNS/cluster/fd/path/pipe/multi-address/large/stress host-topology paths are excluded",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4734,
+      "source_line": 4735,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1267,7 +1267,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked net diagnostic core inventory; internet/autoselect/DNS/cluster/fd/path/pipe/multi-address/large/stress host-topology paths are excluded",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4747,
+      "source_line": 4748,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1278,7 +1278,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked module-hooks required-gap inventory; classify Node24-only hooks, shared loader-hook semantics, error-shape failures, and harness topology after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4960,
+      "source_line": 4961,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1289,7 +1289,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked module-hooks required-gap inventory; classify Node24-only hooks, shared loader-hook semantics, error-shape failures, and harness topology after the first wide run",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4976,
+      "source_line": 4977,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1300,7 +1300,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 required-surface implementation wave: exact module-loader blocker inventory; keep ignored until broad root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 4992,
+      "source_line": 4993,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1311,7 +1311,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 required-surface implementation wave: exact module-loader blocker inventory; keep ignored until broad root-cause clusters are fixed or precisely classified",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5005,
+      "source_line": 5006,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1322,7 +1322,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 node26 broad pre-run: exact module-loader blocker inventory; promote only dynamically green Current-lane fixtures",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5018,
+      "source_line": 5019,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1333,7 +1333,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 focused implementation wave: package/CJS/ESM loader core; run after exact broad pre-run and before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5031,
+      "source_line": 5032,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1344,7 +1344,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 focused implementation wave: package/CJS/ESM loader core; run after exact broad pre-run and before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5044,
+      "source_line": 5045,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1355,7 +1355,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked parallel JS platform required-gap inventory; classify util, global, errors, promises, performance, abort, and EventTarget failures before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5203,
+      "source_line": 5204,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1366,7 +1366,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked parallel JS platform required-gap inventory; classify util, global, errors, promises, performance, abort, and EventTarget failures before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5219,
+      "source_line": 5220,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1377,7 +1377,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 node26 broad pre-run: ROI-ranked parallel JS platform required-gap inventory; promote only dynamically green fixtures",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5235,
+      "source_line": 5236,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1388,7 +1388,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: generated-posture discovery for remaining unpromoted test/parallel required gaps after excluding already killed host/native/CLI/stress/fatal families",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5399,
+      "source_line": 5400,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1399,7 +1399,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: generated-posture discovery for remaining unpromoted test/parallel required gaps after excluding already killed host/native/CLI/stress/fatal families",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5412,
+      "source_line": 5413,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1410,7 +1410,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 node26 broad pre-run: generated-posture discovery for remaining unpromoted test/parallel required gaps after excluding already killed host/native/CLI/stress/fatal families",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5425,
+      "source_line": 5426,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1421,7 +1421,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 node26 broad pre-run: owner-wide node-compat/unpromoted-surface required-gap inventory after the filtered parallel selector drained; classify mixed async, web, dns, blob, stream, and embedding root causes before promotion",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5438,
+      "source_line": 5439,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1432,7 +1432,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 post-2000 broad pre-run: internal helper/module/process/WebIDL slice from node-compat/unpromoted-surface; classify internal helper failures before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5452,
+      "source_line": 5453,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1443,7 +1443,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 post-2000 broad pre-run: internal helper/module/process/WebIDL slice from node-compat/unpromoted-surface; classify internal helper failures before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5465,
+      "source_line": 5466,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1454,7 +1454,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked core semantics and util required-gap inventory; classify assert, buffer, path, URL, and util failures before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5647,
+      "source_line": 5648,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1465,7 +1465,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked core semantics and util required-gap inventory; classify assert, buffer, path, URL, and util failures before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5660,
+      "source_line": 5661,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1476,7 +1476,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 node26 broad pre-run: ROI-ranked core semantics and util required-gap inventory; promote only dynamically green Current-lane fixtures",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5673,
+      "source_line": 5674,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1487,7 +1487,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 node26 broad pre-run: core-semantics/console required-gap inventory; promote only dynamically green Current-lane fixtures",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 5686,
+      "source_line": 5687,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1498,7 +1498,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked fs-host-io required-gap inventory; watch/stress/crash paths are excluded by the kill rule and remain gaps",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6024,
+      "source_line": 6025,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1509,7 +1509,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 broad pre-run: ROI-ranked fs-host-io required-gap inventory; watch/stress/crash paths are excluded by the kill rule and remain gaps",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6037,
+      "source_line": 6038,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1520,7 +1520,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 node26 broad pre-run: ROI-ranked fs-host-io required-gap inventory; watch/stress/crash paths are excluded by the kill rule and remain gaps",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6050,
+      "source_line": 6051,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1531,7 +1531,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node20 divergence: official v20.20.2 test-fs-stat.js still requires the older JSON.stringify(Stats) field shape that the current runtime no longer preserves while matching the newer Node22/Node24 file contract",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6072,
+      "source_line": 6073,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1542,7 +1542,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-write-stream.js now also requires fs.close() to be observed when destroying WriteStream directly, while the current older Node22-compatible contract still follows the older file semantics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6112,
+      "source_line": 6113,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1553,7 +1553,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-write-stream-autoclose-option.js now also asserts ERR_INVALID_THIS when probing WriteStream.prototype.autoClose, while the current older Node22-compatible contract still follows the older surface",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6122,
+      "source_line": 6123,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1564,7 +1564,7 @@
       "classification": "watchpoint",
       "reason": "Superseded by NDS3 cycle 53: node24 test-fs-symlink.js is now dynamically green-guarded by node24_default_lane_executes_cycle53_fs_symlink_batch",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6132,
+      "source_line": 6133,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1575,7 +1575,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-promises-watch.js adds maxQueue and overflow option validation that Nimbus has not adopted into the default lane yet",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6155,
+      "source_line": 6156,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1586,7 +1586,7 @@
       "classification": "watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6165,
+      "source_line": 6166,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1597,7 +1597,7 @@
       "classification": "watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6175,
+      "source_line": 6176,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1608,7 +1608,7 @@
       "classification": "watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6185,
+      "source_line": 6186,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1619,7 +1619,7 @@
       "classification": "watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6195,
+      "source_line": 6196,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1630,7 +1630,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node20 divergence: official v20.20.2 test-buffer-slow.js still exercises SlowBuffer(buffer.kMaxLength), and the embedded runtime hits its 128 MB heap ceiling before Node-style range semantics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6205,
+      "source_line": 6206,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1641,7 +1641,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node22-only path gap: official v22.15.0 expects the post-CVE path.win32.normalize() semantics that preserve the test segment in \\\\\\\\? and \\\\\\\\. device paths",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6215,
+      "source_line": 6216,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1652,7 +1652,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node22 path gap: official v22.15.0 expects path.win32.toNamespacedPath('\\\\\\\\?\\\\\\\\foo') to retain the trailing slash, but the current runtime still returns the older Node20 shape",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6225,
+      "source_line": 6226,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1663,7 +1663,7 @@
       "classification": "watchpoint",
       "reason": "Pinned shared path gap: official Node20/Node22 test-path-resolve.js currently fails because win32.resolve rejects drive-letter-less inputs without a CWD",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6235,
+      "source_line": 6236,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1674,7 +1674,7 @@
       "classification": "watchpoint",
       "reason": "Pinned shared path gap: official Node20/Node22 test-path-resolve.js currently fails because win32.resolve rejects drive-letter-less inputs without a CWD",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6245,
+      "source_line": 6246,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1685,7 +1685,7 @@
       "classification": "watchpoint",
       "reason": "Pinned vendored fixture tracks post-22 url.parse deprecation semantics; official Node22 v22.15.0 has no counterpart",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6255,
+      "source_line": 6256,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1696,7 +1696,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 node26 broad pre-run: Current-lane residual batch from Node26 broad pre-run; classify crypto, fs, stream, http2, loader, process, url, and util root causes before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6342,
+      "source_line": 6343,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     }
   ]
