@@ -5339,6 +5339,7 @@ const NODE26_UNPROMOTED_SURFACE_PROMOTED_PATHS: &[&str] = &[
     "test/async-hooks/test-async-exec-resource-http.js",
     "test/async-hooks/test-httpparser-reuse.js",
     "test/parallel/test-async-hooks-http-parser-destroy.js",
+    "test/parallel/test-async-local-storage-weak-asyncwrap-leak.js",
     "test/parallel/test-blob-createobjecturl.js",
     "test/parallel/test-diagnostic-channel-http-request-created.js",
     "test/parallel/test-diagnostic-channel-http-response-created.js",
@@ -5945,6 +5946,12 @@ const FS_HOST_IO_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-fs-promises-file-handle-writer.js",
     "test/parallel/test-fs-promises-mkdtempDisposable.js",
     "test/parallel/test-fs-promises-statfs-validate-path.js",
+    // NDS3 node26 cycle 36: these residual fs-host-io paths were previously
+    // filtered from the broad watchpoint as low ROI; with only the tail left,
+    // they passed together in the residual diagnostic batch on the immutable
+    // Deno tag and are now enforced by the promoted batch.
+    "test/parallel/test-fs-promises-watch-ignore-invalid.mjs",
+    "test/parallel/test-fs-promises-watch.js",
     "test/parallel/test-fs-promises.js",
     "test/parallel/test-fs-read-position-validation.mjs",
     "test/parallel/test-fs-read-promises-position-validation.mjs",
@@ -5974,6 +5981,7 @@ const FS_HOST_IO_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-fs-stream-double-close.js",
     "test/parallel/test-fs-stream-fs-options.js",
     "test/parallel/test-fs-stream-options.js",
+    "test/parallel/test-fs-sir-writes-alot.js",
     "test/parallel/test-fs-symlink-dir-junction.js",
     "test/parallel/test-fs-symlink-dir-junction-relative.js",
     "test/parallel/test-fs-symlink-dir.js",
@@ -5991,6 +5999,7 @@ const FS_HOST_IO_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-fs-write-stream-fs.js",
     "test/parallel/test-fs-write-stream-throw-type-error.js",
     "test/parallel/test-fs-write-stream.js",
+    "test/parallel/test-fs-write-buffer-large.js",
     "test/parallel/test-fs-writestream-open-write.js",
     "test/parallel/test-fs-writesync-crash.js",
 ];

@@ -3,7 +3,15 @@
   "catalog_kind": "node_compat_lane_classifications",
   "lane": "node26",
   "contract": "Classifies vendored lane-local test files that are not green in the non-ignored Rust compatibility lane. Entries must not be counted as pass claims; they reduce only the unmanifested/unclassified remainder.",
-  "entries": [],
+  "entries": [
+    {
+      "test_path": "test/parallel/test-fs-stat-temporal.mjs",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "streams-local-io/fs-host-io",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node26_current_lane_fs_host_io_residual_watchpoint"
+    }
+  ],
   "groups": [
     {
       "id": "node26-requires_native_addon_harness-1",
@@ -1944,7 +1952,6 @@
         "test/parallel/test-async-hooks-worker-asyncfn-terminate-2.js",
         "test/parallel/test-async-hooks-worker-asyncfn-terminate-3.js",
         "test/parallel/test-async-hooks-worker-asyncfn-terminate-4.js",
-        "test/parallel/test-async-local-storage-weak-asyncwrap-leak.js",
         "test/parallel/test-async-wrap-destroyid.js",
         "test/parallel/test-async-wrap-pop-id-during-load.js",
         "test/parallel/test-async-wrap-tlssocket-asyncreset.js",
@@ -3616,11 +3623,9 @@
         "test/parallel/test-fs-promises-file-handle-read-worker.js",
         "test/parallel/test-fs-promises-watch-ignore-function.mjs",
         "test/parallel/test-fs-promises-watch-ignore-glob.mjs",
-        "test/parallel/test-fs-promises-watch-ignore-invalid.mjs",
         "test/parallel/test-fs-promises-watch-ignore-mixed.mjs",
         "test/parallel/test-fs-promises-watch-ignore-regexp.mjs",
         "test/parallel/test-fs-promises-watch-iterator.js",
-        "test/parallel/test-fs-promises-watch.js",
         "test/parallel/test-fs-read-file-sync-hostname.js",
         "test/parallel/test-fs-read-stream.js",
         "test/parallel/test-fs-readdir-buffer.js",
@@ -3636,8 +3641,6 @@
         "test/parallel/test-fs-realpath-pipe.js",
         "test/parallel/test-fs-realpath.js",
         "test/parallel/test-fs-rm.js",
-        "test/parallel/test-fs-sir-writes-alot.js",
-        "test/parallel/test-fs-stat-temporal.mjs",
         "test/parallel/test-fs-stream-construct-compat-error-read.js",
         "test/parallel/test-fs-syncwritestream.js",
         "test/parallel/test-fs-utils-get-dirents.js",
@@ -3653,7 +3656,6 @@
         "test/parallel/test-fs-watch-ignore-regexp.js",
         "test/parallel/test-fs-watch-recursive-assert-leaks.js",
         "test/parallel/test-fs-watch-recursive-linux-parallel-remove.js",
-        "test/parallel/test-fs-write-buffer-large.js",
         "test/parallel/test-fs-write-file-invalid-path.js",
         "test/parallel/test-fs-write-sigxfsz.js",
         "test/parallel/test-fs-write-stream-patch-open.js",
