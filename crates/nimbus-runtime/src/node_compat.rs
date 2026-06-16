@@ -398,15 +398,15 @@ fn resolve_node_target_with_resolver(
     ) {
         Ok(resolved) => resolved,
         Err(error) => {
-            if should_try_package_subpath_without_exports(&error) {
-                if let Some(resolved) = try_resolve_package_subpath_without_exports(
+            if should_try_package_subpath_without_exports(&error)
+                && let Some(resolved) = try_resolve_package_subpath_without_exports(
                     path_policy,
                     specifier,
                     &referrer_url,
                     package_json_resolver.as_ref(),
-                )? {
-                    return Ok(resolved);
-                }
+                )?
+            {
+                return Ok(resolved);
             }
             return Err(JsErrorBox::from_err(error));
         }

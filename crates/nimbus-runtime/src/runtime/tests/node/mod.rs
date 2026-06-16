@@ -1110,10 +1110,9 @@ Object.defineProperty(globalThis.global, "gc", {
                     | NodeCompatNamedPreludeBehavior::ProcessExitAlwaysSentinel
             )
         );
-    let import_preamble = if should_quiesce_then_require_fixture(test_relative_path) {
-        String::new()
-    } else if matches!(mode, NodeCompatBundleMode::Runtime)
-        && should_load_fixture_as_async_main_module(test_relative_path)
+    let import_preamble = if should_quiesce_then_require_fixture(test_relative_path)
+        || (matches!(mode, NodeCompatBundleMode::Runtime)
+            && should_load_fixture_as_async_main_module(test_relative_path))
     {
         String::new()
     } else if should_load_fixture_as_commonjs_main_module(test_relative_path) {

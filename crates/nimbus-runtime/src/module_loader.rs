@@ -334,9 +334,7 @@ impl RestrictedModuleLoader {
                         .transpose()
                         .map_err(JsErrorBox::from_err)?
                         .unwrap_or(resolved_specifier);
-                    if let Err(error) = self.ensure_allowed_specifier(&found_specifier) {
-                        return Err(error);
-                    }
+                    self.ensure_allowed_specifier(&found_specifier)?;
                     let source = self
                         .load_module_source(&found_specifier, options, hook_format)
                         .await?;
@@ -350,9 +348,7 @@ impl RestrictedModuleLoader {
                 Err(_) => return Err(JsErrorBox::generic("module load hook cancelled")),
             }
         }
-        if let Err(error) = self.ensure_allowed_specifier(&resolved_specifier) {
-            return Err(error);
-        }
+        self.ensure_allowed_specifier(&resolved_specifier)?;
         let source = self
             .load_module_source(&resolved_specifier, options, resolved_format.as_deref())
             .await?;
