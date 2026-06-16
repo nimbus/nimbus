@@ -657,7 +657,6 @@ const LOADER_CONTEXT_VM_EXTRA_DIRS: &[&str] = &[
 
 const LOADER_CONTEXT_VM_FATAL_ABORT_PATHS: &[&str] =
     &["test/parallel/test-vm-module-evaluate-while-evaluating.js"];
-const LOADER_CONTEXT_VM_FATAL_ABORT_PREFIXES: &[&str] = &["test/parallel/test-vm-module-"];
 
 fn loader_context_vm_runnable_fixture_paths(lane: NodeCompatLane) -> Vec<String> {
     let mut fixture_paths = node_compat_required_gap_paths_for_owner(lane, "loader-context/vm");
@@ -665,9 +664,6 @@ fn loader_context_vm_runnable_fixture_paths(lane: NodeCompatLane) -> Vec<String>
         !LOADER_CONTEXT_VM_FATAL_ABORT_PATHS
             .iter()
             .any(|fatal_path| path == fatal_path)
-            && !LOADER_CONTEXT_VM_FATAL_ABORT_PREFIXES
-                .iter()
-                .any(|fatal_prefix| path.starts_with(fatal_prefix))
     });
     fixture_paths
 }
@@ -768,6 +764,28 @@ const LOADER_CONTEXT_VM_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-vm-inherited_properties.js",
     "test/parallel/test-vm-is-context.js",
     "test/parallel/test-vm-low-stack-space.js",
+    "test/parallel/test-vm-module-after-evaluate.js",
+    "test/parallel/test-vm-module-basic.js",
+    "test/parallel/test-vm-module-cached-data.js",
+    "test/parallel/test-vm-module-dynamic-import-promise.js",
+    "test/parallel/test-vm-module-dynamic-import.js",
+    "test/parallel/test-vm-module-dynamic-namespace.js",
+    "test/parallel/test-vm-module-errors.js",
+    "test/parallel/test-vm-module-evaluate-source-text-module.js",
+    "test/parallel/test-vm-module-evaluate-synthethic-module-rejection.js",
+    "test/parallel/test-vm-module-evaluate-synthethic-module.js",
+    "test/parallel/test-vm-module-hasasyncgraph.js",
+    "test/parallel/test-vm-module-hastoplevelawait.js",
+    "test/parallel/test-vm-module-import-meta.js",
+    "test/parallel/test-vm-module-instantiate.js",
+    "test/parallel/test-vm-module-link-shared-deps.js",
+    "test/parallel/test-vm-module-link.js",
+    "test/parallel/test-vm-module-linkmodulerequests-circular.js",
+    "test/parallel/test-vm-module-linkmodulerequests-deep.js",
+    "test/parallel/test-vm-module-linkmodulerequests.js",
+    "test/parallel/test-vm-module-reevaluate.js",
+    "test/parallel/test-vm-module-referrer-realm.mjs",
+    "test/parallel/test-vm-module-synthetic.js",
     "test/parallel/test-vm-new-script-new-context.js",
     "test/parallel/test-vm-new-script-this-context.js",
     "test/parallel/test-vm-no-dynamic-import-callback.js",
