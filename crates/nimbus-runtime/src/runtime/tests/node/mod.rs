@@ -244,6 +244,7 @@ fn node_compat_supported_node_options_flag(token: &str) -> bool {
         || token == "--async-context-frame"
         || token == "--no-warnings"
         || token == "--trace-warnings"
+        || token == "--experimental-eventsource"
         || token == "--experimental-vm-modules"
         || token == "--experimental-require-module"
         || token == "--experimental-stream-iter"

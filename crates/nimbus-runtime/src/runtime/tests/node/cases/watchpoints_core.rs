@@ -151,6 +151,7 @@ const WHATWG_WEB_PLATFORM_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-whatwg-url-custom-deepequal.js",
     "test/parallel/test-whatwg-url-custom-global.js",
     "test/parallel/test-whatwg-url-custom-href-side-effect.js",
+    "test/parallel/test-whatwg-url-custom-inspect.js",
     "test/parallel/test-whatwg-url-custom-parsing.js",
     "test/parallel/test-whatwg-url-custom-properties.js",
     "test/parallel/test-whatwg-url-custom-searchparams-append.js",

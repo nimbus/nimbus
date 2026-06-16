@@ -3750,6 +3750,7 @@ const EVENT_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-events-customevent.js",
     "test/parallel/test-events-on-async-iterator.js",
     "test/parallel/test-events-uncaught-exception-stack.js",
+    "test/parallel/test-eventsource.js",
     "test/parallel/test-eventsource-disabled.js",
     "test/parallel/test-eventtarget-brandcheck.js",
     "test/parallel/test-eventtarget-custom-inspect-does-not-throw.js",
@@ -5049,7 +5050,8 @@ fn node24_default_lane_module_loader_package_core_watchpoint() {
     );
 }
 
-const PARALLEL_JS_PLATFORM_REQUIRED_GAP_EXTRA_DIRS: &[&str] = &["test/common"];
+const PARALLEL_JS_PLATFORM_REQUIRED_GAP_EXTRA_DIRS: &[&str] =
+    &["test/common", "test/fixtures/global"];
 
 const PARALLEL_JS_PLATFORM_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-abort-controller-any-timeout.js",
@@ -5106,6 +5108,7 @@ const PARALLEL_JS_PLATFORM_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-global-console-exists.js",
     "test/parallel/test-global-domexception.js",
     "test/parallel/test-global-encoder.js",
+    "test/parallel/test-global.js",
     "test/parallel/test-global-setters.js",
     "test/parallel/test-global-webcrypto.js",
     "test/parallel/test-performance-function-async.js",
@@ -5115,6 +5118,7 @@ const PARALLEL_JS_PLATFORM_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-performance-measure.js",
     "test/parallel/test-performance-nodetiming.js",
     "test/parallel/test-performance-resourcetimingbufferfull.js",
+    "test/parallel/test-performance-resourcetimingbuffersize.js",
     "test/parallel/test-performance-timeline.mjs",
     "test/parallel/test-performanceobserver-gc.js",
     "test/parallel/test-performanceobserver.js",
@@ -5464,7 +5468,9 @@ const CORE_SEMANTICS_UTIL_PROMOTED_NODE24_EXTRA_PATHS: &[&str] = &[
 ];
 
 const CORE_SEMANTICS_UTIL_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/parallel/test-assert.js",
     "test/parallel/test-assert-class.js",
+    "test/parallel/test-assert-deep.js",
     "test/parallel/test-assert-esm-cjs-message-verify.js",
     "test/parallel/test-assert-myers-diff.js",
     "test/parallel/test-assert-partial-deep-equal.js",
@@ -5479,6 +5485,7 @@ const CORE_SEMANTICS_UTIL_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-buffer-zero-fill.js",
     "test/parallel/test-path-resolve.js",
     "test/parallel/test-url-is-url-internal.js",
+    "test/parallel/test-url-parse-deprecation.js",
     "test/parallel/test-util-emit-experimental-warning.js",
     "test/parallel/test-util-getcallsites-preparestacktrace.js",
     "test/parallel/test-util-inspect-getters-accessing-this.js",

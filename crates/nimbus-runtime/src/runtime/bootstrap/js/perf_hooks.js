@@ -867,6 +867,14 @@ let resourceTimingBufferFullPending = false;
 // otherwise the truncated value modulo 2^32. Matches Node's
 // converters['unsigned long'] used by Performance#setResourceTimingBufferSize.
 function toResourceTimingBufferSize(value) {
+  if (typeof value === "bigint" || typeof value === "symbol") {
+    const typeName = typeof value === "bigint" ? "BigInt" : "Symbol";
+    const error = new TypeError(
+      `maxSize is a ${typeName} and cannot be converted to a number.`,
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   const number = Number(value);
   if (!Number.isFinite(number) || number === 0) {
     return 0;

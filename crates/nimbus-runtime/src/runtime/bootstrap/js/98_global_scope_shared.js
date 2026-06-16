@@ -98,6 +98,162 @@ core.registerErrorBuilder(
   },
 );
 
+function hasNodeExecArgvFlag(flag) {
+  const execArgv = globalThis.process?.execArgv;
+  return Array.isArray(execArgv) && execArgv.includes(flag);
+}
+
+let sessionStorageValue;
+function createInMemorySessionStorage() {
+  const entries = new Map();
+  const storage = {
+    get length() {
+      return entries.size;
+    },
+    key(index) {
+      return Array.from(entries.keys())[Number(index)] ?? null;
+    },
+    getItem(key) {
+      key = String(key);
+      return entries.has(key) ? entries.get(key) : null;
+    },
+    setItem(key, value) {
+      entries.set(String(key), String(value));
+    },
+    removeItem(key) {
+      entries.delete(String(key));
+    },
+    clear() {
+      entries.clear();
+    },
+  };
+  return new Proxy(storage, {
+    deleteProperty(_target, key) {
+      entries.delete(String(key));
+      return true;
+    },
+    get(target, key, receiver) {
+      if (typeof key === "symbol" || key in target) {
+        return Reflect.get(target, key, receiver);
+      }
+      return entries.has(key) ? entries.get(key) : undefined;
+    },
+    getOwnPropertyDescriptor(target, key) {
+      if (typeof key === "symbol" || key in target) {
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      }
+      if (!entries.has(key)) {
+        return undefined;
+      }
+      return {
+        configurable: true,
+        enumerable: true,
+        value: entries.get(key),
+        writable: true,
+      };
+    },
+    has(target, key) {
+      return key in target || entries.has(String(key));
+    },
+    ownKeys() {
+      return Array.from(entries.keys());
+    },
+    set(_target, key, value) {
+      entries.set(String(key), String(value));
+      return true;
+    },
+  });
+}
+
+const eventSourceGlobalDescriptor = Object.getOwnPropertyDescriptor({
+  get EventSource() {
+    return hasNodeExecArgvFlag("--experimental-eventsource")
+      ? eventSource.EventSource
+      : undefined;
+  },
+}, "EventSource");
+eventSourceGlobalDescriptor.enumerable = false;
+
+const sessionStorageGlobalDescriptor = Object.getOwnPropertyDescriptor({
+  get sessionStorage() {
+    return sessionStorageValue ??= createInMemorySessionStorage();
+  },
+}, "sessionStorage");
+
+const nodeUrlContextLabel = "  Symbol(context): URLContext {";
+const node22UrlContextLabel = "  [Symbol(context)]: URLContext {";
+const denoPrivateCustomInspectSymbol = Symbol.for("Deno.privateCustomInspect");
+const nodeCustomInspectSymbol = Symbol.for("nodejs.util.inspect.custom");
+
+function nodeMajorVersionFromProcess() {
+  const version = globalThis.process?.versions?.node;
+  if (typeof version !== "string") {
+    return 0;
+  }
+  return Number(version.split(".", 1)[0]) || 0;
+}
+
+function normalizeUrlInspectOutput(output) {
+  if (typeof output !== "string") {
+    return output;
+  }
+  const major = nodeMajorVersionFromProcess();
+  if (major === 22) {
+    return output.replace(nodeUrlContextLabel, node22UrlContextLabel);
+  }
+  if (major >= 24) {
+    return output.replace(node22UrlContextLabel, nodeUrlContextLabel);
+  }
+  return output;
+}
+
+function installUrlInspectNormalizer() {
+  const prototype = url.URL?.prototype;
+  if (prototype === undefined) {
+    return;
+  }
+
+  const denoInspectDescriptor = Object.getOwnPropertyDescriptor(
+    prototype,
+    denoPrivateCustomInspectSymbol,
+  );
+  const denoInspect = denoInspectDescriptor?.value;
+  if (typeof denoInspect === "function") {
+    const normalizedDenoInspect = {
+      [denoPrivateCustomInspectSymbol](inspect, inspectOptions) {
+        return normalizeUrlInspectOutput(
+          denoInspect.call(this, inspect, inspectOptions),
+        );
+      },
+    }[denoPrivateCustomInspectSymbol];
+    Object.defineProperty(prototype, denoPrivateCustomInspectSymbol, {
+      ...denoInspectDescriptor,
+      value: normalizedDenoInspect,
+    });
+  }
+
+  const nodeInspectDescriptor = Object.getOwnPropertyDescriptor(
+    prototype,
+    nodeCustomInspectSymbol,
+  );
+  const nodeInspect = nodeInspectDescriptor?.value;
+  if (typeof nodeInspect === "function") {
+    const normalizedNodeInspect = {
+      [nodeCustomInspectSymbol](depth, inspectOptions, inspect) {
+        return normalizeUrlInspectOutput(
+          nodeInspect.call(this, depth, inspectOptions, inspect),
+        );
+      },
+    }[nodeCustomInspectSymbol];
+    Object.defineProperty(prototype, nodeCustomInspectSymbol, {
+      ...nodeInspectDescriptor,
+      value: normalizedNodeInspect,
+    });
+  }
+}
+
+installUrlInspectNormalizer();
+
 // Match the Deno runtime module name that Node polyfills import. Keep this
 // intentionally smaller than the full Deno runtime global contract, but wide
 // enough for Node polyfills to rely on the same shared URL / fetch / DOM
@@ -115,10 +271,7 @@ const windowOrWorkerGlobalScope = {
   ErrorEvent: core.propNonEnumerable(event.ErrorEvent),
   Event: core.propNonEnumerable(event.Event),
   EventTarget: core.propNonEnumerable(event.EventTarget),
-  // Node 22/24 gate the EventSource global behind --experimental-eventsource, so
-  // it is absent by default (test/parallel/test-eventsource-disabled.js asserts
-  // `typeof EventSource === 'undefined'`). The ext script stays imported for
-  // opt-in callers; only the default global registration is withheld.
+  EventSource: eventSourceGlobalDescriptor,
   File: core.propNonEnumerable(file.File),
   FileReader: core.propNonEnumerable(fileReader.FileReader),
   FormData: core.propNonEnumerable(formData.FormData),
@@ -129,6 +282,7 @@ const windowOrWorkerGlobalScope = {
   Request: core.propNonEnumerable(request.Request),
   Response: core.propNonEnumerable(response.Response),
   reportError: core.propWritable(event.reportError),
+  sessionStorage: sessionStorageGlobalDescriptor,
   TextDecoder: core.propNonEnumerable(encoding.TextDecoder),
   TextEncoder: core.propNonEnumerable(encoding.TextEncoder),
   URL: core.propNonEnumerable(url.URL),
