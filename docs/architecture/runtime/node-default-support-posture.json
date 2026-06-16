@@ -102368,10 +102368,10 @@
       }
     },
     "node26": {
-      "current_pass_rate": 0.368591,
-      "current_passed": 2056,
+      "current_pass_rate": 0.368949,
+      "current_passed": 2058,
       "diagnostic_only_non_isolate": {
-        "gaps": 2065
+        "gaps": 2069
       },
       "entries": [
         {
@@ -102384,7 +102384,43 @@
           "source_classification": "requires_native_addon_harness",
           "source_expectation": "expected_gap",
           "support_denominator": "diagnostic_only_non_isolate",
+          "test_path": "test/ffi/test-ffi-shared-buffer.js"
+        },
+        {
+          "docs_cross_check": "docs must describe fail-closed diagnostic or service/microVM route",
+          "evidence_path": "tests/runtime/node/classifications/node26.json",
+          "owner": "loader-context/native-addon-host",
+          "reason": "fixture depends on host-owned native or terminal behavior and must fail closed unless a host-capable backend is selected",
+          "reason_code": "host_owned_non_isolate_harness",
+          "shim_classification": "diagnostic_stub",
+          "source_classification": "requires_native_addon_harness",
+          "source_expectation": "expected_gap",
+          "support_denominator": "diagnostic_only_non_isolate",
           "test_path": "test/parallel/test-module-loading-error.js"
+        },
+        {
+          "docs_cross_check": "docs must describe fail-closed diagnostic or service/microVM route",
+          "evidence_path": "tests/runtime/node/classifications/node26.json",
+          "owner": "loader-context/native-addon-host",
+          "reason": "fixture depends on host-owned native or terminal behavior and must fail closed unless a host-capable backend is selected",
+          "reason_code": "host_owned_non_isolate_harness",
+          "shim_classification": "diagnostic_stub",
+          "source_classification": "requires_native_addon_harness",
+          "source_expectation": "expected_gap",
+          "support_denominator": "diagnostic_only_non_isolate",
+          "test_path": "test/embedding/test-embedding-snapshot-vm.js"
+        },
+        {
+          "docs_cross_check": "docs must describe fail-closed diagnostic or service/microVM route",
+          "evidence_path": "tests/runtime/node/classifications/node26.json",
+          "owner": "loader-context/native-addon-host",
+          "reason": "fixture depends on host-owned native or terminal behavior and must fail closed unless a host-capable backend is selected",
+          "reason_code": "host_owned_non_isolate_harness",
+          "shim_classification": "diagnostic_stub",
+          "source_classification": "requires_native_addon_harness",
+          "source_expectation": "expected_gap",
+          "support_denominator": "diagnostic_only_non_isolate",
+          "test_path": "test/ffi/test-ffi-module.js"
         },
         {
           "docs_cross_check": "docs must describe fail-closed diagnostic or service/microVM route",
@@ -119727,18 +119763,6 @@
           "test_path": "test/async-hooks/test-graph.tls-write.js"
         },
         {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/async-hooks/test-httpparser-reuse.js"
-        },
-        {
           "docs_cross_check": "visible optional gap; docs must not count it as required support",
           "evidence_path": "tests/runtime/node/classifications/node26.json",
           "owner": "node-compat/unpromoted-surface",
@@ -120543,18 +120567,6 @@
           "test_path": "test/embedding/test-embedding-snapshot-basic.js"
         },
         {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/embedding/test-embedding-snapshot-vm.js"
-        },
-        {
           "docs_cross_check": "visible optional gap; docs must not count it as required support",
           "evidence_path": "tests/runtime/node/classifications/node26.json",
           "owner": "node-compat/unpromoted-surface",
@@ -120589,18 +120601,6 @@
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_optional",
           "test_path": "test/embedding/test-embedding-throw.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/embedding/test-shared-embedding-v8.js"
         },
         {
           "docs_cross_check": "docs must not count upstream harness topology as runtime API support",
@@ -121767,18 +121767,6 @@
           "test_path": "test/ffi/test-ffi-memory.js"
         },
         {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/ffi/test-ffi-module.js"
-        },
-        {
           "docs_cross_check": "visible optional gap; docs must not count it as required support",
           "evidence_path": "tests/runtime/node/classifications/node26.json",
           "owner": "node-compat/unpromoted-surface",
@@ -121825,18 +121813,6 @@
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_optional",
           "test_path": "test/ffi/test-ffi-readonly-write.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/ffi/test-ffi-shared-buffer.js"
         },
         {
           "docs_cross_check": "visible optional gap; docs must not count it as required support",
@@ -122905,18 +122881,6 @@
           "source_expectation": "expected_gap",
           "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-async-hooks-fatal-error.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-async-hooks-http-parser-destroy.js"
         },
         {
           "docs_cross_check": "docs must not count upstream harness topology as runtime API support",
@@ -138279,18 +138243,6 @@
           "test_path": "test/parallel/test-webcrypto-cryptokey-workers.js"
         },
         {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-webcrypto-derivebits-argon2.js"
-        },
-        {
           "docs_cross_check": "docs must link upstream/platform rationale when excluding from support",
           "evidence_path": "tests/runtime/node/classifications/node26.json",
           "owner": "node-compat/unpromoted-surface",
@@ -144015,6 +143967,18 @@
           "test_path": "test/known_issues/test-vm-timeout-escape-queuemicrotask.js"
         },
         {
+          "docs_cross_check": "docs must describe fail-closed diagnostic or service/microVM route",
+          "evidence_path": "tests/runtime/node/classifications/node26.json",
+          "owner": "loader-context/native-addon-host",
+          "reason": "fixture depends on host-owned native or terminal behavior and must fail closed unless a host-capable backend is selected",
+          "reason_code": "host_owned_non_isolate_harness",
+          "shim_classification": "diagnostic_stub",
+          "source_classification": "requires_native_addon_harness",
+          "source_expectation": "expected_skip",
+          "support_denominator": "diagnostic_only_non_isolate",
+          "test_path": "test/embedding/test-shared-embedding-v8.js"
+        },
+        {
           "docs_cross_check": "docs must not count upstream harness topology as runtime API support",
           "evidence_path": "tests/runtime/node/classifications/node26.json",
           "owner": "node-compat-denominator/fixture-sync",
@@ -144588,6 +144552,18 @@
           "source_classification": "upstream_known_issue_or_platform_boundary",
           "source_expectation": "expected_skip",
           "support_denominator": "upstream_or_platform_boundary",
+          "test_path": "test/parallel/test-webcrypto-derivebits-argon2.js"
+        },
+        {
+          "docs_cross_check": "docs must link upstream/platform rationale when excluding from support",
+          "evidence_path": "tests/runtime/node/classifications/node26.json",
+          "owner": "networking/crypto-provider",
+          "reason": "fixture is blocked by upstream, version-specific, or host-platform behavior",
+          "reason_code": "upstream_or_platform_boundary",
+          "shim_classification": "unsupported",
+          "source_classification": "upstream_known_issue_or_platform_boundary",
+          "source_expectation": "expected_skip",
+          "support_denominator": "upstream_or_platform_boundary",
           "test_path": "test/parallel/test-crypto-oneshot-hash-xof.js"
         },
         {
@@ -144640,34 +144616,34 @@
         }
       ],
       "feasibility": {
-        "current_passed": 2056,
-        "estimated_reachable_pass_ceiling": 2609,
+        "current_passed": 2058,
+        "estimated_reachable_pass_ceiling": 2604,
         "optional_promotable_gap_count": 512,
-        "required_gap_count": 41,
+        "required_gap_count": 34,
         "target_pass_count": null,
         "target_reachable_in_this_plan": null
       },
       "full_official_fixture_corpus": 5578,
-      "reclassified_requires_unpromoted_node_surface_count": 3172,
+      "reclassified_requires_unpromoted_node_surface_count": 3165,
       "remaining_requires_unpromoted_node_surface_count": 0,
       "role": "current",
       "source_classification_counts": {
-        "requires_native_addon_harness": 34,
+        "requires_native_addon_harness": 38,
         "requires_pseudo_tty_host_harness": 32,
         "requires_pummel_stress_harness": 65,
         "requires_sequential_host_state_harness": 119,
-        "requires_unpromoted_node_surface": 3172,
+        "requires_unpromoted_node_surface": 3165,
         "requires_wpt_harness": 25,
         "support_fixture_not_top_level_test": 46,
-        "upstream_known_issue_or_platform_boundary": 29
+        "upstream_known_issue_or_platform_boundary": 30
       },
-      "source_requires_unpromoted_node_surface_count": 3172,
+      "source_requires_unpromoted_node_surface_count": 3165,
       "support_denominator_counts": {
-        "diagnostic_only_non_isolate": 2065,
+        "diagnostic_only_non_isolate": 2069,
         "test_harness_only": 814,
-        "upstream_or_platform_boundary": 90,
+        "upstream_or_platform_boundary": 91,
         "v8_isolate_optional": 512,
-        "v8_isolate_required": 41
+        "v8_isolate_required": 34
       },
       "test_harness_only": {
         "gaps": 814
@@ -144681,16 +144657,16 @@
         "tag_object": "30ffe3cfc2fda3684c38ec43aa79c381d398bf14"
       },
       "upstream_or_platform_boundary": {
-        "gaps": 90
+        "gaps": 91
       },
       "v8_isolate_optional": {
         "gaps": 512
       },
       "v8_isolate_required": {
-        "gaps": 41,
-        "pass_rate_percent": 98.04,
-        "passed": 2056,
-        "total": 2097
+        "gaps": 34,
+        "pass_rate_percent": 98.37,
+        "passed": 2058,
+        "total": 2092
       }
     }
   },

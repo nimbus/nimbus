@@ -95,6 +95,36 @@ FORCED_LANE_CLASSIFICATIONS: dict[str, dict[str, dict[str, str]]] = {
             "owner": "loader-context/native-addon-host",
             "reason": "The fixture requires a .node native addon through CommonJS require(), which would dlopen host-native code outside the V8 isolate and must remain fail-closed unless a host-capable backend is selected.",
         },
+        "test/embedding/test-embedding-snapshot-vm.js": {
+            "expectation": "expected_gap",
+            "classification": "requires_native_addon_harness",
+            "owner": "loader-context/native-addon-host",
+            "reason": "The fixture resolves and spawns Node's embedtest helper binary with --embedder-snapshot-blob to create and reload an embedder snapshot, so it is host embedder-binary evidence rather than a multi-tenant isolate support claim.",
+        },
+        "test/embedding/test-shared-embedding-v8.js": {
+            "expectation": "expected_skip",
+            "classification": "requires_native_addon_harness",
+            "owner": "loader-context/native-addon-host",
+            "reason": "The fixture self-skips unless the Node test build links against the shared Node.js library, then resolves and spawns shared_embedtest; this is host embedder-binary coverage outside the default isolate runtime.",
+        },
+        "test/ffi/test-ffi-module.js": {
+            "expectation": "expected_gap",
+            "classification": "requires_native_addon_harness",
+            "owner": "loader-context/native-addon-host",
+            "reason": "The fixture runs under --experimental-ffi, imports node:ffi, and exercises subprocess-gated native FFI/dlopen behavior, which must remain fail-closed for the default multi-tenant isolate runtime.",
+        },
+        "test/ffi/test-ffi-shared-buffer.js": {
+            "expectation": "expected_gap",
+            "classification": "requires_native_addon_harness",
+            "owner": "loader-context/native-addon-host",
+            "reason": "The fixture requires --experimental-ffi plus internal/test/binding('ffi') and dlopen-backed shared-buffer calls against a native test library, so it is native host-surface evidence outside the default isolate contract.",
+        },
+        "test/parallel/test-webcrypto-derivebits-argon2.js": {
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "networking/crypto-provider",
+            "reason": "The official Node26 fixture self-skips unless the linked provider reports OpenSSL >= 3.2 because Argon2 WebCrypto vectors are unavailable on older or BoringSSL-family providers.",
+        },
         "test/parallel/test-util-styletext.js": {
             "expectation": "expected_gap",
             "classification": "requires_pseudo_tty_host_harness",

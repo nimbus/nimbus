@@ -10,13 +10,43 @@
       "expectation": "expected_gap",
       "classification": "requires_native_addon_harness",
       "owner": "loader-context/native-addon-host",
+      "reason": "The fixture requires --experimental-ffi plus internal/test/binding('ffi') and dlopen-backed shared-buffer calls against a native test library, so it is native host-surface evidence outside the default isolate contract.",
+      "test_paths": [
+        "test/ffi/test-ffi-shared-buffer.js"
+      ]
+    },
+    {
+      "id": "node26-requires_native_addon_harness-2",
+      "expectation": "expected_gap",
+      "classification": "requires_native_addon_harness",
+      "owner": "loader-context/native-addon-host",
       "reason": "The fixture requires a .node native addon through CommonJS require(), which would dlopen host-native code outside the V8 isolate and must remain fail-closed unless a host-capable backend is selected.",
       "test_paths": [
         "test/parallel/test-module-loading-error.js"
       ]
     },
     {
-      "id": "node26-requires_native_addon_harness-2",
+      "id": "node26-requires_native_addon_harness-3",
+      "expectation": "expected_gap",
+      "classification": "requires_native_addon_harness",
+      "owner": "loader-context/native-addon-host",
+      "reason": "The fixture resolves and spawns Node's embedtest helper binary with --embedder-snapshot-blob to create and reload an embedder snapshot, so it is host embedder-binary evidence rather than a multi-tenant isolate support claim.",
+      "test_paths": [
+        "test/embedding/test-embedding-snapshot-vm.js"
+      ]
+    },
+    {
+      "id": "node26-requires_native_addon_harness-4",
+      "expectation": "expected_gap",
+      "classification": "requires_native_addon_harness",
+      "owner": "loader-context/native-addon-host",
+      "reason": "The fixture runs under --experimental-ffi, imports node:ffi, and exercises subprocess-gated native FFI/dlopen behavior, which must remain fail-closed for the default multi-tenant isolate runtime.",
+      "test_paths": [
+        "test/ffi/test-ffi-module.js"
+      ]
+    },
+    {
+      "id": "node26-requires_native_addon_harness-5",
       "expectation": "expected_gap",
       "classification": "requires_native_addon_harness",
       "owner": "loader-context/native-addon-host",
@@ -58,7 +88,7 @@
       ]
     },
     {
-      "id": "node26-requires_pseudo_tty_host_harness-3",
+      "id": "node26-requires_pseudo_tty_host_harness-6",
       "expectation": "expected_gap",
       "classification": "requires_pseudo_tty_host_harness",
       "owner": "process-and-timing/tty-host",
@@ -68,7 +98,7 @@
       ]
     },
     {
-      "id": "node26-requires_pseudo_tty_host_harness-4",
+      "id": "node26-requires_pseudo_tty_host_harness-7",
       "expectation": "expected_gap",
       "classification": "requires_pseudo_tty_host_harness",
       "owner": "process-and-timing/tty-host",
@@ -108,7 +138,7 @@
       ]
     },
     {
-      "id": "node26-requires_pummel_stress_harness-5",
+      "id": "node26-requires_pummel_stress_harness-8",
       "expectation": "expected_gap",
       "classification": "requires_pummel_stress_harness",
       "owner": "node-compat/stress-harness",
@@ -182,7 +212,7 @@
       ]
     },
     {
-      "id": "node26-requires_sequential_host_state_harness-6",
+      "id": "node26-requires_sequential_host_state_harness-9",
       "expectation": "expected_gap",
       "classification": "requires_sequential_host_state_harness",
       "owner": "node-compat/sequential-host-state",
@@ -310,7 +340,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-7",
+      "id": "node26-requires_unpromoted_node_surface-10",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/buffer",
@@ -326,7 +356,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-8",
+      "id": "node26-requires_unpromoted_node_surface-11",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/console",
@@ -340,7 +370,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-9",
+      "id": "node26-requires_unpromoted_node_surface-12",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/path",
@@ -350,7 +380,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-10",
+      "id": "node26-requires_unpromoted_node_surface-13",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/domain",
@@ -375,7 +405,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-11",
+      "id": "node26-requires_unpromoted_node_surface-14",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/module",
@@ -393,7 +423,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-12",
+      "id": "node26-requires_unpromoted_node_surface-15",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/util",
@@ -413,7 +443,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-13",
+      "id": "node26-requires_unpromoted_node_surface-16",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/vm",
@@ -436,7 +466,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-14",
+      "id": "node26-requires_unpromoted_node_surface-17",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/workers",
@@ -574,7 +604,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-15",
+      "id": "node26-requires_unpromoted_node_surface-18",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/crypto",
@@ -678,7 +708,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-16",
+      "id": "node26-requires_unpromoted_node_surface-19",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/dgram",
@@ -706,7 +736,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-17",
+      "id": "node26-requires_unpromoted_node_surface-20",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/http",
@@ -1099,7 +1129,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-18",
+      "id": "node26-requires_unpromoted_node_surface-21",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/http2",
@@ -1191,7 +1221,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-19",
+      "id": "node26-requires_unpromoted_node_surface-22",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/https",
@@ -1239,7 +1269,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-20",
+      "id": "node26-requires_unpromoted_node_surface-23",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/net",
@@ -1385,7 +1415,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-21",
+      "id": "node26-requires_unpromoted_node_surface-24",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/tls",
@@ -1605,7 +1635,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-22",
+      "id": "node26-requires_unpromoted_node_surface-25",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/zlib",
@@ -1631,7 +1661,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-23",
+      "id": "node26-requires_unpromoted_node_surface-26",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "node-compat/unpromoted-surface",
@@ -1656,7 +1686,6 @@
         "test/async-hooks/test-graph.tcp.js",
         "test/async-hooks/test-graph.tls-write-12.js",
         "test/async-hooks/test-graph.tls-write.js",
-        "test/async-hooks/test-httpparser-reuse.js",
         "test/async-hooks/test-httpparser.request.js",
         "test/async-hooks/test-httpparser.response.js",
         "test/async-hooks/test-pipeconnectwrap.js",
@@ -1724,11 +1753,9 @@
         "test/embedding/test-embedding-load-environment-utf8.js",
         "test/embedding/test-embedding-snapshot-as-file.js",
         "test/embedding/test-embedding-snapshot-basic.js",
-        "test/embedding/test-embedding-snapshot-vm.js",
         "test/embedding/test-embedding-snapshot-without-code-cache.js",
         "test/embedding/test-embedding-snapshot-worker.js",
         "test/embedding/test-embedding-throw.js",
-        "test/embedding/test-shared-embedding-v8.js",
         "test/es-module/test-cjs-esm-warn.js",
         "test/es-module/test-cjs-legacyMainResolve-permission.js",
         "test/es-module/test-cjs-legacyMainResolve.js",
@@ -1826,12 +1853,10 @@
         "test/ffi/test-ffi-calls.js",
         "test/ffi/test-ffi-dynamic-library.js",
         "test/ffi/test-ffi-memory.js",
-        "test/ffi/test-ffi-module.js",
         "test/ffi/test-ffi-permission-allow-cli.js",
         "test/ffi/test-ffi-permission-audit.js",
         "test/ffi/test-ffi-permissions.js",
         "test/ffi/test-ffi-readonly-write.js",
-        "test/ffi/test-ffi-shared-buffer.js",
         "test/ffi/test-ffi-weakref-calls.js",
         "test/internet/test-corepack-yarn-install.js",
         "test/internet/test-dns-any.js",
@@ -1921,7 +1946,6 @@
         "test/parallel/test-als-defaultvalue.js",
         "test/parallel/test-arm-math-illegal-instruction.js",
         "test/parallel/test-async-hooks-fatal-error.js",
-        "test/parallel/test-async-hooks-http-parser-destroy.js",
         "test/parallel/test-async-hooks-stack-overflow-try-catch.js",
         "test/parallel/test-async-hooks-worker-asyncfn-terminate-1.js",
         "test/parallel/test-async-hooks-worker-asyncfn-terminate-2.js",
@@ -3202,7 +3226,6 @@
         "test/parallel/test-web-locks.js",
         "test/parallel/test-webapi-sharedarraybuffer-rejection.js",
         "test/parallel/test-webcrypto-cryptokey-workers.js",
-        "test/parallel/test-webcrypto-derivebits-argon2.js",
         "test/parallel/test-webcrypto-supports.mjs",
         "test/parallel/test-webcrypto-util.js",
         "test/parallel/test-webcrypto-webidl.js",
@@ -3447,7 +3470,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-24",
+      "id": "node26-requires_unpromoted_node_surface-27",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/diagnostics-channel",
@@ -3462,7 +3485,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-25",
+      "id": "node26-requires_unpromoted_node_surface-28",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/os",
@@ -3477,7 +3500,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-26",
+      "id": "node26-requires_unpromoted_node_surface-29",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/perf-hooks",
@@ -3488,7 +3511,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-27",
+      "id": "node26-requires_unpromoted_node_surface-30",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/process-host",
@@ -3556,7 +3579,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-28",
+      "id": "node26-requires_unpromoted_node_surface-31",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/timers",
@@ -3572,7 +3595,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-29",
+      "id": "node26-requires_unpromoted_node_surface-32",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "runtime/v8",
@@ -3600,7 +3623,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-30",
+      "id": "node26-requires_unpromoted_node_surface-33",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/fs-host-io",
@@ -3662,7 +3685,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-31",
+      "id": "node26-requires_unpromoted_node_surface-34",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/readline-tty",
@@ -3684,7 +3707,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-32",
+      "id": "node26-requires_unpromoted_node_surface-35",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/stream",
@@ -3715,7 +3738,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-33",
+      "id": "node26-requires_unpromoted_node_surface-36",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/tty-host",
@@ -3725,7 +3748,7 @@
       ]
     },
     {
-      "id": "node26-requires_wpt_harness-34",
+      "id": "node26-requires_wpt_harness-37",
       "expectation": "expected_gap",
       "classification": "requires_wpt_harness",
       "owner": "node-compat/wpt-harness",
@@ -3759,7 +3782,7 @@
       ]
     },
     {
-      "id": "node26-upstream_known_issue_or_platform_boundary-35",
+      "id": "node26-upstream_known_issue_or_platform_boundary-38",
       "expectation": "expected_gap",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "node-compat/platform-boundary",
@@ -3791,7 +3814,17 @@
       ]
     },
     {
-      "id": "node26-support_fixture_not_top_level_test-36",
+      "id": "node26-requires_native_addon_harness-39",
+      "expectation": "expected_skip",
+      "classification": "requires_native_addon_harness",
+      "owner": "loader-context/native-addon-host",
+      "reason": "The fixture self-skips unless the Node test build links against the shared Node.js library, then resolves and spawns shared_embedtest; this is host embedder-binary coverage outside the default isolate runtime.",
+      "test_paths": [
+        "test/embedding/test-shared-embedding-v8.js"
+      ]
+    },
+    {
+      "id": "node26-support_fixture_not_top_level_test-40",
       "expectation": "expected_skip",
       "classification": "support_fixture_not_top_level_test",
       "owner": "node-compat-denominator/fixture-sync",
@@ -3846,7 +3879,7 @@
       ]
     },
     {
-      "id": "node26-upstream_known_issue_or_platform_boundary-37",
+      "id": "node26-upstream_known_issue_or_platform_boundary-41",
       "expectation": "expected_skip",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "core-semantics/buffer",
@@ -3856,7 +3889,17 @@
       ]
     },
     {
-      "id": "node26-upstream_known_issue_or_platform_boundary-38",
+      "id": "node26-upstream_known_issue_or_platform_boundary-42",
+      "expectation": "expected_skip",
+      "classification": "upstream_known_issue_or_platform_boundary",
+      "owner": "networking/crypto-provider",
+      "reason": "The official Node26 fixture self-skips unless the linked provider reports OpenSSL >= 3.2 because Argon2 WebCrypto vectors are unavailable on older or BoringSSL-family providers.",
+      "test_paths": [
+        "test/parallel/test-webcrypto-derivebits-argon2.js"
+      ]
+    },
+    {
+      "id": "node26-upstream_known_issue_or_platform_boundary-43",
       "expectation": "expected_skip",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "networking/crypto-provider",
@@ -3866,7 +3909,7 @@
       ]
     },
     {
-      "id": "node26-upstream_known_issue_or_platform_boundary-39",
+      "id": "node26-upstream_known_issue_or_platform_boundary-44",
       "expectation": "expected_skip",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "networking/crypto-provider",
@@ -3876,7 +3919,7 @@
       ]
     },
     {
-      "id": "node26-upstream_known_issue_or_platform_boundary-40",
+      "id": "node26-upstream_known_issue_or_platform_boundary-45",
       "expectation": "expected_skip",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "networking/crypto-provider",
@@ -3887,7 +3930,7 @@
       ]
     },
     {
-      "id": "node26-upstream_known_issue_or_platform_boundary-41",
+      "id": "node26-upstream_known_issue_or_platform_boundary-46",
       "expectation": "expected_skip",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "networking/crypto-provider",

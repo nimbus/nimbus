@@ -5308,6 +5308,8 @@ const NODE26_UNPROMOTED_SURFACE_PROMOTED_PATHS: &[&str] = &[
     "test/async-hooks/test-async-exec-resource-http-32060.js",
     "test/async-hooks/test-async-exec-resource-http-agent.js",
     "test/async-hooks/test-async-exec-resource-http.js",
+    "test/async-hooks/test-httpparser-reuse.js",
+    "test/parallel/test-async-hooks-http-parser-destroy.js",
     "test/parallel/test-blob-createobjecturl.js",
     "test/parallel/test-diagnostic-channel-http-request-created.js",
     "test/parallel/test-diagnostic-channel-http-response-created.js",
