@@ -460,6 +460,17 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Free runner disk for Node compatibility evidence
+        run: |
+          df -h /
+          sudo rm -rf \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /usr/share/dotnet
+          df -h /
+
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
         with:
