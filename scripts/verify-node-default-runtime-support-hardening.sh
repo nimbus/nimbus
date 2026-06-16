@@ -150,11 +150,28 @@ PY
   fi
 
   step 5 "Required surface blocker inventory"
-  if python3 scripts/runtime/node/required_surface_blockers.py --check >/dev/null; then
+  local blockers_tmp
+  blockers_tmp="$(mktemp -d)"
+  if python3 scripts/runtime/node/required_surface_blockers.py \
+       --posture "${public_posture_json}" \
+       --json "${blockers_tmp}/required-surface-blockers.json" \
+       --markdown "${blockers_tmp}/required-surface-blockers.md" >/dev/null &&
+     python3 - "${blockers_tmp}/required-surface-blockers.json" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+for lane in ("node22", "node24"):
+    if data["totals"][lane]["required_gap_count"] != 0:
+        raise SystemExit(1)
+raise SystemExit(0)
+PY
+  then
     pass "Required-surface blocker inventory is fresh and empty for required gaps"
   else
-    fail "Required-surface blocker inventory is stale or non-empty" "Expected required_surface_blockers.py --check to pass"
+    fail "Required-surface blocker inventory is stale or non-empty" "Expected required_surface_blockers.py to find 0 required gaps from ${public_posture_json}"
   fi
+  rm -rf "${blockers_tmp}"
 
   step 6 "Package registry category schema and breadth"
   if [ -f "${CANARY_REGISTRY}" ] &&
