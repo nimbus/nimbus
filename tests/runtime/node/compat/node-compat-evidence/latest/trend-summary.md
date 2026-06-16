@@ -11,17 +11,17 @@
 | `node20` | `v20.20.2` | 917 | +0 | 21.6% | +0.0 | 0 | +0 |
 | `node22` | `v22.22.3` | 2363 | +0 | 49.8% | +0.0 | 0 | +0 |
 | `node24` | `v24.16.0` | 2400 | +0 | 46.2% | +0.0 | 0 | +0 |
-| `node26` | `v26.2.0` | 2067 | +3 | 37.1% | +0.1 | 0 | +0 |
+| `node26` | `v26.2.0` | 2071 | +4 | 37.1% | +0.1 | 0 | +0 |
 
 ## Evidence Trends
 
 | Metric | Current | Baseline | Delta |
 | --- | ---: | ---: | ---: |
 | `canary_report_count` | 0 | 0 | +0 |
-| `expectation_catalog_entry_count` | 153 | 153 | +0 |
+| `expectation_catalog_entry_count` | 154 | 154 | +0 |
 | `oracle_report_count` | 0 | 0 | +0 |
 | `required_canary_gap_count` | 0 | 0 | +0 |
-| `rust_ignore_count` | 153 | 153 | +0 |
+| `rust_ignore_count` | 154 | 154 | +0 |
 | `slice_report_count` | 0 | 0 | +0 |
 | `unexpected_pass_count` | 0 | 0 | +0 |
 | `warning_count` | 0 | 0 | +0 |

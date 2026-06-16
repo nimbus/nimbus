@@ -362,11 +362,7 @@
       "owner": "core-semantics/console",
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
-        "test/parallel/test-console-diagnostics-channels.js",
-        "test/parallel/test-console-issue-43095.js",
-        "test/parallel/test-console-tty-colors-per-stream.js",
-        "test/parallel/test-console-with-frozen-intrinsics.js",
-        "test/parallel/test-console.js"
+        "test/parallel/test-console-tty-colors-per-stream.js"
       ]
     },
     {

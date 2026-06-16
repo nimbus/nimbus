@@ -5494,6 +5494,10 @@ fn core_semantics_util_required_gap_paths(lane: NodeCompatLane) -> Vec<String> {
     fixture_paths
 }
 
+fn core_semantics_console_required_gap_paths(lane: NodeCompatLane) -> Vec<String> {
+    node_compat_required_gap_paths_for_owner(lane, "core-semantics/console")
+}
+
 const CORE_SEMANTICS_UTIL_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-assert-class.js",
     "test/parallel/test-assert-esm-cjs-message-verify.js",
@@ -5555,6 +5559,20 @@ const CORE_SEMANTICS_UTIL_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-util-styletext-hex.js",
 ];
 
+// NDS3 node26 cycle 32 console promotion wave (nimbus/deno
+// v2.8.3-nimbus.63). Node 22 and Node 24/26 intentionally differ in how
+// Console's util.inspect output prints Symbol keys; the fork now selects the
+// lane-appropriate `nodejsSymbolKeysWithoutBrackets` default for Console
+// instances. The Node26 owner-wide console required-gap batch is green on the
+// immutable tag and the Node22 cycle-31 console guard stays green, so these
+// Current-lane fixtures are promoted from required gaps to measured support.
+const CORE_SEMANTICS_CONSOLE_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/parallel/test-console-diagnostics-channels.js",
+    "test/parallel/test-console-issue-43095.js",
+    "test/parallel/test-console-with-frozen-intrinsics.js",
+    "test/parallel/test-console.js",
+];
+
 #[test]
 fn node22_supported_lane_executes_core_semantics_util_promoted_batch_fixture() {
     let mut fixture_paths: Vec<String> = CORE_SEMANTICS_UTIL_PROMOTED_COMMON_PATHS
@@ -5611,6 +5629,21 @@ fn node26_current_lane_executes_core_semantics_util_promoted_batch_fixture() {
 }
 
 #[test]
+fn node26_current_lane_executes_core_semantics_console_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = CORE_SEMANTICS_CONSOLE_PROMOTED_NODE26_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-core-semantics-console-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        CORE_SEMANTICS_UTIL_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked core semantics and util required-gap inventory; classify assert, buffer, path, URL, and util failures before focused fixes"]
 fn node22_supported_lane_core_semantics_util_required_gap_watchpoint() {
     let fixture_paths = core_semantics_util_required_gap_paths(NodeCompatLane::Node22);
@@ -5642,6 +5675,19 @@ fn node26_current_lane_core_semantics_util_required_gap_watchpoint() {
     let fixture_paths = core_semantics_util_required_gap_paths(NodeCompatLane::Node26);
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node26-current-lane-core-semantics-util-required-gap-watchpoint",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        CORE_SEMANTICS_UTIL_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: core-semantics/console required-gap inventory; promote only dynamically green Current-lane fixtures"]
+fn node26_current_lane_core_semantics_console_required_gap_watchpoint() {
+    let fixture_paths = core_semantics_console_required_gap_paths(NodeCompatLane::Node26);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-core-semantics-console-required-gap-watchpoint",
         NodeCompatLane::Node26,
         &fixture_paths,
         &[],
