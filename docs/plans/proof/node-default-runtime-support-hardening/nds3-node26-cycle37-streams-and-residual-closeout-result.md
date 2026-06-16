@@ -214,15 +214,33 @@ bash scripts/verify-node-default-runtime-support-hardening.sh
 Observed:
 
 ```console
+Mode: public generated-evidence gate (private NDS proof plan not present)
+Summary: 9 passed, 1 skipped, 0 failed
+```
+
+The default verifier mode now matches a clean CI checkout: it checks committed
+public generated evidence and explicitly skips the private proof-row audit
+because `docs/private/` is ignored. The public generated-evidence gate checks
+Node22, Node24, and Node26 required-surface posture, the required-surface
+blocker inventory, package registry breadth, required canary gaps, generated
+public docs, release-train drift, and CI/nightly wiring.
+
+Strict private proof audit command:
+
+```console
+NIMBUS_NDS_STRICT_PRIVATE_PROOFS=1 bash scripts/verify-node-default-runtime-support-hardening.sh
+```
+
+Observed in this checkout:
+
+```console
 Summary: 14 passed, 20 failed
 ```
 
-The posture predicate in the verifier is green for Node22 and Node24, and the
-generated posture now also shows Node26 at `0` required gaps and `100.0` percent
-pass rate. The remaining aggregate failures are proof/plan closeout predicates
-under ignored `docs/private/` paths plus package/Convex/docs closeout proof
-rows. This checkpoint therefore records Node26 required-surface completion, not
-full NDS closeout.
+The strict private proof audit still fails because the private plan/proof
+closeout files are absent from this worktree. This is intentional: the default
+CI-visible gate cannot depend on ignored private files, while the strict mode
+remains available for an owner checkout that has the private proof corpus.
 
 ## Residual Risks
 

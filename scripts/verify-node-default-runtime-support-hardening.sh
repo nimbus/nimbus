@@ -26,6 +26,7 @@ STATUS_SUMMARY="tests/runtime/node/compat/node-compat-evidence/latest/status-sum
 
 PASS=0
 FAIL=0
+SKIP=0
 FAIL_DETAIL=()
 
 pass() {
@@ -41,6 +42,14 @@ fail() {
     FAIL_DETAIL+=("$1 - $2")
   else
     FAIL_DETAIL+=("$1")
+  fi
+}
+
+skip() {
+  SKIP=$((SKIP + 1))
+  printf '  \033[33mSKIP\033[0m  %s\n' "$1"
+  if [ $# -ge 2 ]; then
+    printf '        %s\n' "$2"
   fi
 }
 
@@ -89,10 +98,143 @@ required_proofs=(
   "${PROOF_DIR}/nds10-closeout.md"
 )
 
+run_public_generated_gate() {
+  local public_posture_json="docs/architecture/runtime/node-default-support-posture.json"
+  local public_posture_md="docs/architecture/runtime/node-default-support-posture.md"
+
+  printf 'Mode: public generated-evidence gate (private NDS proof plan not present)\n'
+
+  step 1 "Private proof control plane"
+  skip "Private proof audit not run" \
+    "docs/private is ignored in clean CI checkouts; set NIMBUS_NDS_STRICT_PRIVATE_PROOFS=1 with the private plan present to run proof-row closeout checks"
+
+  step 2 "Default-support posture artifacts"
+  if [ -f "${public_posture_json}" ] && [ -f "${public_posture_md}" ]; then
+    pass "Default-support posture artifacts exist"
+  else
+    fail "Default-support posture artifacts missing" "Expected ${public_posture_json} and ${public_posture_md}"
+  fi
+
+  step 3 "Node22/Node24/Node26 V8-isolate-required green"
+  if [ -f "${public_posture_json}" ] && python3 - "${public_posture_json}" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+for lane_name in ("node22", "node24", "node26"):
+    required = data["lanes"][lane_name]["v8_isolate_required"]
+    if required.get("gaps") != 0 or required.get("pass_rate_percent") != 100:
+        raise SystemExit(1)
+raise SystemExit(0)
+PY
+  then
+    pass "Node22, Node24, and Node26 V8-isolate-required fixtures are 100%"
+  else
+    fail "V8-isolate-required fixtures not proven green" "Expected generated posture metrics with 0 gaps and 100% pass rate for node22/node24/node26"
+  fi
+
+  step 4 "Node24 unpromoted surface eliminated"
+  if [ -f "${public_posture_json}" ] && python3 - "${public_posture_json}" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+if data["lanes"]["node24"].get("remaining_requires_unpromoted_node_surface_count") == 0:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+  then
+    pass "Node24 has no remaining unpromoted surface entries in the default-support posture"
+  else
+    fail "Node24 still has Requires Unpromoted Node Surface" "Expected generated posture metrics"
+  fi
+
+  step 5 "Required surface blocker inventory"
+  if python3 scripts/runtime/node/required_surface_blockers.py --check >/dev/null; then
+    pass "Required-surface blocker inventory is fresh and empty for required gaps"
+  else
+    fail "Required-surface blocker inventory is stale or non-empty" "Expected required_surface_blockers.py --check to pass"
+  fi
+
+  step 6 "Package registry category schema and breadth"
+  if [ -f "${CANARY_REGISTRY}" ] &&
+     grep -q '"compat_category"' "${CANARY_REGISTRY}" &&
+     grep -q '"compat_family"' "${CANARY_REGISTRY}" &&
+     grep -q '"canary_surfaces"' "${CANARY_REGISTRY}" &&
+     python3 - "${CANARY_REGISTRY}" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+claims = [claim for claim in data.get("claims", []) if claim.get("runtime_preset") == "Application"]
+categories = {claim.get("compat_category") for claim in claims if claim.get("compat_category")}
+if len(claims) >= 50 and len(categories) >= 12:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+  then
+    pass "Application canary registry has >=50 claims across >=12 categories"
+  else
+    fail "Application package breadth incomplete" "Expected >=50 Application claims across >=12 compat_category values"
+  fi
+
+  step 7 "Required canary gaps are zero"
+  if [ -f "tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.md" ] &&
+     grep -q 'required canary gaps: `0`' tests/runtime/node/published/nodejs/compatibility.md 2>/dev/null; then
+    pass "Required Application canary gaps are zero"
+  else
+    fail "Required canary gap proof missing" "Expected generated docs/dashboard to show 0"
+  fi
+
+  step 8 "Generated public docs expose package/API boundaries"
+  if [ -f tests/runtime/node/published/nodejs/reference/packages.md ] &&
+     [ -f tests/runtime/node/published/nodejs/reference/node-apis.md ] &&
+     grep -q 'Node22' tests/runtime/node/published/nodejs/reference/packages.md &&
+     grep -q 'Node24' tests/runtime/node/published/nodejs/reference/packages.md &&
+     grep -q 'Node26' tests/runtime/node/published/nodejs/reference/packages.md &&
+     grep -q 'Node22' tests/runtime/node/published/nodejs/reference/node-apis.md &&
+     grep -q 'Service/microVM required' tests/runtime/node/published/nodejs/reference/node-apis.md; then
+    pass "Generated package and API references are per-version and boundary-aware"
+  else
+    fail "Generated package/API references incomplete" "Expected per-version package support and non-isolate API boundaries"
+  fi
+
+  step 9 "Release-train and latest-suite drift"
+  if [ -f tests/runtime/node/compat/node-lts-compat/node-release-train.json ] &&
+     grep -q '"drift_detected": false' tests/runtime/node/compat/node-lts-compat/node-release-train.json; then
+    pass "Release-train drift check is clean"
+  else
+    fail "Release-train drift proof missing or dirty" "Expected drift_detected=false"
+  fi
+
+  step 10 "CI and nightly gate wiring"
+  if grep -Rq 'verify-node-default-runtime-support-hardening' .github/workflows 2>/dev/null &&
+     [ -f .github/workflows/node-compat-nightly.yml ] &&
+     grep -q 'node26' .github/workflows/node-compat-nightly.yml &&
+     grep -q 'fixture' .github/workflows/node-compat-nightly.yml; then
+    pass "PR CI and nightly include NDS/Node26 compatibility gates"
+  else
+    fail "CI or nightly gate wiring missing" "Expected PR verifier and broad Node26 nightly lanes"
+  fi
+
+  printf '\n\033[1mSummary:\033[0m %s passed, %s skipped, %s failed\n' "${PASS}" "${SKIP}" "${FAIL}"
+  if [ "${FAIL}" -ne 0 ]; then
+    printf '\nFailures:\n'
+    for detail in "${FAIL_DETAIL[@]}"; do
+      printf '  - %s\n' "${detail}"
+    done
+    exit 1
+  fi
+  exit 0
+}
+
 printf '\033[1mNDS verification gate - node-default-runtime-support-hardening\033[0m\n'
 printf 'Repo: %s\n' "${REPO_ROOT}"
 
 PLAN_FILE="$(plan_file)"
+if [ -z "${PLAN_FILE}" ] && [ "${NIMBUS_NDS_STRICT_PRIVATE_PROOFS:-0}" != "1" ]; then
+  run_public_generated_gate
+fi
 
 step 1 "Plan closeout status"
 if [ -n "${PLAN_FILE}" ] && \
