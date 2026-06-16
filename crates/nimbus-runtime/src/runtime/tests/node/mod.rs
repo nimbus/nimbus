@@ -3884,3 +3884,4 @@ include!("cases/nds3_cycle95_esm_dynamic_import.rs");
 include!("cases/nds3_cycle96_esm_async_loader_hooks.rs");
 include!("cases/nds3_cycle97_vm_module_tla.rs");
 include!("cases/nds3_cycle98_vm_module_import_meta.rs");
+include!("cases/nds3_node26_cycle35_webstreams_transfer.rs");

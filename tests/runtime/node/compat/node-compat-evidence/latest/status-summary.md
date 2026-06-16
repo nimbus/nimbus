@@ -9,13 +9,13 @@ Counts every official vendored lane-local test-* JS/CJS/MJS fixture, then compar
 | `node20` | `legacy` | `v20.20.2` | 4248 | 917 | 3318 | 13 | 3331 | 4248 | 0 | 21.6% |
 | `node22` | `supported` | `v22.22.3` | 4748 | 2363 | 2365 | 20 | 2385 | 4748 | 0 | 49.8% |
 | `node24` | `default` | `v24.16.0` | 5198 | 2400 | 2750 | 48 | 2798 | 5198 | 0 | 46.2% |
-| `node26` | `current` | `v26.2.0` | 5578 | 2079 | 3445 | 54 | 3499 | 5578 | 0 | 37.3% |
+| `node26` | `current` | `v26.2.0` | 5578 | 2082 | 3442 | 54 | 3496 | 5578 | 0 | 37.3% |
 
 ## Evidence Tiers
 
 | Tier | Source | Primary count | Passed | Claims | Official denominator? | Notes |
 | --- | --- | ---: | ---: | ---: | --- | --- |
-| `official` | `vendored_official_fixture_corpus` | 19772 fixture_count | 7759 | - | yes | Byte-identical Node upstream test-* fixtures under lane-local nodeNN/test roots; pass percentages use only this denominator. |
+| `official` | `vendored_official_fixture_corpus` | 19772 fixture_count | 7762 | - | yes | Byte-identical Node upstream test-* fixtures under lane-local nodeNN/test roots; pass percentages use only this denominator. |
 | `supplementary` | `node_compat_manifest_test_tier` | 7 fixture_count | - | - | no | Nimbus-authored support fixtures that explain behavior beyond official Node corpus pass claims. |
 | `regression` | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/regression` | 26 fixture_count | - | - | no | Nimbus-authored or adapted regression fixtures separated from official lane roots. |
 | `canary` | `tests/runtime/node/canary-registry.json` | 37 active_canary_count | - | 79 | no | Package and app probes that support developer-facing claims without changing official fixture denominators. |
@@ -29,7 +29,7 @@ Counts every official vendored lane-local test-* JS/CJS/MJS fixture, then compar
 | `node20` | `tests/runtime/node/classifications/node20.json` | 3318 | 13 | 3331 | `{"Expected failure": 22, "Known gap": 3296, "Skipped / excluded": 13}` | `{"Requires Native Addon Harness": 24, "Requires Pseudo Tty Host Harness": 28, "Requires Pummel Stress Harness": 60, "Requires Sequential Host State Harness": 119, "Requires Unpromoted Node Surface": 3025, "Requires Wpt Harness": 20, "Rust Watchpoint Expected Failure": 22, "Support Fixture Not Top Level Test": 13, "Upstream Known Issue Or Platform Boundary": 20}` |
 | `node22` | `tests/runtime/node/classifications/node22.json` | 2365 | 20 | 2385 | `{"Expected failure": 21, "Known gap": 2344, "Skipped / excluded": 20}` | `{"Requires Native Addon Harness": 29, "Requires Pseudo Tty Host Harness": 31, "Requires Pummel Stress Harness": 55, "Requires Sequential Host State Harness": 115, "Requires Unpromoted Node Surface": 2066, "Requires Wpt Harness": 22, "Rust Watchpoint Expected Failure": 21, "Support Fixture Not Top Level Test": 20, "Upstream Known Issue Or Platform Boundary": 26}` |
 | `node24` | `tests/runtime/node/classifications/node24.json` | 2750 | 48 | 2798 | `{"Expected failure": 4, "Known gap": 2746, "Skipped / excluded": 48}` | `{"Requires Native Addon Harness": 31, "Requires Pseudo Tty Host Harness": 32, "Requires Pummel Stress Harness": 64, "Requires Sequential Host State Harness": 119, "Requires Unpromoted Node Surface": 2454, "Requires Wpt Harness": 23, "Rust Watchpoint Expected Failure": 4, "Support Fixture Not Top Level Test": 47, "Upstream Known Issue Or Platform Boundary": 24}` |
-| `node26` | `tests/runtime/node/classifications/node26.json` | 3445 | 54 | 3499 | `{"Known gap": 3445, "Skipped / excluded": 54}` | `{"Requires Native Addon Harness": 38, "Requires Pseudo Tty Host Harness": 32, "Requires Pummel Stress Harness": 65, "Requires Sequential Host State Harness": 119, "Requires Unpromoted Node Surface": 3144, "Requires Wpt Harness": 25, "Support Fixture Not Top Level Test": 46, "Upstream Known Issue Or Platform Boundary": 30}` |
+| `node26` | `tests/runtime/node/classifications/node26.json` | 3442 | 54 | 3496 | `{"Known gap": 3442, "Skipped / excluded": 54}` | `{"Requires Native Addon Harness": 38, "Requires Pseudo Tty Host Harness": 32, "Requires Pummel Stress Harness": 65, "Requires Sequential Host State Harness": 119, "Requires Unpromoted Node Surface": 3141, "Requires Wpt Harness": 25, "Support Fixture Not Top Level Test": 46, "Upstream Known Issue Or Platform Boundary": 30}` |
 
 ## Family Passed Denominator
 
