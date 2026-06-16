@@ -2993,6 +2993,31 @@ fn node24_default_lane_executes_nds3_census_promoted_batch_fixture() {
     );
 }
 
+const RUNTIME_V8_PROMOTED_NODE26_PATHS: &[&str] = &[
+    "test/parallel/test-v8-collect-gc-profile-exit-before-stop.js",
+    "test/parallel/test-v8-collect-gc-profile-using.js",
+    "test/parallel/test-v8-collect-gc-profile.js",
+    "test/parallel/test-v8-getheapsnapshot-twice.js",
+    "test/parallel/test-v8-global-setter.js",
+    "test/parallel/test-v8-heap-profile.js",
+    "test/parallel/test-v8-string-is-one-byte-representation.js",
+];
+
+#[test]
+fn node26_current_lane_executes_runtime_v8_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = RUNTIME_V8_PROMOTED_NODE26_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-runtime-v8-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        NDS3_CENSUS_PROMOTED_EXTRA_DIRS,
+    );
+}
+
 // NDS3 deno_node fork-method promotion wave (nimbus/deno v2.8.2-nimbus.5). Each
 // fixture below is a genuine Application-API required gap whose only blocker was
 // a missing `ext/node/polyfills` method, ported faithfully against upstream Node

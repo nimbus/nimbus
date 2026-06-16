@@ -3587,23 +3587,16 @@
       "owner": "runtime/v8",
       "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
       "test_paths": [
-        "test/parallel/test-v8-collect-gc-profile-exit-before-stop.js",
         "test/parallel/test-v8-collect-gc-profile-in-worker.js",
-        "test/parallel/test-v8-collect-gc-profile-using.js",
-        "test/parallel/test-v8-collect-gc-profile.js",
         "test/parallel/test-v8-coverage.js",
         "test/parallel/test-v8-cpu-profile.js",
         "test/parallel/test-v8-flag-pool-size-0.js",
         "test/parallel/test-v8-flags.js",
-        "test/parallel/test-v8-getheapsnapshot-twice.js",
-        "test/parallel/test-v8-global-setter.js",
-        "test/parallel/test-v8-heap-profile.js",
         "test/parallel/test-v8-query-objects.js",
         "test/parallel/test-v8-serdes.js",
         "test/parallel/test-v8-serialize-leak.js",
         "test/parallel/test-v8-startup-snapshot-api.js",
         "test/parallel/test-v8-stop-coverage.js",
-        "test/parallel/test-v8-string-is-one-byte-representation.js",
         "test/parallel/test-v8-take-coverage-noop.js",
         "test/parallel/test-v8-take-coverage.js"
       ]
