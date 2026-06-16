@@ -31,6 +31,37 @@ Node26 is Current/non-LTS compatibility evidence and is not enterprise LTS suppo
 | Unsupported | Rejected with a documented diagnostic and no support claim. |
 | Not Applicable To Faas | CLI, interactive, daemon, or process-wide behavior that does not map to function invocation. |
 
+## Default-Support Posture
+
+Source: `docs/architecture/runtime/node-default-support-posture.json`
+
+The default-support posture separates the full official fixture corpus from the V8-isolate-required surface, optional isolate gaps, diagnostic non-isolate behavior, test-harness-only fixtures, and upstream/platform boundaries.
+
+| Target | Role | Full official corpus | Current passed | V8-isolate required passed/total | Required gaps | Optional gaps | Diagnostic non-isolate | Test-harness-only | Upstream/platform |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Node20 | Legacy | 4248 | 917 | 917 / 1643 | 726 | 360 | 1671 | 512 | 62 |
+| Node22 | Supported | 4748 | 2363 | 2363 / 2363 | 0 | 421 | 1347 | 537 | 80 |
+| Node24 | Default | 5198 | 2400 | 2400 / 2400 | 0 | 477 | 1435 | 800 | 86 |
+| Node26 | Current | 5578 | 2092 | 2092 / 2092 | 0 | 512 | 2069 | 814 | 91 |
+
+Node24 remains the product-default routing target, but the well-supported default label is gated on NDS closeout. Until Node22 and Node24 are green for the V8-isolate-required surface, these generated counts are the public contract.
+Node26 is Current/non-LTS observation evidence and is shown separately from supported LTS claims.
+
+## Capability Classes
+
+Source: `docs/architecture/runtime/node-isolate-shim-inventory.json`
+
+| Class | Public label | Meaning | Entries |
+| --- | --- | --- | ---: |
+| `native` | Native isolate implementation | Implemented by native Rust or V8-backed isolate operations in the Nimbus runtime or nimbus/deno fork. | 1 |
+| `shimmed` | Shimmed Node-compatible API | Implemented as JavaScript or TypeScript compatibility code that mirrors Node behavior while preserving the isolate permission boundary. | 1 |
+| `emulated` | Emulated isolate-local behavior | Emulates process, stream, or host-adjacent state inside the isolate without mutating host-global process state. | 1 |
+| `test-harness-only` | Test-harness-only support | Exists only to execute and measure upstream Node fixtures; it is not a production application capability. | 1 |
+| `diagnostic` | Diagnostic denial or service route | The runtime intentionally denies or routes the surface and records an actionable boundary diagnostic instead of granting host authority. | 1 |
+| `unsupported` | Unsupported platform boundary | Not supported in the in-process V8 isolate profile; requires upstream, native, host-capable service, or microVM work before it can become a support claim. | 1 |
+
+See [shim and boundary inventory](shims-and-boundaries.md) for source locations, side-effect limits, evidence, and owner repository.
+
 ## API Families
 
 | API family | Nimbus support | Verification | Evidence | Coverage requirements |

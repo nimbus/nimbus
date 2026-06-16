@@ -5,7 +5,7 @@ It is a support summary, not a blanket Node.js compatibility claim.
 
 ## Snapshot
 
-- generated at: `2026-06-14T09:55:47.457770+00:00`
+- generated at: `2026-06-16T16:16:12.310134+00:00`
 - status source: `tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json`
 - dashboard source: `tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json`
 - trend source: `tests/runtime/node/compat/node-compat-evidence/latest/trend-summary.json`
@@ -15,9 +15,9 @@ It is a support summary, not a blanket Node.js compatibility claim.
 | Target | Role | Upstream | Vendored official fixtures | Passed | Expected failure / known gap | Skipped / excluded | Unclassified | Official fixture pass rate | Classified coverage |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Node20 | Legacy grace; EOL | `v20.20.2` | 4248 | 917 | 3318 | 13 | 0 | 21.6% | 100.0% |
-| Node22 | Supported; Maintenance LTS | `v22.22.3` | 4748 | 2353 | 2375 | 20 | 0 | 49.6% | 100.0% |
-| Node24 | Product default; Active LTS | `v24.16.0` | 5198 | 2383 | 2767 | 48 | 0 | 45.8% | 100.0% |
-| Node26 | Current | `v26.2.0` | 5578 | 1009 | 4523 | 46 | 0 | 18.1% | 100.0% |
+| Node22 | Supported; Maintenance LTS | `v22.22.3` | 4748 | 2363 | 2365 | 20 | 0 | 49.8% | 100.0% |
+| Node24 | Product default; Active LTS | `v24.16.0` | 5198 | 2400 | 2750 | 48 | 0 | 46.2% | 100.0% |
+| Node26 | Current | `v26.2.0` | 5578 | 2092 | 3432 | 54 | 0 | 37.5% | 100.0% |
 
 ## Package/Framework Canaries
 

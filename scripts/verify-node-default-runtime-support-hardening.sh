@@ -186,17 +186,22 @@ PY
     fail "Required canary gap proof missing" "Expected generated docs/dashboard to show 0"
   fi
 
-  step 8 "Generated public docs expose package/API boundaries"
+  step 8 "Generated public docs expose package/API/shim boundaries"
   if [ -f tests/runtime/node/published/nodejs/reference/packages.md ] &&
      [ -f tests/runtime/node/published/nodejs/reference/node-apis.md ] &&
+     [ -f tests/runtime/node/published/nodejs/reference/shims-and-boundaries.md ] &&
+     [ -f docs/architecture/runtime/node-isolate-shim-inventory.json ] &&
      grep -q 'Node22' tests/runtime/node/published/nodejs/reference/packages.md &&
      grep -q 'Node24' tests/runtime/node/published/nodejs/reference/packages.md &&
      grep -q 'Node26' tests/runtime/node/published/nodejs/reference/packages.md &&
      grep -q 'Node22' tests/runtime/node/published/nodejs/reference/node-apis.md &&
-     grep -q 'Service/microVM required' tests/runtime/node/published/nodejs/reference/node-apis.md; then
-    pass "Generated package and API references are per-version and boundary-aware"
+     grep -q 'Service/microVM required' tests/runtime/node/published/nodejs/reference/node-apis.md &&
+     grep -q 'test-harness-only' tests/runtime/node/published/nodejs/reference/shims-and-boundaries.md &&
+     grep -q 'diagnostic' tests/runtime/node/published/nodejs/reference/shims-and-boundaries.md &&
+     grep -q 'unsupported' tests/runtime/node/published/nodejs/reference/shims-and-boundaries.md; then
+    pass "Generated package, API, and shim references are per-version and boundary-aware"
   else
-    fail "Generated package/API references incomplete" "Expected per-version package support and non-isolate API boundaries"
+    fail "Generated package/API/shim references incomplete" "Expected per-version package support plus non-isolate and shim boundaries"
   fi
 
   step 9 "Release-train and latest-suite drift"

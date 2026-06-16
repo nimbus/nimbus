@@ -11,11 +11,11 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 - upstream fixture line: `v24.16.0`
 - runtime execution target: `Node24`
 - vendored official fixtures: `5198`
-- passed official fixtures: `2383`
-- expected failure / known gap fixtures: `2767`
+- passed official fixtures: `2400`
+- expected failure / known gap fixtures: `2750`
 - skipped / excluded fixtures: `48`
 - unclassified fixtures: `0`
-- official fixture pass rate: `45.8%`
+- official fixture pass rate: `46.2%`
 - classified coverage: `100.0%`
 
 ## Classification Catalog
@@ -24,8 +24,8 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 
 | Expectation | Count |
 | --- | ---: |
-| Expected failure | 5 |
-| Known gap | 2762 |
+| Expected failure | 4 |
+| Known gap | 2746 |
 | Skipped / excluded | 48 |
 
 ## Canary Coverage
