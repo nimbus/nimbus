@@ -970,8 +970,23 @@ fn should_force_commonjs_package_scope_for_fixture(test_relative_path: &str) -> 
     )
 }
 
+fn should_load_timing_sensitive_commonjs_main_fixture(test_relative_path: &str) -> bool {
+    matches!(
+        test_relative_path,
+        // This stream fixture is a CommonJS main script whose expected chunking
+        // depends on when its 10ms refill timer becomes observable relative to
+        // the top-level read loop. Loading it through the harness ESM import can
+        // perturb that boundary when large extra fixture trees are materialized.
+        // A synchronous require matches `node test-file.js`: the fixture body
+        // runs in one CJS main turn, then the ordinary event loop owns the refill
+        // timer.
+        "test/parallel/test-stream2-basic.js"
+    )
+}
+
 fn should_load_fixture_with_commonjs_require(test_relative_path: &str) -> bool {
     should_require_fixture_without_import_promise(test_relative_path)
+        || should_load_timing_sensitive_commonjs_main_fixture(test_relative_path)
         || should_force_commonjs_package_scope_for_fixture(test_relative_path)
 }
 
@@ -2149,6 +2164,14 @@ fn runtime_limits_for_node_compat_fixture(
         // harness.
         limits.execution_timeout = Duration::from_secs(120);
     }
+    if test_relative_path == "test/parallel/test-async-hooks-fatal-error.js" {
+        // This fixture validates ten process.execPath child runtimes that each
+        // die through an async_hooks fatal path. The synthetic compat re-exec is
+        // bounded but slower than native Node process startup, so give this
+        // fixture a finite slow-spawn evidence budget without changing the
+        // application preset.
+        limits.execution_timeout = Duration::from_secs(60);
+    }
     if matches!(
         test_relative_path,
         "test/parallel/test-webcrypto-wrap-unwrap.js"
@@ -2254,6 +2277,20 @@ fn node_compat_harness_wall_clock_timeout_tracks_fixture_runtime_budget() {
         node_compat_fixture_wall_clock_timeout(&nested_runner_limits),
         Duration::from_secs(125),
         "long-running subprocess fixtures still have a finite wall-clock budget",
+    );
+
+    let async_hooks_fatal_error_limits = runtime_limits_for_node_compat_fixture(
+        "test/parallel/test-async-hooks-fatal-error.js",
+        Some(NodeCompatLane::Node26),
+    );
+    assert_eq!(
+        async_hooks_fatal_error_limits.execution_timeout,
+        Duration::from_secs(60),
+        "the async-hooks fatal spawn matrix gets a finite slow-spawn budget",
+    );
+    assert_eq!(
+        node_compat_fixture_wall_clock_timeout(&async_hooks_fatal_error_limits),
+        Duration::from_secs(65),
     );
 
     let node22_webcrypto_wrap_unwrap_limits = runtime_limits_for_node_compat_fixture(

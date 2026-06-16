@@ -22,6 +22,7 @@ const isWindows = process.platform === 'win32';
 const isASan = process.config?.variables?.asan === 1;
 const hasInspector = process.features?.inspector === true;
 const hasSQLite = Boolean(process.versions?.sqlite);
+const hasTemporal = Boolean(process.config?.variables?.v8_enable_temporal_support);
 let localhostIPv4 = null;
 const localIPv6Hosts = ['localhost'];
 const tmpdir = require('./tmpdir.js');
@@ -1205,6 +1206,120 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
         // Invalid trace category input should not prevent fork startup.
       }
     };
+    const writeNimbusForkTraceFile = (traceEvents) => {
+      const traceDirectory = processObject.env.DENO_NODE_TRACE_EVENT_DIRECTORY;
+      if (
+        typeof traceDirectory !== "string" ||
+        traceDirectory.length === 0 ||
+        !Array.isArray(traceEvents) ||
+        traceEvents.length === 0
+      ) {
+        return;
+      }
+      let fs;
+      try {
+        fs = require("node:fs");
+      } catch {
+        return;
+      }
+      let rotation = 1;
+      let traceFile = pathModule.join(traceDirectory, "node_trace." + rotation + ".log");
+      while (fs.existsSync(traceFile) && rotation < 1000) {
+        if (rotation === 1) {
+          break;
+        }
+        rotation += 1;
+        traceFile = pathModule.join(traceDirectory, "node_trace." + rotation + ".log");
+      }
+      try {
+        fs.writeFileSync(traceFile, JSON.stringify({ traceEvents }));
+      } catch {
+        // Best-effort trace flush.
+      }
+    };
+    const flushNimbusForkTraceEvents = () => {
+      const traceDirectory = processObject.env.DENO_NODE_TRACE_EVENT_DIRECTORY;
+      if (typeof traceDirectory !== "string" || traceDirectory.length === 0) {
+        return;
+      }
+      let fs;
+      try {
+        fs = require("node:fs");
+      } catch {
+        return;
+      }
+      let entries;
+      try {
+        entries = fs.readdirSync(traceDirectory);
+      } catch {
+        return;
+      }
+      const traceEvents = [];
+      for (const entryName of entries) {
+        if (
+          typeof entryName !== "string" ||
+          !entryName.startsWith(".deno_trace_events_") ||
+          !entryName.includes("_t") ||
+          !entryName.endsWith(".json")
+        ) {
+          continue;
+        }
+        const entryPath = pathModule.join(traceDirectory, entryName);
+        try {
+          const slice = JSON.parse(fs.readFileSync(entryPath, "utf8"));
+          if (slice && Array.isArray(slice.traceEvents)) {
+            traceEvents.push(...slice.traceEvents);
+          }
+        } catch {
+          // Skip unreadable or partial trace-event slices.
+        }
+        try {
+          fs.unlinkSync(entryPath);
+        } catch {
+          // Best-effort cleanup; the generated node_trace file is the proof.
+        }
+      }
+      if (traceEvents.length === 0) {
+        return;
+      }
+      writeNimbusForkTraceFile(traceEvents);
+    };
+    const installNimbusForkTraceEventFlush = () => {
+      if (traceEventCategoriesFromExecArgv() === null) {
+        return;
+      }
+      let binding;
+      try {
+        const { internalBinding } = require("internal/test/binding");
+        binding = internalBinding("trace_events");
+      } catch {
+        return;
+      }
+      if (
+        !binding ||
+        binding.__nimbusForkTraceFlushInstalled === true ||
+        typeof binding.trace !== "function" ||
+        typeof binding.recordedTraceEventsSince !== "function"
+      ) {
+        return;
+      }
+      const originalTrace = binding.trace;
+      binding.trace = function nimbusForkTraceFlushWrapper(...traceArgs) {
+        const result = originalTrace.apply(this, traceArgs);
+        try {
+          writeNimbusForkTraceFile(binding.recordedTraceEventsSince(0));
+        } catch {
+          // Trace flushing must not change trace_events API behavior.
+        }
+        return result;
+      };
+      Object.defineProperty(binding, "__nimbusForkTraceFlushInstalled", {
+        value: true,
+        configurable: false,
+        enumerable: false,
+        writable: false,
+      });
+    };
     const emitIpcMessage = (message) => {
       ipc.emit("message", message);
       originalEmit("message", message);
@@ -1373,6 +1488,7 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
       if (!processObject._exiting) {
         processObject._exiting = true;
         originalEmit("exit", exitCode);
+        flushNimbusForkTraceEvents();
       }
       return exitCode;
     };
@@ -1513,6 +1629,7 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
       processObject.env.DENO_NODE_TRACE_EVENT_DIRECTORY = workerData.cwd;
     }
     enableTraceEventsFromExecArgv();
+    installNimbusForkTraceEventFlush();
 
     ipc.on("removeListener", (name) => {
       if (name === "message") {
@@ -2028,6 +2145,7 @@ module.exports = {
   hasCrypto,
   hasOpenSSL,
   hasSQLite,
+  hasTemporal,
   hasIntl: typeof Intl === 'object' && typeof Intl.DateTimeFormat === 'function',
   isDumbTerminal: process.env.TERM === 'dumb',
   isAIX,

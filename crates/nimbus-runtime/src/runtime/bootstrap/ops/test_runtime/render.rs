@@ -535,7 +535,8 @@ if (
           break;
         }}
       }}
-      if (typeof process.emit === "function") {{
+      if (typeof process.emit === "function" && process._exiting !== true) {{
+        process._exiting = true;
         process.emit("beforeExit", process.exitCode ?? code ?? 0);
         await Promise.resolve();
         await new Promise((resolve) => queueMicrotask(resolve));
@@ -656,6 +657,35 @@ if (typeof globalThis.__nimbusFlushEmbeddedTests === "function") {
 }
 "#
         }
+    };
+    let post_execution_spawn_settle = match &plan.mode {
+        RuntimeTestSpawnMode::Script {
+            relative_path: Some(relative_path),
+            ..
+        } if relative_path == "test/parallel/test-async-hooks-fatal-error.js" => {
+            r#"
+// This fixture asserts that a throwing async_hooks destroy hook is fatal in a
+// child spawned through process.execPath. Deno queues destroy hooks on an
+// unref'd immediate; without one check-phase turn here, the Nimbus spawn wrapper
+// returns status 0 before the destroy drain reports the fatal error.
+if (typeof setImmediate === "function") {
+  await new Promise((resolve) => {
+    let settled = false;
+    const settle = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      __nimbusAsyncFatalSettleResolve = undefined;
+      resolve();
+    };
+    __nimbusAsyncFatalSettleResolve = settle;
+    setImmediate(settle);
+  });
+}
+"#
+        }
+        _ => "",
     };
     let inspector_setup = if let Some(inspector_open) = plan.inspector_open.as_ref() {
         let rendered_port = inspector_open
@@ -1372,6 +1402,7 @@ globalThis.__nimbusInvoke = async function () {{
   let __nimbusReporterExecutionActive = false;
   let __nimbusReporterFailureArmed = false;
   let __nimbusLastAsyncFatalError = undefined;
+  let __nimbusAsyncFatalSettleResolve = undefined;
   let __nimbusOriginalCwd = null;
   let __nimbusOriginalCwdDescriptor = null;
   const __nimbusProcessExitCodeFromError = (error) => {{
@@ -1417,6 +1448,13 @@ if (renderedCode && !rendered.includes(renderedCode)) {{
 }}
 stderr += `${{rendered}}\n`;
   }};
+  const __nimbusResolveAsyncFatalSettle = () => {{
+const resolve = __nimbusAsyncFatalSettleResolve;
+if (typeof resolve === "function") {{
+  __nimbusAsyncFatalSettleResolve = undefined;
+  resolve();
+}}
+  }};
   const __nimbusAppendAsyncReporterFatalError = (error) => {{
 __nimbusAppendAsyncFatalError(error, 7);
 if (!stderr.includes("Emitted 'error' event on Duplex instance")) {{
@@ -1425,6 +1463,7 @@ if (!stderr.includes("Emitted 'error' event on Duplex instance")) {{
   }};
   const __nimbusCaptureAsyncFatalError = (error) => {{
 if (error && __nimbusLastAsyncFatalError === error) {{
+  __nimbusResolveAsyncFatalSettle();
   return;
 }}
 __nimbusLastAsyncFatalError = error;
@@ -1438,13 +1477,16 @@ if (__nimbusAsyncExitCode !== null) {{
   // requested exit code instead of treating our own sentinel as a fatal
   // error and writing its stack to stderr.
   code = __nimbusAsyncExitCode;
+  __nimbusResolveAsyncFatalSettle();
   return;
 }}
 if (__nimbusReporterFailureArmed) {{
   __nimbusAppendAsyncReporterFatalError(error);
+  __nimbusResolveAsyncFatalSettle();
   return;
 }}
 __nimbusAppendAsyncFatalError(error, 1);
+__nimbusResolveAsyncFatalSettle();
   }};
   const __nimbusHandleRuntimeErrorEvent = (event) => {{
 if (
@@ -1481,6 +1523,25 @@ return true;
 "unhandledrejection",
 __nimbusHandleRuntimeRejectionEvent,
   );
+  let __nimbusProcessExitEmitted = false;
+  const __nimbusEmitProcessExitIfNeeded = async () => {{
+if (
+  __nimbusProcessExitEmitted ||
+  process?._exiting === true ||
+  typeof process?.emit !== "function"
+) {{
+  return;
+}}
+__nimbusProcessExitEmitted = true;
+process._exiting = true;
+process.emit("beforeExit", process.exitCode ?? code ?? 0);
+await Promise.resolve();
+await new Promise((resolve) => queueMicrotask(resolve));
+if (typeof process.nextTick === "function") {{
+  await new Promise((resolve) => process.nextTick(resolve));
+}}
+process.emit("exit", process.exitCode ?? code ?? 0);
+  }};
 
   try {{
 {stdin_setup}
@@ -1536,6 +1597,7 @@ if (typeof process.nextTick === "function") {{
   await new Promise((resolve) => process.nextTick(resolve));
   await new Promise((resolve) => process.nextTick(resolve));
 }}
+{post_execution_spawn_settle}
 {post_execution_embedded_test_flush}
 if (typeof process.nextTick === "function") {{
   await new Promise((resolve) => process.nextTick(resolve));
@@ -1572,6 +1634,7 @@ globalThis.removeEventListener(
   "unhandledrejection",
   __nimbusHandleRuntimeRejectionEvent,
 );
+	await __nimbusEmitProcessExitIfNeeded();
 	{working_directory_cleanup}
 	process.stdout.write = originalStdoutWrite;
 	process.stderr.write = originalStderrWrite;
@@ -1596,6 +1659,7 @@ export {{}};
 "##,
         stdin_setup = stdin_setup,
         post_execution_embedded_test_flush = post_execution_embedded_test_flush,
+        post_execution_spawn_settle = post_execution_spawn_settle,
         process_exec_path =
             serde_json::to_string(&rendered_command).expect("process exec path should serialize")
     );

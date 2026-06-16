@@ -54,6 +54,22 @@ fn node24_supported_lane_executes_cycle13_w3_vm_eval_batch() {
     );
 }
 
+#[test]
+fn node26_current_lane_executes_cycle13_w3_vm_eval_batch() {
+    let fixture_paths = NDS3_CYCLE13_W3_VM_EVAL_PATHS
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-cycle13-w3-vm-eval-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        NDS3_CYCLE13_W3_VM_EVAL_EXTRA_DIRS,
+    );
+}
+
 // `test/parallel/test-webcrypto-sign-verify.js` (node22) was held back: a
 // per-fixture probe against the pinned `v2.8.2-nimbus.26` fork (the tag CI
 // builds) shows it still fails even with the cycle-13 fork edits applied, so

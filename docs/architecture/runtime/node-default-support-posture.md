@@ -22,7 +22,7 @@ behavior, test-harness-only, or upstream/platform boundary.
 | `node20` | `legacy` | 4248 | 917 | 726 | 360 | 1671 | 512 | 62 | 3025 | 0 |
 | `node22` | `supported` | 4748 | 2363 | 0 | 421 | 1347 | 537 | 80 | 2066 | 0 |
 | `node24` | `default` | 5198 | 2400 | 0 | 477 | 1435 | 800 | 86 | 2454 | 0 |
-| `node26` | `current` | 5578 | 2087 | 5 | 512 | 2069 | 814 | 91 | 3135 | 0 |
+| `node26` | `current` | 5578 | 2092 | 0 | 512 | 2069 | 814 | 91 | 3131 | 0 |
 
 ## Node24 Feasibility
 

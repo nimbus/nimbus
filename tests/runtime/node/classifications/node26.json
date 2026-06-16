@@ -3,15 +3,7 @@
   "catalog_kind": "node_compat_lane_classifications",
   "lane": "node26",
   "contract": "Classifies vendored lane-local test files that are not green in the non-ignored Rust compatibility lane. Entries must not be counted as pass claims; they reduce only the unmanifested/unclassified remainder.",
-  "entries": [
-    {
-      "test_path": "test/parallel/test-fs-stat-temporal.mjs",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "streams-local-io/fs-host-io",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node26_current_lane_fs_host_io_residual_watchpoint"
-    }
-  ],
+  "entries": [],
   "groups": [
     {
       "id": "node26-requires_native_addon_harness-1",
@@ -461,7 +453,6 @@
         "test/parallel/test-vm-measure-memory-lazy.js",
         "test/parallel/test-vm-measure-memory-multi-context.js",
         "test/parallel/test-vm-measure-memory.js",
-        "test/parallel/test-vm-module-evaluate-while-evaluating.js",
         "test/parallel/test-vm-module-modulerequests.js",
         "test/parallel/test-vm-sigint-existing-handler.js",
         "test/parallel/test-vm-sigint.js",
@@ -1946,7 +1937,6 @@
         "test/parallel/test-als-defaultvalue-original.js",
         "test/parallel/test-als-defaultvalue.js",
         "test/parallel/test-arm-math-illegal-instruction.js",
-        "test/parallel/test-async-hooks-fatal-error.js",
         "test/parallel/test-async-hooks-stack-overflow-try-catch.js",
         "test/parallel/test-async-hooks-worker-asyncfn-terminate-1.js",
         "test/parallel/test-async-hooks-worker-asyncfn-terminate-2.js",
@@ -3157,7 +3147,6 @@
         "test/parallel/test-stdout-stderr-write.js",
         "test/parallel/test-stdout-to-file.js",
         "test/parallel/test-strace-openat-openssl.js",
-        "test/parallel/test-stream2-basic.js",
         "test/parallel/test-stream2-finish-pipe-error.js",
         "test/parallel/test-stream2-finish-pipe.js",
         "test/parallel/test-stream2-pipe-error-handling.js",
@@ -3182,7 +3171,6 @@
         "test/parallel/test-trace-env-stack.js",
         "test/parallel/test-trace-env.js",
         "test/parallel/test-trace-events-api-worker-disabled.js",
-        "test/parallel/test-trace-events-api.js",
         "test/parallel/test-trace-events-async-hooks-dynamic.js",
         "test/parallel/test-trace-events-async-hooks-worker.js",
         "test/parallel/test-trace-events-dynamic-enable-workers-disabled.js",

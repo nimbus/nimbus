@@ -228,14 +228,6 @@ fn runtime_test_spawn_file_output_syncs(
     plan: &RuntimeTestSpawnPlan,
     bundle_root: &Path,
 ) -> Vec<RuntimeTestSpawnFileOutputSync> {
-    let RuntimeTestSpawnMode::TestRunner {
-        reporter_destinations,
-        rerun_failures_file,
-        ..
-    } = &plan.mode
-    else {
-        return Vec::new();
-    };
     let Some(source_bundle_root) = plan.source_bundle_root.as_deref() else {
         return Vec::new();
     };
@@ -243,28 +235,48 @@ fn runtime_test_spawn_file_output_syncs(
         return Vec::new();
     }
 
-    let mut syncs = reporter_destinations
-        .iter()
-        .filter(|destination| destination.as_str() != "stdout" && destination.as_str() != "stderr")
-        .filter_map(|destination| {
-            let original = PathBuf::from(destination);
-            if !original.is_absolute() {
-                return None;
-            }
-            Some((
-                original.clone(),
-                rewrite_bundle_output_path(&original, source_bundle_root, bundle_root),
-            ))
-        })
-        .collect::<Vec<_>>();
+    let mut syncs = Vec::new();
 
-    if let Some(rerun_failures_file) = rerun_failures_file {
-        let original = PathBuf::from(rerun_failures_file);
-        if original.is_absolute() {
-            syncs.push((
-                original.clone(),
-                rewrite_bundle_output_path(&original, source_bundle_root, bundle_root),
-            ));
+    if let Some(cwd) = plan.cwd.as_deref() {
+        let original = cwd.join("node_trace.1.log");
+        syncs.push((
+            original.clone(),
+            rewrite_bundle_output_path(&original, source_bundle_root, bundle_root),
+        ));
+    }
+
+    if let RuntimeTestSpawnMode::TestRunner {
+        reporter_destinations,
+        rerun_failures_file,
+        ..
+    } = &plan.mode
+    {
+        syncs.extend(
+            reporter_destinations
+                .iter()
+                .filter(|destination| {
+                    destination.as_str() != "stdout" && destination.as_str() != "stderr"
+                })
+                .filter_map(|destination| {
+                    let original = PathBuf::from(destination);
+                    if !original.is_absolute() {
+                        return None;
+                    }
+                    Some((
+                        original.clone(),
+                        rewrite_bundle_output_path(&original, source_bundle_root, bundle_root),
+                    ))
+                }),
+        );
+
+        if let Some(rerun_failures_file) = rerun_failures_file {
+            let original = PathBuf::from(rerun_failures_file);
+            if original.is_absolute() {
+                syncs.push((
+                    original.clone(),
+                    rewrite_bundle_output_path(&original, source_bundle_root, bundle_root),
+                ));
+            }
         }
     }
 
