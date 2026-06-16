@@ -256,6 +256,10 @@ fn node_compat_supported_node_options_flag(token: &str) -> bool {
         || token == "--preserve-symlinks-main"
         || token == "--no-preserve-symlinks"
         || token == "--no-preserve-symlinks-main"
+        || token == "--permission"
+        || token == "--permission-audit"
+        || token.starts_with("--allow-fs-read=")
+        || token.starts_with("--allow-fs-write=")
         || token.starts_with("--unhandled-rejections=")
 }
 

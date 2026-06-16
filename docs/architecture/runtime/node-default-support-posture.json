@@ -102368,8 +102368,8 @@
       }
     },
     "node26": {
-      "current_pass_rate": 0.36393,
-      "current_passed": 2030,
+      "current_pass_rate": 0.364647,
+      "current_passed": 2034,
       "diagnostic_only_non_isolate": {
         "gaps": 2065
       },
@@ -130467,18 +130467,6 @@
           "test_path": "test/parallel/test-permission-config-file.mjs"
         },
         {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-permission-diagnostics-channel.js"
-        },
-        {
           "docs_cross_check": "docs must describe fail-closed diagnostic or service/microVM route",
           "evidence_path": "tests/runtime/node/classifications/node26.json",
           "owner": "node-compat/unpromoted-surface",
@@ -138327,42 +138315,6 @@
           "test_path": "test/parallel/test-unicode-node-options.js"
         },
         {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-urlpattern-invalidthis.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-urlpattern-types.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node26.json",
-          "owner": "node-compat/unpromoted-surface",
-          "reason": "legacy unpromoted fixture names public JavaScript or V8-isolate-compatible Node API behavior",
-          "reason_code": "legacy_unpromoted_required_api_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "requires_unpromoted_node_surface",
-          "source_expectation": "expected_gap",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-urlpattern.js"
-        },
-        {
           "docs_cross_check": "visible optional gap; docs must not count it as required support",
           "evidence_path": "tests/runtime/node/classifications/node26.json",
           "owner": "node-compat/unpromoted-surface",
@@ -144952,15 +144904,15 @@
         }
       ],
       "feasibility": {
-        "current_passed": 2030,
+        "current_passed": 2034,
         "estimated_reachable_pass_ceiling": 2609,
         "optional_promotable_gap_count": 512,
-        "required_gap_count": 67,
+        "required_gap_count": 63,
         "target_pass_count": null,
         "target_reachable_in_this_plan": null
       },
       "full_official_fixture_corpus": 5578,
-      "reclassified_requires_unpromoted_node_surface_count": 3198,
+      "reclassified_requires_unpromoted_node_surface_count": 3194,
       "remaining_requires_unpromoted_node_surface_count": 0,
       "role": "current",
       "source_classification_counts": {
@@ -144968,18 +144920,18 @@
         "requires_pseudo_tty_host_harness": 32,
         "requires_pummel_stress_harness": 65,
         "requires_sequential_host_state_harness": 119,
-        "requires_unpromoted_node_surface": 3198,
+        "requires_unpromoted_node_surface": 3194,
         "requires_wpt_harness": 25,
         "support_fixture_not_top_level_test": 46,
         "upstream_known_issue_or_platform_boundary": 29
       },
-      "source_requires_unpromoted_node_surface_count": 3198,
+      "source_requires_unpromoted_node_surface_count": 3194,
       "support_denominator_counts": {
         "diagnostic_only_non_isolate": 2065,
         "test_harness_only": 814,
         "upstream_or_platform_boundary": 90,
         "v8_isolate_optional": 512,
-        "v8_isolate_required": 67
+        "v8_isolate_required": 63
       },
       "test_harness_only": {
         "gaps": 814
@@ -144999,9 +144951,9 @@
         "gaps": 512
       },
       "v8_isolate_required": {
-        "gaps": 67,
-        "pass_rate_percent": 96.8,
-        "passed": 2030,
+        "gaps": 63,
+        "pass_rate_percent": 97.0,
+        "passed": 2034,
         "total": 2097
       }
     }

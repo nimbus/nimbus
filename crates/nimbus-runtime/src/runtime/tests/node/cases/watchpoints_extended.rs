@@ -5318,6 +5318,10 @@ const NODE26_UNPROMOTED_SURFACE_PROMOTED_PATHS: &[&str] = &[
     "test/parallel/test-dns-promises-exists.js",
     "test/parallel/test-gc-tls-external-memory.js",
     "test/parallel/test-heapdump-async-hooks-init-promise.js",
+    "test/parallel/test-permission-diagnostics-channel.js",
+    "test/parallel/test-urlpattern-invalidthis.js",
+    "test/parallel/test-urlpattern-types.js",
+    "test/parallel/test-urlpattern.js",
     "test/parallel/test-whatwg-encoding-singlebyte.mjs",
 ];
 

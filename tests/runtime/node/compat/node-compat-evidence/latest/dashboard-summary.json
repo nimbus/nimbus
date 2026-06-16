@@ -68255,23 +68255,23 @@
         "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node26/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 5578,
-        "documented_manifested_green_count": 2016,
+        "documented_manifested_green_count": 2034,
         "documented_manifested_green_source": "rust_nonignored_execution_fixture_inventory_minus_classified_red_skip",
         "documented_family_green_count": 894,
-        "path_owned_manifested_green_count": 2016,
-        "classified_red_skip_count": 3562,
-        "classified_total_count": 3562,
-        "known_red_or_gap_count": 3510,
+        "path_owned_manifested_green_count": 2034,
+        "classified_red_skip_count": 3544,
+        "classified_total_count": 3544,
+        "known_red_or_gap_count": 3492,
         "skipped_or_excluded_count": 52,
         "documented_or_classified_count": 5578,
         "unmanifested_or_unclassified_count": 0,
-        "documented_manifested_green_ratio": 0.36142,
+        "documented_manifested_green_ratio": 0.364647,
         "classification_catalog": {
           "catalog_path": "tests/runtime/node/classifications/node26.json",
           "catalog_present": true,
-          "classified_red_skip_count": 3562,
+          "classified_red_skip_count": 3544,
           "by_expectation": {
-            "expected_gap": 3510,
+            "expected_gap": 3492,
             "expected_skip": 52
           },
           "by_classification": {
@@ -68279,7 +68279,7 @@
             "requires_pseudo_tty_host_harness": 32,
             "requires_pummel_stress_harness": 65,
             "requires_sequential_host_state_harness": 119,
-            "requires_unpromoted_node_surface": 3212,
+            "requires_unpromoted_node_surface": 3194,
             "requires_wpt_harness": 25,
             "support_fixture_not_top_level_test": 46,
             "upstream_known_issue_or_platform_boundary": 29
@@ -79927,30 +79927,6 @@
               "group_id": "node26-requires_unpromoted_node_surface-23"
             },
             {
-              "test_path": "test/async-hooks/test-async-exec-resource-http-32060.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
-              "test_path": "test/async-hooks/test-async-exec-resource-http-agent.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
-              "test_path": "test/async-hooks/test-async-exec-resource-http.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
               "test_path": "test/async-hooks/test-async-local-storage-dgram.js",
               "expectation": "expected_gap",
               "classification": "requires_unpromoted_node_surface",
@@ -82280,14 +82256,6 @@
             },
             {
               "test_path": "test/parallel/test-benchmark-cli.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
-              "test_path": "test/parallel/test-blob-createobjecturl.js",
               "expectation": "expected_gap",
               "classification": "requires_unpromoted_node_surface",
               "owner": "node-compat/unpromoted-surface",
@@ -84855,22 +84823,6 @@
               "group_id": "node26-requires_unpromoted_node_surface-23"
             },
             {
-              "test_path": "test/parallel/test-diagnostic-channel-http-request-created.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
-              "test_path": "test/parallel/test-diagnostic-channel-http-response-created.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
               "test_path": "test/parallel/test-diff.js",
               "expectation": "expected_gap",
               "classification": "requires_unpromoted_node_surface",
@@ -84919,14 +84871,6 @@
               "group_id": "node26-requires_unpromoted_node_surface-23"
             },
             {
-              "test_path": "test/parallel/test-dns-channel-cancel-promise.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
               "test_path": "test/parallel/test-dns-channel-cancel.js",
               "expectation": "expected_gap",
               "classification": "requires_unpromoted_node_surface",
@@ -84936,22 +84880,6 @@
             },
             {
               "test_path": "test/parallel/test-dns-channel-timeout.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
-              "test_path": "test/parallel/test-dns-lookup-promises-options-deprecated.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
-              "test_path": "test/parallel/test-dns-lookup-promises.js",
               "expectation": "expected_gap",
               "classification": "requires_unpromoted_node_surface",
               "owner": "node-compat/unpromoted-surface",
@@ -84992,22 +84920,6 @@
             },
             {
               "test_path": "test/parallel/test-dns-multi-channel.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
-              "test_path": "test/parallel/test-dns-perf_hooks.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
-              "test_path": "test/parallel/test-dns-promises-exists.js",
               "expectation": "expected_gap",
               "classification": "requires_unpromoted_node_surface",
               "owner": "node-compat/unpromoted-surface",
@@ -85695,14 +85607,6 @@
               "group_id": "node26-requires_unpromoted_node_surface-23"
             },
             {
-              "test_path": "test/parallel/test-gc-tls-external-memory.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
               "test_path": "test/parallel/test-global-customevent.js",
               "expectation": "expected_gap",
               "classification": "requires_unpromoted_node_surface",
@@ -85832,14 +85736,6 @@
             },
             {
               "test_path": "test/parallel/test-heap-prof-sigint.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
-              "test_path": "test/parallel/test-heapdump-async-hooks-init-promise.js",
               "expectation": "expected_gap",
               "classification": "requires_unpromoted_node_surface",
               "owner": "node-compat/unpromoted-surface",
@@ -87112,14 +87008,6 @@
             },
             {
               "test_path": "test/parallel/test-permission-config-file.mjs",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
-              "test_path": "test/parallel/test-permission-diagnostics-channel.js",
               "expectation": "expected_gap",
               "classification": "requires_unpromoted_node_surface",
               "owner": "node-compat/unpromoted-surface",
@@ -92359,30 +92247,6 @@
               "group_id": "node26-requires_unpromoted_node_surface-23"
             },
             {
-              "test_path": "test/parallel/test-urlpattern-invalidthis.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
-              "test_path": "test/parallel/test-urlpattern-types.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
-              "test_path": "test/parallel/test-urlpattern.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
               "test_path": "test/parallel/test-utf8-scripts.js",
               "expectation": "expected_gap",
               "classification": "requires_unpromoted_node_surface",
@@ -92640,14 +92504,6 @@
             },
             {
               "test_path": "test/parallel/test-whatwg-encoding-custom-textdecoder.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "node-compat/unpromoted-surface",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-23"
-            },
-            {
-              "test_path": "test/parallel/test-whatwg-encoding-singlebyte.mjs",
               "expectation": "expected_gap",
               "classification": "requires_unpromoted_node_surface",
               "owner": "node-compat/unpromoted-surface",
@@ -96792,7 +96648,7 @@
         "source": "vendored_official_fixture_corpus",
         "primary_count_label": "fixture_count",
         "primary_count": 19772,
-        "passed_count": 7696,
+        "passed_count": 7714,
         "counts_in_official_denominator": true,
         "notes": "Byte-identical Node upstream test-* fixtures under lane-local nodeNN/test roots; pass percentages use only this denominator."
       },
@@ -96827,7 +96683,7 @@
         "tier": "watchpoint",
         "source": "tests/runtime/node/expectations/rust-watchpoints.json",
         "primary_count_label": "catalog_entry_count",
-        "primary_count": 152,
+        "primary_count": 153,
         "counts_in_official_denominator": false,
         "notes": "Ignored Rust watchpoints and expectation catalog entries used to preserve known failures and unexpected-pass diagnostics."
       },
@@ -96841,7 +96697,7 @@
         "notes": "Expected-denial or host-owned evidence; these are explicit boundaries, not compatibility passes."
       }
     ],
-    "rust_ignore_count": 152,
+    "rust_ignore_count": 153,
     "warnings": []
   },
   "inventory_reports": [],
