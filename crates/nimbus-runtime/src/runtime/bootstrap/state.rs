@@ -7,7 +7,7 @@ use deno_permissions::PermissionsContainer;
 use deno_web::{JsMessageData, MessagePort};
 
 use crate::RuntimeBundle;
-use crate::backends::v8::embedder::{CancelHandle, JsRuntime};
+use crate::backends::v8::embedder::{CancelHandle, JsRuntime, OpState};
 use crate::error::{NimbusRuntimeError, Result};
 use crate::executor::SharedInvocationPermit;
 use crate::host::{HostBridge, HostCallCancellation};
@@ -73,6 +73,7 @@ pub(super) struct InstalledRuntimeCapabilityPolicy {
     pub(super) paths: RuntimePathPolicy,
     pub(super) env: RuntimeEnvPolicy,
     pub(super) permissions: PermissionsContainer,
+    pub(super) node_conditions: Vec<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -334,6 +335,7 @@ fn install_runtime_contract(
         permissions: build_permissions_container(&paths, &env, &limits)?,
         paths,
         env,
+        node_conditions: limits.node_conditions.clone(),
     };
     let op_state = runtime.op_state();
     let mut state = op_state.borrow_mut();
@@ -373,6 +375,15 @@ pub(crate) fn main_thread_worker_bootstrap_state() -> InstalledRuntimeWorkerBoot
         },
         parent_port: None,
         shared_env: RuntimeSharedWorkerEnv::default(),
+    }
+}
+
+pub(crate) fn install_missing_deno_extension_state(state: &mut OpState) {
+    if !state.has::<deno_web::StartTime>() {
+        state.put(deno_web::StartTime::default());
+    }
+    if !state.has::<deno_core::uv_compat::AsyncId>() {
+        state.put(deno_core::uv_compat::AsyncId::default());
     }
 }
 

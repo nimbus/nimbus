@@ -148,7 +148,7 @@ fn node_compat_canary_registry_parses_and_points_at_real_roots() {
     let registry = load_canary_registry();
     let mut cargo_sources_by_package: BTreeMap<String, String> = BTreeMap::new();
 
-    assert_eq!(registry.schema_version, 2);
+    assert_eq!(registry.schema_version, 3);
 
     let mut seen_claim_ids = BTreeSet::new();
     for claim in &registry.claims {

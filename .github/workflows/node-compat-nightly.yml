@@ -93,6 +93,8 @@ jobs:
           bash scripts/verify-node-latest-suite-tags.sh
           NIMBUS_ENFORCE_CURRENT_NODE_CORPORA=1 bash scripts/verify-node-latest-suite-tags.sh
           bash scripts/verify-node-release-train.sh
+          make node-compat-validate-fixtures
+          make node-compat-verify-fixture-upstream ALLOW_FETCH=1
           python3 scripts/runtime/node/release_train.py probe-live
           make node-compat-validate-watchpoints
 

@@ -1,5 +1,23 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
+  "compat_category_values": [
+    "ai_sdk",
+    "auth_jwt",
+    "collaboration_api",
+    "convex_runtime",
+    "database_http_client",
+    "email",
+    "host_boundary",
+    "http_client",
+    "http_framework",
+    "id_generation",
+    "object_storage",
+    "payments",
+    "platform_builtins",
+    "realtime_framework",
+    "tooling_loader",
+    "validation"
+  ],
   "claims": [
     {
       "id": "application-platform-builtins",
@@ -7,8 +25,64 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "runtime-supplementary",
+      "compat_category": "platform_builtins",
       "canary_surfaces": ["esm_cjs_loading", "process_metadata", "fs_path", "streams", "timers", "crypto", "fetch_http"],
       "public_claim": "Node platform builtin smoke is fixture-backed for each supported LTS lane and exercises ESM/CJS loading, process metadata, fs/path, streams, timers, crypto, and fetch/http.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-platform-esm-cjs-loading",
+      "package": "node-platform-builtins",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "runtime-supplementary",
+      "compat_category": "platform_builtins",
+      "canary_surfaces": ["esm_cjs_loading"],
+      "public_claim": "Node platform builtin canaries prove ESM plus createRequire CommonJS loading for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-platform-process-metadata",
+      "package": "node-platform-builtins",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "runtime-supplementary",
+      "compat_category": "platform_builtins",
+      "canary_surfaces": ["process_metadata"],
+      "public_claim": "Node platform builtin canaries prove lane-local process.version and process.release metadata for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-platform-file-path-roundtrip",
+      "package": "node-platform-builtins",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "runtime-supplementary",
+      "compat_category": "platform_builtins",
+      "canary_surfaces": ["fs_path"],
+      "public_claim": "Node platform builtin canaries prove local fs write/read and path.basename behavior inside the application bundle.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-platform-stream-timer",
+      "package": "node-platform-builtins",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "runtime-supplementary",
+      "compat_category": "platform_builtins",
+      "canary_surfaces": ["streams", "timers"],
+      "public_claim": "Node platform builtin canaries prove Readable stream iteration and timers/promises delay behavior for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-platform-crypto-fetch-http",
+      "package": "node-platform-builtins",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "runtime-supplementary",
+      "compat_category": "platform_builtins",
+      "canary_surfaces": ["crypto", "fetch_http"],
+      "public_claim": "Node platform builtin canaries prove crypto hashing and loopback fetch/http behavior for each supported LTS lane.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -17,8 +91,31 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "networking",
+      "compat_category": "http_framework",
       "canary_surfaces": ["fetch_http", "streams", "timers"],
       "public_claim": "Express application networking smoke is fixture-backed for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-networking-express-middleware",
+      "package": "express",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "networking",
+      "compat_category": "http_framework",
+      "canary_surfaces": ["fetch_http", "streams"],
+      "public_claim": "Express canaries prove middleware response-header mutation and JSON route output for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-networking-express-error-handler",
+      "package": "express",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "networking",
+      "compat_category": "http_framework",
+      "canary_surfaces": ["fetch_http", "timers"],
+      "public_claim": "Express canaries prove async server lifecycle and error-handler response shaping for each supported LTS lane.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -27,8 +124,31 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "networking",
+      "compat_category": "http_framework",
       "canary_surfaces": ["fetch_http", "streams", "timers"],
       "public_claim": "Fastify application networking smoke is fixture-backed for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-networking-fastify-hooks",
+      "package": "fastify",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "networking",
+      "compat_category": "http_framework",
+      "canary_surfaces": ["fetch_http", "streams"],
+      "public_claim": "Fastify canaries prove onSend hook execution and JSON route output for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-networking-fastify-error-handler",
+      "package": "fastify",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "networking",
+      "compat_category": "http_framework",
+      "canary_surfaces": ["fetch_http", "timers"],
+      "public_claim": "Fastify canaries prove app.listen/app.close lifecycle and error-handler response shaping for each supported LTS lane.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -37,8 +157,20 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "networking",
+      "compat_category": "realtime_framework",
       "canary_surfaces": ["fetch_http", "streams", "timers"],
       "public_claim": "Socket.IO application networking smoke is fixture-backed for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-networking-socket-io-websocket-events",
+      "package": "socket.io",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "networking",
+      "compat_category": "realtime_framework",
+      "canary_surfaces": ["fetch_http", "streams", "timers"],
+      "public_claim": "Socket.IO canaries prove websocket connection, server-to-client welcome event, and client/server event echo for each supported LTS lane.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -47,8 +179,31 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "networking",
+      "compat_category": "http_client",
       "canary_surfaces": ["fetch_http", "streams"],
       "public_claim": "Undici application networking smoke is fixture-backed for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-networking-undici-success-response",
+      "package": "undici",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "networking",
+      "compat_category": "http_client",
+      "canary_surfaces": ["fetch_http", "streams"],
+      "public_claim": "Undici canaries prove successful request and response-body JSON decoding for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-networking-undici-error-response",
+      "package": "undici",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "networking",
+      "compat_category": "http_client",
+      "canary_surfaces": ["fetch_http", "streams"],
+      "public_claim": "Undici canaries prove non-2xx response status and body handling without treating it as transport failure.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -57,8 +212,31 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "networking",
+      "compat_category": "http_client",
       "canary_surfaces": ["fetch_http", "streams"],
       "public_claim": "Axios application networking smoke is fixture-backed for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-networking-axios-success-response",
+      "package": "axios",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "networking",
+      "compat_category": "http_client",
+      "canary_surfaces": ["fetch_http", "streams"],
+      "public_claim": "Axios canaries prove successful request and JSON response decoding for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-networking-axios-error-response",
+      "package": "axios",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "networking",
+      "compat_category": "http_client",
+      "canary_surfaces": ["fetch_http", "streams"],
+      "public_claim": "Axios canaries prove response-backed error handling for non-2xx HTTP responses.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -67,8 +245,20 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "loader-context",
+      "compat_category": "convex_runtime",
       "canary_surfaces": ["convex_use_node_action_packaging"],
       "public_claim": "Convex-compatible use node action package metadata is fixture-backed for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "convex-use-node-action-package-metadata",
+      "package": "convex-use-node-action",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "loader-context",
+      "compat_category": "convex_runtime",
+      "canary_surfaces": ["convex_use_node_action_packaging"],
+      "public_claim": "Convex-compatible use node action package canaries prove package metadata and loader registration for each supported LTS lane.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -77,6 +267,7 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "convex",
+      "compat_category": "convex_runtime",
       "canary_surfaces": [
         "convex_use_node_action_invocation",
         "convex_use_node_package_import",
@@ -92,13 +283,69 @@
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
+      "id": "convex-use-node-real-app-ctx-calls",
+      "package": "convex-use-node-real-app",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "convex",
+      "compat_category": "convex_runtime",
+      "canary_surfaces": ["convex_use_node_ctx_run_query", "convex_use_node_ctx_run_mutation", "convex_use_node_ctx_run_action"],
+      "public_claim": "Convex-compatible use node app canaries prove ctx.runQuery, ctx.runMutation, and ctx.runAction calls from Node actions for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "convex-use-node-real-app-builtins",
+      "package": "convex-use-node-real-app",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "convex",
+      "compat_category": "convex_runtime",
+      "canary_surfaces": ["convex_use_node_fetch_env_secret_crypto_stream_path_fs_temp"],
+      "public_claim": "Convex-compatible use node app canaries prove fetch, env/secret boundary, crypto, stream, path, and temp fs behavior inside Node actions.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "convex-use-node-real-app-diagnostics",
+      "package": "convex-use-node-real-app",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "convex",
+      "compat_category": "convex_runtime",
+      "canary_surfaces": ["convex_use_node_scheduler", "convex_use_node_dangling_promise_diagnostic"],
+      "public_claim": "Convex-compatible use node app canaries prove scheduler interaction and dangling-promise diagnostics for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
       "id": "application-sdk-openai",
       "package": "openai",
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "sdk",
+      "compat_category": "ai_sdk",
       "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
       "public_claim": "OpenAI SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-openai-chat-completions",
+      "package": "openai",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "ai_sdk",
+      "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
+      "public_claim": "OpenAI SDK canaries prove chat.completions.create against a local HTTP service for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-openai-auth-and-model",
+      "package": "openai",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "ai_sdk",
+      "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
+      "public_claim": "OpenAI SDK canaries prove authorization header propagation and request model serialization for each supported LTS lane.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -107,8 +354,31 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "sdk",
+      "compat_category": "ai_sdk",
       "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
       "public_claim": "Anthropic SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-anthropic-messages",
+      "package": "@anthropic-ai/sdk",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "ai_sdk",
+      "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
+      "public_claim": "Anthropic SDK canaries prove messages.create against a local HTTP service for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-anthropic-auth-and-model",
+      "package": "@anthropic-ai/sdk",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "ai_sdk",
+      "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
+      "public_claim": "Anthropic SDK canaries prove x-api-key propagation and request model serialization for each supported LTS lane.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -117,8 +387,31 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "sdk",
+      "compat_category": "ai_sdk",
       "canary_surfaces": ["esm_cjs_loading", "value_serialization"],
       "public_claim": "Vercel AI SDK helper smoke is fixture-backed for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-vercel-ai-json-schema",
+      "package": "ai",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "ai_sdk",
+      "canary_surfaces": ["esm_cjs_loading", "value_serialization"],
+      "public_claim": "Vercel AI SDK canaries prove jsonSchema helper output for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-vercel-ai-tool-execution",
+      "package": "ai",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "ai_sdk",
+      "canary_surfaces": ["esm_cjs_loading", "value_serialization"],
+      "public_claim": "Vercel AI SDK canaries prove tool input schema setup, execution callback, and stop predicate construction.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -127,8 +420,31 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "sdk",
+      "compat_category": "payments",
       "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
       "public_claim": "Stripe SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-stripe-customer-create",
+      "package": "stripe",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "payments",
+      "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
+      "public_claim": "Stripe SDK canaries prove customers.create against a local HTTP service for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-stripe-form-auth",
+      "package": "stripe",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "payments",
+      "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
+      "public_claim": "Stripe SDK canaries prove form body serialization and bearer authentication propagation.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -137,8 +453,31 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "sdk",
+      "compat_category": "email",
       "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
       "public_claim": "Resend SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-resend-email-send",
+      "package": "resend",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "email",
+      "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
+      "public_claim": "Resend SDK canaries prove emails.send against a local HTTP service for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-resend-auth-subject",
+      "package": "resend",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "email",
+      "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
+      "public_claim": "Resend SDK canaries prove bearer authentication propagation and email subject serialization.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -147,8 +486,31 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "sdk",
+      "compat_category": "object_storage",
       "canary_surfaces": ["fetch_http", "streams", "crypto", "esm_cjs_loading"],
       "public_claim": "AWS SDK v3 S3 client application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-aws-s3-list-buckets",
+      "package": "@aws-sdk/client-s3",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "object_storage",
+      "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
+      "public_claim": "AWS SDK v3 S3 canaries prove ListBuckets response parsing against a local HTTP service for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-aws-s3-signing-node-http-handler",
+      "package": "@aws-sdk/client-s3",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "object_storage",
+      "canary_surfaces": ["fetch_http", "streams", "crypto", "esm_cjs_loading"],
+      "public_claim": "AWS SDK v3 S3 canaries prove NodeHttpHandler transport setup and signed authorization header propagation.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -157,8 +519,31 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "sdk",
+      "compat_category": "collaboration_api",
       "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
       "public_claim": "Slack Web API SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-slack-auth-test",
+      "package": "@slack/web-api",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "collaboration_api",
+      "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
+      "public_claim": "Slack Web API canaries prove auth.test response handling against a local HTTP service for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-slack-bearer-auth",
+      "package": "@slack/web-api",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "collaboration_api",
+      "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
+      "public_claim": "Slack Web API canaries prove bearer authentication propagation and API path construction.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -167,8 +552,31 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "sdk",
+      "compat_category": "collaboration_api",
       "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
       "public_claim": "Octokit SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-octokit-user-request",
+      "package": "octokit",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "collaboration_api",
+      "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
+      "public_claim": "Octokit canaries prove GET /user request dispatch and response data extraction against a local HTTP service.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-octokit-token-auth",
+      "package": "octokit",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "collaboration_api",
+      "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
+      "public_claim": "Octokit canaries prove token authentication propagation for each supported LTS lane.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -177,8 +585,31 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "sdk",
+      "compat_category": "auth_jwt",
       "canary_surfaces": ["crypto", "esm_cjs_loading"],
       "public_claim": "jose JWT signing and verification smoke is fixture-backed for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-jose-sign-verify",
+      "package": "jose",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "auth_jwt",
+      "canary_surfaces": ["crypto", "esm_cjs_loading", "value_serialization"],
+      "public_claim": "jose canaries prove SignJWT and jwtVerify round-trip payload handling for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-jose-protected-header",
+      "package": "jose",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "auth_jwt",
+      "canary_surfaces": ["crypto", "esm_cjs_loading", "value_serialization"],
+      "public_claim": "jose canaries prove protected-header serialization and compact JWT segment generation.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -187,8 +618,31 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "sdk",
+      "compat_category": "validation",
       "canary_surfaces": ["esm_cjs_loading", "value_serialization"],
       "public_claim": "Zod validation smoke is fixture-backed for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-zod-parse-success",
+      "package": "zod",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "validation",
+      "canary_surfaces": ["esm_cjs_loading", "value_serialization"],
+      "public_claim": "Zod canaries prove object parsing, array validation, and transformed result reads for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-zod-parse-failure",
+      "package": "zod",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "validation",
+      "canary_surfaces": ["esm_cjs_loading", "value_serialization"],
+      "public_claim": "Zod canaries prove safeParse failure reporting and issue-count propagation.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -197,8 +651,20 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "sdk",
+      "compat_category": "id_generation",
       "canary_surfaces": ["crypto", "esm_cjs_loading"],
       "public_claim": "uuid deterministic ID smoke is fixture-backed for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-uuid-v5-deterministic",
+      "package": "uuid",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "id_generation",
+      "canary_surfaces": ["crypto", "esm_cjs_loading"],
+      "public_claim": "uuid canaries prove v5 deterministic ID generation and validation for each supported LTS lane.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -207,8 +673,20 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "sdk",
+      "compat_category": "id_generation",
       "canary_surfaces": ["crypto", "esm_cjs_loading"],
       "public_claim": "nanoid ID-generation smoke is fixture-backed for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-nanoid-custom-alphabet",
+      "package": "nanoid",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "id_generation",
+      "canary_surfaces": ["crypto", "esm_cjs_loading"],
+      "public_claim": "nanoid canaries prove customAlphabet ID generation and length handling for each supported LTS lane.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -217,8 +695,31 @@
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "sdk",
+      "compat_category": "database_http_client",
       "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
       "public_claim": "Upstash Redis HTTP client smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-upstash-redis-set-get",
+      "package": "@upstash/redis",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "database_http_client",
+      "canary_surfaces": ["fetch_http", "esm_cjs_loading", "value_serialization"],
+      "public_claim": "Upstash Redis canaries prove SET and GET helper behavior against a local HTTP service for each supported LTS lane.",
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-upstash-redis-rest-command",
+      "package": "@upstash/redis",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "compat_category": "database_http_client",
+      "canary_surfaces": ["fetch_http", "esm_cjs_loading", "value_serialization"],
+      "public_claim": "Upstash Redis canaries prove REST command serialization and multiple HTTP call handling.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
@@ -229,6 +730,7 @@
       "support_status": "service_microvm_required",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "host-heavy",
+      "compat_category": "host_boundary",
       "canary_surfaces": ["child_process_denial"],
       "public_claim": "Production in-process Node application functions deny child_process execution with an actionable service/microVM boundary diagnostic.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -241,6 +743,7 @@
       "support_status": "service_microvm_required",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "host-heavy",
+      "compat_category": "host_boundary",
       "canary_surfaces": ["worker_threads_denial"],
       "public_claim": "Production in-process Node application functions deny worker thread creation with an actionable service/microVM boundary diagnostic.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -253,6 +756,7 @@
       "support_status": "service_microvm_required",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "host-heavy",
+      "compat_category": "host_boundary",
       "canary_surfaces": ["inspector_denial"],
       "public_claim": "Production in-process Node application functions deny inspector authority with an actionable service/microVM boundary diagnostic.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -265,6 +769,7 @@
       "support_status": "service_microvm_required",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "host-heavy",
+      "compat_category": "host_boundary",
       "canary_surfaces": ["repl_denial"],
       "public_claim": "Production in-process Node application functions deny REPL authority with an actionable service/microVM boundary diagnostic.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -277,6 +782,7 @@
       "support_status": "service_microvm_required",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "host-heavy",
+      "compat_category": "host_boundary",
       "canary_surfaces": ["node_test_runner_denial"],
       "public_claim": "Production in-process Node application functions deny Node CLI test-runner subprocess execution with an actionable service/microVM boundary diagnostic.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -289,6 +795,7 @@
       "support_status": "service_microvm_required",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "host-heavy",
+      "compat_category": "host_boundary",
       "canary_surfaces": ["native_addon_denial"],
       "public_claim": "Production in-process Node application functions reject .node native addon loading with an actionable service/microVM boundary diagnostic.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -301,6 +808,7 @@
       "support_status": "service_microvm_required",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "host-heavy",
+      "compat_category": "host_boundary",
       "canary_surfaces": ["persistent_filesystem_denial"],
       "public_claim": "Production in-process Node application functions deny persistent filesystem assumptions outside declared runtime roots with an actionable service/microVM boundary diagnostic.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -313,6 +821,7 @@
       "support_status": "service_microvm_required",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "host-heavy",
+      "compat_category": "host_boundary",
       "canary_surfaces": ["raw_server_listen_denial"],
       "public_claim": "Production in-process Node application functions deny raw server listen behavior with an actionable service/microVM boundary diagnostic.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -325,6 +834,7 @@
       "support_status": "service_microvm_required",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "host-heavy",
+      "compat_category": "host_boundary",
       "canary_surfaces": ["prisma_engine_service_route"],
       "public_claim": "Prisma engine execution is service/microVM-routed rather than granted to production in-process Node application functions.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -337,6 +847,7 @@
       "support_status": "service_microvm_required",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "host-heavy",
+      "compat_category": "host_boundary",
       "canary_surfaces": ["sharp_native_service_route"],
       "public_claim": "sharp native module loading is service/microVM-routed rather than granted to production in-process Node application functions.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -349,6 +860,7 @@
       "support_status": "service_microvm_required",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "host-heavy",
+      "compat_category": "host_boundary",
       "canary_surfaces": ["esbuild_binary_service_route"],
       "public_claim": "esbuild binary execution is service/microVM-routed rather than granted to production in-process Node application functions.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -359,6 +871,7 @@
       "runtime_preset": "Tooling",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "loader-context",
+      "compat_category": "tooling_loader",
       "canary_surfaces": ["esm_cjs_loading", "fs_path", "process_metadata"],
       "public_claim": "tsx tooling smoke is fixture-backed for each supported LTS lane.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -369,6 +882,7 @@
       "runtime_preset": "Tooling",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "loader-context",
+      "compat_category": "tooling_loader",
       "canary_surfaces": ["esm_cjs_loading", "fs_path", "process_metadata"],
       "public_claim": "ts-node tooling smoke is fixture-backed for each supported LTS lane.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -379,6 +893,7 @@
       "runtime_preset": "Tooling",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "loader-context",
+      "compat_category": "tooling_loader",
       "canary_surfaces": ["esm_cjs_loading", "fs_path", "process_metadata"],
       "public_claim": "jest tooling smoke is fixture-backed for each supported LTS lane.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -389,6 +904,7 @@
       "runtime_preset": "Tooling",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "loader-context",
+      "compat_category": "tooling_loader",
       "canary_surfaces": ["esm_cjs_loading", "fs_path", "process_metadata"],
       "public_claim": "Prisma tooling smoke is fixture-backed for each supported LTS lane and records either a successful SQLite roundtrip or a documented unsupported engine boundary.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -399,6 +915,7 @@
       "runtime_preset": "Tooling",
       "lane_coverage": ["node22", "node24"],
       "compat_family": "loader-context",
+      "compat_category": "tooling_loader",
       "canary_surfaces": ["esm_cjs_loading", "fs_path", "process_metadata", "fetch_http", "streams", "timers"],
       "public_claim": "Next tooling smoke is fixture-backed for each supported LTS lane with a checked build and route-response probe.",
       "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
@@ -414,7 +931,14 @@
       "bundle": "platform.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "runtime-supplementary",
-      "claim_ids": ["application-platform-builtins"],
+      "claim_ids": [
+        "application-platform-builtins",
+        "application-platform-esm-cjs-loading",
+        "application-platform-process-metadata",
+        "application-platform-file-path-roundtrip",
+        "application-platform-stream-timer",
+        "application-platform-crypto-fetch-http"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -437,7 +961,11 @@
       "bundle": "express.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "networking",
-      "claim_ids": ["application-networking-express"],
+      "claim_ids": [
+        "application-networking-express",
+        "application-networking-express-middleware",
+        "application-networking-express-error-handler"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -465,7 +993,11 @@
       "bundle": "fastify.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "networking",
-      "claim_ids": ["application-networking-fastify"],
+      "claim_ids": [
+        "application-networking-fastify",
+        "application-networking-fastify-hooks",
+        "application-networking-fastify-error-handler"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -493,7 +1025,10 @@
       "bundle": "socket-io.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "networking",
-      "claim_ids": ["application-networking-socket-io"],
+      "claim_ids": [
+        "application-networking-socket-io",
+        "application-networking-socket-io-websocket-events"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -516,7 +1051,11 @@
       "bundle": "undici.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "networking",
-      "claim_ids": ["application-networking-undici"],
+      "claim_ids": [
+        "application-networking-undici",
+        "application-networking-undici-success-response",
+        "application-networking-undici-error-response"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -539,7 +1078,11 @@
       "bundle": "axios.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "networking",
-      "claim_ids": ["application-networking-axios"],
+      "claim_ids": [
+        "application-networking-axios",
+        "application-networking-axios-success-response",
+        "application-networking-axios-error-response"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -562,7 +1105,10 @@
       "bundle": null,
       "runtime_preset": "Application",
       "compat_family_dependency": "loader-context",
-      "claim_ids": ["convex-use-node-action-packaging"],
+      "claim_ids": [
+        "convex-use-node-action-packaging",
+        "convex-use-node-action-package-metadata"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -587,7 +1133,12 @@
       "bundle": null,
       "runtime_preset": "Application",
       "compat_family_dependency": "convex",
-      "claim_ids": ["convex-use-node-real-app"],
+      "claim_ids": [
+        "convex-use-node-real-app",
+        "convex-use-node-real-app-ctx-calls",
+        "convex-use-node-real-app-builtins",
+        "convex-use-node-real-app-diagnostics"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -618,7 +1169,11 @@
       "bundle": "openai.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "sdk",
-      "claim_ids": ["application-sdk-openai"],
+      "claim_ids": [
+        "application-sdk-openai",
+        "application-sdk-openai-chat-completions",
+        "application-sdk-openai-auth-and-model"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -646,7 +1201,11 @@
       "bundle": "anthropic.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "sdk",
-      "claim_ids": ["application-sdk-anthropic"],
+      "claim_ids": [
+        "application-sdk-anthropic",
+        "application-sdk-anthropic-messages",
+        "application-sdk-anthropic-auth-and-model"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -674,7 +1233,11 @@
       "bundle": "ai.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "sdk",
-      "claim_ids": ["application-sdk-vercel-ai"],
+      "claim_ids": [
+        "application-sdk-vercel-ai",
+        "application-sdk-vercel-ai-json-schema",
+        "application-sdk-vercel-ai-tool-execution"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -702,7 +1265,11 @@
       "bundle": "stripe.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "sdk",
-      "claim_ids": ["application-sdk-stripe"],
+      "claim_ids": [
+        "application-sdk-stripe",
+        "application-sdk-stripe-customer-create",
+        "application-sdk-stripe-form-auth"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -730,7 +1297,11 @@
       "bundle": "resend.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "sdk",
-      "claim_ids": ["application-sdk-resend"],
+      "claim_ids": [
+        "application-sdk-resend",
+        "application-sdk-resend-email-send",
+        "application-sdk-resend-auth-subject"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -758,7 +1329,11 @@
       "bundle": "aws-s3.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "sdk",
-      "claim_ids": ["application-sdk-aws-sdk-v3-s3"],
+      "claim_ids": [
+        "application-sdk-aws-sdk-v3-s3",
+        "application-sdk-aws-s3-list-buckets",
+        "application-sdk-aws-s3-signing-node-http-handler"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -786,7 +1361,11 @@
       "bundle": "slack.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "sdk",
-      "claim_ids": ["application-sdk-slack-web-api"],
+      "claim_ids": [
+        "application-sdk-slack-web-api",
+        "application-sdk-slack-auth-test",
+        "application-sdk-slack-bearer-auth"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -814,7 +1393,11 @@
       "bundle": "octokit.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "sdk",
-      "claim_ids": ["application-sdk-octokit"],
+      "claim_ids": [
+        "application-sdk-octokit",
+        "application-sdk-octokit-user-request",
+        "application-sdk-octokit-token-auth"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -842,7 +1425,11 @@
       "bundle": "jose.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "sdk",
-      "claim_ids": ["application-sdk-jose"],
+      "claim_ids": [
+        "application-sdk-jose",
+        "application-sdk-jose-sign-verify",
+        "application-sdk-jose-protected-header"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -870,7 +1457,11 @@
       "bundle": "zod.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "sdk",
-      "claim_ids": ["application-sdk-zod"],
+      "claim_ids": [
+        "application-sdk-zod",
+        "application-sdk-zod-parse-success",
+        "application-sdk-zod-parse-failure"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -898,7 +1489,10 @@
       "bundle": "uuid.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "sdk",
-      "claim_ids": ["application-sdk-uuid"],
+      "claim_ids": [
+        "application-sdk-uuid",
+        "application-sdk-uuid-v5-deterministic"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -926,7 +1520,10 @@
       "bundle": "nanoid.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "sdk",
-      "claim_ids": ["application-sdk-nanoid"],
+      "claim_ids": [
+        "application-sdk-nanoid",
+        "application-sdk-nanoid-custom-alphabet"
+      ],
       "lane_runs": [
         {
           "lane": "node22",
@@ -954,7 +1551,11 @@
       "bundle": "upstash-redis.mjs",
       "runtime_preset": "Application",
       "compat_family_dependency": "sdk",
-      "claim_ids": ["application-sdk-upstash-redis"],
+      "claim_ids": [
+        "application-sdk-upstash-redis",
+        "application-sdk-upstash-redis-set-get",
+        "application-sdk-upstash-redis-rest-command"
+      ],
       "lane_runs": [
         {
           "lane": "node22",

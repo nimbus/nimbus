@@ -33,43 +33,85 @@ This generated reference summarizes package and framework canaries by support bo
 
 | Package | Preset | Evidence | Support boundary | Result | Required lanes | Observed lanes | Claim |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `node-platform-builtins` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-platform-builtins` |
-| `express` | `Application` | Support | Supported | Passed | Node22, Node24 | Node20, Node22, Node24 | `application-networking-express` |
-| `fastify` | `Application` | Support | Supported | Passed | Node22, Node24 | Node20, Node22, Node24 | `application-networking-fastify` |
-| `socket.io` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-networking-socket-io` |
-| `undici` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-networking-undici` |
-| `axios` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-networking-axios` |
-| `convex-use-node-action` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `convex-use-node-action-packaging` |
-| `convex-use-node-real-app` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24, Node26 | `convex-use-node-real-app` |
-| `openai` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24, Node26 | `application-sdk-openai` |
-| `@anthropic-ai/sdk` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24, Node26 | `application-sdk-anthropic` |
-| `ai` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24, Node26 | `application-sdk-vercel-ai` |
-| `stripe` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24, Node26 | `application-sdk-stripe` |
-| `resend` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24, Node26 | `application-sdk-resend` |
-| `@aws-sdk/client-s3` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24, Node26 | `application-sdk-aws-sdk-v3-s3` |
-| `@slack/web-api` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24, Node26 | `application-sdk-slack-web-api` |
-| `octokit` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24, Node26 | `application-sdk-octokit` |
-| `jose` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24, Node26 | `application-sdk-jose` |
-| `zod` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24, Node26 | `application-sdk-zod` |
-| `uuid` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24, Node26 | `application-sdk-uuid` |
-| `nanoid` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24, Node26 | `application-sdk-nanoid` |
-| `@upstash/redis` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24, Node26 | `application-sdk-upstash-redis` |
-| `node:child_process` | `Application` | Diagnostic | Service/microVM required | Passed | Node22, Node24 | Node22, Node24, Node26 | `host-heavy-child-process-denied` |
-| `node:worker_threads` | `Application` | Diagnostic | Service/microVM required | Passed | Node22, Node24 | Node22, Node24, Node26 | `host-heavy-worker-threads-denied` |
-| `node:inspector` | `Application` | Diagnostic | Service/microVM required | Passed | Node22, Node24 | Node22, Node24, Node26 | `host-heavy-inspector-denied` |
-| `node:repl` | `Application` | Diagnostic | Service/microVM required | Passed | Node22, Node24 | Node22, Node24, Node26 | `host-heavy-repl-denied` |
-| `node --test` | `Application` | Diagnostic | Service/microVM required | Passed | Node22, Node24 | Node22, Node24, Node26 | `host-heavy-node-test-runner-denied` |
-| `native-addon` | `Application` | Diagnostic | Service/microVM required | Passed | Node22, Node24 | Node22, Node24, Node26 | `host-heavy-native-addon-denied` |
-| `persistent-filesystem` | `Application` | Diagnostic | Service/microVM required | Passed | Node22, Node24 | Node22, Node24, Node26 | `host-heavy-persistent-filesystem-denied` |
-| `raw-server-listen` | `Application` | Diagnostic | Service/microVM required | Passed | Node22, Node24 | Node22, Node24, Node26 | `host-heavy-raw-server-listen-denied` |
-| `prisma` | `Application` | Diagnostic | Service/microVM required | Passed | Node22, Node24 | Node22, Node24, Node26 | `host-heavy-prisma-engine-routed` |
-| `sharp` | `Application` | Diagnostic | Service/microVM required | Passed | Node22, Node24 | Node22, Node24, Node26 | `host-heavy-sharp-native-routed` |
-| `esbuild` | `Application` | Diagnostic | Service/microVM required | Passed | Node22, Node24 | Node22, Node24, Node26 | `host-heavy-esbuild-binary-routed` |
-| `tsx` | `Tooling` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `tooling-loader-tsx` |
-| `ts-node` | `Tooling` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `tooling-loader-ts-node` |
-| `jest` | `Tooling` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `tooling-loader-jest` |
-| `prisma` | `Tooling` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `tooling-loader-prisma` |
-| `next` | `Tooling` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `tooling-loader-next` |
+| `node-platform-builtins` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-platform-builtins` |
+| `node-platform-builtins` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-platform-esm-cjs-loading` |
+| `node-platform-builtins` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-platform-process-metadata` |
+| `node-platform-builtins` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-platform-file-path-roundtrip` |
+| `node-platform-builtins` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-platform-stream-timer` |
+| `node-platform-builtins` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-platform-crypto-fetch-http` |
+| `express` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-networking-express` |
+| `express` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-networking-express-middleware` |
+| `express` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-networking-express-error-handler` |
+| `fastify` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-networking-fastify` |
+| `fastify` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-networking-fastify-hooks` |
+| `fastify` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-networking-fastify-error-handler` |
+| `socket.io` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-networking-socket-io` |
+| `socket.io` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-networking-socket-io-websocket-events` |
+| `undici` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-networking-undici` |
+| `undici` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-networking-undici-success-response` |
+| `undici` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-networking-undici-error-response` |
+| `axios` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-networking-axios` |
+| `axios` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-networking-axios-success-response` |
+| `axios` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-networking-axios-error-response` |
+| `convex-use-node-action` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `convex-use-node-action-packaging` |
+| `convex-use-node-action` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `convex-use-node-action-package-metadata` |
+| `convex-use-node-real-app` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `convex-use-node-real-app` |
+| `convex-use-node-real-app` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `convex-use-node-real-app-ctx-calls` |
+| `convex-use-node-real-app` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `convex-use-node-real-app-builtins` |
+| `convex-use-node-real-app` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `convex-use-node-real-app-diagnostics` |
+| `openai` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-openai` |
+| `openai` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-openai-chat-completions` |
+| `openai` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-openai-auth-and-model` |
+| `@anthropic-ai/sdk` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-anthropic` |
+| `@anthropic-ai/sdk` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-anthropic-messages` |
+| `@anthropic-ai/sdk` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-anthropic-auth-and-model` |
+| `ai` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-vercel-ai` |
+| `ai` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-vercel-ai-json-schema` |
+| `ai` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-vercel-ai-tool-execution` |
+| `stripe` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-stripe` |
+| `stripe` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-stripe-customer-create` |
+| `stripe` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-stripe-form-auth` |
+| `resend` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-resend` |
+| `resend` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-resend-email-send` |
+| `resend` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-resend-auth-subject` |
+| `@aws-sdk/client-s3` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-aws-sdk-v3-s3` |
+| `@aws-sdk/client-s3` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-aws-s3-list-buckets` |
+| `@aws-sdk/client-s3` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-aws-s3-signing-node-http-handler` |
+| `@slack/web-api` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-slack-web-api` |
+| `@slack/web-api` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-slack-auth-test` |
+| `@slack/web-api` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-slack-bearer-auth` |
+| `octokit` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-octokit` |
+| `octokit` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-octokit-user-request` |
+| `octokit` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-octokit-token-auth` |
+| `jose` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-jose` |
+| `jose` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-jose-sign-verify` |
+| `jose` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-jose-protected-header` |
+| `zod` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-zod` |
+| `zod` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-zod-parse-success` |
+| `zod` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-zod-parse-failure` |
+| `uuid` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-uuid` |
+| `uuid` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-uuid-v5-deterministic` |
+| `nanoid` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-nanoid` |
+| `nanoid` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-nanoid-custom-alphabet` |
+| `@upstash/redis` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-upstash-redis` |
+| `@upstash/redis` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-upstash-redis-set-get` |
+| `@upstash/redis` | `Application` | Support | Supported | Missing Observation | Node22, Node24 | none | `application-sdk-upstash-redis-rest-command` |
+| `node:child_process` | `Application` | Diagnostic | Service/microVM required | Missing Observation | Node22, Node24 | none | `host-heavy-child-process-denied` |
+| `node:worker_threads` | `Application` | Diagnostic | Service/microVM required | Missing Observation | Node22, Node24 | none | `host-heavy-worker-threads-denied` |
+| `node:inspector` | `Application` | Diagnostic | Service/microVM required | Missing Observation | Node22, Node24 | none | `host-heavy-inspector-denied` |
+| `node:repl` | `Application` | Diagnostic | Service/microVM required | Missing Observation | Node22, Node24 | none | `host-heavy-repl-denied` |
+| `node --test` | `Application` | Diagnostic | Service/microVM required | Missing Observation | Node22, Node24 | none | `host-heavy-node-test-runner-denied` |
+| `native-addon` | `Application` | Diagnostic | Service/microVM required | Missing Observation | Node22, Node24 | none | `host-heavy-native-addon-denied` |
+| `persistent-filesystem` | `Application` | Diagnostic | Service/microVM required | Missing Observation | Node22, Node24 | none | `host-heavy-persistent-filesystem-denied` |
+| `raw-server-listen` | `Application` | Diagnostic | Service/microVM required | Missing Observation | Node22, Node24 | none | `host-heavy-raw-server-listen-denied` |
+| `prisma` | `Application` | Diagnostic | Service/microVM required | Missing Observation | Node22, Node24 | none | `host-heavy-prisma-engine-routed` |
+| `sharp` | `Application` | Diagnostic | Service/microVM required | Missing Observation | Node22, Node24 | none | `host-heavy-sharp-native-routed` |
+| `esbuild` | `Application` | Diagnostic | Service/microVM required | Missing Observation | Node22, Node24 | none | `host-heavy-esbuild-binary-routed` |
+| `tsx` | `Tooling` | Support | Supported | Missing Observation | Node22, Node24 | none | `tooling-loader-tsx` |
+| `ts-node` | `Tooling` | Support | Supported | Missing Observation | Node22, Node24 | none | `tooling-loader-ts-node` |
+| `jest` | `Tooling` | Support | Supported | Missing Observation | Node22, Node24 | none | `tooling-loader-jest` |
+| `prisma` | `Tooling` | Support | Supported | Missing Observation | Node22, Node24 | none | `tooling-loader-prisma` |
+| `next` | `Tooling` | Support | Supported | Missing Observation | Node22, Node24 | none | `tooling-loader-next` |
 
 ## Package Guidance
 

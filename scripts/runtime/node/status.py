@@ -35,6 +35,10 @@ VALID_LANE_CLASSIFICATION_EXPECTATIONS = {
     "expected_skip",
 }
 RUST_NODE_COMPAT_PATH = Path("crates/nimbus-runtime/src/runtime/tests/node/mod.rs")
+REGRESSION_FIXTURE_ROOT = Path(
+    "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/regression"
+)
+CANARY_REGISTRY_PATH = Path("tests/runtime/node/canary-registry.json")
 
 
 def repo_root() -> Path:
@@ -68,6 +72,14 @@ def lane_metadata_files() -> list[Path]:
 
 def family_catalog_files() -> list[Path]:
     return sorted((manifest_root() / "fixtures").glob("*.json"))
+
+
+def regression_fixture_root() -> Path:
+    return repo_root() / REGRESSION_FIXTURE_ROOT
+
+
+def canary_registry_path() -> Path:
+    return repo_root() / CANARY_REGISTRY_PATH
 
 
 def normalize_rust_fixture_path(path: str) -> str:
@@ -218,6 +230,149 @@ def build_family_summaries(lanes: list[dict]) -> list[dict]:
             }
         )
     return summaries
+
+
+def supplementary_fixture_count() -> int:
+    count = 0
+    for path in family_catalog_files():
+        catalog = load_json(path)
+        for fixture in catalog.get("fixture_seeds", []):
+            if isinstance(fixture, dict) and fixture.get("test_tier") == "supplementary":
+                count += 1
+    return count
+
+
+def regression_fixture_count() -> int:
+    root = regression_fixture_root()
+    if not root.is_dir():
+        return 0
+    return len(discover_fixture_files(root))
+
+
+def canary_counts() -> dict:
+    path = canary_registry_path()
+    if not path.is_file():
+        return {
+            "active_canary_count": 0,
+            "active_claim_count": 0,
+            "diagnostic_canary_count": 0,
+            "diagnostic_claim_count": 0,
+        }
+    registry = load_json(path)
+    active_canaries = [
+        canary
+        for canary in registry.get("canaries", [])
+        if isinstance(canary, dict) and canary.get("status") == "active"
+    ]
+    active_claim_ids: set[str] = set()
+    diagnostic_claim_ids: set[str] = set()
+    diagnostic_canary_count = 0
+    for canary in active_canaries:
+        claim_ids = [
+            claim_id
+            for claim_id in canary.get("claim_ids", [])
+            if isinstance(claim_id, str)
+        ]
+        active_claim_ids.update(claim_ids)
+        if canary.get("evidence_kind") == "diagnostic":
+            diagnostic_canary_count += 1
+            diagnostic_claim_ids.update(claim_ids)
+    return {
+        "active_canary_count": len(active_canaries),
+        "active_claim_count": len(active_claim_ids),
+        "diagnostic_canary_count": diagnostic_canary_count,
+        "diagnostic_claim_count": len(diagnostic_claim_ids),
+    }
+
+
+def build_evidence_tier_summary(
+    *,
+    lane_summaries: list[dict],
+    expectation_summary: dict,
+) -> list[dict]:
+    official_fixture_count = sum(
+        lane["vendored_test_file_count"] for lane in lane_summaries
+    )
+    official_pass_count = sum(
+        lane["documented_manifested_green_count"] for lane in lane_summaries
+    )
+    canary_summary = canary_counts()
+    return [
+        {
+            "tier": "official",
+            "source": "vendored_official_fixture_corpus",
+            "primary_count_label": "fixture_count",
+            "primary_count": official_fixture_count,
+            "passed_count": official_pass_count,
+            "counts_in_official_denominator": True,
+            "notes": (
+                "Byte-identical Node upstream test-* fixtures under lane-local "
+                "nodeNN/test roots; pass percentages use only this denominator."
+            ),
+        },
+        {
+            "tier": "supplementary",
+            "source": "node_compat_manifest_test_tier",
+            "primary_count_label": "fixture_count",
+            "primary_count": supplementary_fixture_count(),
+            "passed_count": None,
+            "counts_in_official_denominator": False,
+            "notes": (
+                "Nimbus-authored support fixtures that explain behavior beyond "
+                "official Node corpus pass claims."
+            ),
+        },
+        {
+            "tier": "regression",
+            "source": str(REGRESSION_FIXTURE_ROOT),
+            "primary_count_label": "fixture_count",
+            "primary_count": regression_fixture_count(),
+            "passed_count": None,
+            "counts_in_official_denominator": False,
+            "notes": (
+                "Nimbus-authored or adapted regression fixtures separated from "
+                "official lane roots."
+            ),
+        },
+        {
+            "tier": "canary",
+            "source": str(CANARY_REGISTRY_PATH),
+            "primary_count_label": "active_canary_count",
+            "primary_count": canary_summary["active_canary_count"],
+            "claim_count": canary_summary["active_claim_count"],
+            "counts_in_official_denominator": False,
+            "notes": (
+                "Package and app probes that support developer-facing claims "
+                "without changing official fixture denominators."
+            ),
+        },
+        {
+            "tier": "watchpoint",
+            "source": expectation_summary["catalog_path"],
+            "primary_count_label": "catalog_entry_count",
+            "primary_count": expectation_summary["catalog_entry_count"],
+            "counts_in_official_denominator": False,
+            "notes": (
+                "Ignored Rust watchpoints and expectation catalog entries used "
+                "to preserve known failures and unexpected-pass diagnostics."
+            ),
+        },
+        {
+            "tier": "diagnostic",
+            "source": f"{expectation_summary['catalog_path']} + {CANARY_REGISTRY_PATH}",
+            "primary_count_label": "diagnostic_count",
+            "primary_count": expectation_summary["by_expectation"].get(
+                "diagnostic_expected_failure", 0
+            )
+            + canary_summary["diagnostic_canary_count"],
+            "claim_count": canary_summary["diagnostic_claim_count"],
+            "counts_in_official_denominator": False,
+            "notes": (
+                "Expected-denial or host-owned evidence; these are explicit "
+                "boundaries, not compatibility passes."
+            ),
+        },
+    ]
 
 
 def validate_lane_classification_catalog(
@@ -586,7 +741,7 @@ def build_lane_summaries(lanes: list[dict], family_summaries: list[dict]) -> lis
         path_owned_green = len(refs.nonignored - classified_paths)
         documented_green = path_owned_green
         documented_green_source = (
-            "rust_nonignored_path_owned_fixture_inventory_minus_classified_red_skip"
+            "rust_nonignored_execution_fixture_inventory_minus_classified_red_skip"
         )
         unmanifested_or_unclassified = max(
             0, len(fixtures) - documented_green - classified_red_skip
@@ -690,20 +845,27 @@ def build_summary(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "report_kind": "node_compat_suite_status",
         "status_contract": (
-            "Counts every vendored lane-local test-* JS/CJS/MJS fixture, then "
-            "compares that denominator to the documented manifested passed subset "
-            "plus explicit lane classification catalogs. Supported lanes use "
-            "non-ignored Rust fixture evidence minus explicit expected-failure, "
-            "known-gap, and skipped classifications as the passed numerator. "
+            "Counts every official vendored lane-local test-* JS/CJS/MJS fixture, "
+            "then compares that denominator to the documented manifested passed "
+            "subset plus explicit lane classification catalogs. Supported lanes use "
+            "non-ignored Rust tests that execute node-compat fixtures for the "
+            "matching lane minus explicit expected-failure, known-gap, and "
+            "skipped classifications as the passed numerator. "
             "Ignored watchpoints never count as passed. Expected failures, known "
             "gaps, and skipped/excluded entries are not pass claims; the remaining "
             "remainder is intentionally reported as unmanifested_or_unclassified, "
-            "not as pass or fail."
+            "not as pass or fail. Supplementary, regression, canary, watchpoint, "
+            "and diagnostic evidence is reported in separate evidence tiers and "
+            "never changes official pass denominators."
         ),
         "lane_count": len(lane_summaries),
         "family_count": len(family_summaries),
         "rust_ignore_count": len(rust_ignores),
         "expectation_catalog": expectation_summary,
+        "evidence_tier_summary": build_evidence_tier_summary(
+            lane_summaries=lane_summaries,
+            expectation_summary=expectation_summary,
+        ),
         "total_vendored_test_file_count": sum(
             summary["vendored_test_file_count"] for summary in lane_summaries
         ),
@@ -753,6 +915,26 @@ def build_markdown(summary: dict) -> str:
             f"{lane['documented_or_classified_count']} | "
             f"{lane['unmanifested_or_unclassified_count']} | "
             f"{ratio:.1f}% |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Evidence Tiers",
+            "",
+            "| Tier | Source | Primary count | Passed | Claims | Official denominator? | Notes |",
+            "| --- | --- | ---: | ---: | ---: | --- | --- |",
+        ]
+    )
+    for tier in summary["evidence_tier_summary"]:
+        passed = tier.get("passed_count")
+        claims = tier.get("claim_count")
+        lines.append(
+            f"| `{tier['tier']}` | `{tier['source']}` | "
+            f"{tier['primary_count']} {tier['primary_count_label']} | "
+            f"{passed if passed is not None else '-'} | "
+            f"{claims if claims is not None else '-'} | "
+            f"{'yes' if tier['counts_in_official_denominator'] else 'no'} | "
+            f"{tier['notes']} |"
         )
     lines.extend(
         [

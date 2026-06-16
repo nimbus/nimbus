@@ -17,7 +17,6 @@ const {
   PerformanceMeasure,
   PerformanceObserver: WebPerformanceObserver,
   PerformanceObserverEntryList,
-  PerformanceResourceTiming,
 } = core.loadExtScript("ext:deno_web/15_performance.js");
 
 const {
@@ -25,6 +24,7 @@ const {
   ERR_INVALID_ARG_TYPE,
   ERR_INVALID_ARG_VALUE,
   ERR_INVALID_THIS,
+  ERR_MISSING_ARGS,
   ERR_OUT_OF_RANGE,
 } = core.loadExtScript("ext:deno_node/internal/errors.ts");
 const {
@@ -49,16 +49,29 @@ const constants = {
   NODE_PERFORMANCE_ENTRY_TYPE_HTTP: 6,
   NODE_PERFORMANCE_ENTRY_TYPE_DNS: 7,
   NODE_PERFORMANCE_ENTRY_TYPE_NET: 8,
+  NODE_PERFORMANCE_GC_MAJOR: 4,
+  NODE_PERFORMANCE_GC_MINOR: 1,
+  NODE_PERFORMANCE_GC_INCREMENTAL: 8,
+  NODE_PERFORMANCE_GC_WEAKCB: 16,
+  NODE_PERFORMANCE_GC_FLAGS_NO: 0,
+  NODE_PERFORMANCE_GC_FLAGS_CONSTRUCT_RETAINED: 2,
+  NODE_PERFORMANCE_GC_FLAGS_FORCED: 4,
+  NODE_PERFORMANCE_GC_FLAGS_SYNCHRONOUS_PHANTOM_PROCESSING: 8,
+  NODE_PERFORMANCE_GC_FLAGS_ALL_AVAILABLE_GARBAGE: 16,
+  NODE_PERFORMANCE_GC_FLAGS_ALL_EXTERNAL_MEMORY: 32,
+  NODE_PERFORMANCE_GC_FLAGS_SCHEDULE_IDLE: 64,
 };
 
 const EMPTY_HISTOGRAM_MIN_BIGINT = 9_223_372_036_854_775_807n;
 const EMPTY_HISTOGRAM_MIN_NUMBER = Number(EMPTY_HISTOGRAM_MIN_BIGINT);
 const INTERVAL_HISTOGRAM_CLONE_TYPE = "NimbusIntervalHistogramSnapshot";
 const RECORDABLE_HISTOGRAM_CLONE_TYPE = "NimbusRecordableHistogram";
+const NODE_ENTRY_TYPES = ["function", "gc", "http2", "http", "dns", "net"];
 const kHistogramStateId = Symbol("kHistogramStateId");
 const kHistogramRecordable = Symbol("kHistogramRecordable");
 const kHistogramSkipThrow = Symbol("kHistogramSkipThrow");
 const histogramStateRegistry = new Map();
+const nodePerformanceObservers = [];
 let nextHistogramStateId = 1;
 const histogramStateFinalizer = new FinalizationRegistry((stateId) => {
   const state = histogramStateRegistry.get(stateId);
@@ -477,13 +490,68 @@ function createHistogram(options = kEmptyObject) {
   return createRecordableHistogramFromState(createHistogramState(options));
 }
 
+class NodePerformanceEntry {
+  constructor({
+    name,
+    entryType,
+    startTime,
+    duration,
+    detail = null,
+    args = [],
+    kind = undefined,
+    flags = undefined,
+  }) {
+    this.name = name;
+    this.entryType = entryType;
+    this.startTime = startTime;
+    this.duration = duration;
+    this.detail = detail;
+    if (kind !== undefined) {
+      this.kind = kind;
+    }
+    if (flags !== undefined) {
+      this.flags = flags;
+    }
+    for (let index = 0; index < args.length; index += 1) {
+      this[index] = args[index];
+    }
+  }
+
+  toJSON() {
+    return {
+      name: this.name,
+      entryType: this.entryType,
+      startTime: this.startTime,
+      duration: this.duration,
+      detail: this.detail,
+    };
+  }
+}
+
+function enqueueNodePerformanceEntry(entry) {
+  for (const observer of nodePerformanceObservers) {
+    observer[Symbol.for("nimbus.perf_hooks.enqueueNodeEntry")](entry);
+  }
+}
+
 // Node-compatible PerformanceObserver that throws proper Node.js errors
 class PerformanceObserver extends WebPerformanceObserver {
+  #nodeCallback = null;
+  #nodeTypes = [];
+  #nodeBuffer = [];
+  #nodeScheduled = false;
+  #resourceCallback = null;
+  #resourceBuffer = [];
+  #resourceScheduled = false;
+  #observesResource = false;
+
   constructor(callback) {
     if (typeof callback !== "function") {
       throw new ERR_INVALID_ARG_TYPE("callback", "Function", callback);
     }
     super(callback);
+    this.#nodeCallback = callback;
+    this.#resourceCallback = callback;
   }
 
   observe(options) {
@@ -499,24 +567,223 @@ class PerformanceObserver extends WebPerformanceObserver {
         options.entryTypes,
       );
     }
-    return super.observe(options);
+    const requestedTypes = options.entryTypes !== undefined
+      ? options.entryTypes
+      : options.type !== undefined
+      ? [options.type]
+      : [];
+    const nodeEntryTypes = requestedTypes.filter((entryType) =>
+      NODE_ENTRY_TYPES.includes(entryType)
+    );
+    const observesResource = requestedTypes.includes("resource");
+    const webEntryTypes = options.entryTypes !== undefined
+      ? options.entryTypes.filter((entryType) =>
+        entryType !== "resource" && !NODE_ENTRY_TYPES.includes(entryType)
+      )
+      : requestedTypes.filter((entryType) =>
+        entryType !== "resource" && !NODE_ENTRY_TYPES.includes(entryType)
+      );
+
+    if (webEntryTypes.length > 0) {
+      if (options.entryTypes !== undefined) {
+        super.observe({ entryTypes: webEntryTypes, buffered: options.buffered });
+      } else {
+        super.observe({
+          type: webEntryTypes[0],
+          buffered: options.buffered,
+        });
+      }
+    }
+
+    if (nodeEntryTypes.length > 0) {
+      if (nodeEntryTypes.includes("gc")) {
+        installGcPerformanceHook();
+      }
+      this.#nodeTypes = nodeEntryTypes;
+      this.#nodeBuffer = [];
+      if (!nodePerformanceObservers.includes(this)) {
+        nodePerformanceObservers.push(this);
+      }
+    }
+
+    if (observesResource) {
+      this.#observesResource = true;
+      if (!resourceTimingObservers.includes(this)) {
+        resourceTimingObservers.push(this);
+      }
+    }
+  }
+
+  disconnect() {
+    super.disconnect();
+    const nodeIndex = nodePerformanceObservers.indexOf(this);
+    if (nodeIndex !== -1) {
+      nodePerformanceObservers.splice(nodeIndex, 1);
+    }
+    const index = resourceTimingObservers.indexOf(this);
+    if (index !== -1) {
+      resourceTimingObservers.splice(index, 1);
+    }
+    this.#nodeBuffer = [];
+    this.#nodeTypes = [];
+    this.#resourceBuffer = [];
+    this.#observesResource = false;
+  }
+
+  takeRecords() {
+    const records = super.takeRecords();
+    const nodeRecords = this.#nodeBuffer;
+    this.#nodeBuffer = [];
+    if (this.#resourceBuffer.length === 0 && nodeRecords.length === 0) {
+      return records;
+    }
+    const resourceRecords = this.#resourceBuffer;
+    this.#resourceBuffer = [];
+    return records.concat(nodeRecords, resourceRecords);
+  }
+
+  [Symbol.for("nimbus.perf_hooks.enqueueNodeEntry")](entry) {
+    if (!this.#nodeTypes.includes(entry.entryType)) {
+      return;
+    }
+    this.#nodeBuffer.push(entry);
+    if (this.#nodeScheduled) {
+      return;
+    }
+    this.#nodeScheduled = true;
+    queueMicrotask(() => {
+      this.#nodeScheduled = false;
+      const entries = this.#nodeBuffer;
+      this.#nodeBuffer = [];
+      if (entries.length === 0) {
+        return;
+      }
+      this.#nodeCallback(createPerformanceEntryList(entries), this);
+    });
+  }
+
+  [Symbol.for("nimbus.perf_hooks.enqueueResourceTiming")](entry) {
+    if (!this.#observesResource) {
+      return;
+    }
+    this.#resourceBuffer.push(entry);
+    if (this.#resourceScheduled) {
+      return;
+    }
+    this.#resourceScheduled = true;
+    queueMicrotask(() => {
+      this.#resourceScheduled = false;
+      const entries = this.#resourceBuffer;
+      this.#resourceBuffer = [];
+      if (entries.length === 0) {
+        return;
+      }
+      this.#resourceCallback(createPerformanceEntryList(entries), this);
+    });
   }
 
   static get supportedEntryTypes() {
-    return WebPerformanceObserver.supportedEntryTypes;
+    const entryTypes = [...WebPerformanceObserver.supportedEntryTypes];
+    for (const entryType of [...NODE_ENTRY_TYPES, "resource"]) {
+      if (!entryTypes.includes(entryType)) {
+        entryTypes.push(entryType);
+      }
+    }
+    return entryTypes;
   }
 }
 
-const eventLoopUtilization = () => {
-  // TODO(@marvinhagemeister): Return actual non-stubbed values
-  return { idle: 0, active: 0, utilization: 0 };
+let eventLoopIdleTime = 0;
+
+const eventLoopUtilizationFromTotals = (idle, active) => {
+  const total = idle + active;
+  return {
+    idle,
+    active,
+    utilization: total === 0 ? 0 : active / total,
+  };
+};
+
+const currentEventLoopUtilization = () => {
+  if (nodeTimingLoopStart < 0) {
+    return eventLoopUtilizationFromTotals(0, 0);
+  }
+  const now = performance.now();
+  const total = Math.max(0, now - nodeTimingLoopStart);
+  if (eventLoopIdleTime === 0 && total > 0) {
+    eventLoopIdleTime = total;
+  }
+  const idle = Math.min(eventLoopIdleTime, total);
+  return eventLoopUtilizationFromTotals(idle, Math.max(0, total - idle));
+};
+
+const eventLoopUtilizationDelta = (later, earlier) => {
+  const idle = later.idle - earlier.idle;
+  const active = later.active - earlier.active;
+  return eventLoopUtilizationFromTotals(idle, active);
+};
+
+const eventLoopUtilization = (utilization1, utilization2) => {
+  if (utilization1 === undefined) {
+    return currentEventLoopUtilization();
+  }
+  if (utilization2 === undefined) {
+    return eventLoopUtilizationDelta(currentEventLoopUtilization(), utilization1);
+  }
+  return eventLoopUtilizationDelta(utilization1, utilization2);
 };
 
 performance.eventLoopUtilization = eventLoopUtilization;
 
+const bootstrapTime = performance.now();
+let nodeTimingLoopStart = -1;
+let nodeTimingLoopStartArmed = false;
+let nodeTimingLoopExit = -1;
 const nodeTiming = {
+  name: "node",
+  entryType: "node",
+  startTime: 0,
   nodeStart: 0,
-  bootstrapComplete: performance.now(),
+  v8Start: Math.max(1, bootstrapTime / 4),
+  environment: Math.max(2, bootstrapTime / 2),
+  bootstrapComplete: Math.max(3, bootstrapTime),
+  get idleTime() {
+    return currentEventLoopUtilization().idle;
+  },
+  get loopStart() {
+    if (nodeTimingLoopStart < 0 && nodeTimingLoopStartArmed) {
+      nodeTimingLoopStart = Math.max(this.bootstrapComplete, performance.now());
+    }
+    nodeTimingLoopStartArmed = true;
+    return nodeTimingLoopStart;
+  },
+  get loopExit() {
+    if (nodeTimingLoopStart < 0) {
+      return -1;
+    }
+    if (nodeTimingLoopExit < 0) {
+      nodeTimingLoopExit = performance.now();
+    }
+    return nodeTimingLoopExit;
+  },
+  get duration() {
+    return Math.max(performance.now(), this.loopExit, this.bootstrapComplete);
+  },
+  toJSON() {
+    return {
+      name: this.name,
+      entryType: this.entryType,
+      startTime: this.startTime,
+      duration: this.duration,
+      nodeStart: this.nodeStart,
+      v8Start: this.v8Start,
+      environment: this.environment,
+      bootstrapComplete: this.bootstrapComplete,
+      loopStart: this.loopStart,
+      loopExit: this.loopExit,
+      idleTime: this.idleTime,
+    };
+  },
 };
 
 const seedNodeTimingMarks = () => {
@@ -529,11 +796,336 @@ const seedNodeTimingMarks = () => {
 performance.nodeTiming = nodeTiming;
 seedNodeTimingMarks();
 
+function installGcPerformanceHook() {
+  const originalGc = globalThis.gc;
+  if (
+    typeof originalGc !== "function" ||
+    originalGc[Symbol.for("nimbus.perf_hooks.gcWrapped")] === true
+  ) {
+    return;
+  }
+  function performanceGc(...args) {
+    const startTime = performance.now();
+    const result = originalGc.apply(this, args);
+    const duration = Math.max(0, performance.now() - startTime);
+    enqueueNodePerformanceEntry(new NodePerformanceEntry({
+      name: "gc",
+      entryType: "gc",
+      startTime,
+      duration,
+      detail: {
+        kind: constants.NODE_PERFORMANCE_GC_MAJOR,
+        flags: constants.NODE_PERFORMANCE_GC_FLAGS_FORCED,
+      },
+      kind: constants.NODE_PERFORMANCE_GC_MAJOR,
+      flags: constants.NODE_PERFORMANCE_GC_FLAGS_FORCED,
+    }));
+    return result;
+  }
+  Object.defineProperty(performanceGc, Symbol.for("nimbus.perf_hooks.gcWrapped"), {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+  Object.defineProperty(globalThis, "gc", {
+    value: performanceGc,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+  if (globalThis.global && globalThis.global.gc === originalGc) {
+    Object.defineProperty(globalThis.global, "gc", {
+      value: performanceGc,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+  }
+}
+
+installGcPerformanceHook();
+
+const kResourceTiming = Symbol("kResourceTiming");
+const enqueueResourceTimingSymbol = Symbol.for("nimbus.perf_hooks.enqueueResourceTiming");
+const denoPrivateCustomInspectSymbol = Symbol.for("Deno.privateCustomInspect");
+const resourceTimingEntries = [];
+const resourceTimingObservers = [];
+
+// Node mirrors the W3C Resource Timing buffer semantics
+// (lib/internal/perf/observe.js): a primary buffer capped at
+// resourceTimingBufferSizeLimit, a secondary overflow buffer, and a
+// 'resourcetimingbufferfull' event dispatched on the global performance object
+// once the primary buffer is full. deno_web implements
+// setResourceTimingBufferSize as a no-op and has no markResourceTiming, so
+// Nimbus owns the entire buffer here.
+let resourceTimingBufferSizeLimit = 250;
+let resourceTimingSecondaryBuffer = [];
+let resourceTimingBufferFullPending = false;
+
+// WebIDL `unsigned long` coercion (ToUint32): NaN / +/-Infinity coerce to 0,
+// otherwise the truncated value modulo 2^32. Matches Node's
+// converters['unsigned long'] used by Performance#setResourceTimingBufferSize.
+function toResourceTimingBufferSize(value) {
+  if (typeof value === "bigint" || typeof value === "symbol") {
+    const typeName = typeof value === "bigint" ? "BigInt" : "Symbol";
+    const error = new TypeError(
+      `maxSize is a ${typeName} and cannot be converted to a number.`,
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number) || number === 0) {
+    return 0;
+  }
+  let wrapped = Math.trunc(number) % 4294967296;
+  if (wrapped < 0) {
+    wrapped += 4294967296;
+  }
+  return wrapped;
+}
+
+// https://www.w3.org/TR/resource-timing-2/#dfn-add-a-performanceresourcetiming-entry
+function bufferResourceTiming(entry) {
+  if (
+    resourceTimingEntries.length < resourceTimingBufferSizeLimit &&
+    !resourceTimingBufferFullPending
+  ) {
+    resourceTimingEntries.push(entry);
+    return;
+  }
+
+  if (!resourceTimingBufferFullPending) {
+    resourceTimingBufferFullPending = true;
+    globalThis.setImmediate(() => {
+      while (resourceTimingSecondaryBuffer.length > 0) {
+        const excessNumberBefore = resourceTimingSecondaryBuffer.length;
+        performance.dispatchEvent(
+          new globalThis.Event("resourcetimingbufferfull"),
+        );
+
+        // Number of secondary entries that now fit in the primary buffer.
+        const numbersToPreserve = Math.max(
+          Math.min(
+            resourceTimingBufferSizeLimit - resourceTimingEntries.length,
+            resourceTimingSecondaryBuffer.length,
+          ),
+          0,
+        );
+        const excessNumberAfter =
+          resourceTimingSecondaryBuffer.length - numbersToPreserve;
+        for (let idx = 0; idx < numbersToPreserve; idx++) {
+          resourceTimingEntries.push(resourceTimingSecondaryBuffer[idx]);
+        }
+
+        if (excessNumberBefore <= excessNumberAfter) {
+          resourceTimingSecondaryBuffer = [];
+        }
+      }
+      resourceTimingBufferFullPending = false;
+    });
+  }
+
+  resourceTimingSecondaryBuffer.push(entry);
+}
+
+function createPerformanceEntryList(entries) {
+  return {
+    getEntries() {
+      return entries.slice();
+    },
+    getEntriesByType(type) {
+      return entries.filter((entry) => entry.entryType === type);
+    },
+    getEntriesByName(name, type = undefined) {
+      return entries.filter((entry) =>
+        entry.name === name && (type === undefined || entry.entryType === type)
+      );
+    },
+  };
+}
+
+function resourceTimingFields(entry) {
+  return {
+    name: entry.name,
+    entryType: entry.entryType,
+    startTime: entry.startTime,
+    duration: entry.duration,
+    initiatorType: entry.initiatorType,
+    nextHopProtocol: entry.nextHopProtocol,
+    workerStart: entry.workerStart,
+    redirectStart: entry.redirectStart,
+    redirectEnd: entry.redirectEnd,
+    fetchStart: entry.fetchStart,
+    domainLookupStart: entry.domainLookupStart,
+    domainLookupEnd: entry.domainLookupEnd,
+    connectStart: entry.connectStart,
+    connectEnd: entry.connectEnd,
+    secureConnectionStart: entry.secureConnectionStart,
+    requestStart: entry.requestStart,
+    responseStart: entry.responseStart,
+    responseEnd: entry.responseEnd,
+    transferSize: entry.transferSize,
+    encodedBodySize: entry.encodedBodySize,
+    decodedBodySize: entry.decodedBodySize,
+    deliveryType: entry.deliveryType,
+    responseStatus: entry.responseStatus,
+  };
+}
+
+function normalizeResourceConnectionTiming(connection) {
+  return {
+    domainLookupStartTime: connection?.domainLookupStartTime ?? 0,
+    domainLookupEndTime: connection?.domainLookupEndTime ?? 0,
+    connectionStartTime: connection?.connectionStartTime ?? 0,
+    connectionEndTime: connection?.connectionEndTime ?? 0,
+    secureConnectionStartTime: connection?.secureConnectionStartTime ?? 0,
+    ALPNNegotiatedProtocol: connection?.ALPNNegotiatedProtocol ?? [],
+  };
+}
+
+class PerformanceResourceTiming {
+  constructor(resourceTiming = undefined) {
+    if (resourceTiming === undefined) {
+      throw new ERR_ILLEGAL_CONSTRUCTOR();
+    }
+    this[kResourceTiming] = resourceTiming;
+  }
+
+  get name() {
+    return this[kResourceTiming].name;
+  }
+
+  get entryType() {
+    return "resource";
+  }
+
+  get startTime() {
+    return this[kResourceTiming].startTime;
+  }
+
+  get duration() {
+    return Math.max(0, this.responseEnd - this.startTime);
+  }
+
+  get initiatorType() {
+    return this[kResourceTiming].initiatorType;
+  }
+
+  get workerStart() {
+    return this[kResourceTiming].finalServiceWorkerStartTime;
+  }
+
+  get redirectStart() {
+    return this[kResourceTiming].redirectStartTime;
+  }
+
+  get redirectEnd() {
+    return this[kResourceTiming].redirectEndTime;
+  }
+
+  get fetchStart() {
+    return this[kResourceTiming].postRedirectStartTime;
+  }
+
+  get domainLookupStart() {
+    return this[kResourceTiming].connection.domainLookupStartTime;
+  }
+
+  get domainLookupEnd() {
+    return this[kResourceTiming].connection.domainLookupEndTime;
+  }
+
+  get connectStart() {
+    return this[kResourceTiming].connection.connectionStartTime;
+  }
+
+  get connectEnd() {
+    return this[kResourceTiming].connection.connectionEndTime;
+  }
+
+  get secureConnectionStart() {
+    return this[kResourceTiming].connection.secureConnectionStartTime;
+  }
+
+  get nextHopProtocol() {
+    return this[kResourceTiming].connection.ALPNNegotiatedProtocol;
+  }
+
+  get requestStart() {
+    return this[kResourceTiming].finalNetworkRequestStartTime;
+  }
+
+  get responseStart() {
+    return this[kResourceTiming].finalNetworkResponseStartTime;
+  }
+
+  get responseEnd() {
+    return this[kResourceTiming].endTime;
+  }
+
+  get encodedBodySize() {
+    return this[kResourceTiming].encodedBodySize;
+  }
+
+  get decodedBodySize() {
+    return this[kResourceTiming].decodedBodySize;
+  }
+
+  get transferSize() {
+    if (this[kResourceTiming].cacheMode === "local") {
+      return 0;
+    }
+    return this.encodedBodySize === 0 ? 0 : this.encodedBodySize + 300;
+  }
+
+  get deliveryType() {
+    return this[kResourceTiming].deliveryType;
+  }
+
+  get responseStatus() {
+    return this[kResourceTiming].responseStatus;
+  }
+
+  toJSON() {
+    return resourceTimingFields(this);
+  }
+
+  [customInspectSymbol](depth, options) {
+    if (depth < 0) {
+      return "[PerformanceResourceTiming]";
+    }
+    const inspectOptions = {
+      ...options,
+      depth: options?.depth == null ? null : options.depth - 1,
+    };
+    return `PerformanceResourceTiming ${inspect(resourceTimingFields(this), inspectOptions)}`;
+  }
+
+  [denoPrivateCustomInspectSymbol](inspectValue, inspectOptions) {
+    return `PerformanceResourceTiming ${inspectValue(resourceTimingFields(this), inspectOptions)}`;
+  }
+}
+
+Object.setPrototypeOf(PerformanceResourceTiming.prototype, PerformanceEntry.prototype);
+Object.defineProperty(PerformanceResourceTiming.prototype, Symbol.toStringTag, {
+  value: "PerformanceResourceTiming",
+  configurable: true,
+});
+
 const nodeTimingMarkNames = new Set(["nodeStart", "bootstrapComplete"]);
 const isVisiblePerformanceEntry = (entry) =>
   entry.entryType !== "mark" || !nodeTimingMarkNames.has(entry.name);
 const filterVisiblePerformanceEntries = (entries) =>
   entries.filter(isVisiblePerformanceEntry);
+
+// Node sorts every getEntries* result ascending by startTime through a single
+// shared comparator (upstream lib/internal/perf/observe.js performanceObserverSorter).
+// Array.prototype.sort is stable, so ties preserve insertion order.
+const performanceEntrySorter = (first, second) => first.startTime - second.startTime;
+const sortPerformanceEntriesByStartTime = (entries) =>
+  entries.sort(performanceEntrySorter);
 
 const coerceNodeMarkName = (markName) => {
   if (typeof markName === "symbol") {
@@ -579,15 +1171,101 @@ performance.clearMarks = (markName = undefined) => {
 };
 
 const originalGetEntries = performance.getEntries.bind(performance);
-performance.getEntries = () => filterVisiblePerformanceEntries(originalGetEntries());
+performance.getEntries = () =>
+  sortPerformanceEntriesByStartTime(
+    filterVisiblePerformanceEntries(originalGetEntries()).concat(resourceTimingEntries),
+  );
 
 const originalGetEntriesByType = performance.getEntriesByType.bind(performance);
-performance.getEntriesByType = (type) =>
-  filterVisiblePerformanceEntries(originalGetEntriesByType(type));
+performance.getEntriesByType = function getEntriesByType(type) {
+  if (arguments.length === 0) {
+    throw new ERR_MISSING_ARGS("type");
+  }
+  if (type === "resource") {
+    return sortPerformanceEntriesByStartTime(resourceTimingEntries.slice());
+  }
+  return sortPerformanceEntriesByStartTime(
+    filterVisiblePerformanceEntries(originalGetEntriesByType(type)),
+  );
+};
 
 const originalGetEntriesByName = performance.getEntriesByName.bind(performance);
-performance.getEntriesByName = (name, type = undefined) =>
-  filterVisiblePerformanceEntries(originalGetEntriesByName(name, type));
+performance.getEntriesByName = function getEntriesByName(name, type = undefined) {
+  if (arguments.length === 0) {
+    throw new ERR_MISSING_ARGS("name");
+  }
+  const webEntries = filterVisiblePerformanceEntries(originalGetEntriesByName(name, type));
+  if (type !== undefined && type !== "resource") {
+    return sortPerformanceEntriesByStartTime(webEntries);
+  }
+  return sortPerformanceEntriesByStartTime(
+    webEntries.concat(resourceTimingEntries.filter((entry) => entry.name === name)),
+  );
+};
+
+performance.clearResourceTimings = () => {
+  resourceTimingEntries.length = 0;
+};
+
+// deno_web's setResourceTimingBufferSize is a no-op. Node coerces maxSize via
+// the WebIDL `unsigned long` converter and updates the primary-buffer limit; the
+// buffer itself is not trimmed when the limit is lowered
+// (test/parallel/test-performance-resourcetimingbuffersize.js).
+performance.setResourceTimingBufferSize = function setResourceTimingBufferSize(
+  maxSize,
+) {
+  if (arguments.length === 0) {
+    throw new ERR_MISSING_ARGS("maxSize");
+  }
+  resourceTimingBufferSizeLimit = toResourceTimingBufferSize(maxSize);
+};
+
+// The deno_web global performance.toJSON() only emits { timeOrigin }. Node's
+// Performance#toJSON (lib/internal/perf/performance.js) additionally exposes
+// nodeTiming and eventLoopUtilization, so wrap it to match Node's shape.
+performance.toJSON = () => ({
+  nodeTiming,
+  timeOrigin: performance.timeOrigin,
+  eventLoopUtilization: eventLoopUtilization(),
+});
+
+performance.markResourceTiming = (
+  timingInfo,
+  requestedUrl,
+  initiatorType,
+  _global,
+  cacheMode,
+  _bodyInfo,
+  responseStatus = 0,
+  deliveryType = "",
+) => {
+  const resourceTiming = new PerformanceResourceTiming({
+    name: `${requestedUrl}`,
+    startTime: timingInfo?.startTime ?? 0,
+    redirectStartTime: timingInfo?.redirectStartTime ?? 0,
+    redirectEndTime: timingInfo?.redirectEndTime ?? 0,
+    postRedirectStartTime: timingInfo?.postRedirectStartTime ?? 0,
+    finalServiceWorkerStartTime: timingInfo?.finalServiceWorkerStartTime ?? 0,
+    finalNetworkRequestStartTime: timingInfo?.finalNetworkRequestStartTime ?? 0,
+    finalNetworkResponseStartTime: timingInfo?.finalNetworkResponseStartTime ?? 0,
+    endTime: timingInfo?.endTime ?? 0,
+    encodedBodySize: timingInfo?.encodedBodySize ?? 0,
+    decodedBodySize: timingInfo?.decodedBodySize ?? 0,
+    connection: normalizeResourceConnectionTiming(timingInfo?.finalConnectionTimingInfo),
+    initiatorType: `${initiatorType}`,
+    cacheMode,
+    responseStatus,
+    deliveryType,
+  });
+  // Node calls enqueue() (notify observers) before bufferResourceTiming()
+  // (lib/internal/perf/resource_timing.js markResourceTiming). Observers receive
+  // every entry; the global buffer applies the size limit / overflow event.
+  for (const observer of resourceTimingObservers) {
+    observer[enqueueResourceTimingSymbol](resourceTiming);
+  }
+  bufferResourceTiming(resourceTiming);
+  return resourceTiming;
+};
 
 const recordHistogramDuration = (histogram, startTime) => {
   if (!histogram || typeof histogram.record !== "function") {
@@ -629,7 +1307,15 @@ const timerify = (fn, options = {}) => {
     const startTime = performance.now();
     if (new.target) {
       try {
-        return new fn(...args);
+        const result = new fn(...args);
+        enqueueNodePerformanceEntry(new NodePerformanceEntry({
+          name: fn.name,
+          entryType: "function",
+          startTime,
+          duration: Math.max(0, performance.now() - startTime),
+          args,
+        }));
+        return result;
       } finally {
         recordHistogramDuration(options?.histogram, startTime);
       }
@@ -640,9 +1326,23 @@ const timerify = (fn, options = {}) => {
       if (result && typeof result.then === "function") {
         return Promise.resolve(result).finally(() => {
           recordHistogramDuration(options?.histogram, startTime);
+          enqueueNodePerformanceEntry(new NodePerformanceEntry({
+            name: fn.name,
+            entryType: "function",
+            startTime,
+            duration: Math.max(0, performance.now() - startTime),
+            args,
+          }));
         });
       }
       recordHistogramDuration(options?.histogram, startTime);
+      enqueueNodePerformanceEntry(new NodePerformanceEntry({
+        name: fn.name,
+        entryType: "function",
+        startTime,
+        duration: Math.max(0, performance.now() - startTime),
+        args,
+      }));
       return result;
     } catch (error) {
       recordHistogramDuration(options?.histogram, startTime);

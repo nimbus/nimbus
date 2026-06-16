@@ -20,6 +20,38 @@ fn resolve_runtime_test_spawn_path(path: &Path, cwd: Option<&Path>) -> PathBuf {
     }
 }
 
+fn push_supported_node_option(exec_argv: &mut Vec<String>, token: &str) {
+    match token {
+        "--expose-internals"
+        | "--async-context-frame"
+        | "--enable-source-maps"
+        | "--experimental-eventsource"
+        | "--experimental-print-required-tla"
+        | "--experimental-require-module"
+        | "--experimental-stream-iter"
+        | "--experimental-vm-modules"
+        | "--no-async-context-frame"
+        | "--no-enable-source-maps"
+        | "--no-deprecation"
+        | "--no-experimental-require-module"
+        | "--no-experimental-sqlite"
+        | "--no-require-module"
+        | "--no-warnings"
+        | "--no-turbo-fast-api-calls"
+        | "--preserve-symlinks"
+        | "--preserve-symlinks-main"
+        | "--require-module"
+        | "--throw-deprecation"
+        | "--trace-warnings"
+        | "--trace-events-enabled"
+        | "--turbo-fast-api-calls" => exec_argv.push(token.to_string()),
+        _ if token.starts_with("--trace-require-module=") || token.starts_with("--title=") => {
+            exec_argv.push(token.to_string());
+        }
+        _ => {}
+    }
+}
+
 pub(super) fn runtime_test_spawn_mode(
     payload: RuntimeTestSpawnPayload,
 ) -> std::result::Result<RuntimeTestSpawnPlan, JsErrorBox> {
@@ -34,6 +66,8 @@ pub(super) fn runtime_test_spawn_mode(
     let mut permission_restricted = false;
     let mut process_title = None;
     let mut exec_argv = Vec::new();
+    let mut preload_imports = Vec::new();
+    let mut preload_requires = Vec::new();
     let mut expose_gc = false;
     let mut inspector_open = None;
     let mut test_mode = false;
@@ -58,6 +92,11 @@ pub(super) fn runtime_test_spawn_mode(
             })
         })
         .transpose()?;
+    if let Some(node_options) = payload.env.as_ref().and_then(|env| env.get("NODE_OPTIONS")) {
+        for token in node_options.split_whitespace() {
+            push_supported_node_option(&mut exec_argv, token);
+        }
+    }
 
     let mut index = 0usize;
     let parse_test_random_seed = |value: &str| -> std::result::Result<u32, JsErrorBox> {
@@ -82,6 +121,9 @@ pub(super) fn runtime_test_spawn_mode(
                         "missing source argument for node_compat subprocess flag `{arg}`"
                     ))
                 })?;
+                if source_bundle_root.is_none() {
+                    source_bundle_root = runtime_test_bundle_root_from_embedded_value(source);
+                }
                 eval_source = Some(source.clone());
                 index += 2;
             }
@@ -91,6 +133,9 @@ pub(super) fn runtime_test_spawn_mode(
                         "missing source argument for node_compat subprocess flag `{arg}`"
                     ))
                 })?;
+                if source_bundle_root.is_none() {
+                    source_bundle_root = runtime_test_bundle_root_from_embedded_value(source);
+                }
                 eval_source = Some(source.clone());
                 eval_print_result = true;
                 index += 2;
@@ -120,6 +165,24 @@ pub(super) fn runtime_test_spawn_mode(
             "--expose-gc" => {
                 expose_gc = true;
                 index += 1;
+            }
+            "--import" | "--require" | "-r" => {
+                let value = payload.args.get(index + 1).ok_or_else(|| {
+                    JsErrorBox::generic(format!(
+                        "missing source argument for node_compat subprocess flag `{arg}`"
+                    ))
+                })?;
+                exec_argv.push(arg.to_string());
+                exec_argv.push(value.clone());
+                if arg == "--import" {
+                    preload_imports.push(value.clone());
+                } else {
+                    preload_requires.push(value.clone());
+                }
+                if source_bundle_root.is_none() {
+                    source_bundle_root = runtime_test_bundle_root_from_argument(value);
+                }
+                index += 2;
             }
             "--test" => {
                 test_mode = true;
@@ -223,9 +286,26 @@ pub(super) fn runtime_test_spawn_mode(
                 index += 2;
             }
             "--expose-internals"
+            | "--async-context-frame"
+            | "--enable-source-maps"
+            | "--experimental-eventsource"
+            | "--experimental-print-required-tla"
+            | "--experimental-require-module"
+            | "--experimental-stream-iter"
+            | "--experimental-vm-modules"
+            | "--no-async-context-frame"
+            | "--no-enable-source-maps"
+            | "--no-deprecation"
+            | "--no-experimental-require-module"
             | "--no-experimental-sqlite"
+            | "--no-require-module"
             | "--no-warnings"
             | "--no-turbo-fast-api-calls"
+            | "--preserve-symlinks"
+            | "--preserve-symlinks-main"
+            | "--require-module"
+            | "--throw-deprecation"
+            | "--trace-warnings"
             | "--trace-events-enabled" => {
                 exec_argv.push(arg.to_string());
                 index += 1;
@@ -256,6 +336,8 @@ pub(super) fn runtime_test_spawn_mode(
                     env: payload.env,
                     stdin_bytes,
                     exec_argv,
+                    preload_imports,
+                    preload_requires,
                     source_bundle_root,
                     preload_env_file,
                     permission_restricted,
@@ -265,6 +347,7 @@ pub(super) fn runtime_test_spawn_mode(
                 });
             }
             "--permission" | "--experimental-permission" => {
+                exec_argv.push(arg.to_string());
                 permission_restricted = true;
                 index += 1;
             }
@@ -309,6 +392,7 @@ pub(super) fn runtime_test_spawn_mode(
             }
             _ if arg.starts_with("--trace-event-categories=")
                 || arg.starts_with("--trace-event-file-pattern=")
+                || arg.starts_with("--trace-require-module=")
                 || arg.starts_with("--title=") =>
             {
                 exec_argv.push(arg.to_string());
@@ -322,6 +406,33 @@ pub(super) fn runtime_test_spawn_mode(
                     Path::new(&arg["--env-file=".len()..]),
                     cwd.as_deref(),
                 ));
+                index += 1;
+            }
+            _ if arg.starts_with("--import=") => {
+                let value = arg["--import=".len()..].to_string();
+                exec_argv.push(arg.to_string());
+                preload_imports.push(value.clone());
+                if source_bundle_root.is_none() {
+                    source_bundle_root = runtime_test_bundle_root_from_argument(&value);
+                }
+                index += 1;
+            }
+            _ if arg.starts_with("--require=") => {
+                let value = arg["--require=".len()..].to_string();
+                exec_argv.push(arg.to_string());
+                preload_requires.push(value.clone());
+                if source_bundle_root.is_none() {
+                    source_bundle_root = runtime_test_bundle_root_from_argument(&value);
+                }
+                index += 1;
+            }
+            _ if arg.starts_with("-r") && arg.len() > 2 => {
+                let value = arg["-r".len()..].to_string();
+                exec_argv.push(arg.to_string());
+                preload_requires.push(value.clone());
+                if source_bundle_root.is_none() {
+                    source_bundle_root = runtime_test_bundle_root_from_argument(&value);
+                }
                 index += 1;
             }
             _ if arg.starts_with("--input-type=") => {
@@ -454,7 +565,14 @@ pub(super) fn runtime_test_spawn_mode(
         if source_bundle_root.is_none() {
             source_bundle_root = runtime_test_bundle_root_from_path(&script_path);
         }
-        let (relative_path, source) = if script_path.is_file() {
+        let is_symlink = std::fs::symlink_metadata(&script_path)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false);
+        let (relative_path, source) = if is_symlink {
+            let relative_path =
+                relative_test_path(&script_path).map(|path| path.to_string_lossy().into_owned());
+            (relative_path, None)
+        } else if script_path.is_file() {
             let source = std::fs::read_to_string(&script_path).map_err(|error| {
                 JsErrorBox::generic(format!(
                     "failed to read node_compat subprocess script {}: {error}",
@@ -487,6 +605,8 @@ pub(super) fn runtime_test_spawn_mode(
         env: payload.env,
         stdin_bytes,
         exec_argv,
+        preload_imports,
+        preload_requires,
         source_bundle_root,
         preload_env_file,
         permission_restricted,
@@ -535,4 +655,67 @@ fn runtime_test_bundle_root_from_argument(argument: &str) -> Option<PathBuf> {
         return runtime_test_bundle_root_from_path(path);
     }
     None
+}
+
+fn runtime_test_bundle_root_from_embedded_value(value: &str) -> Option<PathBuf> {
+    if let Some(root) = runtime_test_bundle_root_from_argument(value) {
+        return Some(root);
+    }
+
+    let marker = "/app/.nimbus/convex";
+    let marker_index = value.find(marker)?;
+    let root_end = marker_index + marker.len();
+    let prefix = &value[..root_end];
+    let candidate = if let Some(url_start) = prefix.rfind("file://") {
+        &prefix[url_start + "file://".len()..]
+    } else {
+        let path_start = prefix
+            .char_indices()
+            .rev()
+            .find_map(|(index, ch)| {
+                (index < marker_index
+                    && (ch == '"'
+                        || ch == '\''
+                        || ch == '`'
+                        || ch == '('
+                        || ch == ','
+                        || ch == ';'
+                        || ch.is_whitespace()))
+                .then_some(index + ch.len_utf8())
+            })
+            .unwrap_or(0);
+        &prefix[path_start..]
+    };
+    runtime_test_bundle_root_from_path(Path::new(candidate))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_file_url_discovers_parent_bundle_root() {
+        let source = r#"import { register } from "node:module"; register("file:///private/tmp/nvx-parent/app/.nimbus/convex/test/fixtures/loader.mjs");"#;
+
+        let root = runtime_test_bundle_root_from_embedded_value(source)
+            .expect("file URL inside eval source should identify bundle root");
+
+        assert_eq!(
+            root,
+            PathBuf::from("/private/tmp/nvx-parent/app/.nimbus/convex")
+        );
+    }
+
+    #[test]
+    fn embedded_absolute_path_discovers_parent_bundle_root() {
+        let source = r#"throw new Error("/private/tmp/nvx-parent/app/.nimbus/convex/test/fixtures/child.js");"#;
+
+        let root = runtime_test_bundle_root_from_embedded_value(source)
+            .expect("absolute path inside eval source should identify bundle root");
+
+        assert_eq!(
+            root,
+            PathBuf::from("/private/tmp/nvx-parent/app/.nimbus/convex")
+        );
+    }
 }

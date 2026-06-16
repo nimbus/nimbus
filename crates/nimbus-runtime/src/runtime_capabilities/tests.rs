@@ -329,6 +329,34 @@ fn ensure_write_path_allows_in_root_parent_traversal_after_missing_segment() {
     assert_eq!(checked, expected);
 }
 
+#[cfg(unix)]
+#[test]
+fn ensure_write_link_path_authorizes_entry_without_following_symlink_target() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let app_root = tempdir.path().join("app");
+    let bundle_root = app_root.join(".nimbus/convex");
+    let outside_root = tempdir.path().join("outside");
+    std::fs::create_dir_all(&bundle_root).expect("bundle root should build");
+    std::fs::create_dir_all(&outside_root).expect("outside root should build");
+    let bundle_path = bundle_root.join("bundle.mjs");
+    std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+    std::os::unix::fs::symlink(&outside_root, bundle_root.join("outside-link"))
+        .expect("symlink should write");
+    let bundle = RuntimeBundle::new(&bundle_path);
+
+    let paths = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::application_node22())
+        .expect("path policy should build");
+
+    let checked = paths
+        .ensure_write_link_path(Path::new("outside-link"))
+        .expect("link entry should be removable inside the writable root");
+    let expected = bundle_root
+        .canonicalize()
+        .expect("bundle root should canonicalize")
+        .join("outside-link");
+    assert_eq!(checked, expected);
+}
+
 #[test]
 fn ensure_symlink_target_path_allows_in_root_relative_parent_traversal() {
     let tempdir = tempfile::tempdir().expect("tempdir should build");

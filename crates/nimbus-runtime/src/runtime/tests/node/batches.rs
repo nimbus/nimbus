@@ -1187,4 +1187,5 @@ const PROCESS_FINALIZATION_WATCHPOINT_EXTRA_FILES: &[NodeCompatExtraFixtureEntry
 // roots in one manifest so the default and supported lanes do not drift.
 include!("batches/core_semantics.rs");
 include!("batches/process_and_streams.rs");
+include!("batches/fs_cp.rs");
 include!("batches/networking.rs");

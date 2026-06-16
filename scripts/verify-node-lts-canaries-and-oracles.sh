@@ -8,13 +8,18 @@ cd "${REPO_ROOT}"
 
 python3 - <<'PY'
 import json
+import os
 import sys
 from pathlib import Path
 
 repo = Path.cwd()
 lane_registry_path = repo / "tests/runtime/node/compat/node-lts-compat/node-lts-lanes.json"
 canary_registry_path = repo / "tests/runtime/node/canary-registry.json"
+dashboard_env = os.environ.get("NIMBUS_NODE_COMPAT_DASHBOARD_PATH")
 dashboard_path = repo / "tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json"
+if dashboard_env:
+    candidate = Path(dashboard_env)
+    dashboard_path = candidate if candidate.is_absolute() else repo / candidate
 
 required_surfaces = {
     "esm_cjs_loading",

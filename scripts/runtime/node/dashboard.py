@@ -159,6 +159,7 @@ def discover_suite_status_report(artifacts_root: Path) -> dict | None:
     return {
         "path": str(path.relative_to(repo_root())),
         "lane_summaries": report["lane_summaries"],
+        "evidence_tier_summary": report.get("evidence_tier_summary", []),
         "rust_ignore_count": report.get("rust_ignore_count", 0),
         "warnings": report["warnings"],
     }
@@ -363,6 +364,25 @@ def build_markdown(summary: dict) -> str:
                 f"{lane['vendored_test_file_count']} | "
                 f"{lane['unmanifested_or_unclassified_count']} | "
                 f"{ratio:.1f}% |"
+            )
+        lines.extend(
+            [
+                "",
+                "### Evidence Tiers",
+                "",
+                "| Tier | Source | Primary count | Passed | Claims | Official denominator? |",
+                "| --- | --- | ---: | ---: | ---: | --- |",
+            ]
+        )
+        for tier in status.get("evidence_tier_summary", []):
+            passed = tier.get("passed_count")
+            claims = tier.get("claim_count")
+            lines.append(
+                f"| `{tier['tier']}` | `{tier['source']}` | "
+                f"{tier['primary_count']} {tier['primary_count_label']} | "
+                f"{passed if passed is not None else '-'} | "
+                f"{claims if claims is not None else '-'} | "
+                f"{'yes' if tier['counts_in_official_denominator'] else 'no'} |"
             )
         lines.extend(["", "### Suite Warnings"])
         if status["warnings"]:

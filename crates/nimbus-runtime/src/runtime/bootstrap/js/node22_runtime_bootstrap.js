@@ -19,7 +19,11 @@ import {
 } from "ext:deno_node/internal/fs/utils.mjs";
 import { getBinding as getNodeInternalBinding } from "ext:deno_node/internal_binding/mod.ts";
 import { Buffer as nodeBuffer } from "node:buffer";
-import { relative as nodePathRelative, resolve as nodePathResolve } from "node:path";
+import {
+  isAbsolute as nodePathIsAbsolute,
+  relative as nodePathRelative,
+  resolve as nodePathResolve,
+} from "node:path";
 import nodeProcessBuiltin from "node:process";
 import { StringDecoder as nodeStringDecoder } from "node:string_decoder";
 import * as nodeTimersBuiltin from "node:timers";
@@ -60,6 +64,7 @@ const {
   saveGlobalThisReference: saveWebGlobalThisReference,
 } = core.loadExtScript("ext:deno_web/02_event.js");
 core.loadExtScript("ext:deno_web/04_global_interfaces.js");
+const { atob: webAtob, btoa: webBtoa } = core.loadExtScript("ext:deno_web/05_base64.js");
 const {
   ByteLengthQueuingStrategy: webByteLengthQueuingStrategy,
   CountQueuingStrategy: webCountQueuingStrategy,
@@ -75,6 +80,19 @@ const {
   WritableStreamDefaultController: webWritableStreamDefaultController,
   WritableStreamDefaultWriter: webWritableStreamDefaultWriter,
 } = core.loadExtScript("ext:deno_web/06_streams.js");
+// The encoding/compression web-stream globals come from the same ext modules
+// that the `stream/web` Node polyfill re-exports, so seeding them here keeps
+// `globalThis.TextEncoderStream === require("stream/web").TextEncoderStream`
+// (and siblings) identity-equal. `loadExtScript` is cached, so these resolve to
+// the same bindings the polyfill loads.
+const {
+  TextDecoderStream: webTextDecoderStream,
+  TextEncoderStream: webTextEncoderStream,
+} = core.loadExtScript("ext:deno_web/08_text_encoding.js");
+const {
+  CompressionStream: webCompressionStream,
+  DecompressionStream: webDecompressionStream,
+} = core.loadExtScript("ext:deno_web/14_compression.js");
 core.loadExtScript("ext:deno_web/10_filereader.js");
 core.loadExtScript("ext:deno_web/12_location.js");
 const {
@@ -106,10 +124,20 @@ const {
   AbortError: nodeAbortError,
   ERR_FS_INVALID_SYMLINK_TYPE: nodeErrFsInvalidSymlinkType,
   ERR_FS_FILE_TOO_LARGE: nodeErrFsFileTooLarge,
+  ERR_INVALID_ARG_VALUE: nodeErrInvalidArgValue,
 } = core.loadExtScript("ext:deno_node/internal/errors.ts");
+const { parseFileMode: nodeParseFileMode } = core.loadExtScript(
+  "ext:deno_node/internal/validators.mjs",
+);
 const denoProcessModule = core.loadExtScript("ext:deno_process/40_process.js");
 
 Object.defineProperties(globalThis, windowOrWorkerGlobalScope);
+Object.defineProperty(globalThis, Symbol.toStringTag, {
+  value: "global",
+  configurable: true,
+  enumerable: false,
+  writable: false,
+});
 const nimbusInternalFsBinding = getNodeInternalBinding("fs");
 const {
   ArrayIsArray,
@@ -131,9 +159,31 @@ if (!Object.getOwnPropertyDescriptor(nodeFsDirent.prototype, "path")) {
   });
 }
 
+function runtimeFsAssertExistingCwd(cwd) {
+  try {
+    const value = globalThis.__nimbusSyncHostValue("op_nimbus_runtime_stat_sync", {
+      path: cwd,
+      follow_symlink: true,
+    });
+    return toFileInfo(value);
+  } catch (error) {
+    throw runtimeFsMapThrownError(error);
+  }
+}
+
 function runtimeFsPathToString(path) {
   if (typeof path === "string") {
-    return path;
+    if (nodePathIsAbsolute(path)) {
+      return path;
+    }
+    const cwd = nodeProcessBuiltin?.cwd?.() ??
+      globalThis.process?.cwd?.() ??
+      nimbusRuntimeCurrentCwd ??
+      ".";
+    if (nodePathIsAbsolute(cwd)) {
+      runtimeFsAssertExistingCwd(cwd);
+    }
+    return nodePathResolve(cwd, path);
   }
   if (path instanceof URL) {
     if (path.protocol !== "file:") {
@@ -144,10 +194,30 @@ function runtimeFsPathToString(path) {
   return String(path);
 }
 
+function runtimeFsSymlinkTargetToString(path) {
+  if (typeof path === "string") {
+    return path;
+  }
+  if (path instanceof URL) {
+    if (path.protocol !== "file:") {
+      throw new TypeError(`Nimbus only supports file: URLs for symlink targets; received ${path.href}`);
+    }
+    return decodeURIComponent(path.pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+  }
+  return String(path);
+}
+
 function runtimeFsToUnixTimeFromEpoch(value) {
-  const unixSeconds = nodeFsToUnixTimestamp(value);
-  const seconds = Math.trunc(unixSeconds);
-  const nanoseconds = Math.trunc((unixSeconds * 1e3) - (seconds * 1e3)) * 1e6;
+  let unixSeconds;
+  try {
+    unixSeconds = Date.prototype.getTime.call(value) / 1e3;
+  } catch {
+    unixSeconds = typeof value === "number" && Number.isFinite(value)
+      ? value
+      : nodeFsToUnixTimestamp(value);
+  }
+  const seconds = Math.floor(unixSeconds);
+  const nanoseconds = Math.trunc((unixSeconds - seconds) * 1e9);
   return {
     seconds,
     nanoseconds,
@@ -348,7 +418,7 @@ function runtimeFsDiffWatchSnapshots(previousSnapshot, nextSnapshot, recursive =
   }
 
   if (previousSnapshot.signature !== nextSnapshot.signature) {
-    return { kind: "modify", paths: [nextSnapshot.path], flag: null };
+    return { kind: "modify", paths: [null], flag: null };
   }
   return null;
 }
@@ -615,11 +685,58 @@ function runtimeFsRemoveSync(path, options = undefined) {
   }
 }
 
+async function runtimeFsRmdir(path) {
+  try {
+    await globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_remove", {
+      path: runtimeFsPathToString(path),
+      recursive: false,
+      directory_only: true,
+    });
+  } catch (error) {
+    throw runtimeFsMapThrownError(error);
+  }
+}
+
+function runtimeFsRmdirSync(path) {
+  try {
+    globalThis.__nimbusSyncHostValue("op_nimbus_runtime_remove_sync", {
+      path: runtimeFsPathToString(path),
+      recursive: false,
+      directory_only: true,
+    });
+  } catch (error) {
+    throw runtimeFsMapThrownError(error);
+  }
+}
+
 async function runtimeFsChmod(path, mode) {
   try {
     await globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_chmod", {
       path: runtimeFsPathToString(path),
       mode,
+    });
+  } catch (error) {
+    throw runtimeFsMapThrownError(error);
+  }
+}
+
+async function runtimeFsLchmod(path, mode) {
+  try {
+    await globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_lchmod", {
+      path: runtimeFsPathToString(path),
+      mode,
+    });
+  } catch (error) {
+    throw runtimeFsMapThrownError(error);
+  }
+}
+
+async function runtimeFsChown(path, uid, gid) {
+  try {
+    await globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_chown", {
+      path: runtimeFsPathToString(path),
+      uid,
+      gid,
     });
   } catch (error) {
     throw runtimeFsMapThrownError(error);
@@ -690,7 +807,7 @@ function runtimeFsSymlinkFileType(options) {
 async function runtimeFsSymlink(oldpath, newpath, options = undefined) {
   try {
     await globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_symlink", {
-      oldpath: runtimeFsPathToString(oldpath),
+      oldpath: runtimeFsSymlinkTargetToString(oldpath),
       newpath: runtimeFsPathToString(newpath),
       file_type: runtimeFsSymlinkFileType(options),
     });
@@ -702,7 +819,7 @@ async function runtimeFsSymlink(oldpath, newpath, options = undefined) {
 function runtimeFsSymlinkSync(oldpath, newpath, options = undefined) {
   try {
     globalThis.__nimbusSyncHostValue("op_nimbus_runtime_symlink_sync", {
-      oldpath: runtimeFsPathToString(oldpath),
+      oldpath: runtimeFsSymlinkTargetToString(oldpath),
       newpath: runtimeFsPathToString(newpath),
       file_type: runtimeFsSymlinkFileType(options),
     });
@@ -758,6 +875,29 @@ function runtimeFsChmodSync(path, mode) {
     globalThis.__nimbusSyncHostValue("op_nimbus_runtime_chmod_sync", {
       path: runtimeFsPathToString(path),
       mode,
+    });
+  } catch (error) {
+    throw runtimeFsMapThrownError(error);
+  }
+}
+
+function runtimeFsLchmodSync(path, mode) {
+  try {
+    globalThis.__nimbusSyncHostValue("op_nimbus_runtime_lchmod_sync", {
+      path: runtimeFsPathToString(path),
+      mode,
+    });
+  } catch (error) {
+    throw runtimeFsMapThrownError(error);
+  }
+}
+
+function runtimeFsChownSync(path, uid, gid) {
+  try {
+    globalThis.__nimbusSyncHostValue("op_nimbus_runtime_chown_sync", {
+      path: runtimeFsPathToString(path),
+      uid,
+      gid,
     });
   } catch (error) {
     throw runtimeFsMapThrownError(error);
@@ -829,10 +969,89 @@ function runtimeNodePlatform() {
   }
 }
 
+const nimbusProcessCwdPatched = Symbol("nimbus.processCwdPatched");
+const nimbusProcessStdioPatched = Symbol("nimbus.processStdioPatched");
+let nimbusRuntimeCurrentCwd = null;
+
+function seedNodeProcessCwd(nodeProcess) {
+  if (
+    !nodeProcess ||
+    typeof nodeProcess !== "object" ||
+    nodeProcess[nimbusProcessCwdPatched] === true
+  ) {
+    return;
+  }
+
+  const originalCwd = typeof nodeProcess.cwd === "function"
+    ? nodeProcess.cwd.bind(nodeProcess)
+    : null;
+  const policyCwd = typeof core.ops.op_nimbus_runtime_cwd === "function"
+    ? core.ops.op_nimbus_runtime_cwd()
+    : null;
+  let currentCwd = typeof policyCwd === "string" && policyCwd.length > 0
+    ? policyCwd
+    : nimbusRuntimeCurrentCwd ??
+      (nodeProcess !== globalThis.process &&
+          globalThis.process?.[nimbusProcessCwdPatched] === true &&
+          typeof globalThis.process?.cwd === "function"
+        ? globalThis.process.cwd()
+        : null) ??
+      (originalCwd !== null &&
+          nodeProcess === globalThis.process &&
+          nodeProcess[nimbusProcessCwdPatched] === true
+        ? originalCwd()
+        : null) ??
+      "/";
+  nimbusRuntimeCurrentCwd = currentCwd;
+
+  Object.defineProperty(nodeProcess, "cwd", {
+    value() {
+      return currentCwd;
+    },
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+
+  Object.defineProperty(nodeProcess, "chdir", {
+    value(directory) {
+      const nextCwd = nodePathResolve(currentCwd, String(directory));
+      const fileInfo = runtimeFsAssertExistingCwd(nextCwd);
+      if (!fileInfo.isDirectory) {
+        const error = new Error(`ENOTDIR: not a directory, chdir '${currentCwd}' -> '${nextCwd}'`);
+        error.code = "ENOTDIR";
+        error.errno = -20;
+        error.syscall = "chdir";
+        error.path = nextCwd;
+        throw error;
+      }
+      currentCwd = nextCwd;
+      nimbusRuntimeCurrentCwd = currentCwd;
+    },
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+
+  Object.defineProperty(nodeProcess, nimbusProcessCwdPatched, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+}
+
 function seedNodeProcessPlatformMetadata(nodeProcess) {
   if (!nodeProcess || typeof nodeProcess !== "object") {
     return;
   }
+
+  Object.defineProperty(nodeProcess, Symbol.toStringTag, {
+    value: "process",
+    configurable: false,
+    enumerable: false,
+    writable: true,
+  });
 
   const nodePlatform = runtimeNodePlatform();
   if (nodePlatform.length > 0 && nodeProcess.platform !== nodePlatform) {
@@ -864,18 +1083,37 @@ function seedNodeProcessStdio(nodeProcess) {
   if (!nodeProcess || typeof nodeProcess !== "object") {
     return;
   }
-
-  if (nodeProcess.stdin === undefined) {
-    nodeProcess.stdin = initStdin(false);
+  if (nodeProcess[nimbusProcessStdioPatched] === true) {
+    return;
   }
 
-  if (nodeProcess.stdout === undefined) {
-    nodeProcess.stdout = createWritableStdioStream(io.stdout, "stdout");
-  }
+  // The deno_node `node:process` polyfill installs self-delegating Proxy
+  // placeholders for stdin/stdout/stderr (`makeStreamDelegate`) as plain data
+  // properties at module top-level, and expects
+  // `internals.__bootstrapNodeProcess` to replace them with real lazy-stream
+  // accessors (`defineLazyStream`). Nimbus's FaaS bootstrap does not run
+  // `__bootstrapNodeProcess`, so we materialize the real streams here,
+  // mirroring that bootstrap's warmup branch.
+  //
+  // The overwrite MUST be unconditional. The placeholder is a data property
+  // holding the Proxy (never `undefined`, so the previous `=== undefined`
+  // guard never fired), and the Proxy's `get` trap reads `process[name]` and
+  // `ReflectGet`s on it. While the property still points at the Proxy, any
+  // `process.stdout.write(...)` re-enters the trap forever (`RangeError:
+  // Maximum call stack size exceeded`). Pointing the property at the real
+  // stream fixes both `process.stdout` and the exported `stdout` binding (the
+  // latter delegates through `process[name]` in a single, terminating hop).
+  // The marker keeps the two call sites (nodeGlobals + globalThis) idempotent
+  // so we construct each stream once.
+  nodeProcess.stdin = initStdin(false);
+  nodeProcess.stdout = createWritableStdioStream(io.stdout, "stdout");
+  nodeProcess.stderr = createWritableStdioStream(io.stderr, "stderr");
 
-  if (nodeProcess.stderr === undefined) {
-    nodeProcess.stderr = createWritableStdioStream(io.stderr, "stderr");
-  }
+  Object.defineProperty(nodeProcess, nimbusProcessStdioPatched, {
+    value: true,
+    enumerable: false,
+    configurable: true,
+  });
 }
 
 function seedNodeProcessExecPath(nodeProcess) {
@@ -910,12 +1148,12 @@ function seedNodeProcessFeatures(nodeProcess) {
   features.tls_sni = features.tls_sni === true;
   features.tls_ocsp = features.tls_ocsp === true;
   features.tls = features.tls === true;
+  features.openssl_is_boringssl = features.openssl_is_boringssl === true;
   features.cached_builtins = features.cached_builtins === true;
   features.require_module = features.require_module === true;
   if (!Object.prototype.hasOwnProperty.call(features, "typescript")) {
     features.typescript = false;
   }
-  delete features.openssl_is_boringssl;
   delete features.quic;
 }
 
@@ -934,8 +1172,18 @@ function seedNodeProcessBuiltinModuleLoader(nodeProcess) {
   ) {
     return;
   }
+  const nodeProcessBuiltinModule = nodeProcess;
   Object.defineProperty(nodeProcess, "getBuiltinModule", {
-    value: getBuiltinModule,
+    value(specifier) {
+      const normalizedSpecifier = typeof specifier === "string" &&
+          specifier.startsWith("node:")
+        ? specifier.slice(5)
+        : specifier;
+      if (normalizedSpecifier === "process") {
+        return nodeProcessBuiltinModule;
+      }
+      return getBuiltinModule.call(nodeProcessBuiltin, specifier);
+    },
     configurable: true,
     enumerable: true,
     writable: true,
@@ -1123,10 +1371,6 @@ function installNimbusNativeExtensionErrorMapping(nodeProcess) {
 const nimbusScopedNodeSpawnSyncInstalled = Symbol.for(
   "nimbus.scopedNodeSpawnSyncInstalled",
 );
-const nimbusPromiseAsyncHooksInstalled = Symbol.for(
-  "nimbus.promiseAsyncHooksInstalled",
-);
-
 function installScopedNodeSpawnSyncChild() {
   if (
     denoProcessModule?.[nimbusScopedNodeSpawnSyncInstalled] === true ||
@@ -1148,260 +1392,6 @@ function installScopedNodeSpawnSyncChild() {
     writable: false,
   });
   Object.defineProperty(denoProcessModule, nimbusScopedNodeSpawnSyncInstalled, {
-    value: true,
-    configurable: false,
-    enumerable: false,
-    writable: false,
-  });
-}
-
-function installPromiseAsyncHooksBridge() {
-  if (
-    globalThis[nimbusPromiseAsyncHooksInstalled] === true ||
-    typeof core.setPromiseHooks !== "function"
-  ) {
-    return;
-  }
-
-  const asyncHooks = core.loadExtScript("ext:deno_node/internal/async_hooks.ts");
-  if (
-    typeof asyncHooks?.emitInit !== "function" ||
-    typeof asyncHooks?.emitBefore !== "function" ||
-    typeof asyncHooks?.emitAfter !== "function"
-  ) {
-    return;
-  }
-
-  const publicAsyncHooks = core.loadExtScript("ext:deno_node/async_hooks.ts");
-  const promiseAsyncIds = new WeakMap();
-  const promiseTriggerAsyncIds = new WeakMap();
-  const promisesWithActiveInitHooks = new WeakSet();
-  const promisesWithBeforeHooks = new WeakSet();
-  const promiseResolveHooks = [];
-  const triggerAsyncIdStack = [1];
-  let nextPromiseAsyncId = 1;
-  let activeInitHookCount = 0;
-  let activeAfterHookCount = 0;
-  let lateAfterHookBudget = 0;
-  function promiseAsyncId(promise) {
-    let asyncId = promiseAsyncIds.get(promise);
-    if (asyncId === undefined) {
-      asyncId = nextPromiseAsyncId;
-      nextPromiseAsyncId += 1;
-      promiseAsyncIds.set(promise, asyncId);
-    }
-    return asyncId;
-  }
-  function currentTriggerAsyncId() {
-    return triggerAsyncIdStack[triggerAsyncIdStack.length - 1] || 1;
-  }
-
-  if (publicAsyncHooks && typeof publicAsyncHooks === "object") {
-    const publicAsyncHooksDefault = publicAsyncHooks.default &&
-      typeof publicAsyncHooks.default === "object"
-      ? publicAsyncHooks.default
-      : undefined;
-    const originalCreateHook = publicAsyncHooks.createHook ??
-      publicAsyncHooksDefault?.createHook;
-    if (typeof originalCreateHook === "function") {
-      const createHook = function createNimbusAsyncHook(callbacks = {}) {
-        const hook = originalCreateHook(callbacks);
-        const tracksInit = typeof callbacks?.init === "function";
-        const tracksAfter = typeof callbacks?.after === "function";
-        const tracksPromiseResolve = typeof callbacks?.promiseResolve === "function";
-        if (!tracksInit && !tracksAfter && !tracksPromiseResolve) {
-          return hook;
-        }
-
-        let enabled = false;
-        const originalEnable = hook.enable;
-        const originalDisable = hook.disable;
-        hook.enable = function enableNimbusAsyncHook() {
-          originalEnable.call(this);
-          if (!enabled) {
-            if (tracksInit) {
-              activeInitHookCount += 1;
-            }
-            if (tracksAfter) {
-              activeAfterHookCount += 1;
-              lateAfterHookBudget += 1;
-            }
-            if (tracksPromiseResolve) {
-              promiseResolveHooks.push(callbacks.promiseResolve);
-            }
-            enabled = true;
-          }
-          return this;
-        };
-        hook.disable = function disableNimbusAsyncHook() {
-          originalDisable.call(this);
-          if (enabled) {
-            if (tracksInit) {
-              activeInitHookCount = Math.max(0, activeInitHookCount - 1);
-            }
-            if (tracksAfter) {
-              activeAfterHookCount = Math.max(0, activeAfterHookCount - 1);
-            }
-            if (tracksPromiseResolve) {
-              const index = promiseResolveHooks.indexOf(callbacks.promiseResolve);
-              if (index !== -1) {
-                promiseResolveHooks.splice(index, 1);
-              }
-            }
-            enabled = false;
-          }
-          return this;
-        };
-        return hook;
-      };
-      Object.defineProperty(publicAsyncHooks, "createHook", {
-        value: createHook,
-        configurable: true,
-        enumerable: true,
-        writable: true,
-      });
-      if (publicAsyncHooksDefault) {
-        Object.defineProperty(publicAsyncHooksDefault, "createHook", {
-          value: createHook,
-          configurable: true,
-          enumerable: true,
-          writable: true,
-        });
-      }
-    }
-    const OriginalAsyncResource = publicAsyncHooks.AsyncResource ??
-      publicAsyncHooksDefault?.AsyncResource;
-    if (typeof OriginalAsyncResource === "function") {
-      class NimbusAsyncResource extends OriginalAsyncResource {
-        #triggerAsyncId;
-
-        constructor(type, options = undefined) {
-          if (typeof type !== "string") {
-            const error = new TypeError(
-              `The "type" argument must be of type string. Received ${typeof type}`,
-            );
-            error.code = "ERR_INVALID_ARG_TYPE";
-            throw error;
-          }
-          if (type.length === 0) {
-            const error = new TypeError(
-              "The property 'type' is invalid. Received ''",
-            );
-            error.code = "ERR_ASYNC_TYPE";
-            throw error;
-          }
-
-          let triggerAsyncId = currentTriggerAsyncId();
-          if (typeof options === "number") {
-            triggerAsyncId = options;
-          } else if (
-            options &&
-            typeof options === "object" &&
-            options.triggerAsyncId !== undefined
-          ) {
-            triggerAsyncId = options.triggerAsyncId;
-          }
-          if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < 0) {
-            const error = new RangeError(
-              `The value of "triggerAsyncId" is out of range. Received ${triggerAsyncId}`,
-            );
-            error.code = "ERR_INVALID_ASYNC_ID";
-            throw error;
-          }
-
-          super(type);
-          this.#triggerAsyncId = triggerAsyncId;
-        }
-
-        triggerAsyncId() {
-          return this.#triggerAsyncId;
-        }
-      }
-      Object.defineProperty(publicAsyncHooks, "AsyncResource", {
-        value: NimbusAsyncResource,
-        configurable: true,
-        enumerable: true,
-        writable: true,
-      });
-      if (publicAsyncHooksDefault) {
-        Object.defineProperty(publicAsyncHooksDefault, "AsyncResource", {
-          value: NimbusAsyncResource,
-          configurable: true,
-          enumerable: true,
-          writable: true,
-        });
-      }
-    }
-    Object.defineProperty(publicAsyncHooks, "triggerAsyncId", {
-      value: currentTriggerAsyncId,
-      configurable: true,
-      enumerable: true,
-      writable: true,
-    });
-    if (publicAsyncHooks.default && typeof publicAsyncHooks.default === "object") {
-      Object.defineProperty(publicAsyncHooks.default, "triggerAsyncId", {
-        value: currentTriggerAsyncId,
-        configurable: true,
-        enumerable: true,
-        writable: true,
-      });
-    }
-  }
-
-  core.setPromiseHooks(
-    (promise, parentPromise) => {
-      const asyncId = promiseAsyncId(promise);
-      const triggerAsyncId = parentPromise === undefined || parentPromise === null
-        ? asyncHooks.executionAsyncId() || 1
-        : promiseAsyncId(parentPromise);
-      promiseTriggerAsyncIds.set(promise, triggerAsyncId);
-      if (activeInitHookCount > 0) {
-        promisesWithActiveInitHooks.add(promise);
-      }
-      promise[asyncHooks.async_id_symbol] = asyncId;
-      promise[asyncHooks.trigger_async_id_symbol] = triggerAsyncId;
-      asyncHooks.emitInit(asyncId, "PROMISE", triggerAsyncId, promise);
-    },
-    (promise) => {
-      const asyncId = promiseAsyncIds.get(promise);
-      if (asyncId !== undefined) {
-        promisesWithBeforeHooks.add(promise);
-        triggerAsyncIdStack.push(promiseTriggerAsyncIds.get(promise) || 1);
-        asyncHooks.emitBefore(asyncId);
-      }
-    },
-    (promise) => {
-      const asyncId = promiseAsyncIds.get(promise);
-      if (asyncId !== undefined) {
-        try {
-          asyncHooks.emitAfter(asyncId);
-        } finally {
-          if (triggerAsyncIdStack.length > 1) {
-            triggerAsyncIdStack.pop();
-          }
-        }
-      }
-    },
-    (promise) => {
-      const asyncId = promiseAsyncIds.get(promise);
-      if (asyncId !== undefined) {
-        if (
-          activeAfterHookCount > 0 &&
-          lateAfterHookBudget > 0 &&
-          !promisesWithActiveInitHooks.has(promise) &&
-          !promisesWithBeforeHooks.has(promise)
-        ) {
-          lateAfterHookBudget -= 1;
-          asyncHooks.emitAfter(asyncId);
-        }
-        for (const hook of [...promiseResolveHooks]) {
-          hook(asyncId);
-        }
-      }
-    },
-  );
-
-  Object.defineProperty(globalThis, nimbusPromiseAsyncHooksInstalled, {
     value: true,
     configurable: false,
     enumerable: false,
@@ -1484,9 +1474,53 @@ function createLoadEnvFileNotFoundError(path) {
 
 function isLoadEnvFileAccessDeniedError(error) {
   return error?.name === "NotCapable"
+    || error?.code === "ERR_ACCESS_DENIED"
+    || error?.permission === "FileSystemRead"
     || (
       typeof error?.message === "string"
-      && error.message.includes("Requires read access to")
+      && (
+        error.message.includes("Requires read access to") ||
+        error.message.includes("Access to this API has been restricted") ||
+        error.message.includes("runtime read capability denied")
+      )
+    );
+}
+
+function isNodePermissionModeEnabled(nodeProcess) {
+  const execArgv = nodeProcess?.execArgv;
+  if (!Array.isArray(execArgv)) {
+    return false;
+  }
+  return execArgv.some((arg) => {
+    const value = String(arg);
+    return value === "--permission" || value.startsWith("--permission=");
+  });
+}
+
+function isNodePermissionModeLoadEnvFileAccessDeniedError(nodeProcess, error) {
+  if (!isNodePermissionModeEnabled(nodeProcess)) {
+    return false;
+  }
+  const message = typeof error?.message === "string" ? error.message : "";
+  return error?.code === "EACCES"
+    || error?.name === "PermissionDenied"
+    || message.includes("permission denied");
+}
+
+function isLoadEnvFileNotFoundError(error) {
+  const message = typeof error?.message === "string" ? error.message : "";
+  return error?.name === "NotFound"
+    || error?.code === "ENOENT"
+    || error?.nimbusHostError?.code === "ENOENT"
+    || message.includes("No such file or directory")
+    || message.includes("os error 2");
+}
+
+function isLoadEnvFileInvalidDataError(error) {
+  return error?.name === "InvalidData"
+    || (
+      typeof error?.message === "string"
+      && error.message.includes("stream did not contain valid UTF-8")
     );
 }
 
@@ -1527,12 +1561,15 @@ function seedNodeProcessEnvOverlay(nodeProcess) {
 }
 
 function rememberLoadedEnvFileEntries(nodeProcess, path) {
+  const source = runtimeReadTextFileSync(resolveLoadEnvFilePath(nodeProcess, path));
+  applyLoadedEnvFileEntries(nodeProcess, source);
+}
+
+function applyLoadedEnvFileEntries(nodeProcess, source) {
   const overlayEntries = seedNodeProcessEnvOverlay(nodeProcess);
   if (!overlayEntries) {
     return;
   }
-
-  const source = runtimeReadTextFileSync(resolveLoadEnvFilePath(nodeProcess, path));
 
   for (const [key, value] of Object.entries(runtimeParseEnv(source))) {
     try {
@@ -1544,7 +1581,32 @@ function rememberLoadedEnvFileEntries(nodeProcess, path) {
         continue;
       }
     }
+    try {
+      nodeProcess.env[key] = value;
+    } catch (_error) {
+      // Keep the internal overlay in sync for embedders that expose a
+      // read-only env object while still allowing loadEnvFile visibility.
+    }
     overlayEntries[key] = value;
+  }
+}
+
+function loadEnvFileThroughNimbusHost(nodeProcess, resolvedPath, displayPath) {
+  try {
+    const source = runtimeReadTextFileSync(resolvedPath);
+    applyLoadedEnvFileEntries(nodeProcess, source);
+    return undefined;
+  } catch (fallbackError) {
+    if (isLoadEnvFileAccessDeniedError(fallbackError)) {
+      throw createLoadEnvFileAccessDeniedError(displayPath, fallbackError);
+    }
+    if (isLoadEnvFileNotFoundError(fallbackError)) {
+      throw createLoadEnvFileNotFoundError(displayPath);
+    }
+    if (isLoadEnvFileInvalidDataError(fallbackError)) {
+      throw new TypeError(`Contents of '${displayPath}' should be a valid string.`);
+    }
+    throw fallbackError;
   }
 }
 
@@ -1641,6 +1703,7 @@ function normalizeFsReadLength(buffer, offset, length) {
 
 const nimbusFileHandleGcPatched = Symbol("nimbus.fileHandleGcPatched");
 const nimbusFsPromisesLifecyclePatched = Symbol("nimbus.fsPromisesLifecyclePatched");
+const nimbusFsWatchPatched = Symbol("nimbus.fsWatchPatched");
 const nimbusFsPromisesWatchPatched = Symbol("nimbus.fsPromisesWatchPatched");
 const nimbusOriginalFileHandleFdGetter =
   Object.getOwnPropertyDescriptor(nodeInternalFsFileHandle?.prototype ?? {}, "fd")?.get;
@@ -1675,6 +1738,20 @@ function getFsPromisesFlag(options, fallbackFlag) {
     return options.flag;
   }
   return fallbackFlag;
+}
+
+function hasRemovedRmdirRecursiveOption(options) {
+  return options !== null &&
+    typeof options === "object" &&
+    options.recursive !== undefined;
+}
+
+function createRemovedRmdirRecursiveError(recursive) {
+  return new nodeErrInvalidArgValue(
+    "options.recursive",
+    recursive,
+    "is no longer supported",
+  );
 }
 
 function createFsPromisesWatchTypeError(name, expected, value) {
@@ -1713,6 +1790,16 @@ function createFsPromisesWatchAbortError(cause = undefined) {
   if (cause !== undefined) {
     error.cause = cause;
   }
+  return error;
+}
+
+function createFsWatchNotFoundError(path) {
+  const error = new Error(`ENOENT: no such file or directory, watch '${path}'`);
+  error.errno = -2;
+  error.code = "ENOENT";
+  error.syscall = "watch";
+  error.path = path;
+  error.filename = path;
   return error;
 }
 
@@ -2144,6 +2231,126 @@ function patchNodeFsReadSemantics(nodeProcess) {
     nodeInternalFsFileHandle.prototype.read = patchedFileHandleRead;
   }
 
+  const originalTruncate = nodeFs.truncate;
+  if (typeof originalTruncate === "function" && originalTruncate.__nimbusOpenErrorPath !== true) {
+    const patchedTruncate = function (path, lenOrCallback = 0, maybeCallback = undefined) {
+      const callback = typeof lenOrCallback === "function" ? lenOrCallback : maybeCallback;
+      if (typeof callback !== "function") {
+        return Reflect.apply(originalTruncate, this, arguments);
+      }
+      const wrappedCallback = function (error, ...rest) {
+        if (error && error.path === undefined) {
+          const message = String(error.message ?? "");
+          if (
+            error.code === "ENOENT" ||
+            message.includes("ENOENT") ||
+            message.includes("os error 2")
+          ) {
+            const normalizedError = new Error(
+              `ENOENT: no such file or directory, open '${path}'`,
+            );
+            normalizedError.code = "ENOENT";
+            normalizedError.errno = -2;
+            normalizedError.syscall = "open";
+            normalizedError.path = path;
+            return callback.call(this, normalizedError, ...rest);
+          }
+        }
+        return callback.call(this, error, ...rest);
+      };
+      if (typeof lenOrCallback === "function") {
+        return Reflect.apply(originalTruncate, this, [path, wrappedCallback]);
+      }
+      return Reflect.apply(originalTruncate, this, [path, lenOrCallback, wrappedCallback]);
+    };
+    Object.defineProperties(patchedTruncate, Object.getOwnPropertyDescriptors(originalTruncate));
+    Object.defineProperty(patchedTruncate, "__nimbusOpenErrorPath", {
+      value: true,
+      configurable: true,
+      enumerable: false,
+      writable: false,
+    });
+    nodeFs.truncate = patchedTruncate;
+  }
+
+  const originalRmdir = nodeFs.rmdir;
+  if (typeof originalRmdir === "function" && originalRmdir.__nimbusRemovedRecursive !== true) {
+    const patchedRmdir = function (path, options = undefined, callback = undefined) {
+      const normalizedOptions = typeof options === "function" ? undefined : options;
+      const normalizedCallback = typeof options === "function" ? options : callback;
+      if (hasRemovedRmdirRecursiveOption(normalizedOptions)) {
+        throw createRemovedRmdirRecursiveError(normalizedOptions.recursive);
+      }
+      if (typeof normalizedCallback !== "function") {
+        return Reflect.apply(originalRmdir, this, arguments);
+      }
+      PromiseResolve(runtimeFsRmdir(path)).then(
+        () => normalizedCallback(),
+        (error) => normalizedCallback(error),
+      );
+    };
+    Object.defineProperties(patchedRmdir, Object.getOwnPropertyDescriptors(originalRmdir));
+    Object.defineProperty(patchedRmdir, "__nimbusRemovedRecursive", {
+      value: true,
+      configurable: true,
+      enumerable: false,
+      writable: false,
+    });
+    nodeFs.rmdir = patchedRmdir;
+  }
+
+  const originalRmdirSync = nodeFs.rmdirSync;
+  if (
+    typeof originalRmdirSync === "function" &&
+    originalRmdirSync.__nimbusRemovedRecursive !== true
+  ) {
+    const patchedRmdirSync = function (path, options = undefined) {
+      if (hasRemovedRmdirRecursiveOption(options)) {
+        throw createRemovedRmdirRecursiveError(options.recursive);
+      }
+      return runtimeFsRmdirSync(path);
+    };
+    Object.defineProperties(patchedRmdirSync, Object.getOwnPropertyDescriptors(originalRmdirSync));
+    Object.defineProperty(patchedRmdirSync, "__nimbusRemovedRecursive", {
+      value: true,
+      configurable: true,
+      enumerable: false,
+      writable: false,
+    });
+    nodeFs.rmdirSync = patchedRmdirSync;
+  }
+
+  const originalWatch = nodeFs.watch;
+  if (typeof originalWatch === "function" && originalWatch[nimbusFsWatchPatched] !== true) {
+    const patchedWatch = function (filename, optionsOrListener = undefined, listener = undefined) {
+      const options = optionsOrListener !== null && typeof optionsOrListener === "object"
+        ? optionsOrListener
+        : listener !== null && typeof listener === "object"
+        ? listener
+        : undefined;
+      if (options?.throwIfNoEntry !== false) {
+        const watchPath = nodeFsGetValidatedPathToString(filename);
+        try {
+          nodeFs.statSync(watchPath);
+        } catch (error) {
+          if (error?.code === "ENOENT" || error?.code === "ENOTDIR") {
+            throw createFsWatchNotFoundError(watchPath);
+          }
+          throw error;
+        }
+      }
+      return Reflect.apply(originalWatch, this, arguments);
+    };
+    Object.defineProperties(patchedWatch, Object.getOwnPropertyDescriptors(originalWatch));
+    Object.defineProperty(patchedWatch, nimbusFsWatchPatched, {
+      value: true,
+      configurable: false,
+      enumerable: false,
+      writable: false,
+    });
+    nodeFs.watch = patchedWatch;
+  }
+
   const nodeFsPromiseTargets = getNodeFsPromiseTargets(nodeFs, nodeProcess);
   const nodeFsCloseSync = nodeFs.closeSync;
   if (
@@ -2307,22 +2514,37 @@ function patchNodeFsReadSemantics(nodeProcess) {
 
     const originalLchmod = nodeFsPromises.lchmod;
     if (typeof originalLchmod === "function") {
-      const patchedLchmod = function (path, mode) {
+      const patchedLchmod = async function (path, mode) {
         if (typeof path === "number" || isNimbusFileHandle(path)) {
-          return Reflect.apply(originalLchmod, this, arguments);
+          return await Reflect.apply(originalLchmod, this, arguments);
         }
-        const symlinkFlags = (nodeFs.constants?.O_WRONLY ?? 1) | (nodeFs.constants?.O_SYMLINK ?? 0);
-        return nodeFsPromises
-          .open(path, symlinkFlags, mode)
-          .then((handle) =>
-            handleFsPromisePathClose(
-              handle.chmod(mode),
-              () => closeNimbusFileHandle(handle),
-            )
-          );
+        const validatedPath = nodeFsGetValidatedPathToString(path);
+        const validatedMode = nodeParseFileMode(mode, "mode");
+        return await deno.lchmod(validatedPath, validatedMode);
       };
       Object.defineProperties(patchedLchmod, Object.getOwnPropertyDescriptors(originalLchmod));
       nodeFsPromises.lchmod = patchedLchmod;
+    }
+
+    const originalRmdir = nodeFsPromises.rmdir;
+    if (
+      typeof originalRmdir === "function" &&
+      originalRmdir.__nimbusRemovedRecursive !== true
+    ) {
+      const patchedRmdir = async function (path, options = undefined) {
+        if (hasRemovedRmdirRecursiveOption(options)) {
+          throw createRemovedRmdirRecursiveError(options.recursive);
+        }
+        return await runtimeFsRmdir(path);
+      };
+      Object.defineProperties(patchedRmdir, Object.getOwnPropertyDescriptors(originalRmdir));
+      Object.defineProperty(patchedRmdir, "__nimbusRemovedRecursive", {
+        value: true,
+        configurable: true,
+        enumerable: false,
+        writable: false,
+      });
+      nodeFsPromises.rmdir = patchedRmdir;
     }
 
     const originalWatch = nodeFsPromises.watch;
@@ -2478,8 +2700,11 @@ function seedNodeProcessLoadEnvFile(nodeProcess) {
       return result;
     } catch (error) {
       if (error !== undefined) {
-        if (isLoadEnvFileAccessDeniedError(error)) {
+        if (isNodePermissionModeLoadEnvFileAccessDeniedError(nodeProcess, error)) {
           throw createLoadEnvFileAccessDeniedError(displayPath, error);
+        }
+        if (isLoadEnvFileAccessDeniedError(error)) {
+          return loadEnvFileThroughNimbusHost(nodeProcess, resolvedPath, displayPath);
         }
         throw error;
       }
@@ -2518,19 +2743,7 @@ function createNodeCompatibleSetImmediate(setImmediateImpl) {
 
     let handle;
     handle = setImmediateImpl(function (...callbackArgs) {
-      try {
-        return Reflect.apply(callback, handle, callbackArgs);
-      } catch (error) {
-        const processObject = globalThis.process;
-        if (
-          processObject &&
-          typeof processObject._fatalException === "function" &&
-          processObject._fatalException(error) === true
-        ) {
-          return;
-        }
-        throw error;
-      }
+      return Reflect.apply(callback, handle, callbackArgs);
     }, ...args);
     return handle;
   }
@@ -2612,13 +2825,25 @@ function seedGlobalEventTargetSurface() {
   }
 }
 
+function nimbusRejectionDomain(value) {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) {
+    return undefined;
+  }
+  try {
+    return value.domain;
+  } catch {
+    return undefined;
+  }
+}
+
 function processUnhandledPromiseRejection(promise, reason) {
   const rejectionEvent = new WebPromiseRejectionEvent("unhandledrejection", {
     cancelable: true,
     promise,
     reason,
   });
-  const hasNodeDomain = promise?.domain || reason?.domain;
+  const hasNodeDomain = nimbusRejectionDomain(promise) ||
+    nimbusRejectionDomain(reason);
 
   if (
     hasNodeDomain &&
@@ -2886,7 +3111,7 @@ function seedGlobalPerformance() {
     value: webPerformance,
     configurable: true,
     enumerable: false,
-    writable: false,
+    writable: true,
   });
 }
 
@@ -2936,6 +3161,26 @@ function upgradeGlobalConsole(nodeProcess) {
       writable: true,
     });
   }
+
+  const clearMethod = {
+    clear() {
+      const stream = nodeProcess?.stdout;
+      if (
+        stream?.isTTY &&
+        nodeProcess?.env?.TERM !== "dumb" &&
+        typeof stream.write === "function"
+      ) {
+        stream.write("\x1b[1;1H");
+        stream.write("\x1b[0J");
+      }
+    },
+  }.clear;
+  Object.defineProperty(runtimeConsole, "clear", {
+    value: clearMethod,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
 
   Object.defineProperty(runtimeConsole, "Console", {
     value: NodeConsole,
@@ -3124,7 +3369,6 @@ if (internals.nodeGlobals === undefined) {
   internals.nodeGlobals = hiddenNodeGlobals;
 }
 installScopedNodeSpawnSyncChild();
-installPromiseAsyncHooksBridge();
 Object.defineProperty(deno, "internal", {
   value: internalSymbol,
   configurable: true,
@@ -3449,6 +3693,30 @@ Object.defineProperty(deno, "chmodSync", {
   enumerable: true,
   writable: false,
 });
+Object.defineProperty(deno, "lchmod", {
+  value: runtimeFsLchmod,
+  configurable: true,
+  enumerable: true,
+  writable: false,
+});
+Object.defineProperty(deno, "lchmodSync", {
+  value: runtimeFsLchmodSync,
+  configurable: true,
+  enumerable: true,
+  writable: false,
+});
+Object.defineProperty(deno, "chown", {
+  value: runtimeFsChown,
+  configurable: true,
+  enumerable: true,
+  writable: false,
+});
+Object.defineProperty(deno, "chownSync", {
+  value: runtimeFsChownSync,
+  configurable: true,
+  enumerable: true,
+  writable: false,
+});
 Object.defineProperty(deno, "copyFile", {
   value: runtimeFsCopyFile,
   configurable: true,
@@ -3635,6 +3903,54 @@ function seedGlobalIfMissing(name, value) {
   }
 }
 
+function setGlobalEnumerable(name, enumerable) {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+  if (!descriptor || descriptor.enumerable === enumerable || !descriptor.configurable) {
+    return;
+  }
+  Object.defineProperty(globalThis, name, {
+    ...descriptor,
+    enumerable,
+  });
+}
+
+function alignNodeGlobalEnumerableSurface() {
+  for (const name of Object.keys(globalThis)) {
+    if (name.startsWith("__nimbus")) {
+      setGlobalEnumerable(name, false);
+    }
+  }
+
+  for (const name of [
+    "EventSource",
+    "gc",
+    "onunhandledrejection",
+    "reportError",
+  ]) {
+    setGlobalEnumerable(name, false);
+  }
+
+  for (const name of [
+    "global",
+    "queueMicrotask",
+    "clearImmediate",
+    "clearInterval",
+    "clearTimeout",
+    "atob",
+    "btoa",
+    "performance",
+    "setImmediate",
+    "setInterval",
+    "setTimeout",
+    "structuredClone",
+    "fetch",
+    "crypto",
+    "navigator",
+  ]) {
+    setGlobalEnumerable(name, true);
+  }
+}
+
 const runtimeTargetTriple = core.ops.op_nimbus_runtime_target_triple();
 if (typeof runtimeTargetTriple === "string" && runtimeTargetTriple.length > 0) {
   core.setBuildInfo(runtimeTargetTriple);
@@ -3671,6 +3987,8 @@ if (
 ) {
   globalThis.process = nodeProcessBuiltin;
 }
+seedNodeProcessCwd(nodeProcessBuiltin);
+seedNodeProcessCwd(internals.nodeGlobals?.process);
 seedNodeProcessPlatformMetadata(internals.nodeGlobals?.process);
 seedNodeProcessStdio(internals.nodeGlobals?.process);
 seedNodeProcessExecPath(internals.nodeGlobals?.process);
@@ -3679,6 +3997,7 @@ seedNodeProcessBuiltinModuleLoader(internals.nodeGlobals?.process);
 seedNodeProcessFinalization(internals.nodeGlobals?.process);
 installNimbusProcessDlopenErrorMapping(internals.nodeGlobals?.process);
 installNimbusNativeExtensionErrorMapping(internals.nodeGlobals?.process);
+seedNodeProcessCwd(globalThis.process);
 seedNodeProcessPlatformMetadata(globalThis.process);
 seedNodeProcessStdio(globalThis.process);
 seedNodeProcessExecPath(globalThis.process);
@@ -3757,14 +4076,21 @@ if (
   typeof globalThis.Buffer === "undefined"
   && (internals.nodeGlobals?.Buffer !== undefined || nodeBuffer !== undefined)
 ) {
+  let globalBufferValue = internals.nodeGlobals?.Buffer ?? nodeBuffer;
   Object.defineProperty(globalThis, "Buffer", {
-    value: internals.nodeGlobals?.Buffer ?? nodeBuffer,
+    get() {
+      return globalBufferValue;
+    },
+    set(value) {
+      globalBufferValue = value;
+    },
     configurable: true,
     enumerable: false,
-    writable: false,
   });
 }
 seedGlobalIfMissing("structuredClone", webStructuredClone);
+seedGlobalIfMissing("atob", webAtob);
+seedGlobalIfMissing("btoa", webBtoa);
 seedGlobalIfMissing("ByteLengthQueuingStrategy", webByteLengthQueuingStrategy);
 seedGlobalIfMissing("CountQueuingStrategy", webCountQueuingStrategy);
 seedGlobalIfMissing("ReadableByteStreamController", webReadableByteStreamController);
@@ -3778,9 +4104,14 @@ seedGlobalIfMissing("TransformStreamDefaultController", webTransformStreamDefaul
 seedGlobalIfMissing("WritableStream", webWritableStream);
 seedGlobalIfMissing("WritableStreamDefaultController", webWritableStreamDefaultController);
 seedGlobalIfMissing("WritableStreamDefaultWriter", webWritableStreamDefaultWriter);
+seedGlobalIfMissing("TextEncoderStream", webTextEncoderStream);
+seedGlobalIfMissing("TextDecoderStream", webTextDecoderStream);
+seedGlobalIfMissing("CompressionStream", webCompressionStream);
+seedGlobalIfMissing("DecompressionStream", webDecompressionStream);
 seedGlobalIfMissing("MessageChannel", webMessageChannel);
 seedGlobalIfMissing("MessagePort", webMessagePort);
 upgradeGlobalConsole(globalThis.process);
+alignNodeGlobalEnumerableSurface();
 
 if (typeof internals.requireImpl?.setUsesLocalNodeModulesDir === "function") {
   internals.requireImpl.setUsesLocalNodeModulesDir();

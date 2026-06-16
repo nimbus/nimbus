@@ -4,6 +4,7 @@ import Module, { getBuiltinModule as getNimbusBuiltinModule } from "node:nimbus/
 const processBuiltin = globalThis.process;
 const fsBuiltin = getNimbusBuiltinModule?.("fs") ?? processBuiltin?.getBuiltinModule?.("fs");
 const fsPromisesBuiltin = fsBuiltin?.promises;
+const pathBuiltin = getNimbusBuiltinModule?.("path") ?? processBuiltin?.getBuiltinModule?.("path");
 const moduleBuiltin = Module ?? processBuiltin?.getBuiltinModule?.("module");
 const internalFsUtils = moduleBuiltin?._load?.("internal/fs/utils", null, false);
 if (
@@ -219,8 +220,19 @@ function openFlagsNeedWrite(flags) {
 }
 
 function validateOpenPath(path, flags) {
+  let validatedPath = getValidatedPathToString(path);
+  if (
+    typeof validatedPath === "string" &&
+    pathBuiltin &&
+    typeof pathBuiltin.isAbsolute === "function" &&
+    typeof pathBuiltin.resolve === "function" &&
+    !pathBuiltin.isAbsolute(validatedPath)
+  ) {
+    const cwd = typeof processBuiltin?.cwd === "function" ? processBuiltin.cwd() : ".";
+    validatedPath = pathBuiltin.resolve(cwd, validatedPath);
+  }
   return globalThis.__nimbusSyncHostValue("op_nimbus_runtime_validate_open_path", {
-    path: String(path),
+    path: validatedPath,
     write: openFlagsNeedWrite(flags),
   });
 }
@@ -539,19 +551,7 @@ function watchPromise(path, options) {
   };
 }
 
-const fsPromisesModule = {
-  ...fsPromisesBuiltin,
-  appendFile,
-  lstat,
-  mkdir,
-  open,
-  readFile,
-  readdir,
-  rmdir,
-  stat,
-  watch: watchPromise,
-  writeFile,
-};
+const fsPromisesModule = fsPromisesBuiltin;
 
 const {
   access,

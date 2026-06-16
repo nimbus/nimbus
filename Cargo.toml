@@ -64,29 +64,30 @@ clap = { version = "4", features = ["derive"] }
 comfy-table = "7"
 deadpool-postgres = "0.14"
 deno_ast = { version = "=0.53.2", features = ["transpiling"] }
-deno_core = { version = "0.401.0", features = ["unsafe_use_unprotected_platform"] }
-deno_crypto = "0.262.0"
+deno_core = { version = "0.404.0", features = ["unsafe_use_unprotected_platform"] }
+deno_crypto = "0.265.0"
 deno_error = "=0.7.1"
-deno_fetch = "0.272.0"
-deno_fs = { version = "0.158.0", features = ["sync_fs"] }
-deno_http = "0.246.0"
-deno_io = "0.158.0"
-deno_napi = "0.179.0"
-deno_net = "0.240.0"
-deno_node = { version = "0.186.0", default-features = false, features = ["sync_fs"] }
-deno_node_sqlite = "0.18.0"
-deno_node_crypto = "0.18.0"
-deno_os = "0.65.0"
-deno_permissions = "0.107.0"
-deno_process = "0.63.0"
-deno_resolver = { version = "=0.79.0", features = ["deno_ast", "sync"] }
+deno_fetch = "0.275.0"
+deno_fs = { version = "0.161.0", features = ["sync_fs"] }
+deno_http = "0.249.0"
+deno_io = "0.161.0"
+deno_napi = "0.182.0"
+deno_net = "0.243.0"
+deno_node = { version = "0.189.0", default-features = false, features = ["sync_fs"] }
+deno_node_sqlite = "0.21.0"
+deno_node_crypto = "0.21.0"
+deno_os = "0.68.0"
+deno_package_json = "0.53.0"
+deno_permissions = "0.110.0"
+deno_process = "0.66.0"
+deno_resolver = { version = "=0.82.0", features = ["deno_ast", "sync"] }
 deno_semver = "=0.10.0"
-deno_telemetry = "0.70.0"
-deno_tls = "0.235.0"
-deno_web = "0.279.0"
-deno_webidl = "0.248.0"
-deno_websocket = "0.253.0"
-node_resolver = { version = "0.86.0", features = ["sync"] }
+deno_telemetry = "0.73.0"
+deno_tls = "0.238.0"
+deno_web = "0.282.0"
+deno_webidl = "0.251.0"
+deno_websocket = "0.256.0"
+node_resolver = { version = "0.89.0", features = ["sync"] }
 crc32c = "0.6"
 crc32fast = "1"
 extenddb-core = { git = "https://github.com/ExtendDB/extenddb", rev = "0448ca066c86bddf2eb465092b8b6854923665ee" }
@@ -149,7 +150,7 @@ twox-hash = "2"
 ulid = { version = "1", features = ["serde"] }
 sys_traits = "0.1.28"
 url = "2"
-v8 = "149.0.0"
+v8 = { version = "149.4.0", default-features = false, features = ["simdutf"] }
 # Direct zbus is required for the session/system test-bus utilities and any
 # hand-rolled `#[proxy]` escape hatch; pin the latest 5.x (the line
 # `zbus_systemd 0.26000.0` selects via its own `zbus = "5.3"` floor) so the
@@ -174,26 +175,36 @@ strip = true
 # Keep the public dependency surface aligned with upstream crate versions while
 # selecting the fork implementation immutably at the workspace root.
 [patch.crates-io]
-deno_core = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_crypto = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_fetch = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_fs = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_http = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_io = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_napi = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_net = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_node = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_node_sqlite = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_node_crypto = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_os = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_package_json = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_permissions = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_process = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_resolver = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_telemetry = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_tls = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_web = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_webidl = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-deno_websocket = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-node_resolver = { git = "https://github.com/nimbus/deno", tag = "v2.8.0-nimbus.9" }
-v8 = { git = "https://github.com/nimbus/rusty_v8", tag = "v149.0.0-nimbus.1" }
+deno_core = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_crypto = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_crypto_provider = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_dotenv = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_features = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_fetch = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_fs = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_http = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_inspector_server = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_io = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_maybe_sync = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_napi = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_net = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_node = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_node_crypto = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_node_sqlite = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_ops = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_os = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_package_json = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_permissions = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_process = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_resolver = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_signals = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_subprocess_windows = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_telemetry = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_tls = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_web = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_webidl = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+deno_websocket = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+node_resolver = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+node_shim = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+serde_v8 = { git = "https://github.com/nimbus/deno", tag = "v2.8.3-nimbus.70" }
+v8 = { git = "https://github.com/nimbus/rusty_v8", tag = "v149.4.0-nimbus.2" }

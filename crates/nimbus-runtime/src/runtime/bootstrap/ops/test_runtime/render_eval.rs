@@ -262,6 +262,8 @@ mod tests {
             env: Some(BTreeMap::new()),
             stdin_bytes: None,
             exec_argv: Vec::new(),
+            preload_imports: Vec::new(),
+            preload_requires: Vec::new(),
             source_bundle_root,
             preload_env_file: None,
             permission_restricted,

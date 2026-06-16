@@ -21,6 +21,7 @@ use crate::backends::v8::embedder::{Extension, JsErrorBox, OpState, op2};
 use crate::runtime::bootstrap::state::{
     InstalledRuntimeCapabilityPolicy, InstalledRuntimeContract, InstalledRuntimeOwner,
     InstalledRuntimeWorkerBootstrapState, RuntimeSharedWorkerEnv, RuntimeWorkerBootstrapDescriptor,
+    install_missing_deno_extension_state,
 };
 use crate::runtime::{NimbusRuntime, RuntimeBundle};
 
@@ -423,9 +424,7 @@ pub(crate) fn worker_threads_state_extension(
     Extension {
         name: "nimbus_runtime_worker_threads_state_ext",
         op_state_fn: Some(Box::new(move |state| {
-            if !state.has::<deno_web::StartTime>() {
-                state.put(deno_web::StartTime::default());
-            }
+            install_missing_deno_extension_state(state);
             state.put(WorkersTable::default());
             state.put(bootstrap_state.shared_env.clone());
             state.put(bootstrap_state);
@@ -525,7 +524,7 @@ require("node:module").runMain();
 export {};
 "#;
     std::fs::write(&bundle_path, bundle_source).map_err(io_error)?;
-    let bundle = RuntimeBundle::with_module_root(&bundle_path, module_root);
+    let bundle = RuntimeBundle::with_side_entrypoint_and_module_root(&bundle_path, module_root);
     Ok((tempdir, bundle, args.specifier.clone()))
 }
 

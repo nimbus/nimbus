@@ -1,6 +1,7 @@
 use std::sync::OnceLock;
 
 use deno_fs::sync::MaybeArc;
+use deno_node::ops::module_hooks::LoaderHookRegistry;
 use deno_web::InMemoryBroadcastChannel;
 use sys_traits::impls::RealSys;
 
@@ -63,6 +64,7 @@ pub(crate) fn snapshot_extensions(target: RuntimeCompatibilityTarget) -> Vec<Ext
 pub(crate) fn execution_extensions(
     target: RuntimeCompatibilityTarget,
     path_policy: &RuntimePathPolicy,
+    loader_hook_registry: Option<LoaderHookRegistry>,
     limits: &RuntimeLimits,
 ) -> Vec<Extension> {
     let mut extensions = Vec::new();
@@ -73,7 +75,7 @@ pub(crate) fn execution_extensions(
             deno_telemetry::deno_telemetry::init(),
             deno_webidl::deno_webidl::init(),
             deno_web::deno_web::init(
-                Default::default(),
+                deno_web::BlobStore::default_arc(),
                 Default::default(),
                 false,
                 InMemoryBroadcastChannel::default(),
@@ -95,7 +97,14 @@ pub(crate) fn execution_extensions(
                 ScopedInNpmPackageChecker,
                 ScopedNodeModulesResolver,
                 RealSys,
-            >(Some(build_node_init_services(path_policy)), fs),
+            >(
+                Some(build_node_init_services(
+                    path_policy,
+                    loader_hook_registry,
+                    &limits.node_conditions,
+                )),
+                fs,
+            ),
             node22_runtime_bootstrap_extension(),
         ]);
     }

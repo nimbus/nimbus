@@ -78,6 +78,15 @@ pub(in super::super) fn op_nimbus_runtime_exec_path(
 
 #[op2]
 #[string]
+pub(in super::super) fn op_nimbus_runtime_cwd(state: &mut OpState) -> String {
+    state
+        .try_borrow::<InstalledRuntimeCapabilityPolicy>()
+        .map(|policy| policy.paths.cwd().display().to_string())
+        .unwrap_or_default()
+}
+
+#[op2]
+#[string]
 pub(in super::super) fn op_nimbus_runtime_target_triple() -> String {
     runtime_target_triple()
 }

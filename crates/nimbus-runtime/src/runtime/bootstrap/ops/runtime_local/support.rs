@@ -77,22 +77,46 @@ pub(super) fn create_runtime_symlink(
 }
 
 fn system_time_to_unix_millis(value: Option<SystemTime>) -> Option<i64> {
-    value.and_then(|time| {
-        time.duration_since(SystemTime::UNIX_EPOCH)
-            .ok()
-            .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+    value.and_then(|time| match time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(duration) => i64::try_from(duration.as_millis()).ok(),
+        Err(error) => {
+            let millis = i64::try_from(error.duration().as_millis()).ok()?;
+            Some(-millis)
+        }
     })
 }
 
 fn system_time_from_unix_parts(seconds: i64, nanos: u32) -> std::io::Result<SystemTime> {
-    if seconds < 0 {
+    if nanos >= 1_000_000_000 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "timestamp must be non-negative",
+            "timestamp nanoseconds are out of range",
         ));
     }
+
+    if seconds >= 0 {
+        return SystemTime::UNIX_EPOCH
+            .checked_add(Duration::new(seconds as u64, nanos))
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "timestamp is out of range",
+                )
+            });
+    }
+
+    let seconds_before_epoch = seconds.unsigned_abs();
+    let duration_before_epoch = if nanos == 0 {
+        Duration::new(seconds_before_epoch, 0)
+    } else {
+        Duration::new(
+            seconds_before_epoch.saturating_sub(1),
+            1_000_000_000 - nanos,
+        )
+    };
+
     SystemTime::UNIX_EPOCH
-        .checked_add(Duration::new(seconds as u64, nanos))
+        .checked_sub(duration_before_epoch)
         .ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -346,5 +370,56 @@ pub(super) fn apply_fs_mode(path: &Path, mode: u32) -> std::io::Result<()> {
 
 #[cfg(not(unix))]
 pub(super) fn apply_fs_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn apply_link_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    unsafe extern "C" {
+        fn lchmod(path: *const libc::c_char, mode: libc::mode_t) -> libc::c_int;
+    }
+
+    let path = CString::new(path.as_os_str().as_bytes()).map_err(|error| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string())
+    })?;
+    let result = unsafe { lchmod(path.as_ptr(), mode as libc::mode_t) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+pub(super) fn apply_link_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
+    Err(std::io::Error::from_raw_os_error(libc::ENOSYS))
+}
+
+#[cfg(not(unix))]
+pub(super) fn apply_link_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
+    Err(std::io::Error::from_raw_os_error(38))
+}
+
+#[cfg(unix)]
+pub(super) fn apply_fs_chown(path: &Path, uid: i64, gid: i64) -> std::io::Result<()> {
+    std::fs::metadata(path)?;
+
+    let runtime_uid = i64::from(unsafe { libc::getuid() });
+    let runtime_gid = i64::from(unsafe { libc::getgid() });
+    let uid_is_virtual_noop = uid == -1 || uid == runtime_uid;
+    let gid_is_virtual_noop = gid == -1 || gid == runtime_gid;
+
+    if uid_is_virtual_noop && gid_is_virtual_noop {
+        return Ok(());
+    }
+
+    Err(std::io::Error::from_raw_os_error(libc::EPERM))
+}
+
+#[cfg(not(unix))]
+pub(super) fn apply_fs_chown(_path: &Path, _uid: i64, _gid: i64) -> std::io::Result<()> {
     Ok(())
 }

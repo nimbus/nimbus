@@ -26,6 +26,7 @@ STATUS_SUMMARY="tests/runtime/node/compat/node-compat-evidence/latest/status-sum
 
 PASS=0
 FAIL=0
+SKIP=0
 FAIL_DETAIL=()
 
 pass() {
@@ -41,6 +42,14 @@ fail() {
     FAIL_DETAIL+=("$1 - $2")
   else
     FAIL_DETAIL+=("$1")
+  fi
+}
+
+skip() {
+  SKIP=$((SKIP + 1))
+  printf '  \033[33mSKIP\033[0m  %s\n' "$1"
+  if [ $# -ge 2 ]; then
+    printf '        %s\n' "$2"
   fi
 }
 
@@ -89,10 +98,165 @@ required_proofs=(
   "${PROOF_DIR}/nds10-closeout.md"
 )
 
+run_public_generated_gate() {
+  local public_posture_json="docs/architecture/runtime/node-default-support-posture.json"
+  local public_posture_md="docs/architecture/runtime/node-default-support-posture.md"
+
+  printf 'Mode: public generated-evidence gate (private NDS proof plan not present)\n'
+
+  step 1 "Private proof control plane"
+  skip "Private proof audit not run" \
+    "docs/private is ignored in clean CI checkouts; set NIMBUS_NDS_STRICT_PRIVATE_PROOFS=1 with the private plan present to run proof-row closeout checks"
+
+  step 2 "Default-support posture artifacts"
+  if [ -f "${public_posture_json}" ] && [ -f "${public_posture_md}" ]; then
+    pass "Default-support posture artifacts exist"
+  else
+    fail "Default-support posture artifacts missing" "Expected ${public_posture_json} and ${public_posture_md}"
+  fi
+
+  step 3 "Node22/Node24/Node26 V8-isolate-required green"
+  if [ -f "${public_posture_json}" ] && python3 - "${public_posture_json}" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+for lane_name in ("node22", "node24", "node26"):
+    required = data["lanes"][lane_name]["v8_isolate_required"]
+    if required.get("gaps") != 0 or required.get("pass_rate_percent") != 100:
+        raise SystemExit(1)
+raise SystemExit(0)
+PY
+  then
+    pass "Node22, Node24, and Node26 V8-isolate-required fixtures are 100%"
+  else
+    fail "V8-isolate-required fixtures not proven green" "Expected generated posture metrics with 0 gaps and 100% pass rate for node22/node24/node26"
+  fi
+
+  step 4 "Node24 unpromoted surface eliminated"
+  if [ -f "${public_posture_json}" ] && python3 - "${public_posture_json}" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+if data["lanes"]["node24"].get("remaining_requires_unpromoted_node_surface_count") == 0:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+  then
+    pass "Node24 has no remaining unpromoted surface entries in the default-support posture"
+  else
+    fail "Node24 still has Requires Unpromoted Node Surface" "Expected generated posture metrics"
+  fi
+
+  step 5 "Required surface blocker inventory"
+  local blockers_tmp
+  blockers_tmp="$(mktemp -d)"
+  if python3 scripts/runtime/node/required_surface_blockers.py \
+       --posture "${public_posture_json}" \
+       --json "${blockers_tmp}/required-surface-blockers.json" \
+       --markdown "${blockers_tmp}/required-surface-blockers.md" >/dev/null &&
+     python3 - "${blockers_tmp}/required-surface-blockers.json" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+for lane in ("node22", "node24"):
+    if data["totals"][lane]["required_gap_count"] != 0:
+        raise SystemExit(1)
+raise SystemExit(0)
+PY
+  then
+    pass "Required-surface blocker inventory is fresh and empty for required gaps"
+  else
+    fail "Required-surface blocker inventory is stale or non-empty" "Expected required_surface_blockers.py to find 0 required gaps from ${public_posture_json}"
+  fi
+  rm -rf "${blockers_tmp}"
+
+  step 6 "Package registry category schema and breadth"
+  if [ -f "${CANARY_REGISTRY}" ] &&
+     grep -q '"compat_category"' "${CANARY_REGISTRY}" &&
+     grep -q '"compat_family"' "${CANARY_REGISTRY}" &&
+     grep -q '"canary_surfaces"' "${CANARY_REGISTRY}" &&
+     python3 - "${CANARY_REGISTRY}" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+claims = [claim for claim in data.get("claims", []) if claim.get("runtime_preset") == "Application"]
+categories = {claim.get("compat_category") for claim in claims if claim.get("compat_category")}
+if len(claims) >= 50 and len(categories) >= 12:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+  then
+    pass "Application canary registry has >=50 claims across >=12 categories"
+  else
+    fail "Application package breadth incomplete" "Expected >=50 Application claims across >=12 compat_category values"
+  fi
+
+  step 7 "Required canary gaps are zero"
+  if [ -f "tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.md" ] &&
+     grep -q 'required canary gaps: `0`' tests/runtime/node/published/nodejs/compatibility.md 2>/dev/null; then
+    pass "Required Application canary gaps are zero"
+  else
+    fail "Required canary gap proof missing" "Expected generated docs/dashboard to show 0"
+  fi
+
+  step 8 "Generated public docs expose package/API/shim boundaries"
+  if [ -f tests/runtime/node/published/nodejs/reference/packages.md ] &&
+     [ -f tests/runtime/node/published/nodejs/reference/node-apis.md ] &&
+     [ -f tests/runtime/node/published/nodejs/reference/shims-and-boundaries.md ] &&
+     [ -f docs/architecture/runtime/node-isolate-shim-inventory.json ] &&
+     grep -q 'Node22' tests/runtime/node/published/nodejs/reference/packages.md &&
+     grep -q 'Node24' tests/runtime/node/published/nodejs/reference/packages.md &&
+     grep -q 'Node26' tests/runtime/node/published/nodejs/reference/packages.md &&
+     grep -q 'Node22' tests/runtime/node/published/nodejs/reference/node-apis.md &&
+     grep -q 'Service/microVM required' tests/runtime/node/published/nodejs/reference/node-apis.md &&
+     grep -q 'test-harness-only' tests/runtime/node/published/nodejs/reference/shims-and-boundaries.md &&
+     grep -q 'diagnostic' tests/runtime/node/published/nodejs/reference/shims-and-boundaries.md &&
+     grep -q 'unsupported' tests/runtime/node/published/nodejs/reference/shims-and-boundaries.md; then
+    pass "Generated package, API, and shim references are per-version and boundary-aware"
+  else
+    fail "Generated package/API/shim references incomplete" "Expected per-version package support plus non-isolate and shim boundaries"
+  fi
+
+  step 9 "Release-train and latest-suite drift"
+  if [ -f tests/runtime/node/compat/node-lts-compat/node-release-train.json ] &&
+     grep -q '"drift_detected": false' tests/runtime/node/compat/node-lts-compat/node-release-train.json; then
+    pass "Release-train drift check is clean"
+  else
+    fail "Release-train drift proof missing or dirty" "Expected drift_detected=false"
+  fi
+
+  step 10 "CI and nightly gate wiring"
+  if grep -Rq 'verify-node-default-runtime-support-hardening' .github/workflows 2>/dev/null &&
+     [ -f .github/workflows/node-compat-nightly.yml ] &&
+     grep -q 'node26' .github/workflows/node-compat-nightly.yml &&
+     grep -q 'fixture' .github/workflows/node-compat-nightly.yml; then
+    pass "PR CI and nightly include NDS/Node26 compatibility gates"
+  else
+    fail "CI or nightly gate wiring missing" "Expected PR verifier and broad Node26 nightly lanes"
+  fi
+
+  printf '\n\033[1mSummary:\033[0m %s passed, %s skipped, %s failed\n' "${PASS}" "${SKIP}" "${FAIL}"
+  if [ "${FAIL}" -ne 0 ]; then
+    printf '\nFailures:\n'
+    for detail in "${FAIL_DETAIL[@]}"; do
+      printf '  - %s\n' "${detail}"
+    done
+    exit 1
+  fi
+  exit 0
+}
+
 printf '\033[1mNDS verification gate - node-default-runtime-support-hardening\033[0m\n'
 printf 'Repo: %s\n' "${REPO_ROOT}"
 
 PLAN_FILE="$(plan_file)"
+if [ -z "${PLAN_FILE}" ] && [ "${NIMBUS_NDS_STRICT_PRIVATE_PROOFS:-0}" != "1" ]; then
+  run_public_generated_gate
+fi
 
 step 1 "Plan closeout status"
 if [ -n "${PLAN_FILE}" ] && \
@@ -118,12 +282,14 @@ step 3 "Control-plane proof and Active Execution Pointer"
 if [ -f "${CONTROL_PROOF}" ] &&
    grep -q 'codex/node-default-runtime-support-hardening' "${CONTROL_PROOF}" &&
    grep -q '/Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening' "${CONTROL_PROOF}" &&
+   grep -q 'https://github.com/nimbus/nimbus/pull/10' "${CONTROL_PROOF}" &&
    grep -q 'Deno fork publish/repin protocol' "${CONTROL_PROOF}" &&
    grep -q 'Resume protocol' "${CONTROL_PROOF}" &&
    [ -n "${PLAN_FILE}" ] &&
    grep -q 'Active worktree | `/Users/jack/src/github.com/nimbus/nimbus-worktrees/node-default-runtime-support-hardening`' "${PLAN_FILE}" &&
    grep -q 'Active branch | `codex/node-default-runtime-support-hardening`' "${PLAN_FILE}" &&
-   grep -q 'Current row | `NDS0`' "${PLAN_FILE}"; then
+   grep -q 'Draft PR | `https://github.com/nimbus/nimbus/pull/10`' "${PLAN_FILE}" &&
+   grep -Eq 'Current row \| `NDS[0-9]+`' "${PLAN_FILE}"; then
   pass "Control-plane proof and Active Execution Pointer are populated"
 else
   fail "Control-plane proof or Active Execution Pointer incomplete" "Draft PR/main-visible pointer may still be pending"
@@ -165,16 +331,34 @@ else
 fi
 
 step 8 "Node24 unpromoted surface eliminated"
-if [ -f "${STATUS_SUMMARY}" ] && ! grep -q '`node24`.*Requires Unpromoted Node Surface' "${STATUS_SUMMARY}"; then
-  pass "Node24 has no unpromoted surface entries"
+if [ -f "${POSTURE_JSON}" ] && python3 - "${POSTURE_JSON}" <<'PY'
+import json
+import sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+node24 = data["lanes"]["node24"]
+if node24.get("remaining_requires_unpromoted_node_surface_count") == 0:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+then
+  pass "Node24 has no remaining unpromoted surface entries in the default-support posture"
 else
-  fail "Node24 still has Requires Unpromoted Node Surface" "NDS1/NDS3 must eliminate or reclassify them"
+  fail "Node24 still has Requires Unpromoted Node Surface" "NDS1/NDS3 must eliminate or reclassify them in the posture"
 fi
 
 step 9 "Node22/Node24 V8-isolate-required green"
-if [ -f "${POSTURE_JSON}" ] &&
-   grep -q '"node22".*"v8_isolate_required".*"pass_rate".*100' "${POSTURE_JSON}" &&
-   grep -q '"node24".*"v8_isolate_required".*"pass_rate".*100' "${POSTURE_JSON}"; then
+if [ -f "${POSTURE_JSON}" ] && python3 - "${POSTURE_JSON}" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+for lane_name in ("node22", "node24"):
+    required = data["lanes"][lane_name]["v8_isolate_required"]
+    if required.get("gaps") != 0 or required.get("pass_rate_percent") != 100:
+        raise SystemExit(1)
+raise SystemExit(0)
+PY
+then
   pass "Node22 and Node24 V8-isolate-required fixtures are 100%"
 else
   fail "V8-isolate-required fixtures not proven green" "Expected generated posture metrics"
@@ -220,11 +404,39 @@ else
   fail "NDS2 fixture fidelity missing" "Expected process fixture, 10 module fixtures, 4 failures, and classification taxonomy"
 fi
 
-step 14 "Node24 full-corpus threshold"
-if [ -f "${POSTURE_JSON}" ] && grep -q '"node24".*"full_corpus".*"passed".*2000' "${POSTURE_JSON}"; then
-  pass "Node24 full-corpus official pass count is at least 2000"
+step 14 "Node24 full-corpus threshold and post-2000 proof"
+node24_threshold_ok=0
+if [ -f "${POSTURE_JSON}" ] && python3 - "${POSTURE_JSON}" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+if data["lanes"]["node24"].get("current_passed", 0) >= 2000:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+then
+  node24_threshold_ok=1
+fi
+if [ "${node24_threshold_ok}" -eq 1 ] &&
+   [ -f "${PROOF_DIR}/nds3-official-fixture-promotion.md" ] &&
+   has 'post-`2000`|post-2000' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'required-surface burn-down' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Selected post-`2000` bucket|Selected post-2000 bucket' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Node24 required gaps' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Node22 required gaps' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Node24 optional gaps' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Node22 optional gaps' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Broad pre-run counts' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Owner repos' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'ROI' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Deno (fork|tag|repin|worktree)|no Deno tag' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'Checkpoint regeneration|checkpoint-only|generated evidence' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   has 'kill-rule|Kill-rule' "${PROOF_DIR}/nds3-official-fixture-promotion.md" &&
+   python3 scripts/runtime/node/required_surface_blockers.py --check >/dev/null; then
+  pass "Node24 full-corpus threshold and post-2000 proof are present"
 else
-  fail "Node24 full-corpus threshold unmet" "Expected generated metric >= 2000"
+  fail "Node24 full-corpus threshold or post-2000 proof unmet" "Expected generated metric >= 2000, NDS3 burn-down/throughput proof markers, and fresh required-surface blocker inventory"
 fi
 
 step 15 "Package registry category schema"

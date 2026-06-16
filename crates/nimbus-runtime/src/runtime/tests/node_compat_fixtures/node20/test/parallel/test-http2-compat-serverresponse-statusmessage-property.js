@@ -23,6 +23,7 @@ server.listen(0, common.mustCall(function() {
     response.on('finish', common.mustCall(function() {
       assert.strictEqual(response.statusMessage, '');
       assert.strictEqual(response.statusMessage, ''); // only warn once
+      server.close();
     }));
     response.end();
   }));
@@ -41,9 +42,6 @@ server.listen(0, common.mustCall(function() {
     }, 1));
     request.on('end', common.mustCall(function() {
       client.close();
-    }));
-    request.on('close', common.mustCall(function() {
-      server.close();
     }));
     request.end();
     request.resume();

@@ -43,7 +43,7 @@ def load_json(path: Path) -> Any:
 def lane_for_test_name(test_name: str | None) -> str | None:
     if test_name is None:
         return None
-    match = re.match(r"^(node(?:20|22|24))_", test_name)
+    match = re.match(r"^(node(?:20|22|24|26))_", test_name)
     if match is None:
         return None
     return match.group(1)

@@ -169,7 +169,7 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
                 ),
                 (
                     "node24",
-                    "runtime::tests::node_compat::node24_default_lane_core_semantics_watchpoint",
+                    "runtime::tests::node_compat::node24_default_lane_executes_core_semantics_subset",
                 ),
             ],
         ),
@@ -190,7 +190,7 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
                 ),
                 (
                     "node24",
-                    "runtime::tests::node_compat::node24_default_lane_process_and_timing_watchpoint",
+                    "runtime::tests::node_compat::node24_default_lane_executes_process_and_timing_subset",
                 ),
             ],
         ),
@@ -211,7 +211,7 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
                 ),
                 (
                     "node24",
-                    "runtime::tests::node_compat::node24_default_lane_streams_and_local_io_watchpoint",
+                    "runtime::tests::node_compat::node24_default_lane_executes_streams_and_local_io_subset",
                 ),
             ],
         ),
@@ -253,7 +253,7 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
                 ),
                 (
                     "node24",
-                    "runtime::tests::node_compat::node24_default_lane_loader_context_watchpoint",
+                    "runtime::tests::node_compat::node24_default_lane_executes_loader_context_subset",
                 ),
             ],
         ),
@@ -592,6 +592,22 @@ fn node_compat_named_preludes_catalog_matches_default_behavior_registry() {
             "test/parallel/test-zlib-unused-weak.js",
             Some(NodeCompatNamedPreludeBehavior::ExposeGc),
         ),
+        (
+            "test/parallel/test-process-exit-from-before-exit.js",
+            Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel),
+        ),
+        (
+            "test/parallel/test-beforeexit-event-exit.js",
+            Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel),
+        ),
+        (
+            "test/parallel/test-process-exit-recursive.js",
+            Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel),
+        ),
+        (
+            "test/parallel/test-fs-read-stream-pos.js",
+            Some(NodeCompatNamedPreludeBehavior::ProcessExitAlwaysSentinel),
+        ),
         ("test/parallel/test-buffer-equals.js", None),
     ];
     for (fixture, expected_behavior) in prelude_cases {
@@ -641,6 +657,51 @@ fn node_compat_named_preludes_catalog_matches_default_behavior_registry() {
         (
             "test/parallel/test-worker-ref.js",
             Some(NodeCompatNamedPostludeBehavior::ProcessBeforeExitReentry),
+        ),
+        (
+            "test/parallel/test-process-beforeexit.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessBeforeExitReentry),
+        ),
+        (
+            "test/parallel/test-process-beforeexit-throw-exit.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessBeforeExitThrowToExit),
+        ),
+        (
+            "test/parallel/test-timers-unrefed-in-beforeexit.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
+        ),
+        (
+            "test/parallel/test-process-exit-from-before-exit.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
+        ),
+        (
+            "test/parallel/test-file-write-stream5.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessBeforeExitReentry),
+        ),
+        (
+            "test/parallel/test-stream-writable-samecb-singletick.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
+        ),
+        (
+            "test/parallel/test-process-env-deprecation.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
+        ),
+        (
+            "test/parallel/test-diagnostics-channel-bounded-channel-run-transform-error.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
+        ),
+        (
+            "test/parallel/test-diagnostics-channel-bounded-channel-scope-transform-error.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
+        ),
+        (
+            "test/parallel/test-diagnostics-channel-run-stores-scope-transform-error.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
+        ),
+        // `.on('beforeExit')` against an already-settled loop -> emit once.
+        (
+            "test/async-hooks/test-async-await.js",
+            Some(NodeCompatNamedPostludeBehavior::ProcessLifecycleDrain),
         ),
         ("test/parallel/test-buffer-equals.js", None),
     ];

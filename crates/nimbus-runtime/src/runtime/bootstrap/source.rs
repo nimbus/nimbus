@@ -3,6 +3,24 @@ use crate::error::{NimbusRuntimeError, Result};
 
 const DENO_HOST_CALL_TRANSPORT_SOURCE: &str = r#"
 const __nimbusCoreOps = Deno.core.ops;
+// Capture Deno.core.runImmediates before POST_BOOTSTRAP_SOURCE deletes
+// globalThis.Deno. The spawn-emulation postlude (render.rs) uses this to
+// drain async_hooks' deferred destroy queue: a GC'd AsyncResource enqueues an
+// unref'd, hook-suppressed "destroy drain" immediate via a FinalizationRegistry,
+// and runImmediates() runs drainDestroyAsyncIds() at the top of its body plus
+// that suppressed immediate. Because the harness synthesizes the process "exit"
+// / mustCall check synchronously, the deferred destroy hooks must be flushed
+// here before that check fires. runImmediates() creates no new hooked async
+// resource (the drain immediate's before/after/destroy are suppressed), so this
+// is a no-op when nothing is pending and never pollutes strict hook accounting.
+Object.defineProperty(globalThis, "__nimbusDrainImmediates", {
+  value: typeof Deno.core.runImmediates === "function"
+    ? Deno.core.runImmediates
+    : null,
+  configurable: true,
+  enumerable: false,
+  writable: true,
+});
 globalThis.__nimbusSyncHostValue = function(opName, payload) {
   const operation = __nimbusCoreOps[opName];
   if (typeof operation !== "function") {
@@ -19,7 +37,7 @@ globalThis.__nimbusSyncHostValue = function(opName, payload) {
   return response.value;
 };
 
-function __nimbusFormatHostError(error) {
+const __nimbusFormatHostError = function __nimbusFormatHostError(error) {
   if (error === null || error === undefined) {
     return "unknown host error";
   }
@@ -31,7 +49,7 @@ function __nimbusFormatHostError(error) {
   } catch (_error) {
     return String(error);
   }
-}
+};
 
 globalThis.__nimbusAsyncHostValue = async function(opName, payload) {
   const operation = __nimbusCoreOps[opName];
@@ -51,7 +69,7 @@ globalThis.__nimbusAsyncHostValue = async function(opName, payload) {
 "#;
 
 const NIMBUS_CONTEXT_CONTRACT_SOURCE: &str = r#"
-function __nimbusNormalizeFieldName(field) {
+const __nimbusNormalizeFieldName = function __nimbusNormalizeFieldName(field) {
   if (typeof field === "string" && field.length > 0) {
     return field;
   }
@@ -64,9 +82,9 @@ function __nimbusNormalizeFieldName(field) {
     return field.__fieldName;
   }
   throw new Error("ctx.db field constraints require a non-empty field name");
-}
+};
 
-function __nimbusCreateConstraintBuilder() {
+const __nimbusCreateConstraintBuilder = function __nimbusCreateConstraintBuilder() {
   const filters = [];
   const builder = {
     field(name) {
@@ -98,18 +116,18 @@ function __nimbusCreateConstraintBuilder() {
     },
   };
   return Object.assign(builder, { __filters: filters });
-}
+};
 
-function __nimbusCollectConstraintFilters(builderFn, label) {
+const __nimbusCollectConstraintFilters = function __nimbusCollectConstraintFilters(builderFn, label) {
   const builder = __nimbusCreateConstraintBuilder();
   const result = builderFn ? builderFn(builder) : builder;
   if (result !== undefined && result !== builder && result?.__filters !== builder.__filters) {
     throw new Error(`ctx.db.${label}(...) must return the provided builder`);
   }
   return [...builder.__filters];
-}
+};
 
-function __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, hostCallSessionId) {
+const __nimbusCreateQueryBuilder = function __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, hostCallSessionId) {
   return Object.freeze({
     __builderId: builderId,
     withIndex(indexName, builderFn) {
@@ -187,9 +205,9 @@ function __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, ho
       });
     },
   });
-}
+};
 
-function __nimbusNormalizeFunctionReference(functionRef, label) {
+const __nimbusNormalizeFunctionReference = function __nimbusNormalizeFunctionReference(functionRef, label) {
   if (!functionRef || typeof functionRef !== "object") {
     throw new Error(`ctx.${label}(...) requires a generated function reference`);
   }
@@ -200,9 +218,9 @@ function __nimbusNormalizeFunctionReference(functionRef, label) {
     name: functionRef.name,
     visibility: typeof functionRef.visibility === "string" ? functionRef.visibility : "public",
   };
-}
+};
 
-async function __nimbusRunNamedFunction(
+const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
   syncHostValue,
   asyncOpName,
   hostCallSessionId,
@@ -241,7 +259,7 @@ async function __nimbusRunNamedFunction(
     host_call_session_id: hostCallSessionId,
     ...(nestedAuthContext ? { auth: nestedAuthContext } : {}),
   });
-}
+};
 
 let __nimbusNextHostCallSessionId = 1;
 let __nimbusInvocationGeneration = 0;
@@ -451,11 +469,21 @@ if (globalThis[__nimbusRuntimeEnvOverlaySymbol] === undefined) {
   });
 }
 
-function __nimbusRuntimeEnvOverlay() {
+const __nimbusRuntimeEnvOverlay = function __nimbusRuntimeEnvOverlay() {
   return globalThis[__nimbusRuntimeEnvOverlaySymbol];
-}
+};
 
-function __nimbusCreateProcessEnvProxy() {
+// Node rejects accessor descriptors and partial data descriptors on
+// `process.env` with an `ERR_INVALID_OBJECT_DEFINE_PROPERTY` TypeError. Build
+// the same error shape (a TypeError carrying that `code`) for the proxy's
+// defineProperty trap.
+const __nimbusErrInvalidObjectDefineProperty = function __nimbusErrInvalidObjectDefineProperty(message) {
+  const error = new TypeError(message);
+  error.code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
+  return error;
+};
+
+const __nimbusCreateProcessEnvProxy = function __nimbusCreateProcessEnvProxy() {
   const snapshot = __nimbusCoreOps.op_nimbus_runtime_env_snapshot();
   const target = Object.assign(Object.create(null), snapshot);
   return new Proxy(target, {
@@ -537,6 +565,21 @@ function __nimbusCreateProcessEnvProxy() {
       if (typeof property === "symbol" || typeof value === "symbol") {
         throw new TypeError("Cannot convert a Symbol value to a string");
       }
+      if (typeof value !== "string") {
+        // Node emits the DEP0104 deprecation warning when a non-string value is
+        // assigned to a process.env property; the value is still coerced to a
+        // string. Mirror that so the warning fires before the coercion.
+        const runtimeProcess = globalThis.process;
+        if (runtimeProcess && typeof runtimeProcess.emitWarning === "function") {
+          runtimeProcess.emitWarning(
+            "Assigning any value other than a string, number, or boolean to a " +
+              "process.env property is deprecated. Please make sure to convert the value " +
+              "to a string before setting process.env with it.",
+            "DeprecationWarning",
+            "DEP0104",
+          );
+        }
+      }
       const stringValue = String(value);
       const overlay = __nimbusRuntimeEnvOverlay();
       overlay[property] = stringValue;
@@ -552,10 +595,155 @@ function __nimbusCreateProcessEnvProxy() {
       delete currentTarget[property];
       return true;
     },
+    defineProperty(_currentTarget, property, descriptor) {
+      // Node rejects accessor descriptors and any data descriptor that is not
+      // fully configurable/writable/enumerable, then writes accepted values
+      // through to the environment (matching the order in deno's process.env
+      // polyfill).
+      if (descriptor.get || descriptor.set) {
+        throw __nimbusErrInvalidObjectDefineProperty(
+          "'process.env' does not accept an accessor(getter/setter) descriptor",
+        );
+      }
+      if (
+        !descriptor.configurable ||
+        !descriptor.enumerable ||
+        !descriptor.writable
+      ) {
+        throw __nimbusErrInvalidObjectDefineProperty(
+          "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
+        );
+      }
+      if (typeof property === "symbol") {
+        return Reflect.defineProperty(target, property, descriptor);
+      }
+      const stringValue = String(descriptor.value);
+      const overlay = __nimbusRuntimeEnvOverlay();
+      overlay[property] = stringValue;
+      target[property] = stringValue;
+      return true;
+    },
   });
-}
+};
 
-function __nimbusInstallRuntimeContractGlobals(contract) {
+const __nimbusDefineNodeFeature = function __nimbusDefineNodeFeature(target, property, value) {
+  Object.defineProperty(target, property, {
+    value,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+};
+
+const __nimbusDefineNodeFeatureGetter = function __nimbusDefineNodeFeatureGetter(target, property, value) {
+  Object.defineProperty(target, property, {
+    get() {
+      return value;
+    },
+    configurable: true,
+    enumerable: true,
+  });
+};
+
+const __nimbusNodeFeatureBoolean = function __nimbusNodeFeatureBoolean(source, property) {
+  return source && typeof source === "object" && source[property] === true;
+};
+
+const __nimbusCreateNodeProcessFeatures = function __nimbusCreateNodeProcessFeatures(source, nodeMajor) {
+  const features = {};
+  __nimbusDefineNodeFeature(
+    features,
+    "inspector",
+    __nimbusNodeFeatureBoolean(source, "inspector"),
+  );
+  __nimbusDefineNodeFeature(
+    features,
+    "debug",
+    __nimbusNodeFeatureBoolean(source, "debug"),
+  );
+  __nimbusDefineNodeFeature(features, "uv", __nimbusNodeFeatureBoolean(source, "uv"));
+  __nimbusDefineNodeFeature(features, "ipv6", __nimbusNodeFeatureBoolean(source, "ipv6"));
+  if (nodeMajor === "20") {
+    __nimbusDefineNodeFeature(
+      features,
+      "require_module",
+      __nimbusNodeFeatureBoolean(source, "require_module"),
+    );
+  } else {
+    __nimbusDefineNodeFeature(
+      features,
+      "openssl_is_boringssl",
+      __nimbusNodeFeatureBoolean(source, "openssl_is_boringssl"),
+    );
+    if (nodeMajor === "24" || nodeMajor === "26") {
+      __nimbusDefineNodeFeature(
+        features,
+        "quic",
+        source && typeof source === "object" ? source.quic : undefined,
+      );
+    }
+  }
+  __nimbusDefineNodeFeature(
+    features,
+    "tls_alpn",
+    __nimbusNodeFeatureBoolean(source, "tls_alpn"),
+  );
+  __nimbusDefineNodeFeature(
+    features,
+    "tls_sni",
+    __nimbusNodeFeatureBoolean(source, "tls_sni"),
+  );
+  __nimbusDefineNodeFeature(
+    features,
+    "tls_ocsp",
+    __nimbusNodeFeatureBoolean(source, "tls_ocsp"),
+  );
+  __nimbusDefineNodeFeature(features, "tls", __nimbusNodeFeatureBoolean(source, "tls"));
+  __nimbusDefineNodeFeature(
+    features,
+    "cached_builtins",
+    __nimbusNodeFeatureBoolean(source, "cached_builtins"),
+  );
+  if (nodeMajor !== "20") {
+    __nimbusDefineNodeFeature(
+      features,
+      "require_module",
+      __nimbusNodeFeatureBoolean(source, "require_module"),
+    );
+    const sourceTypescript =
+      source && typeof source === "object" ? source.typescript : undefined;
+    __nimbusDefineNodeFeatureGetter(
+      features,
+      "typescript",
+      typeof sourceTypescript === "string" ? sourceTypescript : sourceTypescript === true,
+    );
+  }
+  return features;
+};
+
+const __nimbusSyncNodeProcessFeatures = function __nimbusSyncNodeProcessFeatures(target, source) {
+  if (!target || typeof target !== "object") {
+    return source;
+  }
+  for (const property of Reflect.ownKeys(target)) {
+    if (!Reflect.has(source, property)) {
+      try {
+        delete target[property];
+      } catch (_error) {}
+    }
+  }
+  for (const property of Reflect.ownKeys(source)) {
+    const descriptor = Object.getOwnPropertyDescriptor(source, property);
+    if (descriptor) {
+      try {
+        Object.defineProperty(target, property, descriptor);
+      } catch (_error) {}
+    }
+  }
+  return target;
+};
+
+const __nimbusInstallRuntimeContractGlobals = function __nimbusInstallRuntimeContractGlobals(contract) {
   if (!contract || typeof contract !== "object") {
     return;
   }
@@ -596,80 +784,8 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
     const cwd = typeof contract.paths?.cwd === "string" ? contract.paths.cwd : "/";
     const env = __nimbusCreateProcessEnvProxy();
     const processBase = globalThis.process ?? {};
-    // Deno's Node shim owns non-configurable process fields such as
-    // process.release, so install a Nimbus-owned wrapper for lane metadata.
-    const processTarget = Object.create(
-      Object.getPrototypeOf(processBase) ?? Object.prototype,
-    );
-    const processValue = new Proxy(processTarget, {
-      set(target, property, value, receiver) {
-        const result = Reflect.set(target, property, value, receiver);
-        if (
-          result &&
-          processBase &&
-          typeof processBase === "object"
-        ) {
-          const baseDescriptor = Object.getOwnPropertyDescriptor(processBase, property);
-          if (
-            !baseDescriptor ||
-            baseDescriptor.writable === true ||
-            typeof baseDescriptor.set === "function"
-          ) {
-            try {
-              Reflect.set(processBase, property, value);
-            } catch (_error) {}
-          }
-        }
-        return result;
-      },
-      defineProperty(target, property, descriptor) {
-        const result = Reflect.defineProperty(target, property, descriptor);
-        if (
-          result &&
-          processBase &&
-          typeof processBase === "object"
-        ) {
-          const baseDescriptor = Object.getOwnPropertyDescriptor(processBase, property);
-          if (!baseDescriptor || baseDescriptor.configurable === true) {
-            try {
-              Reflect.defineProperty(processBase, property, descriptor);
-            } catch (_error) {}
-          }
-        }
-        return result;
-      },
-      deleteProperty(target, property) {
-        const result = Reflect.deleteProperty(target, property);
-        if (
-          result &&
-          processBase &&
-          typeof processBase === "object"
-        ) {
-          const baseDescriptor = Object.getOwnPropertyDescriptor(processBase, property);
-          if (!baseDescriptor || baseDescriptor.configurable === true) {
-            try {
-              Reflect.deleteProperty(processBase, property);
-            } catch (_error) {}
-          }
-        }
-        return result;
-      },
-    });
-    for (const property of Reflect.ownKeys(processBase)) {
-      if (
-        property === "cwd" ||
-        property === "env" ||
-        property === "version" ||
-        property === "versions" ||
-        property === "release"
-      ) {
-        continue;
-      }
-      const descriptor = Object.getOwnPropertyDescriptor(processBase, property);
-      if (descriptor) {
-        Object.defineProperty(processValue, property, descriptor);
-      }
-    }
+    const processValue =
+      processBase && typeof processBase === "object" ? processBase : {};
     const existingVersions =
       processBase.versions && typeof processBase.versions === "object"
         ? processBase.versions
@@ -696,6 +812,14 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
       nextRelease.lts = nodeReleaseLts;
     }
     const release = Object.freeze(nextRelease);
+    const desiredFeatures = __nimbusCreateNodeProcessFeatures(
+      processBase.features,
+      nodeMajor,
+    );
+    const features = __nimbusSyncNodeProcessFeatures(
+      processBase.features,
+      desiredFeatures,
+    );
     Object.defineProperty(processValue, "cwd", {
       value() {
         return cwd;
@@ -707,6 +831,12 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
     Object.defineProperty(processValue, "env", {
       value: env,
       configurable: true,
+      enumerable: true,
+      writable: false,
+    });
+    Object.defineProperty(processValue, "features", {
+      value: features,
+      configurable: false,
       enumerable: true,
       writable: false,
     });
@@ -728,18 +858,29 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
       enumerable: true,
       writable: false,
     });
+    Object.defineProperty(processValue, Symbol.toStringTag, {
+      value: "process",
+      configurable: false,
+      enumerable: false,
+      writable: true,
+    });
+    let globalProcessValue = processValue;
     Object.defineProperty(globalThis, "process", {
-      value: processValue,
+      get() {
+        return globalProcessValue;
+      },
+      set(value) {
+        globalProcessValue = value;
+      },
       configurable: true,
       enumerable: false,
-      writable: false,
     });
     return;
   }
   delete globalThis.Buffer;
   delete globalThis.global;
   delete globalThis.process;
-}
+};
 
 Object.freeze(__nimbusInstallRuntimeContractGlobals);
 "#;
@@ -755,6 +896,24 @@ Object.freeze(__nimbusInstallRuntimeContractGlobals);
 const POST_BOOTSTRAP_SOURCE: &str = r#"
 const __nimbusRuntimeContract =
   __nimbusCoreOps.op_nimbus_runtime_contract();
+const __nimbusCompatibilityTarget =
+  __nimbusRuntimeContract?.compatibility_target;
+const __nimbusCompatibilityMatch =
+  typeof __nimbusCompatibilityTarget === "string"
+    ? /^node(\d+)$/.exec(__nimbusCompatibilityTarget)
+    : null;
+if (__nimbusCompatibilityMatch !== null) {
+  const __nimbusWasmStreamingCore = Deno.core;
+  const __nimbusWasmStreamingFetchModule =
+    globalThis.__nimbusDenoFetchModule ??
+      __nimbusWasmStreamingCore.loadExtScript("ext:deno_fetch/26_fetch.js");
+  __nimbusWasmStreamingCore.setWasmStreamingCallback(
+    function __nimbusWasmStreamingCallback(source, rid) {
+      return __nimbusWasmStreamingFetchModule.handleWasmStreaming(source, rid);
+    },
+  );
+}
+delete globalThis.__nimbusDenoFetchModule;
 if (globalThis.__nimbusRetainDenoForNodeLazyScripts !== true) {
   delete globalThis.Deno;
 }
@@ -762,9 +921,30 @@ delete globalThis.__nimbusRetainDenoForNodeLazyScripts;
 delete globalThis.__bootstrap;
 delete globalThis.bootstrap;
 __nimbusInstallRuntimeContractGlobals(__nimbusRuntimeContract);
+const __nimbusNodeVersion =
+  __nimbusRuntimeContract?.node_api_contract?.version_number;
+const __nimbusNodeRuntimeMajor = __nimbusCompatibilityMatch
+  ? Number.parseInt(__nimbusCompatibilityMatch[1], 10)
+  : typeof __nimbusNodeVersion === "string"
+    ? Number.parseInt(__nimbusNodeVersion, 10)
+    : undefined;
+Object.defineProperty(globalThis, "__nimbusNodeRuntimeMajor", {
+  value: __nimbusNodeRuntimeMajor,
+  configurable: true,
+  enumerable: false,
+  writable: true,
+});
+if (globalThis.process && typeof globalThis.process === "object") {
+  Object.defineProperty(globalThis.process, "__nimbusNodeRuntimeMajor", {
+    value: __nimbusNodeRuntimeMajor,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+}
 if (Promise.reject.__nimbusDomainAware !== true) {
   const __nimbusOriginalPromiseReject = Promise.reject;
-  function __nimbusDomainAwarePromiseReject(reason) {
+  const __nimbusDomainAwarePromiseReject = function __nimbusDomainAwarePromiseReject(reason) {
     const promise = __nimbusOriginalPromiseReject.apply(this, arguments);
     const domain = globalThis.process?.domain;
     if (domain !== null && domain !== undefined) {
@@ -787,7 +967,7 @@ if (Promise.reject.__nimbusDomainAware !== true) {
       }
     }
     return promise;
-  }
+  };
   Object.defineProperty(__nimbusDomainAwarePromiseReject, "__nimbusDomainAware", {
     configurable: false,
     enumerable: false,
@@ -800,6 +980,25 @@ if (Promise.reject.__nimbusDomainAware !== true) {
     value: __nimbusDomainAwarePromiseReject,
     writable: true,
   });
+}
+{
+  for (const __nimbusGlobalName of Object.keys(globalThis)) {
+    if (!__nimbusGlobalName.startsWith("__nimbus")) {
+      continue;
+    }
+    const __nimbusGlobalDescriptor =
+      Object.getOwnPropertyDescriptor(globalThis, __nimbusGlobalName);
+    if (
+      __nimbusGlobalDescriptor &&
+      __nimbusGlobalDescriptor.configurable === true &&
+      __nimbusGlobalDescriptor.enumerable === true
+    ) {
+      Object.defineProperty(globalThis, __nimbusGlobalName, {
+        ...__nimbusGlobalDescriptor,
+        enumerable: false,
+      });
+    }
+  }
 }
 "#;
 

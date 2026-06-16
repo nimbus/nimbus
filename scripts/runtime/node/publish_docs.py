@@ -44,6 +44,26 @@ def faas_profile_path() -> Path:
     )
 
 
+def default_support_posture_path() -> Path:
+    return (
+        repo_root()
+        / "docs"
+        / "architecture"
+        / "runtime"
+        / "node-default-support-posture.json"
+    )
+
+
+def shim_inventory_path() -> Path:
+    return (
+        repo_root()
+        / "docs"
+        / "architecture"
+        / "runtime"
+        / "node-isolate-shim-inventory.json"
+    )
+
+
 def load_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as file:
         return json.load(file)
@@ -191,6 +211,16 @@ def inline_code_list(values: list[str] | tuple[str, ...]) -> str:
     return ", ".join(f"`{value}`" for value in values)
 
 
+def inline_code_list_limited(values: list[str] | tuple[str, ...], limit: int = 5) -> str:
+    if not values:
+        return "none"
+    rendered = [f"`{value}`" for value in values[:limit]]
+    remaining = len(values) - limit
+    if remaining > 0:
+        rendered.append(f"{remaining} more")
+    return ", ".join(rendered)
+
+
 def evidence_refs(profile: dict[str, Any], refs: list[str]) -> str:
     refs_by_id = {ref["id"]: ref for ref in profile.get("evidence_refs", [])}
     rendered: list[str] = []
@@ -279,10 +309,80 @@ def support_vocabulary_lines(profile: dict[str, Any]) -> list[str]:
     return lines
 
 
+def posture_lanes(posture: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    lanes = posture.get("lanes", {})
+    ordered = ["node20", "node22", "node24", "node26"]
+    return [(lane, lanes[lane]) for lane in ordered if lane in lanes]
+
+
+def default_support_posture_lines(posture: dict[str, Any]) -> list[str]:
+    lines = [
+        "## Default-Support Posture",
+        "",
+        "Source: `docs/architecture/runtime/node-default-support-posture.json`",
+        "",
+        "The default-support posture separates the full official fixture corpus from the V8-isolate-required surface, optional isolate gaps, diagnostic non-isolate behavior, test-harness-only fixtures, and upstream/platform boundaries.",
+        "",
+        "| Target | Role | Full official corpus | Current passed | V8-isolate required passed/total | Required gaps | Optional gaps | Diagnostic non-isolate | Test-harness-only | Upstream/platform |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for lane, payload in posture_lanes(posture):
+        required = payload.get("v8_isolate_required", {})
+        lines.append(
+            f"| {lane_title(lane)} | "
+            f"{role_label(str(payload.get('role', 'unknown')))} | "
+            f"{payload.get('full_official_fixture_corpus', 0)} | "
+            f"{payload.get('current_passed', 0)} | "
+            f"{required.get('passed', 0)} / {required.get('total', 0)} | "
+            f"{required.get('gaps', 0)} | "
+            f"{payload.get('v8_isolate_optional', {}).get('gaps', 0)} | "
+            f"{payload.get('diagnostic_only_non_isolate', {}).get('gaps', 0)} | "
+            f"{payload.get('test_harness_only', {}).get('gaps', 0)} | "
+            f"{payload.get('upstream_or_platform_boundary', {}).get('gaps', 0)} |"
+        )
+    lines.extend(
+        [
+            "",
+            "Node24 remains the product-default routing target, but the well-supported default label is gated on NDS closeout. Until Node22 and Node24 are green for the V8-isolate-required surface, these generated counts are the public contract.",
+            "Node26 is Current/non-LTS observation evidence and is shown separately from supported LTS claims.",
+            "",
+        ]
+    )
+    return lines
+
+
+def capability_class_summary_lines(inventory: dict[str, Any], link_path: str) -> list[str]:
+    lines = [
+        "## Capability Classes",
+        "",
+        "Source: `docs/architecture/runtime/node-isolate-shim-inventory.json`",
+        "",
+        "| Class | Public label | Meaning | Entries |",
+        "| --- | --- | --- | ---: |",
+    ]
+    entries = inventory.get("entries", [])
+    for item in inventory.get("classification_vocabulary", []):
+        class_id = item["class"]
+        count = len([entry for entry in entries if entry.get("class") == class_id])
+        lines.append(
+            f"| `{class_id}` | {item['public_disclosure_label']} | {item['meaning']} | {count} |"
+        )
+    lines.extend(
+        [
+            "",
+            f"See [shim and boundary inventory]({link_path}) for source locations, side-effect limits, evidence, and owner repository.",
+            "",
+        ]
+    )
+    return lines
+
+
 def api_reference_lines(
     profile: dict[str, Any],
     status: dict[str, Any],
     dashboard: dict[str, Any],
+    posture: dict[str, Any],
+    inventory: dict[str, Any],
 ) -> list[str]:
     registry = lane_registry_by_name()
     lines = [
@@ -293,6 +393,8 @@ def api_reference_lines(
         "",
         *version_support_lines(profile, status, registry),
         *support_vocabulary_lines(profile),
+        *default_support_posture_lines(posture),
+        *capability_class_summary_lines(inventory, "shims-and-boundaries.md"),
         "## API Families",
         "",
         "| API family | Nimbus support | Verification | Evidence | Coverage requirements |",
@@ -394,6 +496,8 @@ def compatibility_lines(
     profile: dict[str, Any],
     status: dict[str, Any],
     dashboard: dict[str, Any],
+    posture: dict[str, Any],
+    inventory: dict[str, Any],
 ) -> list[str]:
     registry = lane_registry_by_name()
     lines = [
@@ -404,9 +508,11 @@ def compatibility_lines(
         "",
         *version_support_lines(profile, status, registry),
         *support_vocabulary_lines(profile),
+        *default_support_posture_lines(posture),
+        *capability_class_summary_lines(inventory, "reference/shims-and-boundaries.md"),
         "## Current Public Contract",
         "",
-        "- Node24 is the product-default compatibility target.",
+        "- Node24 is the product-default compatibility target, but the well-supported default label is held until NDS closeout proves the required surface.",
         "- Node22 and Node24 are supported LTS targets with lane-local evidence.",
         "- Node20 remains selectable as legacy-grace regression coverage, but it is not active enterprise LTS support.",
         "- Node26 is selectable as Current/non-LTS compatibility, but it is not a supported LTS lane or product default.",
@@ -427,9 +533,55 @@ def compatibility_lines(
         "",
         "- [Node API reference](reference/node-apis.md)",
         "- [Node package reference](reference/packages.md)",
+        "- [Shim and boundary inventory](reference/shims-and-boundaries.md)",
         "- [Generated evidence](evidence/latest.md)",
         "- [Evidence refresh workflow](evidence/refreshing.md)",
     ]
+    return lines
+
+
+def shim_reference_lines(inventory: dict[str, Any]) -> list[str]:
+    lines = [
+        "# Node Shim And Boundary Inventory",
+        "",
+        *generated_header("docs/architecture/runtime/node-isolate-shim-inventory.json"),
+        "This generated reference lists the Node-compatible isolate shims, emulations, test-harness-only helpers, diagnostic stubs, and unsupported surfaces tracked for the Nimbus V8 isolate runtime and the `nimbus/deno` fork.",
+        "",
+        "## Capability Classes",
+        "",
+        "| Class | Public label | Meaning |",
+        "| --- | --- | --- |",
+    ]
+    for item in inventory.get("classification_vocabulary", []):
+        lines.append(
+            f"| `{item['class']}` | {item['public_disclosure_label']} | {item['meaning']} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Inventory Entries",
+            "",
+            "| Entry | Class | Owner | Lanes | Surfaces | Claimed capability | Limits | Evidence |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for entry in inventory.get("entries", []):
+        lines.append(
+            f"| `{entry['id']}` | `{entry['class']}` | `{entry['owner_repository']}` | "
+            f"{inline_code_list(entry.get('affected_lanes', []))} | "
+            f"{inline_code_list_limited(entry.get('surfaces', []))} | "
+            f"{entry['claimed_capability']} | "
+            f"{entry['capability_limits']} | "
+            f"{inline_code_list_limited(entry.get('evidence_paths', []), limit=3)} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Boundary Rule",
+            "",
+            "Diagnostic entries are not positive support claims. Test-harness-only entries measure official fixtures and do not become user-facing runtime support. Unsupported entries remain visible gaps until an owner lands fixture-backed native, shimmed, or emulated behavior.",
+        ]
+    )
     return lines
 
 
@@ -487,16 +639,53 @@ def latest_lines(
             "| --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
-    for result in canary_results(dashboard):
-        lines.append(
-            f"| `{result.get('package', result.get('id', 'unknown'))}` | "
-            f"{result.get('runtime_preset', 'unknown')} | "
-            f"{lane_title(result.get('lane', 'unknown'))} | "
-            f"`{result.get('pinned_version', 'unknown')}` | "
-            f"{evidence_label(result.get('evidence_kind', 'positive_support'))} | "
-            f"{support_status_label(result.get('support_status', 'supported'))} | "
-            f"{status_label(result.get('status', 'unknown'))} |"
-        )
+    canary_rows = canary_results(dashboard)
+    if canary_rows:
+        for result in canary_rows:
+            lines.append(
+                f"| `{result.get('package', result.get('id', 'unknown'))}` | "
+                f"{result.get('runtime_preset', 'unknown')} | "
+                f"{lane_title(result.get('lane', 'unknown'))} | "
+                f"`{result.get('pinned_version', 'unknown')}` | "
+                f"{evidence_label(result.get('evidence_kind', 'positive_support'))} | "
+                f"{support_status_label(result.get('support_status', 'supported'))} | "
+                f"{status_label(result.get('status', 'unknown'))} |"
+            )
+    else:
+        seen_claim_rows: set[
+            tuple[str, str, str, str, str, str]
+        ] = set()
+        for claim in claim_summaries(dashboard):
+            required_lanes = ", ".join(
+                lane_title(lane) for lane in claim.get("lane_coverage", [])
+            )
+            package = claim.get("package", claim.get("id", "unknown"))
+            runtime_preset = claim.get("runtime_preset", "unknown")
+            evidence = evidence_label(claim.get("evidence_kind", "positive_support"))
+            support_boundary = support_status_label(
+                claim.get("support_status", "supported")
+            )
+            status = status_label(claim.get("status", "unknown"))
+            row_key = (
+                package,
+                runtime_preset,
+                required_lanes,
+                evidence,
+                support_boundary,
+                status,
+            )
+            if row_key in seen_claim_rows:
+                continue
+            seen_claim_rows.add(row_key)
+            lines.append(
+                f"| `{package}` | "
+                f"{runtime_preset} | "
+                f"{required_lanes or 'none'} | "
+                "n/a | "
+                f"{evidence} | "
+                f"{support_boundary} | "
+                f"{status} |"
+            )
     lines.extend(
         [
             "",
@@ -637,10 +826,17 @@ def rendered_public_docs(evidence_root: Path) -> dict[Path, list[str]]:
     status = load_json(evidence_root / "status-summary.json")
     dashboard = load_json(evidence_root / "dashboard-summary.json")
     profile = load_json(faas_profile_path())
+    posture = load_json(default_support_posture_path())
+    inventory = load_json(shim_inventory_path())
     return {
-        Path("compatibility.md"): compatibility_lines(profile, status, dashboard),
-        Path("reference/node-apis.md"): api_reference_lines(profile, status, dashboard),
+        Path("compatibility.md"): compatibility_lines(
+            profile, status, dashboard, posture, inventory
+        ),
+        Path("reference/node-apis.md"): api_reference_lines(
+            profile, status, dashboard, posture, inventory
+        ),
         Path("reference/packages.md"): package_reference_lines(profile, status, dashboard),
+        Path("reference/shims-and-boundaries.md"): shim_reference_lines(inventory),
     }
 
 

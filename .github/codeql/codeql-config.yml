@@ -1,0 +1,17 @@
+# Shared CodeQL configuration for every language in .github/workflows/codeql.yml.
+#
+# The Node compatibility fixture corpus under
+#   crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/
+# is upstream Node.js test data vendored verbatim (tracked via the .gitignore
+# negations and pinned by the official-fixture-identity manifests). It is test
+# *input*, not Nimbus-authored shipped code: we never modify it, so its
+# lint/security findings are not actionable in this repo. Because the corpus is
+# tens of thousands of files, leaving it in scope both drowns the real
+# code-scanning signal and trips GitHub's "code changes were too large"
+# diff-attribution path on large PRs (re-reporting pre-existing fixture alerts
+# as PR-introduced). Excluding it keeps SAST focused on Nimbus's own code.
+name: "Nimbus CodeQL config"
+
+paths-ignore:
+  - "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures"
+  - "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/**"

@@ -202,6 +202,24 @@ impl RuntimePathPolicy {
         Ok(canonical)
     }
 
+    pub(crate) fn ensure_write_link_path(&self, path: &Path) -> Result<PathBuf> {
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.cwd.join(path)
+        };
+        let normalized = normalize_absolute_path_lexically(&absolute);
+        let Some(name) = normalized.file_name() else {
+            self.ensure_within_roots(&normalized, &self.write_roots, "write")?;
+            return Ok(normalized);
+        };
+        let parent = normalized.parent().unwrap_or(self.cwd.as_path());
+        let canonical_parent = canonicalize_preserving_missing_suffix_from_base(parent, &self.cwd)?;
+        let canonical_link = canonical_parent.join(name);
+        self.ensure_within_roots(&canonical_link, &self.write_roots, "write")?;
+        Ok(canonical_link)
+    }
+
     pub(crate) fn ensure_symlink_target_path(
         &self,
         target: &Path,

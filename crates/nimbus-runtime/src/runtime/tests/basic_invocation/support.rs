@@ -1063,6 +1063,36 @@ pub(super) fn assert_host_heavy_canary_error(
     }
 }
 
+#[test]
+fn host_heavy_diagnostic_rejects_fake_success_payloads() {
+    let supported_side_effect = serde_json::json!({
+        "surface": "child_process",
+        "supportStatus": "supported",
+        "diagnostic": "NIMBUS_NODE_HOST_HEAVY_SERVICE_ROUTE_REQUIRED",
+        "denied": "spawned process successfully"
+    });
+    let supported_error =
+        assert_host_heavy_canary_result("child-process.mjs", &supported_side_effect)
+            .expect_err("supported fake-success payload must be rejected");
+    assert!(
+        supported_error.contains("service/microVM boundary"),
+        "unexpected fake-success rejection: {supported_error}"
+    );
+
+    let misleading_diagnostic = serde_json::json!({
+        "surface": "child_process",
+        "supportStatus": "service_microvm_required",
+        "diagnostic": "NIMBUS_NODE_HOST_HEAVY_SERVICE_ROUTE_REQUIRED",
+        "denied": "spawned process successfully"
+    });
+    let denial_error = assert_host_heavy_canary_result("child-process.mjs", &misleading_diagnostic)
+        .expect_err("diagnostic payload that claims the side effect happened must be rejected");
+    assert!(
+        denial_error.contains("expected token"),
+        "unexpected fake-success denial rejection: {denial_error}"
+    );
+}
+
 pub(super) struct ScopedProcessEnvVar {
     key: &'static str,
     previous_value: Option<String>,

@@ -10,15 +10,16 @@ use crate::runtime::bootstrap::payloads::RuntimeHostCallEnvelope;
 use crate::runtime::bootstrap::state::InstalledRuntimeCapabilityPolicy;
 
 use super::support::{
-    apply_directory_mode, apply_fs_mode, apply_path_times, capability_denied_error,
-    create_runtime_symlink, describe_metadata, runtime_fs_error_value,
+    apply_directory_mode, apply_fs_chown, apply_fs_mode, apply_link_mode, apply_path_times,
+    capability_denied_error, create_runtime_symlink, describe_metadata, runtime_fs_error_value,
 };
 use super::types::{
-    RuntimeFsChmodPayload, RuntimeFsCopyFilePayload, RuntimeFsDirEntryDescriptor,
-    RuntimeFsLinkPayload, RuntimeFsMkdirPayload, RuntimeFsOpenValidationPayload,
-    RuntimeFsReadDirPayload, RuntimeFsReadFilePayload, RuntimeFsReadFileResponse,
-    RuntimeFsReadLinkPayload, RuntimeFsRemovePayload, RuntimeFsRenamePayload, RuntimeFsStatPayload,
-    RuntimeFsSymlinkPayload, RuntimeFsUtimePayload, RuntimeFsWriteFilePayload,
+    RuntimeFsChmodPayload, RuntimeFsChownPayload, RuntimeFsCopyFilePayload,
+    RuntimeFsDirEntryDescriptor, RuntimeFsLinkPayload, RuntimeFsMkdirPayload,
+    RuntimeFsOpenValidationPayload, RuntimeFsReadDirPayload, RuntimeFsReadFilePayload,
+    RuntimeFsReadFileResponse, RuntimeFsReadLinkPayload, RuntimeFsRemovePayload,
+    RuntimeFsRenamePayload, RuntimeFsStatPayload, RuntimeFsSymlinkPayload, RuntimeFsUtimePayload,
+    RuntimeFsWriteFilePayload,
 };
 
 #[op2]
@@ -451,6 +452,102 @@ pub(in super::super) async fn op_nimbus_runtime_chmod(
 
 #[op2]
 #[serde]
+pub(in super::super) async fn op_nimbus_runtime_lchmod(
+    state: Rc<RefCell<OpState>>,
+    #[serde] payload: RuntimeFsChmodPayload,
+) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
+    let path_policy = {
+        let state = state.borrow();
+        state
+            .borrow::<InstalledRuntimeCapabilityPolicy>()
+            .paths
+            .clone()
+    };
+    let path = path_policy
+        .ensure_write_link_path(Path::new(&payload.path))
+        .map_err(capability_denied_error)?;
+    let mode = payload.mode;
+    let response = match tokio::task::spawn_blocking({
+        let path = path.clone();
+        move || apply_link_mode(&path, mode)
+    })
+    .await
+    .map_err(|error| JsErrorBox::generic(error.to_string()))?
+    {
+        Ok(()) => RuntimeHostCallEnvelope::Ok { value: Value::Null },
+        Err(error) => RuntimeHostCallEnvelope::Error {
+            error: runtime_fs_error_value(&path, "lchmod", &error),
+        },
+    };
+    Ok(response)
+}
+
+#[op2]
+#[serde]
+pub(in super::super) async fn op_nimbus_runtime_chown(
+    state: Rc<RefCell<OpState>>,
+    #[serde] payload: RuntimeFsChownPayload,
+) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
+    let permissions = {
+        let state = state.borrow();
+        state
+            .borrow::<InstalledRuntimeCapabilityPolicy>()
+            .permissions
+            .clone()
+    };
+    let path = permissions
+        .check_open(
+            std::borrow::Cow::Borrowed(Path::new(&payload.path)),
+            OpenAccessKind::Write,
+            Some("Deno.chown"),
+        )
+        .map_err(capability_denied_error)?
+        .into_owned_path();
+    let uid = payload.uid;
+    let gid = payload.gid;
+    let response = match tokio::task::spawn_blocking({
+        let path = path.clone();
+        move || apply_fs_chown(&path, uid, gid)
+    })
+    .await
+    .map_err(|error| JsErrorBox::generic(error.to_string()))?
+    {
+        Ok(()) => RuntimeHostCallEnvelope::Ok { value: Value::Null },
+        Err(error) => RuntimeHostCallEnvelope::Error {
+            error: runtime_fs_error_value(&path, "chown", &error),
+        },
+    };
+    Ok(response)
+}
+
+#[op2]
+#[serde]
+pub(in super::super) fn op_nimbus_runtime_chown_sync(
+    state: &mut OpState,
+    #[serde] payload: RuntimeFsChownPayload,
+) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
+    let permissions = state
+        .borrow::<InstalledRuntimeCapabilityPolicy>()
+        .permissions
+        .clone();
+    let path = permissions
+        .check_open(
+            std::borrow::Cow::Borrowed(Path::new(&payload.path)),
+            OpenAccessKind::Write,
+            Some("Deno.chownSync"),
+        )
+        .map_err(capability_denied_error)?
+        .into_owned_path();
+    Ok(match apply_fs_chown(&path, payload.uid, payload.gid) {
+        Ok(()) => RuntimeHostCallEnvelope::Ok { value: Value::Null },
+        Err(error) => RuntimeHostCallEnvelope::Error {
+            error: runtime_fs_error_value(&path, "chownSync", &error),
+        },
+    })
+}
+
+#[op2]
+#[serde]
 pub(in super::super) async fn op_nimbus_runtime_utime(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeFsUtimePayload,
@@ -534,6 +631,28 @@ pub(in super::super) fn op_nimbus_runtime_chmod_sync(
         Ok(()) => RuntimeHostCallEnvelope::Ok { value: Value::Null },
         Err(error) => RuntimeHostCallEnvelope::Error {
             error: runtime_fs_error_value(&path, "chmodSync", &error),
+        },
+    };
+    Ok(response)
+}
+
+#[op2]
+#[serde]
+pub(in super::super) fn op_nimbus_runtime_lchmod_sync(
+    state: &mut OpState,
+    #[serde] payload: RuntimeFsChmodPayload,
+) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
+    let path_policy = state
+        .borrow::<InstalledRuntimeCapabilityPolicy>()
+        .paths
+        .clone();
+    let path = path_policy
+        .ensure_write_link_path(Path::new(&payload.path))
+        .map_err(capability_denied_error)?;
+    let response = match apply_link_mode(&path, payload.mode) {
+        Ok(()) => RuntimeHostCallEnvelope::Ok { value: Value::Null },
+        Err(error) => RuntimeHostCallEnvelope::Error {
+            error: runtime_fs_error_value(&path, "lchmodSync", &error),
         },
     };
     Ok(response)
@@ -647,7 +766,10 @@ pub(in super::super) fn op_nimbus_runtime_read_dir_sync(
     })
 }
 
-fn remove_path(path: &Path, recursive: bool) -> std::io::Result<()> {
+fn remove_path(path: &Path, recursive: bool, directory_only: bool) -> std::io::Result<()> {
+    if directory_only {
+        return std::fs::remove_dir(path);
+    }
     let metadata = std::fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || metadata.is_file() {
         std::fs::remove_file(path)
@@ -672,13 +794,15 @@ pub(in super::super) async fn op_nimbus_runtime_remove(
             .clone()
     };
     let path = path_policy
-        .ensure_write_path(Path::new(&payload.path))
+        .ensure_write_link_path(Path::new(&payload.path))
         .map_err(capability_denied_error)?;
     let recursive = payload.recursive;
+    let directory_only = payload.directory_only;
     let path_for_task = path.clone();
-    let result = tokio::task::spawn_blocking(move || remove_path(&path_for_task, recursive))
-        .await
-        .map_err(|error| JsErrorBox::generic(error.to_string()))?;
+    let result =
+        tokio::task::spawn_blocking(move || remove_path(&path_for_task, recursive, directory_only))
+            .await
+            .map_err(|error| JsErrorBox::generic(error.to_string()))?;
     Ok(match result {
         Ok(()) => RuntimeHostCallEnvelope::Ok { value: Value::Null },
         Err(error) => RuntimeHostCallEnvelope::Error {
@@ -698,9 +822,9 @@ pub(in super::super) fn op_nimbus_runtime_remove_sync(
         .paths
         .clone();
     let path = path_policy
-        .ensure_write_path(Path::new(&payload.path))
+        .ensure_write_link_path(Path::new(&payload.path))
         .map_err(capability_denied_error)?;
-    let result = remove_path(&path, payload.recursive);
+    let result = remove_path(&path, payload.recursive, payload.directory_only);
     Ok(match result {
         Ok(()) => RuntimeHostCallEnvelope::Ok { value: Value::Null },
         Err(error) => RuntimeHostCallEnvelope::Error {

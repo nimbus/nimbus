@@ -28,6 +28,7 @@ mod invocation;
 use self::bootstrap::RuntimeCancellationState;
 pub(crate) use self::bootstrap::RuntimeInvocationTimeoutController;
 pub use self::bundle::RuntimeBundle;
+pub(crate) use self::bundle::RuntimeBundleEntrypointKind;
 pub(crate) use self::bundle::RuntimeBundleIdentity;
 #[cfg(test)]
 use self::helpers::deserialize_json_value;

@@ -45,6 +45,7 @@ assert.throws(
 
 callsfoobar();
 
+
 // Expects an error as callsfoo() was called more than once
 assert.throws(
   () => tracker.verify(),

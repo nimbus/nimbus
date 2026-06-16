@@ -58,10 +58,17 @@ function isPerfHooksSpecifier(specifier) {
   return normalizeBuiltinSpecifier(specifier) === "perf_hooks";
 }
 
+function isProcessSpecifier(specifier) {
+  return normalizeBuiltinSpecifier(specifier) === "process";
+}
+
 function getBuiltinOverride(specifier) {
   const normalizedSpecifier = normalizeBuiltinSpecifier(specifier);
   if (!normalizedSpecifier) {
     return undefined;
+  }
+  if (normalizedSpecifier === "process") {
+    return processModule;
   }
   return INTERNAL_MODULE_OVERRIDES[normalizedSpecifier];
 }
@@ -80,10 +87,106 @@ function getBuiltinModule(specifier) {
 function isBuiltin(specifier) {
   const normalizedSpecifier = normalizeBuiltinSpecifier(specifier);
   return (
+    normalizedSpecifier === "process" ||
     (normalizedSpecifier !== null &&
       isPublicBuiltinOverrideSpecifier(normalizedSpecifier)) ||
     denoIsBuiltin(specifier)
   );
+}
+
+const NIMBUS_BUILTIN_ESM_EXPORT_SYNC_CALLBACKS =
+  "__nimbusBuiltinEsmExportSyncCallbacks";
+const NIMBUS_ORIGINAL_SYNC_BUILTIN_ESM_EXPORTS =
+  "__nimbusOriginalSyncBuiltinESMExports";
+const denoSyncBuiltinESMExports = Object.prototype.hasOwnProperty.call(
+  Module,
+  NIMBUS_ORIGINAL_SYNC_BUILTIN_ESM_EXPORTS,
+)
+  ? Module[NIMBUS_ORIGINAL_SYNC_BUILTIN_ESM_EXPORTS]
+  : typeof Module.syncBuiltinESMExports === "function"
+  ? Module.syncBuiltinESMExports.bind(Module)
+  : null;
+if (
+  !Object.prototype.hasOwnProperty.call(
+    Module,
+    NIMBUS_ORIGINAL_SYNC_BUILTIN_ESM_EXPORTS,
+  )
+) {
+  Object.defineProperty(Module, NIMBUS_ORIGINAL_SYNC_BUILTIN_ESM_EXPORTS, {
+    value: denoSyncBuiltinESMExports,
+    configurable: true,
+    enumerable: false,
+    writable: false,
+  });
+}
+const nimbusBuiltinEsmExportSyncCallbacks = Object.prototype.hasOwnProperty.call(
+  Module,
+  NIMBUS_BUILTIN_ESM_EXPORT_SYNC_CALLBACKS,
+)
+  ? Module[NIMBUS_BUILTIN_ESM_EXPORT_SYNC_CALLBACKS]
+  : new Set();
+if (
+  !Object.prototype.hasOwnProperty.call(
+    Module,
+    NIMBUS_BUILTIN_ESM_EXPORT_SYNC_CALLBACKS,
+  )
+) {
+  Object.defineProperty(Module, NIMBUS_BUILTIN_ESM_EXPORT_SYNC_CALLBACKS, {
+    value: nimbusBuiltinEsmExportSyncCallbacks,
+    configurable: true,
+    enumerable: false,
+    writable: false,
+  });
+}
+
+function __nimbusRegisterBuiltinEsmExportSync(callback) {
+  if (typeof callback !== "function") {
+    throw new TypeError("Nimbus builtin ESM export sync callback must be a function");
+  }
+  nimbusBuiltinEsmExportSyncCallbacks.add(callback);
+  return function unregisterBuiltinEsmExportSync() {
+    nimbusBuiltinEsmExportSyncCallbacks.delete(callback);
+  };
+}
+
+function syncBuiltinESMExports() {
+  denoSyncBuiltinESMExports?.();
+  for (const callback of nimbusBuiltinEsmExportSyncCallbacks) {
+    callback();
+  }
+}
+
+Object.defineProperty(Module, "__nimbusRegisterBuiltinEsmExportSync", {
+  value: __nimbusRegisterBuiltinEsmExportSync,
+  configurable: true,
+  enumerable: false,
+  writable: true,
+});
+
+let activeHookRegistrations = 0;
+
+function registerHooks(hooks) {
+  const registration = denoRegisterHooks(hooks);
+  activeHookRegistrations += 1;
+  let registered = true;
+  return {
+    deregister() {
+      if (registered) {
+        registered = false;
+        activeHookRegistrations = Math.max(0, activeHookRegistrations - 1);
+      }
+      return registration.deregister();
+    },
+  };
+}
+
+function loadHookedBuiltinWithOverrideFallback(request, parent, isMain, override) {
+  const loaded = denoLoad(request, parent, isMain);
+  const normalizedSpecifier = normalizeBuiltinSpecifier(request);
+  const denoBuiltin = normalizedSpecifier
+    ? denoGetBuiltinModule(normalizedSpecifier)
+    : undefined;
+  return loaded === denoBuiltin ? override : loaded;
 }
 
 if (Array.isArray(builtinModules)) {
@@ -93,6 +196,14 @@ if (Array.isArray(builtinModules)) {
     }
     if (!builtinModules.includes(specifier)) {
       builtinModules.push(specifier);
+    }
+  }
+  const nodeMajor = Number.parseInt(processModule?.versions?.node ?? "", 10);
+  if (nodeMajor <= 22) {
+    for (let index = builtinModules.length - 1; index >= 0; index -= 1) {
+      if (String(builtinModules[index]).startsWith("node:")) {
+        builtinModules.splice(index, 1);
+      }
     }
   }
 }
@@ -141,8 +252,14 @@ Module._load = function (request, parent, isMain) {
   if (isPerfHooksSpecifier(request)) {
     return globalThis.__nimbusPerfHooksBuiltin;
   }
+  if (isProcessSpecifier(request)) {
+    return processModule;
+  }
   const override = getBuiltinOverride(request);
   if (override !== undefined) {
+    if (activeHookRegistrations > 0) {
+      return loadHookedBuiltinWithOverrideFallback(request, parent, isMain, override);
+    }
     return override;
   }
   return denoLoad(request, parent, isMain);
@@ -154,6 +271,12 @@ Module._resolveFilename = function (request, parent, isMain, options) {
     normalizedSpecifier &&
     Object.prototype.hasOwnProperty.call(INTERNAL_MODULE_OVERRIDES, normalizedSpecifier)
   ) {
+    if (activeHookRegistrations > 0) {
+      const resolved = denoResolveFilename(request, parent, isMain, options);
+      return normalizeBuiltinSpecifier(resolved) === normalizedSpecifier
+        ? normalizedSpecifier
+        : resolved;
+    }
     return normalizedSpecifier;
   }
   return denoResolveFilename(request, parent, isMain, options);
@@ -167,37 +290,27 @@ function _resolveFilename(...args) {
   return Module._resolveFilename(...args);
 }
 
-function maybeEmitDeprecatedBuiltinWarning(specifier) {
-  if (typeof specifier !== "string") {
-    return;
-  }
-
-  const normalizedSpecifier = specifier.startsWith("node:")
-    ? specifier.slice(5)
-    : specifier;
-  const warning = DEPRECATED_REQUIRE_WARNINGS[normalizedSpecifier];
-  if (!warning) {
-    return;
-  }
-
-  globalThis.process?.emitWarning?.(
-    warning.message,
-    "DeprecationWarning",
-    warning.code,
-  );
-}
-
 function createRequire(filenameOrUrl) {
   const require = denoCreateRequire(filenameOrUrl);
   return new Proxy(require, {
     apply(target, thisArg, args) {
       const request = args[0];
-      maybeEmitDeprecatedBuiltinWarning(request);
       if (isPerfHooksSpecifier(request)) {
         return globalThis.__nimbusPerfHooksBuiltin;
       }
+      if (isProcessSpecifier(request)) {
+        return processModule;
+      }
       const override = getBuiltinOverride(request);
       if (override !== undefined) {
+        if (activeHookRegistrations > 0) {
+          return loadHookedBuiltinWithOverrideFallback(
+            request,
+            undefined,
+            false,
+            override,
+          );
+        }
         return override;
       }
       return Reflect.apply(target, thisArg, args);
@@ -206,6 +319,8 @@ function createRequire(filenameOrUrl) {
 }
 
 Module.createRequire = createRequire;
+Module.registerHooks = registerHooks;
+Module.syncBuiltinESMExports = syncBuiltinESMExports;
 
 export {
   _stat,
@@ -227,5 +342,7 @@ export {
   isBuiltin,
   Module,
   register,
+  registerHooks,
+  syncBuiltinESMExports,
 };
 export default Module;

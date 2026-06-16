@@ -13,7 +13,126 @@ from typing import Any
 from fixture_discovery import discover_fixture_files as discover_git_fixture_files
 
 RUST_NODE_COMPAT_ROOT = Path("crates/nimbus-runtime/src/runtime/tests/node")
-RUST_EXECUTED_FIXTURE_LANES = {"node20", "node22", "node24"}
+RUST_EXECUTED_FIXTURE_LANES = {"node20", "node22", "node24", "node26"}
+RUST_EXECUTION_MARKERS = {
+    "execute_manifested_node_compat_test(",
+    "execute_upstream_node_compat_test_with_extra_files(",
+    "run_manifested_subset_for_lane(",
+    "run_manifested_subset_for_lane_excluding(",
+    "run_node_compat_watchpoint(",
+    "run_node_compat_watchpoint_batch(",
+    "run_node_compat_watchpoint_entry_batch(",
+    "run_node_compat_watchpoint_for_lane(",
+    "run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(",
+}
+FORCED_LANE_CLASSIFICATIONS: dict[str, dict[str, dict[str, str]]] = {
+    "node22": {
+        # Source-confirmed: test-util-styletext.js calls common.getTTYfd(),
+        # which probes existing TTY fds and falls back to opening /dev/tty.
+        "test/parallel/test-util-styletext.js": {
+            "expectation": "expected_gap",
+            "classification": "requires_pseudo_tty_host_harness",
+            "owner": "process-and-timing/tty-host",
+            "reason": "The fixture's styleText stream validation section requires a host TTY fd from common.getTTYfd(), so it is terminal-harness evidence rather than a multi-tenant isolate support claim.",
+        },
+    },
+    "node24": {
+        # Source-confirmed: test-util-styletext.js calls common.getTTYfd(),
+        # which probes existing TTY fds and falls back to opening /dev/tty.
+        "test/parallel/test-util-styletext.js": {
+            "expectation": "expected_gap",
+            "classification": "requires_pseudo_tty_host_harness",
+            "owner": "process-and-timing/tty-host",
+            "reason": "The fixture's styleText stream validation section requires a host TTY fd from common.getTTYfd(), so it is terminal-harness evidence rather than a multi-tenant isolate support claim.",
+        },
+        "test/parallel/test-buffer-tostring-rangeerror.js": {
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "core-semantics/buffer",
+            "reason": "The official Node24 fixture self-skips at runtime due to host memory requirements, so it is excluded from green support claims even when the containing core-semantics batch passes.",
+        },
+    },
+    "node26": {
+        "test/parallel/test-buffer-tostring-rangeerror.js": {
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "core-semantics/buffer",
+            "reason": "The official Node26 fixture self-skips through common.enoughTestMem because it requires allocating buffers larger than MAX_STRING_LENGTH, so it is host-memory stress evidence rather than a default V8-isolate support claim.",
+        },
+        "test/parallel/test-crypto-default-shake-lengths-oneshot.js": {
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "networking/crypto-provider",
+            "reason": "The official Node26 fixture self-skips when process.features.openssl_is_boringssl is true because default SHAKE XOF lengths are not supported by the linked BoringSSL-family provider.",
+        },
+        "test/parallel/test-crypto-dh-group-setters.js": {
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "networking/crypto-provider",
+            "reason": "The official Node26 fixture self-skips when process.features.openssl_is_boringssl is true because the Diffie-Hellman group surface is unsupported by the linked BoringSSL-family provider.",
+        },
+        "test/parallel/test-crypto-dh-modp2-views.js": {
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "networking/crypto-provider",
+            "reason": "The official Node26 fixture self-skips when process.features.openssl_is_boringssl is true because the Diffie-Hellman MODP2 surface is unsupported by the linked BoringSSL-family provider.",
+        },
+        "test/parallel/test-crypto-dh-modp2.js": {
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "networking/crypto-provider",
+            "reason": "The official Node26 fixture self-skips when process.features.openssl_is_boringssl is true because the Diffie-Hellman MODP2 surface is unsupported by the linked BoringSSL-family provider.",
+        },
+        "test/parallel/test-crypto-oneshot-hash-xof.js": {
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "networking/crypto-provider",
+            "reason": "The official Node26 fixture self-skips when process.features.openssl_is_boringssl is true because BoringSSL does not support XOF hash functions.",
+        },
+        "test/parallel/test-module-loading-error.js": {
+            "expectation": "expected_gap",
+            "classification": "requires_native_addon_harness",
+            "owner": "loader-context/native-addon-host",
+            "reason": "The fixture requires a .node native addon through CommonJS require(), which would dlopen host-native code outside the V8 isolate and must remain fail-closed unless a host-capable backend is selected.",
+        },
+        "test/embedding/test-embedding-snapshot-vm.js": {
+            "expectation": "expected_gap",
+            "classification": "requires_native_addon_harness",
+            "owner": "loader-context/native-addon-host",
+            "reason": "The fixture resolves and spawns Node's embedtest helper binary with --embedder-snapshot-blob to create and reload an embedder snapshot, so it is host embedder-binary evidence rather than a multi-tenant isolate support claim.",
+        },
+        "test/embedding/test-shared-embedding-v8.js": {
+            "expectation": "expected_skip",
+            "classification": "requires_native_addon_harness",
+            "owner": "loader-context/native-addon-host",
+            "reason": "The fixture self-skips unless the Node test build links against the shared Node.js library, then resolves and spawns shared_embedtest; this is host embedder-binary coverage outside the default isolate runtime.",
+        },
+        "test/ffi/test-ffi-module.js": {
+            "expectation": "expected_gap",
+            "classification": "requires_native_addon_harness",
+            "owner": "loader-context/native-addon-host",
+            "reason": "The fixture runs under --experimental-ffi, imports node:ffi, and exercises subprocess-gated native FFI/dlopen behavior, which must remain fail-closed for the default multi-tenant isolate runtime.",
+        },
+        "test/ffi/test-ffi-shared-buffer.js": {
+            "expectation": "expected_gap",
+            "classification": "requires_native_addon_harness",
+            "owner": "loader-context/native-addon-host",
+            "reason": "The fixture requires --experimental-ffi plus internal/test/binding('ffi') and dlopen-backed shared-buffer calls against a native test library, so it is native host-surface evidence outside the default isolate contract.",
+        },
+        "test/parallel/test-webcrypto-derivebits-argon2.js": {
+            "expectation": "expected_skip",
+            "classification": "upstream_known_issue_or_platform_boundary",
+            "owner": "networking/crypto-provider",
+            "reason": "The official Node26 fixture self-skips unless the linked provider reports OpenSSL >= 3.2 because Argon2 WebCrypto vectors are unavailable on older or BoringSSL-family providers.",
+        },
+        "test/parallel/test-util-styletext.js": {
+            "expectation": "expected_gap",
+            "classification": "requires_pseudo_tty_host_harness",
+            "owner": "process-and-timing/tty-host",
+            "reason": "The fixture's styleText stream validation section requires a host TTY fd from common.getTTYfd(), so it is terminal-harness evidence rather than a multi-tenant isolate support claim.",
+        }
+    },
+}
 LANE_AWARE_BATCH_MACROS = {
     "node20_only_batch_case",
     "node22_exclusive_batch_case",
@@ -117,8 +236,46 @@ def macro_invocations(text: str) -> list[tuple[str, str, tuple[int, int]]]:
     return invocations
 
 
+def node_compat_batch_entries(text: str) -> list[tuple[str, tuple[int, int]]]:
+    entries: list[tuple[str, tuple[int, int]]] = []
+    pattern = re.compile(r"\bNodeCompatBatchEntry\s*\{")
+    index = 0
+    while True:
+        match = pattern.search(text, index)
+        if match is None:
+            break
+        depth = 1
+        cursor = match.end()
+        while cursor < len(text) and depth > 0:
+            char = text[cursor]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+            cursor += 1
+        if depth == 0:
+            entries.append((text[match.end() : cursor - 1], (match.start(), cursor)))
+        index = max(cursor, match.end())
+    return entries
+
+
 def string_args(text: str) -> list[str]:
     return re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', text)
+
+
+def field_string(text: str, field_name: str) -> str | None:
+    match = re.search(
+        rf"\b{re.escape(field_name)}\s*:\s*(?:Some\(\s*)?\"([^\"\\]*(?:\\.[^\"\\]*)*)\"",
+        text,
+        flags=re.S,
+    )
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def field_is_none(text: str, field_name: str) -> bool:
+    return re.search(rf"\b{re.escape(field_name)}\s*:\s*None\b", text) is not None
 
 
 def lane_relative_literal(literal: str, lane: str) -> str | None:
@@ -149,6 +306,16 @@ def lane_fixture_literals(text: str, lane: str) -> set[str]:
         if relative is not None:
             references.add(relative)
 
+    for body, (start, end) in node_compat_batch_entries(text):
+        for offset in range(start, end):
+            masked[offset] = " "
+        test_relative_path = field_string(body, "test_relative_path")
+        lane_source_field = f"{lane}_fixture_source_path"
+        if field_is_none(body, lane_source_field):
+            continue
+        if field_string(body, lane_source_field) is not None:
+            add(test_relative_path)
+
     for name, body, (start, end) in macro_invocations(text):
         if name not in LANE_AWARE_BATCH_MACROS:
             continue
@@ -166,14 +333,14 @@ def lane_fixture_literals(text: str, lane: str) -> set[str]:
         if name in {"shared_batch_case", "shared_batch_case_with_extra"}:
             if lane in {"node20", "node22"} and has_fixture_source_path:
                 add(test_relative_path)
-            elif lane == "node24":
+            elif lane in {"node24", "node26"}:
                 add(test_relative_path)
         elif name == "split_batch_case":
             if lane == "node20" and has_node20_fixture_source_path:
                 add(test_relative_path)
             elif lane == "node22" and has_node22_fixture_source_path:
                 add(test_relative_path)
-            elif lane == "node24":
+            elif lane in {"node24", "node26"}:
                 add(test_relative_path)
         elif name == "shared_lane_fixture_batch_case":
             if has_fixture_source_path:
@@ -181,15 +348,15 @@ def lane_fixture_literals(text: str, lane: str) -> set[str]:
         elif name == "node20_only_batch_case":
             if lane == "node20" and has_fixture_source_path:
                 add(test_relative_path)
-            elif lane == "node24":
+            elif lane in {"node24", "node26"}:
                 add(test_relative_path)
         elif name == "node22_only_batch_case":
             if lane == "node22" and has_fixture_source_path:
                 add(test_relative_path)
-            elif lane == "node24":
+            elif lane in {"node24", "node26"}:
                 add(test_relative_path)
         elif name == "node22_exclusive_batch_case":
-            if lane == "node22" and has_fixture_source_path:
+            if (lane == "node22" and has_fixture_source_path) or lane == "node26":
                 add(test_relative_path)
         elif name in {
             "shared_official_batch_case",
@@ -200,12 +367,48 @@ def lane_fixture_literals(text: str, lane: str) -> set[str]:
         elif name == "shared_node20_node22_with_node24_override_case_with_extra":
             if lane == "node24" and has_node24_fixture_source_path:
                 add(test_relative_path)
+            elif lane == "node26":
+                add(test_relative_path)
             else:
                 add(test_relative_path)
 
     for literal in fixture_literals("".join(masked)):
         add(literal)
     return references
+
+
+def body_executes_node_compat_fixtures(text: str) -> bool:
+    return any(marker in text for marker in RUST_EXECUTION_MARKERS)
+
+
+def inferred_test_function_lane(name: str, body: str) -> str | None:
+    """Infer which Node lane a Rust test actually executes.
+
+    Status numerators must come from runtime execution evidence. Topology and
+    report-shape tests mention batch constants for all lanes, but they do not
+    run those fixtures. Lane inference therefore follows the concrete execution
+    call sites: test function names, explicit `NodeCompatLane::NodeXX`
+    arguments, and lane-prefixed fixture source paths.
+    """
+
+    lanes: set[str] = set()
+    for lane in RUST_EXECUTED_FIXTURE_LANES:
+        if re.search(rf"(^|_){lane}($|_)", name):
+            lanes.add(lane)
+
+    for major in ("20", "22", "24", "26"):
+        if f"NodeCompatLane::Node{major}" in body:
+            lanes.add(f"node{major}")
+
+    for literal in fixture_literals(body):
+        if literal.startswith("node") and "/" in literal:
+            prefix, _relative = literal.split("/", 1)
+            if prefix in RUST_EXECUTED_FIXTURE_LANES:
+                lanes.add(prefix)
+
+    if len(lanes) == 1:
+        return next(iter(lanes))
+    return None
 
 
 def collect_const_blocks(lines: list[str]) -> dict[str, str]:
@@ -231,7 +434,7 @@ def collect_const_blocks(lines: list[str]) -> dict[str, str]:
                 - line.count("}")
                 - line.count(")")
             )
-            if ";" in line and index > start and depth <= 0:
+            if ";" in line and depth <= 0:
                 break
             index += 1
         blocks[name] = "\n".join(block)
@@ -295,9 +498,20 @@ def collect_test_functions(
                     break
             index += 1
         body = "\n".join(block)
+        if not body_executes_node_compat_fixtures(body):
+            index += 1
+            continue
+        if inferred_test_function_lane(name, body) != lane:
+            index += 1
+            continue
         literals = set(lane_fixture_literals(body, lane))
-        for const_name in re.findall(r"\b[A-Z][A-Z0-9_]+\b", body):
-            literals.update(expand_const_literals(const_name, const_blocks, lane))
+        expands_broad_ignored_watchpoint = (
+            any("ignore" in attr for attr in attrs)
+            and "run_manifested_subset_for_lane(" in body
+        )
+        if not expands_broad_ignored_watchpoint:
+            for const_name in re.findall(r"\b[A-Z][A-Z0-9_]+\b", body):
+                literals.update(expand_const_literals(const_name, const_blocks, lane))
         functions.append(
             {
                 "name": name,
@@ -411,6 +625,10 @@ def classification_for_unpromoted(path: str, fixture_root: Path) -> dict[str, st
     }
 
 
+def forced_lane_classification(lane: str, path: str) -> dict[str, str] | None:
+    return FORCED_LANE_CLASSIFICATIONS.get(lane, {}).get(path)
+
+
 def existing_classified_paths(catalog: dict[str, Any] | None) -> set[str]:
     if catalog is None:
         return set()
@@ -438,7 +656,9 @@ def build_catalog(lane: str, *, preserve_existing: bool) -> dict[str, Any]:
     catalog_path = classification_catalog_path(lane)
     existing = load_json(catalog_path) if preserve_existing and catalog_path.is_file() else None
     existing_paths = existing_classified_paths(existing)
+    forced_paths = set(FORCED_LANE_CLASSIFICATIONS.get(lane, {})) & fixtures
     nongreen_paths = set(fixtures - refs.nonignored)
+    nongreen_paths.update(forced_paths)
     nongreen_paths.update(existing_paths & fixtures)
 
     entries: list[dict[str, Any]] = []
@@ -460,7 +680,9 @@ def build_catalog(lane: str, *, preserve_existing: bool) -> dict[str, Any]:
 
     grouped_paths: dict[tuple[str, str, str, str], list[str]] = defaultdict(list)
     for path in sorted(nongreen_paths - {entry["test_path"] for entry in entries}):
-        classification = classification_for_unpromoted(path, fixture_root)
+        classification = forced_lane_classification(lane, path) or classification_for_unpromoted(
+            path, fixture_root
+        )
         key = (
             classification["expectation"],
             classification["classification"],

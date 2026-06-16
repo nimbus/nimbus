@@ -12,38 +12,48 @@ LOCK_TABLE="/tmp/nimbus-deno-fork-lock-table.tsv"
 RUNTIME_CRATES="/tmp/nimbus-deno-fork-runtime-crates.txt"
 
 EXPECTED_DENO_REPO="https://github.com/nimbus/deno"
-EXPECTED_DENO_TAG="v2.8.0-nimbus.5"
-EXPECTED_DENO_SHA="37b6333a1f703db523efe8a703d36f2152ad087a"
+EXPECTED_DENO_TAG="v2.8.2-nimbus.13"
+EXPECTED_DENO_SHA="cfc4cc4a0289c618e00e3e6f53432ebf7e6ee3c9"
 EXPECTED_DENO_SOURCE="git+${EXPECTED_DENO_REPO}?tag=${EXPECTED_DENO_TAG}#${EXPECTED_DENO_SHA}"
 
 EXPECTED_V8_REPO="https://github.com/nimbus/rusty_v8"
-EXPECTED_V8_TAG="v149.0.0-nimbus.1"
-EXPECTED_V8_SHA="9b77553883f1117ab3df62709b8673b803ed721b"
+EXPECTED_V8_TAG="v149.2.0-nimbus.1"
+EXPECTED_V8_SHA="ce6663111a3ff8fde06bc04ba19bbbced60dbc8d"
 EXPECTED_V8_SOURCE="git+${EXPECTED_V8_REPO}?tag=${EXPECTED_V8_TAG}#${EXPECTED_V8_SHA}"
 
 PATCHED_DENO_CRATES="
 deno_core
 deno_crypto
+deno_crypto_provider
+deno_dotenv
+deno_features
 deno_fetch
 deno_fs
 deno_http
+deno_inspector_server
 deno_io
+deno_maybe_sync
 deno_napi
 deno_net
 deno_node
 deno_node_crypto
 deno_node_sqlite
+deno_ops
 deno_os
 deno_package_json
 deno_permissions
 deno_process
 deno_resolver
+deno_signals
+deno_subprocess_windows
 deno_telemetry
 deno_tls
 deno_web
 deno_webidl
 deno_websocket
 node_resolver
+node_shim
+serde_v8
 "
 
 PASS=0

@@ -47,6 +47,31 @@ const PROCESS_BEFORE_EXIT_REENTRY_POSTLUDE: &str = r#"
     );
   }
 "#;
+const PROCESS_BEFORE_EXIT_THROW_POSTLUDE: &str = r#"
+  if (typeof globalThis.process?.emit === "function") {
+    const __nimbusInitialExitCode = globalThis.process.exitCode ?? 0;
+    try {
+      globalThis.process.emit("beforeExit", __nimbusInitialExitCode);
+    } catch (__nimbusBeforeExitError) {
+      // A throw inside a beforeExit handler is an uncaught exception in Node.
+      // Node still proceeds to the exit sequence, where 'exit' listeners run
+      // (and may reset process.exitCode). Swallow it here so the postlude can
+      // emit 'exit' exactly as Node would after the unhandled throw.
+    }
+    if (typeof globalThis.__nimbusProcessTicksAndRejections === "function") {
+      globalThis.__nimbusProcessTicksAndRejections();
+    }
+    await Promise.resolve();
+    await new Promise((resolve) => queueMicrotask(resolve));
+    if (typeof globalThis.process?.nextTick === "function") {
+      await new Promise((resolve) => globalThis.process.nextTick(resolve));
+    }
+    globalThis.process.emit(
+      "exit",
+      globalThis.process.exitCode ?? __nimbusInitialExitCode,
+    );
+  }
+"#;
 const FORK_CHILD_SETTLE_POSTLUDE: &str = r#"
   if (typeof common.__nimbusFlushForkWorkers === "function") {
     await common.__nimbusFlushForkWorkers();
@@ -80,6 +105,37 @@ for (const __nimbusProcessExitTarget of __nimbusProcessExitTargets) {
         globalThis.__nimbusNodeCompatInvocationFinalized === true
       ) {
         return;
+      }
+      __nimbusRequireForProcessExit("./test/common/index.js").__nimbusAssert?.();
+      const exitError = new Error(`${__nimbusProcessExitSentinel}:${resolvedCode}`);
+      exitError.code = "NIMBUS_NODE_COMPAT_PROCESS_EXIT";
+      throw exitError;
+    };
+  }
+}
+"#;
+
+const PROCESS_EXIT_ALWAYS_SENTINEL_PRELUDE: &str = r#"
+import { createRequire as __nimbusCreateRequireForProcessExit } from "node:module";
+
+const __nimbusRequireForProcessExit =
+  __nimbusCreateRequireForProcessExit(import.meta.url);
+const __nimbusProcessExitSentinel = "__NIMBUS_NODE_COMPAT_PROCESS_EXIT__";
+const __nimbusProcessExitTargets = new Set([
+  globalThis.process,
+  __nimbusRequireForProcessExit("node:process"),
+]);
+
+for (const __nimbusProcessExitTarget of __nimbusProcessExitTargets) {
+  if (
+    __nimbusProcessExitTarget &&
+    typeof __nimbusProcessExitTarget.reallyExit === "function"
+  ) {
+    __nimbusProcessExitTarget.reallyExit = (code) => {
+      const resolvedCode = code ?? __nimbusProcessExitTarget.exitCode ?? 0;
+      __nimbusProcessExitTarget.exitCode = resolvedCode;
+      if (globalThis.process && globalThis.process !== __nimbusProcessExitTarget) {
+        globalThis.process.exitCode = resolvedCode;
       }
       __nimbusRequireForProcessExit("./test/common/index.js").__nimbusAssert?.();
       const exitError = new Error(`${__nimbusProcessExitSentinel}:${resolvedCode}`);
@@ -160,6 +216,7 @@ const PENDING_DEPRECATION_PRELUDE: &str = r#"
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NodeCompatNamedPreludeBehavior {
     ProcessExitSentinel,
+    ProcessExitAlwaysSentinel,
     InteractiveTerminal,
     DnsResultOrderIpv4First,
     DnsResultOrderIpv6First,
@@ -170,8 +227,9 @@ pub(super) enum NodeCompatNamedPreludeBehavior {
 }
 
 impl NodeCompatNamedPreludeBehavior {
-    pub(super) const ALL: [Self; 8] = [
+    pub(super) const ALL: [Self; 9] = [
         Self::ProcessExitSentinel,
+        Self::ProcessExitAlwaysSentinel,
         Self::InteractiveTerminal,
         Self::DnsResultOrderIpv4First,
         Self::DnsResultOrderIpv6First,
@@ -184,6 +242,7 @@ impl NodeCompatNamedPreludeBehavior {
     pub(super) fn id(self) -> &'static str {
         match self {
             Self::ProcessExitSentinel => "process_exit_sentinel",
+            Self::ProcessExitAlwaysSentinel => "process_exit_always_sentinel",
             Self::InteractiveTerminal => "interactive_terminal",
             Self::DnsResultOrderIpv4First => "dns_result_order_ipv4first",
             Self::DnsResultOrderIpv6First => "dns_result_order_ipv6first",
@@ -208,6 +267,7 @@ impl NodeCompatNamedPreludeBehavior {
     fn script(self) -> &'static str {
         match self {
             Self::ProcessExitSentinel => PROCESS_EXIT_SENTINEL_PRELUDE,
+            Self::ProcessExitAlwaysSentinel => PROCESS_EXIT_ALWAYS_SENTINEL_PRELUDE,
             Self::InteractiveTerminal => INTERACTIVE_TERMINAL_PRELUDE,
             Self::DnsResultOrderIpv4First => DNS_RESULT_ORDER_IPV4FIRST_PRELUDE,
             Self::DnsResultOrderIpv6First => DNS_RESULT_ORDER_IPV6FIRST_PRELUDE,
@@ -229,13 +289,15 @@ impl NodeCompatNamedPreludeBehavior {
 pub(super) enum NodeCompatNamedPostludeBehavior {
     ProcessLifecycleDrain,
     ProcessBeforeExitReentry,
+    ProcessBeforeExitThrowToExit,
     ForkChildSettle,
 }
 
 impl NodeCompatNamedPostludeBehavior {
-    pub(super) const ALL: [Self; 3] = [
+    pub(super) const ALL: [Self; 4] = [
         Self::ProcessLifecycleDrain,
         Self::ProcessBeforeExitReentry,
+        Self::ProcessBeforeExitThrowToExit,
         Self::ForkChildSettle,
     ];
 
@@ -243,6 +305,7 @@ impl NodeCompatNamedPostludeBehavior {
         match self {
             Self::ProcessLifecycleDrain => "process_lifecycle_drain",
             Self::ProcessBeforeExitReentry => "process_before_exit_reentry",
+            Self::ProcessBeforeExitThrowToExit => "process_before_exit_throw_to_exit",
             Self::ForkChildSettle => "fork_child_settle",
         }
     }
@@ -259,6 +322,7 @@ impl NodeCompatNamedPostludeBehavior {
         match self {
             Self::ProcessLifecycleDrain => PROCESS_LIFECYCLE_DRAIN_POSTLUDE,
             Self::ProcessBeforeExitReentry => PROCESS_BEFORE_EXIT_REENTRY_POSTLUDE,
+            Self::ProcessBeforeExitThrowToExit => PROCESS_BEFORE_EXIT_THROW_POSTLUDE,
             Self::ForkChildSettle => FORK_CHILD_SETTLE_POSTLUDE,
         }
     }

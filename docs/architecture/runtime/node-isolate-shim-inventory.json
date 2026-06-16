@@ -1,0 +1,178 @@
+{
+  "report_kind": "node_isolate_shim_inventory",
+  "schema_version": 1,
+  "classification_vocabulary": [
+    {
+      "class": "native",
+      "public_disclosure_label": "Native isolate implementation",
+      "meaning": "Implemented by native Rust or V8-backed isolate operations in the Nimbus runtime or nimbus/deno fork."
+    },
+    {
+      "class": "shimmed",
+      "public_disclosure_label": "Shimmed Node-compatible API",
+      "meaning": "Implemented as JavaScript or TypeScript compatibility code that mirrors Node behavior while preserving the isolate permission boundary."
+    },
+    {
+      "class": "emulated",
+      "public_disclosure_label": "Emulated isolate-local behavior",
+      "meaning": "Emulates process, stream, or host-adjacent state inside the isolate without mutating host-global process state."
+    },
+    {
+      "class": "test-harness-only",
+      "public_disclosure_label": "Test-harness-only support",
+      "meaning": "Exists only to execute and measure upstream Node fixtures; it is not a production application capability."
+    },
+    {
+      "class": "diagnostic",
+      "public_disclosure_label": "Diagnostic denial or service route",
+      "meaning": "The runtime intentionally denies or routes the surface and records an actionable boundary diagnostic instead of granting host authority."
+    },
+    {
+      "class": "unsupported",
+      "public_disclosure_label": "Unsupported platform boundary",
+      "meaning": "Not supported in the in-process V8 isolate profile; requires upstream, native, host-capable service, or microVM work before it can become a support claim."
+    }
+  ],
+  "entries": [
+    {
+      "id": "deno-node-native-builtins",
+      "class": "native",
+      "owner_repository": "nimbus/deno",
+      "affected_lanes": ["node22", "node24", "node26"],
+      "surfaces": [
+        "node:buffer",
+        "node:crypto",
+        "node:fs",
+        "node:http",
+        "node:http2",
+        "node:net",
+        "node:tls",
+        "node:dgram",
+        "node:zlib"
+      ],
+      "claimed_capability": "Native Rust and V8-backed Node extension operations provide the low-level isolate implementation for Node builtins that are promoted into the V8-isolate-required surface.",
+      "capability_limits": "Native isolate support remains bounded by Nimbus runtime permission profiles and by the generated default-support posture; it is not a grant of ambient host process, filesystem, network, or native-addon authority.",
+      "evidence_paths": [
+        "docs/architecture/runtime/node-default-support-posture.json",
+        "tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json",
+        "nimbus/deno:ext/node/lib.rs",
+        "nimbus/deno:ext/node/ops",
+        "nimbus/deno:ext/node/polyfills"
+      ]
+    },
+    {
+      "id": "deno-node-js-polyfills",
+      "class": "shimmed",
+      "owner_repository": "nimbus/deno",
+      "affected_lanes": ["node22", "node24", "node26"],
+      "surfaces": [
+        "process.loadEnvFile",
+        "fs.promises",
+        "fs streams",
+        "http2 compatibility state",
+        "internal stream base wrappers",
+        "Node error and validation helpers"
+      ],
+      "claimed_capability": "JavaScript and TypeScript polyfills mirror Node-visible behavior for promoted APIs while delegating authority checks to Deno/Nimbus runtime permissions.",
+      "capability_limits": "A shimmed API may match Node semantics for measured fixtures without implying full Node CLI parity or access outside declared runtime roots.",
+      "evidence_paths": [
+        "nimbus/deno:ext/node/lib.rs",
+        "nimbus/deno:ext/node/polyfills/internal/fs/promises.ts",
+        "nimbus/deno:ext/node/polyfills/internal/fs/streams.js",
+        "nimbus/deno:ext/node/polyfills/internal/http2/util.ts",
+        "nimbus/deno:ext/node/polyfills/internal/stream_base_commons.ts"
+      ]
+    },
+    {
+      "id": "deno-node-isolate-local-emulation",
+      "class": "emulated",
+      "owner_repository": "nimbus/deno",
+      "affected_lanes": ["node22", "node24", "node26"],
+      "surfaces": [
+        "process.cwd metadata",
+        "process.env metadata",
+        "stream state",
+        "HTTP/2 state buffers",
+        "WebStreams and MessagePort transfer helpers"
+      ],
+      "claimed_capability": "Host-adjacent Node state is emulated inside each isolate so fixture-visible semantics can pass without mutating host-global process state.",
+      "capability_limits": "Emulation is per-isolate and capability-scoped; it must not expose host cwd mutation, process exit, OS signals, ambient subprocesses, or unbounded filesystem access.",
+      "evidence_paths": [
+        "docs/architecture/runtime/node-default-support-posture.json",
+        "nimbus/deno:ext/node/lib.rs",
+        "nimbus/deno:ext/node/polyfills/internal/http2/util.ts",
+        "nimbus/deno:ext/node/polyfills/internal/stream_base_commons.ts",
+        "nimbus/deno:ext/web/06_streams.js"
+      ]
+    },
+    {
+      "id": "nimbus-node-official-fixture-harness",
+      "class": "test-harness-only",
+      "owner_repository": "nimbus/nimbus",
+      "affected_lanes": ["node22", "node24", "node26"],
+      "surfaces": [
+        "official Node fixture runner",
+        "subprocess-shaped fixture parser",
+        "fixture prelude rendering",
+        "diagnostic artifact writer",
+        "watchpoint batches"
+      ],
+      "claimed_capability": "Nimbus carries harness-only emulation so upstream Node fixtures can be executed, classified, and promoted with reproducible diagnostics.",
+      "capability_limits": "Harness helpers are evidence infrastructure and do not become public production Node APIs or application capabilities.",
+      "evidence_paths": [
+        "crates/nimbus-runtime/src/runtime/tests/node/mod.rs",
+        "crates/nimbus-runtime/src/runtime/bootstrap/ops/test_runtime",
+        "crates/nimbus-runtime/src/runtime/tests/node/cases",
+        "tests/runtime/node/classifications",
+        "docs/architecture/runtime/node-default-support-posture.json"
+      ]
+    },
+    {
+      "id": "nimbus-host-heavy-diagnostic-boundaries",
+      "class": "diagnostic",
+      "owner_repository": "nimbus/nimbus",
+      "affected_lanes": ["node22", "node24", "node26"],
+      "surfaces": [
+        "node:child_process",
+        "node:worker_threads",
+        "node:inspector",
+        "node:repl",
+        "node --test",
+        ".node native addons",
+        "persistent host filesystem assumptions",
+        "raw server listen",
+        "package-owned native binaries"
+      ],
+      "claimed_capability": "Production in-process application profiles return denial or service/microVM route diagnostics for host-heavy behavior instead of granting host authority.",
+      "capability_limits": "Diagnostic evidence is not positive in-process support; these surfaces require a service or microVM profile when the application genuinely needs host authority.",
+      "evidence_paths": [
+        "tests/runtime/node/host-heavy-canaries/README.md",
+        "tests/runtime/node/canary-registry.json",
+        "tests/runtime/node/compat/node-compat-surface-matrix.md",
+        "tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json"
+      ]
+    },
+    {
+      "id": "node-upstream-and-native-platform-boundaries",
+      "class": "unsupported",
+      "owner_repository": "node-compat/platform-boundary",
+      "affected_lanes": ["node22", "node24", "node26"],
+      "surfaces": [
+        "native addon ABI",
+        "FFI",
+        "exact host process control",
+        "startup snapshot CLI topology",
+        "V8 wire-format exactness",
+        "upstream known issue or platform-specific fixture behavior"
+      ],
+      "claimed_capability": "Unsupported entries remain visible as measured boundaries in the generated posture and lane classification catalogs.",
+      "capability_limits": "These entries are excluded from V8-isolate-required support claims until an owner lands fixture-backed native, shimmed, emulated, or service-routed behavior.",
+      "evidence_paths": [
+        "docs/architecture/runtime/node-default-support-posture.json",
+        "tests/runtime/node/classifications/node22.json",
+        "tests/runtime/node/classifications/node24.json",
+        "tests/runtime/node/classifications/node26.json"
+      ]
+    }
+  ]
+}

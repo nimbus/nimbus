@@ -73,8 +73,6 @@ const {
   opendirSync,
   promises,
   read,
-  readFile,
-  readFileSync,
   readlink,
   readlinkSync,
   readSync,
@@ -117,6 +115,21 @@ const {
   writevSync,
   WriteStream,
 } = fsBuiltin;
+
+let readFile;
+let readFileSync;
+
+function __nimbusSyncFsEsmExports() {
+  readFile = Object.prototype.hasOwnProperty.call(fsBuiltin, "readFile")
+    ? fsBuiltin.readFile
+    : undefined;
+  readFileSync = Object.prototype.hasOwnProperty.call(fsBuiltin, "readFileSync")
+    ? fsBuiltin.readFileSync
+    : undefined;
+}
+
+__nimbusSyncFsEsmExports();
+Module.__nimbusRegisterBuiltinEsmExportSync?.(__nimbusSyncFsEsmExports);
 
 export {
   _toUnixTimestamp,

@@ -1,3 +1,49 @@
+function nimbusNodeRuntimeMajor() {
+  const processMajor = globalThis.process?.__nimbusNodeRuntimeMajor;
+  if (typeof processMajor === "number" && Number.isFinite(processMajor)) {
+    return processMajor;
+  }
+  const globalMajor = globalThis.__nimbusNodeRuntimeMajor;
+  if (typeof globalMajor === "number" && Number.isFinite(globalMajor)) {
+    return globalMajor;
+  }
+  const version = globalThis.process?.versions?.node;
+  if (typeof version === "string") {
+    const major = Number.parseInt(version, 10);
+    if (Number.isFinite(major)) {
+      return major;
+    }
+  }
+  return 0;
+}
+
+function createNode24SymlinkTypeValueError(value) {
+  const display = typeof value === "string" ? `'${value}'` : String(value);
+  const error = new TypeError(
+    "The argument 'type' must be one of: 'dir', 'file', 'junction', null, " +
+      `undefined. Received ${display}`,
+  );
+  error.code = "ERR_INVALID_ARG_VALUE";
+  return error;
+}
+
+function validateSymlinkTypeForRuntime(type) {
+  if (nimbusNodeRuntimeMajor() < 24) {
+    internalFsUtils.stringToSymlinkType(type);
+    return;
+  }
+  if (
+    type === "dir" ||
+    type === "file" ||
+    type === "junction" ||
+    type === null ||
+    type === undefined
+  ) {
+    return;
+  }
+  throw createNode24SymlinkTypeValueError(type);
+}
+
 function createNimbusFsPromisesModule() {
   const fsBuiltin = denoGetBuiltinModule("fs");
   const fsPromisesBuiltin = fsBuiltin?.promises;
@@ -53,6 +99,10 @@ function createNimbusFsPromisesModule() {
   fsPromisesModule.opendir = async function opendir(path, options) {
     return wrapDirHandle(await fsPromisesBuiltin.opendir(path, options));
   };
+  fsPromisesModule.symlink = async function symlink(target, path, type) {
+    validateSymlinkTypeForRuntime(type);
+    return fsPromisesBuiltin.symlink(target, path, type);
+  };
   return fsPromisesModule;
 }
 
@@ -81,7 +131,11 @@ function createNimbusFsModule(fsPromisesModule) {
       || normalizedFlags.includes("+");
   }
   function validateOpenPath(path, flags) {
-    const validatedPath = getValidatedPathToString(path);
+    let validatedPath = getValidatedPathToString(path);
+    if (typeof validatedPath === "string" && !pathModule.isAbsolute(validatedPath)) {
+      const cwd = typeof processModule?.cwd === "function" ? processModule.cwd() : ".";
+      validatedPath = pathModule.resolve(cwd, validatedPath);
+    }
     return globalThis.__nimbusSyncHostValue("op_nimbus_runtime_validate_open_path", {
       path: validatedPath,
       write: openFlagsNeedWrite(flags),
@@ -311,6 +365,31 @@ function createNimbusFsModule(fsPromisesModule) {
   };
   fsModule.appendFileSync = function appendFileSync(path, data, options) {
     return writeFileSyncWithCurrentFsBindings(fsModule, path, data, options, "a");
+  };
+  function rebuildWriteSyncError(originalError) {
+    // The underlying op surfaces an OS write failure as a raw Deno error
+    // (e.g. "Bad file descriptor (os error 9)"). Node instead throws a
+    // UVException whose construction assigns `errno` via plain property
+    // assignment. test-fs-writesync-crash.js relies on that exact mechanism:
+    // it poisons Object.prototype.errno with a throwing setter, so the errno
+    // assignment must propagate that setter's error instead of crashing. It
+    // also pins the canonical EBADF shape (message
+    // "EBADF: bad file descriptor, write", errno UV_EBADF, code "EBADF",
+    // syscall "write") asserted by test-fs-error-messages.js. Route through
+    // Deno's denoErrorToNodeError, which maps the os errno and rebuilds the
+    // error exactly like Node's UVException (assigning errno by plain
+    // assignment so a poisoned prototype setter fires).
+    if (typeof internalErrors?.denoErrorToNodeError !== "function") {
+      return originalError;
+    }
+    return internalErrors.denoErrorToNodeError(originalError, { syscall: "write" });
+  }
+  fsModule.writeSync = function writeSync(fd, buffer, offsetOrOptions, length, position) {
+    try {
+      return fsBuiltin.writeSync(fd, buffer, offsetOrOptions, length, position);
+    } catch (error) {
+      throw rebuildWriteSyncError(error);
+    }
   };
   fsPromisesModule.writeFile = async function writeFile(path, data, options) {
     const normalizedOptions = copyObject(getOptions(options, {
@@ -686,25 +765,52 @@ function createNimbusFsModule(fsPromisesModule) {
     return fsBuiltin.watchFile(filename, options, wrappedListener);
   };
   function snapshotFsStreamOptions(options) {
-    const optionsSnapshot = snapshotFsEncodingOptions(options);
-    if (
-      optionsSnapshot
-      && typeof optionsSnapshot === "object"
-      && "fd" in optionsSnapshot
-      && optionsSnapshot.fd != null
-    ) {
-      return optionsSnapshot;
+    if (options === null || options === undefined) {
+      return { fs: fsModule };
     }
-    if (optionsSnapshot && typeof optionsSnapshot === "object") {
-      return { ...optionsSnapshot, fs: fsModule };
+    if (typeof options === "string") {
+      // A string options value selects the encoding; preserve that while still
+      // routing reads through the Nimbus-sandboxed fs by default.
+      return { encoding: options, fs: fsModule };
     }
-    return { fs: fsModule };
+    if (typeof options !== "object") {
+      // Forward an invalid non-object options value unchanged so the builtin's
+      // getOptions throws ERR_INVALID_ARG_TYPE instead of masking it.
+      return options;
+    }
+    // Copy via for-in (like the builtin's copyObject) so __proto__-inherited
+    // option keys (start/end/fd/autoClose/encoding/fs) survive; object spread
+    // would drop them.
+    const snapshot = {};
+    for (const key in options) {
+      snapshot[key] = options[key];
+    }
+    if ("fd" in snapshot && snapshot.fd != null) {
+      // With an explicit fd the stream operates on the descriptor directly;
+      // keep the original behavior of not overriding fs in that case.
+      return snapshot;
+    }
+    if (!("fs" in snapshot)) {
+      // Inject the Nimbus-sandboxed fs only as a default, never clobbering a
+      // caller-supplied fs:{open,read,close}.
+      snapshot.fs = fsModule;
+    }
+    return snapshot;
+  }
+  function receiverInheritsStreamPrototype(receiver, streamConstructor) {
+    return receiver !== null
+      && receiver !== undefined
+      && streamConstructor.prototype.isPrototypeOf(receiver);
   }
   fsModule.createReadStream = function createReadStream(path, options) {
     return new fsModule.ReadStream(path, options);
   };
   const NimbusReadStream = function ReadStream(path, options) {
-    return fsBuiltin.ReadStream(path, snapshotFsStreamOptions(options));
+    const snapshot = snapshotFsStreamOptions(options);
+    if (!receiverInheritsStreamPrototype(this, fsBuiltin.ReadStream)) {
+      return new fsBuiltin.ReadStream(path, snapshot);
+    }
+    return Reflect.apply(fsBuiltin.ReadStream, this, [path, snapshot]);
   };
   NimbusReadStream.prototype = fsBuiltin.ReadStream.prototype;
   Object.setPrototypeOf(NimbusReadStream, fsBuiltin.ReadStream);
@@ -718,7 +824,11 @@ function createNimbusFsModule(fsPromisesModule) {
     return new fsModule.WriteStream(path, options);
   };
   const NimbusWriteStream = function WriteStream(path, options) {
-    return fsBuiltin.WriteStream(path, snapshotFsStreamOptions(options));
+    const snapshot = snapshotFsStreamOptions(options);
+    if (!receiverInheritsStreamPrototype(this, fsBuiltin.WriteStream)) {
+      return new fsBuiltin.WriteStream(path, snapshot);
+    }
+    return Reflect.apply(fsBuiltin.WriteStream, this, [path, snapshot]);
   };
   NimbusWriteStream.prototype = fsBuiltin.WriteStream.prototype;
   Object.setPrototypeOf(NimbusWriteStream, fsBuiltin.WriteStream);
@@ -782,19 +892,17 @@ function createNimbusFsModule(fsPromisesModule) {
       fsBuiltin.closeSync(fd);
     }
   };
-  fsModule.lchmod = undefined;
-  fsModule.lchmodSync = undefined;
   fsModule.symlink = function symlink(target, path, type, callback) {
     if (typeof type === "function") {
       callback = type;
       type = undefined;
     } else {
-      internalFsUtils.stringToSymlinkType(type);
+      validateSymlinkTypeForRuntime(type);
     }
     return fsBuiltin.symlink(target, path, type, callback);
   };
   fsModule.symlinkSync = function symlinkSync(target, path, type) {
-    internalFsUtils.stringToSymlinkType(type);
+    validateSymlinkTypeForRuntime(type);
     return fsBuiltin.symlinkSync(target, path, type);
   };
   fsModule.opendir = function opendir(path, options, callback) {
@@ -815,5 +923,32 @@ function createNimbusFsModule(fsPromisesModule) {
   fsModule.opendirSync = function opendirSync(path, options) {
     return wrapDirHandle(fsBuiltin.opendirSync(path, options));
   };
+  // Node 24 runtime-deprecates the fs.F_OK/R_OK/W_OK/X_OK aliases (DEP0176):
+  // they remain readable (each returns the matching fs.constants value) but are
+  // accessor-only, so assigning to one throws a TypeError in strict mode, and
+  // the first read across any of the four emits a single DEP0176
+  // DeprecationWarning. deno_node drops the deprecated aliases entirely, so
+  // Nimbus restores the Node-compatible shape here. Node's internal
+  // `codesWarned` SafeSet emits each deprecation code once globally, so a single
+  // module-scoped flag mirrors the warn-once-per-code behavior regardless of
+  // which alias is read first.
+  let dep0176Warned = false;
+  for (const constantKey of ["F_OK", "R_OK", "W_OK", "X_OK"]) {
+    Object.defineProperty(fsModule, constantKey, {
+      configurable: true,
+      enumerable: false,
+      get() {
+        if (!dep0176Warned) {
+          dep0176Warned = true;
+          processModule?.emitWarning?.(
+            `fs.${constantKey} is deprecated, use fs.constants.${constantKey} instead`,
+            "DeprecationWarning",
+            "DEP0176",
+          );
+        }
+        return fsModule.constants[constantKey];
+      },
+    });
+  }
   return fsModule;
 }

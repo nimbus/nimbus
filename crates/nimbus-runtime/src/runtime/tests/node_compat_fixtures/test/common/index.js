@@ -22,6 +22,7 @@ const isWindows = process.platform === 'win32';
 const isASan = process.config?.variables?.asan === 1;
 const hasInspector = process.features?.inspector === true;
 const hasSQLite = Boolean(process.versions?.sqlite);
+const hasTemporal = Boolean(process.config?.variables?.v8_enable_temporal_support);
 let localhostIPv4 = null;
 const localIPv6Hosts = ['localhost'];
 const tmpdir = require('./tmpdir.js');
@@ -30,12 +31,41 @@ const nimbusOriginalProcessChdir = typeof process.chdir === 'function'
   ? process.chdir.bind(process)
   : null;
 if (nimbusOriginalProcessChdir) {
-  process.chdir = function nimbusHarnessChdir(directory) {
+  const nimbusHarnessCwd = function nimbusHarnessCwd() {
+    return nimbusForkCurrentCwd;
+  };
+  const nimbusHarnessChdir = function nimbusHarnessChdir(directory) {
     const nextCwd = path.resolve(nimbusForkCurrentCwd, String(directory));
     const result = nimbusOriginalProcessChdir(directory);
     nimbusForkCurrentCwd = nextCwd;
     return result;
   };
+  Object.defineProperty(process, 'cwd', {
+    value: nimbusHarnessCwd,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+  Object.defineProperty(process, 'chdir', {
+    value: nimbusHarnessChdir,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+  if (globalThis.process && globalThis.process !== process) {
+    Object.defineProperty(globalThis.process, 'cwd', {
+      value: nimbusHarnessCwd,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+    Object.defineProperty(globalThis.process, 'chdir', {
+      value: nimbusHarnessChdir,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+  }
 }
 const PIPE = (() => {
   const pipeName = `n.${process.pid}.sock`;
@@ -64,7 +94,8 @@ function runCallChecks() {
   }
 
   const detail = failed.map((context) => (
-    `Expected ${context.name} to be called ${context.messageSegment}, actual ${context.actual}.`
+    `Expected ${context.name} to be called ${context.messageSegment}, actual ${context.actual}.` +
+    (context.creationStack ? `\n${context.creationStack}` : '')
   )).join('\n');
   assert.fail(`Mismatched function calls:\n${detail}`);
 }
@@ -85,6 +116,7 @@ function _mustCallInner(fn, criteria = 1, field) {
     [field]: criteria,
     actual: 0,
     name: fn.name || '<anonymous>',
+    creationStack: new Error(`mustCall created for ${fn.name || '<anonymous>'}`).stack,
   };
   mustCallChecks.push(context);
 
@@ -391,6 +423,28 @@ function expectsError(validator, exact) {
   }, exact);
 }
 
+function expectRequiredModule(mod, expectation, checkESModule = true) {
+  const { isModuleNamespaceObject } = require('util/types');
+  const clone = { ...mod };
+  if (Object.hasOwn(mod, 'default') && checkESModule) {
+    assert.strictEqual(mod.__esModule, true);
+    delete clone.__esModule;
+  }
+  assert(isModuleNamespaceObject(mod));
+  assert.deepStrictEqual(clone, { ...expectation });
+}
+
+function expectRequiredTLAError(err) {
+  const message = /require\(\) cannot be used on an ESM graph with top-level await/;
+  if (typeof err === 'string') {
+    assert.match(err, /ERR_REQUIRE_ASYNC_MODULE/);
+    assert.match(err, message);
+  } else {
+    assert.strictEqual(err.code, 'ERR_REQUIRE_ASYNC_MODULE');
+    assert.match(err.message, message);
+  }
+}
+
 function getArrayBufferViews(buf) {
   const { buffer, byteOffset, byteLength } = buf;
 
@@ -430,6 +484,19 @@ function getArrayBufferViews(buf) {
 
 function getBufferSources(buf) {
   return [...getArrayBufferViews(buf), new Uint8Array(buf).buffer];
+}
+
+function getTTYfd() {
+  const tty = require('node:tty');
+  const ttyFd = [1, 2, 4, 5].find(tty.isatty);
+  if (ttyFd !== undefined) {
+    return ttyFd;
+  }
+  try {
+    return fs.openSync('/dev/tty');
+  } catch {
+    return -1;
+  }
 }
 
 function canCreateSymLink() {
@@ -534,6 +601,24 @@ const nimbusForkWorkers = new Set();
 const nimbusForkWorkerCompletions = new Set();
 const nimbusAsyncChildProcessCompletions = new Set();
 
+// Harness-internal drain resources (a resolved promise, a queueMicrotask
+// promise, a nextTick TickObject, a setTimeout(0)) created while waiting for
+// child/fork completions must stay invisible to fixture async-hooks. Bracket
+// each resource CREATION in an incPromiseHooksSuppressed window so the fork's
+// emitInitNative records the id in suppressedAsyncIds and then skips its whole
+// before/after/destroy lifecycle. The `await` stays OUTSIDE the window so the
+// event loop still pumps. Mirrors the post-exec drain script in
+// crates/nimbus-runtime/src/runtime/tests/node/mod.rs.
+const __nimbusSuppressDrainInit = (make) => {
+  const core = globalThis.Deno?.core;
+  core?.incPromiseHooksSuppressed?.();
+  try {
+    return make();
+  } finally {
+    core?.decPromiseHooksSuppressed?.();
+  }
+};
+
 async function flushNimbusChildProcesses() {
   const deadline = Date.now() + 1000;
 
@@ -542,10 +627,14 @@ async function flushNimbusChildProcesses() {
       nimbusForkWorkerCompletions.size === 0 &&
       nimbusAsyncChildProcessCompletions.size === 0
     ) {
-      await Promise.resolve();
-      await new Promise((resolve) => queueMicrotask(resolve));
+      await __nimbusSuppressDrainInit(() => Promise.resolve());
+      await __nimbusSuppressDrainInit(
+        () => new Promise((resolve) => queueMicrotask(resolve)),
+      );
       if (typeof process.nextTick === 'function') {
-        await new Promise((resolve) => process.nextTick(resolve));
+        await __nimbusSuppressDrainInit(
+          () => new Promise((resolve) => process.nextTick(resolve)),
+        );
       }
       if (
         nimbusForkWorkerCompletions.size === 0 &&
@@ -562,7 +651,9 @@ async function flushNimbusChildProcesses() {
     if (Date.now() >= deadline) {
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await __nimbusSuppressDrainInit(
+      () => new Promise((resolve) => setTimeout(resolve, 0)),
+    );
   }
 }
 
@@ -591,7 +682,16 @@ function canUseNimbusSpawnSync(command, args = [], options = {}) {
     (options == null || typeof options === 'object') &&
     (options.stdio === undefined || options.stdio === 'pipe') &&
     options.shell !== true &&
-    options.timeout === undefined &&
+    // A positive finite timeout is an upper bound the in-process host op (which
+    // runs synchronously to completion and carries no timeout field) can never
+    // reach, so it is safe to ignore and still route in-process. Fixtures that
+    // pass `timeout: 30000` to spawnSync(process.execPath, ...) (e.g. the
+    // async-hooks stack-overflow trio) must not fall through to the real,
+    // unsupported runtime spawn that returns `status: undefined`.
+    (options.timeout === undefined ||
+      (typeof options.timeout === 'number' &&
+        Number.isFinite(options.timeout) &&
+        options.timeout > 0)) &&
     options.uid === undefined &&
     options.gid === undefined;
 }
@@ -682,6 +782,108 @@ function runNimbusSpawnSync(command, args = [], options = {}) {
       error,
     };
   }
+}
+
+// Case 3 of test/async-hooks/test-callback-error.js (and the abort-shell
+// fixtures) re-exec `process.execPath` through a POSIX shell wrapper of the
+// shape `ulimit -c 0 && exec "<exe>" <args...>` with `options.shell === true`,
+// passing `--abort-on-uncaught-exception` so Node aborts with SIGABRT on the
+// child's uncaught throw. The in-process host op cannot abort the V8 isolate,
+// so the harness recovers the real exec target + argv from the shell string,
+// runs the child in-process (minus the abort flag, which the Rust arg parser
+// does not accept), and reinterprets the resulting non-zero exit as the
+// SIGABRT signal Node would have raised. Returns the spawnSync-shaped result,
+// or null when the command is not this execPath abort-shell shape (callers
+// then fall through to the real shell spawn, e.g. `echo`/`does-not-exist`).
+function tryRunNimbusAbortShell(command, args, options) {
+  if (
+    typeof globalThis.__nimbusSyncHostValue !== 'function' ||
+    options == null ||
+    typeof options !== 'object' ||
+    options.shell !== true ||
+    typeof command !== 'string' ||
+    (Array.isArray(args) && args.length > 0)
+  ) {
+    return null;
+  }
+
+  // Substitute ${VAR} / $VAR tokens from options.env (escapePOSIXShell stores
+  // the real, unescaped argument values there as ESCAPED_n entries).
+  const shellEnv =
+    options.env && typeof options.env === 'object' ? options.env : {};
+  const substituted = command.replace(
+    /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
+    (match, braced, bare) => {
+      const name = braced ?? bare;
+      const value = shellEnv[name];
+      return typeof value === 'string' ? value : '';
+    },
+  );
+
+  // Tokenize the shell string honoring single/double quotes; this is a
+  // deliberately small parser scoped to the `ulimit ... && exec "..." ...`
+  // shape, not a general shell.
+  const tokens = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  let sawToken = false;
+  for (let i = 0; i < substituted.length; i += 1) {
+    const ch = substituted[i];
+    if (inSingle) {
+      if (ch === "'") { inSingle = false; } else { current += ch; }
+      continue;
+    }
+    if (inDouble) {
+      if (ch === '"') { inDouble = false; } else { current += ch; }
+      continue;
+    }
+    if (ch === "'") { inSingle = true; sawToken = true; continue; }
+    if (ch === '"') { inDouble = true; sawToken = true; continue; }
+    if (ch === ' ' || ch === '\t' || ch === '\n') {
+      if (sawToken) { tokens.push(current); current = ''; sawToken = false; }
+      continue;
+    }
+    current += ch;
+    sawToken = true;
+  }
+  if (sawToken) { tokens.push(current); }
+  if (inSingle || inDouble) {
+    return null;
+  }
+
+  // Drop a leading `ulimit -c 0` clause and any `&&` / `;` separators, then a
+  // leading `exec`, to reach `<exe> <args...>`.
+  let index = 0;
+  if (tokens[index] === 'ulimit') {
+    while (index < tokens.length && tokens[index] !== '&&' && tokens[index] !== ';') {
+      index += 1;
+    }
+    if (index < tokens.length) { index += 1; }
+  }
+  if (tokens[index] === 'exec') { index += 1; }
+  const execTarget = tokens[index];
+  if (typeof execTarget !== 'string' || !isNimbusNodeCompatCommand(execTarget)) {
+    return null;
+  }
+  const execArgs = tokens.slice(index + 1);
+
+  // The abort flag is the SIGABRT trigger; strip it (the Rust arg parser
+  // rejects it) and route the remaining script invocation in-process.
+  const abortMode = execArgs.includes('--abort-on-uncaught-exception');
+  const childArgs = execArgs.filter(
+    (value) => value !== '--abort-on-uncaught-exception',
+  );
+
+  const inProcessOptions = { ...options };
+  delete inProcessOptions.shell;
+  const result = runNimbusSpawnSync(execTarget, childArgs, inProcessOptions);
+
+  if (abortMode && typeof result.status === 'number' && result.status !== 0) {
+    result.status = null;
+    result.signal = 'SIGABRT';
+  }
+  return result;
 }
 
 function encodeNimbusAsyncSpawnEnv(options = {}) {
@@ -1004,6 +1206,120 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
         // Invalid trace category input should not prevent fork startup.
       }
     };
+    const writeNimbusForkTraceFile = (traceEvents) => {
+      const traceDirectory = processObject.env.DENO_NODE_TRACE_EVENT_DIRECTORY;
+      if (
+        typeof traceDirectory !== "string" ||
+        traceDirectory.length === 0 ||
+        !Array.isArray(traceEvents) ||
+        traceEvents.length === 0
+      ) {
+        return;
+      }
+      let fs;
+      try {
+        fs = require("node:fs");
+      } catch {
+        return;
+      }
+      let rotation = 1;
+      let traceFile = pathModule.join(traceDirectory, "node_trace." + rotation + ".log");
+      while (fs.existsSync(traceFile) && rotation < 1000) {
+        if (rotation === 1) {
+          break;
+        }
+        rotation += 1;
+        traceFile = pathModule.join(traceDirectory, "node_trace." + rotation + ".log");
+      }
+      try {
+        fs.writeFileSync(traceFile, JSON.stringify({ traceEvents }));
+      } catch {
+        // Best-effort trace flush.
+      }
+    };
+    const flushNimbusForkTraceEvents = () => {
+      const traceDirectory = processObject.env.DENO_NODE_TRACE_EVENT_DIRECTORY;
+      if (typeof traceDirectory !== "string" || traceDirectory.length === 0) {
+        return;
+      }
+      let fs;
+      try {
+        fs = require("node:fs");
+      } catch {
+        return;
+      }
+      let entries;
+      try {
+        entries = fs.readdirSync(traceDirectory);
+      } catch {
+        return;
+      }
+      const traceEvents = [];
+      for (const entryName of entries) {
+        if (
+          typeof entryName !== "string" ||
+          !entryName.startsWith(".deno_trace_events_") ||
+          !entryName.includes("_t") ||
+          !entryName.endsWith(".json")
+        ) {
+          continue;
+        }
+        const entryPath = pathModule.join(traceDirectory, entryName);
+        try {
+          const slice = JSON.parse(fs.readFileSync(entryPath, "utf8"));
+          if (slice && Array.isArray(slice.traceEvents)) {
+            traceEvents.push(...slice.traceEvents);
+          }
+        } catch {
+          // Skip unreadable or partial trace-event slices.
+        }
+        try {
+          fs.unlinkSync(entryPath);
+        } catch {
+          // Best-effort cleanup; the generated node_trace file is the proof.
+        }
+      }
+      if (traceEvents.length === 0) {
+        return;
+      }
+      writeNimbusForkTraceFile(traceEvents);
+    };
+    const installNimbusForkTraceEventFlush = () => {
+      if (traceEventCategoriesFromExecArgv() === null) {
+        return;
+      }
+      let binding;
+      try {
+        const { internalBinding } = require("internal/test/binding");
+        binding = internalBinding("trace_events");
+      } catch {
+        return;
+      }
+      if (
+        !binding ||
+        binding.__nimbusForkTraceFlushInstalled === true ||
+        typeof binding.trace !== "function" ||
+        typeof binding.recordedTraceEventsSince !== "function"
+      ) {
+        return;
+      }
+      const originalTrace = binding.trace;
+      binding.trace = function nimbusForkTraceFlushWrapper(...traceArgs) {
+        const result = originalTrace.apply(this, traceArgs);
+        try {
+          writeNimbusForkTraceFile(binding.recordedTraceEventsSince(0));
+        } catch {
+          // Trace flushing must not change trace_events API behavior.
+        }
+        return result;
+      };
+      Object.defineProperty(binding, "__nimbusForkTraceFlushInstalled", {
+        value: true,
+        configurable: false,
+        enumerable: false,
+        writable: false,
+      });
+    };
     const emitIpcMessage = (message) => {
       ipc.emit("message", message);
       originalEmit("message", message);
@@ -1172,6 +1488,7 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
       if (!processObject._exiting) {
         processObject._exiting = true;
         originalEmit("exit", exitCode);
+        flushNimbusForkTraceEvents();
       }
       return exitCode;
     };
@@ -1312,6 +1629,7 @@ function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
       processObject.env.DENO_NODE_TRACE_EVENT_DIRECTORY = workerData.cwd;
     }
     enableTraceEventsFromExecArgv();
+    installNimbusForkTraceEventFlush();
 
     ipc.on("removeListener", (name) => {
       if (name === "message") {
@@ -1634,13 +1952,17 @@ function installChildProcessShim() {
   const originalSpawn = childProcess.spawn;
   const originalExecFile = childProcess.execFile;
   const originalFork = childProcess.fork;
-  childProcess.spawnSync = function nimbusHarnessSpawnSync(command, args, options) {
+  childProcess.spawnSync = function spawnSync(command, args, options) {
     if (canUseNimbusSpawnSync(command, args, options)) {
       return runNimbusSpawnSync(command, args, options);
     }
+    const abortShellResult = tryRunNimbusAbortShell(command, args, options);
+    if (abortShellResult !== null) {
+      return abortShellResult;
+    }
     return originalSpawnSync.apply(this, arguments);
   };
-  childProcess.execFileSync = function nimbusHarnessExecFileSync(command, args, options) {
+  childProcess.execFileSync = function execFileSync(command, args, options) {
     if (canUseNimbusSpawnSync(command, args, options)) {
       const result = runNimbusSpawnSync(command, args, options);
       if (result.status === 0) {
@@ -1655,13 +1977,13 @@ function installChildProcessShim() {
     }
     return originalExecFileSync.apply(this, arguments);
   };
-  childProcess.spawn = function nimbusHarnessSpawn(command, args, options) {
+  childProcess.spawn = function spawn(command, args, options) {
     if (canUseNimbusAsyncSpawn(command, args, options)) {
       return createNimbusAsyncChildProcess(command, args, options);
     }
     return originalSpawn.apply(this, arguments);
   };
-  childProcess.execFile = function nimbusHarnessExecFile(
+  childProcess.execFile = function execFile(
     command,
     argsOrOptionsOrCallback,
     optionsOrCallback,
@@ -1708,7 +2030,7 @@ function installChildProcessShim() {
 
     return originalExecFile.apply(this, arguments);
   };
-  childProcess.fork = function nimbusHarnessFork(modulePath, argsOrOptions, maybeOptions) {
+  childProcess.fork = function fork(modulePath, argsOrOptions, maybeOptions) {
     let args = [];
     let options = {};
 
@@ -1782,10 +2104,48 @@ function spawnPromisified(command, args = [], options = {}) {
   });
 }
 
+// Escapes command line arguments for a POSIX shell (or returns the string
+// unchanged on Windows). Used as a tagged template; returns an array
+// `[command, options?]` suitable to spread into `exec`/`execSync`/`spawnSync`.
+// Ported verbatim from upstream test/common/index.js, referencing the local
+// `isWindows` binding instead of `common.isWindows` (this synthetic harness
+// exports a plain object rather than the upstream Proxy form).
+function escapePOSIXShell(cmdParts, ...args) {
+  if (isWindows) {
+    // On Windows, paths cannot contain `"`, so we can return the string unchanged.
+    return [String.raw({ raw: cmdParts }, ...args)];
+  }
+  // On POSIX shells, we can pass values via the env, as there's a standard way
+  // for referencing a variable.
+  const env = { ...process.env };
+  let cmd = cmdParts[0];
+  for (let i = 0; i < args.length; i++) {
+    const envVarName = `ESCAPED_${i}`;
+    env[envVarName] = args[i];
+    cmd += '${' + envVarName + '}' + cmdParts[i + 1];
+  }
+
+  return [cmd, { env }];
+}
+
+// Ported verbatim from upstream test/common/index.js. Blocks the current
+// thread for `ms` milliseconds using Atomics.wait on a throwaway
+// SharedArrayBuffer — the same primitive the fork already runs in
+// ext/node/polyfills/internal/util.mjs `sleep`, so it works on the Nimbus
+// main isolate thread.
+function sleepSync(ms) {
+  const sab = new SharedArrayBuffer(4);
+  const i32 = new Int32Array(sab);
+  Atomics.wait(i32, 0, 0, ms);
+}
+
 module.exports = {
+  escapePOSIXShell,
+  sleepSync,
   hasCrypto,
   hasOpenSSL,
   hasSQLite,
+  hasTemporal,
   hasIntl: typeof Intl === 'object' && typeof Intl.DateTimeFormat === 'function',
   isDumbTerminal: process.env.TERM === 'dumb',
   isAIX,
@@ -1818,8 +2178,11 @@ module.exports = {
   invalidArgTypeHelper,
   expectWarning,
   expectsError,
+  expectRequiredModule,
+  expectRequiredTLAError,
   getArrayBufferViews,
   getBufferSources,
+  getTTYfd,
   allowGlobals,
   canCreateSymLink,
   runWithInvalidFD,

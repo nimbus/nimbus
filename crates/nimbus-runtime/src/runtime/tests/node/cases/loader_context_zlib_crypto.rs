@@ -483,18 +483,6 @@ const NODE20_LOADER_CONTEXT_CRYPTO_DH_SAFE_PRIME_BATCH: &[NodeCompatBatchEntry] 
         COMMON_CRYPTO_HASH_EXTRA_FILES
     )];
 
-const NODE24_LOADER_CONTEXT_CRYPTO_DH_STATELESS_SUPPORTED_WATCHPOINT_BATCH: &[NodeCompatBatchEntry] =
-    &[NodeCompatBatchEntry {
-        test_relative_path: "test/parallel/test-crypto-dh-stateless.js",
-        node20_fixture_source_path: None,
-        node22_fixture_source_path: None,
-        node24_fixture_source_path: Some("node24/test/parallel/test-crypto-dh-stateless.js"),
-        shared_extra_files: COMMON_CRYPTO_HASH_EXTRA_FILES,
-        node20_extra_files: &[],
-        node22_extra_files: &[],
-        node24_extra_files: &[],
-    }];
-
 const NODE20_LOADER_CONTEXT_CRYPTO_DH_SUPPORTED_WATCHPOINT_BATCH: &[NodeCompatBatchEntry] =
     &[shared_official_batch_case_with_extra!(
         "test/parallel/test-crypto-dh.js",
@@ -502,10 +490,6 @@ const NODE20_LOADER_CONTEXT_CRYPTO_DH_SUPPORTED_WATCHPOINT_BATCH: &[NodeCompatBa
     )];
 
 const LOADER_CONTEXT_CRYPTO_AUTHENTICATED_AND_AES_WRAP_BATCH: &[NodeCompatBatchEntry] = &[
-    shared_official_batch_case_with_extra!(
-        "test/parallel/test-crypto-authenticated-stream.js",
-        COMMON_CRYPTO_AUTHENTICATED_EXTRA_FILES
-    ),
     NodeCompatBatchEntry {
         test_relative_path: "test/parallel/test-crypto-authenticated.js",
         node20_fixture_source_path: None,
@@ -516,7 +500,6 @@ const LOADER_CONTEXT_CRYPTO_AUTHENTICATED_AND_AES_WRAP_BATCH: &[NodeCompatBatchE
         node22_extra_files: &[],
         node24_extra_files: &[],
     },
-    shared_official_batch_case!("test/parallel/test-crypto-aes-wrap.js"),
     shared_official_batch_case!("test/parallel/test-crypto-des3-wrap.js"),
 ];
 

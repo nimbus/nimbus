@@ -17,6 +17,9 @@ upstream Node fixture corpus:
 - `schemas/`
   - dependency-free JSON schemas for expectation catalogs, sync reports,
     refresh reports, trend snapshots, and the Node FaaS compatibility profile
+- `official-fixture-identities/`
+  - checked-in Git mode/blob identity manifests for every lane that claims a
+    vendored official Node fixture corpus
 
 Canonical developer entrypoints:
 
@@ -37,6 +40,8 @@ make node-compat-oracle LANE=node22 SAMPLE=test/parallel/test-buffer-alloc.js
 bash scripts/verify-node-lts-canaries-and-oracles.sh
 make node-compat-validate-watchpoints
 make node-compat-sync LANE=node22 DRY_RUN=1
+make node-compat-validate-fixtures
+make node-compat-verify-fixture-upstream SOURCE_ROOT=/Users/jack/src/github.com/nodejs/node
 make node-compat-refresh LANE=node22 TAG=v22.15.0 DRY_RUN=1
 make node-compat-status
 make node-compat-dashboard
@@ -50,6 +55,23 @@ The nightly evidence workflow in `.github/workflows/node-compat-nightly.yml`
 replays the representative Node test checks, both canary presets, and a
 version-matched Node20 / Node22 / Node24 / Node26 oracle sample sweep before
 emitting the retained dashboard bundle.
+
+Official fixture roots are the versioned
+`crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/nodeNN/test`
+trees. They must be byte-for-byte official Node mirrors for the pinned lane
+tag, including Git mode and symlink identity. Nimbus-authored compatibility
+probes live outside those roots:
+
+- `node_compat_fixtures/supplementary/` for app-facing compatibility probes
+- `node_compat_fixtures/regression/` for reduced local bug regressions
+- `tests/runtime/node/*-canaries/` for package/framework app canaries
+- `tests/runtime/node/expectations/` for ignored official watchpoints and
+  diagnostic boundaries
+
+The unversioned `node_compat_fixtures/test` root is a shared support-fixture
+tier used to assemble bundle-local `test/common` and `test/fixtures` files for
+regression, supplementary, and cross-lane focused tests. It is not an official
+lane root and must not contribute to official fixture denominators.
 
 The active-LTS canary/oracle verifier requires lane-local Node22 and Node24
 canary results for every registered package claim, a version-matched oracle

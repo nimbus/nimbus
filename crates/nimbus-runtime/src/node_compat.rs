@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use deno_core::FastString;
 use deno_fs::sync::MaybeArc;
+use deno_node::ops::module_hooks::LoaderHookRegistry;
 use deno_node::{NodeExtInitServices, NodeRequireLoader};
 use deno_permissions::{OpenAccessKind, PermissionsContainer};
 use deno_resolver::cache::ParsedSourceCache;
@@ -18,7 +19,8 @@ use deno_resolver::npm::{CreateInNpmPkgCheckerOptions, DenoInNpmPackageChecker};
 use node_resolver::analyze::{CjsModuleExportAnalyzer, NodeCodeTranslator, NodeCodeTranslatorMode};
 use node_resolver::cache::NodeResolutionSys;
 use node_resolver::errors::{
-    PackageFolderResolveError, PackageFolderResolveErrorKind, PackageNotFoundError,
+    NodeJsErrorCode, NodeResolveError, PackageFolderResolveError, PackageFolderResolveErrorKind,
+    PackageNotFoundError,
 };
 use node_resolver::{
     DenoIsBuiltInNodeModuleChecker, InNpmPackageChecker, NodeResolution, NodeResolutionKind,
@@ -29,6 +31,7 @@ use sys_traits::impls::RealSys;
 use url::Url;
 
 use crate::backends::v8::embedder::{JsErrorBox, ModuleSpecifier};
+use crate::limits::RuntimeCompatibilityTarget;
 use crate::runtime_capabilities::{RuntimePathPolicy, build_module_read_permissions_container};
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -202,10 +205,40 @@ impl NodeRequireLoader for ScopedNodeRequireLoader {
                 let package_json = self.package_json_resolver.get_closest_package_json(&path)?;
                 package_json
                     .as_deref()
+                    .filter(|package_json| package_json_applies_to_path(&path, &package_json.path))
                     .map(|package_json| package_json.typ.as_str() != "module")
                     .unwrap_or(true)
             }
             Some(_) => false,
+        })
+    }
+
+    fn is_maybe_cjs_from_require(
+        &self,
+        specifier: &Url,
+    ) -> Result<bool, node_resolver::errors::PackageJsonLoadError> {
+        if specifier.scheme() != "file" {
+            return Ok(false);
+        }
+        let Ok(path) = specifier.to_file_path() else {
+            return Ok(false);
+        };
+        let extension = path
+            .extension()
+            .map(|ext| ext.to_string_lossy().to_ascii_lowercase());
+        Ok(match extension.as_deref() {
+            Some("cjs") | Some("cts") => true,
+            Some("mjs") | Some("mts") | Some("json") | Some("wasm") => false,
+            _ => {
+                let Some(package_json) =
+                    self.package_json_resolver.get_closest_package_json(&path)?
+                else {
+                    return Ok(true);
+                };
+                !(package_json_applies_to_path(&path, &package_json.path)
+                    && package_json.typ.as_str() == "module"
+                    && path.extension().is_some())
+            }
         })
     }
 }
@@ -232,9 +265,20 @@ pub(crate) fn build_package_json_resolver() -> Arc<LocalPackageJsonResolver> {
     Arc::new(PackageJsonResolver::new(RealSys, None))
 }
 
-pub(crate) fn build_node_resolver(
+fn build_node_resolver_with_user_conditions(
     path_policy: &RuntimePathPolicy,
     package_json_resolver: Arc<LocalPackageJsonResolver>,
+    conditions: &[String],
+) -> LocalNodeResolver {
+    let mut options = NodeResolverOptions::default();
+    options.conditions.conditions = conditions.iter().cloned().map(Cow::Owned).collect();
+    build_node_resolver_with_options(path_policy, package_json_resolver, options)
+}
+
+fn build_node_resolver_with_options(
+    path_policy: &RuntimePathPolicy,
+    package_json_resolver: Arc<LocalPackageJsonResolver>,
+    options: NodeResolverOptions,
 ) -> LocalNodeResolver {
     NodeResolver::new(
         ScopedInNpmPackageChecker,
@@ -242,15 +286,42 @@ pub(crate) fn build_node_resolver(
         ScopedNodeModulesResolver::new(path_policy),
         package_json_resolver,
         NodeResolutionSys::new(RealSys, None),
-        NodeResolverOptions::default(),
+        options,
     )
+}
+
+fn build_node_resolver_with_condition_override(
+    path_policy: &RuntimePathPolicy,
+    package_json_resolver: Arc<LocalPackageJsonResolver>,
+    resolution_mode: NodeResolutionMode,
+    conditions: Option<Vec<String>>,
+) -> LocalNodeResolver {
+    let mut options = NodeResolverOptions::default();
+    if let Some(conditions) = conditions.filter(|conditions| !conditions.is_empty()) {
+        let conditions = conditions.into_iter().map(Cow::Owned).collect();
+        match resolution_mode {
+            NodeResolutionMode::Import => {
+                options.conditions.import_conditions_override = Some(conditions);
+            }
+            NodeResolutionMode::Require => {
+                options.conditions.require_conditions_override = Some(conditions);
+            }
+        }
+    }
+    build_node_resolver_with_options(path_policy, package_json_resolver, options)
 }
 
 pub(crate) fn build_node_init_services(
     path_policy: &RuntimePathPolicy,
+    loader_hook_registry: Option<LoaderHookRegistry>,
+    node_conditions: &[String],
 ) -> NodeExtInitServices<ScopedInNpmPackageChecker, ScopedNodeModulesResolver, RealSys> {
     let package_json_resolver = build_package_json_resolver();
-    let node_resolver = build_node_resolver(path_policy, package_json_resolver.clone());
+    let node_resolver = build_node_resolver_with_user_conditions(
+        path_policy,
+        package_json_resolver.clone(),
+        node_conditions,
+    );
     NodeExtInitServices {
         node_require_loader: Rc::new(ScopedNodeRequireLoader::new(
             path_policy.clone(),
@@ -258,18 +329,66 @@ pub(crate) fn build_node_init_services(
         )),
         node_resolver: MaybeArc::new(node_resolver),
         pkg_json_resolver: package_json_resolver,
+        loader_hook_registry,
         sys: RealSys,
     }
 }
 
-pub(crate) fn resolve_node_target(
+pub(crate) fn resolve_node_target_with_user_conditions(
     path_policy: &RuntimePathPolicy,
     specifier: &str,
     referrer: &str,
     resolution_mode: NodeResolutionMode,
+    conditions: &[String],
 ) -> Result<ResolvedNodeTarget, JsErrorBox> {
     let package_json_resolver = build_package_json_resolver();
-    let node_resolver = build_node_resolver(path_policy, package_json_resolver.clone());
+    let node_resolver = build_node_resolver_with_user_conditions(
+        path_policy,
+        package_json_resolver.clone(),
+        conditions,
+    );
+    resolve_node_target_with_resolver(
+        path_policy,
+        specifier,
+        referrer,
+        resolution_mode,
+        package_json_resolver,
+        node_resolver,
+    )
+}
+
+pub(crate) fn resolve_node_target_with_conditions(
+    path_policy: &RuntimePathPolicy,
+    specifier: &str,
+    referrer: &str,
+    resolution_mode: NodeResolutionMode,
+    conditions: Option<Vec<String>>,
+) -> Result<ResolvedNodeTarget, JsErrorBox> {
+    let package_json_resolver = build_package_json_resolver();
+    let node_resolver = build_node_resolver_with_condition_override(
+        path_policy,
+        package_json_resolver.clone(),
+        resolution_mode,
+        conditions,
+    );
+    resolve_node_target_with_resolver(
+        path_policy,
+        specifier,
+        referrer,
+        resolution_mode,
+        package_json_resolver,
+        node_resolver,
+    )
+}
+
+fn resolve_node_target_with_resolver(
+    path_policy: &RuntimePathPolicy,
+    specifier: &str,
+    referrer: &str,
+    resolution_mode: NodeResolutionMode,
+    package_json_resolver: Arc<LocalPackageJsonResolver>,
+    node_resolver: LocalNodeResolver,
+) -> Result<ResolvedNodeTarget, JsErrorBox> {
     let referrer_url = normalize_referrer(referrer)?;
     let resolved = match node_resolver.resolve(
         specifier,
@@ -279,17 +398,17 @@ pub(crate) fn resolve_node_target(
     ) {
         Ok(resolved) => resolved,
         Err(error) => {
-            if let Some(resolved) = try_resolve_package_subpath_without_exports(
-                path_policy,
-                specifier,
-                &referrer_url,
-                package_json_resolver.as_ref(),
-            )? {
+            if should_try_package_subpath_without_exports(&error)
+                && let Some(resolved) = try_resolve_package_subpath_without_exports(
+                    path_policy,
+                    specifier,
+                    &referrer_url,
+                    package_json_resolver.as_ref(),
+                )?
+            {
                 return Ok(resolved);
             }
-            return Err(JsErrorBox::generic(format!(
-                "failed to resolve runtime module `{specifier}` from `{referrer}`: {error}"
-            )));
+            return Err(JsErrorBox::from_err(error));
         }
     };
     match resolved {
@@ -306,10 +425,18 @@ pub(crate) fn resolve_node_target(
     }
 }
 
+fn should_try_package_subpath_without_exports(error: &NodeResolveError) -> bool {
+    matches!(
+        error.as_kind().maybe_code(),
+        Some(NodeJsErrorCode::ERR_MODULE_NOT_FOUND)
+    )
+}
+
 pub(crate) async fn translate_commonjs_to_esm(
     path_policy: &RuntimePathPolicy,
     specifier: &ModuleSpecifier,
     source: &str,
+    compatibility_target: RuntimeCompatibilityTarget,
 ) -> Result<String, JsErrorBox> {
     let package_json_resolver = build_package_json_resolver();
     let in_npm_package_checker = DenoInNpmPackageChecker::new(CreateInNpmPkgCheckerOptions::Byonm);
@@ -344,7 +471,7 @@ pub(crate) async fn translate_commonjs_to_esm(
             package_json_resolver,
             RealSys,
         )),
-        NodeCodeTranslatorMode::ModuleLoader,
+        node_code_translator_mode_for_target(compatibility_target),
     );
     translator
         .translate_cjs_to_esm(specifier, Some(Cow::Borrowed(source)))
@@ -355,6 +482,22 @@ pub(crate) async fn translate_commonjs_to_esm(
                 "failed to translate runtime CommonJS module {specifier}: {error}"
             ))
         })
+}
+
+fn node_code_translator_mode_for_target(
+    target: RuntimeCompatibilityTarget,
+) -> NodeCodeTranslatorMode {
+    match target {
+        RuntimeCompatibilityTarget::Node20 | RuntimeCompatibilityTarget::Node22 => {
+            NodeCodeTranslatorMode::ModuleLoaderWithoutModuleExports
+        }
+        RuntimeCompatibilityTarget::Node24 | RuntimeCompatibilityTarget::Node26 => {
+            NodeCodeTranslatorMode::ModuleLoader
+        }
+        RuntimeCompatibilityTarget::WebStandardIsolate | RuntimeCompatibilityTarget::BunJsc => {
+            NodeCodeTranslatorMode::ModuleLoader
+        }
+    }
 }
 
 fn try_resolve_package_subpath_without_exports(
@@ -432,6 +575,7 @@ pub(crate) fn classify_resolved_module_kind(
                 })?;
             let package_type = package_json
                 .as_deref()
+                .filter(|package_json| package_json_applies_to_path(path, &package_json.path))
                 .map(|package_json| package_json.typ.as_str())
                 .unwrap_or("none");
             if package_type == "module" {
@@ -484,6 +628,34 @@ pub(crate) fn path_has_node_modules_segment(path: &Path) -> bool {
         .any(|component| matches!(component, Component::Normal(part) if part == "node_modules"))
 }
 
+fn find_package_root_from_node_modules(path: &Path) -> Option<PathBuf> {
+    let components: Vec<_> = path.components().collect();
+    let node_modules_index = components.iter().rposition(
+        |component| matches!(component, Component::Normal(part) if *part == "node_modules"),
+    )?;
+    let package_name_index = node_modules_index + 1;
+    let package_name = components.get(package_name_index)?;
+    let mut package_root = PathBuf::new();
+    for component in &components[..=node_modules_index] {
+        package_root.push(component);
+    }
+    package_root.push(package_name);
+    if matches!(package_name, Component::Normal(part) if part.to_string_lossy().starts_with('@')) {
+        package_root.push(components.get(package_name_index + 1)?);
+    }
+    Some(package_root)
+}
+
+fn package_json_applies_to_path(path: &Path, package_json_path: &Path) -> bool {
+    let Some(package_json_dir) = package_json_path.parent() else {
+        return false;
+    };
+    let Some(package_root) = find_package_root_from_node_modules(path) else {
+        return true;
+    };
+    package_json_dir.starts_with(package_root)
+}
+
 fn canonicalize_existing_path(path: PathBuf) -> Option<PathBuf> {
     std::fs::canonicalize(&path).ok().or(Some(path))
 }
@@ -523,6 +695,7 @@ mod tests {
     use crate::runtime_capabilities::{
         RuntimeEnvPolicy, build_ambient_denied_permissions_container,
     };
+    use deno_error::JsErrorClass as _;
 
     #[test]
     fn split_package_specifier_handles_scoped_and_unscoped_subpaths() {
@@ -547,6 +720,154 @@ mod tests {
         assert_eq!(package_name_from_specifier("es-errors/type"), "es-errors");
         assert_eq!(package_name_from_specifier("@scope/pkg"), "@scope/pkg");
         assert_eq!(package_name_from_specifier("express"), "express");
+    }
+
+    #[test]
+    fn cjs_translator_mode_matches_node_namespace_version() {
+        assert!(matches!(
+            node_code_translator_mode_for_target(RuntimeCompatibilityTarget::Node22),
+            NodeCodeTranslatorMode::ModuleLoaderWithoutModuleExports
+        ));
+        assert!(matches!(
+            node_code_translator_mode_for_target(RuntimeCompatibilityTarget::Node24),
+            NodeCodeTranslatorMode::ModuleLoader
+        ));
+    }
+
+    fn assert_error_code(error: &JsErrorBox, expected: &str) {
+        let code = error
+            .get_additional_properties()
+            .find(|(key, _)| key == "code")
+            .map(|(_, value)| value.to_string());
+        assert_eq!(code.as_deref(), Some(expected));
+    }
+
+    #[test]
+    fn scoped_require_loader_does_not_inherit_module_type_across_node_modules_root() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let package_root = app_root.join("package-type-module");
+        let dependency_root = package_root.join("node_modules/dep-without-package-json");
+        std::fs::create_dir_all(&dependency_root).expect("dependency dir should build");
+        std::fs::write(package_root.join("package.json"), r#"{"type":"module"}"#)
+            .expect("parent package manifest should write");
+        let dependency_file = dependency_root.join("dep.js");
+        std::fs::write(&dependency_file, "module.exports = 42;\n")
+            .expect("dependency file should write");
+
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
+            .expect("policy should build");
+        let package_json_resolver = build_package_json_resolver();
+        let loader = ScopedNodeRequireLoader::new(policy, package_json_resolver.clone());
+        let specifier =
+            Url::from_file_path(&dependency_file).expect("dependency path should become a url");
+
+        assert!(
+            loader
+                .is_maybe_cjs(&specifier)
+                .expect("dependency should classify")
+        );
+        assert_eq!(
+            classify_resolved_module_kind(&dependency_file, package_json_resolver.as_ref())
+                .expect("dependency module kind should classify"),
+            ResolvedNodeModuleKind::CommonJs
+        );
+    }
+
+    #[test]
+    fn scoped_require_loader_respects_dependency_package_module_type() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let package_root = app_root.join("package-type-module");
+        let dependency_root = package_root.join("node_modules/dep-with-package-json");
+        std::fs::create_dir_all(&dependency_root).expect("dependency dir should build");
+        std::fs::write(package_root.join("package.json"), r#"{"type":"commonjs"}"#)
+            .expect("parent package manifest should write");
+        std::fs::write(dependency_root.join("package.json"), r#"{"type":"module"}"#)
+            .expect("dependency package manifest should write");
+        let dependency_file = dependency_root.join("dep.js");
+        std::fs::write(&dependency_file, "export default 42;\n")
+            .expect("dependency file should write");
+
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
+            .expect("policy should build");
+        let package_json_resolver = build_package_json_resolver();
+        let loader = ScopedNodeRequireLoader::new(policy, package_json_resolver.clone());
+        let specifier =
+            Url::from_file_path(&dependency_file).expect("dependency path should become a url");
+
+        assert!(
+            !loader
+                .is_maybe_cjs(&specifier)
+                .expect("dependency should classify")
+        );
+        assert_eq!(
+            classify_resolved_module_kind(&dependency_file, package_json_resolver.as_ref())
+                .expect("dependency module kind should classify"),
+            ResolvedNodeModuleKind::EsModule
+        );
+    }
+
+    #[test]
+    fn scoped_require_loader_from_require_respects_package_module_type() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        std::fs::create_dir_all(&app_root).expect("app dir should build");
+        std::fs::write(app_root.join("package.json"), r#"{"type":"module"}"#)
+            .expect("package manifest should write");
+        let module_file = app_root.join("dep.js");
+        std::fs::write(&module_file, "export default 42;\n").expect("module file should write");
+
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
+            .expect("policy should build");
+        let package_json_resolver = build_package_json_resolver();
+        let loader = ScopedNodeRequireLoader::new(policy, package_json_resolver);
+        let specifier = Url::from_file_path(&module_file).expect("module path should become a url");
+
+        assert!(
+            !loader
+                .is_maybe_cjs_from_require(&specifier)
+                .expect("module should classify")
+        );
+    }
+
+    #[test]
+    fn scoped_require_loader_from_require_does_not_inherit_parent_module_type() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let package_root = app_root.join("package-type-module");
+        let dependency_root = package_root.join("node_modules/dep-without-package-json");
+        std::fs::create_dir_all(&dependency_root).expect("dependency dir should build");
+        std::fs::write(package_root.join("package.json"), r#"{"type":"module"}"#)
+            .expect("parent package manifest should write");
+        let dependency_file = dependency_root.join("dep.js");
+        std::fs::write(&dependency_file, "module.exports = 42;\n")
+            .expect("dependency file should write");
+
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
+            .expect("policy should build");
+        let package_json_resolver = build_package_json_resolver();
+        let loader = ScopedNodeRequireLoader::new(policy, package_json_resolver);
+        let specifier =
+            Url::from_file_path(&dependency_file).expect("dependency path should become a url");
+
+        assert!(
+            loader
+                .is_maybe_cjs_from_require(&specifier)
+                .expect("dependency should classify")
+        );
     }
 
     #[test]
@@ -607,11 +928,12 @@ mod tests {
         let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
             .expect("policy should build");
 
-        let resolved = resolve_node_target(
+        let resolved = resolve_node_target_with_user_conditions(
             &policy,
             "@esbuild/darwin-arm64/bin/esbuild",
             &referrer_dir.join("main.js").display().to_string(),
             node_resolver::ResolutionMode::Require,
+            &[],
         )
         .expect("package subpath should resolve");
 
@@ -625,5 +947,209 @@ mod tests {
                 kind: ResolvedNodeModuleKind::CommonJs,
             }
         );
+    }
+
+    #[test]
+    fn resolve_node_target_user_conditions_precede_default_conditions() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let functions_root = app_root.join("functions");
+        let package_root = functions_root.join("node_modules/conditional-pkg");
+        std::fs::create_dir_all(&package_root).expect("package root should build");
+        std::fs::write(
+            package_root.join("package.json"),
+            r#"{
+              "name": "conditional-pkg",
+              "type": "module",
+              "exports": {
+                ".": {
+                  "custom-condition": "./custom.js",
+                  "import": "./import.js",
+                  "default": "./default.js"
+                }
+              }
+            }"#,
+        )
+        .expect("package manifest should write");
+        std::fs::write(package_root.join("custom.js"), "export default 'custom';\n")
+            .expect("custom condition file should write");
+        std::fs::write(package_root.join("import.js"), "export default 'import';\n")
+            .expect("import condition file should write");
+        std::fs::write(
+            package_root.join("default.js"),
+            "export default 'default';\n",
+        )
+        .expect("default condition file should write");
+
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
+            .expect("policy should build");
+        let referrer = functions_root.join("main.mjs").display().to_string();
+
+        let default_resolved = resolve_node_target_with_user_conditions(
+            &policy,
+            "conditional-pkg",
+            &referrer,
+            node_resolver::ResolutionMode::Import,
+            &[],
+        )
+        .expect("package should resolve with default import conditions");
+        assert_eq!(
+            default_resolved,
+            ResolvedNodeTarget::Module {
+                path: package_root
+                    .join("import.js")
+                    .canonicalize()
+                    .expect("import path should canonicalize"),
+                kind: ResolvedNodeModuleKind::EsModule,
+            }
+        );
+
+        let custom_conditions = vec!["custom-condition".to_string()];
+        let custom_resolved = resolve_node_target_with_user_conditions(
+            &policy,
+            "conditional-pkg",
+            &referrer,
+            node_resolver::ResolutionMode::Import,
+            &custom_conditions,
+        )
+        .expect("package should resolve with configured user conditions");
+        assert_eq!(
+            custom_resolved,
+            ResolvedNodeTarget::Module {
+                path: package_root
+                    .join("custom.js")
+                    .canonicalize()
+                    .expect("custom path should canonicalize"),
+                kind: ResolvedNodeModuleKind::EsModule,
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_node_target_empty_condition_override_uses_default_conditions() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let functions_root = app_root.join("functions");
+        let package_root = functions_root.join("node_modules/foo");
+        std::fs::create_dir_all(&package_root).expect("package root should build");
+        std::fs::write(
+            package_root.join("package.json"),
+            r#"{
+              "name": "foo",
+              "exports": {
+                "./second": {
+                  "foo": "./foo.cjs",
+                  "default": "./default.cjs"
+                },
+                "./no-default": {
+                  "foo": "./foo.cjs"
+                }
+              }
+            }"#,
+        )
+        .expect("package manifest should write");
+        std::fs::write(package_root.join("foo.cjs"), "module.exports = 'foo';\n")
+            .expect("custom condition file should write");
+        std::fs::write(
+            package_root.join("default.cjs"),
+            "module.exports = 'default';\n",
+        )
+        .expect("default condition file should write");
+
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
+            .expect("policy should build");
+        let referrer = functions_root.join("main.mjs").display().to_string();
+
+        let default_resolved = resolve_node_target_with_conditions(
+            &policy,
+            "foo/second",
+            &referrer,
+            node_resolver::ResolutionMode::Import,
+            Some(Vec::new()),
+        )
+        .expect("empty override should use default import conditions");
+        assert_eq!(
+            default_resolved,
+            ResolvedNodeTarget::Module {
+                path: package_root
+                    .join("default.cjs")
+                    .canonicalize()
+                    .expect("default path should canonicalize"),
+                kind: ResolvedNodeModuleKind::CommonJs,
+            }
+        );
+
+        let error = resolve_node_target_with_conditions(
+            &policy,
+            "foo/no-default",
+            &referrer,
+            node_resolver::ResolutionMode::Import,
+            Some(Vec::new()),
+        )
+        .expect_err("empty override should preserve package exports failures");
+        assert_error_code(&error, "ERR_PACKAGE_PATH_NOT_EXPORTED");
+    }
+
+    #[test]
+    fn resolve_node_target_preserves_invalid_specifier_errors_before_no_exports_fallback() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let functions_root = app_root.join("functions");
+        let exports_root = functions_root.join("node_modules/foo");
+        std::fs::create_dir_all(&exports_root).expect("package root should build");
+        std::fs::write(
+            exports_root.join("package.json"),
+            r#"{
+              "name": "foo",
+              "exports": {
+                "./sub/*": "./*"
+              }
+            }"#,
+        )
+        .expect("package manifest should write");
+        std::fs::write(exports_root.join("asdf.js"), "export default 'asdf';\n")
+            .expect("export target should write");
+        std::fs::write(
+            functions_root.join("package.json"),
+            r##"{
+              "imports": {
+                "#subpath/*": "./sub/*"
+              }
+            }"##,
+        )
+        .expect("function package manifest should write");
+
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node22())
+            .expect("policy should build");
+        let referrer = functions_root.join("main.mjs").display().to_string();
+
+        let exports_error = resolve_node_target_with_conditions(
+            &policy,
+            "foo/sub/./../asdf.js",
+            &referrer,
+            node_resolver::ResolutionMode::Import,
+            None,
+        )
+        .expect_err("invalid package exports specifier should not use file fallback");
+        assert_error_code(&exports_error, "ERR_INVALID_MODULE_SPECIFIER");
+
+        let imports_error = resolve_node_target_with_conditions(
+            &policy,
+            "#subpath/sub/../../../belowbase",
+            &referrer,
+            node_resolver::ResolutionMode::Import,
+            None,
+        )
+        .expect_err("invalid package imports specifier should not use file fallback");
+        assert_error_code(&imports_error, "ERR_INVALID_MODULE_SPECIFIER");
     }
 }

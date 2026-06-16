@@ -6,7 +6,7 @@ use crate::backends::v8::embedder::{JsRuntime, PollEventLoopOptions};
 use crate::error::Result;
 
 use super::super::helpers::{deserialize_json_value, runtime_js_error};
-use super::super::{InvocationRequest, NimbusRuntime, RuntimeBundle};
+use super::super::{InvocationRequest, NimbusRuntime, RuntimeBundle, RuntimeBundleEntrypointKind};
 use super::tracing::{
     trace_snapshot_seeded_runtime_error, trace_snapshot_seeded_runtime_error_with_optional_bundle,
     trace_snapshot_seeded_runtime_phase, trace_snapshot_seeded_runtime_phase_with_optional_bundle,
@@ -73,33 +73,51 @@ impl NimbusRuntime {
             "load_bundle:start",
         );
         let module_load_started_at = Instant::now();
-        trace_snapshot_seeded_runtime_phase(
-            construction_mode,
-            bundle,
-            context,
-            request,
-            "load_bundle:load_main_es_module:start",
-        );
-        let module_id = runtime
-            .load_main_es_module(&module_specifier)
-            .await
-            .map_err(|error| {
-                trace_snapshot_seeded_runtime_error(
-                    construction_mode,
-                    bundle,
-                    context,
-                    request,
+        let (load_start_phase, load_error_phase, load_complete_phase) =
+            match bundle.entrypoint_kind() {
+                RuntimeBundleEntrypointKind::Main => (
+                    "load_bundle:load_main_es_module:start",
                     "load_bundle:load_main_es_module:error",
-                    &error,
-                );
-                runtime_js_error(error)
-            })?;
+                    "load_bundle:load_main_es_module:complete",
+                ),
+                RuntimeBundleEntrypointKind::Side => (
+                    "load_bundle:load_side_es_module:start",
+                    "load_bundle:load_side_es_module:error",
+                    "load_bundle:load_side_es_module:complete",
+                ),
+            };
         trace_snapshot_seeded_runtime_phase(
             construction_mode,
             bundle,
             context,
             request,
-            "load_bundle:load_main_es_module:complete",
+            load_start_phase,
+        );
+        let module_id = match bundle.entrypoint_kind() {
+            RuntimeBundleEntrypointKind::Main => {
+                runtime.load_main_es_module(&module_specifier).await
+            }
+            RuntimeBundleEntrypointKind::Side => {
+                runtime.load_side_es_module(&module_specifier).await
+            }
+        }
+        .map_err(|error| {
+            trace_snapshot_seeded_runtime_error(
+                construction_mode,
+                bundle,
+                context,
+                request,
+                load_error_phase,
+                &error,
+            );
+            runtime_js_error(error)
+        })?;
+        trace_snapshot_seeded_runtime_phase(
+            construction_mode,
+            bundle,
+            context,
+            request,
+            load_complete_phase,
         );
         self.policy
             .metrics()

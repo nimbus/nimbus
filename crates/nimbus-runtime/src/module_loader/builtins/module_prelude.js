@@ -7,14 +7,6 @@ import {
 } from "ext:deno_node/internal/fs/streams.mjs";
 import { getBinding as getNodeInternalBinding } from "ext:deno_node/internal_binding/mod.ts";
 
-const DEPRECATED_REQUIRE_WARNINGS = Object.freeze({
-  punycode: Object.freeze({
-    code: "DEP0040",
-    message:
-      "The `punycode` module is deprecated. Please use a userland alternative instead.",
-  }),
-});
-
 const processModule = globalThis.process;
 const Module = processModule?.getBuiltinModule?.("module");
 if (!Module) {
@@ -34,6 +26,7 @@ const {
   findSourceMap,
   globalPaths,
   register,
+  registerHooks: denoRegisterHooks,
 } = Module;
 
 const denoCreateRequire = Module.createRequire.bind(Module);
@@ -70,11 +63,19 @@ if (
   };
 }
 const internalFsBinding = getNodeInternalBinding("fs");
-const internalTestBindingState = globalThis.__nimbusInternalTestBindingState ??= {
-  warningEmitted: false,
-  overrides: new Map(),
-  readlineBuiltin: undefined,
-};
+if (globalThis.__nimbusInternalTestBindingState === undefined) {
+  Object.defineProperty(globalThis, "__nimbusInternalTestBindingState", {
+    value: {
+      warningEmitted: false,
+      overrides: new Map(),
+      readlineBuiltin: undefined,
+    },
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+}
+const internalTestBindingState = globalThis.__nimbusInternalTestBindingState;
 const {
   assertEncoding,
   constants: internalFsConstants,
@@ -165,7 +166,11 @@ function createNimbusInternalTestBindingModule() {
 
 function cloneBuiltinModuleWithOverrides(builtinModule, overrides = {}) {
   const clone = {};
-  Object.defineProperties(clone, Object.getOwnPropertyDescriptors(builtinModule));
+  const descriptors = Object.getOwnPropertyDescriptors(builtinModule);
+  for (const descriptor of Object.values(descriptors)) {
+    descriptor.configurable = true;
+  }
+  Object.defineProperties(clone, descriptors);
   Object.defineProperties(clone, Object.getOwnPropertyDescriptors(overrides));
   const prototype = Object.getPrototypeOf(builtinModule);
   if (prototype !== null) {
@@ -602,18 +607,33 @@ function createNimbusTtyModule() {
     return loadReadlineBuiltin().clearScreenDown(this, callback);
   };
 
-  return {
-    ...ttyBuiltin,
-    isatty: builtinIsatty,
-    ReadStream,
-    WriteStream,
-    default: {
-      ...ttyBuiltin,
-      isatty: builtinIsatty,
-      ReadStream,
-      WriteStream,
+  Object.defineProperties(ttyBuiltin, {
+    isatty: {
+      configurable: true,
+      enumerable: true,
+      value: builtinIsatty,
+      writable: true,
     },
-  };
+    ReadStream: {
+      configurable: true,
+      enumerable: true,
+      value: ReadStream,
+      writable: true,
+    },
+    WriteStream: {
+      configurable: true,
+      enumerable: true,
+      value: WriteStream,
+      writable: true,
+    },
+    default: {
+      configurable: true,
+      enumerable: true,
+      value: ttyBuiltin,
+      writable: true,
+    },
+  });
+  return ttyBuiltin;
 }
 
 function createNimbusOsModule() {
@@ -866,16 +886,27 @@ function createNimbusReadlineModule() {
     readlineBuiltin.Interface.prototype,
   );
 
-  return {
-    ...readlineBuiltin,
-    Interface,
-    createInterface,
-    default: {
-      ...readlineBuiltin,
-      Interface,
-      createInterface,
+  Object.defineProperties(readlineBuiltin, {
+    Interface: {
+      configurable: true,
+      enumerable: true,
+      value: Interface,
+      writable: true,
     },
-  };
+    createInterface: {
+      configurable: true,
+      enumerable: true,
+      value: createInterface,
+      writable: true,
+    },
+    default: {
+      configurable: true,
+      enumerable: true,
+      value: readlineBuiltin,
+      writable: true,
+    },
+  });
+  return readlineBuiltin;
 }
 
 function createNimbusReadlinePromisesModule() {
@@ -900,14 +931,25 @@ function createNimbusReadlinePromisesModule() {
     readlinePromisesBuiltin.Interface.prototype,
   );
 
-  return {
-    ...readlinePromisesBuiltin,
-    Interface,
-    createInterface,
-    default: {
-      ...readlinePromisesBuiltin,
-      Interface,
-      createInterface,
+  Object.defineProperties(readlinePromisesBuiltin, {
+    Interface: {
+      configurable: true,
+      enumerable: true,
+      value: Interface,
+      writable: true,
     },
-  };
+    createInterface: {
+      configurable: true,
+      enumerable: true,
+      value: createInterface,
+      writable: true,
+    },
+    default: {
+      configurable: true,
+      enumerable: true,
+      value: readlinePromisesBuiltin,
+      writable: true,
+    },
+  });
+  return readlinePromisesBuiltin;
 }
