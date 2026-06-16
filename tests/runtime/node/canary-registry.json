@@ -39,7 +39,7 @@
       "compat_category": "platform_builtins",
       "canary_surfaces": ["esm_cjs_loading"],
       "public_claim": "Node platform builtin canaries prove ESM plus createRequire CommonJS loading for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-platform-process-metadata",
@@ -50,7 +50,7 @@
       "compat_category": "platform_builtins",
       "canary_surfaces": ["process_metadata"],
       "public_claim": "Node platform builtin canaries prove lane-local process.version and process.release metadata for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-platform-file-path-roundtrip",
@@ -61,7 +61,7 @@
       "compat_category": "platform_builtins",
       "canary_surfaces": ["fs_path"],
       "public_claim": "Node platform builtin canaries prove local fs write/read and path.basename behavior inside the application bundle.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-platform-stream-timer",
@@ -72,7 +72,7 @@
       "compat_category": "platform_builtins",
       "canary_surfaces": ["streams", "timers"],
       "public_claim": "Node platform builtin canaries prove Readable stream iteration and timers/promises delay behavior for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-platform-crypto-fetch-http",
@@ -83,7 +83,7 @@
       "compat_category": "platform_builtins",
       "canary_surfaces": ["crypto", "fetch_http"],
       "public_claim": "Node platform builtin canaries prove crypto hashing and loopback fetch/http behavior for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-networking-express",
@@ -105,7 +105,7 @@
       "compat_category": "http_framework",
       "canary_surfaces": ["fetch_http", "streams"],
       "public_claim": "Express canaries prove middleware response-header mutation and JSON route output for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-networking-express-error-handler",
@@ -116,7 +116,7 @@
       "compat_category": "http_framework",
       "canary_surfaces": ["fetch_http", "timers"],
       "public_claim": "Express canaries prove async server lifecycle and error-handler response shaping for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-networking-fastify",
@@ -138,7 +138,7 @@
       "compat_category": "http_framework",
       "canary_surfaces": ["fetch_http", "streams"],
       "public_claim": "Fastify canaries prove onSend hook execution and JSON route output for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-networking-fastify-error-handler",
@@ -149,7 +149,7 @@
       "compat_category": "http_framework",
       "canary_surfaces": ["fetch_http", "timers"],
       "public_claim": "Fastify canaries prove app.listen/app.close lifecycle and error-handler response shaping for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-networking-socket-io",
@@ -171,7 +171,7 @@
       "compat_category": "realtime_framework",
       "canary_surfaces": ["fetch_http", "streams", "timers"],
       "public_claim": "Socket.IO canaries prove websocket connection, server-to-client welcome event, and client/server event echo for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-networking-undici",
@@ -193,7 +193,7 @@
       "compat_category": "http_client",
       "canary_surfaces": ["fetch_http", "streams"],
       "public_claim": "Undici canaries prove successful request and response-body JSON decoding for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-networking-undici-error-response",
@@ -204,7 +204,7 @@
       "compat_category": "http_client",
       "canary_surfaces": ["fetch_http", "streams"],
       "public_claim": "Undici canaries prove non-2xx response status and body handling without treating it as transport failure.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-networking-axios",
@@ -226,7 +226,7 @@
       "compat_category": "http_client",
       "canary_surfaces": ["fetch_http", "streams"],
       "public_claim": "Axios canaries prove successful request and JSON response decoding for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-networking-axios-error-response",
@@ -237,7 +237,7 @@
       "compat_category": "http_client",
       "canary_surfaces": ["fetch_http", "streams"],
       "public_claim": "Axios canaries prove response-backed error handling for non-2xx HTTP responses.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "convex-use-node-action-packaging",
@@ -259,7 +259,7 @@
       "compat_category": "convex_runtime",
       "canary_surfaces": ["convex_use_node_action_packaging"],
       "public_claim": "Convex-compatible use node action package canaries prove package metadata and loader registration for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "convex-use-node-real-app",
@@ -291,7 +291,7 @@
       "compat_category": "convex_runtime",
       "canary_surfaces": ["convex_use_node_ctx_run_query", "convex_use_node_ctx_run_mutation", "convex_use_node_ctx_run_action"],
       "public_claim": "Convex-compatible use node app canaries prove ctx.runQuery, ctx.runMutation, and ctx.runAction calls from Node actions for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "convex-use-node-real-app-builtins",
@@ -302,7 +302,7 @@
       "compat_category": "convex_runtime",
       "canary_surfaces": ["convex_use_node_fetch_env_secret_crypto_stream_path_fs_temp"],
       "public_claim": "Convex-compatible use node app canaries prove fetch, env/secret boundary, crypto, stream, path, and temp fs behavior inside Node actions.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "convex-use-node-real-app-diagnostics",
@@ -313,7 +313,7 @@
       "compat_category": "convex_runtime",
       "canary_surfaces": ["convex_use_node_scheduler", "convex_use_node_dangling_promise_diagnostic"],
       "public_claim": "Convex-compatible use node app canaries prove scheduler interaction and dangling-promise diagnostics for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-openai",
@@ -335,7 +335,7 @@
       "compat_category": "ai_sdk",
       "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
       "public_claim": "OpenAI SDK canaries prove chat.completions.create against a local HTTP service for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-openai-auth-and-model",
@@ -346,7 +346,7 @@
       "compat_category": "ai_sdk",
       "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
       "public_claim": "OpenAI SDK canaries prove authorization header propagation and request model serialization for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-anthropic",
@@ -368,7 +368,7 @@
       "compat_category": "ai_sdk",
       "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
       "public_claim": "Anthropic SDK canaries prove messages.create against a local HTTP service for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-anthropic-auth-and-model",
@@ -379,7 +379,7 @@
       "compat_category": "ai_sdk",
       "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
       "public_claim": "Anthropic SDK canaries prove x-api-key propagation and request model serialization for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-vercel-ai",
@@ -401,7 +401,7 @@
       "compat_category": "ai_sdk",
       "canary_surfaces": ["esm_cjs_loading", "value_serialization"],
       "public_claim": "Vercel AI SDK canaries prove jsonSchema helper output for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-vercel-ai-tool-execution",
@@ -412,7 +412,7 @@
       "compat_category": "ai_sdk",
       "canary_surfaces": ["esm_cjs_loading", "value_serialization"],
       "public_claim": "Vercel AI SDK canaries prove tool input schema setup, execution callback, and stop predicate construction.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-stripe",
@@ -434,7 +434,7 @@
       "compat_category": "payments",
       "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
       "public_claim": "Stripe SDK canaries prove customers.create against a local HTTP service for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-stripe-form-auth",
@@ -445,7 +445,7 @@
       "compat_category": "payments",
       "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
       "public_claim": "Stripe SDK canaries prove form body serialization and bearer authentication propagation.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-resend",
@@ -467,7 +467,7 @@
       "compat_category": "email",
       "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
       "public_claim": "Resend SDK canaries prove emails.send against a local HTTP service for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-resend-auth-subject",
@@ -478,7 +478,7 @@
       "compat_category": "email",
       "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
       "public_claim": "Resend SDK canaries prove bearer authentication propagation and email subject serialization.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-aws-sdk-v3-s3",
@@ -500,7 +500,7 @@
       "compat_category": "object_storage",
       "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
       "public_claim": "AWS SDK v3 S3 canaries prove ListBuckets response parsing against a local HTTP service for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-aws-s3-signing-node-http-handler",
@@ -511,7 +511,7 @@
       "compat_category": "object_storage",
       "canary_surfaces": ["fetch_http", "streams", "crypto", "esm_cjs_loading"],
       "public_claim": "AWS SDK v3 S3 canaries prove NodeHttpHandler transport setup and signed authorization header propagation.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-slack-web-api",
@@ -533,7 +533,7 @@
       "compat_category": "collaboration_api",
       "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
       "public_claim": "Slack Web API canaries prove auth.test response handling against a local HTTP service for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-slack-bearer-auth",
@@ -544,7 +544,7 @@
       "compat_category": "collaboration_api",
       "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
       "public_claim": "Slack Web API canaries prove bearer authentication propagation and API path construction.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-octokit",
@@ -566,7 +566,7 @@
       "compat_category": "collaboration_api",
       "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
       "public_claim": "Octokit canaries prove GET /user request dispatch and response data extraction against a local HTTP service.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-octokit-token-auth",
@@ -577,7 +577,7 @@
       "compat_category": "collaboration_api",
       "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
       "public_claim": "Octokit canaries prove token authentication propagation for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-jose",
@@ -599,7 +599,7 @@
       "compat_category": "auth_jwt",
       "canary_surfaces": ["crypto", "esm_cjs_loading", "value_serialization"],
       "public_claim": "jose canaries prove SignJWT and jwtVerify round-trip payload handling for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-jose-protected-header",
@@ -610,7 +610,7 @@
       "compat_category": "auth_jwt",
       "canary_surfaces": ["crypto", "esm_cjs_loading", "value_serialization"],
       "public_claim": "jose canaries prove protected-header serialization and compact JWT segment generation.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-zod",
@@ -632,7 +632,7 @@
       "compat_category": "validation",
       "canary_surfaces": ["esm_cjs_loading", "value_serialization"],
       "public_claim": "Zod canaries prove object parsing, array validation, and transformed result reads for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-zod-parse-failure",
@@ -643,7 +643,7 @@
       "compat_category": "validation",
       "canary_surfaces": ["esm_cjs_loading", "value_serialization"],
       "public_claim": "Zod canaries prove safeParse failure reporting and issue-count propagation.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-uuid",
@@ -665,7 +665,7 @@
       "compat_category": "id_generation",
       "canary_surfaces": ["crypto", "esm_cjs_loading"],
       "public_claim": "uuid canaries prove v5 deterministic ID generation and validation for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-nanoid",
@@ -687,7 +687,7 @@
       "compat_category": "id_generation",
       "canary_surfaces": ["crypto", "esm_cjs_loading"],
       "public_claim": "nanoid canaries prove customAlphabet ID generation and length handling for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-upstash-redis",
@@ -709,7 +709,7 @@
       "compat_category": "database_http_client",
       "canary_surfaces": ["fetch_http", "esm_cjs_loading", "value_serialization"],
       "public_claim": "Upstash Redis canaries prove SET and GET helper behavior against a local HTTP service for each supported LTS lane.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "application-sdk-upstash-redis-rest-command",
@@ -720,7 +720,7 @@
       "compat_category": "database_http_client",
       "canary_surfaces": ["fetch_http", "esm_cjs_loading", "value_serialization"],
       "public_claim": "Upstash Redis canaries prove REST command serialization and multiple HTTP call handling.",
-      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+      "doc_path": "tests/runtime/node/compat/node-compat-surface-matrix.md"
     },
     {
       "id": "host-heavy-child-process-denied",
