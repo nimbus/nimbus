@@ -68255,23 +68255,23 @@
         "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node26/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 5578,
-        "documented_manifested_green_count": 2058,
+        "documented_manifested_green_count": 2064,
         "documented_manifested_green_source": "rust_nonignored_execution_fixture_inventory_minus_classified_red_skip",
         "documented_family_green_count": 894,
-        "path_owned_manifested_green_count": 2058,
-        "classified_red_skip_count": 3520,
-        "classified_total_count": 3520,
-        "known_red_or_gap_count": 3466,
+        "path_owned_manifested_green_count": 2064,
+        "classified_red_skip_count": 3514,
+        "classified_total_count": 3514,
+        "known_red_or_gap_count": 3460,
         "skipped_or_excluded_count": 54,
         "documented_or_classified_count": 5578,
         "unmanifested_or_unclassified_count": 0,
-        "documented_manifested_green_ratio": 0.368949,
+        "documented_manifested_green_ratio": 0.370025,
         "classification_catalog": {
           "catalog_path": "tests/runtime/node/classifications/node26.json",
           "catalog_present": true,
-          "classified_red_skip_count": 3520,
+          "classified_red_skip_count": 3514,
           "by_expectation": {
-            "expected_gap": 3466,
+            "expected_gap": 3460,
             "expected_skip": 54
           },
           "by_classification": {
@@ -68279,7 +68279,7 @@
             "requires_pseudo_tty_host_harness": 32,
             "requires_pummel_stress_harness": 65,
             "requires_sequential_host_state_harness": 119,
-            "requires_unpromoted_node_surface": 3165,
+            "requires_unpromoted_node_surface": 3159,
             "requires_wpt_harness": 25,
             "support_fixture_not_top_level_test": 46,
             "upstream_known_issue_or_platform_boundary": 30
@@ -94511,54 +94511,6 @@
               "group_id": "node26-requires_unpromoted_node_surface-30"
             },
             {
-              "test_path": "test/parallel/test-process-getactiveresources-track-active-handles.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "process-and-timing/process-host",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-30"
-            },
-            {
-              "test_path": "test/parallel/test-process-getactiveresources-track-active-requests.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "process-and-timing/process-host",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-30"
-            },
-            {
-              "test_path": "test/parallel/test-process-getactiveresources-track-interval-lifetime.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "process-and-timing/process-host",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-30"
-            },
-            {
-              "test_path": "test/parallel/test-process-getactiveresources-track-multiple-timers.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "process-and-timing/process-host",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-30"
-            },
-            {
-              "test_path": "test/parallel/test-process-getactiveresources-track-timer-lifetime.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "process-and-timing/process-host",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-30"
-            },
-            {
-              "test_path": "test/parallel/test-process-getactiveresources.js",
-              "expectation": "expected_gap",
-              "classification": "requires_unpromoted_node_surface",
-              "owner": "process-and-timing/process-host",
-              "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
-              "group_id": "node26-requires_unpromoted_node_surface-30"
-            },
-            {
               "test_path": "test/parallel/test-process-getgroups.js",
               "expectation": "expected_gap",
               "classification": "requires_unpromoted_node_surface",
@@ -96456,7 +96408,7 @@
         "source": "vendored_official_fixture_corpus",
         "primary_count_label": "fixture_count",
         "primary_count": 19772,
-        "passed_count": 7738,
+        "passed_count": 7744,
         "counts_in_official_denominator": true,
         "notes": "Byte-identical Node upstream test-* fixtures under lane-local nodeNN/test roots; pass percentages use only this denominator."
       },
