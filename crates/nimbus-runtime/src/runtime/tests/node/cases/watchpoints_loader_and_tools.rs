@@ -901,6 +901,14 @@ const LOADER_CONTEXT_DOMAIN_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-domain-vm-promise-isolation.js",
 ];
 
+const LOADER_CONTEXT_DOMAIN_PROMOTED_NODE26_ONLY_PATHS: &[&str] = &[
+    "test/parallel/test-domain-async-id-map-leak.js",
+    "test/parallel/test-domain-emit-error-handler-stack.js",
+    "test/parallel/test-domain-promise.js",
+    "test/parallel/test-domain-set-uncaught-exception-capture-after-load.js",
+    "test/parallel/test-domain-stack-empty-in-process-uncaughtexception.js",
+];
+
 fn loader_context_domain_required_fixture_paths(lane: NodeCompatLane) -> Vec<String> {
     node_compat_required_gap_paths_for_owner(lane, "loader-context/domain")
 }
@@ -936,6 +944,22 @@ fn node24_default_lane_executes_loader_context_domain_promoted_batch_fixture() {
 }
 
 #[test]
+fn node26_current_lane_executes_loader_context_domain_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = LOADER_CONTEXT_DOMAIN_PROMOTED_COMMON_PATHS
+        .iter()
+        .chain(LOADER_CONTEXT_DOMAIN_PROMOTED_NODE26_ONLY_PATHS.iter())
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-loader-context-domain-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        LOADER_CONTEXT_DOMAIN_EXTRA_DIRS,
+    );
+}
+
+#[test]
 #[ignore = "NDS3 broad pre-run: ROI-ranked loader-context/domain required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified"]
 fn node22_supported_lane_loader_context_domain_watchpoint() {
     let fixture_paths = loader_context_domain_required_fixture_paths(NodeCompatLane::Node22);
@@ -955,6 +979,19 @@ fn node24_default_lane_loader_context_domain_watchpoint() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-loader-context-domain-watchpoint",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        &[],
+        LOADER_CONTEXT_DOMAIN_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: ROI-ranked loader-context/domain required-gap inventory; keep ignored until root-cause clusters are fixed or precisely classified"]
+fn node26_current_lane_loader_context_domain_watchpoint() {
+    let fixture_paths = loader_context_domain_required_fixture_paths(NodeCompatLane::Node26);
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-loader-context-domain-watchpoint",
+        NodeCompatLane::Node26,
         &fixture_paths,
         &[],
         LOADER_CONTEXT_DOMAIN_EXTRA_DIRS,

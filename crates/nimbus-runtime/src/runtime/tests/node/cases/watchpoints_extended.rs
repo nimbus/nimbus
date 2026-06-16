@@ -5246,6 +5246,9 @@ fn node26_current_lane_parallel_js_platform_required_gap_watchpoint() {
 
 const UNPROMOTED_PARALLEL_DISCOVERY_EXTRA_DIRS: &[&str] = &["test/common", "test/fixtures"];
 
+const NODE26_UNPROMOTED_SURFACE_REQUIRED_GAP_EXTRA_DIRS: &[&str] =
+    &["test/common", "test/async-hooks", "test/fixtures", "test/fixtures/keys"];
+
 const UNPROMOTED_PARALLEL_DISCOVERY_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-async-local-storage-http-agent.js",
     "test/parallel/test-async-local-storage-http-multiclients.js",
@@ -5301,6 +5304,23 @@ const UNPROMOTED_PARALLEL_DISCOVERY_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-warn-tls-wrap-deprecation.js",
 ];
 
+const NODE26_UNPROMOTED_SURFACE_PROMOTED_PATHS: &[&str] = &[
+    "test/async-hooks/test-async-exec-resource-http-32060.js",
+    "test/async-hooks/test-async-exec-resource-http-agent.js",
+    "test/async-hooks/test-async-exec-resource-http.js",
+    "test/parallel/test-blob-createobjecturl.js",
+    "test/parallel/test-diagnostic-channel-http-request-created.js",
+    "test/parallel/test-diagnostic-channel-http-response-created.js",
+    "test/parallel/test-dns-channel-cancel-promise.js",
+    "test/parallel/test-dns-lookup-promises-options-deprecated.js",
+    "test/parallel/test-dns-lookup-promises.js",
+    "test/parallel/test-dns-perf_hooks.js",
+    "test/parallel/test-dns-promises-exists.js",
+    "test/parallel/test-gc-tls-external-memory.js",
+    "test/parallel/test-heapdump-async-hooks-init-promise.js",
+    "test/parallel/test-whatwg-encoding-singlebyte.mjs",
+];
+
 #[test]
 fn node22_supported_lane_executes_unpromoted_parallel_discovery_promoted_batch_fixture() {
     let fixture_paths: Vec<String> = UNPROMOTED_PARALLEL_DISCOVERY_PROMOTED_COMMON_PATHS
@@ -5352,6 +5372,21 @@ fn node26_current_lane_executes_unpromoted_parallel_discovery_promoted_batch_fix
 }
 
 #[test]
+fn node26_current_lane_executes_unpromoted_surface_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NODE26_UNPROMOTED_SURFACE_PROMOTED_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-unpromoted-surface-promoted-batch",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        NODE26_UNPROMOTED_SURFACE_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
 #[ignore = "NDS3 broad pre-run: generated-posture discovery for remaining unpromoted test/parallel required gaps after excluding already killed host/native/CLI/stress/fatal families"]
 fn node22_supported_lane_unpromoted_parallel_discovery_watchpoint() {
     let fixture_paths = unpromoted_parallel_discovery_fixture_paths(NodeCompatLane::Node22);
@@ -5387,6 +5422,20 @@ fn node26_current_lane_unpromoted_parallel_discovery_watchpoint() {
         &fixture_paths,
         &[],
         UNPROMOTED_PARALLEL_DISCOVERY_EXTRA_DIRS,
+    );
+}
+
+#[test]
+#[ignore = "NDS3 node26 broad pre-run: owner-wide node-compat/unpromoted-surface required-gap inventory after the filtered parallel selector drained; classify mixed async, web, dns, blob, stream, and embedding root causes before promotion"]
+fn node26_current_lane_unpromoted_surface_required_gap_watchpoint() {
+    let fixture_paths =
+        node_compat_required_gap_paths_for_owner(NodeCompatLane::Node26, "node-compat/unpromoted-surface");
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-unpromoted-surface-required-gap-watchpoint",
+        NodeCompatLane::Node26,
+        &fixture_paths,
+        &[],
+        NODE26_UNPROMOTED_SURFACE_REQUIRED_GAP_EXTRA_DIRS,
     );
 }
 
