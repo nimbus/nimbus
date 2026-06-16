@@ -1486,6 +1486,27 @@ function isLoadEnvFileAccessDeniedError(error) {
     );
 }
 
+function isNodePermissionModeEnabled(nodeProcess) {
+  const execArgv = nodeProcess?.execArgv;
+  if (!Array.isArray(execArgv)) {
+    return false;
+  }
+  return execArgv.some((arg) => {
+    const value = String(arg);
+    return value === "--permission" || value.startsWith("--permission=");
+  });
+}
+
+function isNodePermissionModeLoadEnvFileAccessDeniedError(nodeProcess, error) {
+  if (!isNodePermissionModeEnabled(nodeProcess)) {
+    return false;
+  }
+  const message = typeof error?.message === "string" ? error.message : "";
+  return error?.code === "EACCES"
+    || error?.name === "PermissionDenied"
+    || message.includes("permission denied");
+}
+
 function isLoadEnvFileNotFoundError(error) {
   const message = typeof error?.message === "string" ? error.message : "";
   return error?.name === "NotFound"
@@ -2679,6 +2700,9 @@ function seedNodeProcessLoadEnvFile(nodeProcess) {
       return result;
     } catch (error) {
       if (error !== undefined) {
+        if (isNodePermissionModeLoadEnvFileAccessDeniedError(nodeProcess, error)) {
+          throw createLoadEnvFileAccessDeniedError(displayPath, error);
+        }
         if (isLoadEnvFileAccessDeniedError(error)) {
           return loadEnvFileThroughNimbusHost(nodeProcess, resolvedPath, displayPath);
         }

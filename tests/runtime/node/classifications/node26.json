@@ -6,31 +6,7 @@
   "entries": [],
   "groups": [
     {
-      "id": "node26-node26_current_broad_pre_run_residual-1",
-      "expectation": "expected_failure",
-      "classification": "node26_current_broad_pre_run_residual",
-      "owner": "node-compat/current-lane",
-      "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-      "test_paths": [
-        "test/parallel/test-buffer-indexof.js",
-        "test/parallel/test-crypto-dh.js",
-        "test/parallel/test-crypto-gcm-implicit-short-tag.js",
-        "test/parallel/test-crypto-scrypt.js",
-        "test/parallel/test-fs-glob.mjs",
-        "test/parallel/test-http2-misbehaving-flow-control-paused.js",
-        "test/parallel/test-http2-misbehaving-flow-control.js",
-        "test/parallel/test-http2-options-max-headers-exceeds-nghttp2.js",
-        "test/parallel/test-https-agent-session-reuse.js",
-        "test/parallel/test-process-load-env-file.js",
-        "test/parallel/test-runner-get-test-context.js",
-        "test/parallel/test-stream-duplex.js",
-        "test/parallel/test-trace-events-dynamic-enable.js",
-        "test/parallel/test-url-parse-invalid-input.js",
-        "test/parallel/test-util-parse-env.js"
-      ]
-    },
-    {
-      "id": "node26-requires_native_addon_harness-2",
+      "id": "node26-requires_native_addon_harness-1",
       "expectation": "expected_gap",
       "classification": "requires_native_addon_harness",
       "owner": "loader-context/native-addon-host",
@@ -40,7 +16,7 @@
       ]
     },
     {
-      "id": "node26-requires_native_addon_harness-3",
+      "id": "node26-requires_native_addon_harness-2",
       "expectation": "expected_gap",
       "classification": "requires_native_addon_harness",
       "owner": "loader-context/native-addon-host",
@@ -82,7 +58,7 @@
       ]
     },
     {
-      "id": "node26-requires_pseudo_tty_host_harness-4",
+      "id": "node26-requires_pseudo_tty_host_harness-3",
       "expectation": "expected_gap",
       "classification": "requires_pseudo_tty_host_harness",
       "owner": "process-and-timing/tty-host",
@@ -92,7 +68,7 @@
       ]
     },
     {
-      "id": "node26-requires_pseudo_tty_host_harness-5",
+      "id": "node26-requires_pseudo_tty_host_harness-4",
       "expectation": "expected_gap",
       "classification": "requires_pseudo_tty_host_harness",
       "owner": "process-and-timing/tty-host",
@@ -132,7 +108,7 @@
       ]
     },
     {
-      "id": "node26-requires_pummel_stress_harness-6",
+      "id": "node26-requires_pummel_stress_harness-5",
       "expectation": "expected_gap",
       "classification": "requires_pummel_stress_harness",
       "owner": "node-compat/stress-harness",
@@ -206,7 +182,7 @@
       ]
     },
     {
-      "id": "node26-requires_sequential_host_state_harness-7",
+      "id": "node26-requires_sequential_host_state_harness-6",
       "expectation": "expected_gap",
       "classification": "requires_sequential_host_state_harness",
       "owner": "node-compat/sequential-host-state",
@@ -334,7 +310,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-8",
+      "id": "node26-requires_unpromoted_node_surface-7",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/assert",
@@ -345,7 +321,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-9",
+      "id": "node26-requires_unpromoted_node_surface-8",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/buffer",
@@ -361,7 +337,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-10",
+      "id": "node26-requires_unpromoted_node_surface-9",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/console",
@@ -375,7 +351,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-11",
+      "id": "node26-requires_unpromoted_node_surface-10",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/path",
@@ -385,7 +361,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-12",
+      "id": "node26-requires_unpromoted_node_surface-11",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "core-semantics/url",
@@ -395,7 +371,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-13",
+      "id": "node26-requires_unpromoted_node_surface-12",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/domain",
@@ -438,7 +414,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-14",
+      "id": "node26-requires_unpromoted_node_surface-13",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/module",
@@ -456,7 +432,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-15",
+      "id": "node26-requires_unpromoted_node_surface-14",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/util",
@@ -476,7 +452,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-16",
+      "id": "node26-requires_unpromoted_node_surface-15",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/vm",
@@ -521,7 +497,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-17",
+      "id": "node26-requires_unpromoted_node_surface-16",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "loader-context/workers",
@@ -659,7 +635,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-18",
+      "id": "node26-requires_unpromoted_node_surface-17",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/crypto",
@@ -763,7 +739,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-19",
+      "id": "node26-requires_unpromoted_node_surface-18",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/dgram",
@@ -791,7 +767,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-20",
+      "id": "node26-requires_unpromoted_node_surface-19",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/http",
@@ -1184,7 +1160,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-21",
+      "id": "node26-requires_unpromoted_node_surface-20",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/http2",
@@ -1276,7 +1252,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-22",
+      "id": "node26-requires_unpromoted_node_surface-21",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/https",
@@ -1324,7 +1300,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-23",
+      "id": "node26-requires_unpromoted_node_surface-22",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/net",
@@ -1470,7 +1446,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-24",
+      "id": "node26-requires_unpromoted_node_surface-23",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/tls",
@@ -1690,7 +1666,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-25",
+      "id": "node26-requires_unpromoted_node_surface-24",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "networking/zlib",
@@ -1716,7 +1692,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-26",
+      "id": "node26-requires_unpromoted_node_surface-25",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "node-compat/unpromoted-surface",
@@ -3554,7 +3530,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-27",
+      "id": "node26-requires_unpromoted_node_surface-26",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/diagnostics-channel",
@@ -3569,7 +3545,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-28",
+      "id": "node26-requires_unpromoted_node_surface-27",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/os",
@@ -3584,7 +3560,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-29",
+      "id": "node26-requires_unpromoted_node_surface-28",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/perf-hooks",
@@ -3595,7 +3571,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-30",
+      "id": "node26-requires_unpromoted_node_surface-29",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/process-host",
@@ -3663,7 +3639,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-31",
+      "id": "node26-requires_unpromoted_node_surface-30",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "process-and-timing/timers",
@@ -3679,7 +3655,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-32",
+      "id": "node26-requires_unpromoted_node_surface-31",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "runtime/v8",
@@ -3707,7 +3683,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-33",
+      "id": "node26-requires_unpromoted_node_surface-32",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/fs-host-io",
@@ -3769,7 +3745,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-34",
+      "id": "node26-requires_unpromoted_node_surface-33",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/readline-tty",
@@ -3791,7 +3767,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-35",
+      "id": "node26-requires_unpromoted_node_surface-34",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/stream",
@@ -3822,7 +3798,7 @@
       ]
     },
     {
-      "id": "node26-requires_unpromoted_node_surface-36",
+      "id": "node26-requires_unpromoted_node_surface-35",
       "expectation": "expected_gap",
       "classification": "requires_unpromoted_node_surface",
       "owner": "streams-local-io/tty-host",
@@ -3832,7 +3808,7 @@
       ]
     },
     {
-      "id": "node26-requires_wpt_harness-37",
+      "id": "node26-requires_wpt_harness-36",
       "expectation": "expected_gap",
       "classification": "requires_wpt_harness",
       "owner": "node-compat/wpt-harness",
@@ -3866,7 +3842,7 @@
       ]
     },
     {
-      "id": "node26-upstream_known_issue_or_platform_boundary-38",
+      "id": "node26-upstream_known_issue_or_platform_boundary-37",
       "expectation": "expected_gap",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "node-compat/platform-boundary",
@@ -3898,7 +3874,7 @@
       ]
     },
     {
-      "id": "node26-support_fixture_not_top_level_test-39",
+      "id": "node26-support_fixture_not_top_level_test-38",
       "expectation": "expected_skip",
       "classification": "support_fixture_not_top_level_test",
       "owner": "node-compat-denominator/fixture-sync",
@@ -3953,7 +3929,7 @@
       ]
     },
     {
-      "id": "node26-upstream_known_issue_or_platform_boundary-40",
+      "id": "node26-upstream_known_issue_or_platform_boundary-39",
       "expectation": "expected_skip",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "core-semantics/buffer",
@@ -3963,7 +3939,7 @@
       ]
     },
     {
-      "id": "node26-upstream_known_issue_or_platform_boundary-41",
+      "id": "node26-upstream_known_issue_or_platform_boundary-40",
       "expectation": "expected_skip",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "networking/crypto-provider",
@@ -3973,7 +3949,7 @@
       ]
     },
     {
-      "id": "node26-upstream_known_issue_or_platform_boundary-42",
+      "id": "node26-upstream_known_issue_or_platform_boundary-41",
       "expectation": "expected_skip",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "networking/crypto-provider",
@@ -3983,7 +3959,7 @@
       ]
     },
     {
-      "id": "node26-upstream_known_issue_or_platform_boundary-43",
+      "id": "node26-upstream_known_issue_or_platform_boundary-42",
       "expectation": "expected_skip",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "networking/crypto-provider",
@@ -3994,7 +3970,7 @@
       ]
     },
     {
-      "id": "node26-upstream_known_issue_or_platform_boundary-44",
+      "id": "node26-upstream_known_issue_or_platform_boundary-43",
       "expectation": "expected_skip",
       "classification": "upstream_known_issue_or_platform_boundary",
       "owner": "networking/crypto-provider",

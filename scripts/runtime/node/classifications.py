@@ -53,31 +53,6 @@ FORCED_LANE_CLASSIFICATIONS: dict[str, dict[str, dict[str, str]]] = {
         },
     },
     "node26": {
-        **{
-            path: {
-                "expectation": "expected_failure",
-                "classification": "node26_current_broad_pre_run_residual",
-                "owner": "node-compat/current-lane",
-                "reason": "NDS4 Node26 Current broad pre-run recorded this official fixture as skipped or failing, so it remains nongreen until a focused Current-lane promotion proves it green.",
-            }
-            for path in {
-                "test/parallel/test-buffer-indexof.js",
-                "test/parallel/test-crypto-dh.js",
-                "test/parallel/test-crypto-gcm-implicit-short-tag.js",
-                "test/parallel/test-crypto-scrypt.js",
-                "test/parallel/test-fs-glob.mjs",
-                "test/parallel/test-http2-misbehaving-flow-control-paused.js",
-                "test/parallel/test-http2-misbehaving-flow-control.js",
-                "test/parallel/test-http2-options-max-headers-exceeds-nghttp2.js",
-                "test/parallel/test-https-agent-session-reuse.js",
-                "test/parallel/test-process-load-env-file.js",
-                "test/parallel/test-runner-get-test-context.js",
-                "test/parallel/test-stream-duplex.js",
-                "test/parallel/test-trace-events-dynamic-enable.js",
-                "test/parallel/test-url-parse-invalid-input.js",
-                "test/parallel/test-util-parse-env.js",
-            }
-        },
         "test/parallel/test-buffer-tostring-rangeerror.js": {
             "expectation": "expected_skip",
             "classification": "upstream_known_issue_or_platform_boundary",

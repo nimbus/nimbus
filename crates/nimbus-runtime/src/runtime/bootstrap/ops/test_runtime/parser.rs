@@ -345,6 +345,7 @@ pub(super) fn runtime_test_spawn_mode(
                 });
             }
             "--permission" | "--experimental-permission" => {
+                exec_argv.push(arg.to_string());
                 permission_restricted = true;
                 index += 1;
             }
