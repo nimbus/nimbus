@@ -1,5 +1,10 @@
 import { assert, path, pathToFileURL } from "./support.mjs";
 
+function assertTimestampDate(value, fieldName) {
+  assert.ok(value instanceof Date, `${fieldName} should decode to a Date`);
+  assert.ok(!Number.isNaN(value.getTime()), `${fieldName} should be valid`);
+}
+
 async function runFieldValueSmokeFlow(
   firestoreModule,
   firestore,
@@ -28,7 +33,7 @@ async function runFieldValueSmokeFlow(
   assert.equal(data.legacy, "old");
   assert.deepEqual(data.tags, ["seed"]);
   assert.equal(data.mergeDelete, undefined);
-  assert.equal(typeof data.mergeStamp, "string");
+  assertTimestampDate(data.mergeStamp, "mergeStamp");
 
   await firestoreModule.updateDoc(documentReference, {
     count: firestoreModule.increment(2),
@@ -41,7 +46,7 @@ async function runFieldValueSmokeFlow(
   assert.equal(data.count, 3);
   assert.equal(data.legacy, undefined);
   assert.deepEqual(data.tags, ["seed", "north"]);
-  assert.equal(typeof data.updatedAt, "string");
+  assertTimestampDate(data.updatedAt, "updatedAt");
 
   const batch = firestoreModule.writeBatch(firestore);
   batch.set(
@@ -62,7 +67,7 @@ async function runFieldValueSmokeFlow(
   assert.equal(data.count, 4);
   assert.equal(data.batchDelete, undefined);
   assert.deepEqual(data.tags, ["north"]);
-  assert.equal(typeof data.batchStamp, "string");
+  assertTimestampDate(data.batchStamp, "batchStamp");
 
   const priorCount = await firestoreModule.runTransaction(
     firestore,
@@ -89,7 +94,7 @@ async function runFieldValueSmokeFlow(
   assert.equal(data.count, 5);
   assert.equal(data.txnDelete, undefined);
   assert.deepEqual(data.tags, ["north", "txn"]);
-  assert.equal(typeof data.txnStamp, "string");
+  assertTimestampDate(data.txnStamp, "txnStamp");
 }
 
 export async function testSmokeSurface(bundleDir, smokeBaseUrl) {
@@ -316,4 +321,3 @@ export async function testSmokeSurface(bundleDir, smokeBaseUrl) {
     await appModule.deleteApp(authApp);
   }
 }
-
