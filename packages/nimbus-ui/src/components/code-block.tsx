@@ -1,6 +1,35 @@
 import { useEffect, useState } from "react";
-import { createHighlighter, type Highlighter } from "shiki";
+import {
+  createHighlighter,
+  type Highlighter,
+  type ShikiTransformer,
+} from "shiki";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
+
+/** A per-identifier type hint (FSV8): 1-based line/col + the TS-compiler hover. */
+export type CodeHint = { name: string; line: number; col: number; hover: string };
+
+// A shiki transformer that, for each hint position, sets the matching token
+// span's `title` to the inferred type (native hover tooltip) and marks it so
+// CSS can show it's hoverable. shiki `span(node, line, col)` is 1-based line,
+// 0-based col; the hints are 1-based line/col, so col maps to `col - 1`.
+function typeHoverTransformer(hints: CodeHint[]): ShikiTransformer {
+  const byPosition = new Map<string, string>();
+  for (const hint of hints) {
+    byPosition.set(`${hint.line}:${hint.col - 1}`, hint.hover);
+  }
+  return {
+    name: "nimbus-type-hover",
+    span(node, line, col) {
+      const hover = byPosition.get(`${line}:${col}`);
+      if (hover) {
+        node.properties = node.properties ?? {};
+        node.properties.title = hover;
+        node.properties["data-typed"] = "true";
+      }
+    },
+  };
+}
 
 const LIGHT_THEME = "github-light";
 const DARK_THEME = "github-dark";
@@ -43,22 +72,27 @@ function normalizeLang(lang: string): string {
 export function CodeBlock({
   code,
   lang = "typescript",
+  hints,
   testid,
 }: {
   code: string;
   lang?: string;
+  hints?: CodeHint[];
   testid?: string;
 }) {
   const [html, setHtml] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    const transformers =
+      hints && hints.length > 0 ? [typeHoverTransformer(hints)] : undefined;
     getHighlighter()
       .then((hl) =>
         hl.codeToHtml(code, {
           lang: normalizeLang(lang),
           themes: { light: LIGHT_THEME, dark: DARK_THEME },
           defaultColor: false,
+          transformers,
         }),
       )
       .then((out) => {
@@ -70,7 +104,7 @@ export function CodeBlock({
     return () => {
       cancelled = true;
     };
-  }, [code, lang]);
+  }, [code, lang, hints]);
 
   if (html === null) {
     return (

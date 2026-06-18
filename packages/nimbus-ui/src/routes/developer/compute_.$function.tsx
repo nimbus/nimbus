@@ -302,7 +302,7 @@ type ModuleAnalysis = {
   references: Array<{ target: string; line: number }>;
 };
 
-type TypeHint = { name: string; line: number; hover: string };
+type TypeHint = { name: string; line: number; col: number; hover: string };
 
 type SourceState =
   | { status: "loading" }
@@ -405,7 +405,11 @@ function SourceTab({ fn }: { fn: FunctionDoc }) {
         />
       ) : null}
       <div className="min-h-0 flex-1 overflow-hidden">
-        <CodeBlock code={state.source} lang="typescript" />
+        <CodeBlock
+          code={state.source}
+          lang="typescript"
+          hints={state.typeInfo ?? undefined}
+        />
       </div>
     </div>
   );
