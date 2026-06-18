@@ -32,23 +32,34 @@ function nimbusRemapHandlerError(error, origin) {
   // outer `eval at <anonymous> (file:...)` marker has `<anonymous> (`, not
   // `<anonymous>:`, so this regex targets only the body frame.
   const match = stack.match(/<anonymous>:(\d+):(\d+)/);
-  if (match) {
-    const reportedLine = Number(match[1]);
-    const originalLine = origin.line + (reportedLine - 2) - 1;
-    if (Number.isFinite(originalLine) && originalLine >= 1) {
-      const location = (origin.module ? origin.module + ":" : "") + originalLine;
-      if (!String(err.message).includes(location)) {
-        try {
-          err.message = err.message + " (at " + location + ")";
-        } catch (_writeError) {
-          // message is read-only on some error shapes; the location still
-          // rides on nimbusOriginalLocation below.
-        }
-      }
-      err.nimbusOriginalLocation = location;
-    }
+  if (!match) {
+    return err;
   }
-  return err;
+  const reportedLine = Number(match[1]);
+  const originalLine = origin.line + (reportedLine - 2) - 1;
+  if (!Number.isFinite(originalLine) || originalLine < 1) {
+    return err;
+  }
+  const location = (origin.module ? origin.module + ":" : "") + originalLine;
+  const suffix = " (at " + location + ")";
+  const baseMessage = String(err.message == null ? "" : err.message);
+  if (baseMessage.endsWith(suffix)) {
+    return err;
+  }
+  // Append ` (at module:line)` and throw a FRESH error. Two deno_core behaviors,
+  // both verified live against the dev runtime, dictate this exact approach:
+  // (1) deno_core derives the surfaced exception text from V8's `create_message`,
+  //     which reflects the message captured at the *original* throw — so mutating
+  //     the existing error's `.message` is ignored; a fresh error is required.
+  // (2) Do NOT copy the original error's `.stack` onto the fresh error. Doing so
+  //     re-associates it with the original's frames, and deno_core then collapses
+  //     the surfaced text back to the original message, dropping the appended
+  //     location. Letting the fresh error keep its own stack lets the location
+  //     survive into the run record.
+  const remapped = new Error(baseMessage + suffix);
+  remapped.name = err.name;
+  remapped.nimbusOriginalLocation = location;
+  return remapped;
 }
 
 // Wraps a compiled runtime handler so both synchronous throws and asynchronous
