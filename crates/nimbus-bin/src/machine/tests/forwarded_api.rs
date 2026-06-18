@@ -230,6 +230,7 @@ fn machine_status_detects_reachable_machine_api_socket() {
                 "protocol_version": "v1alpha2",
                 "service_execution_ready": false,
                 "service_execution_mode": "standard_containers",
+                "service_execution_driver": "unavailable",
                 "supported_service_backends": ["container"],
                 "supported_operations": ["healthz", "capabilities"],
                 "binary_statuses": [
@@ -283,6 +284,12 @@ fn machine_status_detects_reachable_machine_api_socket() {
             .as_ref()
             .map(|capabilities| capabilities.service_execution_mode),
         Some(protocol::MachineApiServiceExecutionMode::StandardContainers)
+    );
+    assert_eq!(
+        api.capabilities
+            .as_ref()
+            .map(|capabilities| capabilities.service_execution_driver),
+        Some(protocol::MachineApiServiceExecutionDriver::Unavailable)
     );
     assert_eq!(
         api.capabilities

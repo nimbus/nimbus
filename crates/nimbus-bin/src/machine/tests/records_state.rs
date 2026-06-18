@@ -11,6 +11,7 @@ fn hidden_machine_api_subcommand_falls_back_without_home() {
             socket_path: Some(PathBuf::from("/tmp/nimbus.sock")),
             socket_activation: false,
             control_data_dir: Some(PathBuf::from("/tmp/nimbus-control")),
+            guest_node_id: "machine-os-guest-node".to_owned(),
         }),
     })
     .expect("hidden machine api should fall back without HOME");

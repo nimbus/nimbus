@@ -29,6 +29,10 @@ SDK_PLAN="docs/private/plans/archive/nimbus-sdk-resource-model-plan.md"
 CAPABILITY_PLAN="docs/private/plans/archive/nimbus-capability-segregation-plan.md"
 NODE_DBUS_DOC="docs/private/operating/node-dbus-binding.md"
 MICROVM_DOC="docs/private/architecture/sandbox/microvm-service-baseline.md"
+MACHINE_OS_REPO="../machine-os"
+MACHINE_OS_RECIPE="${MACHINE_OS_REPO}/image/build-common.sh"
+MACHINE_OS_BUILD="${MACHINE_OS_REPO}/image/build.sh"
+MACHINE_OS_VERIFY_RECIPE="${MACHINE_OS_REPO}/scripts/verify-recipe.sh"
 
 PASS=0
 FAIL=0
@@ -203,6 +207,25 @@ if crates_grep 'trait MachineApiNodeWorkloadFacade' \
   pass "${C}"
 else
   fail "${C}" "machine API service-sandbox routes still expose direct ContainerSandboxBackend lifecycle wiring or the node-workload facade is missing"
+fi
+
+# --- 11b. NSR5b machine-os recipe bakes guest node workload contract ----------
+C="11b. NSR5b machine-os recipe bakes guest node workload contract"
+if [[ -f "${MACHINE_OS_RECIPE}" ]] \
+  && [[ -f "${MACHINE_OS_BUILD}" ]] \
+  && [[ -f "${MACHINE_OS_VERIFY_RECIPE}" ]] \
+  && grep -q -- '--guest-node-id machine-os-guest-node' "${MACHINE_OS_RECIPE}" \
+  && grep -q '/var/lib/nimbus/control/node-agent' "${MACHINE_OS_RECIPE}" \
+  && grep -q 'nimbus-guest-node-agent.cil' "${MACHINE_OS_RECIPE}" \
+  && grep -q 'allow container_runtime_t system_dbusd_t' "${MACHINE_OS_RECIPE}" \
+  && grep -q 'guest_node_agent_unit=nimbus.service' "${MACHINE_OS_BUILD}" \
+  && grep -q 'guest_node_agent_id=machine-os-guest-node' "${MACHINE_OS_BUILD}" \
+  && grep -q 'guest_node_agent_status_path=/var/lib/nimbus/control/node-agent/status.jsonl' "${MACHINE_OS_BUILD}" \
+  && grep -q 'service_workload_driver=guest-node-agent-systemd-transient-unit' "${MACHINE_OS_BUILD}" \
+  && grep -q 'service_workload_runner=/usr/libexec/nimbus/nimbus-container-runner' "${MACHINE_OS_BUILD}"; then
+  pass "${C}"
+else
+  fail "${C}" "machine-os recipe/unit/policy summary does not expose the guest node-agent/systemd workload contract"
 fi
 
 # --- 11. NSR5 machine-os guest node gates -------------------------------------

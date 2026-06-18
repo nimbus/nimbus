@@ -663,7 +663,8 @@ mod tests {
         serve_machine_api,
     };
     use crate::machine::protocol::{
-        MachineApiHealthResponse, MachineApiServiceExecutionMode, PROTOCOL_VERSION,
+        MachineApiHealthResponse, MachineApiServiceExecutionDriver, MachineApiServiceExecutionMode,
+        PROTOCOL_VERSION,
     };
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -702,6 +703,10 @@ mod tests {
         assert_eq!(
             capabilities.service_execution_mode,
             MachineApiServiceExecutionMode::StandardContainers
+        );
+        assert_eq!(
+            capabilities.service_execution_driver,
+            MachineApiServiceExecutionDriver::Unavailable
         );
         assert_eq!(
             capabilities.supported_service_backends,
@@ -763,6 +768,7 @@ mod tests {
                 "protocol_version": "v1alpha1",
                 "service_execution_ready": true,
                 "service_execution_mode": "standard_containers",
+                "service_execution_driver": "guest_node_agent_systemd_transient_unit",
                 "supported_service_backends": ["container"],
                 "supported_operations": ["healthz", "capabilities"],
                 "service_execution_blockers": [],
@@ -867,6 +873,10 @@ mod tests {
             .capabilities()
             .expect("capabilities should decode cleanly");
         assert!(capabilities.service_execution_ready);
+        assert_eq!(
+            capabilities.service_execution_driver,
+            MachineApiServiceExecutionDriver::GuestNodeAgentSystemdTransientUnit
+        );
         assert_eq!(
             capabilities.supported_service_backends,
             vec![SandboxBackendKind::Container]

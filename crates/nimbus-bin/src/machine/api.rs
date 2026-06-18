@@ -33,8 +33,8 @@ use super::protocol::{
     MACHINE_API_ROLE, MachineApiBinaryStatus, MachineApiBootcOperationResponse,
     MachineApiBootcRollbackRequest, MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest,
     MachineApiBootcUpgradeRequest, MachineApiCapabilityResponse, MachineApiErrorResponse,
-    MachineApiHealthResponse, MachineApiOperationStatus, MachineApiServiceExecutionMode,
-    MachineApiServiceProcessRow, MachineApiServiceProcessSnapshot,
+    MachineApiHealthResponse, MachineApiOperationStatus, MachineApiServiceExecutionDriver,
+    MachineApiServiceExecutionMode, MachineApiServiceProcessRow, MachineApiServiceProcessSnapshot,
     MachineApiServiceProcessSnapshotResponse, MachineApiServiceSandboxBuildStartRequest,
     MachineApiServiceSandboxDetails, MachineApiServiceSandboxImageStartRequest,
     MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxListResponse,
@@ -144,7 +144,7 @@ pub(super) async fn run_machine_api_command(
     container_config.machine_port_forwarder =
         Some(OciMachinePortForwarderConfig::gvproxy_default());
     let bundle_materializer = Arc::new(ContainerSandboxBackend::new(container_config));
-    let node_id = NodeIdentity::new("machine-os-guest-node").map_err(|error| {
+    let node_id = NodeIdentity::new(&command.guest_node_id).map_err(|error| {
         Error::Internal(format!(
             "failed to build machine API guest node identity: {error}"
         ))

@@ -28,6 +28,8 @@ pub(crate) struct MachineApiCapabilityResponse {
     pub(crate) protocol_version: String,
     pub(crate) service_execution_ready: bool,
     pub(crate) service_execution_mode: MachineApiServiceExecutionMode,
+    #[serde(default)]
+    pub(crate) service_execution_driver: MachineApiServiceExecutionDriver,
     pub(crate) supported_service_backends: Vec<SandboxBackendKind>,
     pub(crate) supported_operations: Vec<String>,
     pub(crate) binary_statuses: Vec<MachineApiBinaryStatus>,
@@ -39,6 +41,14 @@ pub(crate) struct MachineApiCapabilityResponse {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum MachineApiServiceExecutionMode {
     StandardContainers,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MachineApiServiceExecutionDriver {
+    #[default]
+    Unavailable,
+    GuestNodeAgentSystemdTransientUnit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

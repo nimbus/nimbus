@@ -797,6 +797,8 @@ fn parses_hidden_machine_api_subcommand() {
         "/tmp/nimbus.sock",
         "--control-data-dir",
         "/tmp/nimbus-control",
+        "--guest-node-id",
+        "guest-node-a",
     ]);
     let Some(RootCommand::Machine(machine)) = cli.command else {
         panic!("machine api should parse");
@@ -809,6 +811,7 @@ fn parses_hidden_machine_api_subcommand() {
                 api.control_data_dir,
                 Some(PathBuf::from("/tmp/nimbus-control"))
             );
+            assert_eq!(api.guest_node_id, "guest-node-a");
             assert!(!api.socket_activation);
         }
         _ => panic!("expected api subcommand"),

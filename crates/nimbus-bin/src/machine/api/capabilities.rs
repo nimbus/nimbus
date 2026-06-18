@@ -94,6 +94,11 @@ pub(super) fn machine_api_capability_response(
         protocol_version: PROTOCOL_VERSION.to_owned(),
         service_execution_ready,
         service_execution_mode: MachineApiServiceExecutionMode::StandardContainers,
+        service_execution_driver: if state.service_workloads.is_some() {
+            MachineApiServiceExecutionDriver::GuestNodeAgentSystemdTransientUnit
+        } else {
+            MachineApiServiceExecutionDriver::Unavailable
+        },
         supported_service_backends,
         supported_operations,
         binary_statuses,

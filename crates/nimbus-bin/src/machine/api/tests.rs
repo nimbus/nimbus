@@ -66,6 +66,10 @@ async fn machine_api_serves_health_and_capabilities_over_unix_socket() {
         "{capabilities}"
     );
     assert!(
+        capabilities.contains("\"service_execution_driver\":\"unavailable\""),
+        "{capabilities}"
+    );
+    assert!(
         capabilities.contains("\"supported_service_backends\":[\"container\"]"),
         "{capabilities}"
     );
@@ -105,6 +109,10 @@ fn capability_response_reports_binary_statuses_and_explicit_blockers() {
     assert_eq!(
         capabilities.service_execution_mode,
         MachineApiServiceExecutionMode::StandardContainers
+    );
+    assert_eq!(
+        capabilities.service_execution_driver,
+        MachineApiServiceExecutionDriver::Unavailable
     );
     assert_eq!(
         capabilities.supported_service_backends,
@@ -176,6 +184,10 @@ fn capability_response_reports_machine_port_forwarder_blocker_when_unreachable()
 
     let capabilities = machine_api_capability_response(&state);
     assert!(!capabilities.service_execution_ready);
+    assert_eq!(
+        capabilities.service_execution_driver,
+        MachineApiServiceExecutionDriver::GuestNodeAgentSystemdTransientUnit
+    );
     assert_eq!(
         capabilities.supported_operations,
         vec![
@@ -272,6 +284,10 @@ fn capability_response_keeps_build_start_available_without_buildah_or_fuse_overl
     let capabilities = machine_api_capability_response(&state);
 
     assert!(capabilities.service_execution_ready);
+    assert_eq!(
+        capabilities.service_execution_driver,
+        MachineApiServiceExecutionDriver::GuestNodeAgentSystemdTransientUnit
+    );
     assert!(
         capabilities
             .supported_operations

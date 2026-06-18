@@ -541,4 +541,8 @@ pub(super) struct MachineApiCommand {
     /// Optional override for the persisted control-plane directory root.
     #[arg(long)]
     pub(super) control_data_dir: Option<PathBuf>,
+
+    /// Stable node identity advertised by the guest node-agent facade.
+    #[arg(long, hide = true, default_value = "machine-os-guest-node")]
+    pub(super) guest_node_id: String,
 }
