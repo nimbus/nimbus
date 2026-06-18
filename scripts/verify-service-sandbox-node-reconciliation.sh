@@ -15,6 +15,7 @@ PLAN="docs/private/plans/service-sandbox-node-reconciliation-plan.md"
 PLANS_README="docs/private/plans/README.md"
 PROOF_DIR="docs/private/plans/proof/service-sandbox-node-reconciliation"
 VERIFIER="scripts/verify-service-sandbox-node-reconciliation.sh"
+NSR5_PROOF="${PROOF_DIR}/nsr5-machine-os-guest-node.md"
 BIN_MAIN="crates/nimbus-bin/src/main.rs"
 NODE_CARGO="crates/nimbus-node/Cargo.toml"
 NODE_SRC="crates/nimbus-node/src"
@@ -188,10 +189,15 @@ fi
 C="11. NSR5 machine-os guest-node promotion gates are reachable"
 if [[ -x scripts/verify-bootc-default-promotion-gate.sh ]] \
   && [[ -x ../machine-os/scripts/check-selinux-avcs.sh ]] \
-  && [[ -f "${PROOF_DIR}/nsr5-machine-os-guest-node.md" ]]; then
+  && [[ -f "${NSR5_PROOF}" ]] \
+  && grep -q 'verify-bootc-default-promotion-gate.sh' "${NSR5_PROOF}" \
+  && grep -q 'verified: bootc default promotion gate has release evidence and clean macOS guest proof' "${NSR5_PROOF}" \
+  && grep -q 'guest node agent' "${NSR5_PROOF}" \
+  && grep -q 'systemd transient unit' "${NSR5_PROOF}" \
+  && grep -q 'SELinux AVC' "${NSR5_PROOF}"; then
   pass "${C}"
 else
-  fail "${C}" "machine-os gate scripts or NSR5 proof file missing"
+  fail "${C}" "machine-os gate scripts or source-confirmed NSR5 promotion proof missing"
 fi
 
 # --- 12. NSR6 Compose lifecycle no-bypass -------------------------------------
