@@ -216,6 +216,46 @@ fn capability_response_reports_machine_port_forwarder_blocker_when_unreachable()
 }
 
 #[test]
+fn capability_response_reports_unavailable_node_workload_driver_when_lifecycle_is_blocked() {
+    let temp_dir = short_socket_tempdir();
+    for requirement in STANDARD_CONTAINER_BINARY_REQUIREMENTS {
+        write_fake_binary(&temp_dir, requirement.name);
+    }
+
+    let state = MachineApiState {
+        control_data_dir: temp_dir.path().join("control"),
+        listen_mode: MachineApiListenMode::DirectSocket,
+        binary_lookup_path: Some(fake_runtime_path(&temp_dir)),
+        helper_binary_dirs: Vec::new(),
+        service_workloads: Some(Arc::new(BlockedNodeWorkloadFacade)),
+        machine_port_forwarder: None,
+    };
+
+    let capabilities = machine_api_capability_response(&state);
+
+    assert!(!capabilities.service_execution_ready);
+    assert_eq!(
+        capabilities.service_execution_driver,
+        MachineApiServiceExecutionDriver::Unavailable
+    );
+    assert_eq!(
+        capabilities.service_execution_blockers,
+        vec!["guest node lifecycle backend unavailable: systemd D-Bus is unavailable".to_owned()]
+    );
+    assert!(
+        !capabilities
+            .supported_operations
+            .iter()
+            .any(|operation| operation == MACHINE_API_IMAGE_START_OPERATION)
+    );
+    assert!(capabilities.operation_statuses.iter().any(|status| {
+        status.name == MACHINE_API_IMAGE_START_OPERATION
+            && !status.available
+            && status.blockers == capabilities.service_execution_blockers
+    }));
+}
+
+#[test]
 fn capability_response_resolves_helper_binaries_from_podman_dirs() {
     let temp_dir = short_socket_tempdir();
     let helper_dir = temp_dir.path().join("podman-helpers");
@@ -1111,5 +1151,53 @@ impl SandboxBackend for RefreshingInspectBackend {
 
     fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
         Box::pin(async move { Ok(()) })
+    }
+}
+
+struct BlockedNodeWorkloadFacade;
+
+impl MachineApiNodeWorkloadFacade for BlockedNodeWorkloadFacade {
+    fn kind(&self) -> SandboxBackendKind {
+        SandboxBackendKind::Container
+    }
+
+    fn service_execution_blockers(&self) -> Vec<String> {
+        vec!["guest node lifecycle backend unavailable: systemd D-Bus is unavailable".to_owned()]
+    }
+
+    fn start<'a>(
+        &'a self,
+        _spec: SandboxSpec,
+    ) -> super::service_workloads::MachineApiServiceFuture<'a, SandboxHandle> {
+        Box::pin(async move {
+            Err(MachineApiHttpError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                message: "blocked test facade should not start workloads".to_owned(),
+            })
+        })
+    }
+
+    fn inspect<'a>(
+        &'a self,
+        _id: &'a SandboxId,
+    ) -> super::service_workloads::MachineApiServiceFuture<'a, Option<SandboxHandle>> {
+        Box::pin(async move {
+            Err(MachineApiHttpError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                message: "blocked test facade should not inspect workloads".to_owned(),
+            })
+        })
+    }
+
+    fn stop<'a>(
+        &'a self,
+        _id: &'a SandboxId,
+    ) -> super::service_workloads::MachineApiServiceFuture<'a, ()> {
+        Box::pin(async move {
+            Err(MachineApiHttpError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                message: "blocked test facade should not stop workloads".to_owned(),
+            })
+        })
     }
 }

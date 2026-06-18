@@ -258,6 +258,27 @@ impl ContainerSandboxBackend {
         Ok(PreparedContainerServiceWorkload { handle, bundle_dir })
     }
 
+    pub fn mark_plan_only_service_workload_stopped(
+        &self,
+        id: &SandboxId,
+    ) -> Result<Option<SandboxHandle>> {
+        if self.config.start_mode != ContainerStartMode::PlanOnly {
+            return Err(SandboxError::OperationFailed {
+                message: "container service workload status refresh requires plan-only mode"
+                    .to_owned(),
+            });
+        }
+        let Some(mut manifest) = self.read_manifest(id)? else {
+            return Ok(None);
+        };
+        manifest.next_restart_at_millis = None;
+        synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
+        self.cleanup_manifest_launch_artifacts(&manifest)?;
+        manifest.launch_artifact = None;
+        self.write_manifest(&manifest)?;
+        Ok(Some(manifest.handle))
+    }
+
     fn attach_runner_owned_egress_proxy(&self, launch_plan: &mut ContainerStartPlan) -> Result<()> {
         if launch_plan.manifest.egress_proxy.is_some() {
             return Ok(());

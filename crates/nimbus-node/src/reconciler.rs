@@ -3,11 +3,11 @@ use std::sync::Arc;
 use nimbus_core::{Error, PrincipalContext, Result};
 
 use super::{
-    DirectProcessBackend, HostLifecycleBackend, HostLifecycleBackendCapabilities,
-    HostLifecycleFuture, HostLifecyclePlan, HostLifecycleRequest, HostLifecycleStatus,
-    HostLifecycleStatusReason, LocalEnforcementBinding, NodeIdentity, SystemdDbusClient,
-    SystemdTransientUnitBackend, TenantSystemEvidenceProjection, TenantWorkloadDeletionState,
-    TenantWorkloadId, TenantWorkloadSpec, TenantWorkloadStatus,
+    DirectProcessBackend, HostBackendObservedState, HostLifecycleBackend,
+    HostLifecycleBackendCapabilities, HostLifecycleFuture, HostLifecyclePlan, HostLifecycleRequest,
+    HostLifecycleStatus, HostLifecycleStatusReason, LocalEnforcementBinding, NodeIdentity,
+    SystemdDbusClient, SystemdTransientUnitBackend, TenantSystemEvidenceProjection,
+    TenantWorkloadDeletionState, TenantWorkloadId, TenantWorkloadSpec, TenantWorkloadStatus,
 };
 
 pub trait StatusEvidenceWriter: Send + Sync + 'static {
@@ -444,7 +444,20 @@ where
         plan: &HostLifecyclePlan,
     ) -> Result<(NodeWorkloadReconcileAction, TenantWorkloadStatus)> {
         let workload_id = plan.workload_id().clone();
-        let inspected = self.backend.inspect(workload_id.clone()).await?;
+        let inspected = match self.backend.inspect(workload_id.clone()).await {
+            Ok(status) => status,
+            Err(Error::NotFound(_)) => {
+                let observed = HostLifecycleStatus::from_backend_state(
+                    plan,
+                    HostBackendObservedState::Stopped,
+                );
+                return Ok((
+                    NodeWorkloadReconcileAction::ObservedStopped,
+                    observed.to_workload_status(plan)?,
+                ));
+            }
+            Err(error) => return Err(error),
+        };
         if is_stopped(&inspected) {
             return Ok((
                 NodeWorkloadReconcileAction::ObservedStopped,
@@ -886,6 +899,38 @@ mod tests {
             binding.spec().resources().admitted_quotas(),
             "observed reconcile writes must not mutate admitted quota policy"
         );
+    }
+
+    #[tokio::test]
+    async fn reconciler_treats_missing_workload_as_already_stopped() {
+        let backend = CountingBackend::new(DirectProcessBackend::new());
+        let writer = RecordingStatusEvidenceWriter::default();
+        let reconciler = NodeWorkloadReconciler::new(backend.clone(), writer.clone());
+        let binding = binding();
+        let deleting = LocalEnforcementBinding::from_spec(
+            binding
+                .spec()
+                .clone()
+                .mark_deleting_server_owned([TenantFinalizerRecord::new(
+                    "local_enforcement",
+                    "host-lifecycle-stop",
+                )
+                .expect("finalizer should parse")]),
+        );
+
+        let stopped = reconciler
+            .reconcile_binding(&deleting, direct_request())
+            .await
+            .expect("missing workload should reconcile as already stopped");
+
+        assert_eq!(stopped.desired_state(), NodeWorkloadDesiredState::Stopped);
+        assert_eq!(
+            stopped.action(),
+            NodeWorkloadReconcileAction::ObservedStopped
+        );
+        assert_eq!(stopped.status().phase(), TenantWorkloadPhase::Deleting);
+        assert_eq!(backend.calls(), vec!["validate", "inspect"]);
+        assert_eq!(writer.writes().len(), 1);
     }
 
     #[tokio::test]

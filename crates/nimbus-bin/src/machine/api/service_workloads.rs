@@ -4,12 +4,15 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
-use nimbus::{Error, SandboxBackendKind, SandboxHandle, SandboxId, SandboxSpec, SandboxStatus};
+use nimbus::{
+    Error, SandboxBackend, SandboxBackendKind, SandboxHandle, SandboxId, SandboxSpec, SandboxStatus,
+};
 use nimbus_sandbox::backends::container::{ContainerSandboxBackend, ContainerSandboxStateView};
 use nimbus_server::local_enforcement::{
     HostLifecycleBackend, HostLifecycleBackendKind, HostLifecyclePlan, HostLifecycleRequest,
-    HostLifecycleStatus, NodeAgent, NodeAgentAssignment, NodeAssignmentDisposition, RunnerSpec,
-    StatusEvidenceWriter, TenantWorkloadPhase, TenantWorkloadSpec,
+    HostLifecycleStatus, NodeAgent, NodeAgentAssignment, NodeAssignmentDisposition,
+    NodeBackendCapabilitySource, RunnerSpec, StatusEvidenceWriter, TenantWorkloadPhase,
+    TenantWorkloadSpec,
 };
 
 use crate::node_workload_executor::admit_workload_spec;
@@ -22,6 +25,9 @@ pub(super) type MachineApiServiceFuture<'a, T> =
 
 pub(crate) trait MachineApiNodeWorkloadFacade: Send + Sync {
     fn kind(&self) -> SandboxBackendKind;
+    fn service_execution_blockers(&self) -> Vec<String> {
+        Vec::new()
+    }
     fn start<'a>(&'a self, spec: SandboxSpec) -> MachineApiServiceFuture<'a, SandboxHandle>;
     fn inspect<'a>(
         &'a self,
@@ -52,11 +58,39 @@ impl<B, W> GuestNodeWorkloadService<B, W> {
 
 impl<B, W> MachineApiNodeWorkloadFacade for GuestNodeWorkloadService<B, W>
 where
-    B: HostLifecycleBackend,
+    B: HostLifecycleBackend + NodeBackendCapabilitySource,
     W: StatusEvidenceWriter,
 {
     fn kind(&self) -> SandboxBackendKind {
         SandboxBackendKind::Container
+    }
+
+    fn service_execution_blockers(&self) -> Vec<String> {
+        let mut blockers = Vec::new();
+        for capabilities in self
+            .node_agent
+            .capability_report()
+            .backend_capabilities()
+            .iter()
+            .filter(|capabilities| {
+                capabilities.backend() == HostLifecycleBackendKind::SystemdTransientUnit
+                    && !capabilities.available()
+            })
+        {
+            if capabilities.failure_reasons().is_empty() {
+                blockers.push(
+                    "guest node lifecycle backend unavailable: systemd transient unit backend is unavailable"
+                        .to_owned(),
+                );
+            } else {
+                blockers.extend(
+                    capabilities.failure_reasons().iter().map(|reason| {
+                        format!("guest node lifecycle backend unavailable: {reason}")
+                    }),
+                );
+            }
+        }
+        blockers
     }
 
     fn start<'a>(&'a self, spec: SandboxSpec) -> MachineApiServiceFuture<'a, SandboxHandle> {
@@ -83,7 +117,7 @@ where
                     false,
                 )
                 .await?;
-            Ok(handle_with_node_status(prepared.handle, Some(&status)))
+            Ok(handle_with_node_phase(prepared.handle, Some(status)))
         })
     }
 
@@ -108,17 +142,18 @@ where
                     &details.resources,
                 )
                 .await?;
-            Ok(Some(handle_with_node_status(
-                SandboxHandle::new(
-                    details.summary.tenant_id,
-                    details.summary.sandbox_id,
-                    details.summary.service_name,
-                    SandboxBackendKind::Container,
-                    details.summary.status,
-                    details.summary.published_endpoints,
-                ),
-                status.as_ref(),
-            )))
+            let handle = SandboxHandle::new(
+                details.summary.tenant_id,
+                details.summary.sandbox_id,
+                details.summary.service_name,
+                SandboxBackendKind::Container,
+                details.summary.status,
+                details.summary.published_endpoints,
+            );
+            if status.is_none() {
+                self.mark_plan_only_manifest_stopped(&handle.id).await?;
+            }
+            Ok(Some(handle_with_node_phase(handle, status)))
         })
     }
 
@@ -143,6 +178,10 @@ where
                 true,
             )
             .await?;
+            self.bundle_materializer
+                .stop(id)
+                .await
+                .map_err(sandbox_error_to_http_error)?;
             Ok(())
         })
     }
@@ -160,7 +199,7 @@ where
         bundle_dir: &Path,
         resources: &nimbus::SandboxResourceLimits,
         stop: bool,
-    ) -> Result<HostLifecycleStatus, MachineApiHttpError> {
+    ) -> Result<TenantWorkloadPhase, MachineApiHttpError> {
         let spec = service_tenant_workload_spec(
             tenant_id,
             service_name,
@@ -190,8 +229,14 @@ where
                 });
             }
         }
-        let request = service_container_runner_request(bundle_dir, resources)?;
-        self.inspect_node_status(spec, request).await
+        let Some(outcome) = report.outcomes().first() else {
+            return Err(MachineApiHttpError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: "node agent returned no outcome for service workload assignment"
+                    .to_owned(),
+            });
+        };
+        Ok(outcome.status().phase())
     }
 
     async fn inspect_service_workload(
@@ -200,7 +245,7 @@ where
         service_name: &str,
         bundle_dir: &Path,
         resources: &nimbus::SandboxResourceLimits,
-    ) -> Result<Option<HostLifecycleStatus>, MachineApiHttpError> {
+    ) -> Result<Option<TenantWorkloadPhase>, MachineApiHttpError> {
         let spec = service_tenant_workload_spec(
             tenant_id,
             service_name,
@@ -209,10 +254,20 @@ where
         )?;
         let request = service_container_runner_request(bundle_dir, resources)?;
         match self.inspect_node_status(spec, request).await {
-            Ok(status) => Ok(Some(status)),
+            Ok(status) => Ok(Some(status.phase())),
             Err(error) if error.status == StatusCode::NOT_FOUND => Ok(None),
             Err(error) => Err(error),
         }
+    }
+
+    async fn mark_plan_only_manifest_stopped(
+        &self,
+        id: &SandboxId,
+    ) -> Result<(), MachineApiHttpError> {
+        self.bundle_materializer
+            .mark_plan_only_service_workload_stopped(id)
+            .map_err(sandbox_error_to_http_error)?;
+        Ok(())
     }
 
     async fn inspect_node_status(
@@ -284,13 +339,13 @@ fn bundle_dir_from_manifest_path(manifest_path: &Path) -> Result<PathBuf, Machin
     Ok(sandbox_root.join("bundle"))
 }
 
-fn handle_with_node_status(
+fn handle_with_node_phase(
     mut handle: SandboxHandle,
-    status: Option<&HostLifecycleStatus>,
+    phase: Option<TenantWorkloadPhase>,
 ) -> SandboxHandle {
-    if let Some(status) = status {
-        handle.status = sandbox_status_from_node_phase(status.phase());
-    }
+    handle.status = phase
+        .map(sandbox_status_from_node_phase)
+        .unwrap_or(SandboxStatus::Stopped);
     handle
 }
 
@@ -377,9 +432,9 @@ mod tests {
     };
     use nimbus_sandbox::backends::container::ContainerSandboxBackendConfig;
     use nimbus_server::local_enforcement::{
-        HostBackendObservedState, HostLifecycleFuture, HostLifecyclePlan, HostLifecycleProperty,
-        HostLifecycleStatus, NodeIdentity, StatusEvidenceWrite, TenantWorkloadId,
-        TenantWorkloadStatus,
+        HostBackendObservedState, HostLifecycleBackendCapabilities, HostLifecycleFuture,
+        HostLifecyclePlan, HostLifecycleProperty, HostLifecycleStatus, NodeIdentity,
+        StatusEvidenceWrite, TenantWorkloadId, TenantWorkloadStatus,
     };
 
     use super::*;
@@ -388,6 +443,7 @@ mod tests {
     struct RecordingLifecycleBackend {
         calls: Arc<Mutex<Vec<&'static str>>>,
         last_plan: Arc<Mutex<Option<HostLifecyclePlan>>>,
+        workload_missing: Arc<Mutex<bool>>,
     }
 
     impl RecordingLifecycleBackend {
@@ -405,6 +461,14 @@ mod tests {
 
         fn record(&self, call: &'static str) {
             self.calls.lock().expect("calls lock").push(call);
+        }
+
+        fn mark_workload_missing(&self) {
+            *self.workload_missing.lock().expect("missing lock") = true;
+        }
+
+        fn workload_missing(&self) -> bool {
+            *self.workload_missing.lock().expect("missing lock")
         }
     }
 
@@ -437,6 +501,7 @@ mod tests {
         ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
             Box::pin(async move {
                 self.record("stop");
+                self.mark_workload_missing();
                 let plan = self.last_plan();
                 Ok(HostLifecycleStatus::from_backend_state(
                     &plan,
@@ -452,7 +517,9 @@ mod tests {
             Box::pin(async move {
                 self.record("inspect");
                 let plan = self.last_plan();
-                if self.calls().contains(&"start") {
+                if self.workload_missing() {
+                    Err(Error::NotFound("unit not found".to_owned()))
+                } else if self.calls().contains(&"start") {
                     Ok(HostLifecycleStatus::from_backend_state(
                         &plan,
                         HostBackendObservedState::Ready,
@@ -461,6 +528,15 @@ mod tests {
                     Err(Error::NotFound("unit not started yet".to_owned()))
                 }
             })
+        }
+    }
+
+    impl NodeBackendCapabilitySource for RecordingLifecycleBackend {
+        fn node_backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities> {
+            vec![HostLifecycleBackendCapabilities::new(
+                HostLifecycleBackendKind::SystemdTransientUnit,
+                true,
+            )]
         }
     }
 
@@ -549,6 +625,58 @@ mod tests {
                 HostLifecycleProperty::MemoryMaxBytes(bytes) if *bytes == 64 * 1024 * 1024
             )
         }));
+    }
+
+    #[tokio::test]
+    async fn guest_node_workload_service_marks_missing_units_stopped_in_container_state() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let container_config = ContainerSandboxBackendConfig::plan_only(
+            temp_dir.path().join("bundles"),
+            temp_dir.path().join("state"),
+        );
+        let backend = RecordingLifecycleBackend::default();
+        let writer = RecordingStatusWriter::default();
+        let node_agent = NodeAgent::new(
+            NodeIdentity::new("machine-os-guest-node").expect("node id"),
+            backend.clone(),
+            writer,
+        );
+        let service = GuestNodeWorkloadService::new(
+            node_agent,
+            Arc::new(ContainerSandboxBackend::new(container_config)),
+            temp_dir.path().join("state"),
+        );
+        let tenant_id = TenantId::new("svc-demo").expect("tenant id");
+        let spec = SandboxSpec::new(
+            tenant_id,
+            SandboxOwnerSpec::service("api"),
+            SandboxBackendKind::Container,
+            SandboxRootSpec::rootfs("/tmp/rootfs"),
+            SandboxProcessSpec::new(["/bin/server"]),
+        );
+        let handle = service.start(spec).await.expect("start should reconcile");
+
+        backend.mark_workload_missing();
+
+        let inspected = service
+            .inspect(&handle.id)
+            .await
+            .expect("missing node unit should inspect as stopped")
+            .expect("container manifest should remain present");
+        assert_eq!(inspected.status, SandboxStatus::Stopped);
+        let summary = service
+            .state_view
+            .inspect(&handle.id)
+            .expect("state view should load")
+            .expect("manifest should remain present")
+            .summary;
+        assert_eq!(summary.status, SandboxStatus::Stopped);
+
+        service
+            .stop(&handle.id)
+            .await
+            .expect("missing node unit should stop idempotently");
+        assert!(!backend.calls().contains(&"stop"));
     }
 
     #[test]

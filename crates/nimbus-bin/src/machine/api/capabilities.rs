@@ -8,9 +8,11 @@ pub(super) fn machine_api_capability_response(
         state.binary_lookup_path.as_deref(),
         &state.helper_binary_dirs,
     );
-    let state_operations_available = state.service_workloads.is_some();
-    let mut shared_blockers = Vec::new();
-    if !state_operations_available {
+    let node_workload_blockers = node_workload_service_blockers(state);
+    let node_workload_available = node_workload_blockers.is_empty();
+    let state_operations_available = state.service_workloads.is_some() && node_workload_available;
+    let mut shared_blockers = node_workload_blockers;
+    if state.service_workloads.is_none() {
         shared_blockers.push(MACHINE_API_OPERATION_BLOCKER.to_owned());
     }
     if state_operations_available
@@ -94,7 +96,7 @@ pub(super) fn machine_api_capability_response(
         protocol_version: PROTOCOL_VERSION.to_owned(),
         service_execution_ready,
         service_execution_mode: MachineApiServiceExecutionMode::StandardContainers,
-        service_execution_driver: if state.service_workloads.is_some() {
+        service_execution_driver: if state.service_workloads.is_some() && node_workload_available {
             MachineApiServiceExecutionDriver::GuestNodeAgentSystemdTransientUnit
         } else {
             MachineApiServiceExecutionDriver::Unavailable
@@ -105,6 +107,14 @@ pub(super) fn machine_api_capability_response(
         operation_statuses,
         service_execution_blockers,
     }
+}
+
+fn node_workload_service_blockers(state: &MachineApiState) -> Vec<String> {
+    state
+        .service_workloads
+        .as_ref()
+        .map(|workloads| workloads.service_execution_blockers())
+        .unwrap_or_default()
 }
 
 fn machine_api_operation_status(name: &str, blockers: Vec<String>) -> MachineApiOperationStatus {
