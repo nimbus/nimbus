@@ -35,6 +35,7 @@ nimbus = { path = "../nimbus", features = ["aws-kms"] }
 nimbus-assets = { path = "../nimbus-assets", features = ["js-packages", "templates"] }
 nimbus-machine = { path = "../nimbus-machine" }
 nimbus-server = { path = "../nimbus-server" }
+nimbus-services = { path = "../nimbus-services" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-system = { path = "../nimbus-system" }
 open = "5.3"

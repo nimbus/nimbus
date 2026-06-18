@@ -5806,6 +5806,7 @@ dependencies = [
  "nimbus-machine",
  "nimbus-sandbox",
  "nimbus-server",
+ "nimbus-services",
  "nimbus-system",
  "nimbus-testing",
  "oci-client",

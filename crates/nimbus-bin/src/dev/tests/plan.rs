@@ -379,6 +379,60 @@ fn dev_auto_discovers_compose_for_local_development() {
 }
 
 #[test]
+fn dev_uses_workload_controller_for_compose_services() {
+    let temp = tempdir().expect("tempdir should build");
+    create_source_root(temp.path(), "convex");
+    fs::write(
+        temp.path().join("compose.yaml"),
+        r#"
+name: Demo Stack
+services:
+  api:
+    image: ghcr.io/acme/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  db:
+    image: docker.io/library/postgres@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+"#,
+    )
+    .expect("compose fixture should write");
+    let nested_cwd = temp.path().join("convex");
+
+    let dev_plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), &nested_cwd)
+        .expect("dev plan should resolve");
+    assert_eq!(
+        dev_plan.start_command.tenant_isolation_mode,
+        nimbus_server::TenantIsolationMode::LocalDevelopment
+    );
+    assert_eq!(
+        dev_plan.start_command.compose_file,
+        vec![temp.path().join("compose.yaml")]
+    );
+
+    let selection = dev_plan
+        .compose_selection
+        .as_ref()
+        .expect("dev should auto-discover compose");
+    let workload_plan = crate::workload_boot::plan_compose_services(
+        selection,
+        &dev_plan.data_dir,
+        dev_plan.start_command.tenant_isolation_mode,
+        &crate::workload_boot::default_local_node_capacity().expect("local node should build"),
+    )
+    .expect("dev workload-control plan should resolve");
+    let mut workload_ids = workload_plan
+        .desired_workloads()
+        .into_iter()
+        .map(|workload| workload.workload_id().to_owned())
+        .collect::<Vec<_>>();
+    workload_ids.sort();
+
+    assert_eq!(
+        workload_plan.compose_files(),
+        &[temp.path().join("compose.yaml")]
+    );
+    assert_eq!(workload_ids, ["service:api", "service:db"]);
+}
+
+#[test]
 fn dev_start_and_compose_explicit_paths_override_auto_discovery() {
     let temp = tempdir().expect("tempdir should build");
     create_source_root(temp.path(), "convex");

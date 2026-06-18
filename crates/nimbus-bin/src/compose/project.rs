@@ -37,7 +37,19 @@ impl ComposeProjectContext {
         selection: &ResolvedComposeSelection,
         control_data_dir: &Path,
     ) -> Result<Self, Error> {
-        let plan = ComposeProjectPlan::load_selection(selection)?;
+        Self::load_selection_with_admission(
+            selection,
+            control_data_dir,
+            crate::compose::file::ComposeAdmissionMode::LocalDevelopment,
+        )
+    }
+
+    pub(crate) fn load_selection_with_admission(
+        selection: &ResolvedComposeSelection,
+        control_data_dir: &Path,
+        admission_mode: crate::compose::file::ComposeAdmissionMode,
+    ) -> Result<Self, Error> {
+        let plan = ComposeProjectPlan::load_selection_with_admission(selection, admission_mode)?;
         let control_plane = ComposeProjectControlPlane::from_plan(&plan, control_data_dir)?;
         Ok(Self {
             selection: selection.clone(),

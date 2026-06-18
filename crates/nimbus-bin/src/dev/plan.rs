@@ -118,6 +118,10 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
     // credentials (D5); the start command below serves exactly those
     // endpoints so `.env.local` and the run banner stay truthful.
     let wire = resolve_wire_plan(wire_surfaces, &data_dir)?;
+    let start_compose_files = compose_selection
+        .as_ref()
+        .map(|selection| selection.files.clone())
+        .unwrap_or_else(|| command.compose_file.clone());
     let start_command = StartCommand {
         port: command.port,
         // Firestore-compatible routes are always-on in dev: they mount on
@@ -146,7 +150,7 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         app_dir: start_app_dir,
         skip_codegen: command.skip_codegen,
         debug_node_apis: command.debug_node_apis,
-        compose_file: command.compose_file,
+        compose_file: start_compose_files,
         deploy_admin_token: Some(deploy_admin_token),
         auto_tenant: Some(auto_tenant),
         tenant_isolation_mode: nimbus_server::TenantIsolationMode::LocalDevelopment,

@@ -93,6 +93,18 @@ pub(crate) fn load_compose_project_context_for_selection(
     ComposeProjectContext::load_selection(selection, control_data_dir)
 }
 
+pub(crate) fn load_compose_project_context_for_selection_with_isolation_mode(
+    selection: &ResolvedComposeSelection,
+    control_data_dir: &std::path::Path,
+    tenant_isolation_mode: nimbus_server::TenantIsolationMode,
+) -> Result<ComposeProjectContext, Error> {
+    ComposeProjectContext::load_selection_with_admission(
+        selection,
+        control_data_dir,
+        compose_admission_mode_for_tenant_isolation(tenant_isolation_mode),
+    )
+}
+
 pub(crate) fn load_host_backed_service_manager_for_selection_with_isolation_mode(
     selection: &ResolvedComposeSelection,
     control_data_dir: &std::path::Path,

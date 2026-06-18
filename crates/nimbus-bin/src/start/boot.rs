@@ -86,6 +86,25 @@ pub(crate) async fn run_start_command(
     let cloud_functions_registry =
         load_cloud_functions_registry(&command, resolved_app_dir.as_ref(), &runtime_limits)?;
     let compose_selection = resolve_optional_compose_selection(&command)?;
+    let workload_boot_plan = match compose_selection.as_ref() {
+        Some(selection) => Some(crate::workload_boot::plan_compose_services(
+            selection,
+            &compose_control_data_dir,
+            command.tenant_isolation_mode,
+            &crate::workload_boot::default_local_node_capacity()?,
+        )?),
+        None => None,
+    };
+    if let Some(plan) = &workload_boot_plan {
+        tracing::info!(
+            tenant_id = %plan.tenant_id(),
+            tenant_isolation_mode = plan.tenant_isolation_mode().as_str(),
+            compose_files = plan.compose_file_count(),
+            desired_workloads = plan.desired_workload_count(),
+            placement_plans = plan.placement_plan_count(),
+            "resolved compose workload-control boot plan"
+        );
+    }
     let service_manager = load_service_manager(
         compose_selection.as_ref(),
         &compose_control_data_dir,
