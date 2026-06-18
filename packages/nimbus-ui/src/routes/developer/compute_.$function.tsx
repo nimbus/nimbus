@@ -35,11 +35,20 @@ const TABS: Array<{ id: DetailTab; label: string }> = [
 
 type DetailSearch = {
   tab?: DetailTab;
+  // 1-based source line to highlight + scroll to in the Source tab (e.g. when
+  // arriving from a failed run's error location).
+  line?: number;
 };
 
 export const Route = createFileRoute("/developer/compute_/$function")({
   validateSearch: (search: Record<string, unknown>): DetailSearch => ({
     tab: isTab(search.tab) ? search.tab : undefined,
+    line:
+      typeof search.line === "number" && Number.isFinite(search.line)
+        ? search.line
+        : typeof search.line === "string" && /^\d+$/.test(search.line)
+          ? Number.parseInt(search.line, 10)
+          : undefined,
   }),
   component: FunctionDetailPage,
 });
@@ -213,7 +222,7 @@ function FunctionDetailPage() {
         ) : fn === null ? (
           <NotFound path={functionPath} />
         ) : (
-          <TabBody tab={tab} fn={fn} bundle={bundle} />
+          <TabBody tab={tab} fn={fn} bundle={bundle} line={search.line} />
         )}
       </div>
 
@@ -226,13 +235,15 @@ function TabBody({
   tab,
   fn,
   bundle,
+  line,
 }: {
   tab: DetailTab;
   fn: FunctionDoc;
   bundle: BundleDoc | null;
+  line?: number;
 }) {
   if (tab === "statistics") return <StatisticsTab fn={fn} bundle={bundle} />;
-  if (tab === "source") return <SourceTab fn={fn} />;
+  if (tab === "source") return <SourceTab fn={fn} highlightLine={line} />;
   if (tab === "logs") return <LogsTab fn={fn} />;
   return <RunsTab fn={fn} />;
 }
@@ -319,7 +330,13 @@ type SourceState =
   | { status: "missing" }
   | { status: "error"; message: string };
 
-function SourceTab({ fn }: { fn: FunctionDoc }) {
+function SourceTab({
+  fn,
+  highlightLine,
+}: {
+  fn: FunctionDoc;
+  highlightLine?: number;
+}) {
   const modulePath = useMemo(() => {
     const path = fn.path ?? "";
     const separator = path.indexOf(":");
@@ -415,6 +432,7 @@ function SourceTab({ fn }: { fn: FunctionDoc }) {
           code={state.source}
           lang="typescript"
           hints={state.typeInfo ?? undefined}
+          highlightLine={highlightLine}
         />
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createHighlighter,
   type Highlighter,
@@ -26,6 +26,21 @@ function typeHoverTransformer(hints: CodeHint[]): ShikiTransformer {
         node.properties = node.properties ?? {};
         node.properties.title = hover;
         node.properties["data-typed"] = "true";
+      }
+    },
+  };
+}
+
+// A shiki transformer that marks a single 1-based line so CSS can highlight it
+// (and the scroll effect can find it). Used to land a reader on a run's error
+// source line. shiki `line(node, line)` is 1-based.
+function lineHighlightTransformer(highlightLine: number): ShikiTransformer {
+  return {
+    name: "nimbus-line-highlight",
+    line(node, line) {
+      if (line === highlightLine) {
+        node.properties = node.properties ?? {};
+        node.properties["data-highlighted-line"] = "true";
       }
     },
   };
@@ -73,19 +88,24 @@ export function CodeBlock({
   code,
   lang = "typescript",
   hints,
+  highlightLine,
   testid,
 }: {
   code: string;
   lang?: string;
   hints?: CodeHint[];
+  /** 1-based line to highlight and scroll into view (e.g. a run's error line). */
+  highlightLine?: number;
   testid?: string;
 }) {
   const [html, setHtml] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
-    const transformers =
-      hints && hints.length > 0 ? [typeHoverTransformer(hints)] : undefined;
+    const transformers: ShikiTransformer[] = [];
+    if (hints && hints.length > 0) transformers.push(typeHoverTransformer(hints));
+    if (highlightLine) transformers.push(lineHighlightTransformer(highlightLine));
     getHighlighter()
       .then((hl) =>
         hl.codeToHtml(code, {
@@ -104,7 +124,14 @@ export function CodeBlock({
     return () => {
       cancelled = true;
     };
-  }, [code, lang, hints]);
+  }, [code, lang, hints, highlightLine]);
+
+  // Once highlighted HTML is in the DOM, scroll the highlighted line into view.
+  useEffect(() => {
+    if (html === null || !highlightLine || !containerRef.current) return;
+    const target = containerRef.current.querySelector("[data-highlighted-line]");
+    target?.scrollIntoView({ block: "center" });
+  }, [html, highlightLine]);
 
   if (html === null) {
     return (
@@ -120,6 +147,7 @@ export function CodeBlock({
   return (
     // biome-ignore lint/security/noDangerouslySetInnerHtml: trusted shiki highlighter output built from source text
     <div
+      ref={containerRef}
       className="nimbus-code h-full overflow-auto text-[12px] leading-5"
       data-testid={testid}
       dangerouslySetInnerHTML={{ __html: html }}

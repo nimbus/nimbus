@@ -260,3 +260,12 @@
     color-mix(in oklch, var(--color-muted) 55%, transparent);
   text-underline-offset: 3px;
 }
+
+/* A run's error source line, when arrived at via the error-location link. The
+   shiki line span is made full-width so the highlight reads as a row. */
+.nimbus-code .shiki .line[data-highlighted-line] {
+  display: inline-block;
+  width: 100%;
+  background: color-mix(in oklch, var(--color-danger) 18%, transparent);
+  box-shadow: inset 2px 0 0 var(--color-danger);
+}
