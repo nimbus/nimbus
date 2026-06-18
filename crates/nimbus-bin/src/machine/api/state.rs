@@ -18,12 +18,9 @@ pub(super) async fn refresh_persisted_service_sandbox_state(
     state: &MachineApiState,
     sandbox_ids: Vec<nimbus::SandboxId>,
 ) -> Result<(), MachineApiHttpError> {
-    let backend = require_service_backend(state)?;
+    let workloads = require_service_workloads(state)?;
     for sandbox_id in sandbox_ids {
-        let _ = backend
-            .inspect(&sandbox_id)
-            .await
-            .map_err(sandbox_error_to_http_error)?;
+        let _ = workloads.inspect(&sandbox_id).await?;
     }
     Ok(())
 }

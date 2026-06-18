@@ -15,7 +15,7 @@ pub(crate) struct MachineApiState {
     pub(crate) control_data_dir: PathBuf,
     pub(crate) listen_mode: MachineApiListenMode,
     pub(crate) binary_lookup_path: Option<OsString>,
-    pub(crate) service_backend: Option<Arc<dyn SandboxBackend>>,
+    pub(crate) service_workloads: Option<Arc<dyn SandboxBackend>>,
     pub(crate) machine_port_forwarder: Option<OciMachinePortForwarderConfig>,
 }
 

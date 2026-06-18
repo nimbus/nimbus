@@ -55,7 +55,9 @@ services:
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
         helper_binary_dirs: default_guest_helper_binary_dirs(),
-        service_backend: Some(Arc::new(StubMachineApiSandboxBackend)),
+        service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+            Arc::new(StubMachineApiSandboxBackend),
+        )),
         machine_port_forwarder: None,
     };
     write_fake_runtime_binaries(temp_dir.path());
@@ -99,7 +101,9 @@ async fn host_loader_accepts_default_projects_with_ready_forwarded_machine_api_o
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
         helper_binary_dirs: default_guest_helper_binary_dirs(),
-        service_backend: Some(Arc::new(StubMachineApiSandboxBackend)),
+        service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+            Arc::new(StubMachineApiSandboxBackend),
+        )),
         machine_port_forwarder: None,
     };
     write_fake_runtime_binaries(temp_dir.path());
@@ -146,7 +150,7 @@ services:
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
         helper_binary_dirs: default_guest_helper_binary_dirs(),
-        service_backend: None,
+        service_workloads: None,
         machine_port_forwarder: None,
     };
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -206,7 +210,9 @@ services:
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
         helper_binary_dirs: default_guest_helper_binary_dirs(),
-        service_backend: Some(Arc::new(StubMachineApiSandboxBackend)),
+        service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+            Arc::new(StubMachineApiSandboxBackend),
+        )),
         machine_port_forwarder: None,
     };
     write_fake_runtime_binaries(temp_dir.path());
@@ -257,7 +263,9 @@ async fn macos_service_up_uses_forwarded_machine_api_for_default_projects() {
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
         helper_binary_dirs: default_guest_helper_binary_dirs(),
-        service_backend: Some(Arc::new(StubMachineApiSandboxBackend)),
+        service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+            Arc::new(StubMachineApiSandboxBackend),
+        )),
         machine_port_forwarder: None,
     };
     write_fake_runtime_binaries(temp_dir.path());
@@ -420,7 +428,9 @@ services:
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
         helper_binary_dirs: default_guest_helper_binary_dirs(),
-        service_backend: Some(Arc::new(ContainerSandboxBackend::new(backend_config))),
+        service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+            Arc::new(ContainerSandboxBackend::new(backend_config)),
+        )),
         machine_port_forwarder: None,
     };
     write_fake_runtime_binaries(temp_dir.path());

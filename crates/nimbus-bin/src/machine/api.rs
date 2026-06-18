@@ -17,14 +17,17 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use nimbus::{
-    Error, SandboxBackend, SandboxBackendKind, SandboxError, SandboxOciImageSource,
-    SandboxRootSpec, SandboxSpec, SandboxStatus, TenantId,
+    Error, SandboxBackendKind, SandboxError, SandboxOciImageSource, SandboxRootSpec, SandboxSpec,
+    SandboxStatus, TenantId,
 };
 use nimbus_sandbox::backends::container::{
     ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerSandboxStateView,
     OciMachinePortForwarderConfig,
 };
+use nimbus_server::local_enforcement::{NodeAgent, NodeIdentity, SystemdTransientUnitBackend};
 use serde::Deserialize;
+
+use crate::node_workload_executor::JsonlStatusWriter;
 
 use super::protocol::{
     MACHINE_API_ROLE, MachineApiBinaryStatus, MachineApiBootcOperationResponse,
@@ -48,6 +51,7 @@ mod listener;
 mod logs;
 mod process;
 mod routes;
+mod service_workloads;
 mod state;
 #[cfg(test)]
 mod tests;
@@ -59,6 +63,9 @@ pub(crate) use self::listener::bind_direct_listener;
 use self::binaries::apply_resolved_runtime_paths;
 use self::listener::resolve_machine_api_listener;
 use self::routes::machine_api_router;
+#[cfg(test)]
+pub(crate) use self::service_workloads::machine_api_node_workload_facade_from_sandbox_backend;
+pub(crate) use self::service_workloads::{GuestNodeWorkloadService, MachineApiNodeWorkloadFacade};
 
 const MACHINE_API_OPERATION_BLOCKER: &str =
     "guest machine API does not yet expose service lifecycle operations";
@@ -82,7 +89,7 @@ pub(crate) struct MachineApiState {
     pub(crate) listen_mode: MachineApiListenMode,
     pub(crate) binary_lookup_path: Option<OsString>,
     pub(crate) helper_binary_dirs: Vec<PathBuf>,
-    pub(crate) service_backend: Option<Arc<dyn SandboxBackend>>,
+    pub(crate) service_workloads: Option<Arc<dyn MachineApiNodeWorkloadFacade>>,
     pub(crate) machine_port_forwarder: Option<OciMachinePortForwarderConfig>,
 }
 
@@ -124,19 +131,46 @@ pub(super) async fn run_machine_api_command(
     let (listener, listen_mode) = resolve_machine_api_listener(&command)?;
     let binary_lookup_path = std::env::var_os("PATH");
     let helper_binary_dirs = default_guest_helper_binary_dirs();
+    let container_root = control_data_dir.join("service-sandboxes").join("container");
+    let mut container_config = ContainerSandboxBackendConfig::plan_only(
+        container_root.join("bundles"),
+        container_root.join("state"),
+    );
+    apply_resolved_runtime_paths(
+        &mut container_config,
+        binary_lookup_path.as_deref(),
+        &helper_binary_dirs,
+    );
+    container_config.machine_port_forwarder =
+        Some(OciMachinePortForwarderConfig::gvproxy_default());
+    let bundle_materializer = Arc::new(ContainerSandboxBackend::new(container_config));
+    let node_id = NodeIdentity::new("machine-os-guest-node").map_err(|error| {
+        Error::Internal(format!(
+            "failed to build machine API guest node identity: {error}"
+        ))
+    })?;
+    let status_writer = JsonlStatusWriter::new(control_data_dir.join("node-agent/status.jsonl"));
+    #[cfg(target_os = "linux")]
+    let node_lifecycle_backend =
+        SystemdTransientUnitBackend::linux_systemd_default()
+            .await
+            .map_err(|error| {
+                Error::Internal(format!(
+                    "machine API service workloads require guest systemd transient unit support: {error}"
+                ))
+            })?;
+    #[cfg(not(target_os = "linux"))]
+    let node_lifecycle_backend = SystemdTransientUnitBackend::unavailable(
+        "machine API service workloads require a Linux guest systemd manager",
+    );
+    let node_agent = NodeAgent::new(node_id, node_lifecycle_backend, status_writer);
+    let service_workloads = Arc::new(GuestNodeWorkloadService::new(
+        node_agent,
+        bundle_materializer,
+        container_root.join("state"),
+    ));
     let state = MachineApiState {
-        service_backend: Some(Arc::new(ContainerSandboxBackend::new({
-            let mut config = ContainerSandboxBackendConfig::under_root(
-                control_data_dir.join("service-sandboxes").join("container"),
-            );
-            apply_resolved_runtime_paths(
-                &mut config,
-                binary_lookup_path.as_deref(),
-                &helper_binary_dirs,
-            );
-            config.machine_port_forwarder = Some(OciMachinePortForwarderConfig::gvproxy_default());
-            config
-        }))),
+        service_workloads: Some(service_workloads),
         control_data_dir,
         listen_mode,
         binary_lookup_path,
@@ -160,11 +194,11 @@ where
         .map_err(|error| Error::Internal(format!("machine API server failed: {error}")))
 }
 
-fn require_service_backend(
+fn require_service_workloads(
     state: &MachineApiState,
-) -> Result<&Arc<dyn SandboxBackend>, MachineApiHttpError> {
+) -> Result<&Arc<dyn MachineApiNodeWorkloadFacade>, MachineApiHttpError> {
     state
-        .service_backend
+        .service_workloads
         .as_ref()
         .ok_or_else(|| MachineApiHttpError {
             status: StatusCode::SERVICE_UNAVAILABLE,
@@ -270,7 +304,8 @@ fn sandbox_error_to_http_error(error: SandboxError) -> MachineApiHttpError {
     }
 }
 
-struct MachineApiHttpError {
+#[derive(Debug)]
+pub(crate) struct MachineApiHttpError {
     status: StatusCode,
     message: String,
 }

@@ -34,7 +34,7 @@ async fn machine_api_serves_health_and_capabilities_over_unix_socket() {
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(fake_runtime_path(&temp_dir)),
         helper_binary_dirs: Vec::new(),
-        service_backend: None,
+        service_workloads: None,
         machine_port_forwarder: None,
     };
     for requirement in STANDARD_CONTAINER_BINARY_REQUIREMENTS {
@@ -97,7 +97,7 @@ fn capability_response_reports_binary_statuses_and_explicit_blockers() {
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(fake_runtime_path(&temp_dir)),
         helper_binary_dirs: Vec::new(),
-        service_backend: None,
+        service_workloads: None,
         machine_port_forwarder: None,
     };
     let capabilities = machine_api_capability_response(&state);
@@ -159,12 +159,14 @@ fn capability_response_reports_machine_port_forwarder_blocker_when_unreachable()
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(fake_runtime_path(&temp_dir)),
         helper_binary_dirs: Vec::new(),
-        service_backend: Some(Arc::new(ContainerSandboxBackend::new(
-            ContainerSandboxBackendConfig::plan_only(
-                temp_dir.path().join("bundles"),
-                temp_dir.path().join("state"),
-            ),
-        ))),
+        service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+            Arc::new(ContainerSandboxBackend::new(
+                ContainerSandboxBackendConfig::plan_only(
+                    temp_dir.path().join("bundles"),
+                    temp_dir.path().join("state"),
+                ),
+            )),
+        )),
         machine_port_forwarder: Some(OciMachinePortForwarderConfig {
             host: "127.0.0.1".to_owned(),
             port: 9,
@@ -216,7 +218,7 @@ fn capability_response_resolves_helper_binaries_from_podman_dirs() {
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(fake_runtime_path(&temp_dir)),
         helper_binary_dirs: vec![helper_dir.clone()],
-        service_backend: None,
+        service_workloads: None,
         machine_port_forwarder: None,
     };
 
@@ -256,12 +258,14 @@ fn capability_response_keeps_build_start_available_without_buildah_or_fuse_overl
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(fake_runtime_path(&temp_dir)),
         helper_binary_dirs: vec![helper_dir],
-        service_backend: Some(Arc::new(ContainerSandboxBackend::new(
-            ContainerSandboxBackendConfig::plan_only(
-                temp_dir.path().join("bundles"),
-                temp_dir.path().join("state"),
-            ),
-        ))),
+        service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+            Arc::new(ContainerSandboxBackend::new(
+                ContainerSandboxBackendConfig::plan_only(
+                    temp_dir.path().join("bundles"),
+                    temp_dir.path().join("state"),
+                ),
+            )),
+        )),
         machine_port_forwarder: None,
     };
 
@@ -381,7 +385,9 @@ async fn machine_api_list_and_current_refresh_persisted_service_state_before_rep
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(fake_runtime_path(&temp_dir)),
         helper_binary_dirs: Vec::new(),
-        service_backend: Some(Arc::new(backend)),
+        service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+            Arc::new(backend),
+        )),
         machine_port_forwarder: None,
     };
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -445,7 +451,9 @@ async fn machine_api_start_routes_reject_cross_wired_root_kinds_before_backend_s
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(fake_runtime_path(&temp_dir)),
         helper_binary_dirs: Vec::new(),
-        service_backend: Some(Arc::new(backend)),
+        service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+            Arc::new(backend),
+        )),
         machine_port_forwarder: None,
     };
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -534,7 +542,9 @@ async fn machine_api_start_routes_reject_standalone_specs_before_backend_start()
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(fake_runtime_path(&temp_dir)),
         helper_binary_dirs: Vec::new(),
-        service_backend: Some(Arc::new(backend)),
+        service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+            Arc::new(backend),
+        )),
         machine_port_forwarder: None,
     };
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -620,7 +630,9 @@ async fn service_sandbox_id_routes_ignore_standalone_sandbox_records() {
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(fake_runtime_path(&temp_dir)),
         helper_binary_dirs: Vec::new(),
-        service_backend: Some(Arc::new(backend)),
+        service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+            Arc::new(backend),
+        )),
         machine_port_forwarder: None,
     };
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();

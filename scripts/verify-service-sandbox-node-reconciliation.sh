@@ -20,6 +20,8 @@ BIN_MAIN="crates/nimbus-bin/src/main.rs"
 NODE_CARGO="crates/nimbus-node/Cargo.toml"
 NODE_SRC="crates/nimbus-node/src"
 COMPOSE_SRC="crates/nimbus-bin/src/compose"
+MACHINE_API_SRC="crates/nimbus-bin/src/machine/api"
+MACHINE_API_ROOT="crates/nimbus-bin/src/machine/api.rs"
 WORKLOAD_CONTROL_DIR="crates/nimbus-services/src/workload_control"
 WORKLOAD_SCHEDULING_SRC="${WORKLOAD_CONTROL_DIR}/scheduling.rs"
 SESSION_MODEL="docs/private/architecture/sandbox/service-sandbox-session-model.md"
@@ -54,6 +56,11 @@ plan_grep() {
 compose_backend_lifecycle_leaks() {
   grep -R -n --include='*.rs' -E '\.(start|stop|inspect)\(' "${COMPOSE_SRC}" 2>/dev/null \
     | grep -v '^crates/nimbus-bin/src/compose/lifecycle.rs:' || true
+}
+
+machine_api_direct_container_lifecycle_leaks() {
+  grep -R -n --include='*.rs' -E 'SandboxBackendMachineApiServiceWorkloads|MachineApiServiceWorkloads|ContainerSandboxBackend::(start|inspect|stop)' \
+    "${MACHINE_API_SRC}" "${MACHINE_API_ROOT}" 2>/dev/null || true
 }
 
 # --- 1. NSR0 control-plane registration --------------------------------------
@@ -183,6 +190,19 @@ if crates_grep 'RunnerSpec' \
   pass "${C}"
 else
   fail "${C}" "typed container/krun runner spec tests or NSR4 proof missing"
+fi
+
+# --- 11a. NSR5a machine API delegates service lifecycle to node workload path --
+C="11a. NSR5a machine API service-sandbox lifecycle uses guest node workload facade"
+if crates_grep 'trait MachineApiNodeWorkloadFacade' \
+  && crates_grep 'struct GuestNodeWorkloadService' \
+  && crates_grep 'prepare_plan_only_service_workload' \
+  && crates_grep 'RunnerSpec::container' \
+  && crates_grep 'NodeAgentAssignment::from_spec' \
+  && [[ -z "$(machine_api_direct_container_lifecycle_leaks)" ]]; then
+  pass "${C}"
+else
+  fail "${C}" "machine API service-sandbox routes still expose direct ContainerSandboxBackend lifecycle wiring or the node-workload facade is missing"
 fi
 
 # --- 11. NSR5 machine-os guest node gates -------------------------------------

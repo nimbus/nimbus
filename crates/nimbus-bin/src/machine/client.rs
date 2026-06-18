@@ -659,7 +659,8 @@ mod tests {
     };
     use crate::machine::api::{
         MachineApiListenMode, MachineApiState, bind_direct_listener,
-        default_guest_helper_binary_dirs, serve_machine_api,
+        default_guest_helper_binary_dirs, machine_api_node_workload_facade_from_sandbox_backend,
+        serve_machine_api,
     };
     use crate::machine::protocol::{
         MachineApiHealthResponse, MachineApiServiceExecutionMode, PROTOCOL_VERSION,
@@ -675,7 +676,7 @@ mod tests {
             listen_mode: MachineApiListenMode::DirectSocket,
             binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
             helper_binary_dirs: default_guest_helper_binary_dirs(),
-            service_backend: None,
+            service_workloads: None,
             machine_port_forwarder: None,
         };
         write_fake_runtime_binaries(temp_dir.path());
@@ -848,7 +849,9 @@ mod tests {
             listen_mode: MachineApiListenMode::DirectSocket,
             binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
             helper_binary_dirs: default_guest_helper_binary_dirs(),
-            service_backend: Some(Arc::new(StubMachineApiSandboxBackend::default())),
+            service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+                Arc::new(StubMachineApiSandboxBackend::default()),
+            )),
             machine_port_forwarder: None,
         };
         write_fake_runtime_binaries(temp_dir.path());
@@ -948,7 +951,9 @@ mod tests {
             listen_mode: MachineApiListenMode::DirectSocket,
             binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
             helper_binary_dirs: default_guest_helper_binary_dirs(),
-            service_backend: Some(Arc::new(ContainerSandboxBackend::new(backend_config))),
+            service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+                Arc::new(ContainerSandboxBackend::new(backend_config)),
+            )),
             machine_port_forwarder: None,
         };
         write_fake_runtime_binaries(temp_dir.path());
@@ -1027,7 +1032,9 @@ mod tests {
             listen_mode: MachineApiListenMode::DirectSocket,
             binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
             helper_binary_dirs: default_guest_helper_binary_dirs(),
-            service_backend: Some(Arc::new(ContainerSandboxBackend::new(backend_config))),
+            service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+                Arc::new(ContainerSandboxBackend::new(backend_config)),
+            )),
             machine_port_forwarder: None,
         };
         write_fake_runtime_binaries(temp_dir.path());

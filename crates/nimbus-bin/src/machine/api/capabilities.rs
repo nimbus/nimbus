@@ -8,7 +8,7 @@ pub(super) fn machine_api_capability_response(
         state.binary_lookup_path.as_deref(),
         &state.helper_binary_dirs,
     );
-    let state_operations_available = state.service_backend.is_some();
+    let state_operations_available = state.service_workloads.is_some();
     let mut shared_blockers = Vec::new();
     if !state_operations_available {
         shared_blockers.push(MACHINE_API_OPERATION_BLOCKER.to_owned());
@@ -85,9 +85,9 @@ pub(super) fn machine_api_capability_response(
             .map(|status| status.name.clone()),
     );
     let supported_service_backends = state
-        .service_backend
+        .service_workloads
         .as_ref()
-        .map(|backend| vec![backend.kind()])
+        .map(|workloads| vec![workloads.kind()])
         .unwrap_or_else(|| vec![SandboxBackendKind::Container]);
 
     MachineApiCapabilityResponse {

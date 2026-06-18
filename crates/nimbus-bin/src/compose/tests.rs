@@ -27,7 +27,8 @@ use crate::compose::logs::{read_log_chunk, resolve_service_ctr_log_path};
 use crate::compose::process::{parse_process_rows, read_pid_file_if_exists};
 use crate::machine::{
     MachineApiClient, MachineApiListenMode, MachineApiState, bind_direct_listener,
-    default_guest_helper_binary_dirs, serve_machine_api,
+    default_guest_helper_binary_dirs, machine_api_node_workload_facade_from_sandbox_backend,
+    serve_machine_api,
 };
 
 mod forwarded_api;

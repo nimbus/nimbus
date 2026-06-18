@@ -140,6 +140,12 @@ pub struct ContainerSandboxBackend {
     egress_proxies: Arc<Mutex<HashMap<SandboxId, SandboxEgressProxy>>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedContainerServiceWorkload {
+    pub handle: SandboxHandle,
+    pub bundle_dir: PathBuf,
+}
+
 impl ContainerSandboxBackend {
     pub fn new(config: ContainerSandboxBackendConfig) -> Self {
         Self {
@@ -224,6 +230,29 @@ impl ContainerSandboxBackend {
     fn start_sync(&self, spec: SandboxSpec) -> Result<SandboxHandle> {
         let launch_plan = self.plan_start(&spec)?;
         self.finish_start(launch_plan)
+    }
+
+    pub fn prepare_plan_only_service_workload(
+        &self,
+        spec: SandboxSpec,
+    ) -> Result<PreparedContainerServiceWorkload> {
+        if self.config.start_mode != ContainerStartMode::PlanOnly {
+            return Err(SandboxError::InvalidSpec {
+                message: "container service workload materialization requires plan-only mode"
+                    .to_owned(),
+            });
+        }
+        if spec.service_name().is_none() {
+            return Err(SandboxError::InvalidSpec {
+                message:
+                    "container service workload materialization requires service owner metadata"
+                        .to_owned(),
+            });
+        }
+        let launch_plan = self.plan_start(&spec)?;
+        let bundle_dir = launch_plan.manifest.bundle_layout.bundle_dir.clone();
+        let handle = self.finish_start(launch_plan)?;
+        Ok(PreparedContainerServiceWorkload { handle, bundle_dir })
     }
 
     fn finish_start(&self, launch_plan: ContainerStartPlan) -> Result<SandboxHandle> {

@@ -144,7 +144,8 @@ mod tests {
     };
     use crate::machine::{
         MachineApiListenMode, MachineApiState, bind_direct_listener,
-        default_guest_helper_binary_dirs, serve_machine_api,
+        default_guest_helper_binary_dirs, machine_api_node_workload_facade_from_sandbox_backend,
+        serve_machine_api,
     };
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -159,8 +160,8 @@ mod tests {
             listen_mode: MachineApiListenMode::DirectSocket,
             binary_lookup_path: None,
             helper_binary_dirs: default_guest_helper_binary_dirs(),
-            service_backend: Some(std::sync::Arc::new(
-                StubMachineApiSandboxBackend::with_state_root(state_root),
+            service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+                std::sync::Arc::new(StubMachineApiSandboxBackend::with_state_root(state_root)),
             )),
             machine_port_forwarder: None,
         };

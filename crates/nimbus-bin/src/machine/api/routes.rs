@@ -93,11 +93,8 @@ async fn machine_api_start_image_service_sandbox(
     Json(request): Json<MachineApiServiceSandboxImageStartRequest>,
 ) -> Result<Json<MachineApiServiceSandboxStartResponse>, MachineApiHttpError> {
     require_image_start_root(&request.spec)?;
-    let backend = require_service_backend(&state)?;
-    let handle = backend
-        .start(request.spec)
-        .await
-        .map_err(sandbox_error_to_http_error)?;
+    let workloads = require_service_workloads(&state)?;
+    let handle = workloads.start(request.spec).await?;
     Ok(Json(MachineApiServiceSandboxStartResponse { handle }))
 }
 
@@ -106,11 +103,8 @@ async fn machine_api_start_build_service_sandbox(
     Json(request): Json<MachineApiServiceSandboxBuildStartRequest>,
 ) -> Result<Json<MachineApiServiceSandboxStartResponse>, MachineApiHttpError> {
     require_build_start_root(&request.spec)?;
-    let backend = require_service_backend(&state)?;
-    let handle = backend
-        .start(request.spec)
-        .await
-        .map_err(sandbox_error_to_http_error)?;
+    let workloads = require_service_workloads(&state)?;
+    let handle = workloads.start(request.spec).await?;
     Ok(Json(MachineApiServiceSandboxStartResponse { handle }))
 }
 
@@ -118,12 +112,9 @@ async fn machine_api_inspect_service_sandbox(
     State(state): State<MachineApiState>,
     AxumPath(sandbox_id): AxumPath<String>,
 ) -> Result<Json<MachineApiServiceSandboxInspectResponse>, MachineApiHttpError> {
-    let backend = require_service_backend(&state)?;
+    let workloads = require_service_workloads(&state)?;
     let sandbox_id = nimbus::SandboxId::new(sandbox_id);
-    let handle = backend
-        .inspect(&sandbox_id)
-        .await
-        .map_err(sandbox_error_to_http_error)?;
+    let handle = workloads.inspect(&sandbox_id).await?;
     Ok(Json(MachineApiServiceSandboxInspectResponse {
         sandbox_id,
         handle,
@@ -140,7 +131,7 @@ async fn machine_api_list_service_sandboxes(
     State(state): State<MachineApiState>,
     Query(query): Query<MachineApiServiceSandboxListQuery>,
 ) -> Result<Json<MachineApiServiceSandboxListResponse>, MachineApiHttpError> {
-    require_service_backend(&state)?;
+    require_service_workloads(&state)?;
     let view = container_state_view(&state);
     let summaries = match query.tenant_id.as_ref() {
         Some(tenant_id) => view
@@ -178,7 +169,7 @@ async fn machine_api_lookup_current_service_sandbox(
     State(state): State<MachineApiState>,
     Query(query): Query<MachineApiCurrentServiceSandboxQuery>,
 ) -> Result<Json<MachineApiServiceSandboxLookupResponse>, MachineApiHttpError> {
-    require_service_backend(&state)?;
+    require_service_workloads(&state)?;
     let view = container_state_view(&state);
     let sandbox_ids = view
         .list_for_tenant(&query.tenant_id)
@@ -214,7 +205,7 @@ async fn machine_api_read_service_sandbox_logs(
     AxumPath(sandbox_id): AxumPath<String>,
     Query(query): Query<MachineApiServiceSandboxLogQuery>,
 ) -> Result<Json<MachineApiServiceSandboxLogChunkResponse>, MachineApiHttpError> {
-    require_service_backend(&state)?;
+    require_service_workloads(&state)?;
     let sandbox_id = nimbus::SandboxId::new(sandbox_id);
     let view = container_state_view(&state);
     let log_paths = view
@@ -239,7 +230,7 @@ async fn machine_api_service_sandbox_process_snapshot(
     State(state): State<MachineApiState>,
     AxumPath(sandbox_id): AxumPath<String>,
 ) -> Result<Json<MachineApiServiceProcessSnapshotResponse>, MachineApiHttpError> {
-    require_service_backend(&state)?;
+    require_service_workloads(&state)?;
     let sandbox_id = nimbus::SandboxId::new(sandbox_id);
     let view = container_state_view(&state);
     let details = view
@@ -284,22 +275,15 @@ async fn machine_api_stop_service_sandbox(
     State(state): State<MachineApiState>,
     AxumPath(sandbox_id): AxumPath<String>,
 ) -> Result<Json<MachineApiServiceSandboxStopResponse>, MachineApiHttpError> {
-    let backend = require_service_backend(&state)?;
+    let workloads = require_service_workloads(&state)?;
     let sandbox_id = nimbus::SandboxId::new(sandbox_id);
-    let Some(_) = backend
-        .inspect(&sandbox_id)
-        .await
-        .map_err(sandbox_error_to_http_error)?
-    else {
+    let Some(_) = workloads.inspect(&sandbox_id).await? else {
         return Err(MachineApiHttpError {
             status: StatusCode::NOT_FOUND,
             message: format!("sandbox instance was not found: {sandbox_id}"),
         });
     };
-    backend
-        .stop(&sandbox_id)
-        .await
-        .map_err(sandbox_error_to_http_error)?;
+    workloads.stop(&sandbox_id).await?;
     Ok(Json(MachineApiServiceSandboxStopResponse {
         sandbox_id,
         stopped: true,
