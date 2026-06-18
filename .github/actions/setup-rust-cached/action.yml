@@ -49,6 +49,13 @@ inputs:
       saving entirely.
     required: false
     default: "auto"
+  linux-linker:
+    description: >-
+      Linux linker to export through CARGO_TARGET_*_RUSTFLAGS. Defaults to
+      "mold" for CI acceleration. Use "lld" for OpenSSL-backed test/build
+      lanes that are known to trip mold on ubuntu runners.
+    required: false
+    default: "mold"
 
 runs:
   using: composite
@@ -64,12 +71,10 @@ runs:
         echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
         git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
 
-    # CA1: Replace the system bfd/lld linker on Linux runners with mold.
-    # mold is 3-10x faster than the GNU linker on large instrumented binaries
-    # and was the prerequisite for unlocking `cargo llvm-cov -j > 1` in the
-    # Coverage job (see ci.yml's coverage step and the CC6 deferral). The
-    # env vars persist via $GITHUB_ENV so every subsequent cargo invocation
-    # in the job uses mold without per-call wrapper plumbing.
+    # CA1: Default Linux runners to mold. mold is 3-10x faster than the GNU
+    # linker on large binaries. The linux-linker input lets known
+    # OpenSSL-backed link lanes opt back to lld without open-coding
+    # environment writes in each workflow.
     #
     # Invocation pattern: RUSTFLAGS '-C link-arg=-fuse-ld=mold' (NOT
     # CARGO_TARGET_*_LINKER=mold). The LINKER=mold variant makes rustc
@@ -80,15 +85,29 @@ runs:
     #
     # macOS/Windows branches keep their system linker; this gate exists so
     # the composite remains portable once CA4 migrates release.yml onto it.
-    - name: Install mold linker (Linux)
+    - name: Configure Linux linker
       if: runner.os == 'Linux'
       shell: bash
+      env:
+        NIMBUS_LINUX_LINKER: ${{ inputs.linux-linker }}
       run: |
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends mold
-        echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> "${GITHUB_ENV}"
-        echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> "${GITHUB_ENV}"
-        mold --version
+        case "${NIMBUS_LINUX_LINKER}" in
+          mold)
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends mold
+            echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> "${GITHUB_ENV}"
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> "${GITHUB_ENV}"
+            mold --version
+            ;;
+          lld)
+            echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=lld" >> "${GITHUB_ENV}"
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=lld" >> "${GITHUB_ENV}"
+            ;;
+          *)
+            echo "unsupported linux-linker: ${NIMBUS_LINUX_LINKER}" >&2
+            exit 64
+            ;;
+        esac
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable

@@ -198,6 +198,7 @@ jobs:
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-bun-runtime-contract-no-bin-v2
+          linux-linker: lld
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       # This lane touches nimbus-server runtime diagnostics and the operator UI
@@ -250,6 +251,7 @@ jobs:
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-workspace-no-bin-v2
+          linux-linker: lld
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-nextest
@@ -327,15 +329,8 @@ jobs:
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-external-providers-no-bin-v2
+          linux-linker: lld
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
-
-      # The external-provider test binary links vendored OpenSSL through
-      # rusqlite/native-tls. Keep this lane on lld; ubuntu-24.04 mold has
-      # repeatedly failed this shape with OpenSSL's bn_sqrx8x_internal.
-      - name: Use lld for OpenSSL-backed provider test links
-        run: |
-          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=lld" >> "${GITHUB_ENV}"
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=lld" >> "${GITHUB_ENV}"
 
       - name: Start postgres provider fixture
         if: matrix.provider == 'postgres'
@@ -564,6 +559,7 @@ jobs:
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-node-dbus-no-bin-v2
+          linux-linker: lld
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Bootstrap user-mode systemd
@@ -884,6 +880,7 @@ jobs:
         with:
           shared-key: ci-ubuntu-stable-harness-${{ matrix.surface }}-no-bin-v2
           toolchain-components: llvm-tools-preview
+          linux-linker: lld
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       # CC4: nimbus-ui artifacts (convex codegen + SPA dist) are produced by

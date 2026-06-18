@@ -59,6 +59,7 @@ jobs:
         with:
           shared-key: ci-ubuntu-stable-desktop-ui-v2
           cache-bin: "true"
+          linux-linker: lld
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Set up Node.js
