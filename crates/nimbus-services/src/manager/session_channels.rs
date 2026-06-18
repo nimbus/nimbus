@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use nimbus_core::{Error, TenantId};
 
-use crate::{SessionResource, SessionTargetSnapshot};
+use crate::{SessionResource, SessionTargetSnapshot, WorkloadChannelDescriptor, WorkloadExecutor};
 
 use super::clock::now_millis;
 use super::types::ServiceManagerState;
@@ -59,6 +59,31 @@ pub(super) struct SessionChannelState {
     pub(super) pending_target_to_client_bytes: usize,
     pub(super) high_watermark_bytes: usize,
     pub(super) audit: Vec<SessionChannelAuditRecord>,
+}
+
+pub(super) struct SessionBroker<'a, E: ?Sized> {
+    executor: &'a mut E,
+}
+
+impl<'a, E> SessionBroker<'a, E>
+where
+    E: WorkloadExecutor + ?Sized,
+{
+    pub(super) fn new(executor: &'a mut E) -> Self {
+        Self { executor }
+    }
+
+    pub(super) fn open_session_channels(
+        &mut self,
+        session: &SessionResource,
+    ) -> Result<Vec<WorkloadChannelDescriptor>, Error> {
+        let workload_id = session_workload_id(session);
+        session
+            .channels
+            .iter()
+            .map(|channel| self.executor.open_channel(&workload_id, channel))
+            .collect()
+    }
 }
 
 impl SessionChannelState {
@@ -211,5 +236,12 @@ fn target_snapshot_generation(snapshot: &SessionTargetSnapshot) -> u64 {
     match snapshot {
         SessionTargetSnapshot::Service { generation, .. }
         | SessionTargetSnapshot::Sandbox { generation, .. } => *generation,
+    }
+}
+
+fn session_workload_id(session: &SessionResource) -> String {
+    match &session.target_snapshot {
+        SessionTargetSnapshot::Service { name, .. } => format!("service:{name}"),
+        SessionTargetSnapshot::Sandbox { id, .. } => format!("sandbox:{id}"),
     }
 }

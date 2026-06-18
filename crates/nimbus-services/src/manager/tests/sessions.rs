@@ -2,6 +2,38 @@ use super::*;
 use crate::manager::session_channels::{
     SessionChannelAuditKind, SessionChannelHalfState, SessionChannelKey,
 };
+use crate::{
+    DesiredWorkload, WorkloadChannelDescriptor, WorkloadExecutionStatus, WorkloadExecutor,
+};
+
+#[derive(Default)]
+struct RecordingSessionWorkloadExecutor {
+    opened_channels: Vec<WorkloadChannelDescriptor>,
+}
+
+impl WorkloadExecutor for RecordingSessionWorkloadExecutor {
+    fn start(&mut self, desired: &DesiredWorkload) -> Result<WorkloadExecutionStatus, Error> {
+        WorkloadExecutionStatus::ready(desired.workload_id())
+    }
+
+    fn stop(&mut self, workload_id: &str) -> Result<WorkloadExecutionStatus, Error> {
+        WorkloadExecutionStatus::stopped(workload_id)
+    }
+
+    fn inspect(&self, workload_id: &str) -> Result<WorkloadExecutionStatus, Error> {
+        WorkloadExecutionStatus::ready(workload_id)
+    }
+
+    fn open_channel(
+        &mut self,
+        workload_id: &str,
+        channel: &str,
+    ) -> Result<WorkloadChannelDescriptor, Error> {
+        let descriptor = WorkloadChannelDescriptor::new(workload_id, channel)?;
+        self.opened_channels.push(descriptor.clone());
+        Ok(descriptor)
+    }
+}
 
 #[tokio::test]
 async fn open_session_rejects_not_ready_sandbox_targets() {
@@ -98,6 +130,87 @@ async fn session_lookup_and_close_are_tenant_scoped() {
         .expect("owning tenant should close its session");
     assert_eq!(closed.lifecycle_state, SessionLifecycleState::Closed);
     assert_eq!(closed.close_reason.as_deref(), Some("tenant_close"));
+}
+
+#[tokio::test]
+async fn session_open_uses_workload_executor_channel() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::new(),
+        }),
+        Arc::new(StubSandboxBackend::new(1)),
+    );
+    manager
+        .create_service_definition(
+            &tenant_id,
+            "browser",
+            ServiceBackend::built_in("browser"),
+            BTreeMap::new(),
+        )
+        .expect("dynamic browser service definition should create");
+    let mut executor = RecordingSessionWorkloadExecutor::default();
+
+    let (_session, descriptors) = manager
+        .open_session_with_broker_async(
+            &tenant_id,
+            SessionTarget::Service {
+                name: "browser".to_owned(),
+            },
+            vec!["cdp".to_owned(), "page".to_owned()],
+            Some(60_000),
+            &mut executor,
+        )
+        .await
+        .expect("brokered service session should open");
+
+    assert_eq!(descriptors.len(), 2);
+    assert_eq!(
+        executor
+            .opened_channels
+            .iter()
+            .map(|descriptor| (descriptor.workload_id(), descriptor.channel()))
+            .collect::<Vec<_>>(),
+        [("service:browser", "cdp"), ("service:browser", "page")]
+    );
+}
+
+#[tokio::test]
+async fn session_open_returns_workload_channel_descriptor() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::new(),
+        }),
+        Arc::new(StubSandboxBackend::new(1)),
+    );
+    manager
+        .create_service_definition(
+            &tenant_id,
+            "browser",
+            ServiceBackend::built_in("browser"),
+            BTreeMap::new(),
+        )
+        .expect("dynamic browser service definition should create");
+    let mut executor = RecordingSessionWorkloadExecutor::default();
+
+    let (session, descriptors) = manager
+        .open_session_with_broker_async(
+            &tenant_id,
+            SessionTarget::Service {
+                name: "browser".to_owned(),
+            },
+            vec!["cdp".to_owned()],
+            Some(60_000),
+            &mut executor,
+        )
+        .await
+        .expect("brokered service session should open");
+
+    assert_eq!(session.channels, vec!["cdp".to_owned()]);
+    assert_eq!(descriptors.len(), 1);
+    assert_eq!(descriptors[0].workload_id(), "service:browser");
+    assert_eq!(descriptors[0].channel(), "cdp");
 }
 
 #[tokio::test]

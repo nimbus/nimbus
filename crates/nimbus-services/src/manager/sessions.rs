@@ -7,13 +7,14 @@ use ulid::Ulid;
 use crate::{
     BuiltInServiceSpec, ExternalServiceSpec, ServiceBackend, ServiceDefinition,
     ServiceDefinitionSource, SessionLifecycleState, SessionResource, SessionTarget,
-    SessionTargetSnapshot,
+    SessionTargetSnapshot, WorkloadChannelDescriptor, WorkloadExecutor,
 };
 
 use super::ServiceManager;
 use super::clock::{next_version, now_millis};
 use super::session_channels::{
-    SessionChannelKey, SessionChannelState, close_session_channels, initialize_session_channels,
+    SessionBroker, SessionChannelKey, SessionChannelState, close_session_channels,
+    initialize_session_channels,
 };
 use super::types::{ServiceManagerState, TenantServiceKey};
 
@@ -22,6 +23,30 @@ const MAX_SESSION_TTL_MILLIS: u64 = 60 * 60 * 1000;
 const MAX_SESSION_CHANNELS: usize = 8;
 
 impl ServiceManager {
+    pub async fn open_session_with_broker_async<E>(
+        &self,
+        tenant_id: &TenantId,
+        target: SessionTarget,
+        channels: Vec<String>,
+        requested_ttl_millis: Option<u64>,
+        executor: &mut E,
+    ) -> Result<(SessionResource, Vec<WorkloadChannelDescriptor>), Error>
+    where
+        E: WorkloadExecutor + ?Sized,
+    {
+        let session = self
+            .open_session_async(tenant_id, target, channels, requested_ttl_millis)
+            .await?;
+        let mut broker = SessionBroker::new(executor);
+        match broker.open_session_channels(&session) {
+            Ok(descriptors) => Ok((session, descriptors)),
+            Err(error) => {
+                let _ = self.close_session(tenant_id, &session.id, "channel_open_failed");
+                Err(error)
+            }
+        }
+    }
+
     pub async fn open_session_async(
         &self,
         tenant_id: &TenantId,
