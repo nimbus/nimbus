@@ -26,7 +26,8 @@ pub use host_lifecycle::{
     SystemdUnitKind, SystemdUnitName, TenantWorkloadId, TenantWorkloadLifecycleEvidence,
 };
 pub use reconciler::{
-    NodeAgent, NodeAgentAssignment, NodeAgentReconcileReport, NodeAssignmentDisposition,
+    NodeAgent, NodeAgentAssignment, NodeAgentCapabilityReport, NodeAgentReconcileReport,
+    NodeAgentTransportAdmission, NodeAssignmentDisposition, NodeBackendCapabilitySource,
     NodeWorkloadDesiredState, NodeWorkloadReconcileAction, NodeWorkloadReconcileOutcome,
     NodeWorkloadReconciler, StatusEvidenceWrite, StatusEvidenceWriter,
 };

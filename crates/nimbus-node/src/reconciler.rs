@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
-use nimbus_core::{Error, Result};
+use nimbus_core::{Error, PrincipalContext, Result};
 
 use super::{
-    HostLifecycleBackend, HostLifecycleFuture, HostLifecyclePlan, HostLifecycleRequest,
-    HostLifecycleStatus, HostLifecycleStatusReason, LocalEnforcementBinding, NodeIdentity,
-    TenantSystemEvidenceProjection, TenantWorkloadDeletionState, TenantWorkloadId,
-    TenantWorkloadSpec, TenantWorkloadStatus,
+    DirectProcessBackend, HostLifecycleBackend, HostLifecycleBackendCapabilities,
+    HostLifecycleFuture, HostLifecyclePlan, HostLifecycleRequest, HostLifecycleStatus,
+    HostLifecycleStatusReason, LocalEnforcementBinding, NodeIdentity, SystemdDbusClient,
+    SystemdTransientUnitBackend, TenantSystemEvidenceProjection, TenantWorkloadDeletionState,
+    TenantWorkloadId, TenantWorkloadSpec, TenantWorkloadStatus,
 };
 
 pub trait StatusEvidenceWriter: Send + Sync + 'static {
@@ -146,6 +147,91 @@ impl NodeAgentReconcileReport {
     }
 }
 
+pub trait NodeBackendCapabilitySource: Send + Sync + 'static {
+    fn node_backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities>;
+}
+
+impl NodeBackendCapabilitySource for DirectProcessBackend {
+    fn node_backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities> {
+        vec![HostLifecycleBackendCapabilities::direct_process()]
+    }
+}
+
+impl<C> NodeBackendCapabilitySource for SystemdTransientUnitBackend<C>
+where
+    C: SystemdDbusClient,
+{
+    fn node_backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities> {
+        vec![self.backend_capabilities()]
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeAgentCapabilityReport {
+    node_id: NodeIdentity,
+    backend_capabilities: Vec<HostLifecycleBackendCapabilities>,
+}
+
+impl NodeAgentCapabilityReport {
+    fn new(
+        node_id: NodeIdentity,
+        backend_capabilities: Vec<HostLifecycleBackendCapabilities>,
+    ) -> Self {
+        Self {
+            node_id,
+            backend_capabilities,
+        }
+    }
+
+    pub fn node_id(&self) -> &NodeIdentity {
+        &self.node_id
+    }
+
+    pub fn backend_capabilities(&self) -> &[HostLifecycleBackendCapabilities] {
+        &self.backend_capabilities
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeAgentTransportAdmission {
+    node_id: NodeIdentity,
+    principal: PrincipalContext,
+}
+
+impl NodeAgentTransportAdmission {
+    pub fn authorize(node_id: NodeIdentity, principal: PrincipalContext) -> Result<Self> {
+        if !principal.authenticated {
+            return Err(Error::PermissionDenied(
+                "node-agent transport requires an authenticated principal".to_owned(),
+            ));
+        }
+        let Some(principal_node_id) = principal_string_claim(
+            &principal,
+            &["node_id", "nodeId", "nimbus_node_id", "nimbusNodeId"],
+        ) else {
+            return Err(Error::PermissionDenied(format!(
+                "node-agent transport principal is missing node id claim for `{}`",
+                node_id.as_str()
+            )));
+        };
+        if principal_node_id != node_id.as_str() {
+            return Err(Error::PermissionDenied(format!(
+                "node-agent transport principal authorized node `{principal_node_id}`, but agent is `{}`",
+                node_id.as_str()
+            )));
+        }
+        Ok(Self { node_id, principal })
+    }
+
+    pub fn node_id(&self) -> &NodeIdentity {
+        &self.node_id
+    }
+
+    pub fn principal(&self) -> &PrincipalContext {
+        &self.principal
+    }
+}
+
 #[derive(Debug)]
 pub struct NodeAgent<B, W> {
     node_id: NodeIdentity,
@@ -167,6 +253,36 @@ impl<B, W> NodeAgent<B, W> {
     pub fn reconciler(&self) -> &NodeWorkloadReconciler<B, W> {
         &self.reconciler
     }
+
+    pub fn authorize_transport(
+        &self,
+        principal: PrincipalContext,
+    ) -> Result<NodeAgentTransportAdmission> {
+        NodeAgentTransportAdmission::authorize(self.node_id.clone(), principal)
+    }
+}
+
+impl<B, W> NodeAgent<B, W>
+where
+    B: NodeBackendCapabilitySource,
+{
+    pub fn capability_report(&self) -> NodeAgentCapabilityReport {
+        NodeAgentCapabilityReport::new(
+            self.node_id.clone(),
+            self.reconciler.backend().node_backend_capabilities(),
+        )
+    }
+}
+
+fn principal_string_claim<'a>(principal: &'a PrincipalContext, names: &[&str]) -> Option<&'a str> {
+    for claims in [&principal.verified_claims, &principal.claims] {
+        for name in names {
+            if let Some(value) = claims.get(*name).and_then(|value| value.as_str()) {
+                return Some(value);
+            }
+        }
+    }
+    None
 }
 
 impl<B, W> NodeAgent<B, W>
@@ -653,6 +769,17 @@ mod tests {
             .expect("binding should materialize")
     }
 
+    fn node_agent_principal(authenticated: bool, node_id: &str) -> PrincipalContext {
+        PrincipalContext {
+            authenticated,
+            claims: serde_json::Map::from_iter([(
+                "node_id".to_string(),
+                serde_json::Value::String(node_id.to_string()),
+            )]),
+            verified_claims: serde_json::Map::new(),
+        }
+    }
+
     fn direct_request() -> HostLifecycleRequest {
         HostLifecycleRequest::new(
             HostLifecycleBackendKind::DirectProcess,
@@ -821,6 +948,61 @@ mod tests {
             4,
             "each reconcile pass should write status evidence for each assignment"
         );
+    }
+
+    #[test]
+    fn node_agent_reports_capabilities() {
+        let node_agent = NodeAgent::new(
+            NodeIdentity::new("node-a").expect("node id should parse"),
+            DirectProcessBackend::new(),
+            RecordingStatusEvidenceWriter::default(),
+        );
+
+        let report = node_agent.capability_report();
+        assert_eq!(report.node_id().as_str(), "node-a");
+        assert_eq!(report.backend_capabilities().len(), 1);
+        let capabilities = &report.backend_capabilities()[0];
+        assert_eq!(
+            capabilities.backend(),
+            HostLifecycleBackendKind::DirectProcess
+        );
+        assert!(
+            capabilities.available(),
+            "direct-process backend should report available capabilities"
+        );
+        assert_eq!(capabilities.features().get("pid1"), Some(&false));
+        assert_eq!(capabilities.features().get("dbus"), Some(&false));
+    }
+
+    #[test]
+    fn node_agent_rejects_unauthenticated_transport() {
+        let node_agent = NodeAgent::new(
+            NodeIdentity::new("node-a").expect("node id should parse"),
+            DirectProcessBackend::new(),
+            RecordingStatusEvidenceWriter::default(),
+        );
+
+        let unauthenticated = node_agent
+            .authorize_transport(node_agent_principal(false, "node-a"))
+            .expect_err("node-agent transport must reject unauthenticated principals");
+        assert!(
+            unauthenticated.to_string().contains("authenticated"),
+            "unauthenticated rejection should name the auth boundary: {unauthenticated}"
+        );
+
+        let wrong_node = node_agent
+            .authorize_transport(node_agent_principal(true, "node-b"))
+            .expect_err("node-agent transport must reject another node's principal");
+        assert!(
+            wrong_node.to_string().contains("node-b"),
+            "node mismatch should name the presented node: {wrong_node}"
+        );
+
+        let admitted = node_agent
+            .authorize_transport(node_agent_principal(true, "node-a"))
+            .expect("matching authenticated node principal should be admitted");
+        assert_eq!(admitted.node_id().as_str(), "node-a");
+        assert!(admitted.principal().authenticated);
     }
 
     #[tokio::test]
