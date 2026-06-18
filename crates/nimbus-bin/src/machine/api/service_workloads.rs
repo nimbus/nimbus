@@ -320,6 +320,55 @@ fn core_error_to_http(error: Error) -> MachineApiHttpError {
 }
 
 #[cfg(test)]
+pub(crate) fn machine_api_node_workload_facade_from_sandbox_backend(
+    backend: Arc<dyn nimbus::SandboxBackend>,
+) -> Arc<dyn MachineApiNodeWorkloadFacade> {
+    Arc::new(TestSandboxBackendNodeWorkloadFacade { backend })
+}
+
+#[cfg(test)]
+struct TestSandboxBackendNodeWorkloadFacade {
+    backend: Arc<dyn nimbus::SandboxBackend>,
+}
+
+#[cfg(test)]
+impl MachineApiNodeWorkloadFacade for TestSandboxBackendNodeWorkloadFacade {
+    fn kind(&self) -> SandboxBackendKind {
+        self.backend.kind()
+    }
+
+    fn start<'a>(&'a self, spec: SandboxSpec) -> MachineApiServiceFuture<'a, SandboxHandle> {
+        Box::pin(async move {
+            self.backend
+                .start(spec)
+                .await
+                .map_err(sandbox_error_to_http_error)
+        })
+    }
+
+    fn inspect<'a>(
+        &'a self,
+        id: &'a SandboxId,
+    ) -> MachineApiServiceFuture<'a, Option<SandboxHandle>> {
+        Box::pin(async move {
+            self.backend
+                .inspect(id)
+                .await
+                .map_err(sandbox_error_to_http_error)
+        })
+    }
+
+    fn stop<'a>(&'a self, id: &'a SandboxId) -> MachineApiServiceFuture<'a, ()> {
+        Box::pin(async move {
+            self.backend
+                .stop(id)
+                .await
+                .map_err(sandbox_error_to_http_error)
+        })
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::sync::Mutex;
 
@@ -510,54 +559,5 @@ mod tests {
 
         assert_eq!(error.status, StatusCode::BAD_REQUEST);
         assert!(error.message.contains("absolute path"));
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn machine_api_node_workload_facade_from_sandbox_backend(
-    backend: Arc<dyn nimbus::SandboxBackend>,
-) -> Arc<dyn MachineApiNodeWorkloadFacade> {
-    Arc::new(TestSandboxBackendNodeWorkloadFacade { backend })
-}
-
-#[cfg(test)]
-struct TestSandboxBackendNodeWorkloadFacade {
-    backend: Arc<dyn nimbus::SandboxBackend>,
-}
-
-#[cfg(test)]
-impl MachineApiNodeWorkloadFacade for TestSandboxBackendNodeWorkloadFacade {
-    fn kind(&self) -> SandboxBackendKind {
-        self.backend.kind()
-    }
-
-    fn start<'a>(&'a self, spec: SandboxSpec) -> MachineApiServiceFuture<'a, SandboxHandle> {
-        Box::pin(async move {
-            self.backend
-                .start(spec)
-                .await
-                .map_err(sandbox_error_to_http_error)
-        })
-    }
-
-    fn inspect<'a>(
-        &'a self,
-        id: &'a SandboxId,
-    ) -> MachineApiServiceFuture<'a, Option<SandboxHandle>> {
-        Box::pin(async move {
-            self.backend
-                .inspect(id)
-                .await
-                .map_err(sandbox_error_to_http_error)
-        })
-    }
-
-    fn stop<'a>(&'a self, id: &'a SandboxId) -> MachineApiServiceFuture<'a, ()> {
-        Box::pin(async move {
-            self.backend
-                .stop(id)
-                .await
-                .map_err(sandbox_error_to_http_error)
-        })
     }
 }
