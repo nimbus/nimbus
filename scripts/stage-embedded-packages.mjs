@@ -144,7 +144,7 @@ for (const name of THIRD_PARTY) {
 
 // Tooling closure for the embedded V8 codegen runner (BPD4): the codegen
 // prebundle (typescript inlined) + esbuild (JS wrapper) + the host-platform
-// @esbuild native binary. Staged under `.tooling/` — build-time tooling run
+// @esbuild native binary. Staged under `tooling/` — build-time tooling run
 // targets discovered by the V8 tooling runtime ($discovered_tooling), NOT
 // app-provisioned packages. esbuild here runs as a staged tooling binary, not
 // external Node.
@@ -153,7 +153,7 @@ const tooling = [];
 function stageToolingTree(srcDir, toolingName) {
   if (!fs.existsSync(srcDir)) fail(`missing tooling source ${path.relative(REPO_ROOT, srcDir)}`);
   const files = [];
-  copyTree(srcDir, path.join(OUT_DIR, ".tooling", toolingName), "", files);
+  copyTree(srcDir, path.join(OUT_DIR, "tooling", toolingName), "", files);
   files.sort((a, b) => a.path.localeCompare(b.path));
   tooling.push({ name: toolingName, kind: "tree", files });
 }
@@ -164,7 +164,7 @@ function stageToolingTree(srcDir, toolingName) {
   if (!fs.existsSync(bundle)) {
     fail("missing codegen prebundle — run `npm run build -w @nimbus/codegen` before staging");
   }
-  const destDir = path.join(OUT_DIR, ".tooling", "codegen");
+  const destDir = path.join(OUT_DIR, "tooling", "codegen");
   fs.mkdirSync(destDir, { recursive: true });
   const buf = fs.readFileSync(bundle);
   fs.writeFileSync(path.join(destDir, "codegen.bundle.mjs"), buf);

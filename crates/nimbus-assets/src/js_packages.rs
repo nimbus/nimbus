@@ -210,18 +210,26 @@ pub fn verify_manifest_integrity() -> Result<(), String> {
         }
     }
     for tool in &manifest.tooling {
-        for file in &tool.files {
-            let bytes = tooling_file_bytes(&tool.name, &file.path).ok_or_else(|| {
-                format!("missing embedded tooling file {}/{}", tool.name, file.path)
-            })?;
-            verify_digest(
-                &format!("tooling {}/{}", tool.name, file.path),
-                &bytes,
-                file,
-            )?;
-        }
+        verify_tooling_entry(tool)?;
     }
     Ok(())
+}
+
+/// Verify the embedded build-time tooling closure without also checking
+/// app-provisioned packages.
+pub fn verify_tooling_integrity() -> Result<(), String> {
+    let manifest = manifest();
+    if manifest.tooling.is_empty() {
+        return Err("embedded tooling manifest is empty".to_string());
+    }
+    for tool in &manifest.tooling {
+        verify_tooling_entry(tool)?;
+    }
+    Ok(())
+}
+
+pub fn tooling_available() -> bool {
+    verify_tooling_integrity().is_ok()
 }
 
 /// Backwards-compatible name for callers that only need the manifest checksum
@@ -230,9 +238,22 @@ pub fn verify_integrity() -> Result<(), String> {
     verify_manifest_integrity()
 }
 
-/// Bytes of an embedded tooling file at `.tooling/<name>/<rel>`.
+fn verify_tooling_entry(tool: &EmbeddedTooling) -> Result<(), String> {
+    for file in &tool.files {
+        let bytes = tooling_file_bytes(&tool.name, &file.path)
+            .ok_or_else(|| format!("missing embedded tooling file {}/{}", tool.name, file.path))?;
+        verify_digest(
+            &format!("tooling {}/{}", tool.name, file.path),
+            &bytes,
+            file,
+        )?;
+    }
+    Ok(())
+}
+
+/// Bytes of an embedded tooling file at `tooling/<name>/<rel>`.
 fn tooling_file_bytes(name: &str, rel: &str) -> Option<Vec<u8>> {
-    EmbeddedPackages::get(&format!(".tooling/{name}/{rel}")).map(|f| f.data.into_owned())
+    EmbeddedPackages::get(&format!("tooling/{name}/{rel}")).map(|f| f.data.into_owned())
 }
 
 fn verify_digest(label: &str, bytes: &[u8], file: &EmbeddedFile) -> Result<(), String> {

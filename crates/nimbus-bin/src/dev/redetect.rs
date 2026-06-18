@@ -647,7 +647,7 @@ mod tests {
             );
             return;
         }
-        if nimbus_assets::js_packages::manifest().tooling.is_empty() {
+        if !nimbus_assets::js_packages::tooling_available() {
             eprintln!(
                 "skipping mid_session_convex_adoption_registers_watch_roots; embedded codegen \
                  tooling unavailable (run `make build-packages`)"

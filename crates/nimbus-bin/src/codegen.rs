@@ -494,7 +494,7 @@ mod tests {
         // The embedded runner sources its tooling closure (codegen prebundle +
         // esbuild + platform @esbuild binary) from the embedded payload, staged
         // by `make build-packages`. Skip if the binary was built without it.
-        !js_packages::manifest().tooling.is_empty()
+        js_packages::tooling_available()
     }
 
     // (Removed `copy_dir_recursive` + `stage_workspace_codegen_package`: the
