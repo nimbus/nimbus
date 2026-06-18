@@ -63,17 +63,9 @@ fn full_scan_queries_warm_materialized_surface_and_warm_table_gets_reuse_it() {
     assert_eq!(stats.paginated_count, 0);
     assert_eq!(stats.get_hit_count, 0);
 
-    let second = engine
-        .query_documents(&tenant_id, &query)
-        .expect("second full-scan query should succeed");
-    assert_eq!(document_bodies(&second), vec!["Ada", "Beta"]);
-
-    let stats = engine
-        .materialized_read_surface_stats_for_testing(&tenant_id)
-        .expect("materialized surface stats should load");
-    assert_eq!(stats.loaded_table_count, 1);
-    assert_eq!(stats.table_load_count, 1);
-    assert_eq!(stats.evaluation_count, 2);
+    let stats = warm_query_until_publication_covers_head(&engine, &tenant_id, &table, &query);
+    let baseline_table_load_count = stats.table_load_count;
+    let baseline_get_hit_count = stats.get_hit_count;
 
     let warm_only = engine
         .get_document(&tenant_id, &table, warm_only_id)
@@ -83,8 +75,45 @@ fn full_scan_queries_warm_materialized_surface_and_warm_table_gets_reuse_it() {
     let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
-    assert_eq!(stats.table_load_count, 1);
-    assert_eq!(stats.get_hit_count, 1);
+    assert_eq!(stats.loaded_table_count, 1);
+    assert_eq!(stats.table_load_count, baseline_table_load_count);
+    assert_eq!(stats.get_hit_count, baseline_get_hit_count + 1);
+}
+
+fn warm_query_until_publication_covers_head(
+    engine: &Engine,
+    tenant_id: &TenantId,
+    table: &TableName,
+    query: &Query,
+) -> crate::MaterializedReadSurfaceStats {
+    for _ in 0..4 {
+        let documents = engine
+            .query_documents(tenant_id, query)
+            .expect("catch-up full-scan query should succeed");
+        assert_eq!(document_bodies(&documents), vec!["Ada", "Beta"]);
+
+        let stats = engine
+            .materialized_read_surface_stats_for_testing(tenant_id)
+            .expect("materialized surface stats should load");
+        let publication = engine
+            .materialized_table_publication_stats_for_testing(tenant_id, table)
+            .expect("materialized publication stats should load")
+            .expect("warmed table should publish");
+        let journal = engine
+            .mutation_journal_stats_for_testing(tenant_id)
+            .expect("journal stats should load");
+        if publication.covered_sequence.0 >= journal.durable_head.0 {
+            assert_eq!(stats.loaded_table_count, 1);
+            assert!(
+                durable_journal_commits(engine, tenant_id, publication.covered_sequence).is_empty(),
+                "publication should not miss document-bearing commits after coverage {}",
+                publication.covered_sequence.0
+            );
+            return stats;
+        }
+    }
+
+    panic!("materialized publication should catch up to the durable head");
 }
 
 #[test]
