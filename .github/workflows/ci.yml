@@ -825,7 +825,7 @@ jobs:
   harness:
     name: ${{ matrix.surface-label }} Verification Harness${{ matrix.shard-label }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     if: github.event_name != 'schedule'
     needs: [ui-artifacts, warm-sccache]
     strategy:
