@@ -23,7 +23,8 @@ pub use projection::install_table_projection_observer;
 pub use records::SystemTenantStatusEvidenceWriter;
 pub use records::ensure_system_tenant_async;
 pub use records::{
-    ModuleSource, SystemModuleRecordInput, SystemSourcePackageRecordInput, read_module_source_async,
+    ModuleSource, SystemModuleRecordInput, SystemSourcePackageRecordInput,
+    read_module_source_async, read_source_package_modules_async,
 };
 pub use records::{
     RunRecord, SystemDeploymentFunctionRecordInput, SystemDeploymentHttpRouteRecordInput,

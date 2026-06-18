@@ -304,6 +304,8 @@ type ModuleAnalysis = {
 
 type TypeHint = { name: string; line: number; col: number; hover: string };
 
+type CalledByEdge = { target: string; caller: string };
+
 type SourceState =
   | { status: "loading" }
   | {
@@ -311,6 +313,7 @@ type SourceState =
       source: string;
       digest: string;
       analysis: ModuleAnalysis | null;
+      calledBy: CalledByEdge[] | null;
       typeInfo: TypeHint[] | null;
     }
   | { status: "missing" }
@@ -349,6 +352,7 @@ function SourceTab({ fn }: { fn: FunctionDoc }) {
           source?: string;
           digest?: string;
           analysis?: ModuleAnalysis;
+          called_by?: CalledByEdge[];
           type_info?: TypeHint[];
         };
         setState({
@@ -356,6 +360,7 @@ function SourceTab({ fn }: { fn: FunctionDoc }) {
           source: body.source ?? "",
           digest: body.digest ?? "",
           analysis: body.analysis ?? null,
+          calledBy: body.called_by ?? null,
           typeInfo: body.type_info ?? null,
         });
       })
@@ -401,6 +406,7 @@ function SourceTab({ fn }: { fn: FunctionDoc }) {
         <SymbolsBar
           modulePath={modulePath}
           analysis={state.analysis}
+          calledBy={state.calledBy}
           typeInfo={state.typeInfo}
         />
       ) : null}
@@ -420,13 +426,23 @@ function SourceTab({ fn }: { fn: FunctionDoc }) {
 function SymbolsBar({
   modulePath,
   analysis,
+  calledBy,
   typeInfo,
 }: {
   modulePath: string;
   analysis: ModuleAnalysis;
+  calledBy: CalledByEdge[] | null;
   typeInfo: TypeHint[] | null;
 }) {
-  if (analysis.exports.length === 0 && analysis.references.length === 0) {
+  // Unique caller paths (which functions elsewhere call into this module).
+  const callers = Array.from(
+    new Set((calledBy ?? []).map((edge) => edge.caller)),
+  ).sort();
+  if (
+    analysis.exports.length === 0 &&
+    analysis.references.length === 0 &&
+    callers.length === 0
+  ) {
     return null;
   }
   return (
@@ -468,6 +484,21 @@ function SymbolsBar({
               path={reference.target}
               label={reference.target}
               testid={`function-source-call-${reference.target}`}
+            />
+          ))}
+        </div>
+      ) : null}
+      {callers.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+            called by
+          </span>
+          {callers.map((caller) => (
+            <SymbolLink
+              key={caller}
+              path={caller}
+              label={caller}
+              testid={`function-source-calledby-${caller}`}
             />
           ))}
         </div>

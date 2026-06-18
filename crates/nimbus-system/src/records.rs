@@ -558,6 +558,35 @@ pub async fn read_module_source_async(
     }))
 }
 
+/// All modules (path + source) in the source package that contains
+/// `module_path`. Backs the cross-module call graph ("called by"); empty when
+/// the module is unknown. See the Function Source Visibility plan (FSV7).
+pub async fn read_source_package_modules_async(
+    engine: &Arc<Engine>,
+    store: &dyn SourcePackageStore,
+    module_path: &str,
+) -> Result<Vec<(String, String)>> {
+    let modules = query_system_documents_by_eq_async(
+        engine,
+        SystemTable::Modules,
+        [("path", json!(module_path))],
+    )
+    .await?;
+    let Some(module) = modules.into_iter().next() else {
+        return Ok(Vec::new());
+    };
+    let Some(digest) = module.fields.get("sourcePackageId").and_then(Value::as_str) else {
+        return Ok(Vec::new());
+    };
+    let bytes = store.get(digest)?;
+    let parsed = parse_source_package(&bytes)?;
+    Ok(parsed
+        .modules
+        .into_iter()
+        .map(|module| (module.path, module.source))
+        .collect())
+}
+
 pub struct RunRecord<'a> {
     pub tenant_id: &'a TenantId,
     pub function_path: &'a str,
