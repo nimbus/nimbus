@@ -1,9 +1,9 @@
-import { Box, type LucideIcon, SquareFunction } from "lucide-react";
+import { Box, type LucideIcon, Network, SquareFunction } from "lucide-react";
 
-// Compute has exactly two kinds under Developer: request-scoped Functions and
-// long-lived Sandboxes. They are mutually exclusive views (one at a time).
+// Compute kinds under Developer: request-scoped Functions, long-lived Sandboxes,
+// and a deployment-wide call Graph. Mutually exclusive views (one at a time).
 // Services and Sessions are separate top-level resources, not compute types.
-export type ComputeView = "functions" | "sandboxes";
+export type ComputeView = "functions" | "sandboxes" | "graph";
 
 export type ComputeViewOption = {
   value: ComputeView;
@@ -14,8 +14,11 @@ export type ComputeViewOption = {
 export const COMPUTE_VIEWS: ReadonlyArray<ComputeViewOption> = [
   { value: "functions", label: "Functions", icon: SquareFunction },
   { value: "sandboxes", label: "Sandboxes", icon: Box },
+  { value: "graph", label: "Call graph", icon: Network },
 ];
 
 export function parseComputeView(value: unknown): ComputeView {
-  return value === "sandboxes" ? "sandboxes" : "functions";
+  if (value === "sandboxes") return "sandboxes";
+  if (value === "graph") return "graph";
+  return "functions";
 }

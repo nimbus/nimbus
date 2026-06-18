@@ -587,6 +587,33 @@ pub async fn read_source_package_modules_async(
         .collect())
 }
 
+/// All modules (path + source) in the active deployment's source package.
+/// Backs the deployment-wide call graph; empty when nothing is deployed. FSV7.
+pub async fn read_active_source_package_modules_async(
+    engine: &Arc<Engine>,
+    store: &dyn SourcePackageStore,
+) -> Result<Vec<(String, String)>> {
+    let packages = query_system_documents_by_eq_async(
+        engine,
+        SystemTable::SourcePackages,
+        [("status", json!("active"))],
+    )
+    .await?;
+    let Some(package) = packages.into_iter().next() else {
+        return Ok(Vec::new());
+    };
+    let Some(digest) = package.fields.get("digest").and_then(Value::as_str) else {
+        return Ok(Vec::new());
+    };
+    let bytes = store.get(digest)?;
+    let parsed = parse_source_package(&bytes)?;
+    Ok(parsed
+        .modules
+        .into_iter()
+        .map(|module| (module.path, module.source))
+        .collect())
+}
+
 pub struct RunRecord<'a> {
     pub tenant_id: &'a TenantId,
     pub function_path: &'a str,

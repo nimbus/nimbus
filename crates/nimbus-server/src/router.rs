@@ -693,6 +693,7 @@ fn build_local_admin_router() -> Router<Arc<AppState>> {
         .route("/api/system/shutdown", post(http::shutdown_system))
         .route("/api/system/version-info", get(http::version_info))
         .route("/api/console/source", get(http::module_source))
+        .route("/api/console/graph", get(http::call_graph))
         .route("/debug/runtime/metrics", get(http::runtime_diagnostics))
         .route(
             "/debug/tenants/{tenant_id}/consistency",

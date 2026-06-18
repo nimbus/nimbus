@@ -17,6 +17,7 @@ import {
   type ComputeView,
   parseComputeView,
 } from "./compute-views";
+import { GraphView } from "./graph-view";
 
 type ComputeSearch = { view?: ComputeView };
 
@@ -99,13 +100,17 @@ function ComputePage() {
       <PageHeader
         title="Compute"
         subtitle={
-          view === "sandboxes"
-            ? "Sandboxes are isolated execution environments for this tenant, read live from the sandbox runtime."
-            : "Functions registered to this tenant, grouped by bundle and module. Open one to view its source, logs, and runs."
+          view === "graph"
+            ? "The deployment's function call graph — api.* / internal.* calls between functions. Click a node to open its source."
+            : view === "sandboxes"
+              ? "Sandboxes are isolated execution environments for this tenant, read live from the sandbox runtime."
+              : "Functions registered to this tenant, grouped by bundle and module. Open one to view its source, logs, and runs."
         }
       />
 
-      {view === "sandboxes" ? (
+      {view === "graph" ? (
+        <GraphView />
+      ) : view === "sandboxes" ? (
         <SandboxesView />
       ) : (
         <FunctionsView functions={functions} bundles={bundles} />

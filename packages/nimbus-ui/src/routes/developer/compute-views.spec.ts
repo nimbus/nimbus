@@ -3,10 +3,11 @@ import { describe, expect, it } from "vitest";
 import { COMPUTE_VIEWS, parseComputeView } from "./compute-views";
 
 describe("compute-views", () => {
-  it("exposes functions and sandboxes as the two compute types", () => {
+  it("exposes functions, sandboxes, and the call graph as compute views", () => {
     expect(COMPUTE_VIEWS.map((v) => v.value)).toEqual([
       "functions",
       "sandboxes",
+      "graph",
     ]);
   });
 
@@ -23,7 +24,8 @@ describe("compute-views", () => {
     expect(parseComputeView("functions")).toBe("functions");
   });
 
-  it("parses the sandboxes view", () => {
+  it("parses the sandboxes and graph views", () => {
     expect(parseComputeView("sandboxes")).toBe("sandboxes");
+    expect(parseComputeView("graph")).toBe("graph");
   });
 });

@@ -24,6 +24,7 @@ use crate::tenant::TenantIsolationContext;
 mod authz;
 mod deploy;
 mod documents;
+mod graph;
 mod local_admin;
 mod machines;
 mod metadata;
@@ -45,6 +46,7 @@ pub(crate) use deploy::deploy_app;
 pub(crate) use documents::{
     delete_document, get_document, insert_document, list_documents, update_document,
 };
+pub(crate) use graph::call_graph;
 pub(crate) use local_admin::{rotate_local_admin_token, shutdown_system};
 pub(crate) use machines::{
     create_machine, delete_machine, restart_machine, start_machine, stop_machine, update_machine,
