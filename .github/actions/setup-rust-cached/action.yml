@@ -56,6 +56,13 @@ inputs:
       lanes that are known to trip mold on ubuntu runners.
     required: false
     default: "mold"
+  linux-openssl-provider:
+    description: >-
+      OpenSSL provider for Linux builds. Defaults to "vendored" so release
+      artifacts keep the workspace Cargo feature contract. Use "system" for
+      CI test lanes that only need a deterministic runner-local OpenSSL link.
+    required: false
+    default: "vendored"
 
 runs:
   using: composite
@@ -105,6 +112,26 @@ runs:
             ;;
           *)
             echo "unsupported linux-linker: ${NIMBUS_LINUX_LINKER}" >&2
+            exit 64
+            ;;
+        esac
+
+    - name: Configure Linux OpenSSL provider
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        NIMBUS_LINUX_OPENSSL_PROVIDER: ${{ inputs.linux-openssl-provider }}
+      run: |
+        case "${NIMBUS_LINUX_OPENSSL_PROVIDER}" in
+          vendored)
+            ;;
+          system)
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends pkg-config libssl-dev
+            echo "OPENSSL_NO_VENDOR=1" >> "${GITHUB_ENV}"
+            ;;
+          *)
+            echo "unsupported linux-openssl-provider: ${NIMBUS_LINUX_OPENSSL_PROVIDER}" >&2
             exit 64
             ;;
         esac

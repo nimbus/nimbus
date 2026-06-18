@@ -194,6 +194,7 @@ jobs:
         with:
           shared-key: ci-ubuntu-stable-coverage-no-bin-v2
           linux-linker: lld
+          linux-openssl-provider: system
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-llvm-cov
@@ -301,6 +302,7 @@ jobs:
         with:
           shared-key: ci-ubuntu-stable-coverage-no-bin-v2
           linux-linker: lld
+          linux-openssl-provider: system
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-llvm-cov

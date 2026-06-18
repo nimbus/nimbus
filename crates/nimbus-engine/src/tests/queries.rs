@@ -687,25 +687,41 @@ async fn subscription_re_evaluation_uses_indexed_query_path() {
         .expect("subscribe should succeed");
     let _ = rx.recv().await.expect("initial update should arrive");
 
-    engine
+    let active_id = engine
         .insert_document(
             &tenant_id,
             tasks_table(),
             serde_json::Map::from_iter([("status".to_string(), json!("active"))]),
         )
         .expect("active insert should succeed");
-    let active_update = rx.recv().await.expect("active update should arrive");
-    match active_update {
-        SubscriptionUpdate::Result { snapshot, .. } => {
-            let data = snapshot.to_json_documents();
-            assert_eq!(data.len(), 2);
-            assert!(
-                data.iter()
-                    .all(|document| document["status"] == json!("active"))
-            );
+    let active_sequence = durable_journal_commits(&engine, &tenant_id, SequenceNumber(0))
+        .into_iter()
+        .find(|commit| commit.writes.iter().any(|write| write.doc_id == active_id))
+        .expect("active insert commit should be durable")
+        .sequence;
+
+    timeout(Duration::from_secs(1), async {
+        loop {
+            let update = rx.recv().await.expect("active update should arrive");
+            match update {
+                SubscriptionUpdate::Result { snapshot, .. } => {
+                    if snapshot.covered_sequence.0 < active_sequence.0 {
+                        continue;
+                    }
+                    let data = snapshot.to_json_documents();
+                    assert_eq!(data.len(), 2);
+                    assert!(
+                        data.iter()
+                            .all(|document| document["status"] == json!("active"))
+                    );
+                    break;
+                }
+                other => panic!("unexpected active update: {other:?}"),
+            }
         }
-        other => panic!("unexpected active update: {other:?}"),
-    }
+    })
+    .await
+    .expect("subscription update should cover the active insert");
 
     engine
         .insert_document(
