@@ -11,7 +11,11 @@
 //! {
 //!   "version": 1,
 //!   "modules": {
-//!     "<module path>": { "source": "<text>", "sourceMap": "<text>" | null }
+//!     "<module path>": {
+//!       "source": "<text>",
+//!       "sourceMap": "<text>" | null,
+//!       "typeInfo": [ { "name", "line", "col", "hover" }, ... ]   // FSV8, optional
+//!     }
 //!   }
 //! }
 //! ```
@@ -30,14 +34,25 @@ use crate::source_store::source_package_digest;
 /// Current source-package format version.
 pub const SOURCE_PACKAGE_VERSION: u64 = 1;
 
+/// A module to pack into a source package: original source, optional source map,
+/// and optional client-extracted type info (FSV8) — the JSON hint array from the
+/// TS compiler, computed at deploy where the toolchain exists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleInput {
+    pub source: String,
+    pub source_map: Option<String>,
+    pub type_info: Option<Value>,
+}
+
 /// A module parsed out of a source package: its path, original source, optional
-/// source map, and the content hash of the source text (change detector,
-/// recorded on the `modules` row).
+/// source map, optional type info, and the content hash of the source text
+/// (change detector, recorded on the `modules` row).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedModule {
     pub path: String,
     pub source: String,
     pub source_map: Option<String>,
+    pub type_info: Option<Value>,
     pub sha256: String,
 }
 
@@ -49,20 +64,24 @@ pub struct ParsedSourcePackage {
     pub unpacked_bytes: u64,
 }
 
-/// Build canonical source-package bytes from `path -> (source, source_map)`.
-/// Deterministic: the `BTreeMap` input fixes module order, so identical source
+/// Build canonical source-package bytes from `path -> ModuleInput`.
+/// Deterministic: the `BTreeMap` input fixes module order, so identical content
 /// yields identical bytes and therefore a stable digest.
-pub fn build_source_package(modules: &BTreeMap<String, (String, Option<String>)>) -> Vec<u8> {
+pub fn build_source_package(modules: &BTreeMap<String, ModuleInput>) -> Vec<u8> {
     let mut module_map = Map::new();
-    for (path, (source, source_map)) in modules {
+    for (path, module) in modules {
         let mut entry = Map::new();
-        entry.insert("source".to_owned(), Value::String(source.clone()));
+        entry.insert("source".to_owned(), Value::String(module.source.clone()));
         entry.insert(
             "sourceMap".to_owned(),
-            source_map
+            module
+                .source_map
                 .as_ref()
                 .map_or(Value::Null, |map| Value::String(map.clone())),
         );
+        if let Some(type_info) = &module.type_info {
+            entry.insert("typeInfo".to_owned(), type_info.clone());
+        }
         module_map.insert(path.clone(), Value::Object(entry));
     }
     let document = json!({
@@ -93,12 +112,17 @@ pub fn parse_source_package(bytes: &[u8]) -> Result<ParsedSourcePackage> {
             .get("sourceMap")
             .and_then(Value::as_str)
             .map(str::to_owned);
+        let type_info = entry
+            .get("typeInfo")
+            .cloned()
+            .filter(|value| !value.is_null());
         unpacked_bytes = unpacked_bytes.saturating_add(source.len() as u64);
         modules.push(ParsedModule {
             path: path.clone(),
             sha256: source_package_digest(source.as_bytes()),
             source: source.to_owned(),
             source_map,
+            type_info,
         });
     }
     modules.sort_by(|a, b| a.path.cmp(&b.path));
@@ -112,18 +136,25 @@ pub fn parse_source_package(bytes: &[u8]) -> Result<ParsedSourcePackage> {
 mod tests {
     use super::*;
 
-    fn sample() -> BTreeMap<String, (String, Option<String>)> {
+    fn sample() -> BTreeMap<String, ModuleInput> {
         BTreeMap::from([
             (
                 "messages".to_owned(),
-                ("export const list = query({});\n".to_owned(), None),
+                ModuleInput {
+                    source: "export const list = query({});\n".to_owned(),
+                    source_map: None,
+                    type_info: Some(
+                        json!([{"name": "list", "line": 1, "hover": "const list: Query"}]),
+                    ),
+                },
             ),
             (
                 "admin/users".to_owned(),
-                (
-                    "export const create = mutation({});\n".to_owned(),
-                    Some("{\"version\":3}".to_owned()),
-                ),
+                ModuleInput {
+                    source: "export const create = mutation({});\n".to_owned(),
+                    source_map: Some("{\"version\":3}".to_owned()),
+                    type_info: None,
+                },
             ),
         ])
     }
@@ -146,13 +177,18 @@ mod tests {
             messages.sha256,
             source_package_digest(messages.source.as_bytes())
         );
+        // type info round-trips on the module that carried it.
+        let hints = messages.type_info.as_ref().expect("messages type info");
+        assert_eq!(hints[0]["name"], "list");
+        assert_eq!(hints[0]["hover"], "const list: Query");
 
         let admin = &parsed.modules[0];
         assert_eq!(admin.source_map.as_deref(), Some("{\"version\":3}"));
+        assert_eq!(admin.type_info, None);
 
         let expected_unpacked: u64 = modules
             .values()
-            .map(|(source, _)| source.len() as u64)
+            .map(|module| module.source.len() as u64)
             .sum();
         assert_eq!(parsed.unpacked_bytes, expected_unpacked);
     }

@@ -224,14 +224,19 @@ async fn source_package_build_store_record_and_read_round_trip() {
     let modules = std::collections::BTreeMap::from([
         (
             "messages".to_owned(),
-            (
-                "export const list = query({});\n".to_owned(),
-                None::<String>,
-            ),
+            crate::ModuleInput {
+                source: "export const list = query({});\n".to_owned(),
+                source_map: None,
+                type_info: None,
+            },
         ),
         (
             "admin/users".to_owned(),
-            ("export const create = mutation({});\n".to_owned(), None),
+            crate::ModuleInput {
+                source: "export const create = mutation({});\n".to_owned(),
+                source_map: None,
+                type_info: None,
+            },
         ),
     ]);
     let bytes = build_source_package(&modules);

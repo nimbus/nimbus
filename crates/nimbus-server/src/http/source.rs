@@ -20,6 +20,10 @@ pub(crate) struct ModuleSourceResponse {
     /// `api.*`/`internal.*` references. Derived on read from the stored source —
     /// no second copy. See FSV7.
     analysis: ModuleAnalysis,
+    /// Per-identifier type hints captured at deploy by the TS compiler (FSV8),
+    /// carried in the source package. Absent when the deploy had no toolchain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    type_info: Option<serde_json::Value>,
 }
 
 /// Serve a deployed module's source from the content-addressed source-package
@@ -44,5 +48,6 @@ pub(crate) async fn module_source(
         source: resolved.source,
         source_map: resolved.source_map,
         analysis,
+        type_info: resolved.type_info,
     }))
 }

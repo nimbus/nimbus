@@ -111,13 +111,22 @@ else
   fail "oxc analysis foundation missing"
 fi
 
-step FSV8 "Type intelligence (TS-compiler hover extraction)"
+step FSV8 "Type intelligence (TS-compiler hover)"
 if [ -f crates/nimbus-bin/src/typeinfo.mjs ] \
   && grep -q "getQuickInfoAtPosition" crates/nimbus-bin/src/typeinfo.mjs 2>/dev/null; then
-  pass "type-info extraction foundation present (TS Compiler API hover)"
+  pass "type-info extraction (TS Compiler API hover)"
 else
-  fail "type-info extraction foundation missing"
+  fail "type-info extraction missing"
 fi
+grep -q "extract_module_type_info" crates/nimbus-bin/src/deploy.rs 2>/dev/null \
+  && pass "deploy captures per-module type info into the source package" \
+  || fail "deploy does not capture type info"
+grep -q "type_info" crates/nimbus-server/src/http/source.rs 2>/dev/null \
+  && pass "source endpoint returns type info" \
+  || fail "source endpoint does not return type info"
+grep -q "TypeHint" packages/nimbus-ui/src/routes/developer/compute_.\$function.tsx 2>/dev/null \
+  && pass "console renders type hover tooltips" \
+  || fail "console does not render type hover"
 
 printf '\n\033[1mSummary:\033[0m %d passed, %d failed\n' "${PASS}" "${FAIL}"
 if [ "${FAIL}" -gt 0 ]; then

@@ -516,6 +516,7 @@ pub struct ModuleSource {
     pub path: String,
     pub source: String,
     pub source_map: Option<String>,
+    pub type_info: Option<Value>,
     pub digest: String,
 }
 
@@ -552,6 +553,7 @@ pub async fn read_module_source_async(
         path: found.path,
         source: found.source,
         source_map: found.source_map,
+        type_info: found.type_info,
         digest: digest.to_owned(),
     }))
 }

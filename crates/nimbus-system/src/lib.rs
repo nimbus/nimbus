@@ -39,7 +39,7 @@ pub use records::{
 #[cfg(test)]
 use schema::{SystemTable, system_table_schemas};
 pub use source_package::{
-    ParsedModule, ParsedSourcePackage, SOURCE_PACKAGE_VERSION, build_source_package,
+    ModuleInput, ParsedModule, ParsedSourcePackage, SOURCE_PACKAGE_VERSION, build_source_package,
     parse_source_package,
 };
 pub use source_store::{

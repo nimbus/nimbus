@@ -302,6 +302,8 @@ type ModuleAnalysis = {
   references: Array<{ target: string; line: number }>;
 };
 
+type TypeHint = { name: string; line: number; hover: string };
+
 type SourceState =
   | { status: "loading" }
   | {
@@ -309,6 +311,7 @@ type SourceState =
       source: string;
       digest: string;
       analysis: ModuleAnalysis | null;
+      typeInfo: TypeHint[] | null;
     }
   | { status: "missing" }
   | { status: "error"; message: string };
@@ -346,12 +349,14 @@ function SourceTab({ fn }: { fn: FunctionDoc }) {
           source?: string;
           digest?: string;
           analysis?: ModuleAnalysis;
+          type_info?: TypeHint[];
         };
         setState({
           status: "ready",
           source: body.source ?? "",
           digest: body.digest ?? "",
           analysis: body.analysis ?? null,
+          typeInfo: body.type_info ?? null,
         });
       })
       .catch((error) => {
@@ -393,7 +398,11 @@ function SourceTab({ fn }: { fn: FunctionDoc }) {
         ) : null}
       </div>
       {state.analysis ? (
-        <SymbolsBar modulePath={modulePath} analysis={state.analysis} />
+        <SymbolsBar
+          modulePath={modulePath}
+          analysis={state.analysis}
+          typeInfo={state.typeInfo}
+        />
       ) : null}
       <div className="min-h-0 flex-1 overflow-hidden">
         <CodeBlock code={state.source} lang="typescript" />
@@ -407,9 +416,11 @@ function SourceTab({ fn }: { fn: FunctionDoc }) {
 function SymbolsBar({
   modulePath,
   analysis,
+  typeInfo,
 }: {
   modulePath: string;
   analysis: ModuleAnalysis;
+  typeInfo: TypeHint[] | null;
 }) {
   if (analysis.exports.length === 0 && analysis.references.length === 0) {
     return null;
@@ -424,14 +435,22 @@ function SymbolsBar({
           <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
             defines
           </span>
-          {analysis.exports.map((symbol) => (
-            <SymbolLink
-              key={symbol.name}
-              path={`${modulePath}:${symbol.name}`}
-              label={symbol.name}
-              testid={`function-source-define-${symbol.name}`}
-            />
-          ))}
+          {analysis.exports.map((symbol) => {
+            // The TS-compiler hover for this export's declaration (FSV8),
+            // shown as the chip's native tooltip.
+            const hint = typeInfo?.find(
+              (h) => h.name === symbol.name && h.line === symbol.line,
+            );
+            return (
+              <SymbolLink
+                key={symbol.name}
+                path={`${modulePath}:${symbol.name}`}
+                label={symbol.name}
+                title={hint?.hover}
+                testid={`function-source-define-${symbol.name}`}
+              />
+            );
+          })}
         </div>
       ) : null}
       {analysis.references.length > 0 ? (
@@ -456,10 +475,12 @@ function SymbolsBar({
 function SymbolLink({
   path,
   label,
+  title,
   testid,
 }: {
   path: string;
   label: string;
+  title?: string;
   testid: string;
 }) {
   return (
@@ -468,6 +489,7 @@ function SymbolLink({
       params={{ function: path }}
       search={{ tab: "source" }}
       data-testid={testid}
+      title={title}
       className="rounded border border-app px-1.5 py-0.5 font-mono text-[11px] text-link hover:bg-surface-2 hover:underline"
     >
       {label}

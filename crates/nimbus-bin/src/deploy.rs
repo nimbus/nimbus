@@ -715,10 +715,24 @@ fn collect_convex_source_package(
     if !convex_dir.is_dir() {
         return Ok(None);
     }
-    let mut modules = std::collections::BTreeMap::new();
-    collect_source_modules(&convex_dir, &convex_dir, &mut modules)?;
-    if modules.is_empty() {
+    let mut files = std::collections::BTreeMap::new();
+    collect_source_modules(&convex_dir, &convex_dir, &mut files)?;
+    if files.is_empty() {
         return Ok(None);
+    }
+    // Carry per-module type info (FSV8), computed best-effort with the app's own
+    // TypeScript (resolved from app_dir); absent when no toolchain is present.
+    let mut modules = std::collections::BTreeMap::new();
+    for (module_path, (file_path, source)) in files {
+        let type_info = crate::typeinfo::extract_module_type_info(app_dir, &file_path);
+        modules.insert(
+            module_path,
+            nimbus_system::ModuleInput {
+                source,
+                source_map: None,
+                type_info,
+            },
+        );
     }
     let bytes = nimbus_system::build_source_package(&modules);
     let digest = nimbus_system::source_package_digest(&bytes);
@@ -734,7 +748,7 @@ fn collect_convex_source_package(
 fn collect_source_modules(
     root: &Path,
     dir: &Path,
-    modules: &mut std::collections::BTreeMap<String, (String, Option<String>)>,
+    files: &mut std::collections::BTreeMap<String, (PathBuf, String)>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
@@ -746,7 +760,7 @@ fn collect_source_modules(
             if name == "_generated" || name == "node_modules" {
                 continue;
             }
-            collect_source_modules(root, &path, modules)?;
+            collect_source_modules(root, &path, files)?;
             continue;
         }
         if !file_type.is_file() {
@@ -764,7 +778,7 @@ fn collect_source_modules(
         let relative = path.strip_prefix(root)?.with_extension("");
         let module_path = relative.to_string_lossy().replace('\\', "/");
         let source = fs::read_to_string(&path)?;
-        modules.insert(module_path, (source, None));
+        files.insert(module_path, (path.clone(), source));
     }
     Ok(())
 }
