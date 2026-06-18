@@ -196,7 +196,7 @@ OUT
 HTTP/1.1 200 OK
 content-type: application/json
 
-{"protocol_version":"v1alpha2","service_execution_ready":true,"service_execution_mode":"standard_containers","supported_service_backends":["container"],"supported_operations":["healthz","capabilities","service-sandboxes.image-start","service-sandboxes.list","service-sandboxes.inspect","service-sandboxes.stop","service-sandboxes.logs","service-sandboxes.ps","os.bootc.status","os.bootc.switch","os.bootc.upgrade","os.bootc.rollback"],"binary_statuses":[{"name":"buildah","present":true,"resolved_path":"/usr/bin/buildah","required_for_operations":["service-sandboxes.image-start"]}],"operation_statuses":[{"name":"service-sandboxes.image-start","available":true,"blockers":[]}],"service_execution_blockers":[]}
+{"protocol_version":"v1alpha2","service_execution_ready":true,"service_execution_mode":"standard_containers","service_execution_driver":"guest_node_agent_systemd_transient_unit","supported_service_backends":["container"],"supported_operations":["healthz","capabilities","service-sandboxes.image-start","service-sandboxes.list","service-sandboxes.inspect","service-sandboxes.stop","service-sandboxes.logs","service-sandboxes.ps","os.bootc.status","os.bootc.switch","os.bootc.upgrade","os.bootc.rollback"],"binary_statuses":[{"name":"buildah","present":true,"resolved_path":"/usr/bin/buildah","required_for_operations":["service-sandboxes.image-start"]}],"operation_statuses":[{"name":"service-sandboxes.image-start","available":true,"blockers":[]}],"service_execution_blockers":[]}
 OUT
     ;;
   *"--unix-socket ${FAKE_NIMBUS_RUNTIME_ROOT}/default-api.sock http://localhost/v1/machine-api/os/bootc/status"*)
@@ -329,6 +329,7 @@ grep -F "SubState=running" "${output_dir}/guest-nimbus-service-status.txt" >/dev
 grep -F "virtiofs" "${output_dir}/guest-virtiofs-mount.txt" >/dev/null
 grep -F '"status":"ok"' "${output_dir}/guest-machine-api-health.txt" >/dev/null
 grep -F '"service_execution_mode":"standard_containers"' "${output_dir}/guest-machine-api-capabilities.txt" >/dev/null
+grep -F '"service_execution_driver":"guest_node_agent_systemd_transient_unit"' "${output_dir}/guest-machine-api-capabilities.txt" >/dev/null
 grep -F '"booted_digest":"sha256:9999999999999999999999999999999999999999999999999999999999999999"' "${output_dir}/guest-machine-api-bootc-status.txt" >/dev/null
 grep -F '"imageDigest":"sha256:9999999999999999999999999999999999999999999999999999999999999999"' "${output_dir}/guest-bootc-status.txt" >/dev/null
 grep -F "Enforcing" "${output_dir}/guest-selinux-mode.txt" >/dev/null

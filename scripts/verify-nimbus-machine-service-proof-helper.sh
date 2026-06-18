@@ -20,11 +20,18 @@ inspect_count_file="${tmp_dir}/inspect-count.txt"
 quoted_inspect_count_file="$(printf '%q' "${inspect_count_file}")"
 probe_count_file="${tmp_dir}/probe-count.txt"
 quoted_probe_count_file="$(printf '%q' "${probe_count_file}")"
+identity_path="${tmp_dir}/machine-key"
+ssh_port="20022"
 
 mkdir -p "${home_dir}" "${runtime_root}" "${bin_dir}" "${output_dir}" "${project_dir}"
 printf 'up\n' > "${state_file}"
 printf '0\n' > "${inspect_count_file}"
 printf '0\n' > "${probe_count_file}"
+printf 'fake ssh identity\n' > "${identity_path}"
+chmod 0600 "${identity_path}"
+export FAKE_NIMBUS_RUNTIME_ROOT="${runtime_root}"
+export FAKE_SSH_IDENTITY_PATH="${identity_path}"
+export FAKE_SSH_PORT="${ssh_port}"
 cat > "${compose_file}" <<'EOF'
 name: demo-app
 services:
@@ -57,6 +64,35 @@ if [[ "\${1:-}" == "machine" && "\${2:-}" == "status" ]]; then
 result: status
 lifecycle: running
 manager: ready
+OUT
+  exit 0
+fi
+
+if [[ "\${1:-}" == "machine" && "\${2:-}" == "inspect" ]]; then
+  if [[ "\${3:-}" != "default" || "\${4:-}" != "-f" || "\${5:-}" != "json" ]]; then
+    echo "expected machine inspect default -f json" >&2
+    exit 64
+  fi
+  cat <<OUT
+{
+  "config": {
+    "name": "default",
+    "guest": {
+      "ssh_user": "nimbus",
+      "ssh_identity_path": "${FAKE_SSH_IDENTITY_PATH}"
+    },
+    "roots": {
+      "runtime_root": "${FAKE_NIMBUS_RUNTIME_ROOT}"
+    }
+  },
+  "state": {
+    "lifecycle": "running",
+    "manager": "ready",
+    "runtime": {
+      "ssh_port": ${FAKE_SSH_PORT}
+    }
+  }
+}
 OUT
   exit 0
 fi
@@ -205,7 +241,7 @@ OUT
 HTTP/1.1 200 OK
 content-type: application/json
 
-{"protocol_version":"v1alpha2","service_execution_ready":true,"service_execution_mode":"standard_containers","supported_service_backends":["container"],"supported_operations":["healthz","capabilities","service-sandboxes.list","service-sandboxes.inspect","service-sandboxes.inspect-current","service-sandboxes.logs","service-sandboxes.ps","service-sandboxes.image-start","service-sandboxes.stop","service-sandboxes.build-start"],"binary_statuses":[{"name":"conmon","present":true,"resolved_path":"/usr/bin/conmon","required_for_operations":["service-sandboxes.image-start","service-sandboxes.build-start"]},{"name":"crun","present":true,"resolved_path":"/usr/bin/crun","required_for_operations":["service-sandboxes.image-start","service-sandboxes.build-start"]},{"name":"netavark","present":true,"resolved_path":"/usr/libexec/podman/netavark","required_for_operations":["service-sandboxes.image-start","service-sandboxes.build-start"]},{"name":"aardvark-dns","present":true,"resolved_path":"/usr/libexec/podman/aardvark-dns","required_for_operations":["service-sandboxes.image-start","service-sandboxes.build-start"]}],"operation_statuses":[{"name":"service-sandboxes.list","available":true,"blockers":[]},{"name":"service-sandboxes.inspect","available":true,"blockers":[]},{"name":"service-sandboxes.inspect-current","available":true,"blockers":[]},{"name":"service-sandboxes.logs","available":true,"blockers":[]},{"name":"service-sandboxes.ps","available":true,"blockers":[]},{"name":"service-sandboxes.image-start","available":true,"blockers":[]},{"name":"service-sandboxes.stop","available":true,"blockers":[]},{"name":"service-sandboxes.build-start","available":true,"blockers":[]}],"service_execution_blockers":[]}
+{"protocol_version":"v1alpha2","service_execution_ready":true,"service_execution_mode":"standard_containers","service_execution_driver":"guest_node_agent_systemd_transient_unit","supported_service_backends":["container"],"supported_operations":["healthz","capabilities","service-sandboxes.list","service-sandboxes.inspect","service-sandboxes.inspect-current","service-sandboxes.logs","service-sandboxes.ps","service-sandboxes.image-start","service-sandboxes.stop","service-sandboxes.build-start"],"binary_statuses":[{"name":"conmon","present":true,"resolved_path":"/usr/bin/conmon","required_for_operations":["service-sandboxes.image-start","service-sandboxes.build-start"]},{"name":"crun","present":true,"resolved_path":"/usr/bin/crun","required_for_operations":["service-sandboxes.image-start","service-sandboxes.build-start"]},{"name":"netavark","present":true,"resolved_path":"/usr/libexec/podman/netavark","required_for_operations":["service-sandboxes.image-start","service-sandboxes.build-start"]},{"name":"aardvark-dns","present":true,"resolved_path":"/usr/libexec/podman/aardvark-dns","required_for_operations":["service-sandboxes.image-start","service-sandboxes.build-start"]}],"operation_statuses":[{"name":"service-sandboxes.list","available":true,"blockers":[]},{"name":"service-sandboxes.inspect","available":true,"blockers":[]},{"name":"service-sandboxes.inspect-current","available":true,"blockers":[]},{"name":"service-sandboxes.logs","available":true,"blockers":[]},{"name":"service-sandboxes.ps","available":true,"blockers":[]},{"name":"service-sandboxes.image-start","available":true,"blockers":[]},{"name":"service-sandboxes.stop","available":true,"blockers":[]},{"name":"service-sandboxes.build-start","available":true,"blockers":[]}],"service_execution_blockers":[]}
 OUT
     ;;
   http://localhost/v1/machine-api/service-sandboxes)
@@ -238,6 +274,52 @@ OUT
 esac
 EOF
 
+cat > "${bin_dir}/ssh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+rendered="$*"
+case "${rendered}" in
+  *"-i ${FAKE_SSH_IDENTITY_PATH}"*"-p ${FAKE_SSH_PORT}"*"root@127.0.0.1"*"/bin/sh -lc "*"tail -n 200"*"/var/lib/nimbus/control/node-agent/status.jsonl"*)
+    cat <<'OUT'
+{"projection":{"decision_id":"tid_local-demo_service_db","tenant_id":"local-demo","surface":"node.workload_executor","authority_class":"operator","workload_uid":"tw_local-demo_db","workload_subject":"db","generation":1},"status":{"workload_uid":"tw_local-demo_db","observed_generation":1,"decision_id":"tid_local-demo_service_db","writer_node_id":"machine-os-guest-node","target":"status","phase":"ready","conditions":[{"type":"ready","status":"true","reason":"Ready"}],"observed_usage":{},"node_observation_ids":{},"lifecycle_evidence":{"backend":"systemd_transient_unit","unit_name":"nimbus-tw_local-demo-db.service","job_path":"/org/freedesktop/systemd1/job/991","process_id":2002,"cgroup_path":"/system.slice/nimbus-tw_local-demo-db.service","journal_selectors":[{"field":"_SYSTEMD_UNIT","value":"nimbus-tw_local-demo-db.service"},{"field":"NIMBUS_WORKLOAD_ID","value":"tw_local-demo_db"}],"status_reason":"ready","message":null},"cleanup_progress":null,"diagnostics":{},"evidence_correlation_ids":["nimbus-tw_local-demo-db.service","/org/freedesktop/systemd1/job/991","pid:2002","/system.slice/nimbus-tw_local-demo-db.service"]}}
+OUT
+    ;;
+  *"-i ${FAKE_SSH_IDENTITY_PATH}"*"-p ${FAKE_SSH_PORT}"*"root@127.0.0.1"*"/bin/sh -lc "*"systemctl list-units \"nimbus-tw_*.service\" --all --no-pager --no-legend 2>&1 || true"*)
+    cat <<'OUT'
+nimbus-tw_local-demo-db.service loaded active running Nimbus tenant workload tw_local-demo_db
+OUT
+    ;;
+  *"-i ${FAKE_SSH_IDENTITY_PATH}"*"-p ${FAKE_SSH_PORT}"*"root@127.0.0.1"*"/bin/sh -lc "*"systemctl show --no-pager --property=Id,LoadState,ActiveState,SubState,MainPID,ControlGroup"*)
+    cat <<'OUT'
+# unit nimbus-tw_local-demo-db.service
+Id=nimbus-tw_local-demo-db.service
+LoadState=loaded
+ActiveState=active
+SubState=running
+MainPID=2002
+ControlGroup=/system.slice/nimbus-tw_local-demo-db.service
+OUT
+    ;;
+  *"-i ${FAKE_SSH_IDENTITY_PATH}"*"-p ${FAKE_SSH_PORT}"*"root@127.0.0.1"*"/bin/sh -lc "*"journalctl -b -u"*)
+    cat <<'OUT'
+# journal unit nimbus-tw_local-demo-db.service
+NIMBUS_WORKLOAD_ID=tw_local-demo_db
+nimbus-container-runner started
+OUT
+    ;;
+  *"-i ${FAKE_SSH_IDENTITY_PATH}"*"-p ${FAKE_SSH_PORT}"*"root@127.0.0.1"*"/bin/sh -lc "*"ls -lZ"*"/usr/libexec/nimbus/nimbus-container-runner"*)
+    cat <<'OUT'
+-rwxr-xr-x. root root system_u:object_r:bin_t:s0 /usr/libexec/nimbus/nimbus-container-runner
+OUT
+    ;;
+  *)
+    echo "unexpected ssh command: ${rendered}" >&2
+    exit 64
+    ;;
+esac
+EOF
+
 sed "s|__PROBE_COUNT_FILE__|${quoted_probe_count_file}|g" \
   "${bin_dir}/curl" > "${bin_dir}/curl.rendered"
 mv "${bin_dir}/curl.rendered" "${bin_dir}/curl"
@@ -248,9 +330,9 @@ sed -e "s|__COMPOSE_FILE__|${compose_file}|g" \
   "${bin_dir}/nimbus" > "${bin_dir}/nimbus.rendered"
 mv "${bin_dir}/nimbus.rendered" "${bin_dir}/nimbus"
 
-chmod +x "${bin_dir}/nimbus" "${bin_dir}/curl"
+chmod +x "${bin_dir}/nimbus" "${bin_dir}/curl" "${bin_dir}/ssh"
 
-bash "${repo_root}/scripts/collect-nimbus-machine-service-proof.sh" \
+PATH="${bin_dir}:${PATH}" bash "${repo_root}/scripts/collect-nimbus-machine-service-proof.sh" \
   --home "${home_dir}" \
   --runtime-root "${runtime_root}" \
   --output-dir "${output_dir}" \
@@ -265,6 +347,7 @@ summary_file="${output_dir}/summary.txt"
 
 for expected_file in \
   "${output_dir}/machine-status.txt" \
+  "${output_dir}/machine-inspect.txt" \
   "${output_dir}/machine-api-health.txt" \
   "${output_dir}/machine-api-capabilities.txt" \
   "${output_dir}/service-config.txt" \
@@ -275,6 +358,11 @@ for expected_file in \
   "${output_dir}/service-ps.txt" \
   "${output_dir}/service-logs.txt" \
   "${output_dir}/localhost-probe.txt" \
+  "${output_dir}/guest-node-agent-status.txt" \
+  "${output_dir}/guest-systemd-transient-units.txt" \
+  "${output_dir}/guest-systemd-transient-unit-status.txt" \
+  "${output_dir}/guest-node-workload-journal.txt" \
+  "${output_dir}/guest-typed-runner-path.txt" \
   "${output_dir}/service-down.txt" \
   "${output_dir}/service-list-after-down.txt"
 do
@@ -286,17 +374,28 @@ done
 
 grep -F "service.name                       db" "${summary_file}" >/dev/null
 grep -F "published.url                      http://127.0.0.1:18080/healthz" "${summary_file}" >/dev/null
+grep -F "guest.node_agent_status_path       /var/lib/nimbus/control/node-agent/status.jsonl" "${summary_file}" >/dev/null
+grep -F "guest.container_runner_path        /usr/libexec/nimbus/nimbus-container-runner" "${summary_file}" >/dev/null
+grep -F "privileged.guest_evidence          root-ssh port=${ssh_port} identity=${identity_path}" "${summary_file}" >/dev/null
+grep -E "^capture\\.machine_inspect[[:space:]]+ok path=${output_dir}/machine-inspect.txt cmd=${output_dir}/machine-inspect-command.txt$" "${summary_file}" >/dev/null
 grep -E "^capture\\.machine_api_health[[:space:]]+ok path=${output_dir}/machine-api-health.txt cmd=${output_dir}/machine-api-health-command.txt$" "${summary_file}" >/dev/null
 grep -E "^capture\\.service_up[[:space:]]+ok path=${output_dir}/service-up.txt cmd=${output_dir}/service-up-command.txt$" "${summary_file}" >/dev/null
 grep -E "^capture\\.service_ready[[:space:]]+ok attempts=3 path=${output_dir}/service-inspect.txt cmd=${output_dir}/service-inspect-command.txt$" "${summary_file}" >/dev/null
 grep -E "^capture\\.machine_api_service_sandboxes[[:space:]]+ok path=${output_dir}/machine-api-service-sandboxes.txt cmd=${output_dir}/machine-api-service-sandboxes-command.txt$" "${summary_file}" >/dev/null
 grep -E "^capture\\.localhost_probe[[:space:]]+ok attempts=2 path=${output_dir}/localhost-probe.txt cmd=${output_dir}/localhost-probe-command.txt$" "${summary_file}" >/dev/null
+grep -E "^capture\\.guest_node_agent_status[[:space:]]+ok path=${output_dir}/guest-node-agent-status.txt cmd=${output_dir}/guest-node-agent-status-command.txt$" "${summary_file}" >/dev/null
+grep -E "^capture\\.guest_systemd_transient_units[[:space:]]+ok path=${output_dir}/guest-systemd-transient-units.txt cmd=${output_dir}/guest-systemd-transient-units-command.txt$" "${summary_file}" >/dev/null
+grep -E "^capture\\.guest_systemd_transient_unit_status[[:space:]]+ok path=${output_dir}/guest-systemd-transient-unit-status.txt cmd=${output_dir}/guest-systemd-transient-unit-status-command.txt$" "${summary_file}" >/dev/null
+grep -E "^capture\\.guest_node_workload_journal[[:space:]]+ok path=${output_dir}/guest-node-workload-journal.txt cmd=${output_dir}/guest-node-workload-journal-command.txt$" "${summary_file}" >/dev/null
+grep -E "^capture\\.guest_typed_runner_path[[:space:]]+ok path=${output_dir}/guest-typed-runner-path.txt cmd=${output_dir}/guest-typed-runner-path-command.txt$" "${summary_file}" >/dev/null
 grep -F "result                             captured" "${summary_file}" >/dev/null
 
 grep -F "manager: ready" "${output_dir}/machine-status.txt" >/dev/null
+grep -F "\"ssh_identity_path\": \"${identity_path}\"" "${output_dir}/machine-inspect.txt" >/dev/null
 grep -F '"status":"ok"' "${output_dir}/machine-api-health.txt" >/dev/null
 grep -F '"protocol_version":"v1alpha2"' "${output_dir}/machine-api-health.txt" >/dev/null
 grep -F '"service_execution_ready":true' "${output_dir}/machine-api-capabilities.txt" >/dev/null
+grep -F '"service_execution_driver":"guest_node_agent_systemd_transient_unit"' "${output_dir}/machine-api-capabilities.txt" >/dev/null
 grep -F '"service-sandboxes.build-start"' "${output_dir}/machine-api-capabilities.txt" >/dev/null
 grep -F "project_name: demo-app" "${output_dir}/service-config.txt" >/dev/null
 grep -F "kind: build" "${output_dir}/service-config.txt" >/dev/null
@@ -310,6 +409,16 @@ grep -F "ctr.log" "${output_dir}/service-inspect.txt" >/dev/null
 grep -F "runtime_pid: 2002" "${output_dir}/service-ps.txt" >/dev/null
 grep -F "guest log line" "${output_dir}/service-logs.txt" >/dev/null
 grep -F "HTTP/1.1 200 OK" "${output_dir}/localhost-probe.txt" >/dev/null
+grep -F '"projection"' "${output_dir}/guest-node-agent-status.txt" >/dev/null
+grep -F '"observed_generation":1' "${output_dir}/guest-node-agent-status.txt" >/dev/null
+grep -F '"lifecycle_evidence"' "${output_dir}/guest-node-agent-status.txt" >/dev/null
+grep -F '"systemd_transient_unit"' "${output_dir}/guest-node-agent-status.txt" >/dev/null
+grep -F '"cgroup_path":"/system.slice/nimbus-tw_local-demo-db.service"' "${output_dir}/guest-node-agent-status.txt" >/dev/null
+grep -F '"NIMBUS_WORKLOAD_ID"' "${output_dir}/guest-node-agent-status.txt" >/dev/null
+grep -F "nimbus-tw_local-demo-db.service" "${output_dir}/guest-systemd-transient-units.txt" >/dev/null
+grep -F "ControlGroup=/system.slice/nimbus-tw_local-demo-db.service" "${output_dir}/guest-systemd-transient-unit-status.txt" >/dev/null
+grep -F "NIMBUS_WORKLOAD_ID=tw_local-demo_db" "${output_dir}/guest-node-workload-journal.txt" >/dev/null
+grep -F "/usr/libexec/nimbus/nimbus-container-runner" "${output_dir}/guest-typed-runner-path.txt" >/dev/null
 grep -F "action: stopped" "${output_dir}/service-down.txt" >/dev/null
 grep -F "[]" "${output_dir}/service-list-after-down.txt" >/dev/null
 

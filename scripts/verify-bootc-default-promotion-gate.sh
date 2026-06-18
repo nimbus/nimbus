@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: verify-bootc-default-promotion-gate.sh --release-dir <path> --guest-proof-dir <path> --expected-tag <vX.Y.Z>
+usage: verify-bootc-default-promotion-gate.sh --release-dir <path> --guest-proof-dir <path> --service-proof-dir <path> --expected-tag <vX.Y.Z>
 
 Verify that a Nimbus-owned bootc machine-os release bundle plus a real macOS
 guest proof bundle are sufficient evidence to promote the bootc image as the
@@ -12,10 +12,14 @@ macOS default.
 This gate intentionally composes two evidence classes:
 - immutable release assets, digest references, SBOM, checksums, and AppleHV OCI metadata
 - booted guest proof, machine API readiness, bootc/runtime capabilities, and clean SELinux AVC evidence
+- service proof showing the forwarded machine API drove a node-agent-backed
+  systemd transient unit with cgroup, journal, workload id, and generation evidence
 
 Options:
   --release-dir <path>      Directory containing downloaded machine-os release assets
   --guest-proof-dir <path>  Directory produced by collect-nimbus-machine-guest-proof.sh
+  --service-proof-dir <path>
+                             Directory produced by collect-nimbus-machine-service-proof.sh
   --expected-tag <tag>      Nimbus/machine-os release tag, for example v0.1.23
   -h, --help                Show this help
 EOF
@@ -59,6 +63,7 @@ assert_sha256_hex_value() {
 
 release_dir=""
 guest_proof_dir=""
+service_proof_dir=""
 expected_tag=""
 
 while [[ $# -gt 0 ]]; do
@@ -69,6 +74,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --guest-proof-dir)
       guest_proof_dir="${2:-}"
+      shift 2
+      ;;
+    --service-proof-dir)
+      service_proof_dir="${2:-}"
       shift 2
       ;;
     --expected-tag)
@@ -87,13 +96,16 @@ done
 
 [[ -n "${release_dir}" ]] || die "--release-dir is required"
 [[ -n "${guest_proof_dir}" ]] || die "--guest-proof-dir is required"
+[[ -n "${service_proof_dir}" ]] || die "--service-proof-dir is required"
 [[ -n "${expected_tag}" ]] || die "--expected-tag is required"
 [[ -d "${release_dir}" ]] || die "release dir does not exist: ${release_dir}"
 [[ -d "${guest_proof_dir}" ]] || die "guest proof dir does not exist: ${guest_proof_dir}"
+[[ -d "${service_proof_dir}" ]] || die "service proof dir does not exist: ${service_proof_dir}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 release_dir="$(cd "${release_dir}" && pwd)"
 guest_proof_dir="$(cd "${guest_proof_dir}" && pwd)"
+service_proof_dir="$(cd "${service_proof_dir}" && pwd)"
 
 release_gate_args=(
   --release-dir "${release_dir}"
@@ -133,6 +145,21 @@ guest_selinux_avcs="${guest_proof_dir}/guest-selinux-avcs.txt"
 guest_selinux_avc_check="${guest_proof_dir}/guest-selinux-avc-check.txt"
 machine_log_tail="${guest_proof_dir}/machine-log-tail.txt"
 
+service_summary="${service_proof_dir}/summary.txt"
+service_machine_status="${service_proof_dir}/machine-status.txt"
+service_machine_inspect="${service_proof_dir}/machine-inspect.txt"
+service_capabilities="${service_proof_dir}/machine-api-capabilities.txt"
+service_api_sandboxes="${service_proof_dir}/machine-api-service-sandboxes.txt"
+service_inspect="${service_proof_dir}/service-inspect.txt"
+service_ps="${service_proof_dir}/service-ps.txt"
+service_logs="${service_proof_dir}/service-logs.txt"
+service_localhost_probe="${service_proof_dir}/localhost-probe.txt"
+service_node_agent_status="${service_proof_dir}/guest-node-agent-status.txt"
+service_systemd_units="${service_proof_dir}/guest-systemd-transient-units.txt"
+service_systemd_unit_status="${service_proof_dir}/guest-systemd-transient-unit-status.txt"
+service_node_workload_journal="${service_proof_dir}/guest-node-workload-journal.txt"
+service_typed_runner_path="${service_proof_dir}/guest-typed-runner-path.txt"
+
 for artifact in \
   "${summary}" \
   "${machine_status}" \
@@ -153,6 +180,25 @@ for artifact in \
   "${guest_selinux_avcs}" \
   "${guest_selinux_avc_check}" \
   "${machine_log_tail}"
+do
+  assert_file "${artifact}"
+done
+
+for artifact in \
+  "${service_summary}" \
+  "${service_machine_status}" \
+  "${service_machine_inspect}" \
+  "${service_capabilities}" \
+  "${service_api_sandboxes}" \
+  "${service_inspect}" \
+  "${service_ps}" \
+  "${service_logs}" \
+  "${service_localhost_probe}" \
+  "${service_node_agent_status}" \
+  "${service_systemd_units}" \
+  "${service_systemd_unit_status}" \
+  "${service_node_workload_journal}" \
+  "${service_typed_runner_path}"
 do
   assert_file "${artifact}"
 done
@@ -186,6 +232,7 @@ assert_contains "${guest_health}" "guest-machine-api" "machine API role"
 assert_contains "${guest_health}" "v1alpha2" "machine API protocol"
 assert_matches "${guest_capabilities}" '"service_execution_ready"[[:space:]]*:[[:space:]]*true' "machine API capabilities"
 assert_matches "${guest_capabilities}" '"service_execution_mode"[[:space:]]*:[[:space:]]*"standard_containers"' "machine API service mode"
+assert_matches "${guest_capabilities}" '"service_execution_driver"[[:space:]]*:[[:space:]]*"guest_node_agent_systemd_transient_unit"' "machine API service driver"
 for operation in os.bootc.status os.bootc.switch os.bootc.upgrade os.bootc.rollback service-sandboxes.image-start service-sandboxes.stop service-sandboxes.logs; do
   assert_contains "${guest_capabilities}" "${operation}" "machine API operation ${operation}"
 done
@@ -208,4 +255,36 @@ assert_contains "${guest_selinux_context}" "nimbus-machine-api" "Nimbus SELinux 
 
 assert_contains "${guest_selinux_avc_check}" "verified SELinux AVC gate: no AVC denials" "SELinux AVC check"
 
-printf 'verified: bootc default promotion gate has release evidence and clean macOS guest proof for %s\n' "${expected_tag}"
+assert_contains "${service_summary}" "result" "service proof summary"
+assert_contains "${service_summary}" "captured" "service proof summary"
+assert_contains "${service_summary}" "privileged.guest_evidence" "service proof privileged capture"
+assert_contains "${service_summary}" "root-ssh" "service proof privileged capture"
+assert_matches "${service_machine_status}" "running|lifecycle:[[:space:]]*running" "service proof machine status"
+assert_contains "${service_machine_inspect}" "ssh_identity_path" "service proof machine inspect SSH identity"
+assert_contains "${service_machine_inspect}" "ssh_port" "service proof machine inspect SSH port"
+assert_matches "${service_capabilities}" '"service_execution_ready"[[:space:]]*:[[:space:]]*true' "service proof machine API capabilities"
+assert_matches "${service_capabilities}" '"service_execution_driver"[[:space:]]*:[[:space:]]*"guest_node_agent_systemd_transient_unit"' "service proof machine API driver"
+assert_contains "${service_api_sandboxes}" "sandbox_id" "service proof machine API sandbox list"
+assert_matches "${service_inspect}" 'status:[[:space:]]*ready|"status"[[:space:]]*:[[:space:]]*"ready"' "service inspect ready"
+assert_contains "${service_ps}" "runtime_pid" "service process snapshot"
+assert_contains "${service_logs}" "guest log" "service logs"
+assert_contains "${service_localhost_probe}" "HTTP/1.1 200 OK" "service localhost probe"
+assert_contains "${service_node_agent_status}" '"projection"' "node-agent status projection"
+assert_contains "${service_node_agent_status}" '"status"' "node-agent status body"
+assert_contains "${service_node_agent_status}" '"workload_uid"' "node-agent workload id"
+assert_contains "${service_node_agent_status}" '"observed_generation"' "node-agent observed generation"
+assert_contains "${service_node_agent_status}" '"lifecycle_evidence"' "node-agent lifecycle evidence"
+assert_contains "${service_node_agent_status}" '"systemd_transient_unit"' "node-agent backend evidence"
+assert_contains "${service_node_agent_status}" '"unit_name"' "node-agent unit evidence"
+assert_contains "${service_node_agent_status}" '"cgroup_path"' "node-agent cgroup evidence"
+assert_contains "${service_node_agent_status}" '"journal_selectors"' "node-agent journal selector evidence"
+assert_contains "${service_node_agent_status}" '"NIMBUS_WORKLOAD_ID"' "node-agent workload journal selector"
+assert_contains "${service_node_agent_status}" "nimbus-tw_" "node-agent transient unit name"
+assert_contains "${service_systemd_units}" "nimbus-tw_" "systemd transient unit list"
+assert_contains "${service_systemd_unit_status}" "Id=nimbus-tw_" "systemd transient unit status"
+assert_contains "${service_systemd_unit_status}" "ControlGroup=/system.slice/nimbus-tw_" "systemd transient unit cgroup"
+assert_contains "${service_node_workload_journal}" "nimbus-tw_" "node workload journal unit"
+assert_contains "${service_node_workload_journal}" "NIMBUS_WORKLOAD_ID" "node workload journal selector"
+assert_contains "${service_typed_runner_path}" "/usr/libexec/nimbus/nimbus-container-runner" "typed container runner path"
+
+printf 'verified: bootc default promotion gate has release evidence, clean macOS guest proof, and node-agent service proof for %s\n' "${expected_tag}"

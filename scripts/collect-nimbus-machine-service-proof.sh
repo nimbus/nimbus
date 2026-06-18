@@ -17,6 +17,8 @@ lane for:
 - `nimbus compose up/ps/inspect/top/logs/down` against a container-backed
   image-backed or build-backed Compose project
 - optional localhost connectivity proof for one published guest service
+- guest node-agent status evidence plus transient systemd unit/cgroup/journal
+  evidence for the service workload while it is still running
 
 options:
   --compose-file <path>          Compose file to exercise (required)
@@ -134,6 +136,8 @@ curl_bin="curl"
 compose_file=""
 service_name=""
 published_url=""
+guest_node_agent_status_path="/var/lib/nimbus/control/node-agent/status.jsonl"
+guest_container_runner_path="/usr/libexec/nimbus/nimbus-container-runner"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -241,6 +245,8 @@ print_line "service.name" "${service_name}"
 print_line "nimbus.bin" "${nimbus_bin}"
 print_line "curl.bin" "${curl_bin}"
 print_line "published.url" "${published_url:-<unspecified>}"
+print_line "guest.node_agent_status_path" "${guest_node_agent_status_path}"
+print_line "guest.container_runner_path" "${guest_container_runner_path}"
 
 base_cmd=(
   env
@@ -254,6 +260,33 @@ capture_command \
   "${output_dir}/machine-status-command.txt" \
   "${output_dir}/machine-status.txt" \
   "${base_cmd[@]}" machine status || true
+
+capture_command \
+  "capture.machine_inspect" \
+  "${output_dir}/machine-inspect-command.txt" \
+  "${output_dir}/machine-inspect.txt" \
+  "${base_cmd[@]}" machine inspect "${machine_name}" -f json || true
+
+root_ssh_identity_path=""
+root_ssh_port=""
+if [[ -s "${output_dir}/machine-inspect.txt" ]]; then
+  root_ssh_identity_path="$(
+    sed -n 's/.*"ssh_identity_path": "\([^"]*\)".*/\1/p' \
+      "${output_dir}/machine-inspect.txt" \
+      | head -n1
+  )"
+  root_ssh_port="$(
+    sed -n 's/.*"ssh_port": \([0-9][0-9]*\).*/\1/p' \
+      "${output_dir}/machine-inspect.txt" \
+      | head -n1
+  )"
+fi
+
+if [[ -n "${root_ssh_identity_path}" && -n "${root_ssh_port}" && -f "${root_ssh_identity_path}" ]]; then
+  print_line "privileged.guest_evidence" "root-ssh port=${root_ssh_port} identity=${root_ssh_identity_path}"
+else
+  print_line "privileged.guest_evidence" "unavailable"
+fi
 
 capture_command \
   "capture.machine_api_health" \
@@ -324,6 +357,135 @@ if [[ -n "${published_url}" ]]; then
 else
   print_line "capture.localhost_probe" "skipped reason=no-published-url"
 fi
+
+if [[ -n "${root_ssh_identity_path}" && -n "${root_ssh_port}" && -f "${root_ssh_identity_path}" ]]; then
+  guest_node_agent_status_cmd=(
+    ssh
+    -o BatchMode=yes
+    -o IdentitiesOnly=yes
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o CheckHostIP=no
+    -o LogLevel=ERROR
+    -o SetEnv=LC_ALL=
+    -i "${root_ssh_identity_path}"
+    -p "${root_ssh_port}"
+    root@127.0.0.1
+    "/bin/sh -lc 'if [ -s \"${guest_node_agent_status_path}\" ]; then tail -n 200 \"${guest_node_agent_status_path}\"; else printf \"%s\n\" \"missing ${guest_node_agent_status_path}\"; exit 66; fi'"
+  )
+  guest_systemd_units_cmd=(
+    ssh
+    -o BatchMode=yes
+    -o IdentitiesOnly=yes
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o CheckHostIP=no
+    -o LogLevel=ERROR
+    -o SetEnv=LC_ALL=
+    -i "${root_ssh_identity_path}"
+    -p "${root_ssh_port}"
+    root@127.0.0.1
+    "/bin/sh -lc 'systemctl list-units \"nimbus-tw_*.service\" --all --no-pager --no-legend 2>&1 || true'"
+  )
+  guest_systemd_unit_status_cmd=(
+    ssh
+    -o BatchMode=yes
+    -o IdentitiesOnly=yes
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o CheckHostIP=no
+    -o LogLevel=ERROR
+    -o SetEnv=LC_ALL=
+    -i "${root_ssh_identity_path}"
+    -p "${root_ssh_port}"
+    root@127.0.0.1
+    "/bin/sh -lc 'units=\$(systemctl list-units \"nimbus-tw_*.service\" --all --no-pager --no-legend 2>/dev/null | awk \"{print \\\$1}\"); if [ -z \"\$units\" ]; then printf \"%s\n\" \"missing nimbus-tw_ transient service units\"; exit 66; fi; for unit in \$units; do printf \"# unit %s\n\" \"\$unit\"; systemctl show --no-pager --property=Id,LoadState,ActiveState,SubState,MainPID,ControlGroup \"\$unit\" || true; done'"
+  )
+  guest_node_workload_journal_cmd=(
+    ssh
+    -o BatchMode=yes
+    -o IdentitiesOnly=yes
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o CheckHostIP=no
+    -o LogLevel=ERROR
+    -o SetEnv=LC_ALL=
+    -i "${root_ssh_identity_path}"
+    -p "${root_ssh_port}"
+    root@127.0.0.1
+    "/bin/sh -lc 'units=\$(systemctl list-units \"nimbus-tw_*.service\" --all --no-pager --no-legend 2>/dev/null | awk \"{print \\\$1}\"); if [ -z \"\$units\" ]; then printf \"%s\n\" \"missing nimbus-tw_ transient service units\"; exit 66; fi; for unit in \$units; do printf \"# journal unit %s\n\" \"\$unit\"; journalctl -b -u \"\$unit\" --no-pager -n 120 || true; done'"
+  )
+  guest_typed_runner_path_cmd=(
+    ssh
+    -o BatchMode=yes
+    -o IdentitiesOnly=yes
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o CheckHostIP=no
+    -o LogLevel=ERROR
+    -o SetEnv=LC_ALL=
+    -i "${root_ssh_identity_path}"
+    -p "${root_ssh_port}"
+    root@127.0.0.1
+    "/bin/sh -lc 'if [ -e \"${guest_container_runner_path}\" ]; then ls -lZ \"${guest_container_runner_path}\" 2>/dev/null || ls -l \"${guest_container_runner_path}\"; else printf \"%s\n\" \"missing ${guest_container_runner_path}\"; exit 66; fi'"
+  )
+else
+  guest_node_agent_status_cmd=(
+    /bin/sh
+    -lc
+    "printf '%s\n' 'node-agent status capture unavailable: missing root SSH identity or port' >&2; exit 65"
+  )
+  guest_systemd_units_cmd=(
+    /bin/sh
+    -lc
+    "printf '%s\n' 'systemd unit capture unavailable: missing root SSH identity or port' >&2; exit 65"
+  )
+  guest_systemd_unit_status_cmd=(
+    /bin/sh
+    -lc
+    "printf '%s\n' 'systemd unit status capture unavailable: missing root SSH identity or port' >&2; exit 65"
+  )
+  guest_node_workload_journal_cmd=(
+    /bin/sh
+    -lc
+    "printf '%s\n' 'node workload journal capture unavailable: missing root SSH identity or port' >&2; exit 65"
+  )
+  guest_typed_runner_path_cmd=(
+    /bin/sh
+    -lc
+    "printf '%s\n' 'typed runner path capture unavailable: missing root SSH identity or port' >&2; exit 65"
+  )
+fi
+
+capture_command \
+  "capture.guest_node_agent_status" \
+  "${output_dir}/guest-node-agent-status-command.txt" \
+  "${output_dir}/guest-node-agent-status.txt" \
+  "${guest_node_agent_status_cmd[@]}" || true
+
+capture_command \
+  "capture.guest_systemd_transient_units" \
+  "${output_dir}/guest-systemd-transient-units-command.txt" \
+  "${output_dir}/guest-systemd-transient-units.txt" \
+  "${guest_systemd_units_cmd[@]}" || true
+
+capture_command \
+  "capture.guest_systemd_transient_unit_status" \
+  "${output_dir}/guest-systemd-transient-unit-status-command.txt" \
+  "${output_dir}/guest-systemd-transient-unit-status.txt" \
+  "${guest_systemd_unit_status_cmd[@]}" || true
+
+capture_command \
+  "capture.guest_node_workload_journal" \
+  "${output_dir}/guest-node-workload-journal-command.txt" \
+  "${output_dir}/guest-node-workload-journal.txt" \
+  "${guest_node_workload_journal_cmd[@]}" || true
+
+capture_command \
+  "capture.guest_typed_runner_path" \
+  "${output_dir}/guest-typed-runner-path-command.txt" \
+  "${output_dir}/guest-typed-runner-path.txt" \
+  "${guest_typed_runner_path_cmd[@]}" || true
 
 capture_command \
   "capture.service_down" \

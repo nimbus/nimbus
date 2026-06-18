@@ -203,6 +203,8 @@ if crates_grep 'trait MachineApiNodeWorkloadFacade' \
   && crates_grep 'prepare_plan_only_service_workload' \
   && crates_grep 'RunnerSpec::container' \
   && crates_grep 'NodeAgentAssignment::from_spec' \
+  && grep -q 'require_service_workloads(&state)' "${MACHINE_API_SRC}/routes.rs" \
+  && ! grep -q 'ContainerSandboxBackend' "${MACHINE_API_SRC}/routes.rs" \
   && [[ -z "$(machine_api_direct_container_lifecycle_leaks)" ]]; then
   pass "${C}"
 else
@@ -228,13 +230,31 @@ else
   fail "${C}" "machine-os recipe/unit/policy summary does not expose the guest node-agent/systemd workload contract"
 fi
 
+# --- 11c. NSR5c proof collectors require node-agent service evidence ---------
+C="11c. NSR5c proof collectors require node-agent transient-unit evidence"
+if grep -q -- '--service-proof-dir' scripts/verify-bootc-default-promotion-gate.sh \
+  && grep -q 'guest-node-agent-status.txt' scripts/verify-bootc-default-promotion-gate.sh \
+  && grep -q 'guest-systemd-transient-unit-status.txt' scripts/verify-bootc-default-promotion-gate.sh \
+  && grep -q 'guest-node-workload-journal.txt' scripts/verify-bootc-default-promotion-gate.sh \
+  && grep -q 'guest-typed-runner-path.txt' scripts/verify-bootc-default-promotion-gate.sh \
+  && grep -q 'service_execution_driver.*guest_node_agent_systemd_transient_unit' scripts/verify-bootc-default-promotion-gate.sh \
+  && grep -q 'guest-node-agent-status.txt' scripts/collect-nimbus-machine-service-proof.sh \
+  && grep -q 'guest-systemd-transient-unit-status.txt' scripts/collect-nimbus-machine-service-proof.sh \
+  && grep -q 'guest-node-workload-journal.txt' scripts/collect-nimbus-machine-service-proof.sh \
+  && grep -q 'guest-typed-runner-path.txt' scripts/collect-nimbus-machine-service-proof.sh \
+  && grep -q 'verified: bootc default promotion gate helper accepts complete evidence and rejects failed SELinux or missing node-agent proof' scripts/verify-bootc-default-promotion-gate-helper.sh; then
+  pass "${C}"
+else
+  fail "${C}" "machine proof collectors/helpers do not require node-agent status, transient systemd unit, journal/cgroup, typed runner, and service proof evidence"
+fi
+
 # --- 11. NSR5 machine-os guest node gates -------------------------------------
 C="11. NSR5 machine-os guest-node promotion gates are reachable"
 if [[ -x scripts/verify-bootc-default-promotion-gate.sh ]] \
   && [[ -x ../machine-os/scripts/check-selinux-avcs.sh ]] \
   && [[ -f "${NSR5_PROOF}" ]] \
   && grep -q 'verify-bootc-default-promotion-gate.sh' "${NSR5_PROOF}" \
-  && grep -q 'verified: bootc default promotion gate has release evidence and clean macOS guest proof' "${NSR5_PROOF}" \
+  && grep -q 'verified: bootc default promotion gate has release evidence, clean macOS guest proof, and node-agent service proof' "${NSR5_PROOF}" \
   && grep -q 'guest node agent' "${NSR5_PROOF}" \
   && grep -q 'systemd transient unit' "${NSR5_PROOF}" \
   && grep -q 'SELinux AVC' "${NSR5_PROOF}"; then

@@ -8,8 +8,10 @@ export NIMBUS_MACHINE_OS_SKIP_GHCR_PUBLIC_CHECK=1
 
 release_dir="${tmp_dir}/release"
 proof_dir="${tmp_dir}/proof"
+service_proof_dir="${tmp_dir}/service-proof"
 bad_proof_dir="${tmp_dir}/bad-proof"
-mkdir -p "${release_dir}" "${proof_dir}" "${bad_proof_dir}"
+bad_service_proof_dir="${tmp_dir}/bad-service-proof"
+mkdir -p "${release_dir}" "${proof_dir}" "${service_proof_dir}" "${bad_proof_dir}" "${bad_service_proof_dir}"
 
 expected_tag="v9.9.9"
 digest="sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -36,7 +38,7 @@ fedora_bootc_base_image=quay.io/fedora/fedora-bootc@${base_digest}
 bib_image=quay.io/centos-bootc/bootc-image-builder@${bib_digest}
 bootc_image_builder_rootfs=ext4
 provisioning_contract=bootc-native-no-ignition-primary
-selinux_expectation=container-runtime-domain-container-socket-policy-plus-fedora-bootupd-compat-plus-runtime-avc-gate
+selinux_expectation=container-runtime-domain-container-socket-policy-plus-guest-node-systemd-dbus-policy-plus-fedora-bootupd-compat-plus-runtime-avc-gate
 nimbus_version=${expected_tag}
 nimbus_binary_sha256=${nimbus_binary_sha256}
 EOF
@@ -118,7 +120,7 @@ HTTP/1.1 200 OK
 {"status":"ok","role":"guest-machine-api","protocol_version":"v1alpha2"}
 EOF
 cat >"${proof_dir}/guest-machine-api-capabilities.txt" <<'EOF'
-{"service_execution_ready":true,"service_execution_mode":"standard_containers","supported_operations":["service-sandboxes.image-start","service-sandboxes.stop","service-sandboxes.logs","os.bootc.status","os.bootc.switch","os.bootc.upgrade","os.bootc.rollback"]}
+{"service_execution_ready":true,"service_execution_mode":"standard_containers","service_execution_driver":"guest_node_agent_systemd_transient_unit","supported_operations":["service-sandboxes.image-start","service-sandboxes.stop","service-sandboxes.logs","os.bootc.status","os.bootc.switch","os.bootc.upgrade","os.bootc.rollback"]}
 EOF
 cat >"${proof_dir}/guest-machine-api-bootc-status.txt" <<'EOF'
 HTTP/1.1 200 OK
@@ -158,9 +160,85 @@ cat >"${proof_dir}/machine-log-tail.txt" <<'EOF'
 nimbus bootc proof machine reached ready state
 EOF
 
+cat >"${service_proof_dir}/summary.txt" <<EOF
+output.dir                         ${service_proof_dir}
+machine.name                       bootc-default-proof
+privileged.guest_evidence          root-ssh port=10000 identity=${tmp_dir}/machine-key
+service.name                       db
+published.url                      http://127.0.0.1:18080/healthz
+result                             captured
+EOF
+cat >"${service_proof_dir}/machine-status.txt" <<'EOF'
+result: status
+lifecycle: running
+manager: ready
+EOF
+cat >"${service_proof_dir}/machine-inspect.txt" <<EOF
+{"config":{"guest":{"ssh_identity_path":"${tmp_dir}/machine-key"}},"state":{"runtime":{"ssh_port":10000}}}
+EOF
+cat >"${service_proof_dir}/machine-api-capabilities.txt" <<'EOF'
+HTTP/1.1 200 OK
+content-type: application/json
+
+{"protocol_version":"v1alpha2","service_execution_ready":true,"service_execution_mode":"standard_containers","service_execution_driver":"guest_node_agent_systemd_transient_unit","supported_service_backends":["container"],"supported_operations":["healthz","capabilities","service-sandboxes.list","service-sandboxes.inspect","service-sandboxes.inspect-current","service-sandboxes.logs","service-sandboxes.ps","service-sandboxes.image-start","service-sandboxes.stop","service-sandboxes.build-start"],"binary_statuses":[],"operation_statuses":[],"service_execution_blockers":[]}
+EOF
+cat >"${service_proof_dir}/machine-api-service-sandboxes.txt" <<'EOF'
+HTTP/1.1 200 OK
+content-type: application/json
+
+{"sandboxes":[{"tenant_id":"local-demo","service_name":"db","sandbox_id":"db-01aaa","status":"ready"}]}
+EOF
+cat >"${service_proof_dir}/service-inspect.txt" <<'EOF'
+{
+  "summary": {
+    "tenant_id": "local-demo",
+    "service_name": "db",
+    "sandbox_id": "db-01aaa",
+    "status": "ready"
+  }
+}
+EOF
+cat >"${service_proof_dir}/service-ps.txt" <<'EOF'
+runtime_pid: 2002
+conmon_pid: 1001
+EOF
+cat >"${service_proof_dir}/service-logs.txt" <<'EOF'
+guest log line
+EOF
+cat >"${service_proof_dir}/localhost-probe.txt" <<'EOF'
+HTTP/1.1 200 OK
+content-type: text/plain
+
+ok
+EOF
+cat >"${service_proof_dir}/guest-node-agent-status.txt" <<'EOF'
+{"projection":{"decision_id":"tid_local-demo_service_db","tenant_id":"local-demo","surface":"node.workload_executor","authority_class":"operator","workload_uid":"tw_local-demo_db","workload_subject":"db","generation":1},"status":{"workload_uid":"tw_local-demo_db","observed_generation":1,"decision_id":"tid_local-demo_service_db","writer_node_id":"machine-os-guest-node","target":"status","phase":"ready","conditions":[{"type":"ready","status":"true","reason":"Ready"}],"observed_usage":{},"node_observation_ids":{},"lifecycle_evidence":{"backend":"systemd_transient_unit","unit_name":"nimbus-tw_local-demo-db.service","job_path":"/org/freedesktop/systemd1/job/991","process_id":2002,"cgroup_path":"/system.slice/nimbus-tw_local-demo-db.service","journal_selectors":[{"field":"_SYSTEMD_UNIT","value":"nimbus-tw_local-demo-db.service"},{"field":"NIMBUS_WORKLOAD_ID","value":"tw_local-demo_db"}],"status_reason":"ready","message":null},"cleanup_progress":null,"diagnostics":{},"evidence_correlation_ids":["nimbus-tw_local-demo-db.service","/org/freedesktop/systemd1/job/991","pid:2002","/system.slice/nimbus-tw_local-demo-db.service"]}}
+EOF
+cat >"${service_proof_dir}/guest-systemd-transient-units.txt" <<'EOF'
+nimbus-tw_local-demo-db.service loaded active running Nimbus tenant workload tw_local-demo_db
+EOF
+cat >"${service_proof_dir}/guest-systemd-transient-unit-status.txt" <<'EOF'
+# unit nimbus-tw_local-demo-db.service
+Id=nimbus-tw_local-demo-db.service
+LoadState=loaded
+ActiveState=active
+SubState=running
+MainPID=2002
+ControlGroup=/system.slice/nimbus-tw_local-demo-db.service
+EOF
+cat >"${service_proof_dir}/guest-node-workload-journal.txt" <<'EOF'
+# journal unit nimbus-tw_local-demo-db.service
+NIMBUS_WORKLOAD_ID=tw_local-demo_db
+nimbus-container-runner started
+EOF
+cat >"${service_proof_dir}/guest-typed-runner-path.txt" <<'EOF'
+-rwxr-xr-x. root root system_u:object_r:bin_t:s0 /usr/libexec/nimbus/nimbus-container-runner
+EOF
+
 bash "${repo_root}/scripts/verify-bootc-default-promotion-gate.sh" \
   --release-dir "${release_dir}" \
   --guest-proof-dir "${proof_dir}" \
+  --service-proof-dir "${service_proof_dir}" \
   --expected-tag "${expected_tag}" \
   >"${tmp_dir}/good.out"
 grep -F "verified: bootc default promotion gate" "${tmp_dir}/good.out" >/dev/null
@@ -173,6 +251,7 @@ EOF
 if bash "${repo_root}/scripts/verify-bootc-default-promotion-gate.sh" \
   --release-dir "${release_dir}" \
   --guest-proof-dir "${bad_proof_dir}" \
+  --service-proof-dir "${service_proof_dir}" \
   --expected-tag "${expected_tag}" \
   >"${tmp_dir}/bad.out" 2>&1; then
   echo "expected promotion gate to reject a failed SELinux AVC proof" >&2
@@ -180,4 +259,17 @@ if bash "${repo_root}/scripts/verify-bootc-default-promotion-gate.sh" \
 fi
 grep -F "SELinux AVC check" "${tmp_dir}/bad.out" >/dev/null
 
-printf 'verified: bootc default promotion gate helper accepts complete evidence and rejects failed SELinux proof\n'
+cp -R "${service_proof_dir}/." "${bad_service_proof_dir}/"
+rm "${bad_service_proof_dir}/guest-node-agent-status.txt"
+if bash "${repo_root}/scripts/verify-bootc-default-promotion-gate.sh" \
+  --release-dir "${release_dir}" \
+  --guest-proof-dir "${proof_dir}" \
+  --service-proof-dir "${bad_service_proof_dir}" \
+  --expected-tag "${expected_tag}" \
+  >"${tmp_dir}/bad-service.out" 2>&1; then
+  echo "expected promotion gate to reject missing node-agent service proof" >&2
+  exit 1
+fi
+grep -F "guest-node-agent-status.txt" "${tmp_dir}/bad-service.out" >/dev/null
+
+printf 'verified: bootc default promotion gate helper accepts complete evidence and rejects failed SELinux or missing node-agent proof\n'
