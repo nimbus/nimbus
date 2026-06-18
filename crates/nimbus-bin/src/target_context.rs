@@ -63,21 +63,21 @@ impl TargetSelector {
                 TargetContextSource::ExplicitUrlFlag,
             )?);
         }
-        if sources.is_empty() {
-            if let Some(target) = env_lookup(TARGET_ENV) {
-                sources.push(TargetCandidate::named(
-                    &target,
-                    TargetContextSource::EnvironmentTarget,
-                )?);
-            }
+        if sources.is_empty()
+            && let Some(target) = env_lookup(TARGET_ENV)
+        {
+            sources.push(TargetCandidate::named(
+                &target,
+                TargetContextSource::EnvironmentTarget,
+            )?);
         }
-        if sources.is_empty() {
-            if let Some(url) = env_lookup(DEPLOY_URL_ENV) {
-                sources.push(TargetCandidate::url(
-                    &url,
-                    TargetContextSource::EnvironmentDeployUrl,
-                )?);
-            }
+        if sources.is_empty()
+            && let Some(url) = env_lookup(DEPLOY_URL_ENV)
+        {
+            sources.push(TargetCandidate::url(
+                &url,
+                TargetContextSource::EnvironmentDeployUrl,
+            )?);
         }
         match sources.as_slice() {
             [candidate] => Ok(candidate.context.clone()),
