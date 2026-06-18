@@ -3,6 +3,7 @@
 mod catalog;
 mod manager;
 mod registry;
+mod sandbox_templates;
 mod workload_control;
 
 pub use catalog::{
@@ -18,6 +19,11 @@ pub use manager::{
 pub use registry::{
     RuntimeServiceBindingFuture, RuntimeServiceRegistry, RuntimeServiceTeardownFuture,
     ServiceInstanceBindingRegistry, service_binding_from_handle,
+};
+pub use sandbox_templates::{
+    ComposeSandboxTemplateService, DeployMode, EffectiveSandboxTemplatePolicy, LeasedSandbox,
+    NimbusAppIntent, NimbusDeployPackage, SandboxTemplate, SandboxTemplateChannelEndpoint,
+    SandboxTemplateLeaseController, SandboxTemplateLeaseRequest, SandboxTemplateProvenance,
 };
 pub use workload_control::{
     DesiredWorkload, DesiredWorkloadKind, DesiredWorkloadSnapshot, DesiredWorkloadState,
