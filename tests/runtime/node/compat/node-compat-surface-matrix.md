@@ -17,10 +17,10 @@ Use these generated artifacts for current support numbers and lane details:
 - [`node-lts-compat/node-latest-suite-tags.json`](node-lts-compat/node-latest-suite-tags.json)
 - [`node-faas-compatibility-profile.md`](node-faas-compatibility-profile.md)
 - [`node-faas-compatibility-profile.json`](node-faas-compatibility-profile.json)
-- [`docs/runtimes/nodejs/evidence/latest.md`](../../staging/runtimes/nodejs/evidence/latest.md)
-- [`docs/runtimes/nodejs/evidence/node20.md`](../../staging/runtimes/nodejs/evidence/node20.md)
-- [`docs/runtimes/nodejs/evidence/node22.md`](../../staging/runtimes/nodejs/evidence/node22.md)
-- [`docs/runtimes/nodejs/evidence/node24.md`](../../staging/runtimes/nodejs/evidence/node24.md)
+- [`published/nodejs/evidence/latest.md`](../published/nodejs/evidence/latest.md)
+- [`published/nodejs/evidence/node20.md`](../published/nodejs/evidence/node20.md)
+- [`published/nodejs/evidence/node22.md`](../published/nodejs/evidence/node22.md)
+- [`published/nodejs/evidence/node24.md`](../published/nodejs/evidence/node24.md)
 - [`node-compat-evidence/latest/status-summary.md`](node-compat-evidence/latest/status-summary.md)
 - [`node-compat-evidence/latest/dashboard-summary.md`](node-compat-evidence/latest/dashboard-summary.md)
 - [`node-compat-evidence/latest/trend-summary.md`](node-compat-evidence/latest/trend-summary.md)
@@ -124,6 +124,6 @@ service/microVM boundary.
 
 ## Refresh Workflow
 
-Use [`docs/runtimes/nodejs/evidence/refreshing.md`](../../staging/runtimes/nodejs/evidence/refreshing.md)
+Use [`published/nodejs/evidence/refreshing.md`](../published/nodejs/evidence/refreshing.md)
 when updating lane metadata, syncing against an upstream Node tag, regenerating
 dashboards, or preparing a future `nodeNN` lane.

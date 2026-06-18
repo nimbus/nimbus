@@ -33,7 +33,8 @@ with one job:
 - **The runtime** executes your functions in-process in V8 isolates. It
   is deliberately standalone: it knows nothing about the rest of Nimbus
   and declares what it needs from the host through a single host-bridge
-  contract. Bundles are SHA-256 integrity-checked before invocation.
+  contract. A bundle that carries a recorded provenance hash is SHA-256
+  integrity-checked against it before invocation.
 - **The storage layer** sits behind one engine-facing contract with
   multiple providers: embedded SQLite is the default, redb is a second
   embedded option, and Postgres, MySQL, and libSQL are external options.

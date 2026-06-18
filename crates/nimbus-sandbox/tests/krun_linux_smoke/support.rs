@@ -7,7 +7,7 @@ pub(super) fn smoke_backend_config(
     let mut config = KrunSandboxBackendConfig::default();
     config.bundle_root = bundle_root;
     config.state_root = state_root;
-    config.launch_mode = KrunLaunchMode::Execute;
+    config.start_mode = KrunStartMode::Execute;
 
     if let Some(runtime_path) = env::var_os("NIMBUS_KRUN_SMOKE_RUNTIME") {
         config.runtime_path = runtime_path.into();

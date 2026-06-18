@@ -67,7 +67,10 @@ pub(super) fn durable_record_index_keys_for_table_id(
     table_id: &nimbus_core::TableId,
 ) -> Result<Vec<Vec<u8>>> {
     let mut keys = Vec::new();
-    for index in &table_schema.indexes {
+    // Only maintained indexes (Backfilling|Enabled) carry physical entries; this
+    // must match the interactive write path so durable rewrites neither leak nor
+    // omit index keys for Pending/Deleting indexes.
+    for index in table_schema.maintained_indexes() {
         if let Some(key) = index_key_for_document(document, index, table_id)? {
             keys.push(key);
         }

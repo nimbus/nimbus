@@ -86,5 +86,5 @@ Child processes, worker threads, inspector, REPL, `node --test`, native addons, 
 ## Evidence Links
 
 - [Generated evidence summary](../evidence/latest.md)
-- [Architecture dashboard](../../../architecture/runtime/node-compat-evidence/latest/dashboard-summary.md)
-- [FaaS compatibility profile](../../../architecture/runtime/node-faas-compatibility-profile.md)
+- [Architecture dashboard](../../../compat/node-compat-evidence/latest/dashboard-summary.md)
+- [FaaS compatibility profile](../../../compat/node-faas-compatibility-profile.md)

@@ -375,7 +375,7 @@ export function assertQueryFieldPath(
   }
   if (normalized.includes(".")) {
     throw new Error(
-      `Firestore ${context} nested field paths are not supported yet.`,
+      `Firestore ${context} nested field paths are not supported; reference top-level fields only.`,
     );
   }
   return normalized;

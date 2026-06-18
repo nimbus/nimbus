@@ -54,6 +54,7 @@ struct StubSandboxBackend {
     fail_stop_ids: Mutex<BTreeSet<String>>,
     ready_after_inspects: usize,
     handle_tenant_override: Option<TenantId>,
+    handle_name_override: Option<String>,
     handles: Mutex<BTreeMap<String, SandboxHandle>>,
 }
 
@@ -69,12 +70,18 @@ impl StubSandboxBackend {
             fail_stop_ids: Mutex::new(BTreeSet::new()),
             ready_after_inspects,
             handle_tenant_override: None,
+            handle_name_override: None,
             handles: Mutex::new(BTreeMap::new()),
         }
     }
 
     fn with_handle_tenant_override(mut self, tenant_id: TenantId) -> Self {
         self.handle_tenant_override = Some(tenant_id);
+        self
+    }
+
+    fn with_handle_name_override(mut self, name: impl Into<String>) -> Self {
+        self.handle_name_override = Some(name.into());
         self
     }
 
@@ -108,10 +115,11 @@ impl StubSandboxBackend {
             .as_ref()
             .unwrap_or(tenant_id)
             .clone();
+        let handle_name = self.handle_name_override.as_deref().unwrap_or(service_name);
         SandboxHandle::new(
             handle_tenant_id.clone(),
             SandboxId::new(format!("sandbox-{handle_tenant_id}-{service_name}")),
-            service_name,
+            handle_name,
             SandboxBackendKind::Krun,
             status,
             endpoints,

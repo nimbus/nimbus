@@ -65,7 +65,8 @@ async fn start_service_for_decision_rejects_service_volume_without_catalog_polic
         backend.clone(),
     );
     let isolation = TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
-    let decision = service_lifecycle_decision(&isolation, "db")
+    let decision = manager
+        .service_lifecycle_decision(&isolation, "db")
         .expect("db service activation decision should build");
 
     let error = manager
@@ -82,7 +83,7 @@ async fn start_service_for_decision_rejects_service_volume_without_catalog_polic
     assert_eq!(
         backend.image_starts.load(Ordering::SeqCst),
         0,
-        "unadmitted service volume must fail before sandbox launch"
+        "unadmitted service volume must fail before sandbox start"
     );
 }
 
@@ -109,7 +110,8 @@ async fn start_service_for_decision_accepts_declared_service_tenant_volume() {
     .with_activation_poll_interval(Duration::from_millis(1))
     .with_activation_timeout(Duration::from_secs(1));
     let isolation = TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
-    let decision = service_lifecycle_decision(&isolation, "db")
+    let decision = manager
+        .service_lifecycle_decision(&isolation, "db")
         .expect("db service activation decision should build");
 
     manager

@@ -5,4 +5,4 @@ mod vm;
 pub use state::{
     KrunSandboxDetails, KrunSandboxLogPaths, KrunSandboxStateView, KrunSandboxSummary,
 };
-pub use vm::{KrunLaunchMode, KrunSandboxBackend, KrunSandboxBackendConfig};
+pub use vm::{KrunSandboxBackend, KrunSandboxBackendConfig, KrunStartMode};

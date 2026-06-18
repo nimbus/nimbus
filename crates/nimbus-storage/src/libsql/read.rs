@@ -121,7 +121,7 @@ impl LibsqlReplicaTenantStore {
     pub fn read_durable_journal_from(
         &self,
         sequence: SequenceNumber,
-    ) -> Result<Vec<DurableMutationRecord>> {
+    ) -> Result<Vec<TenantEventRecord>> {
         self.block_on(self.load_remote_durable_records_from(sequence))
     }
 

@@ -27,7 +27,7 @@ pub(super) fn record_postgres_schema_set_events(
     }
 }
 
-pub(super) fn durable_record_changes_schema_cache(record: &DurableMutationRecord) -> bool {
+pub(super) fn durable_record_changes_schema_cache(record: &TenantEventRecord) -> bool {
     record.events.iter().any(|event| {
         matches!(
             event,

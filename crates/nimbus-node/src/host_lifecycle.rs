@@ -860,7 +860,7 @@ mod tests {
                     .lock()
                     .expect("fake backend lock should not be poisoned");
                 let previous = statuses.get(&workload_id).cloned().ok_or_else(|| {
-                    Error::InvalidInput(format!(
+                    Error::NotFound(format!(
                         "fake lifecycle backend has no workload {}",
                         workload_id.as_str()
                     ))
@@ -895,7 +895,7 @@ mod tests {
                     .get(&workload_id)
                     .cloned()
                     .ok_or_else(|| {
-                        Error::InvalidInput(format!(
+                        Error::NotFound(format!(
                             "fake lifecycle backend has no workload {}",
                             workload_id.as_str()
                         ))

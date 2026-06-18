@@ -184,7 +184,7 @@ impl SqliteReadSnapshot {
     pub fn read_durable_journal_from(
         &self,
         sequence: SequenceNumber,
-    ) -> Result<Vec<DurableMutationRecord>> {
+    ) -> Result<Vec<TenantEventRecord>> {
         let mut stmt = self
             .conn
             .prepare(
@@ -198,7 +198,7 @@ impl SqliteReadSnapshot {
         let mut records = Vec::new();
         while let Some(row) = rows.next().map_err(map_sqlite_error)? {
             let payload: Vec<u8> = row.get(0).map_err(map_sqlite_error)?;
-            records.push(deserialize_durable_record(payload.as_slice())?);
+            records.push(deserialize_tenant_event_record(payload.as_slice())?);
         }
         Ok(records)
     }
@@ -249,7 +249,7 @@ impl SqliteReadSnapshot {
                 has_more = true;
                 break;
             }
-            records.push(deserialize_durable_record(payload.as_slice())?);
+            records.push(deserialize_tenant_event_record(payload.as_slice())?);
         }
 
         let next_cursor = records

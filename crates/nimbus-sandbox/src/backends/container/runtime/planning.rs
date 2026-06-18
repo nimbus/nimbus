@@ -330,7 +330,7 @@ fn plan_only_backend_scopes_network_state_by_tenant_for_same_sandbox_id() {
 fn plan_only_backend_auto_assigns_exposed_ports_from_published_range() {
     let temp_dir = TempDir::new().expect("tempdir should build");
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.launch_mode = ContainerLaunchMode::PlanOnly;
+    config.start_mode = ContainerStartMode::PlanOnly;
     config.published_port_range = 15000..=15001;
     let backend = ContainerSandboxBackend::new(config);
 
@@ -354,7 +354,7 @@ fn plan_only_backend_auto_assigns_exposed_ports_from_published_range() {
 fn plan_only_backend_rejects_same_tenant_port_quota_for_image_exposed_ports() {
     let temp_dir = TempDir::new().expect("tempdir should build");
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.launch_mode = ContainerLaunchMode::PlanOnly;
+    config.start_mode = ContainerStartMode::PlanOnly;
     config.published_port_range = 15000..=15005;
     config.max_published_ports_per_tenant = Some(1);
     let backend = ContainerSandboxBackend::new(config);
@@ -387,11 +387,14 @@ fn plan_only_backend_rejects_same_tenant_resource_quota_exhaustion() {
         temp_dir.path().join("bundles"),
         temp_dir.path().join("state"),
     );
+    // Disk is left unlimited: sandbox specs can no longer carry an (unenforceable)
+    // disk_limit_bytes, so each sandbox is charged the default per-sandbox disk
+    // accounting. This test isolates the vCPU constraint, so disk must not bind first.
     config.resource_quota_policy = SandboxResourceQuotaPolicy::default()
         .with_max_active_sandboxes_per_tenant(Some(2))
         .with_max_vcpus_per_tenant(Some(2))
         .with_max_memory_bytes_per_tenant(Some(1024))
-        .with_max_disk_bytes_per_tenant(Some(2048))
+        .with_max_disk_bytes_per_tenant(None)
         .with_max_log_bytes_per_tenant(Some(512));
     let backend = ContainerSandboxBackend::new(config);
 
@@ -401,7 +404,6 @@ fn plan_only_backend_rejects_same_tenant_resource_quota_exhaustion() {
                 SandboxResourceLimits::default()
                     .with_cpu_count(1)
                     .with_memory_limit_bytes(512)
-                    .with_disk_limit_bytes(1024)
                     .with_log_limit_bytes(256),
             ),
         )
@@ -413,7 +415,6 @@ fn plan_only_backend_rejects_same_tenant_resource_quota_exhaustion() {
                 SandboxResourceLimits::default()
                     .with_cpu_count(2)
                     .with_memory_limit_bytes(512)
-                    .with_disk_limit_bytes(1024)
                     .with_log_limit_bytes(256),
             ),
         )
@@ -431,7 +432,6 @@ fn plan_only_backend_rejects_same_tenant_resource_quota_exhaustion() {
                 SandboxResourceLimits::default()
                     .with_cpu_count(2)
                     .with_memory_limit_bytes(512)
-                    .with_disk_limit_bytes(1024)
                     .with_log_limit_bytes(256),
             ),
         )

@@ -1,4 +1,4 @@
-use nimbus_core::{CommitEntry, DurableMutationRecord, Result, Schema, SequenceNumber};
+use nimbus_core::{CommitEntry, Result, Schema, SequenceNumber, TenantEventRecord};
 use nimbus_storage::JournalProgress;
 
 use super::*;
@@ -113,7 +113,7 @@ impl TenantPersistence {
 
     pub(crate) fn applied_head_after_durable_apply(
         &self,
-        records: &[DurableMutationRecord],
+        records: &[TenantEventRecord],
     ) -> Result<SequenceNumber> {
         if matches!(self, Self::LibsqlReplica(_)) {
             Ok(records

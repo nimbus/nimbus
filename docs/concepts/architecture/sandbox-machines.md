@@ -45,7 +45,7 @@ tooling:
 - `buildah` for `SandboxOciImageSource::Build` image builds,
 - `netavark` and `aardvark-dns` for sandbox networking.
 
-Launches run in one of two modes (`ContainerLaunchMode`): `Execute` actually
+Launches run in one of two modes (`ContainerStartMode`): `Execute` actually
 starts the workload; `PlanOnly` materializes and validates everything up to
 execution without starting a process. The backend can also be configured with
 a machine port forwarder (`OciMachinePortForwarderConfig`, backed by
@@ -57,7 +57,7 @@ enforces network policy through the `SandboxEgressProxy` described below.
 The krun backend (`crates/nimbus-sandbox/src/backends/krun/`) targets libkrun
 microVMs on Linux KVM hosts. Its launch planning is real — image
 materialization, rootfs assembly, and guest configuration all work in
-`KrunLaunchMode::PlanOnly` — but execute mode is intentionally blocked. At the
+`KrunStartMode::PlanOnly` — but execute mode is intentionally blocked. At the
 top of launch planning, before any image work, the backend checks whether it
 can enforce egress for a running guest and refuses:
 

@@ -13,11 +13,11 @@ use hyper::client::connect::{Connected, Connection as HyperConnection};
 use libsql::{Builder, Connection, Database, Transaction, TransactionBehavior};
 use native_tls::TlsConnector as NativeTlsConnector;
 use nimbus_core::{
-    CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error,
-    HistoricalIndexCursor, HistoricalReadShape, IndexLifecycleEvent, Result, ScheduledJob,
-    ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId,
-    TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord,
-    TenantId, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
+    CommitEntry, CronJob, Document, DocumentId, Error, HistoricalIndexCursor, HistoricalReadShape,
+    IndexLifecycleEvent, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
+    SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName, TableSchema,
+    TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor,
+    TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use reqwest::Client as HttpClient;
 use reqwest::header::AUTHORIZATION;
@@ -38,9 +38,7 @@ use crate::async_storage::{
     TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, map_executor_join_error,
     map_executor_permit_error,
 };
-use crate::commit_log::{
-    deserialize_durable_record, serialize_durable_record, serialize_tenant_event_record,
-};
+use crate::commit_log::{deserialize_tenant_event_record, serialize_tenant_event_record};
 use crate::encryption::{
     LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_database_encryption_key,
 };
@@ -704,7 +702,7 @@ impl LibsqlReplicaTenantStore {
     async fn load_remote_durable_records_from(
         &self,
         sequence: SequenceNumber,
-    ) -> Result<Vec<DurableMutationRecord>> {
+    ) -> Result<Vec<TenantEventRecord>> {
         let conn = self.remote_connection()?;
         let mut rows = conn
             .query(
@@ -716,7 +714,7 @@ impl LibsqlReplicaTenantStore {
         let mut records = Vec::new();
         while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
             let payload = row.get::<Vec<u8>>(0).map_err(map_libsql_error)?;
-            records.push(deserialize_durable_record(payload.as_slice())?);
+            records.push(deserialize_tenant_event_record(payload.as_slice())?);
         }
         Ok(records)
     }
@@ -760,7 +758,7 @@ impl LibsqlReplicaTenantStore {
                 has_more = true;
                 break;
             }
-            records.push(deserialize_durable_record(payload.as_slice())?);
+            records.push(deserialize_tenant_event_record(payload.as_slice())?);
         }
         let next_cursor = records
             .last()
@@ -829,7 +827,7 @@ impl LibsqlReplicaTenantStore {
 
     async fn append_remote_durable_records_batch(
         &self,
-        records: &[DurableMutationRecord],
+        records: &[TenantEventRecord],
     ) -> Result<()> {
         let conn = self.remote_connection()?;
         let tx = conn
@@ -848,7 +846,7 @@ impl LibsqlReplicaTenantStore {
                 "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
                 libsql::params![
                     i64_from_u64(record.sequence.0)?,
-                    serialize_durable_record(record)?
+                    serialize_tenant_event_record(record)?
                 ],
             )
             .await
@@ -862,7 +860,7 @@ impl LibsqlReplicaTenantStore {
 
     async fn apply_remote_durable_records_batch(
         &self,
-        records: &[DurableMutationRecord],
+        records: &[TenantEventRecord],
     ) -> Result<SequenceNumber> {
         let conn = self.remote_connection()?;
         let tx = conn

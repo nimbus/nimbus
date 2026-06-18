@@ -34,6 +34,7 @@ const packageContracts = {
       "./browser": "./src/browser.ts",
       "./server": "./src/server.ts",
       "./values": "./src/values.ts",
+      "./internal/shared": "./src/internal/shared.ts",
       "./transports/rest": "./src/transports/rest.ts",
     },
   },

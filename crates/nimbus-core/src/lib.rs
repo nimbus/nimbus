@@ -39,8 +39,8 @@ pub use index_history::{
     order_preserving_number_bits,
 };
 pub use mutation::{
-    CommitEntry, DurableMutationRecord, IndexLifecycleEvent, Mutation, SchemaChangeEvent,
-    TableLifecycleEvent, TenantEventKind, TenantEventRecord, WriteOp, WriteOpType,
+    CommitEntry, IndexLifecycleEvent, Mutation, SchemaChangeEvent, TableLifecycleEvent,
+    TenantEventKind, TenantEventRecord, WriteOp, WriteOpType,
 };
 pub use mvcc::{
     CommitSequence, CommitTimestamp, HistoricalAuthorization, HistoricalCursorIdentity,
@@ -93,8 +93,8 @@ mod tests {
     use std::str::FromStr;
 
     use crate::{
-        CommitEntry, Document, DocumentId, DurableMutationRecord, OrderBy, OrderDirection, Query,
-        ResolvedDocumentId, SequenceNumber, TableId, TableName, TenantId, Timestamp, WriteOp,
+        CommitEntry, Document, DocumentId, OrderBy, OrderDirection, Query, ResolvedDocumentId,
+        SequenceNumber, TableId, TableName, TenantEventRecord, TenantId, Timestamp, WriteOp,
         WriteOpType,
     };
 
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn durable_mutation_record_roundtrips_and_verifies_integrity() {
-        let record = DurableMutationRecord::new(
+        let record = TenantEventRecord::new(
             SequenceNumber(9),
             Timestamp(42),
             vec![WriteOp {
@@ -336,7 +336,7 @@ mod tests {
         .expect("record should build");
 
         let encoded = rmp_serde::to_vec(&record).expect("record should serialize");
-        let decoded: DurableMutationRecord =
+        let decoded: TenantEventRecord =
             rmp_serde::from_slice(&encoded).expect("record should deserialize");
 
         decoded
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn durable_mutation_record_without_scheduler_id_roundtrips_and_verifies_integrity() {
-        let record = DurableMutationRecord::new(
+        let record = TenantEventRecord::new(
             SequenceNumber(10),
             Timestamp(43),
             vec![WriteOp {
@@ -371,7 +371,7 @@ mod tests {
         .expect("record should build");
 
         let encoded = rmp_serde::to_vec(&record).expect("record should serialize");
-        let decoded: DurableMutationRecord =
+        let decoded: TenantEventRecord =
             rmp_serde::from_slice(&encoded).expect("record should deserialize");
 
         decoded

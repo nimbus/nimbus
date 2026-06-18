@@ -84,7 +84,7 @@ fn redb_document_versions_are_materialized_during_durable_recovery() {
     updated.fields.insert("title".to_string(), json!("v2"));
     updated.update_time = Timestamp(updated.update_time.0.saturating_add(1));
     let records = vec![
-        DurableMutationRecord::new(
+        TenantEventRecord::new(
             SequenceNumber(1),
             Timestamp(100),
             vec![WriteOp {
@@ -100,7 +100,7 @@ fn redb_document_versions_are_materialized_during_durable_recovery() {
             None,
         )
         .expect("insert durable record should build"),
-        DurableMutationRecord::new(
+        TenantEventRecord::new(
             SequenceNumber(2),
             Timestamp(101),
             vec![WriteOp {
@@ -116,7 +116,7 @@ fn redb_document_versions_are_materialized_during_durable_recovery() {
             None,
         )
         .expect("update durable record should build"),
-        DurableMutationRecord::new(
+        TenantEventRecord::new(
             SequenceNumber(3),
             Timestamp(102),
             vec![WriteOp {
@@ -1026,8 +1026,8 @@ fn durable_write_record(
     doc_id: DocumentId,
     previous: Option<Document>,
     current: Option<Document>,
-) -> DurableMutationRecord {
-    DurableMutationRecord::new(
+) -> TenantEventRecord {
+    TenantEventRecord::new(
         sequence,
         timestamp,
         vec![WriteOp {
@@ -1373,7 +1373,7 @@ fn redb_durable_replay_retires_recreated_table_identity() {
         serde_json::Map::from_iter([("title".to_string(), json!("new"))]),
     );
     let records = vec![
-        DurableMutationRecord::new(
+        TenantEventRecord::new(
             SequenceNumber(1),
             Timestamp(1),
             vec![WriteOp {
@@ -1389,7 +1389,7 @@ fn redb_durable_replay_retires_recreated_table_identity() {
             None,
         )
         .expect("old durable record should build"),
-        DurableMutationRecord::new(
+        TenantEventRecord::new(
             SequenceNumber(2),
             Timestamp(2),
             vec![WriteOp {
@@ -1581,7 +1581,7 @@ fn durable_journal_serialization_preserves_payload_and_metadata() {
     let mut after = before.clone();
     after.fields.insert("title".to_string(), json!("After"));
 
-    let record = DurableMutationRecord::new(
+    let record = TenantEventRecord::new(
         SequenceNumber(7),
         Timestamp(42),
         vec![WriteOp {
@@ -1599,9 +1599,9 @@ fn durable_journal_serialization_preserves_payload_and_metadata() {
     .expect("durable record should build");
 
     let encoded =
-        crate::commit_log::serialize_durable_record(&record).expect("record should serialize");
-    let decoded =
-        crate::commit_log::deserialize_durable_record(&encoded).expect("record should deserialize");
+        crate::commit_log::serialize_tenant_event_record(&record).expect("record should serialize");
+    let decoded = crate::commit_log::deserialize_tenant_event_record(&encoded)
+        .expect("record should deserialize");
 
     assert_eq!(decoded, record);
     assert_eq!(decoded.writes[0].table, table);
@@ -1633,7 +1633,7 @@ fn durable_journal_metadata_supports_dependency_intersection_checks() {
     after.fields.insert("rank".to_string(), json!(8));
 
     let table_id = TableId::new();
-    let record = DurableMutationRecord::new(
+    let record = TenantEventRecord::new(
         SequenceNumber(3),
         Timestamp(12),
         vec![WriteOp {

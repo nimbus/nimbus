@@ -3,8 +3,7 @@ use std::collections::BTreeMap;
 use nimbus_core::{Error, TenantId};
 use nimbus_sandbox::{SandboxHandle, SandboxOwnerSpec, SandboxSpec, SandboxStatus};
 use nimbus_tenant::{
-    TenantImagePolicyDecision, TenantIsolationContext, TenantIsolationDecision,
-    TenantIsolationPolicyInput, WorkloadAttributes,
+    TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput, WorkloadAttributes,
 };
 
 use crate::SandboxResource;
@@ -33,7 +32,7 @@ impl ServiceManager {
         labels: BTreeMap<String, String>,
     ) -> Result<SandboxResource, Error> {
         let profile = profile.into();
-        let decision = sandbox_resource_decision(isolation, &profile, &spec)?;
+        let decision = self.sandbox_resource_decision(isolation, &profile, &spec)?;
         self.create_sandbox_resource_for_decision_async(&decision, profile, spec, labels)
             .await
     }
@@ -267,6 +266,20 @@ impl ServiceManager {
         }
         Ok(Some(resource))
     }
+
+    fn sandbox_resource_decision(
+        &self,
+        isolation: &TenantIsolationContext,
+        profile: &str,
+        spec: &SandboxSpec,
+    ) -> Result<TenantIsolationDecision, Error> {
+        isolation.admit_decision(
+            TenantIsolationPolicyInput::new(
+                WorkloadAttributes::sandbox(profile).with_sandbox_backend(spec.backend),
+            )
+            .with_image(self.manager_image_policy()),
+        )
+    }
 }
 
 fn validate_sandbox_resource_spec(tenant_id: &TenantId, spec: &SandboxSpec) -> Result<(), Error> {
@@ -287,17 +300,4 @@ fn validate_sandbox_resource_spec(tenant_id: &TenantId, spec: &SandboxSpec) -> R
         ));
     }
     Ok(())
-}
-
-fn sandbox_resource_decision(
-    isolation: &TenantIsolationContext,
-    profile: &str,
-    spec: &SandboxSpec,
-) -> Result<TenantIsolationDecision, Error> {
-    isolation.admit_decision(
-        TenantIsolationPolicyInput::new(
-            WorkloadAttributes::sandbox(profile).with_sandbox_backend(spec.backend),
-        )
-        .with_image(TenantImagePolicyDecision::default().allow_local_build()),
-    )
 }

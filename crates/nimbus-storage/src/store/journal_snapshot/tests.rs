@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use nimbus_core::{
-    DurableMutationRecord, Error, FieldSchema, FieldType, IndexDefinition, SequenceNumber, TableId,
-    TableName, TableSchema, TableState, Timestamp, WriteOp, WriteOpType,
+    Error, FieldSchema, FieldType, IndexDefinition, SequenceNumber, TableId, TableName,
+    TableSchema, TableState, TenantEventRecord, Timestamp, WriteOp, WriteOpType,
 };
 use serde_json::json;
 
@@ -426,7 +426,7 @@ fn materialized_snapshot_records_durable_boundary_and_rejects_incomplete_tail() 
         TableName::new("tasks").expect("table name should be valid"),
         serde_json::Map::from_iter([("title".to_string(), json!("durable-only"))]),
     );
-    let record = DurableMutationRecord::new(
+    let record = TenantEventRecord::new(
         SequenceNumber(1),
         Timestamp(100),
         vec![WriteOp {

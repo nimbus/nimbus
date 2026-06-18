@@ -677,7 +677,7 @@ fn transact_write_emits_stream_records() {
 /// high-water counter advances atomically in the same batch as each event,
 /// so no two records share a sequence number and none is skipped.
 #[test]
-fn capture_event_allocates_monotonic_sequences() {
+fn writes_allocate_monotonic_gap_free_sequences() {
     let (engine, ctx, _t) = fixture();
     let arn = streamed_table(&engine, &ctx, "NEW_IMAGE");
     for i in 0..5 {

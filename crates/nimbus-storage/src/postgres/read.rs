@@ -245,7 +245,7 @@ impl PostgresTenantStore {
     pub fn read_durable_journal_from(
         &self,
         sequence: SequenceNumber,
-    ) -> Result<Vec<DurableMutationRecord>> {
+    ) -> Result<Vec<TenantEventRecord>> {
         let provider = self.provider.clone();
         let schema_name = self.schema_name.clone();
         self.block_on(async move {
@@ -257,7 +257,7 @@ impl PostgresTenantStore {
     pub async fn read_durable_journal_from_async(
         &self,
         sequence: SequenceNumber,
-    ) -> Result<Vec<DurableMutationRecord>> {
+    ) -> Result<Vec<TenantEventRecord>> {
         let client = self.provider.client().await?;
         load_durable_records_from_session(&client, &self.schema_name, sequence).await
     }

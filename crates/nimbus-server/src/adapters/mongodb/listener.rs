@@ -12,6 +12,15 @@ use nimbus_mongodb::connection::{ConnectionState, next_request_id};
 use nimbus_mongodb::error::MongoError;
 use nimbus_mongodb::wire::{self, WireError};
 
+/// Refuse to bind the MongoDB listener to anything but a loopback address.
+///
+/// This guard is load-bearing for the adapter's security model, not a
+/// convenience default. The adapter authenticates against a single,
+/// tenant-agnostic SCRAM credential (`AuthConfig`) and selects the tenant from
+/// the requested database name rather than from the authenticated user. That
+/// model is only safe while the listener is unreachable off-host. Binding a
+/// non-loopback address would expose every tenant to anyone who holds the one
+/// credential, so that change must wait until credentials are bound per-tenant.
 pub(crate) fn guard_listener_is_loopback_only(addr: SocketAddr) -> std::io::Result<()> {
     if !addr.ip().is_loopback() {
         return Err(std::io::Error::new(

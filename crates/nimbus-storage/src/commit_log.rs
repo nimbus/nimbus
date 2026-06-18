@@ -1,4 +1,4 @@
-use nimbus_core::{CommitEntry, DurableMutationRecord, Error, Result, TenantEventRecord};
+use nimbus_core::{CommitEntry, Error, Result, TenantEventRecord};
 
 /// Serializes a tenant event record for persistence.
 pub fn serialize_tenant_event_record(entry: &TenantEventRecord) -> Result<Vec<u8>> {
@@ -13,22 +13,10 @@ pub fn deserialize_tenant_event_record(bytes: &[u8]) -> Result<TenantEventRecord
     Ok(record)
 }
 
-/// Compatibility wrapper for storage code that still uses the old durable
-/// mutation terminology.
-pub fn serialize_durable_record(entry: &DurableMutationRecord) -> Result<Vec<u8>> {
-    serialize_tenant_event_record(entry)
-}
-
-/// Compatibility wrapper for storage code that still uses the old durable
-/// mutation terminology.
-pub fn deserialize_durable_record(bytes: &[u8]) -> Result<DurableMutationRecord> {
-    deserialize_tenant_event_record(bytes)
-}
-
 /// Serializes a commit entry by first promoting it into the durable journal format.
 pub fn serialize_commit(entry: &CommitEntry) -> Result<Vec<u8>> {
     let record =
-        DurableMutationRecord::new(entry.sequence, entry.timestamp, entry.writes.clone(), None)?;
+        TenantEventRecord::new(entry.sequence, entry.timestamp, entry.writes.clone(), None)?;
     serialize_tenant_event_record(&record)
 }
 

@@ -167,7 +167,7 @@ fn apply_insert(
     documents
         .insert(key.as_slice(), payload.as_slice())
         .map_err(map_redb_error)?;
-    for index in indexes {
+    for index in indexes.iter().filter(|index| index.is_maintained()) {
         if let Some(index_key) = index_key_for_document(document, index, table_id)? {
             index_table
                 .insert(index_key.as_slice(), EMPTY_TABLE_VALUE)
@@ -233,7 +233,7 @@ fn apply_update(
         .insert(key.as_slice(), payload.as_slice())
         .map_err(map_redb_error)?;
 
-    for index in indexes {
+    for index in indexes.iter().filter(|index| index.is_maintained()) {
         let old_key = index_key_for_document(previous, index, table_id)?;
         let new_key = index_key_for_document(current, index, table_id)?;
         if old_key == new_key {
@@ -298,7 +298,7 @@ fn apply_delete(
         )));
     }
 
-    for index in indexes {
+    for index in indexes.iter().filter(|index| index.is_maintained()) {
         if let Some(index_key) = index_key_for_document(previous, index, table_id)? {
             index_table
                 .remove(index_key.as_slice())
@@ -434,6 +434,59 @@ mod tests {
                 .expect("latest sequence should remain readable"),
             SequenceNumber(2),
             "failed batch must not append a commit log entry"
+        );
+    }
+
+    #[test]
+    fn batch_insert_skips_physical_entries_for_non_maintained_index() {
+        use redb::ReadableTable;
+
+        let store = TenantStore::create_in_memory().expect("store should open");
+        let table = TableName::new("tasks_index_state").expect("table should parse");
+        let mut schema = schema(&table);
+        // Stage a not-yet-backfilled (Pending) index alongside the Enabled one.
+        schema.indexes.push(IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Pending,
+            name: "by_owner_pending".to_string(),
+            fields: vec!["owner".to_string()],
+        });
+        store
+            .replace_table_schema(&schema)
+            .expect("schema should persist");
+
+        let inserted = document(&table, "doc-state", "alpha");
+        store
+            .apply_resolved_write_batch(&[ResolvedWrite::Insert {
+                document: inserted.clone(),
+                indexes: schema.indexes.clone(),
+                resource_path_binding: None,
+            }])
+            .expect("batch insert should commit");
+
+        // The document carries both `owner` and `body`, so an unfiltered batch
+        // path would write two physical entries. Only the Enabled `by_body`
+        // index may persist one; the Pending `by_owner_pending` must not, matching
+        // the interactive write path's is_maintained() filter.
+        let read_txn = store.db.begin_read().expect("read txn should open");
+        let index_table = read_txn.open_table(INDEXES).expect("INDEXES should open");
+        let physical_entries = index_table
+            .iter()
+            .expect("index iteration should succeed")
+            .count();
+        assert_eq!(
+            physical_entries, 1,
+            "batch path must persist only the maintained (Enabled) index entry"
+        );
+
+        // The Enabled index resolves and returns the document.
+        assert_eq!(
+            store
+                .index_scan_eq(&table, "by_body", &json!("alpha"))
+                .expect("enabled index scan should succeed")
+                .len(),
+            1,
+            "Enabled index must answer the query"
         );
     }
 

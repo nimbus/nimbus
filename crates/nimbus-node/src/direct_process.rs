@@ -152,7 +152,12 @@ impl DirectProcessState {
 
     fn record(&self, workload_id: &TenantWorkloadId) -> Result<&DirectProcessRecord> {
         self.records.get(workload_id).ok_or_else(|| {
-            Error::InvalidInput(format!(
+            // A missing workload is `NotFound`, not `InvalidInput`: the request
+            // was well-formed, the unit simply does not exist yet. The
+            // reconciler relies on this distinction to start an absent workload
+            // (NotFound) while propagating a genuine inspect fault
+            // (InvalidInput) instead of masking it with a redundant start.
+            Error::NotFound(format!(
                 "direct process backend has no workload {}",
                 workload_id.as_str()
             ))
@@ -161,7 +166,7 @@ impl DirectProcessState {
 
     fn record_mut(&mut self, workload_id: &TenantWorkloadId) -> Result<&mut DirectProcessRecord> {
         self.records.get_mut(workload_id).ok_or_else(|| {
-            Error::InvalidInput(format!(
+            Error::NotFound(format!(
                 "direct process backend has no workload {}",
                 workload_id.as_str()
             ))
@@ -391,6 +396,10 @@ mod tests {
             .await
             .expect_err("unknown workload inspect should fail closed");
         assert!(
+            matches!(error, Error::NotFound(_)),
+            "missing workload must be NotFound (not InvalidInput) so the reconciler starts it: {error:?}"
+        );
+        assert!(
             error
                 .to_string()
                 .contains(&format!("has no workload {}", unknown.as_str())),
@@ -401,6 +410,10 @@ mod tests {
             .stop(unknown)
             .await
             .expect_err("unknown workload stop should fail closed");
+        assert!(
+            matches!(error, Error::NotFound(_)),
+            "missing workload stop must be NotFound: {error:?}"
+        );
         assert!(
             error.to_string().contains("has no workload"),
             "stop error should name missing workload: {error}"

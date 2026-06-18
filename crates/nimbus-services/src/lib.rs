@@ -11,7 +11,8 @@ pub use catalog::{
     SessionLifecycleState, SessionResource, SessionTarget, SessionTargetSnapshot,
 };
 pub use manager::{
-    NoopServiceEvidenceWriter, ServiceEvidenceFuture, ServiceEvidenceWriter, ServiceManager,
+    LocalBuildAdmission, NoopServiceEvidenceWriter, ServiceEvidenceFuture, ServiceEvidenceWriter,
+    ServiceManager,
 };
 pub use registry::{
     RuntimeServiceBindingFuture, RuntimeServiceRegistry, RuntimeServiceTeardownFuture,

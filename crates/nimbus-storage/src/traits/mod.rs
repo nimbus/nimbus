@@ -8,8 +8,8 @@
 #![allow(async_fn_in_trait)]
 
 use nimbus_core::{
-    CommitEntry, Document, DocumentId, DurableMutationRecord, Filter, Result, SequenceNumber,
-    TableName, TenantId, Timestamp,
+    CommitEntry, Document, DocumentId, Filter, Result, SequenceNumber, TableName,
+    TenantEventRecord, TenantId, Timestamp,
 };
 use serde_json::{Map, Value};
 
@@ -138,10 +138,8 @@ pub trait TenantRangeScan {
 /// Durable journal access used for recovery, subscriptions, and replication.
 pub trait DurableJournal {
     fn journal_progress(&self) -> Result<JournalProgress>;
-    fn read_durable_journal_from(
-        &self,
-        sequence: SequenceNumber,
-    ) -> Result<Vec<DurableMutationRecord>>;
+    fn read_durable_journal_from(&self, sequence: SequenceNumber)
+    -> Result<Vec<TenantEventRecord>>;
     fn stream_durable_journal(
         &self,
         after: SequenceNumber,
@@ -471,7 +469,7 @@ macro_rules! impl_durable_journal {
                 fn read_durable_journal_from(
                     &self,
                     sequence: SequenceNumber,
-                ) -> Result<Vec<DurableMutationRecord>> {
+                ) -> Result<Vec<TenantEventRecord>> {
                     <$ty>::read_durable_journal_from(self, sequence)
                 }
 

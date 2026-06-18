@@ -13,7 +13,7 @@ use tempfile::TempDir;
 
 use nimbus_core::TenantId;
 use nimbus_sandbox::backends::container::{
-    ContainerLaunchMode, ContainerSandboxBackend, ContainerSandboxBackendConfig,
+    ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
 };
 use nimbus_sandbox::{
     PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxEgressPolicy,
@@ -158,7 +158,7 @@ fn container_execute_mode_enforces_proxy_policy_and_live_reload() {
 
 fn smoke_config(workdir: &Path, first_port: u16) -> ContainerSandboxBackendConfig {
     let mut config = ContainerSandboxBackendConfig::under_root(workdir);
-    config.launch_mode = ContainerLaunchMode::Execute;
+    config.start_mode = ContainerStartMode::Execute;
     config.conmon_path = default_existing_path("/usr/bin/conmon", "conmon");
     config.runtime_path = default_existing_path("/usr/bin/crun", "crun");
     config.buildah_path = default_existing_path("/usr/bin/buildah", "buildah");

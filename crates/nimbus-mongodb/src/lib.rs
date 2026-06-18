@@ -11,6 +11,20 @@ use std::fmt;
 
 use ring::rand::{SecureRandom, SystemRandom};
 
+/// The single SCRAM credential the MongoDB adapter authenticates against.
+///
+/// There is exactly one credential, and it is tenant-agnostic: the tenant is
+/// chosen from the requested database name (see
+/// `commands::tenant::resolve_tenant_id`), not from the authenticated user. A
+/// caller who knows this one username and password can therefore reach every
+/// tenant by varying the database name on the wire.
+///
+/// This is only safe because the listener binds loopback-only
+/// (`guard_listener_is_loopback_only` in `nimbus-server`), so the credential
+/// never leaves the host. Before this adapter may bind any non-loopback
+/// address, the credential model must change to bind each credential to a
+/// specific tenant so that authentication — not the database name — decides
+/// tenant access.
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
     pub username: String,

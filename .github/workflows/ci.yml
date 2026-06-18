@@ -558,9 +558,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name != 'schedule'
-    # The LR12 live node-run test builds nimbus-bin, which embeds the
-    # operator UI through nimbus-assets — reuse the ui-artifacts leader
-    # build like the other nimbus-bin-building lanes.
+    # The LR12 live node-workload-executor test builds nimbus-bin, which
+    # embeds the operator UI through nimbus-assets — reuse the ui-artifacts
+    # leader build like the other nimbus-bin-building lanes.
     needs: [ui-artifacts]
 
     steps:
@@ -628,10 +628,10 @@ jobs:
       - name: Refresh embedded package payload mtimes
         run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
-      - name: Run live node-run reconciler test (LR12)
+      - name: Run live node workload executor test (LR12)
         run: |
           set -o pipefail
-          make test-node-run-live 2>&1 | tee -a /tmp/ndb-live.log
+          make test-node-workload-executor-live 2>&1 | tee -a /tmp/ndb-live.log
 
       - name: Summarize per-test results
         if: always()

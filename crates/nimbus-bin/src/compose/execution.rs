@@ -3,7 +3,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use nimbus::{
-    Error, SandboxBackend, SandboxBackendKind, ServiceDefinitionCatalog, ServiceManager, TenantId,
+    Error, LocalBuildAdmission, SandboxBackend, SandboxBackendKind, ServiceDefinitionCatalog,
+    ServiceManager, TenantId,
 };
 use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxStateView};
 
@@ -82,7 +83,11 @@ pub(super) fn load_host_backed_service_manager_for_platform_selection_with_admis
         None => None,
     };
     let backend = load_host_backed_project_backend(&context, host_platform, machine_api_client)?;
-    Ok(ServiceManager::new(catalog, backend))
+    let local_build_admission = match admission_mode {
+        file::ComposeAdmissionMode::LocalDevelopment => LocalBuildAdmission::Allowed,
+        file::ComposeAdmissionMode::Production => LocalBuildAdmission::Denied,
+    };
+    Ok(ServiceManager::new(catalog, backend).with_local_build_admission(local_build_admission))
 }
 
 pub(super) fn should_auto_start_default_machine_for_host_loader(

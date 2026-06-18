@@ -176,7 +176,13 @@ where
                 NodeWorkloadReconcileAction::ObservedRunning,
                 status.to_workload_status(plan)?,
             )),
-            Ok(_) | Err(Error::InvalidInput(_)) => {
+            // Inspect succeeded-but-not-running, or the workload is absent
+            // (`NotFound`): converge by starting it. A genuine inspect fault —
+            // e.g. a live systemd unit in `.Failed` mapped to `InvalidInput` —
+            // must NOT be treated as workload-missing; it falls through to the
+            // final `Err` arm so the fault surfaces instead of being masked by a
+            // redundant `StartTransientUnit`.
+            Ok(_) | Err(Error::NotFound(_)) => {
                 self.backend.start(plan.clone()).await?;
                 let observed = self.backend.inspect(workload_id).await?;
                 Ok((
@@ -623,6 +629,78 @@ mod tests {
             deleting.spec().resources().admitted_quotas(),
             binding.spec().resources().admitted_quotas(),
             "observed reconcile writes must not mutate admitted quota policy"
+        );
+    }
+
+    /// Backend that validates and starts/stops via an inner DirectProcess
+    /// backend but always fails `inspect` with `InvalidInput`, modelling a live
+    /// systemd `.Failed` inspect fault (NoSuchUnit → NotFound, but a failed-state
+    /// inspect maps to InvalidInput).
+    #[derive(Clone)]
+    struct InspectInvalidInputBackend {
+        inner: DirectProcessBackend,
+    }
+
+    impl HostLifecycleBackend for InspectInvalidInputBackend {
+        fn validate(
+            &self,
+            binding: &LocalEnforcementBinding,
+            request: HostLifecycleRequest,
+        ) -> Result<HostLifecyclePlan> {
+            self.inner.validate(binding, request)
+        }
+
+        fn start<'a>(
+            &'a self,
+            plan: HostLifecyclePlan,
+        ) -> HostLifecycleFuture<'a, TenantWorkloadStatus> {
+            self.inner.start(plan)
+        }
+
+        fn stop<'a>(
+            &'a self,
+            workload_id: TenantWorkloadId,
+        ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+            self.inner.stop(workload_id)
+        }
+
+        fn inspect<'a>(
+            &'a self,
+            _workload_id: TenantWorkloadId,
+        ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+            Box::pin(async move {
+                Err(Error::InvalidInput(
+                    "systemd inspect reports unit entered failed state".to_string(),
+                ))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn reconcile_running_propagates_inspect_invalid_input_without_starting() {
+        let backend = CountingBackend::new(InspectInvalidInputBackend {
+            inner: DirectProcessBackend::new(),
+        });
+        let writer = RecordingStatusEvidenceWriter::default();
+        let reconciler = NodeWorkloadReconciler::new(backend.clone(), writer.clone());
+        let binding = binding();
+
+        let error = reconciler
+            .reconcile_binding(&binding, direct_request())
+            .await
+            .expect_err("a genuine inspect fault must propagate, not trigger a redundant start");
+        assert!(
+            matches!(error, Error::InvalidInput(_)),
+            "inspect InvalidInput must surface unchanged: {error:?}"
+        );
+        assert_eq!(
+            backend.calls(),
+            vec!["validate", "inspect"],
+            "reconciler must not call start after an inspect fault"
+        );
+        assert!(
+            writer.writes().is_empty(),
+            "no status evidence should be written when inspect faults"
         );
     }
 

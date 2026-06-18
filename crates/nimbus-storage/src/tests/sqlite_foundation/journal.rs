@@ -102,7 +102,7 @@ fn sqlite_document_versions_are_materialized_during_durable_recovery() {
     updated.fields.insert("title".to_string(), json!("v2"));
     updated.update_time = Timestamp(updated.update_time.0.saturating_add(1));
     let records = vec![
-        DurableMutationRecord::new(
+        TenantEventRecord::new(
             SequenceNumber(1),
             Timestamp(100),
             vec![WriteOp {
@@ -118,7 +118,7 @@ fn sqlite_document_versions_are_materialized_during_durable_recovery() {
             None,
         )
         .expect("insert durable record should build"),
-        DurableMutationRecord::new(
+        TenantEventRecord::new(
             SequenceNumber(2),
             Timestamp(101),
             vec![WriteOp {
@@ -134,7 +134,7 @@ fn sqlite_document_versions_are_materialized_during_durable_recovery() {
             None,
         )
         .expect("update durable record should build"),
-        DurableMutationRecord::new(
+        TenantEventRecord::new(
             SequenceNumber(3),
             Timestamp(102),
             vec![WriteOp {
@@ -702,7 +702,7 @@ fn sqlite_durable_journal_batch_append_enforces_no_holes() {
     let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
         .expect("sqlite tenant store should open");
     let table_id = TableId::new();
-    let first = DurableMutationRecord::new(
+    let first = TenantEventRecord::new(
         SequenceNumber(1),
         Timestamp(10),
         vec![WriteOp {
@@ -718,7 +718,7 @@ fn sqlite_durable_journal_batch_append_enforces_no_holes() {
         None,
     )
     .expect("first durable record should build");
-    let second = DurableMutationRecord::new(
+    let second = TenantEventRecord::new(
         SequenceNumber(2),
         Timestamp(11),
         vec![WriteOp {
@@ -749,7 +749,7 @@ fn sqlite_durable_journal_batch_append_enforces_no_holes() {
     );
 
     let error = store
-        .append_durable_records_batch(&[DurableMutationRecord::new(
+        .append_durable_records_batch(&[TenantEventRecord::new(
             SequenceNumber(4),
             Timestamp(12),
             vec![WriteOp {
@@ -971,8 +971,8 @@ fn sqlite_durable_write_record(
     doc_id: DocumentId,
     previous: Option<Document>,
     current: Option<Document>,
-) -> DurableMutationRecord {
-    DurableMutationRecord::new(
+) -> TenantEventRecord {
+    TenantEventRecord::new(
         sequence,
         timestamp,
         vec![WriteOp {
@@ -999,7 +999,7 @@ fn sqlite_recovery_replays_durable_but_unapplied_records() {
     let second = sample_document("tasks", "Second");
     let table_id = TableId::new();
     let records = vec![
-        DurableMutationRecord::new(
+        TenantEventRecord::new(
             SequenceNumber(1),
             Timestamp(100),
             vec![WriteOp {
@@ -1015,7 +1015,7 @@ fn sqlite_recovery_replays_durable_but_unapplied_records() {
             None,
         )
         .expect("first durable record should build"),
-        DurableMutationRecord::new(
+        TenantEventRecord::new(
             SequenceNumber(2),
             Timestamp(101),
             vec![WriteOp {
@@ -1115,7 +1115,7 @@ fn sqlite_tenant_event_journal_replays_mixed_history() {
         ],
     )
     .expect("schema tenant event should build");
-    let record_document = DurableMutationRecord::new(
+    let record_document = TenantEventRecord::new(
         SequenceNumber(2),
         Timestamp(11),
         vec![WriteOp {
@@ -1189,7 +1189,7 @@ fn sqlite_durable_replay_retires_recreated_table_identity() {
         serde_json::Map::from_iter([("title".to_string(), json!("new"))]),
     );
     let records = vec![
-        DurableMutationRecord::new(
+        TenantEventRecord::new(
             SequenceNumber(1),
             Timestamp(1),
             vec![WriteOp {
@@ -1205,7 +1205,7 @@ fn sqlite_durable_replay_retires_recreated_table_identity() {
             None,
         )
         .expect("old durable record should build"),
-        DurableMutationRecord::new(
+        TenantEventRecord::new(
             SequenceNumber(2),
             Timestamp(2),
             vec![WriteOp {

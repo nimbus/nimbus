@@ -124,7 +124,7 @@ fn apply_empty_records_through(
     if current.durable_head.0 < target.0 {
         let records = ((current.durable_head.0 + 1)..=target.0)
             .map(|sequence| {
-                DurableMutationRecord::from_events(
+                TenantEventRecord::from_events(
                     SequenceNumber(sequence),
                     Timestamp(sequence),
                     Vec::new(),

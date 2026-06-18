@@ -136,7 +136,7 @@ impl MachineApiClient {
     ) -> Result<Option<SandboxHandle>, Error> {
         self.get_json::<MachineApiServiceSandboxInspectResponse>(&format!(
             "/v1/machine-api/service-sandboxes/{}",
-            sandbox_id.as_str()
+            machine_api_path_segment(sandbox_id.as_str())
         ))
         .map(|response| response.handle)
     }
@@ -144,7 +144,7 @@ impl MachineApiClient {
     pub(crate) fn stop_service_sandbox(&self, sandbox_id: &SandboxId) -> Result<(), Error> {
         let response = self.post_empty::<MachineApiServiceSandboxStopResponse>(&format!(
             "/v1/machine-api/service-sandboxes/{}/stop",
-            sandbox_id.as_str()
+            machine_api_path_segment(sandbox_id.as_str())
         ))?;
         if response.stopped {
             Ok(())
@@ -190,7 +190,7 @@ impl MachineApiClient {
     ) -> Result<MachineApiServiceSandboxLogChunkResponse, Error> {
         self.get_json(&format!(
             "/v1/machine-api/service-sandboxes/{}/logs?offset={offset}",
-            sandbox_id.as_str()
+            machine_api_path_segment(sandbox_id.as_str())
         ))
     }
 
@@ -200,7 +200,7 @@ impl MachineApiClient {
     ) -> Result<MachineApiServiceProcessSnapshot, Error> {
         self.get_json::<MachineApiServiceProcessSnapshotResponse>(&format!(
             "/v1/machine-api/service-sandboxes/{}/ps",
-            sandbox_id.as_str()
+            machine_api_path_segment(sandbox_id.as_str())
         ))
         .map(|response| response.snapshot)
     }
@@ -342,11 +342,38 @@ fn machine_api_query_path(path: &str, params: &[(&str, &str)]) -> String {
     encoded
 }
 
+/// Encode `id` into a single URL path segment, percent-escaping every byte
+/// outside the RFC 3986 unreserved set so reserved/structural characters
+/// (`/`, `..`, `%`, space, `?`, `#`, ...) cannot break out of the segment
+/// and alter the request line's path structure.
+///
+/// This is the client-side counterpart to the server's `AxumPath<String>`
+/// extractor, which percent-decodes path segments before
+/// `SandboxId::new(...)`. The encoding is therefore decode-symmetric: a
+/// normal all-unreserved id round-trips byte-for-byte, and a hostile id is
+/// reconstructed to its exact original string server-side.
+fn machine_api_path_segment(id: &str) -> String {
+    let mut out = String::with_capacity(id.len());
+    percent_encode_path_segment_into(id, &mut out);
+    out
+}
+
 fn percent_encode_query_value_into(value: &str, encoded: &mut String) {
+    percent_encode_into(value, encoded, is_unreserved_query_byte);
+}
+
+fn percent_encode_path_segment_into(value: &str, encoded: &mut String) {
+    percent_encode_into(value, encoded, is_unreserved_path_segment_byte);
+}
+
+/// Shared RFC 3986 percent-encode loop: keep bytes the `is_unreserved`
+/// predicate accepts and `%XX`-escape every other byte (including the bytes
+/// of multi-byte UTF-8 sequences).
+fn percent_encode_into(value: &str, encoded: &mut String, is_unreserved: fn(u8) -> bool) {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
 
     for byte in value.bytes() {
-        if is_unreserved_query_byte(byte) {
+        if is_unreserved(byte) {
             encoded.push(byte as char);
         } else {
             encoded.push('%');
@@ -357,6 +384,19 @@ fn percent_encode_query_value_into(value: &str, encoded: &mut String) {
 }
 
 fn is_unreserved_query_byte(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~'
+    )
+}
+
+/// Path-segment safety needs the same guarantee as a query value: escape
+/// every reserved/structural byte. The unreserved set is identical to the
+/// query predicate, so `/`, `?`, `#`, `%`, and space all percent-encode. `.`
+/// stays literal (it is unreserved), but escaping `/` is what confines a
+/// hostile id to a single segment: `../etc` collapses to `..%2Fetc` rather
+/// than introducing an extra slash-delimited path component.
+fn is_unreserved_path_segment_byte(byte: u8) -> bool {
     matches!(
         byte,
         b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~'
@@ -609,13 +649,13 @@ mod tests {
     };
     use nimbus_sandbox::SandboxFuture;
     use nimbus_sandbox::backends::container::{
-        ContainerLaunchMode, ContainerSandboxBackend, ContainerSandboxBackendConfig,
+        ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
     };
     use tempfile::{Builder, TempDir};
 
     use super::{
-        MachineApiClient, machine_api_query_path, normalize_guest_visible_build_spec,
-        normalize_guest_visible_host_path,
+        MachineApiClient, machine_api_path_segment, machine_api_query_path,
+        normalize_guest_visible_build_spec, normalize_guest_visible_host_path,
     };
     use crate::machine::api::{
         MachineApiListenMode, MachineApiState, bind_direct_listener,
@@ -902,7 +942,7 @@ mod tests {
         let mut backend_config = ContainerSandboxBackendConfig::under_root(
             control_data_dir.join("service-sandboxes").join("container"),
         );
-        backend_config.launch_mode = ContainerLaunchMode::PlanOnly;
+        backend_config.start_mode = ContainerStartMode::PlanOnly;
         let state = MachineApiState {
             control_data_dir,
             listen_mode: MachineApiListenMode::DirectSocket,
@@ -981,7 +1021,7 @@ mod tests {
         let mut backend_config = ContainerSandboxBackendConfig::under_root(
             control_data_dir.join("service-sandboxes").join("container"),
         );
-        backend_config.launch_mode = ContainerLaunchMode::PlanOnly;
+        backend_config.start_mode = ContainerStartMode::PlanOnly;
         let state = MachineApiState {
             control_data_dir,
             listen_mode: MachineApiListenMode::DirectSocket,
@@ -1287,6 +1327,160 @@ mod tests {
         );
     }
 
+    #[test]
+    fn machine_api_path_segment_encodes_reserved_and_structural_characters() {
+        // The common case (server-minted, all-unreserved) must pass through
+        // byte-identical so real traffic is unchanged.
+        assert_eq!(machine_api_path_segment("db-1"), "db-1");
+        // `..` and `/` must collapse into the segment so a traversal-shaped id
+        // cannot climb out of the path segment.
+        assert_eq!(machine_api_path_segment("../etc"), "..%2Fetc");
+        assert_eq!(machine_api_path_segment("a/b"), "a%2Fb");
+        // Space and the percent literal must escape (a raw `%` would otherwise
+        // be read as the start of an escape octet by the server decoder).
+        assert_eq!(machine_api_path_segment("a b"), "a%20b");
+        assert_eq!(machine_api_path_segment("50%off"), "50%25off");
+        // `?` and `#` would start a query/fragment if left raw.
+        assert_eq!(machine_api_path_segment("q?x#y"), "q%3Fx%23y");
+    }
+
+    /// Bind a one-shot Unix listener, run `drive` against a client pointed at
+    /// it, and return the request line (first CRLF-terminated line) the client
+    /// actually sent. The server replies with `response_body` as a 200 JSON
+    /// body so the client call resolves to `Ok`.
+    fn capture_machine_api_request_line(
+        response_body: &str,
+        drive: impl FnOnce(&MachineApiClient),
+    ) -> String {
+        let temp_dir = short_socket_tempdir();
+        let socket_path = temp_dir.path().join("nimbus.sock");
+        let listener = StdUnixListener::bind(&socket_path).expect("listener should bind");
+        let response_body = response_body.to_owned();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("request should connect");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("read timeout should set");
+
+            let mut request = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            loop {
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        request.extend_from_slice(&chunk[..read]);
+                        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) =>
+                    {
+                        break;
+                    }
+                    Err(error) => panic!("request should read: {error}"),
+                }
+            }
+
+            write!(
+                stream,
+                "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            )
+            .expect("response should write");
+
+            String::from_utf8(request).expect("request should be valid utf-8")
+        });
+
+        let client = MachineApiClient::new_for_test(socket_path);
+        drive(&client);
+
+        server.join().expect("server should join")
+    }
+
+    #[test]
+    fn inspect_service_sandbox_encodes_hostile_id_into_request_path() {
+        // `handle: null` keeps the body minimal while staying a valid
+        // MachineApiServiceSandboxInspectResponse so the client returns Ok.
+        let response_body = "{\"sandbox_id\":\"../../etc/passwd\",\"handle\":null}".to_string();
+        let request = capture_machine_api_request_line(&response_body, |client| {
+            client
+                .inspect_service_sandbox(&SandboxId::new("../../etc/passwd"))
+                .expect("inspect should succeed");
+        });
+
+        assert!(
+            request.starts_with(
+                "GET /v1/machine-api/service-sandboxes/..%2F..%2Fetc%2Fpasswd HTTP/1.0\r\n"
+            ),
+            "hostile id must collapse to one safe segment with no raw `/` or `..`: {request}"
+        );
+    }
+
+    #[test]
+    fn stop_log_and_ps_paths_encode_hostile_id_segment() {
+        // stop: reserved space + percent literal in the id.
+        let stop_request = capture_machine_api_request_line(
+            "{\"sandbox_id\":\"a b%c\",\"stopped\":true}",
+            |client| {
+                client
+                    .stop_service_sandbox(&SandboxId::new("a b%c"))
+                    .expect("stop should succeed");
+            },
+        );
+        assert!(
+            stop_request
+                .starts_with("POST /v1/machine-api/service-sandboxes/a%20b%25c/stop HTTP/1.0\r\n"),
+            "{stop_request}"
+        );
+
+        // logs: structural `/` in the id; the literal `?offset=7` delimiter and
+        // numeric offset must stay raw after the encoded segment.
+        let log_request = capture_machine_api_request_line(
+            "{\"sandbox_id\":\"x/y\",\"offset\":7,\"next_offset\":7,\"chunk\":\"\"}",
+            |client| {
+                client
+                    .read_service_sandbox_log_chunk(&SandboxId::new("x/y"), 7)
+                    .expect("log chunk should read");
+            },
+        );
+        assert!(
+            log_request.starts_with(
+                "GET /v1/machine-api/service-sandboxes/x%2Fy/logs?offset=7 HTTP/1.0\r\n"
+            ),
+            "log path must encode the segment but keep ?offset=7 literal: {log_request}"
+        );
+
+        // ps: `#` in the id would otherwise begin a fragment.
+        let snapshot_json = serde_json::json!({
+            "snapshot": {
+                "sandbox_id": "p#q",
+                "tenant_id": "tenant",
+                "service_name": "svc",
+                "status": "ready",
+                "runtime_pidfile": "/run/pidfile",
+                "conmon_pidfile": "/run/conmon.pid",
+                "runtime_pid": null,
+                "conmon_pid": null,
+                "process_rows": []
+            }
+        })
+        .to_string();
+        let ps_request = capture_machine_api_request_line(&snapshot_json, |client| {
+            client
+                .service_sandbox_process_snapshot(&SandboxId::new("p#q"))
+                .expect("process snapshot should read");
+        });
+        assert!(
+            ps_request.starts_with("GET /v1/machine-api/service-sandboxes/p%23q/ps HTTP/1.0\r\n"),
+            "{ps_request}"
+        );
+    }
+
     fn wait_for_health(client: &MachineApiClient) -> MachineApiHealthResponse {
         let start = std::time::Instant::now();
         loop {
@@ -1470,7 +1664,7 @@ mod tests {
                 }
             },
             "last_exit_code": null,
-            "launch_mode": "plan_only",
+            "start_mode": "plan_only",
             "shutdown_requested": matches!(status, SandboxStatus::Stopped),
             "status": status
         });

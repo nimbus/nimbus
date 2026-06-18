@@ -63,7 +63,7 @@ struct CanonicalMaterializedJournalSnapshot {
     scheduled_execution_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct CanonicalTableIdentity {
     namespace: String,
     table_name: String,
@@ -135,6 +135,50 @@ pub fn compare_materialized_journal_snapshots(
             left_canonical.durable_head,
             right_canonical.durable_head,
         ));
+    }
+
+    // Compare stable table identities. `canonicalize_table_identities` already
+    // sorts both vectors deterministically, so this two-stage diff mirrors the
+    // schema/documents branches below: first the identity-key cardinality/order,
+    // then per-entry (which surfaces table_id or lifecycle-state drift on a
+    // same-named table). Without this branch the fingerprint digest hashes the
+    // identities while `ok = mismatches.is_empty()` ignores them, so the digest
+    // and the integrity flag could silently disagree (green-on-drift).
+    let left_identity_keys = left_canonical
+        .table_identities
+        .iter()
+        .map(table_identity_key)
+        .collect::<Vec<_>>();
+    let right_identity_keys = right_canonical
+        .table_identities
+        .iter()
+        .map(table_identity_key)
+        .collect::<Vec<_>>();
+    if left_identity_keys != right_identity_keys {
+        return Some(mismatch(
+            "materialized_snapshot_match",
+            left_scope,
+            right_scope,
+            "table_identities",
+            left_identity_keys,
+            right_identity_keys,
+        ));
+    }
+    for (left_identity, right_identity) in left_canonical
+        .table_identities
+        .iter()
+        .zip(&right_canonical.table_identities)
+    {
+        if left_identity != right_identity {
+            return Some(mismatch(
+                "materialized_snapshot_match",
+                left_scope,
+                right_scope,
+                &format!("table_identities.{}", table_identity_key(left_identity)),
+                left_identity,
+                right_identity,
+            ));
+        }
     }
 
     let left_schema_keys = left_canonical
@@ -353,6 +397,10 @@ fn canonicalize_scheduled_execution_ids(ids: &[String]) -> Vec<String> {
 
 fn document_key(document: &Document) -> String {
     format!("{}/{}", document.table, document.id)
+}
+
+fn table_identity_key(identity: &CanonicalTableIdentity) -> String {
+    format!("{}/{}", identity.namespace, identity.table_name)
 }
 
 fn mismatch<T, U>(

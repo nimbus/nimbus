@@ -50,7 +50,7 @@ servers, requests, sockets, and the heavier `tls` / `http2` families.
 ## Current Manifested Official Subset
 
 The manifested `networking` family batch is now live in
-[`NETWORKING_BATCH`](../../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs).
+[`NETWORKING_BATCH`](../../../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs).
 
 Current manifested batch counts:
 
@@ -62,7 +62,7 @@ Current manifested batch counts:
 ## Package Canary Evidence
 
 Pinned package canaries for the `networking` family now live under
-[`tests/runtime/node/networking-canaries/`](../../../../../tests/runtime/node/networking-canaries/).
+[`tests/runtime/node/networking-canaries/`](../../../../../../tests/runtime/node/networking-canaries/).
 
 Current checked-in package set:
 

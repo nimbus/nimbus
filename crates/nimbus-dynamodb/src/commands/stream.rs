@@ -150,7 +150,8 @@ pub(crate) fn next_sequence_value(
 
 /// Persist the next sequence number for `table_name`'s stream (upsert). Only
 /// used by tests to seed the counter; the live write path advances the counter
-/// atomically inside [`capture_event`]'s single-batch write.
+/// atomically inside [`execute_atomic_write_batch_with_streams`]'s single-batch
+/// write.
 #[cfg(test)]
 fn set_sequence_value(
     engine: &Arc<Engine>,
@@ -466,58 +467,6 @@ pub(crate) fn stream_enabled(
         .stream_specification
         .as_ref()
         .is_some_and(|spec| spec.stream_enabled))
-}
-
-/// Capture a change event for `table_name` if it has a stream enabled
-/// (otherwise a no-op). Called by the write handlers after a successful
-/// mutation.
-///
-/// The event document and the advanced high-water counter are written in a
-/// **single** `AtomicWriteBatch` (one storage transaction), so the sequence bump
-/// can never be torn from the event it numbers. The event is written with
-/// `WriteSetMode::Create` keyed by its sequence number, so if a concurrent
-/// writer already claimed this sequence the commit fails (`AlreadyExists`) and we
-/// retry with a freshly read counter — yielding strictly monotonic,
-/// no-duplicate / no-loss sequence numbers under concurrency (F8), replacing the
-/// former non-atomic read / insert / set across three separate engine calls.
-///
-/// # Errors
-/// A mapped engine error if the event cannot be persisted, or
-/// `InternalServerError` if sequence allocation cannot converge within
-/// [`MAX_SEQUENCE_RETRIES`].
-pub(crate) fn capture_event(
-    engine: &Arc<Engine>,
-    context: &TenantIsolationContext,
-    table_name: &str,
-    change: ChangeEvent<'_>,
-) -> Result<(), DynamoDbError> {
-    if !stream_enabled(engine, context, table_name)? {
-        return Ok(());
-    }
-
-    for _ in 0..MAX_SEQUENCE_RETRIES {
-        let seq = next_sequence_value(engine, context, table_name)?;
-        let batch = AtomicWriteBatch::new(vec![
-            stream_event_write(table_name, seq, &change)?,
-            sequence_counter_write(table_name, seq + 1)?,
-        ])
-        .map_err(map_core_error)?;
-
-        match engine
-            .begin_mutation_execution_unit(context.tenant_id().clone(), PrincipalContext::system())
-            .map_err(map_core_error)?
-            .execute_atomic_write_batch(batch)
-        {
-            Ok(_) => return Ok(()),
-            // A concurrent writer claimed this sequence first: re-read and retry.
-            Err(nimbus_core::Error::AlreadyExists(_)) => continue,
-            Err(error) => return Err(map_core_error(error)),
-        }
-    }
-
-    Err(DynamoDbError::InternalServerError(
-        "stream sequence allocation exhausted retries under contention".to_owned(),
-    ))
 }
 
 /// Read captured events for a table's stream from `start_sequence`, ascending

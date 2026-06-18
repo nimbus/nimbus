@@ -36,7 +36,7 @@ async fn assert_engine_reload_recovers_durable_journal_before_serving_async_read
         data_dir.path(),
         &tenant_id,
         backend,
-        &[nimbus_core::DurableMutationRecord::new(
+        &[nimbus_core::TenantEventRecord::new(
             SequenceNumber(1),
             Timestamp(60_000),
             vec![nimbus_core::WriteOp {
@@ -1017,6 +1017,108 @@ fn snapshot_comparison_reports_document_field_differences_with_identifier() {
     assert!(mismatch.right_description.contains("beta"));
 }
 
+/// Builds a snapshot carrying explicit table identities and no documents, so a
+/// test can drive table-identity drift in isolation from document/schema state.
+fn snapshot_with_table_identities(
+    table_identities: Vec<crate::TableIdentitySnapshotEntry>,
+) -> crate::MaterializedJournalSnapshot {
+    crate::MaterializedJournalSnapshot {
+        version: 2,
+        applied_sequence: SequenceNumber(1),
+        durable_head: SequenceNumber(1),
+        table_identities,
+        schema: nimbus_core::Schema::default(),
+        documents: Vec::new(),
+        scheduled_execution_ids: Vec::new(),
+    }
+}
+
+#[test]
+fn snapshot_comparison_reports_table_identity_state_drift() {
+    // Same namespace/table/table_id on both sides; only the lifecycle state
+    // diverges. The digest hashes table_identities, so the equality verifier
+    // must surface this mismatch rather than reporting green on drift.
+    let table_id = nimbus_core::TableId::new();
+    let identity = |state: nimbus_core::TableState| crate::TableIdentitySnapshotEntry {
+        namespace: "default".to_string(),
+        table: tasks_table(),
+        table_id: table_id.clone(),
+        state,
+    };
+    let left = snapshot_with_table_identities(vec![identity(nimbus_core::TableState::Active)]);
+    let right = snapshot_with_table_identities(vec![identity(nimbus_core::TableState::Deleting)]);
+
+    let mismatch = compare_materialized_journal_snapshots(
+        ConsistencyScope::AuthoritativeSnapshot,
+        &left,
+        ConsistencyScope::ShadowMaterializer,
+        &right,
+    )
+    .expect("table identity state drift should be reported");
+
+    assert_eq!(mismatch.invariant, "materialized_snapshot_match");
+    assert!(
+        mismatch.path.starts_with("table_identities."),
+        "expected per-identity path, got {}",
+        mismatch.path
+    );
+    assert_eq!(mismatch.left_scope, ConsistencyScope::AuthoritativeSnapshot);
+    assert_eq!(mismatch.right_scope, ConsistencyScope::ShadowMaterializer);
+    assert!(
+        mismatch.left_description.contains("active"),
+        "{}",
+        mismatch.left_description
+    );
+    assert!(
+        mismatch.right_description.contains("deleting"),
+        "{}",
+        mismatch.right_description
+    );
+}
+
+#[test]
+fn snapshot_comparison_reports_table_identity_table_id_drift() {
+    // Identical namespace/table/state, but the stable table_id differs. The
+    // identity-key cardinality check (namespace/table) passes, so this must be
+    // caught by the per-entry comparison, not silently hashed-but-ignored.
+    let identity = |table_id: nimbus_core::TableId| crate::TableIdentitySnapshotEntry {
+        namespace: "default".to_string(),
+        table: tasks_table(),
+        table_id,
+        state: nimbus_core::TableState::Active,
+    };
+    let left = snapshot_with_table_identities(vec![identity(nimbus_core::TableId::new())]);
+    let right = snapshot_with_table_identities(vec![identity(nimbus_core::TableId::new())]);
+
+    let mismatch = compare_materialized_journal_snapshots(
+        ConsistencyScope::AuthoritativeSnapshot,
+        &left,
+        ConsistencyScope::ShadowMaterializer,
+        &right,
+    )
+    .expect("table identity table_id drift should be reported");
+
+    assert_eq!(mismatch.invariant, "materialized_snapshot_match");
+    assert_eq!(
+        mismatch.path,
+        format!("table_identities.default/{}", tasks_table())
+    );
+    assert!(
+        mismatch
+            .left_description
+            .contains(left.table_identities[0].table_id.as_str()),
+        "{}",
+        mismatch.left_description
+    );
+    assert!(
+        mismatch
+            .right_description
+            .contains(right.table_identities[0].table_id.as_str()),
+        "{}",
+        mismatch.right_description
+    );
+}
+
 #[test]
 fn durable_journal_bootstrap_verifier_reports_resume_after_mismatch() {
     let snapshot = materialized_snapshot_with_documents(Vec::new());
@@ -1270,7 +1372,7 @@ fn append_durable_records_for_backend(
     data_dir: &std::path::Path,
     tenant_id: &TenantId,
     backend: EmbeddedProviderKind,
-    records: &[nimbus_core::DurableMutationRecord],
+    records: &[nimbus_core::TenantEventRecord],
 ) {
     let path = tenant_storage_path(data_dir, tenant_id, backend);
     match backend {

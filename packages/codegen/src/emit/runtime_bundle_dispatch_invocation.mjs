@@ -2,11 +2,11 @@ function runtimeBundleDispatchInvocation() {
   return `function invokeNamedDefinition(name, expectedKind, args, options = {}) {
   const definition = functionsByName.get(name);
   if (!definition) {
-    throw new Error(\`convex function not found: \${name}\`);
+    throw new Error(\`nimbus function not found: \${name}\`);
   }
   if (definition.kind !== expectedKind) {
     throw new Error(
-      \`convex function kind mismatch for \${name}: expected \${expectedKind}, got \${definition.kind}\`,
+      \`nimbus function kind mismatch for \${name}: expected \${expectedKind}, got \${definition.kind}\`,
     );
   }
 
@@ -29,20 +29,20 @@ function runtimeBundleDispatchInvocation() {
     case "action":
       return executeActionDefinition(definition, request);
     default:
-      throw new Error(\`unsupported convex function kind: \${expectedKind}\`);
+      throw new Error(\`unsupported nimbus function kind: \${expectedKind}\`);
   }
 }
 
 async function invokeNamedDefinitionLocally(request) {
   const definition = functionsByName.get(request.function_name);
   if (!definition) {
-    throw new Error("convex function not found: " + request.function_name);
+    throw new Error("nimbus function not found: " + request.function_name);
   }
   const requestVisibility =
     typeof request.visibility === "string" ? request.visibility : "public";
   if (definition.visibility !== requestVisibility) {
     throw new Error(
-      "convex function "
+      "nimbus function "
         + request.function_name
         + " is "
         + definition.visibility
@@ -52,7 +52,7 @@ async function invokeNamedDefinitionLocally(request) {
   }
   if (definition.kind !== request.kind) {
     throw new Error(
-      "convex function kind mismatch for "
+      "nimbus function kind mismatch for "
         + request.function_name
         + ": expected "
         + request.kind

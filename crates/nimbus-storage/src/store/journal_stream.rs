@@ -1,4 +1,4 @@
-use nimbus_core::{DurableMutationRecord, Error, Result, SequenceNumber};
+use nimbus_core::{Error, Result, SequenceNumber, TenantEventRecord};
 use redb::{ReadableTable, TableError};
 use std::time::Instant;
 
@@ -14,7 +14,7 @@ pub const MAX_DURABLE_JOURNAL_STREAM_LIMIT: usize = 1_000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DurableJournalPage {
-    pub records: Vec<DurableMutationRecord>,
+    pub records: Vec<TenantEventRecord>,
     pub next_cursor: SequenceNumber,
     pub latest_sequence: SequenceNumber,
     pub cursor_floor: SequenceNumber,
@@ -97,7 +97,7 @@ impl TenantReadSnapshot {
                 has_more = true;
                 break;
             }
-            records.push(crate::commit_log::deserialize_durable_record(
+            records.push(crate::commit_log::deserialize_tenant_event_record(
                 value.value(),
             )?);
         }

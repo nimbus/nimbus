@@ -60,7 +60,7 @@ const DEFAULT_READINESS_PROBE_TIMEOUT_MILLIS: u64 = 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ContainerLaunchMode {
+pub enum ContainerStartMode {
     Execute,
     PlanOnly,
 }
@@ -82,7 +82,7 @@ pub struct ContainerSandboxBackendConfig {
     pub network_interface: String,
     pub network_subnet: String,
     pub machine_port_forwarder: Option<OciMachinePortForwarderConfig>,
-    pub launch_mode: ContainerLaunchMode,
+    pub start_mode: ContainerStartMode,
     pub log_level: String,
     pub start_timeout: Duration,
     pub stop_timeout: Duration,
@@ -101,7 +101,7 @@ impl ContainerSandboxBackendConfig {
         Self {
             bundle_root: bundle_root.into(),
             state_root: state_root.into(),
-            launch_mode: ContainerLaunchMode::PlanOnly,
+            start_mode: ContainerStartMode::PlanOnly,
             ..Self::default()
         }
     }
@@ -126,7 +126,7 @@ impl Default for ContainerSandboxBackendConfig {
             network_interface: crate::backends::oci::network::DEFAULT_NETWORK_INTERFACE.to_owned(),
             network_subnet: crate::backends::oci::network::DEFAULT_NETWORK_SUBNET.to_owned(),
             machine_port_forwarder: None,
-            launch_mode: ContainerLaunchMode::Execute,
+            start_mode: ContainerStartMode::Execute,
             log_level: "debug".to_owned(),
             start_timeout: Duration::from_secs(DEFAULT_START_TIMEOUT_SECS),
             stop_timeout: Duration::from_secs(DEFAULT_STOP_TIMEOUT_SECS),
@@ -157,7 +157,7 @@ impl ContainerSandboxBackend {
                 sandbox_id: id.as_str().to_owned(),
             });
         };
-        if manifest.launch_mode != ContainerLaunchMode::Execute {
+        if manifest.start_mode != ContainerStartMode::Execute {
             return Err(SandboxError::InvalidSpec {
                 message: "container egress live reload requires execute-mode sandbox".to_owned(),
             });
@@ -226,10 +226,10 @@ impl ContainerSandboxBackend {
         self.finish_start(launch_plan)
     }
 
-    fn finish_start(&self, launch_plan: ContainerLaunchPlan) -> Result<SandboxHandle> {
+    fn finish_start(&self, launch_plan: ContainerStartPlan) -> Result<SandboxHandle> {
         let mut manifest = launch_plan.manifest;
-        match self.config.launch_mode {
-            ContainerLaunchMode::PlanOnly => {
+        match self.config.start_mode {
+            ContainerStartMode::PlanOnly => {
                 manifest.last_exit_code = None;
                 manifest.restart_count = 0;
                 manifest.next_restart_at_millis = None;
@@ -237,7 +237,7 @@ impl ContainerSandboxBackend {
                 self.write_manifest(&manifest)?;
                 Ok(manifest.handle)
             }
-            ContainerLaunchMode::Execute => self.execute_start(&manifest).inspect_err(|_| {
+            ContainerStartMode::Execute => self.execute_start(&manifest).inspect_err(|_| {
                 let _ = self.cleanup_manifest_launch_artifacts(&manifest);
             }),
         }
@@ -247,14 +247,14 @@ impl ContainerSandboxBackend {
         let Some(mut manifest) = self.read_manifest(id)? else {
             return Ok(None);
         };
-        let restarted = self.config.launch_mode == ContainerLaunchMode::Execute
+        let restarted = self.config.start_mode == ContainerStartMode::Execute
             && self.maybe_restart_after_exit(&mut manifest)?;
-        let status = match self.config.launch_mode {
-            ContainerLaunchMode::PlanOnly => manifest.status,
-            ContainerLaunchMode::Execute if restarted => manifest.status,
-            ContainerLaunchMode::Execute => self.detect_runtime_status(&manifest)?,
+        let status = match self.config.start_mode {
+            ContainerStartMode::PlanOnly => manifest.status,
+            ContainerStartMode::Execute if restarted => manifest.status,
+            ContainerStartMode::Execute => self.detect_runtime_status(&manifest)?,
         };
-        if self.config.launch_mode == ContainerLaunchMode::Execute
+        if self.config.start_mode == ContainerStartMode::Execute
             && !restarted
             && manifest.conmon_layout.exit_status_file.exists()
         {
@@ -274,8 +274,8 @@ impl ContainerSandboxBackend {
             });
         };
 
-        match self.config.launch_mode {
-            ContainerLaunchMode::PlanOnly => {
+        match self.config.start_mode {
+            ContainerStartMode::PlanOnly => {
                 manifest.shutdown_requested = true;
                 manifest.last_exit_code = Some(0);
                 manifest.next_restart_at_millis = None;
@@ -284,29 +284,29 @@ impl ContainerSandboxBackend {
                 manifest.launch_artifact = None;
                 self.write_manifest(&manifest)
             }
-            ContainerLaunchMode::Execute => self.execute_stop(&mut manifest),
+            ContainerStartMode::Execute => self.execute_stop(&mut manifest),
         }
     }
 
-    pub(crate) fn plan_start(&self, spec: &SandboxSpec) -> Result<ContainerLaunchPlan> {
+    pub(crate) fn plan_start(&self, spec: &SandboxSpec) -> Result<ContainerStartPlan> {
         let sandbox_id = next_sandbox_id(spec.display_name());
         match &spec.root {
             SandboxRootSpec::Rootfs(_) => self.plan_start_with_id(spec, &sandbox_id, None, None),
             SandboxRootSpec::OciImage(image) => {
                 self.resource_quota_manager().ensure_launch_quota(spec)?;
                 let prepared_launch =
-                    self.prepare_oci_image_launch(spec, &sandbox_id, &image.source)?;
-                self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
+                    self.prepare_oci_image_start(spec, &sandbox_id, &image.source)?;
+                self.plan_start_with_materialized_image(spec, &sandbox_id, prepared_launch)
             }
         }
     }
 
-    fn plan_start_with_materialized_launch(
+    fn plan_start_with_materialized_image(
         &self,
         spec: &SandboxSpec,
         sandbox_id: &SandboxId,
         prepared_launch: PreparedMaterializedImageLaunch,
-    ) -> Result<ContainerLaunchPlan> {
+    ) -> Result<ContainerStartPlan> {
         self.plan_start_with_id(
             spec,
             sandbox_id,
@@ -321,7 +321,7 @@ impl ContainerSandboxBackend {
         sandbox_id: &SandboxId,
         launch_defaults: Option<&OciImageLaunchDefaults>,
         launch_artifact: Option<ContainerLaunchArtifact>,
-    ) -> Result<ContainerLaunchPlan> {
+    ) -> Result<ContainerStartPlan> {
         if spec.backend != SandboxBackendKind::Container {
             return Err(SandboxError::InvalidSpec {
                 message: format!(
@@ -331,7 +331,7 @@ impl ContainerSandboxBackend {
             });
         }
 
-        let resolved_launch = resolve_launch_spec(spec, launch_defaults)?;
+        let resolved_launch = resolve_start_spec(spec, launch_defaults)?;
         let mut resolved_spec = resolved_launch.spec.clone();
         self.resource_quota_manager()
             .ensure_launch_quota(&resolved_spec)?;
@@ -342,7 +342,7 @@ impl ContainerSandboxBackend {
                 &resolved_launch.image_metadata.exposed_ports,
             )?,
         );
-        let egress_proxy = (self.config.launch_mode == ContainerLaunchMode::Execute)
+        let egress_proxy = (self.config.start_mode == ContainerStartMode::Execute)
             .then(|| self.allocate_egress_proxy(&resolved_spec))
             .transpose()?;
         let network_layout = OciNetworkLayout::new(
@@ -416,13 +416,13 @@ impl ContainerSandboxBackend {
             SandboxBackendKind::Container,
             SandboxStatus::Starting,
             visible_published_endpoints(
-                self.config.launch_mode,
+                self.config.start_mode,
                 &resolved_spec,
                 SandboxStatus::Starting,
             ),
         );
 
-        Ok(ContainerLaunchPlan {
+        Ok(ContainerStartPlan {
             manifest: ContainerSandboxManifest {
                 handle,
                 spec: resolved_spec,
@@ -436,7 +436,7 @@ impl ContainerSandboxBackend {
                 last_exit_code: None,
                 restart_count: 0,
                 next_restart_at_millis: None,
-                launch_mode: self.config.launch_mode,
+                start_mode: self.config.start_mode,
                 shutdown_requested: false,
                 status: SandboxStatus::Starting,
             },
@@ -617,7 +617,7 @@ impl ContainerSandboxBackend {
         )
     }
 
-    fn prepare_oci_image_launch(
+    fn prepare_oci_image_start(
         &self,
         spec: &SandboxSpec,
         sandbox_id: &SandboxId,
@@ -928,7 +928,7 @@ impl SandboxBackend for ContainerSandboxBackend {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ContainerLaunchPlan {
+pub(crate) struct ContainerStartPlan {
     manifest: ContainerSandboxManifest,
 }
 
@@ -948,7 +948,7 @@ struct ContainerSandboxManifest {
     restart_count: u32,
     #[serde(default)]
     next_restart_at_millis: Option<u64>,
-    launch_mode: ContainerLaunchMode,
+    start_mode: ContainerStartMode,
     shutdown_requested: bool,
     status: SandboxStatus,
 }
@@ -1036,7 +1036,7 @@ fn hostname_for(spec: &SandboxSpec) -> String {
     }
 }
 
-fn resolve_launch_spec(
+fn resolve_start_spec(
     spec: &SandboxSpec,
     launch_defaults: Option<&OciImageLaunchDefaults>,
 ) -> Result<ContainerResolvedLaunchSpec> {
@@ -1185,12 +1185,12 @@ fn probe_http_ready(address: SocketAddr, timeout: Duration) -> bool {
 }
 
 fn visible_published_endpoints(
-    launch_mode: ContainerLaunchMode,
+    start_mode: ContainerStartMode,
     spec: &SandboxSpec,
     status: SandboxStatus,
 ) -> Vec<PublishedEndpoint> {
     let endpoints = published_endpoints(spec);
-    if launch_mode == ContainerLaunchMode::Execute && status != SandboxStatus::Ready {
+    if start_mode == ContainerStartMode::Execute && status != SandboxStatus::Ready {
         Vec::new()
     } else {
         endpoints
@@ -1201,7 +1201,7 @@ fn synchronize_handle_status(manifest: &mut ContainerSandboxManifest, status: Sa
     manifest.status = status;
     manifest.handle.status = status;
     manifest.handle.published_endpoints =
-        visible_published_endpoints(manifest.launch_mode, &manifest.spec, status);
+        visible_published_endpoints(manifest.start_mode, &manifest.spec, status);
 }
 
 fn published_endpoints(spec: &SandboxSpec) -> Vec<PublishedEndpoint> {

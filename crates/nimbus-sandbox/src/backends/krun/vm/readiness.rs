@@ -80,12 +80,12 @@ fn probe_http_ready(address: SocketAddr, timeout: Duration) -> bool {
 }
 
 pub(super) fn visible_published_endpoints(
-    launch_mode: KrunLaunchMode,
+    start_mode: KrunStartMode,
     spec: &SandboxSpec,
     status: SandboxStatus,
 ) -> Vec<PublishedEndpoint> {
     let endpoints = published_endpoints(spec);
-    if launch_mode == KrunLaunchMode::Execute && status != SandboxStatus::Ready {
+    if start_mode == KrunStartMode::Execute && status != SandboxStatus::Ready {
         Vec::new()
     } else {
         endpoints
@@ -96,7 +96,7 @@ pub(super) fn synchronize_handle_status(manifest: &mut KrunSandboxManifest, stat
     manifest.status = status;
     manifest.handle.status = status;
     manifest.handle.published_endpoints =
-        visible_published_endpoints(manifest.launch_mode, &manifest.spec, status);
+        visible_published_endpoints(manifest.start_mode, &manifest.spec, status);
 }
 
 fn published_endpoints(spec: &SandboxSpec) -> Vec<PublishedEndpoint> {

@@ -250,9 +250,9 @@ fn validate_resource_limits(resources: &SandboxResourceLimits) -> Result<()> {
             message: "container sandbox memory_limit_bytes must be greater than zero".to_owned(),
         });
     }
-    if matches!(resources.disk_limit_bytes, Some(0)) {
+    if resources.disk_limit_bytes.is_some() {
         return Err(SandboxError::InvalidSpec {
-            message: "container sandbox disk_limit_bytes must be greater than zero".to_owned(),
+            message: "container sandbox disk_limit_bytes is not enforceable: the writable surface is a host bind-mount and OCI linux.resources has no total-disk-capacity control".to_owned(),
         });
     }
     if matches!(resources.log_limit_bytes, Some(0)) {
@@ -406,8 +406,8 @@ mod tests {
     };
     use crate::endpoint::PublishedEndpointProtocol;
     use crate::spec::{
-        SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec,
-        SandboxRootfsSpec, SandboxSpec,
+        SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
+        SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
     };
 
     fn egress_enforcement_from_config(config: &serde_json::Value) -> SandboxEgressEnforcementPlan {
@@ -659,5 +659,42 @@ mod tests {
             error.to_string().contains("wildcards"),
             "bundle generation should expose the invalid egress policy error: {error}"
         );
+    }
+
+    #[test]
+    fn bundle_config_rejects_unenforceable_disk_limit() {
+        let spec = sample_spec()
+            .with_resource_limits(SandboxResourceLimits::default().with_disk_limit_bytes(1024));
+
+        let error = build_bundle_config(
+            "db",
+            &spec,
+            None,
+            None,
+            &crate::backends::container::bundle::ContainerBundleOptions::default(),
+        )
+        .expect_err("an unenforceable disk_limit_bytes must fail closed");
+
+        assert!(
+            error
+                .to_string()
+                .contains("disk_limit_bytes is not enforceable"),
+            "expected actionable disk-limit validation error, got: {error}"
+        );
+
+        // An enforceable limit on the same surface (memory) must still build a bundle:
+        // the guard is specific to the disk knob Nimbus cannot honor, not a blanket
+        // rejection of resource limits.
+        let with_memory = sample_spec().with_resource_limits(
+            SandboxResourceLimits::default().with_memory_limit_bytes(256 * 1024 * 1024),
+        );
+        build_bundle_config(
+            "db",
+            &with_memory,
+            None,
+            None,
+            &crate::backends::container::bundle::ContainerBundleOptions::default(),
+        )
+        .expect("a spec without disk_limit_bytes should still render a bundle");
     }
 }

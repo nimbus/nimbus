@@ -84,7 +84,7 @@ pub(super) fn sample_forwarder(port: u16) -> OciMachinePortForwarderConfig {
 
 pub(super) fn sample_plan_only_backend(root: &std::path::Path) -> ContainerSandboxBackend {
     ContainerSandboxBackend::new(ContainerSandboxBackendConfig {
-        launch_mode: ContainerLaunchMode::PlanOnly,
+        start_mode: ContainerStartMode::PlanOnly,
         ..ContainerSandboxBackendConfig::under_root(root)
     })
 }

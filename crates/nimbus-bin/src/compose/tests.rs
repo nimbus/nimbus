@@ -13,7 +13,7 @@ use nimbus::{
 };
 use nimbus_sandbox::SandboxFuture;
 use nimbus_sandbox::backends::container::{
-    ContainerLaunchMode, ContainerSandboxBackend, ContainerSandboxBackendConfig,
+    ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
 };
 use serde_json::json;
 use tempfile::TempDir;

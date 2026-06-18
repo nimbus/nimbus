@@ -1424,8 +1424,7 @@ mod tests {
     #[test]
     fn extract_error_location_lifts_remapped_source_location() {
         // The runtime remap appends ` (at module:line)` to the thrown message.
-        let message =
-            "runtime JavaScript error: Error: message body must not be empty (at messages:24)\n    at eval";
+        let message = "runtime JavaScript error: Error: message body must not be empty (at messages:24)\n    at eval";
         assert_eq!(extract_error_location(message), Some("messages:24"));
 
         // Nested module paths (admin/users) and the first `(at ...)` win.

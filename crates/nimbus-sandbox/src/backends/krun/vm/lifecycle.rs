@@ -1,5 +1,5 @@
-use super::launch::ensure_guest_user_helper_available;
 use super::readiness::{running_status, synchronize_handle_status, visible_published_endpoints};
+use super::start::ensure_guest_user_helper_available;
 use super::*;
 
 impl KrunSandboxBackend {
@@ -8,9 +8,9 @@ impl KrunSandboxBackend {
             return Ok(None);
         };
 
-        manifest.status = match self.config.launch_mode {
-            KrunLaunchMode::PlanOnly => manifest.status,
-            KrunLaunchMode::Execute => {
+        manifest.status = match self.config.start_mode {
+            KrunStartMode::PlanOnly => manifest.status,
+            KrunStartMode::Execute => {
                 if self.maybe_restart_after_exit(&mut manifest)? {
                     manifest.status
                 } else {
@@ -20,7 +20,7 @@ impl KrunSandboxBackend {
         };
         manifest.handle.status = manifest.status;
         manifest.handle.published_endpoints =
-            visible_published_endpoints(manifest.launch_mode, &manifest.spec, manifest.status);
+            visible_published_endpoints(manifest.start_mode, &manifest.spec, manifest.status);
         self.write_manifest(&manifest)?;
         Ok(Some(manifest.handle))
     }
@@ -32,8 +32,8 @@ impl KrunSandboxBackend {
             });
         };
 
-        match self.config.launch_mode {
-            KrunLaunchMode::PlanOnly => {
+        match self.config.start_mode {
+            KrunStartMode::PlanOnly => {
                 manifest.shutdown_requested = true;
                 manifest.last_exit_code = Some(0);
                 manifest.status = SandboxStatus::Stopped;
@@ -42,11 +42,11 @@ impl KrunSandboxBackend {
                 manifest.launch_artifact = None;
                 self.write_manifest(&manifest)
             }
-            KrunLaunchMode::Execute => self.execute_stop(&mut manifest),
+            KrunStartMode::Execute => self.execute_stop(&mut manifest),
         }
     }
 
-    pub(super) fn execute_start(&self, launch_plan: &KrunLaunchPlan) -> Result<SandboxHandle> {
+    pub(super) fn execute_start(&self, launch_plan: &KrunStartPlan) -> Result<SandboxHandle> {
         ensure_linux_host("krun")?;
         let mut manifest = launch_plan.manifest.clone();
         self.launch_manifest(&mut manifest, true)?;

@@ -78,8 +78,12 @@ discussion, not a workaround.
    effects, and the commit-log append happen in one storage transaction.
    Never a document without its index entries; never a commit entry without
    its document write.
-5. **Runtime bundles are integrity-checked.** The bundle's SHA-256 hash is
-   verified before every invocation; a tampered or stale bundle is rejected.
+5. **Runtime bundles are integrity-checked against their provenance.** A bundle
+   loaded with a recorded SHA-256 is re-hashed and compared against that hash
+   before every invocation; a tampered or stale bundle is rejected
+   (`verify_integrity`, `crates/nimbus-runtime/src/runtime/bundle.rs`). A
+   path-backed bundle loaded without recorded provenance carries no expected
+   hash, so it is admitted on filesystem trust alone.
 6. **Schema is optional.** A table without a schema accepts any document.
    Setting a schema adds constraints but never removes the ability to write.
 
