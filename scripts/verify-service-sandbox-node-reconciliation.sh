@@ -19,6 +19,8 @@ BIN_MAIN="crates/nimbus-bin/src/main.rs"
 NODE_CARGO="crates/nimbus-node/Cargo.toml"
 NODE_SRC="crates/nimbus-node/src"
 COMPOSE_SRC="crates/nimbus-bin/src/compose"
+WORKLOAD_CONTROL_DIR="crates/nimbus-services/src/workload_control"
+WORKLOAD_SCHEDULING_SRC="${WORKLOAD_CONTROL_DIR}/scheduling.rs"
 SESSION_MODEL="docs/private/architecture/sandbox/service-sandbox-session-model.md"
 SDK_PLAN="docs/private/plans/archive/nimbus-sdk-resource-model-plan.md"
 CAPABILITY_PLAN="docs/private/plans/archive/nimbus-capability-segregation-plan.md"
@@ -102,13 +104,17 @@ else
 fi
 
 # --- 5. NSR2a desired-state/controller seam -----------------------------------
-C="5. NSR2a WorkloadController and DesiredWorkloadStore are implemented"
+C="5. NSR2a WorkloadController, desired state, and route integration are implemented"
 if crates_grep 'struct WorkloadController' \
   && crates_grep 'DesiredWorkloadStore' \
-  && crates_grep 'desired_workload_replay_after_restart'; then
+  && crates_grep 'desired_workload_replay_after_restart' \
+  && crates_grep 'record_desired_service_workload' \
+  && crates_grep 'desired_workload_snapshot' \
+  && crates_grep 'service_start_records_desired_workload' \
+  && crates_grep 'sandbox_create_records_desired_workload'; then
   pass "${C}"
 else
-  fail "${C}" "WorkloadController/DesiredWorkloadStore or replay test missing"
+  fail "${C}" "WorkloadController/DesiredWorkloadStore, route integration, or desired-workload tests missing"
 fi
 
 # --- 6. NSR2b scheduler/placement has no lifecycle side effects ---------------
@@ -117,10 +123,11 @@ if crates_grep 'struct WorkloadScheduler' \
   && crates_grep 'WorkloadPlacementEngine' \
   && crates_grep 'SchedulingExplanation' \
   && crates_grep 'generated_workload_placement' \
-  && ! grep -rqE 'SandboxBackend::start|StartTransientUnit|open_channel|write_status' crates/nimbus-server/src/workload_control 2>/dev/null; then
+  && [[ -f "${WORKLOAD_SCHEDULING_SRC}" ]] \
+  && ! grep -rqE 'SandboxBackend::start|StartTransientUnit|open_channel|write_status' "${WORKLOAD_SCHEDULING_SRC}" 2>/dev/null; then
   pass "${C}"
 else
-  fail "${C}" "scheduler symbols/tests missing or lifecycle side effects appear in workload_control"
+  fail "${C}" "scheduler symbols/tests missing, scheduler module is not concept-owned, or lifecycle effects appear in scheduling code"
 fi
 
 # --- 7. NSR2c queue/replay/reservation safety ---------------------------------
@@ -136,14 +143,18 @@ else
 fi
 
 # --- 8. NSR2d executor/channel seam -------------------------------------------
-C="8. NSR2d WorkloadExecutor seam and fake lifecycle tests exist"
+C="8. NSR2d WorkloadExecutor seam, NodeAssignment, and status acceptance exist"
 if crates_grep 'trait WorkloadExecutor' \
+  && crates_grep 'struct NodeAssignment' \
   && crates_grep 'EmbeddedNodeClient' \
   && crates_grep 'open_channel' \
-  && crates_grep 'fake_executor_lifecycle_reaches_ready'; then
+  && crates_grep 'fake_remote_executor_lifecycle_reaches_ready' \
+  && crates_grep 'status_acceptance_rejects_wrong_tenant' \
+  && crates_grep 'status_acceptance_rejects_wrong_node' \
+  && crates_grep 'status_acceptance_rejects_stale_generation'; then
   pass "${C}"
 else
-  fail "${C}" "WorkloadExecutor/EmbeddedNodeClient/open_channel seam or fake tests missing"
+  fail "${C}" "WorkloadExecutor/EmbeddedNodeClient/NodeAssignment/status-acceptance tests missing"
 fi
 
 # --- 9. NSR3 node-agent invariants --------------------------------------------
@@ -152,20 +163,25 @@ if ! grep -q 'nimbus-server' "${NODE_CARGO}" \
   && ! grep -rq 'nimbus_server' "${NODE_SRC}" 2>/dev/null \
   && crates_grep 'NodeAgent' \
   && crates_grep 'node_agent_reconciles_multiple_workloads_idempotently' \
-  && crates_grep 'node_state_transition_assignment_disposition'; then
+  && crates_grep 'node_state_transition_assignment_disposition' \
+  && crates_grep 'node_agent_reports_capabilities' \
+  && crates_grep 'node_agent_rejects_unauthenticated_transport'; then
   pass "${C}"
 else
-  fail "${C}" "nimbus-node dependency invariant failed or node-agent tests missing"
+  fail "${C}" "nimbus-node dependency invariant failed or node-agent capability/auth tests missing"
 fi
 
 # --- 10. NSR4 typed runner/systemd launch -------------------------------------
 C="10. NSR4 typed runner specs render systemd plans without raw host commands"
 if crates_grep 'RunnerSpec' \
   && crates_grep 'runner_spec_renders_host_lifecycle_request' \
-  && crates_grep 'raw_host_command_rejected_by_workload_control'; then
+  && crates_grep 'raw_host_command_rejected_by_workload_control' \
+  && crates_grep 'container_runner_spec_renders_host_lifecycle_request' \
+  && crates_grep 'krun_runner_spec_renders_host_lifecycle_request' \
+  && [[ -f "${PROOF_DIR}/nsr4-typed-systemd-runners.md" ]]; then
   pass "${C}"
 else
-  fail "${C}" "typed runner spec or raw-command rejection tests missing"
+  fail "${C}" "typed container/krun runner spec tests or NSR4 proof missing"
 fi
 
 # --- 11. NSR5 machine-os guest node gates -------------------------------------
@@ -215,21 +231,35 @@ else
   fail "${C}" "SandboxTemplate import, nimbus.yaml app intent, operator-policy admission, typed template SDK, TTL/quota, or channel-only port tests missing"
 fi
 
-# --- 14. NSR9 session channel model and tests ---------------------------------
-C="14. NSR9 session channel lifecycle is canonical and tested"
+# --- 14. NSR8 dev/start scheduler integration ---------------------------------
+C="14. NSR8 dev/start produce canonical workload-control shapes"
+if crates_grep 'dev_start_resource_shapes_match_workload_control' \
+  && crates_grep 'start_uses_workload_controller_for_compose_services' \
+  && crates_grep 'dev_uses_workload_controller_for_compose_services' \
+  && crates_grep 'dev_start_scheduler_explanations_match'; then
+  pass "${C}"
+else
+  fail "${C}" "dev/start workload-control shape or scheduler-explanation tests missing"
+fi
+
+# --- 15. NSR9 session channel model and tests ---------------------------------
+C="15. NSR9 session channel lifecycle is canonical and brokered"
 if grep -q 'half-close' "${SESSION_MODEL}" \
   && grep -q 'backpressure' "${SESSION_MODEL}" \
+  && crates_grep 'struct SessionBroker' \
   && crates_grep 'session_channel_target_generation_mismatch' \
   && crates_grep 'session_channel_half_close' \
   && crates_grep 'session_channel_backpressure' \
-  && crates_grep 'session_channel_disconnect_audit'; then
+  && crates_grep 'session_channel_disconnect_audit' \
+  && crates_grep 'session_open_uses_workload_executor_channel' \
+  && crates_grep 'session_open_returns_workload_channel_descriptor'; then
   pass "${C}"
 else
-  fail "${C}" "session model or canonical channel tests missing"
+  fail "${C}" "session model, SessionBroker, or executor-backed channel tests missing"
 fi
 
-# --- 15. NSR10 Wasm seam remains reserved/fail-closed --------------------------
-C="15. NSR10 Wasm runner is reserved without turning invocation isolates into sandboxes"
+# --- 16. NSR10 Wasm seam remains reserved/fail-closed --------------------------
+C="16. NSR10 Wasm runner is reserved without turning invocation isolates into sandboxes"
 if plan_grep 'wasmtime-backend-plan.md' \
   && plan_grep 'runtime invocation isolates' \
   && crates_grep 'wasm_sandbox_requests_fail_closed'; then
@@ -238,8 +268,8 @@ else
   fail "${C}" "Wasm seam docs or fail-closed test missing"
 fi
 
-# --- 16. NSR11 docs/source-map stale claims -----------------------------------
-C="16. NSR11 stale docs and command-surface drift are fixed"
+# --- 17. NSR11 docs/source-map stale claims -----------------------------------
+C="17. NSR11 stale docs and command-surface drift are fixed"
 if grep -q 'node-workload-executor' "${NODE_DBUS_DOC}" \
   && ! grep -q 'ServiceManager.*nimbus-server' "${MICROVM_DOC}" \
   && ! grep -q '`data`' ARCHITECTURE.md \
@@ -250,15 +280,16 @@ else
   fail "${C}" "node/systemd docs, ARCHITECTURE.md, or source-map command anchors are stale"
 fi
 
-# --- 17. formatting ------------------------------------------------------------
-C="17. cargo fmt --all --check passes"
+# --- 18. formatting ------------------------------------------------------------
+C="18. cargo fmt --all --check passes"
 if cargo fmt --all --check >/dev/null 2>&1; then
   pass "${C}"
 else
   fail "${C}" "cargo fmt --all --check reported diffs"
 fi
 
-printf '\n%d/17 conditions green\n' "${PASS}"
+TOTAL=$((PASS + FAIL))
+printf '\n%d/%d conditions green\n' "${PASS}" "${TOTAL}"
 if [[ ${FAIL} -gt 0 ]]; then
   exit 1
 fi
