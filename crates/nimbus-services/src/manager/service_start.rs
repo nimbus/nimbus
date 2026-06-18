@@ -1,5 +1,5 @@
 use nimbus_core::Error;
-use nimbus_sandbox::SandboxHandle;
+use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_tenant::{TenantIsolationDecision, TenantVolumePolicyDecision};
 
 use crate::ServiceBackend;
@@ -46,16 +46,28 @@ impl ServiceManager {
             .await
             .map_err(|error| sandbox_backend_error(key, "start", &error))?;
         if handle.tenant_id != key.tenant_id {
-            return Err(Error::InvalidInput(format!(
+            let error = Error::InvalidInput(format!(
                 "sandbox backend returned handle for tenant {}, but service activation requested tenant {}",
                 handle.tenant_id, key.tenant_id
-            )));
+            ));
+            self.stop_orphaned_sandbox_after_launch_error(
+                &handle,
+                "backend returned a mismatched tenant handle",
+            )
+            .await?;
+            return Err(error);
         }
         if handle.name != key.service_name {
-            return Err(Error::InvalidInput(format!(
+            let error = Error::InvalidInput(format!(
                 "sandbox backend returned handle for service {}, but service activation requested {}",
                 handle.name, key.service_name
-            )));
+            ));
+            self.stop_orphaned_sandbox_after_launch_error(
+                &handle,
+                "backend returned a mismatched service handle",
+            )
+            .await?;
+            return Err(error);
         }
 
         self.state
@@ -65,5 +77,29 @@ impl ServiceManager {
             .insert(key.clone(), handle.clone());
         self.record_service_handle(key, &handle).await?;
         Ok(handle)
+    }
+
+    /// Best-effort stop for a sandbox the backend started but that this manager
+    /// is rejecting before tracking it in `state.handles`. The handle was never
+    /// recorded, so returning the rejection without stopping it would orphan a
+    /// running sandbox the manager no longer references. Mirrors the
+    /// standalone-sandbox-create rollback in `sandboxes.rs`.
+    async fn stop_orphaned_sandbox_after_launch_error(
+        &self,
+        handle: &SandboxHandle,
+        reason: &str,
+    ) -> Result<(), Error> {
+        if matches!(
+            handle.status,
+            SandboxStatus::Stopped | SandboxStatus::Stopping
+        ) {
+            return Ok(());
+        }
+        self.sandbox_backend.stop(&handle.id).await.map_err(|error| {
+            Error::Internal(format!(
+                "sandbox-backed service launch failed after backend start ({reason}); failed to stop untracked sandbox `{}`: {error}",
+                handle.id.as_str()
+            ))
+        })
     }
 }

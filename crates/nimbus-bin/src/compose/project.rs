@@ -145,6 +145,7 @@ fn truncate_ascii(value: &str, max_len: usize) -> String {
 mod tests {
     use super::*;
     use crate::compose::discovery::{ResolvedComposeSelection, resolve_compose_selection};
+    use crate::test_support::with_current_dir;
 
     fn write_compose_fixture(
         tempdir: &tempfile::TempDir,
@@ -300,6 +301,33 @@ services:
         assert_eq!(
             auto_context.control_plane.local_tenant_id,
             explicit_context.control_plane.local_tenant_id
+        );
+    }
+
+    #[test]
+    fn compose_command_auto_discovers_compose_project() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let stack = tempdir.path().join("stack");
+        let nested = stack.join("app");
+        fs::create_dir_all(&nested).expect("nested directory should build");
+        let compose = write_compose_fixture(
+            &tempdir,
+            "stack/compose.yaml",
+            "name: demo\nservices:\n  db:\n    image: busybox:latest\n",
+        );
+
+        let selection = with_current_dir(&nested, || {
+            crate::compose::resolve_required_compose_selection(&[])
+        })
+        .expect("compose command should auto-discover project");
+
+        assert_eq!(
+            fs::canonicalize(selection.primary_file()).unwrap(),
+            fs::canonicalize(compose).unwrap()
+        );
+        assert_eq!(
+            fs::canonicalize(selection.project_root).unwrap(),
+            fs::canonicalize(stack).unwrap()
         );
     }
 }

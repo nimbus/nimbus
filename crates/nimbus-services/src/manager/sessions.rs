@@ -12,7 +12,10 @@ use crate::{
 
 use super::ServiceManager;
 use super::clock::{next_version, now_millis};
-use super::types::TenantServiceKey;
+use super::session_channels::{
+    SessionChannelKey, SessionChannelState, close_session_channels, initialize_session_channels,
+};
+use super::types::{ServiceManagerState, TenantServiceKey};
 
 const DEFAULT_SESSION_TTL_MILLIS: u64 = 15 * 60 * 1000;
 const MAX_SESSION_TTL_MILLIS: u64 = 60 * 60 * 1000;
@@ -126,6 +129,7 @@ impl ServiceManager {
             closed_at_millis: None,
             close_reason: None,
         };
+        initialize_session_channels(&mut state, &session)?;
         state.sessions.insert(id, session.clone());
         Ok(session)
     }
@@ -174,30 +178,131 @@ impl ServiceManager {
         } else {
             None
         };
-        let session = state.sessions.get_mut(session_id)?;
-        if &session.tenant_id != tenant_id {
-            return None;
-        }
-        match (action, next_resource_version) {
-            (Some(SessionCloseAction::Expire), Some(next_resource_version)) => {
-                session.lifecycle_state = SessionLifecycleState::Expired;
-                session.generation = session.generation.saturating_add(1);
-                session.resource_version = next_resource_version;
-                session.updated_at_millis = now;
-                session.closed_at_millis = Some(now);
-                session.close_reason = Some("expired".to_owned());
+        let channel_close_reason = match action {
+            Some(SessionCloseAction::Expire) => Some("expired".to_owned()),
+            Some(SessionCloseAction::Close) => Some(reason.into()),
+            None => None,
+        };
+        let session = {
+            let session = state.sessions.get_mut(session_id)?;
+            if &session.tenant_id != tenant_id {
+                return None;
             }
-            (Some(SessionCloseAction::Close), Some(next_resource_version)) => {
-                session.lifecycle_state = SessionLifecycleState::Closed;
-                session.generation = session.generation.saturating_add(1);
-                session.resource_version = next_resource_version;
-                session.updated_at_millis = now;
-                session.closed_at_millis = Some(now);
-                session.close_reason = Some(reason.into());
+            match (action, next_resource_version, channel_close_reason.as_ref()) {
+                (Some(SessionCloseAction::Expire), Some(next_resource_version), Some(reason)) => {
+                    session.lifecycle_state = SessionLifecycleState::Expired;
+                    session.generation = session.generation.saturating_add(1);
+                    session.resource_version = next_resource_version;
+                    session.updated_at_millis = now;
+                    session.closed_at_millis = Some(now);
+                    session.close_reason = Some(reason.clone());
+                }
+                (Some(SessionCloseAction::Close), Some(next_resource_version), Some(reason)) => {
+                    session.lifecycle_state = SessionLifecycleState::Closed;
+                    session.generation = session.generation.saturating_add(1);
+                    session.resource_version = next_resource_version;
+                    session.updated_at_millis = now;
+                    session.closed_at_millis = Some(now);
+                    session.close_reason = Some(reason.clone());
+                }
+                _ => {}
             }
-            _ => {}
+            session.clone()
+        };
+        if let Some(reason) = channel_close_reason {
+            close_session_channels(&mut state, session_id, &reason);
         }
-        Some(session.clone())
+        Some(session)
+    }
+
+    pub fn ensure_session_channel_target_generation(
+        &self,
+        tenant_id: &TenantId,
+        session_id: &str,
+        channel: &str,
+        current_generation: u64,
+    ) -> Result<(), Error> {
+        let state = self
+            .state
+            .lock()
+            .expect("manager lock should not be poisoned");
+        let channel_state = state
+            .session_channels
+            .get(&SessionChannelKey::new(session_id, channel))
+            .ok_or_else(|| {
+                Error::NotFound(format!(
+                    "session channel `{channel}` for session `{session_id}` was not found"
+                ))
+            })?;
+        if &channel_state.tenant_id != tenant_id {
+            return Err(Error::NotFound(format!(
+                "session channel `{channel}` for session `{session_id}` was not found"
+            )));
+        }
+        channel_state.ensure_target_generation(current_generation)
+    }
+
+    pub fn half_close_session_channel_client_write(
+        &self,
+        tenant_id: &TenantId,
+        session_id: &str,
+        channel: &str,
+        reason: impl Into<String>,
+    ) -> Result<(), Error> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("manager lock should not be poisoned");
+        let channel_state = mutable_session_channel(&mut state, tenant_id, session_id, channel)?;
+        channel_state.half_close_client_write(reason);
+        Ok(())
+    }
+
+    pub fn enqueue_session_channel_target_to_client_bytes(
+        &self,
+        tenant_id: &TenantId,
+        session_id: &str,
+        channel: &str,
+        bytes: usize,
+    ) -> Result<(), Error> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("manager lock should not be poisoned");
+        let channel_state = mutable_session_channel(&mut state, tenant_id, session_id, channel)?;
+        channel_state.enqueue_target_to_client_bytes(bytes)
+    }
+
+    pub fn drain_session_channel_target_to_client_bytes(
+        &self,
+        tenant_id: &TenantId,
+        session_id: &str,
+        channel: &str,
+        bytes: usize,
+    ) -> Result<(), Error> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("manager lock should not be poisoned");
+        let channel_state = mutable_session_channel(&mut state, tenant_id, session_id, channel)?;
+        channel_state.drain_target_to_client_bytes(bytes);
+        Ok(())
+    }
+
+    pub fn disconnect_session_channel(
+        &self,
+        tenant_id: &TenantId,
+        session_id: &str,
+        channel: &str,
+        reason: impl Into<String>,
+    ) -> Result<(), Error> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("manager lock should not be poisoned");
+        let channel_state = mutable_session_channel(&mut state, tenant_id, session_id, channel)?;
+        channel_state.disconnect(reason);
+        Ok(())
     }
 
     fn refresh_session_expiration(
@@ -220,19 +325,26 @@ impl ServiceManager {
         } else {
             None
         };
-        let session = state.sessions.get_mut(session_id)?;
-        if &session.tenant_id != tenant_id {
-            return None;
+        let expired = next_resource_version.is_some();
+        let session = {
+            let session = state.sessions.get_mut(session_id)?;
+            if &session.tenant_id != tenant_id {
+                return None;
+            }
+            if let Some(next_resource_version) = next_resource_version {
+                session.lifecycle_state = SessionLifecycleState::Expired;
+                session.generation = session.generation.saturating_add(1);
+                session.resource_version = next_resource_version;
+                session.updated_at_millis = now;
+                session.closed_at_millis = Some(now);
+                session.close_reason = Some("expired".to_owned());
+            }
+            session.clone()
+        };
+        if expired {
+            close_session_channels(&mut state, session_id, "expired");
         }
-        if let Some(next_resource_version) = next_resource_version {
-            session.lifecycle_state = SessionLifecycleState::Expired;
-            session.generation = session.generation.saturating_add(1);
-            session.resource_version = next_resource_version;
-            session.updated_at_millis = now;
-            session.closed_at_millis = Some(now);
-            session.close_reason = Some("expired".to_owned());
-        }
-        Some(session.clone())
+        Some(session)
     }
 
     fn refresh_tenant_session_expirations(&self, tenant_id: &TenantId) {
@@ -284,6 +396,28 @@ fn validate_channels(channels: &[String]) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+fn mutable_session_channel<'a>(
+    state: &'a mut ServiceManagerState,
+    tenant_id: &TenantId,
+    session_id: &str,
+    channel: &str,
+) -> Result<&'a mut SessionChannelState, Error> {
+    let channel_state = state
+        .session_channels
+        .get_mut(&SessionChannelKey::new(session_id, channel))
+        .ok_or_else(|| {
+            Error::NotFound(format!(
+                "session channel `{channel}` for session `{session_id}` was not found"
+            ))
+        })?;
+    if &channel_state.tenant_id != tenant_id {
+        return Err(Error::NotFound(format!(
+            "session channel `{channel}` for session `{session_id}` was not found"
+        )));
+    }
+    Ok(channel_state)
 }
 
 fn validate_service_session_channels(

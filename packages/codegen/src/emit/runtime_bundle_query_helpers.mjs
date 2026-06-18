@@ -30,7 +30,7 @@ function createConstraintBuilderFromPlan(builder, filters) {
         builder.lte(field, filter.value);
         break;
       default:
-        throw new Error(\`unsupported convex filter op: \${filter.op}\`);
+        throw new Error(\`unsupported nimbus filter op: \${filter.op}\`);
     }
   }
   return builder;
@@ -65,7 +65,7 @@ async function executeResolvedQueryPlan(ctx, plan) {
   }
   return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_query", {
     query: plan,
-    host_call_session_id: "convex-runtime-query-plan",
+    host_call_session_id: "nimbus-runtime-query-plan",
   });
 }`;
 }

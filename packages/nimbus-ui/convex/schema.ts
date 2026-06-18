@@ -48,6 +48,28 @@ export default defineSchema({
     .index("by_bundleId", ["bundleId"])
     .index("by_kind", ["kind"]),
 
+  // Content-addressed archive of original module source (+ source maps),
+  // deduped by digest — the read-artifact behind the Source view. Mirrors
+  // crates/nimbus-system/src/schema.rs (Function Source Visibility plan).
+  source_packages: defineTable({
+    digest: v.string(),
+    storageKey: v.string(),
+    sizeBytes: v.optional(v.number()),
+    unpackedBytes: v.optional(v.number()),
+    status: v.string(),
+  })
+    .index("by_digest", ["digest"])
+    .index("by_status", ["status"]),
+
+  // Per-module metadata; sourcePackageId references source_packages.digest.
+  modules: defineTable({
+    path: v.string(),
+    sourcePackageId: v.string(),
+    sha256: v.string(),
+  })
+    .index("by_path", ["path"])
+    .index("by_sourcePackageId", ["sourcePackageId"]),
+
   tables: defineTable({
     tenantId: v.string(),
     name: v.string(),

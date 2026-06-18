@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use nimbus_core::{
-    Document, DocumentId, DurableMutationRecord, Error, Result, SequenceNumber, TableId, TableName,
-    TableState, WriteOp, WriteOpType,
+    Document, DocumentId, Error, Result, SequenceNumber, TableId, TableName, TableState,
+    TenantEventRecord, WriteOp, WriteOpType,
 };
 
 use crate::table_identity::{
@@ -101,13 +101,13 @@ pub struct ShadowMaterializer {
     table_identities: BTreeMap<(String, TableName), (TableId, TableState)>,
     documents: BTreeMap<(TableId, DocumentId), Document>,
     scheduled_execution_ids: BTreeSet<String>,
-    pending_records: Vec<DurableMutationRecord>,
+    pending_records: Vec<TenantEventRecord>,
 }
 
 impl ShadowMaterializer {
     pub fn from_checkpoint_and_journal(
         checkpoint: MaterializedJournalSnapshot,
-        journal_tail: Vec<DurableMutationRecord>,
+        journal_tail: Vec<TenantEventRecord>,
         config: ShadowMaterializerConfig,
     ) -> Result<Self> {
         let config = config.validate()?;
@@ -160,7 +160,7 @@ impl ShadowMaterializer {
 
     pub fn recover(
         checkpoint: MaterializedJournalSnapshot,
-        pending_records: Vec<DurableMutationRecord>,
+        pending_records: Vec<TenantEventRecord>,
         manifest: ShadowMaterializerManifest,
         config: ShadowMaterializerConfig,
     ) -> Result<Self> {
@@ -183,7 +183,7 @@ impl ShadowMaterializer {
         Ok(recovered)
     }
 
-    pub fn apply_records(&mut self, records: Vec<DurableMutationRecord>) -> Result<()> {
+    pub fn apply_records(&mut self, records: Vec<TenantEventRecord>) -> Result<()> {
         for record in records {
             record.validate_integrity()?;
             let expected_sequence = self.manifest.current_sequence.0.saturating_add(1);
@@ -265,11 +265,11 @@ impl ShadowMaterializer {
         &self.manifest
     }
 
-    pub fn pending_records(&self) -> &[DurableMutationRecord] {
+    pub fn pending_records(&self) -> &[TenantEventRecord] {
         &self.pending_records
     }
 
-    fn apply_record(&mut self, record: &DurableMutationRecord) -> Result<()> {
+    fn apply_record(&mut self, record: &TenantEventRecord) -> Result<()> {
         for write in &record.writes {
             self.apply_write(record, write)?;
         }
@@ -279,7 +279,7 @@ impl ShadowMaterializer {
         Ok(())
     }
 
-    fn apply_write(&mut self, record: &DurableMutationRecord, write: &WriteOp) -> Result<()> {
+    fn apply_write(&mut self, record: &TenantEventRecord, write: &WriteOp) -> Result<()> {
         self.ensure_write_table_identity(write)?;
         let document_key = (write.table_id.clone(), write.doc_id.clone());
         match write.op_type {
@@ -508,7 +508,7 @@ mod tests {
             scheduled_execution_ids: Vec::new(),
         };
         let records = vec![
-            DurableMutationRecord::new(
+            TenantEventRecord::new(
                 SequenceNumber(1),
                 nimbus_core::Timestamp(10),
                 vec![WriteOp {
@@ -524,7 +524,7 @@ mod tests {
                 None,
             )
             .expect("message record should build"),
-            DurableMutationRecord::new(
+            TenantEventRecord::new(
                 SequenceNumber(2),
                 nimbus_core::Timestamp(11),
                 vec![WriteOp {
@@ -607,7 +607,7 @@ mod tests {
             scheduled_execution_ids: Vec::new(),
         };
         let records = vec![
-            DurableMutationRecord::new(
+            TenantEventRecord::new(
                 SequenceNumber(2),
                 nimbus_core::Timestamp(10),
                 vec![WriteOp {

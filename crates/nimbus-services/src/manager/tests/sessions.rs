@@ -1,4 +1,7 @@
 use super::*;
+use crate::manager::session_channels::{
+    SessionChannelAuditKind, SessionChannelHalfState, SessionChannelKey,
+};
 
 #[tokio::test]
 async fn open_session_rejects_not_ready_sandbox_targets() {
@@ -95,4 +98,226 @@ async fn session_lookup_and_close_are_tenant_scoped() {
         .expect("owning tenant should close its session");
     assert_eq!(closed.lifecycle_state, SessionLifecycleState::Closed);
     assert_eq!(closed.close_reason.as_deref(), Some("tenant_close"));
+}
+
+#[tokio::test]
+async fn session_channel_target_generation_mismatch() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::new(),
+        }),
+        Arc::new(StubSandboxBackend::new(1)),
+    );
+    manager
+        .create_service_definition(
+            &tenant_id,
+            "browser",
+            ServiceBackend::built_in("browser"),
+            BTreeMap::new(),
+        )
+        .expect("dynamic browser service definition should create");
+    let session = manager
+        .open_session_async(
+            &tenant_id,
+            SessionTarget::Service {
+                name: "browser".to_owned(),
+            },
+            vec!["cdp".to_owned()],
+            Some(60_000),
+        )
+        .await
+        .expect("service session should open");
+
+    let channel = manager
+        .state
+        .lock()
+        .expect("manager lock should not be poisoned")
+        .session_channels
+        .get(&SessionChannelKey::new(&session.id, "cdp"))
+        .expect("session open should create a channel state")
+        .clone();
+
+    let error = channel
+        .ensure_target_generation(channel.target_generation + 1)
+        .expect_err("stale target generation must reject channel attachment");
+    assert!(
+        error.to_string().contains("reopen the session"),
+        "generation mismatch should require a fresh session: {error}"
+    );
+}
+
+#[tokio::test]
+async fn session_channel_half_close() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::new(),
+        }),
+        Arc::new(StubSandboxBackend::new(1)),
+    );
+    manager
+        .create_service_definition(
+            &tenant_id,
+            "browser",
+            ServiceBackend::built_in("browser"),
+            BTreeMap::new(),
+        )
+        .expect("dynamic browser service definition should create");
+    let session = manager
+        .open_session_async(
+            &tenant_id,
+            SessionTarget::Service {
+                name: "browser".to_owned(),
+            },
+            vec!["cdp".to_owned()],
+            Some(60_000),
+        )
+        .await
+        .expect("service session should open");
+
+    let mut state = manager
+        .state
+        .lock()
+        .expect("manager lock should not be poisoned");
+    let channel = state
+        .session_channels
+        .get_mut(&SessionChannelKey::new(&session.id, "cdp"))
+        .expect("session open should create a channel state");
+
+    channel.half_close_client_write("client_eof");
+
+    assert_eq!(
+        channel.client_to_target,
+        SessionChannelHalfState::HalfClosed
+    );
+    assert_eq!(channel.target_to_client, SessionChannelHalfState::Open);
+    assert!(
+        channel
+            .audit
+            .iter()
+            .any(|record| record.kind == SessionChannelAuditKind::ClientHalfClosed),
+        "half-close should be audited"
+    );
+}
+
+#[tokio::test]
+async fn session_channel_backpressure() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::new(),
+        }),
+        Arc::new(StubSandboxBackend::new(1)),
+    );
+    manager
+        .create_service_definition(
+            &tenant_id,
+            "browser",
+            ServiceBackend::built_in("browser"),
+            BTreeMap::new(),
+        )
+        .expect("dynamic browser service definition should create");
+    let session = manager
+        .open_session_async(
+            &tenant_id,
+            SessionTarget::Service {
+                name: "browser".to_owned(),
+            },
+            vec!["cdp".to_owned()],
+            Some(60_000),
+        )
+        .await
+        .expect("service session should open");
+
+    let mut state = manager
+        .state
+        .lock()
+        .expect("manager lock should not be poisoned");
+    let channel = state
+        .session_channels
+        .get_mut(&SessionChannelKey::new(&session.id, "cdp"))
+        .expect("session open should create a channel state");
+    let high_watermark = channel.high_watermark_bytes;
+
+    channel
+        .enqueue_target_to_client_bytes(high_watermark)
+        .expect("exact high-watermark write should be accepted");
+    let error = channel
+        .enqueue_target_to_client_bytes(1)
+        .expect_err("bytes beyond the high watermark must apply backpressure");
+
+    assert!(
+        error.to_string().contains("backpressure"),
+        "backpressure rejection should be explicit: {error}"
+    );
+    assert_eq!(channel.pending_target_to_client_bytes, high_watermark);
+    assert!(
+        channel
+            .audit
+            .iter()
+            .any(|record| record.kind == SessionChannelAuditKind::Backpressure),
+        "backpressure should be audited"
+    );
+
+    channel.drain_target_to_client_bytes(high_watermark / 2);
+    assert_eq!(
+        channel.pending_target_to_client_bytes,
+        high_watermark - high_watermark / 2
+    );
+}
+
+#[tokio::test]
+async fn session_channel_disconnect_audit() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::new(),
+        }),
+        Arc::new(StubSandboxBackend::new(1)),
+    );
+    manager
+        .create_service_definition(
+            &tenant_id,
+            "browser",
+            ServiceBackend::built_in("browser"),
+            BTreeMap::new(),
+        )
+        .expect("dynamic browser service definition should create");
+    let session = manager
+        .open_session_async(
+            &tenant_id,
+            SessionTarget::Service {
+                name: "browser".to_owned(),
+            },
+            vec!["cdp".to_owned()],
+            Some(60_000),
+        )
+        .await
+        .expect("service session should open");
+
+    let mut state = manager
+        .state
+        .lock()
+        .expect("manager lock should not be poisoned");
+    let channel = state
+        .session_channels
+        .get_mut(&SessionChannelKey::new(&session.id, "cdp"))
+        .expect("session open should create a channel state");
+    channel
+        .enqueue_target_to_client_bytes(256)
+        .expect("initial buffered bytes should be accepted");
+
+    channel.disconnect("transport_closed");
+
+    assert_eq!(channel.client_to_target, SessionChannelHalfState::Closed);
+    assert_eq!(channel.target_to_client, SessionChannelHalfState::Closed);
+    assert_eq!(channel.pending_target_to_client_bytes, 0);
+    assert!(
+        channel.audit.iter().any(|record| {
+            record.kind == SessionChannelAuditKind::Disconnected
+                && record.reason == "transport_closed"
+        }),
+        "disconnect should preserve the audit reason"
+    );
 }

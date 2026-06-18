@@ -159,6 +159,11 @@ impl TableSchema {
                     )));
                 }
 
+                // Indexed field names are interpolated into backend index DDL
+                // (generated columns / JSON-path expressions), so constrain them
+                // to logical-name characters before they can reach SQL builders.
+                validate_logical_name(field_name, "index field name")?;
+
                 let field = self
                     .fields
                     .iter()
@@ -401,6 +406,26 @@ mod tests {
             .validate_indexes()
             .expect_err("index validation should fail");
         assert!(error.to_string().contains("index name"));
+    }
+
+    #[test]
+    fn schema_rejects_index_field_name_with_sql_metacharacters() {
+        // Indexed field names are interpolated into backend index DDL; a name
+        // carrying SQL string-literal metacharacters must be rejected before it
+        // can reach a query builder.
+        let mut schema = users_schema();
+        schema.indexes = vec![IndexDefinition::new(
+            "by_injection",
+            ["name' || (SELECT secret) || '"],
+        )];
+
+        let error = schema
+            .validate_indexes()
+            .expect_err("index validation should fail");
+        assert!(
+            error.to_string().contains("index field name"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]

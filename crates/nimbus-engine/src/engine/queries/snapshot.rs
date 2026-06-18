@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use nimbus_core::{
-    Document, DurableMutationRecord, Error, HistoricalReadShape, Result, TableName, TenantId,
+    Document, Error, HistoricalReadShape, Result, TableName, TenantEventRecord, TenantId,
 };
 use nimbus_storage::{DurableJournalBootstrap, TenantStore};
 
@@ -37,7 +37,7 @@ impl Engine {
         self: &Arc<Self>,
         tenant_id: &TenantId,
         bootstrap: &DurableJournalBootstrap,
-    ) -> Result<Vec<DurableMutationRecord>> {
+    ) -> Result<Vec<TenantEventRecord>> {
         let mut after = bootstrap.resume_after;
         let mut tail = Vec::new();
         while after.0 < bootstrap.bootstrap_cut.0 {
@@ -64,7 +64,7 @@ impl Engine {
 
 pub(super) fn rebuild_authoritative_snapshot(
     bootstrap: &DurableJournalBootstrap,
-    journal_tail: &[DurableMutationRecord],
+    journal_tail: &[TenantEventRecord],
 ) -> Result<crate::MaterializedJournalSnapshot> {
     let store = TenantStore::create_in_memory()?;
     store.rebuild_materialized_journal_from_snapshot(

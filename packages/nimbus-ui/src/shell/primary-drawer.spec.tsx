@@ -88,7 +88,7 @@ describe("PrimaryDrawer", () => {
       "operator",
     );
     for (const id of [
-      "system",
+      "nodes",
       "tenants",
       "machines",
       "network",
@@ -172,5 +172,30 @@ describe("PrimaryDrawer", () => {
     rerender(<PrimaryDrawer />);
     expect(screen.getByTestId("nav-machines")).toBeInTheDocument();
     expect(screen.queryByTestId("nav-compute")).toBeNull();
+  });
+
+  it("toggles collapse on background double-click but not on nav links", () => {
+    setPathname("/developer/compute");
+    render(<PrimaryDrawer />);
+    const initial = screen
+      .getByTestId("primary-drawer")
+      .getAttribute("data-collapsed");
+    // double-clicking a nav link must not toggle collapse
+    fireEvent.doubleClick(screen.getByTestId("nav-compute"));
+    expect(screen.getByTestId("primary-drawer")).toHaveAttribute(
+      "data-collapsed",
+      initial ?? "false",
+    );
+    // double-clicking the nav background toggles
+    fireEvent.doubleClick(screen.getByTestId("primary-drawer"));
+    expect(
+      screen.getByTestId("primary-drawer").getAttribute("data-collapsed"),
+    ).not.toBe(initial);
+    // and toggles back
+    fireEvent.doubleClick(screen.getByTestId("primary-drawer"));
+    expect(screen.getByTestId("primary-drawer")).toHaveAttribute(
+      "data-collapsed",
+      initial ?? "false",
+    );
   });
 });

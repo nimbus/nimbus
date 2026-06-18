@@ -68,8 +68,9 @@ async fn start_service_launch_starts_image_launches_and_validates_identity() {
     let mut spec = sample_spec(&tenant, service_name);
     spec.root = SandboxRootSpec::oci_image_reference("busybox:latest");
     let service_backend = ServiceBackend::sandbox(spec);
+    let executor = SandboxBackendComposeExecutor::new(&backend);
 
-    let handle = start_service_launch(&backend, &tenant, service_name, service_backend)
+    let handle = start_service_launch(&executor, &tenant, service_name, service_backend)
         .await
         .expect("launch should start");
 
@@ -93,9 +94,10 @@ async fn stop_service_target_stops_active_handles_and_reports_already_stopped_te
         stub_handle(&active_id, "db", SandboxStatus::Ready),
         stub_handle(&stopped_id, "db", SandboxStatus::Stopped),
     ]);
+    let executor = SandboxBackendComposeExecutor::new(&backend);
 
     let stopped = stop_service_target(
-        &backend,
+        &executor,
         &tenant,
         ServiceLifecycleTarget {
             sandbox_id: active_id.clone(),
@@ -109,7 +111,7 @@ async fn stop_service_target_stops_active_handles_and_reports_already_stopped_te
     assert_eq!(stopped.status, SandboxStatus::Stopped);
 
     let already_stopped = stop_service_target(
-        &backend,
+        &executor,
         &tenant,
         ServiceLifecycleTarget {
             sandbox_id: stopped_id.clone(),
@@ -129,4 +131,32 @@ async fn stop_service_target_stops_active_handles_and_reports_already_stopped_te
         .lock()
         .expect("stopped ids lock should hold");
     assert_eq!(stopped_ids.as_slice(), &[active_id.as_str().to_owned()]);
+}
+
+#[tokio::test]
+async fn compose_lifecycle_uses_workload_executor() {
+    let tenant = TenantId::new("svc-demo").expect("tenant should parse");
+    let sandbox_id = SandboxId::new("db-01aaa");
+    let backend = StubBackend::with_handles([stub_handle(&sandbox_id, "db", SandboxStatus::Ready)]);
+    let executor = SandboxBackendComposeExecutor::new(&backend);
+    let mut spec = sample_spec(&tenant, "db");
+    spec.root = SandboxRootSpec::oci_image_reference("busybox:latest");
+
+    let started = start_service_launch(&executor, &tenant, "db", ServiceBackend::sandbox(spec))
+        .await
+        .expect("executor-backed lifecycle should start service");
+    assert_eq!(started.name, "db");
+
+    let stopped = stop_service_target(
+        &executor,
+        &tenant,
+        ServiceLifecycleTarget {
+            sandbox_id,
+            service_name: "db".to_owned(),
+            status: SandboxStatus::Ready,
+        },
+    )
+    .await
+    .expect("executor-backed lifecycle should stop service");
+    assert_eq!(stopped.action, ServiceLifecycleAction::Stopped);
 }

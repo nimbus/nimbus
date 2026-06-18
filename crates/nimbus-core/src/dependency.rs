@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    CommitEntry, Document, DocumentId, DurableMutationRecord, Error, Filter, IndexId, OrderBy,
-    Query, Result, TableId, TableName, WriteOpType,
+    CommitEntry, Document, DocumentId, Error, Filter, IndexId, OrderBy, Query, Result, TableId,
+    TableName, TenantEventRecord, WriteOpType,
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -256,7 +256,7 @@ where
 }
 
 pub fn durable_record_intersects_dependency_set<F>(
-    record: &DurableMutationRecord,
+    record: &TenantEventRecord,
     dependencies: &DependencySet,
     candidate_documents: &[Document],
     mut resolve_document: F,

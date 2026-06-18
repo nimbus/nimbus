@@ -37,6 +37,7 @@ pub(crate) const ROOT_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus start
   nimbus dev
+  nimbus run --local -- npm test
   nimbus deploy --url http://localhost:3210
   nimbus codegen --app ./demos/convex/html
   nimbus token rotate

@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 use nimbus_core::{
-    CommitSequence, CommitTimestamp, Document, DurableMutationRecord, Error,
-    HistoricalReadErrorKind, HistoricalReadSnapshot, ReadTimestamp, Result, Schema, SequenceNumber,
-    TableId, TableName, TableState, Timestamp,
+    CommitSequence, CommitTimestamp, Document, Error, HistoricalReadErrorKind,
+    HistoricalReadSnapshot, ReadTimestamp, Result, Schema, SequenceNumber, TableId, TableName,
+    TableState, TenantEventRecord, Timestamp,
 };
 use redb::{ReadableTable, TableError};
 use serde::{Deserialize, Serialize};
@@ -60,7 +60,7 @@ pub struct PointInTimeRestoreArchive {
     pub target_sequence: SequenceNumber,
     pub target_timestamp: Timestamp,
     pub base_snapshot: MaterializedJournalSnapshot,
-    pub journal_tail: Vec<DurableMutationRecord>,
+    pub journal_tail: Vec<TenantEventRecord>,
     pub storage_format_version: StorageFormatVersion,
     pub document_version_storage_format: StorageFormatVersion,
     pub index_version_storage_format: StorageFormatVersion,
@@ -365,7 +365,7 @@ impl TenantStore {
     pub fn rebuild_materialized_journal_from_snapshot(
         &self,
         snapshot: &MaterializedJournalSnapshot,
-        journal_tail: &[DurableMutationRecord],
+        journal_tail: &[TenantEventRecord],
         target_sequence: Option<SequenceNumber>,
     ) -> Result<JournalProgress> {
         snapshot.validate()?;
@@ -473,7 +473,7 @@ impl TenantStore {
 
 pub(crate) fn resolve_point_in_time_target(
     target: PointInTimeRestoreTarget,
-    records: &[DurableMutationRecord],
+    records: &[TenantEventRecord],
     durable_head: SequenceNumber,
 ) -> Result<(SequenceNumber, Timestamp)> {
     match target {
@@ -523,7 +523,7 @@ pub(crate) fn resolve_point_in_time_target(
 
 pub(crate) fn build_point_in_time_restore_archive(
     target: PointInTimeRestoreTarget,
-    records: Vec<DurableMutationRecord>,
+    records: Vec<TenantEventRecord>,
     durable_head: SequenceNumber,
     retention_floor: SequenceNumber,
 ) -> Result<PointInTimeRestoreArchive> {
@@ -591,7 +591,7 @@ pub(crate) fn validate_materialized_journal_replay_base_is_empty(
 
 pub(crate) fn materialized_snapshot_fingerprint_after_rebuild(
     base_snapshot: &MaterializedJournalSnapshot,
-    journal_tail: &[DurableMutationRecord],
+    journal_tail: &[TenantEventRecord],
     target_sequence: SequenceNumber,
 ) -> Result<String> {
     let restored = TenantStore::create_in_memory()?;

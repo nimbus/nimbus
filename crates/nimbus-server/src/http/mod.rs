@@ -24,6 +24,7 @@ use crate::tenant::TenantIsolationContext;
 mod authz;
 mod deploy;
 mod documents;
+mod graph;
 mod local_admin;
 mod machines;
 mod metadata;
@@ -36,6 +37,7 @@ mod schema;
 mod service_grants;
 mod services;
 mod sessions;
+mod source;
 mod tenants;
 mod ui;
 mod version_info;
@@ -44,6 +46,7 @@ pub(crate) use deploy::deploy_app;
 pub(crate) use documents::{
     delete_document, get_document, insert_document, list_documents, update_document,
 };
+pub(crate) use graph::call_graph;
 pub(crate) use local_admin::{rotate_local_admin_token, shutdown_system};
 pub(crate) use machines::{
     create_machine, delete_machine, restart_machine, start_machine, stop_machine, update_machine,
@@ -66,6 +69,7 @@ pub(crate) use services::{
     restart_service, start_service, stop_service, update_service_definition,
 };
 pub(crate) use sessions::{close_session, get_session, list_sessions, open_session};
+pub(crate) use source::module_source;
 pub(crate) use tenants::{create_tenant, delete_tenant, list_tenants};
 pub(crate) use ui::{
     consume_ui_launch_ticket, create_ui_session, mint_ui_launch_ticket, ui_auth, ui_auth_script,

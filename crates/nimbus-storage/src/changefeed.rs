@@ -1,6 +1,6 @@
 use nimbus_core::{
-    DurableMutationRecord, Error, HistoricalReadErrorKind, Result, SequenceNumber, TenantEventKind,
-    TenantEventRecord, Timestamp,
+    Error, HistoricalReadErrorKind, Result, SequenceNumber, TenantEventKind, TenantEventRecord,
+    Timestamp,
 };
 use serde::{Deserialize, Serialize};
 
@@ -53,10 +53,10 @@ pub struct ChangefeedEvent {
     pub record: TenantEventRecord,
 }
 
-impl TryFrom<DurableMutationRecord> for ChangefeedEvent {
+impl TryFrom<TenantEventRecord> for ChangefeedEvent {
     type Error = Error;
 
-    fn try_from(record: DurableMutationRecord) -> Result<Self> {
+    fn try_from(record: TenantEventRecord) -> Result<Self> {
         record.validate_integrity()?;
         Ok(Self {
             sequence: record.sequence,

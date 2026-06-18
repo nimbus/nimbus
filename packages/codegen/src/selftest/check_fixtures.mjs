@@ -10,6 +10,9 @@ const evalCallPattern = new RegExp("\\beval\\s*\\(", "g");
 
 const allowedNewFunctionCounts = new Map([
   ["emit/runtime_bundle_preamble.mjs", 1],
+  // The remap selftest replicates the preamble's Function-constructor wrapper to
+  // verify real V8 line numbering; this is test scaffolding, not emitted code.
+  ["selftest/runtime_remap_fixtures.mjs", 1],
 ]);
 
 async function runCodegenChecks() {

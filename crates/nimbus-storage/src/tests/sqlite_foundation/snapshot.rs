@@ -182,7 +182,7 @@ fn sqlite_materialized_snapshot_records_durable_boundary_and_rejects_incomplete_
     let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
         .expect("sqlite tenant store should open");
     let document = sample_document("tasks", "durable-only");
-    let record = DurableMutationRecord::new(
+    let record = TenantEventRecord::new(
         SequenceNumber(1),
         Timestamp(100),
         vec![WriteOp {

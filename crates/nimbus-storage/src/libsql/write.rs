@@ -86,7 +86,7 @@ impl LibsqlReplicaTenantStore {
         Ok(())
     }
 
-    pub fn append_durable_records_batch(&self, records: &[DurableMutationRecord]) -> Result<()> {
+    pub fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
         if records.is_empty() {
             return Ok(());
         }
@@ -95,7 +95,7 @@ impl LibsqlReplicaTenantStore {
         Ok(())
     }
 
-    pub fn apply_durable_records_batch(&self, records: &[DurableMutationRecord]) -> Result<()> {
+    pub fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
         if records.is_empty() {
             return Ok(());
         }

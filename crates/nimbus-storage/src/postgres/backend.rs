@@ -805,7 +805,7 @@ pub(super) async fn load_durable_records_from_session<C>(
     session: &C,
     schema_name: &str,
     sequence: SequenceNumber,
-) -> Result<Vec<DurableMutationRecord>>
+) -> Result<Vec<TenantEventRecord>>
 where
     C: GenericClient + Sync,
 {
@@ -821,7 +821,7 @@ where
     rows.into_iter()
         .map(|row| {
             let payload: Vec<u8> = row.get(0);
-            deserialize_durable_record(payload.as_slice())
+            deserialize_tenant_event_record(payload.as_slice())
         })
         .collect()
 }
@@ -893,7 +893,7 @@ where
             has_more = true;
             break;
         }
-        records.push(deserialize_durable_record(payload.as_slice())?);
+        records.push(deserialize_tenant_event_record(payload.as_slice())?);
     }
 
     let next_cursor = records
@@ -1030,7 +1030,7 @@ where
 pub(super) async fn apply_durable_record_in_session<C>(
     session: &C,
     schema_name: &str,
-    record: &DurableMutationRecord,
+    record: &TenantEventRecord,
 ) -> Result<()>
 where
     C: GenericClient + Sync,
@@ -1552,5 +1552,41 @@ pub(super) fn map_postgres_error(error: tokio_postgres::Error) -> Error {
         )
     } else {
         Error::storage(StorageErrorKind::Other, format!("postgres error: {error}"))
+    }
+}
+
+#[cfg(test)]
+mod literal_tests {
+    use super::{postgres_json_extract_expr, postgres_string_literal};
+
+    #[test]
+    fn json_extract_expr_passes_through_ordinary_field() {
+        assert_eq!(
+            postgres_json_extract_expr("status"),
+            "jsonb_extract_path_text(data_json::jsonb, 'status')"
+        );
+    }
+
+    #[test]
+    fn json_extract_expr_escapes_sql_literal_delimiter() {
+        // Even if validation were bypassed, a field carrying single quotes must
+        // stay inside the SQL string literal rather than escaping it.
+        let expr = postgres_json_extract_expr("name' || (SELECT secret) || '");
+        assert_eq!(
+            expr,
+            "jsonb_extract_path_text(data_json::jsonb, 'name'' || (SELECT secret) || ''')"
+        );
+        // A correctly escaped single-quoted SQL literal always has a balanced
+        // (even) count of `'`, so the literal can never be closed early.
+        assert_eq!(
+            expr.matches('\'').count() % 2,
+            0,
+            "unbalanced quotes leaked: {expr}"
+        );
+    }
+
+    #[test]
+    fn string_literal_doubles_every_quote() {
+        assert_eq!(postgres_string_literal("a'b'c"), "'a''b''c'");
     }
 }

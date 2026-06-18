@@ -2,7 +2,7 @@ use super::readiness::visible_published_endpoints;
 use super::*;
 
 impl KrunSandboxBackend {
-    pub(super) fn plan_start(&self, spec: &SandboxSpec) -> Result<KrunLaunchPlan> {
+    pub(super) fn plan_start(&self, spec: &SandboxSpec) -> Result<KrunStartPlan> {
         self.ensure_execute_egress_enforcement_available()?;
         let sandbox_id = next_sandbox_id(spec.display_name());
         match &spec.root {
@@ -10,8 +10,8 @@ impl KrunSandboxBackend {
             SandboxRootSpec::OciImage(image) => {
                 self.resource_quota_manager().ensure_launch_quota(spec)?;
                 let prepared_launch =
-                    self.prepare_oci_image_launch(spec, &sandbox_id, &image.source)?;
-                self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
+                    self.prepare_oci_image_start(spec, &sandbox_id, &image.source)?;
+                self.plan_start_with_materialized_image(spec, &sandbox_id, prepared_launch)
             }
         }
     }
@@ -21,17 +21,17 @@ impl KrunSandboxBackend {
         &self,
         spec: &SandboxSpec,
         launch_defaults: Option<&OciImageLaunchDefaults>,
-    ) -> Result<KrunLaunchPlan> {
+    ) -> Result<KrunStartPlan> {
         let sandbox_id = next_sandbox_id(spec.display_name());
         self.plan_start_with_id(spec, &sandbox_id, launch_defaults, None)
     }
 
-    fn plan_start_with_materialized_launch(
+    fn plan_start_with_materialized_image(
         &self,
         spec: &SandboxSpec,
         sandbox_id: &SandboxId,
         prepared_launch: PreparedMaterializedImageLaunch,
-    ) -> Result<KrunLaunchPlan> {
+    ) -> Result<KrunStartPlan> {
         self.plan_start_with_id(
             spec,
             sandbox_id,
@@ -46,7 +46,7 @@ impl KrunSandboxBackend {
         sandbox_id: &SandboxId,
         launch_defaults: Option<&OciImageLaunchDefaults>,
         launch_artifact: Option<KrunLaunchArtifact>,
-    ) -> Result<KrunLaunchPlan> {
+    ) -> Result<KrunStartPlan> {
         if spec.backend != SandboxBackendKind::Krun {
             return Err(SandboxError::InvalidSpec {
                 message: format!(
@@ -57,7 +57,7 @@ impl KrunSandboxBackend {
         }
         self.ensure_execute_egress_enforcement_available()?;
 
-        let mut resolved_launch = resolve_launch_spec(spec, launch_defaults)?;
+        let mut resolved_launch = resolve_start_spec(spec, launch_defaults)?;
         apply_guest_user_switch(&mut resolved_launch.spec, &resolved_launch.image_metadata)?;
         self.resource_quota_manager()
             .ensure_launch_quota(&resolved_launch.spec)?;
@@ -128,7 +128,7 @@ impl KrunSandboxBackend {
             SandboxBackendKind::Krun,
             SandboxStatus::Starting,
             visible_published_endpoints(
-                self.config.launch_mode,
+                self.config.start_mode,
                 &resolved_launch.spec,
                 SandboxStatus::Starting,
             ),
@@ -144,16 +144,16 @@ impl KrunSandboxBackend {
             last_exit_code: None,
             restart_count: 0,
             next_restart_at_millis: None,
-            launch_mode: self.config.launch_mode,
+            start_mode: self.config.start_mode,
             shutdown_requested: false,
             status: SandboxStatus::Starting,
         };
 
-        Ok(KrunLaunchPlan { manifest })
+        Ok(KrunStartPlan { manifest })
     }
 
     fn ensure_execute_egress_enforcement_available(&self) -> Result<()> {
-        if self.config.launch_mode == KrunLaunchMode::PlanOnly {
+        if self.config.start_mode == KrunStartMode::PlanOnly {
             return Ok(());
         }
 
@@ -198,7 +198,7 @@ impl KrunSandboxBackend {
         )
     }
 
-    fn prepare_oci_image_launch(
+    fn prepare_oci_image_start(
         &self,
         spec: &SandboxSpec,
         sandbox_id: &SandboxId,
@@ -269,7 +269,7 @@ impl KrunSandboxBackend {
 
         manifest.spec.port_bindings.extend(auto_bindings);
         manifest.handle.published_endpoints =
-            visible_published_endpoints(manifest.launch_mode, &manifest.spec, manifest.status);
+            visible_published_endpoints(manifest.start_mode, &manifest.spec, manifest.status);
         write_bundle_config(
             &manifest.bundle_layout,
             &hostname_for(&manifest.spec),
@@ -410,7 +410,7 @@ fn krun_vm_config_prelude(spec: &SandboxSpec, needs_unshare_mount: bool) -> Resu
     }
 }
 
-fn resolve_launch_spec(
+fn resolve_start_spec(
     spec: &SandboxSpec,
     launch_defaults: Option<&OciImageLaunchDefaults>,
 ) -> Result<KrunResolvedLaunchSpec> {

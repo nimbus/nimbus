@@ -5,10 +5,12 @@ use nimbus_node::{LocalEnforcementBinding, TenantEgressReloadRequest};
 use nimbus_runtime::HostCallCancellation;
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_tenant::{
-    TenantImagePolicyDecision, TenantIsolationContext, TenantIsolationDecision,
-    TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, WorkloadAttributes,
+    TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput,
+    TenantServiceGrantPolicyDecision, WorkloadAttributes,
 };
 use tokio::time::sleep;
+
+use crate::{DesiredWorkload, DesiredWorkloadState, DesiredWorkloadStore};
 
 use super::ServiceManager;
 use super::types::{ActivationClaim, TenantServiceKey, sandbox_backend_error};
@@ -95,7 +97,7 @@ impl ServiceManager {
         service_name: &str,
         cancellation: HostCallCancellation,
     ) -> Result<Option<SandboxHandle>, Error> {
-        let decision = service_lifecycle_decision(isolation, service_name)?;
+        let decision = self.service_lifecycle_decision(isolation, service_name)?;
         self.start_service_for_decision_async(&decision, service_name, cancellation)
             .await
     }
@@ -110,6 +112,11 @@ impl ServiceManager {
         let binding = LocalEnforcementBinding::from_decision(decision)?;
         binding.service_access(service_name)?;
         let key = TenantServiceKey::new(tenant_id, service_name);
+        self.record_desired_service_workload(
+            tenant_id,
+            service_name,
+            DesiredWorkloadState::Running,
+        )?;
         if let Some(handle) = self.refresh_handle_async(&key).await?
             && !matches!(
                 handle.status,
@@ -124,7 +131,8 @@ impl ServiceManager {
                 self.wait_for_ready_handle_async(&key, &cancellation).await
             }
             ActivationClaim::Claimed => {
-                let Some(launch) = self.service_launch_for_tenant(tenant_id, service_name) else {
+                let Some(activation) = self.service_activation_for_tenant(tenant_id, service_name)
+                else {
                     self.release_activation(&key);
                     return Ok(None);
                 };
@@ -132,8 +140,8 @@ impl ServiceManager {
                     .start_sandbox_service_async(
                         &key,
                         decision,
-                        launch.backend,
-                        &launch.volume_policy,
+                        activation.backend,
+                        &activation.volume_policy,
                     )
                     .await;
                 self.release_activation(&key);
@@ -148,7 +156,7 @@ impl ServiceManager {
         isolation: &TenantIsolationContext,
         service_name: &str,
     ) -> Result<Option<SandboxHandle>, Error> {
-        let decision = service_lifecycle_decision(isolation, service_name)?;
+        let decision = self.service_lifecycle_decision(isolation, service_name)?;
         self.stop_service_for_decision_async(&decision, service_name)
             .await
     }
@@ -162,6 +170,11 @@ impl ServiceManager {
         let binding = LocalEnforcementBinding::from_decision(decision)?;
         binding.service_access(service_name)?;
         let key = TenantServiceKey::new(tenant_id, service_name);
+        self.record_desired_service_workload(
+            tenant_id,
+            service_name,
+            DesiredWorkloadState::Stopped,
+        )?;
         let previous_handle = self.current_handle(&key);
         let refreshed_handle = self.refresh_handle_async(&key).await?;
         let handle_existed_in_backend = refreshed_handle.is_some();
@@ -205,7 +218,7 @@ impl ServiceManager {
         service_name: &str,
         cancellation: HostCallCancellation,
     ) -> Result<Option<SandboxHandle>, Error> {
-        let decision = service_lifecycle_decision(isolation, service_name)?;
+        let decision = self.service_lifecycle_decision(isolation, service_name)?;
         self.restart_service_for_decision_async(&decision, service_name, cancellation)
             .await
     }
@@ -252,15 +265,36 @@ impl ServiceManager {
         let refreshed = self.refresh_handle_async(&key).await?.unwrap_or(handle);
         Ok(Some(refreshed))
     }
-}
 
-pub(super) fn service_lifecycle_decision(
-    isolation: &TenantIsolationContext,
-    service_name: &str,
-) -> Result<TenantIsolationDecision, Error> {
-    isolation.admit_decision(
-        TenantIsolationPolicyInput::new(WorkloadAttributes::service(service_name))
-            .with_services(TenantServiceGrantPolicyDecision::new([service_name]))
-            .with_image(TenantImagePolicyDecision::default().allow_local_build()),
-    )
+    pub(super) fn service_lifecycle_decision(
+        &self,
+        isolation: &TenantIsolationContext,
+        service_name: &str,
+    ) -> Result<TenantIsolationDecision, Error> {
+        isolation.admit_decision(
+            TenantIsolationPolicyInput::new(WorkloadAttributes::service(service_name))
+                .with_services(TenantServiceGrantPolicyDecision::new([service_name]))
+                .with_image(self.manager_image_policy()),
+        )
+    }
+
+    fn record_desired_service_workload(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+        desired_state: DesiredWorkloadState,
+    ) -> Result<(), Error> {
+        let generation = self
+            .service_definition_for_tenant(tenant_id, service_name)
+            .map(|definition| definition.generation)
+            .unwrap_or(1);
+        let desired =
+            DesiredWorkload::service(tenant_id.clone(), service_name, desired_state, generation)?;
+        self.state
+            .lock()
+            .expect("manager lock should not be poisoned")
+            .desired_workloads
+            .upsert_desired_workload(desired);
+        Ok(())
+    }
 }

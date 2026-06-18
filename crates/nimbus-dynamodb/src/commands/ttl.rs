@@ -222,23 +222,32 @@ pub fn sweep_table(
         if !is_expired(&item, &attribute, now) {
             continue;
         }
-        engine
-            .delete_document(context.tenant_id(), table.clone(), document.id.clone())
-            .map_err(map_core_error)?;
-        // A TTL deletion is a service-originated REMOVE; the deleted item is the
-        // old image (DynamoDB carries it for NEW_AND_OLD_IMAGES / OLD_IMAGE).
+        // A TTL deletion is a service-originated REMOVE. The delete and its
+        // stream event commit in one AtomicWriteBatch so a crash can never
+        // leave the row gone with no event emitted, nor an event emitted with
+        // the row still present. The deleted item is the old image (DynamoDB
+        // carries it for NEW_AND_OLD_IMAGES / OLD_IMAGE). The delete is
+        // unconditional (last-writer-wins): TTL is best-effort maintenance over
+        // a read snapshot, matching DynamoDB's own eventual TTL reclamation.
         let keys = extract_key(&item, &key_schema);
-        stream::capture_event(
+        let change = stream::StreamChange::new(
+            table_name.to_string(),
+            StreamEventName::Remove,
+            keys,
+            Some(item),
+            None,
+            Some(stream::ttl_user_identity()),
+        );
+        stream::execute_atomic_write_batch_with_streams(
             engine,
             context,
-            table_name,
-            stream::ChangeEvent {
-                event_name: StreamEventName::Remove,
-                keys: &keys,
-                old_image: Some(&item),
-                new_image: None,
-                user_identity: Some(stream::ttl_user_identity()),
-            },
+            vec![item::delete_atomic_write(
+                table.clone(),
+                document.id.clone(),
+                WritePrecondition::default(),
+            )],
+            &[change],
+            map_core_error,
         )?;
         swept += 1;
     }
@@ -664,5 +673,134 @@ mod tests {
             remove.dynamodb.old_image.is_some(),
             "the deleted item is the old image"
         );
+    }
+
+    /// The TTL sweep deletes the item and emits its REMOVE on one atomic batch,
+    /// so the two can never diverge: every deleted item yields exactly one
+    /// REMOVE record (keyed to it), no surviving item yields one, and the record
+    /// count tracks the delete count with no orphaned events or silent deletes.
+    /// A regression to the former delete-then-capture path (two engine calls
+    /// with a crash window) would break this joint invariant.
+    #[test]
+    fn sweep_commits_each_delete_and_its_remove_event_atomically() {
+        use extenddb_core::types::{
+            DescribeStreamInput, GetRecordsInput, GetShardIteratorInput, ShardIteratorType,
+            StreamEventName,
+        };
+
+        let (engine, ctx, _t) = fixture();
+        // Stream-enabled (both images) + TTL-enabled table.
+        let input: CreateTableInput = serde_json::from_value(json!({
+            "TableName": "Sessions",
+            "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+            "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
+            "StreamSpecification": { "StreamEnabled": true, "StreamViewType": "NEW_AND_OLD_IMAGES" }
+        }))
+        .unwrap();
+        let arn = control_plane::create_table(&engine, &ctx, input)
+            .expect("create")
+            .table_description
+            .latest_stream_arn
+            .expect("stream arn");
+        update(&engine, &ctx, "Sessions", true, "expiresAt").expect("enable ttl");
+
+        let now = 1_700_000_000;
+        let expired = ["a", "b", "c"];
+        for pk in expired {
+            put(&engine, &ctx, "Sessions", pk, Some(now - 10));
+        }
+        put(&engine, &ctx, "Sessions", "fresh1", Some(now + 10_000));
+        put(&engine, &ctx, "Sessions", "fresh2", Some(now + 10_000));
+
+        let swept = sweep_table(&engine, &ctx, "Sessions", now).expect("sweep");
+        assert_eq!(swept, 3, "the three expired items are reclaimed");
+
+        // Data side: every expired item is gone, every fresh item survives.
+        for pk in expired {
+            assert!(!exists(&engine, &ctx, "Sessions", pk), "{pk} was deleted");
+        }
+        assert!(exists(&engine, &ctx, "Sessions", "fresh1"), "fresh1 kept");
+        assert!(exists(&engine, &ctx, "Sessions", "fresh2"), "fresh2 kept");
+
+        // Stream side: read every record back from the shard.
+        let shard = stream::describe_stream(
+            &engine,
+            &ctx,
+            DescribeStreamInput {
+                stream_arn: arn.clone(),
+                limit: None,
+                exclusive_start_shard_id: None,
+            },
+        )
+        .expect("describe stream")
+        .stream_description
+        .shards[0]
+            .shard_id
+            .clone();
+        let iterator = stream::get_shard_iterator(
+            &engine,
+            &ctx,
+            GetShardIteratorInput {
+                stream_arn: arn.clone(),
+                shard_id: shard,
+                shard_iterator_type: ShardIteratorType::TrimHorizon,
+                sequence_number: None,
+            },
+        )
+        .expect("iterator")
+        .shard_iterator
+        .expect("iterator");
+        let records = stream::get_records(
+            &engine,
+            &ctx,
+            GetRecordsInput {
+                shard_iterator: iterator,
+                limit: None,
+            },
+        )
+        .expect("get records")
+        .records;
+
+        let removes: Vec<_> = records
+            .iter()
+            .filter(|record| record.event_name == StreamEventName::Remove)
+            .collect();
+        assert_eq!(
+            removes.len(),
+            3,
+            "exactly one REMOVE per deleted item — no orphaned events, no silent deletes"
+        );
+
+        // Each REMOVE is keyed to one of the deleted items (via its old image).
+        let mut remove_keys: Vec<String> = removes
+            .iter()
+            .map(|record| {
+                let old = record
+                    .dynamodb
+                    .old_image
+                    .as_ref()
+                    .expect("a REMOVE carries the deleted item as its old image");
+                match old.get("pk").expect("old image has the pk attribute") {
+                    AttributeValue::S(value) => value.clone(),
+                    other => panic!("pk should be a string attribute, got {other:?}"),
+                }
+            })
+            .collect();
+        remove_keys.sort();
+        assert_eq!(
+            remove_keys,
+            vec!["a".to_owned(), "b".to_owned(), "c".to_owned()],
+            "the REMOVE events name exactly the deleted keys"
+        );
+
+        // Every REMOVE is TTL-attributed (service identity, not a tenant write).
+        for record in &removes {
+            let identity = record
+                .user_identity
+                .as_ref()
+                .expect("a TTL REMOVE carries a userIdentity");
+            assert_eq!(identity.identity_type, "Service");
+            assert_eq!(identity.principal_id, "dynamodb.amazonaws.com");
+        }
     }
 }

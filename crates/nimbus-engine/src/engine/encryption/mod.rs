@@ -234,7 +234,8 @@ mod tests {
         let cache_dir = dir.path().join("cache");
         std::fs::create_dir_all(&cache_dir).unwrap();
 
-        // Use libsql replica config since it's the only fully-wired path
+        // A libsql replica config is one representative encryptable backend; the
+        // missing-key-file failure is backend-agnostic (all four families are wired).
         let config = libsql_replica_config_with_encryption(
             dir.path().to_path_buf(),
             cache_dir,
@@ -252,7 +253,8 @@ mod tests {
 
     #[test]
     fn test_initialize_encryption_enabled_libsql_replica() {
-        // libsql replica is the fully-wired path for local encryption
+        // Exercise the libsql replica cache backend (SQLCipher); all local
+        // persistence families are fully wired for encryption.
         let dir = TempDir::new().unwrap();
         let key_path = dir.path().join("master.key");
         std::fs::write(&key_path, test_key()).unwrap();

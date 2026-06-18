@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use nimbus_core::{
-    Document, DurableMutationRecord, Page, PaginatedQuery, PrincipalContext, Query, Result,
-    SequenceNumber, TenantId,
+    Document, Page, PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber,
+    TenantEventRecord, TenantId,
 };
 use nimbus_storage::{
     DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DurableJournalBootstrap, MaterializedJournalSnapshot,
@@ -106,7 +106,7 @@ impl EmbeddedReplica {
         tenant_id: TenantId,
         store: TenantStore,
         bootstrap: DurableJournalBootstrap,
-        records: Vec<DurableMutationRecord>,
+        records: Vec<TenantEventRecord>,
     ) -> Result<Self> {
         store.restore_materialized_journal_from_snapshot(&bootstrap.snapshot)?;
         if !records.is_empty() {

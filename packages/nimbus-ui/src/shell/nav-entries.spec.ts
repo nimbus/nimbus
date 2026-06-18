@@ -20,7 +20,7 @@ const EXPECTED_DEVELOPER_IDS = [
 ];
 
 const EXPECTED_OPERATOR_IDS = [
-  "system",
+  "nodes",
   "tenants",
   "machines",
   "network",
@@ -77,6 +77,14 @@ describe("nav-entries", () => {
       expect(entry.count.args).toBeDefined();
       expect(typeof entry.count.ref.name).toBe("string");
     }
+  });
+
+  it("uses non-query count sources for nodes and tenants", () => {
+    const byId = (id: string) => OPERATOR_NAV_ENTRIES.find((e) => e.id === id);
+    expect(byId("nodes")?.count).toBeNull();
+    expect(byId("nodes")?.countKind).toBe("nodes");
+    expect(byId("tenants")?.count).toBeNull();
+    expect(byId("tenants")?.countKind).toBe("tenants");
   });
 
   it("navEntriesForView returns the matching list", () => {

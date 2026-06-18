@@ -32,6 +32,32 @@ import {
 } from "./runtime_metadata.mjs";
 import { loadSchemaDefinition } from "./schema.mjs";
 
+// 1-based line in the module source where a runtime handler's verbatim text
+// begins, used to remap thrown-error stack frames back to the developer's own
+// source (see emit/runtime_remap.mjs). The handler text is sliced from this
+// same source, so a direct search locates it; returns null if it cannot be
+// resolved (the remap then degrades gracefully to no location).
+function handlerOriginLine(moduleSource, handlerText) {
+  if (
+    typeof moduleSource !== "string" ||
+    typeof handlerText !== "string" ||
+    handlerText.length === 0
+  ) {
+    return null;
+  }
+  const index = moduleSource.indexOf(handlerText);
+  if (index < 0) {
+    return null;
+  }
+  let line = 1;
+  for (let i = 0; i < index; i++) {
+    if (moduleSource.charCodeAt(i) === 10) {
+      line++;
+    }
+  }
+  return line;
+}
+
 async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = false, onInfo } = {}) {
   const resolvedSourceRoot = sourceRoot ?? await resolveSourceRoot(appDir);
   const sourceDir = resolvedSourceRoot.sourceDirPath;
@@ -75,6 +101,9 @@ async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = fal
           fn.runtimeEnvironment === "node" ? projectConfig.node.runtimeTarget : null,
         plan: fn.plan,
         runtime_handler: fn.runtimeHandler ?? null,
+        runtime_handler_line: fn.runtimeHandler
+          ? handlerOriginLine(moduleInfo.source, fn.runtimeHandler)
+          : null,
         runtime_bindings: fn.runtimeHandler ? (fn.runtimeBindings ?? {}) : undefined,
       });
     }

@@ -6,8 +6,8 @@ use std::{
 };
 
 use nimbus_core::{
-    AccessAction, CommitEntry, Document, DocumentId, DurableMutationRecord, Error, Mutation,
-    Result, SequenceNumber, TableId, TableName, TenantId,
+    AccessAction, CommitEntry, Document, DocumentId, Error, Mutation, Result, SequenceNumber,
+    TableId, TableName, TenantEventRecord, TenantId,
 };
 use tokio::sync::oneshot;
 use tracing::warn;
@@ -217,7 +217,7 @@ fn process_queued_mutation_batch(
             let _ = response.send(Err(Error::Cancelled));
             continue;
         }
-        let record = match DurableMutationRecord::new(
+        let record = match TenantEventRecord::new(
             nimbus_core::SequenceNumber(next_sequence),
             runtime.store.now(),
             writes,

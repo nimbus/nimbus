@@ -1,41 +1,5 @@
-use std::collections::BTreeMap;
-use std::fs;
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener};
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::thread;
-use std::time::Duration;
-
-use flate2::{Compression, write::GzEncoder};
-use futures::executor::block_on;
-use serde_json::json;
-use sha2::{Digest, Sha256};
-use tar::Builder;
-use tempfile::TempDir;
-
-use nimbus_core::TenantId;
-
-use super::{
-    GUEST_USER_GID_ENV, GUEST_USER_HELPER_GUEST_PATH, GUEST_USER_UID_ENV, GuestUserIds,
-    KrunImageMetadata, KrunLaunchMode, KrunSandboxBackend, KrunSandboxBackendConfig,
-    KrunSandboxManifest, ReadinessProbeTarget, configured_stop_signal, configured_stop_timeout,
-    desired_krun_vm_config, krun_vm_config_path, parse_guest_user, probe_target_ready,
-    readiness_probe_target, restart_backoff_delay, restart_policy_allows_restart, running_status,
-    slugify, visible_published_endpoints,
-};
-use crate::backend::{SandboxBackend, SandboxBackendKind};
-use crate::backends::oci::buildah::{
-    ImageHealthcheck, OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
-};
-use crate::backends::oci::command::CommandSpec;
-use crate::endpoint::PublishedEndpointProtocol;
-use crate::instance::{SandboxId, SandboxStatus};
-use crate::spec::{
-    SandboxMountSpec, SandboxOciBuildSpec, SandboxOciImageSource, SandboxOwnerSpec,
-    SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxResourceQuotaPolicy,
-    SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
-};
+mod support;
+use support::*;
 
 #[test]
 fn execute_backend_fails_closed_until_krun_tsi_egress_pep_exists() {
@@ -920,7 +884,7 @@ fn readiness_probe_target_prefers_http_endpoints() {
         SandboxPortBinding::tcp("postgres", 15432, 5432),
         SandboxPortBinding::new("http", PublishedEndpointProtocol::Http, 18080, 8080),
     ]);
-    let manifest = sample_manifest(spec, KrunLaunchMode::Execute);
+    let manifest = sample_manifest(spec, KrunStartMode::Execute);
 
     assert_eq!(
         readiness_probe_target(&manifest),
@@ -969,7 +933,7 @@ fn running_status_stays_starting_until_probe_passes() {
         SandboxProcessSpec::new(["/bin/service"]),
     )
     .with_port_binding(SandboxPortBinding::tcp("tcp", address.port(), 8080));
-    let manifest = sample_manifest(spec, KrunLaunchMode::Execute);
+    let manifest = sample_manifest(spec, KrunStartMode::Execute);
 
     assert_eq!(running_status(&manifest), SandboxStatus::Starting);
 }
@@ -995,14 +959,11 @@ fn running_status_degrades_ready_sandboxes_to_not_ready_on_probe_failure() {
         address.port(),
         8080,
     ));
-    let mut manifest = sample_manifest(spec, KrunLaunchMode::Execute);
+    let mut manifest = sample_manifest(spec, KrunStartMode::Execute);
     manifest.status = SandboxStatus::Ready;
     manifest.handle.status = SandboxStatus::Ready;
-    manifest.handle.published_endpoints = visible_published_endpoints(
-        KrunLaunchMode::Execute,
-        &manifest.spec,
-        SandboxStatus::Ready,
-    );
+    manifest.handle.published_endpoints =
+        visible_published_endpoints(KrunStartMode::Execute, &manifest.spec, SandboxStatus::Ready);
 
     assert_eq!(running_status(&manifest), SandboxStatus::NotReady);
 }
@@ -1035,7 +996,7 @@ fn running_status_recovers_not_ready_sandboxes_when_probe_returns() {
         address.port(),
         8080,
     ));
-    let mut manifest = sample_manifest(spec, KrunLaunchMode::Execute);
+    let mut manifest = sample_manifest(spec, KrunStartMode::Execute);
     manifest.status = SandboxStatus::NotReady;
     manifest.handle.status = SandboxStatus::NotReady;
 
@@ -1077,21 +1038,21 @@ fn visible_published_endpoints_hide_execute_mode_endpoints_until_ready() {
     let spec = sample_spec();
 
     assert!(
-        visible_published_endpoints(KrunLaunchMode::Execute, &spec, SandboxStatus::Starting)
+        visible_published_endpoints(KrunStartMode::Execute, &spec, SandboxStatus::Starting)
             .is_empty(),
         "execute-mode sandboxes should not publish endpoints before readiness succeeds"
     );
     assert_eq!(
-        visible_published_endpoints(KrunLaunchMode::Execute, &spec, SandboxStatus::Ready).len(),
+        visible_published_endpoints(KrunStartMode::Execute, &spec, SandboxStatus::Ready).len(),
         2
     );
     assert!(
-        visible_published_endpoints(KrunLaunchMode::Execute, &spec, SandboxStatus::NotReady)
+        visible_published_endpoints(KrunStartMode::Execute, &spec, SandboxStatus::NotReady)
             .is_empty(),
         "execute-mode sandboxes should withdraw endpoints when liveness probes regress"
     );
     assert_eq!(
-        visible_published_endpoints(KrunLaunchMode::PlanOnly, &spec, SandboxStatus::Starting).len(),
+        visible_published_endpoints(KrunStartMode::PlanOnly, &spec, SandboxStatus::Starting).len(),
         2,
         "plan-only starts should retain published endpoints for deterministic tests"
     );
@@ -1194,7 +1155,7 @@ fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() 
             },
         },
         "last_exit_code": null,
-        "launch_mode": "execute",
+        "start_mode": "execute",
         "shutdown_requested": false,
         "status": "starting",
     }))
@@ -1217,291 +1178,6 @@ fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() 
     );
 }
 
-fn sample_spec() -> SandboxSpec {
-    sample_spec_with_rootfs(Path::new("/srv/rootfs"))
-}
-
-fn sample_spec_with_rootfs(rootfs: &Path) -> SandboxSpec {
-    SandboxSpec::new(
-        TenantId::new("tenant").expect("tenant id should be valid"),
-        SandboxOwnerSpec::service("postgres-primary"),
-        SandboxBackendKind::Krun,
-        SandboxRootSpec::Rootfs(SandboxRootfsSpec::new(rootfs)),
-        SandboxProcessSpec::new(["/usr/bin/postgres", "-D", "/var/lib/postgresql/data"])
-            .with_env(["PATH=/usr/bin", "PGDATA=/var/lib/postgresql/data"]),
-    )
-    .with_port_bindings([
-        SandboxPortBinding::tcp("postgres", 15432, 5432),
-        SandboxPortBinding::tcp("health", 18080, 8080),
-    ])
-}
-
-fn sparse_image_spec(name: &str) -> SandboxSpec {
-    SandboxSpec::new(
-        TenantId::new("tenant").expect("tenant id should be valid"),
-        SandboxOwnerSpec::service(name),
-        SandboxBackendKind::Krun,
-        SandboxRootSpec::oci_image_reference(
-            "registry.example.com/acme/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        ),
-        SandboxProcessSpec::new(Vec::<String>::new()),
-    )
-}
-
-fn sparse_build_spec(
-    name: &str,
-    image_name: impl Into<String>,
-    dockerfile_path: impl Into<PathBuf>,
-    context_path: impl Into<PathBuf>,
-) -> SandboxSpec {
-    SandboxSpec::new(
-        TenantId::new("tenant").expect("tenant id should be valid"),
-        SandboxOwnerSpec::service(name),
-        SandboxBackendKind::Krun,
-        SandboxRootSpec::oci_image(SandboxOciImageSource::Build(SandboxOciBuildSpec::new(
-            image_name,
-            dockerfile_path,
-            context_path,
-        ))),
-        SandboxProcessSpec::new(Vec::<String>::new()),
-    )
-}
-
-fn sample_spec_for_tenant(tenant_id: &str, name: &str) -> SandboxSpec {
-    SandboxSpec::new(
-        TenantId::new(tenant_id).expect("tenant id should be valid"),
-        SandboxOwnerSpec::service(name),
-        SandboxBackendKind::Krun,
-        SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("/srv/rootfs")),
-        SandboxProcessSpec::new(["/usr/bin/service"]),
-    )
-}
-
-fn manifest_path(root: &Path, spec: &SandboxSpec, sandbox_id: &SandboxId) -> PathBuf {
-    crate::artifact_paths::manifest_path(&root.join("state"), &spec.tenant_id, sandbox_id)
-}
-
-fn bundle_config_path(root: &Path, spec: &SandboxSpec, sandbox_id: &SandboxId) -> PathBuf {
-    crate::artifact_paths::bundle_dir(&root.join("bundles"), &spec.tenant_id, sandbox_id)
-        .join("config.json")
-}
-
-fn rootfs_artifact_path(root: &Path, spec: &SandboxSpec, sandbox_id: &SandboxId) -> PathBuf {
-    crate::artifact_paths::rootfs_root(&root.join("state"), &spec.tenant_id, sandbox_id)
-        .join(sandbox_id.as_str())
-}
-
-fn sample_launch_defaults() -> OciImageLaunchDefaults {
-    OciImageLaunchDefaults {
-        rootfs: SandboxRootfsSpec::new("/image/rootfs"),
-        process: SandboxProcessSpec::new(["/usr/local/bin/service", "serve"])
-            .with_env(["PATH=/usr/local/bin:/usr/bin", "SERVICE_MODE=prod"])
-            .with_cwd("/srv/service"),
-        exposed_ports: vec![
-            OciExposedPort {
-                port: 8080,
-                protocol: OciExposedPortProtocol::Tcp,
-                raw: "8080/tcp".to_owned(),
-            },
-            OciExposedPort {
-                port: 8443,
-                protocol: OciExposedPortProtocol::Tcp,
-                raw: "8443/tcp".to_owned(),
-            },
-        ],
-        user: Some("1000:1000".to_owned()),
-        stop_signal: Some("SIGTERM".to_owned()),
-        healthcheck: Some(ImageHealthcheck {
-            test: vec![
-                "CMD-SHELL".to_owned(),
-                "curl -f http://localhost/health".to_owned(),
-            ],
-            interval: Some(15_000_000_000),
-            timeout: Some(3_000_000_000),
-            start_period: Some(20_000_000_000),
-            retries: Some(5),
-        }),
-        labels: BTreeMap::from([("com.example.service".to_owned(), "edge".to_owned())]),
-    }
-}
-
-fn sample_image_metadata() -> KrunImageMetadata {
-    KrunImageMetadata::default()
-}
-
-fn sample_manifest(spec: SandboxSpec, launch_mode: KrunLaunchMode) -> KrunSandboxManifest {
-    let endpoints = visible_published_endpoints(launch_mode, &spec, SandboxStatus::Starting);
-    KrunSandboxManifest {
-        handle: crate::instance::SandboxHandle::new(
-            spec.tenant_id.clone(),
-            crate::instance::SandboxId::new("sandbox-01"),
-            spec.display_name().to_owned(),
-            SandboxBackendKind::Krun,
-            SandboxStatus::Starting,
-            endpoints,
-        ),
-        spec,
-        image_metadata: KrunImageMetadata::default(),
-        launch_artifact: None,
-        bundle_layout: super::KrunBundleLayout::new("/tmp/bundle"),
-        conmon_layout: super::OciConmonLayout::new(
-            "/tmp/state",
-            &crate::instance::SandboxId::new("sandbox-01"),
-        ),
-        conmon_launch: super::OciConmonLaunchPlan {
-            create_command: CommandSpec::new("/bin/true"),
-            state_command: CommandSpec::new("/bin/true"),
-            start_command: CommandSpec::new("/bin/true"),
-            delete_command: CommandSpec::new("/bin/true"),
-        },
-        last_exit_code: None,
-        restart_count: 0,
-        next_restart_at_millis: None,
-        launch_mode,
-        shutdown_requested: false,
-        status: SandboxStatus::Starting,
-    }
-}
-
-fn sample_registry_image_reference() -> String {
-    let listener =
-        TcpListener::bind("127.0.0.1:0").expect("fake OCI registry listener should bind");
-    let address = listener
-        .local_addr()
-        .expect("fake OCI registry address should resolve");
-
-    let mut layer_archive = Vec::new();
-    {
-        let mut encoder = GzEncoder::new(&mut layer_archive, Compression::default());
-        {
-            let mut tar = Builder::new(&mut encoder);
-            let file_contents = b"#!/bin/sh\necho hello from demo\n";
-            let mut header = tar::Header::new_gnu();
-            header.set_mode(0o755);
-            header.set_size(file_contents.len() as u64);
-            header.set_cksum();
-            tar.append_data(&mut header, "usr/local/bin/demo", &file_contents[..])
-                .expect("fake OCI layer file should append");
-
-            let passwd_contents = b"demo:x:1000:1000:Demo:/workspace:/bin/sh\n";
-            let mut passwd_header = tar::Header::new_gnu();
-            passwd_header.set_mode(0o644);
-            passwd_header.set_size(passwd_contents.len() as u64);
-            passwd_header.set_cksum();
-            tar.append_data(&mut passwd_header, "etc/passwd", &passwd_contents[..])
-                .expect("fake OCI passwd should append");
-
-            let group_contents = b"demo:x:1000:\n";
-            let mut group_header = tar::Header::new_gnu();
-            group_header.set_mode(0o644);
-            group_header.set_size(group_contents.len() as u64);
-            group_header.set_cksum();
-            tar.append_data(&mut group_header, "etc/group", &group_contents[..])
-                .expect("fake OCI group should append");
-            tar.finish().expect("fake OCI tar archive should finish");
-        }
-        encoder
-            .finish()
-            .expect("fake OCI gzip archive should finish");
-    }
-
-    let config = serde_json::json!({
-        "architecture": "amd64",
-        "os": "linux",
-        "config": {
-            "Entrypoint": ["/usr/local/bin/demo"],
-            "Cmd": ["serve"],
-            "Env": ["PATH=/usr/local/bin:/usr/bin", "SERVICE_MODE=prod"],
-            "User": "demo",
-            "WorkingDir": "/workspace",
-            "ExposedPorts": {
-                "8080/tcp": {}
-            },
-            "Labels": {
-                "app": "demo"
-            }
-        }
-    });
-    let config_bytes = serde_json::to_vec(&config).expect("fake OCI config should serialize");
-    let config_digest = format!("sha256:{:x}", Sha256::digest(&config_bytes));
-    let layer_digest = format!("sha256:{:x}", Sha256::digest(&layer_archive));
-    let child_manifest = serde_json::json!({
-        "schemaVersion": 2,
-        "config": {
-            "mediaType": "application/vnd.oci.image.config.v1+json",
-            "size": config_bytes.len(),
-            "digest": config_digest
-        },
-        "layers": [{
-            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
-            "size": layer_archive.len(),
-            "digest": layer_digest
-        }]
-    });
-    let child_manifest_bytes =
-        serde_json::to_vec(&child_manifest).expect("fake OCI child manifest should serialize");
-    let child_manifest_digest = format!("sha256:{:x}", Sha256::digest(&child_manifest_bytes));
-    let index_manifest = serde_json::json!({
-        "schemaVersion": 2,
-        "manifests": [{
-            "mediaType": "application/vnd.oci.image.manifest.v1+json",
-            "size": child_manifest_bytes.len(),
-            "digest": child_manifest_digest,
-            "platform": {
-                "architecture": if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" },
-                "os": "linux"
-            }
-        }]
-    });
-    let index_manifest_bytes =
-        serde_json::to_vec(&index_manifest).expect("fake OCI index manifest should serialize");
-
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            let mut stream = stream.expect("fake OCI registry connection should accept");
-            let mut buffer = [0_u8; 4096];
-            let read = stream
-                .read(&mut buffer)
-                .expect("fake OCI registry request should read");
-            let request = String::from_utf8_lossy(&buffer[..read]);
-            let path = request
-                .lines()
-                .next()
-                .and_then(|line| line.split_whitespace().nth(1))
-                .unwrap_or("/");
-
-            let (status, body) = match path {
-                "/v2/" => (200, Vec::new()),
-                "/v2/library/demo/manifests/latest" => (200, index_manifest_bytes.clone()),
-                _ if path == format!("/v2/library/demo/manifests/{child_manifest_digest}") => {
-                    (200, child_manifest_bytes.clone())
-                }
-                _ if path == format!("/v2/library/demo/blobs/{config_digest}") => {
-                    (200, config_bytes.clone())
-                }
-                _ if path == format!("/v2/library/demo/blobs/{layer_digest}") => {
-                    (200, layer_archive.clone())
-                }
-                _ => (404, Vec::new()),
-            };
-
-            let response = format!(
-                "HTTP/1.1 {status} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                if status == 200 { "OK" } else { "Not Found" },
-                body.len()
-            );
-            stream
-                .write_all(response.as_bytes())
-                .expect("fake OCI registry response head should write");
-            stream
-                .write_all(&body)
-                .expect("fake OCI registry response body should write");
-        }
-    });
-
-    format!("docker://localhost:{}/library/demo:latest", address.port())
-}
-
 #[test]
 fn desired_krun_vm_config_requires_memory_when_cpu_count_is_requested() {
     let error = desired_krun_vm_config(
@@ -1515,15 +1191,4 @@ fn desired_krun_vm_config_requires_memory_when_cpu_count_is_requested() {
             .contains("cpu_count requires memory_limit_bytes"),
         "expected actionable validation error, got: {error}"
     );
-}
-
-trait ImageMetadataTestExt {
-    fn with_stop_signal(self, stop_signal: &str) -> Self;
-}
-
-impl ImageMetadataTestExt for KrunImageMetadata {
-    fn with_stop_signal(mut self, stop_signal: &str) -> Self {
-        self.stop_signal = Some(stop_signal.to_owned());
-        self
-    }
 }

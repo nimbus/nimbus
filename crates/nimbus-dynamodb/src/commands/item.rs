@@ -420,37 +420,6 @@ pub fn update_item(
     })
 }
 
-/// Store `item` under its primary key (full replace, no condition/ReturnValues).
-///
-/// # Errors
-/// `ResourceNotFoundException` if the table is absent; `ValidationException`
-/// for an invalid item or missing key.
-#[cfg(test)]
-pub(crate) fn store_item(
-    engine: &Arc<Engine>,
-    context: &TenantIsolationContext,
-    table_name: &str,
-    item: &Item,
-) -> Result<(), DynamoDbError> {
-    validate_item(item)?;
-    let key_schema = control_plane::load_key_schema(engine, context, table_name)?;
-    let id = primary_key_id(item, &key_schema)?;
-    let table = TableName::new(table_name).map_err(map_core_error)?;
-    // Unconditional create-or-replace in a single atomic transaction (no read
-    // needed — Overwrite handles both create and replace).
-    let fields = item_to_fields(item)?;
-    atomic_overwrite(
-        engine,
-        context,
-        table,
-        id,
-        fields,
-        WritePrecondition::default(),
-    )
-    .map_err(map_core_error)?;
-    Ok(())
-}
-
 /// Read a stored item by id, mapping a missing document to `None`.
 pub(crate) fn read_item(
     engine: &Arc<Engine>,
@@ -742,30 +711,6 @@ mod tests {
         // Neither rejected write mutated the store.
         assert!(stored(&engine, &ctx, "live").is_some());
         assert!(stored(&engine, &ctx, "ghost").is_none());
-    }
-
-    /// F2: `store_item` (the BatchWriteItem / TransactWriteItems put path)
-    /// creates-or-replaces through the single atomic Overwrite path — no
-    /// delete-then-insert window. A fresh key is created; an existing key is
-    /// replaced wholesale.
-    #[test]
-    fn store_item_overwrites_atomically() {
-        let (engine, ctx, _t) = fixture();
-        create_orders(&engine, &ctx);
-        let first: Item =
-            serde_json::from_value(json!({ "pk": {"S": "o1"}, "x": {"N": "1"} })).unwrap();
-        store_item(&engine, &ctx, "Orders", &first).expect("create");
-        assert_eq!(
-            stored(&engine, &ctx, "o1").unwrap().get("x"),
-            Some(&AttributeValue::N("1".into()))
-        );
-
-        let second: Item =
-            serde_json::from_value(json!({ "pk": {"S": "o1"}, "y": {"N": "2"} })).unwrap();
-        store_item(&engine, &ctx, "Orders", &second).expect("replace");
-        let item = stored(&engine, &ctx, "o1").unwrap();
-        assert!(!item.contains_key("x"), "store_item replaces wholesale");
-        assert_eq!(item.get("y"), Some(&AttributeValue::N("2".into())));
     }
 
     #[test]

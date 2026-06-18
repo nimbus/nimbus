@@ -230,9 +230,9 @@ pub(crate) struct StartCommand {
     pub(crate) debug_node_apis: bool,
 
     /// Optional ordered Compose file list that declares sandbox-backed services.
-    /// Repeat `--compose-file` to merge overlays. When omitted, Nimbus uses
-    /// `COMPOSE_FILE` when set, then discovers from the current directory and
-    /// parent directories.
+    /// Repeat `--compose-file` to merge overlays. When omitted, `nimbus start`
+    /// uses COMPOSE_FILE when set and otherwise loads no Compose project. Use
+    /// `nimbus dev` or `nimbus compose` for local Compose auto-discovery.
     #[arg(long)]
     pub(crate) compose_file: Vec<PathBuf>,
 

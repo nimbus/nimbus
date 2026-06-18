@@ -9,12 +9,12 @@ use mysql_async::{
     Conn, Opts, OptsBuilder, Params, Pool, PoolConstraints, Row, Value as MySqlValue,
 };
 use nimbus_core::{
-    CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, FieldType, Filter,
-    HistoricalIndexCursor, HistoricalIndexTuple, HistoricalReadShape, IndexDefinition,
-    IndexLifecycleEvent, ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema,
-    SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName,
-    TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp,
-    TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
+    CommitEntry, CronJob, Document, DocumentId, Error, FieldType, Filter, HistoricalIndexCursor,
+    HistoricalIndexTuple, HistoricalReadShape, IndexDefinition, IndexLifecycleEvent,
+    ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
+    SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName, TableSchema,
+    TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor,
+    TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -26,9 +26,7 @@ use crate::async_storage::{
     TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, map_executor_join_error,
     map_executor_permit_error,
 };
-use crate::commit_log::{
-    deserialize_durable_record, serialize_durable_record, serialize_tenant_event_record,
-};
+use crate::commit_log::{deserialize_tenant_event_record, serialize_tenant_event_record};
 use crate::runtime_bridge::bridge_tokio_runtime;
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{

@@ -148,13 +148,13 @@ impl PostgresTenantStore {
         Ok(())
     }
 
-    pub fn append_durable_records_batch(&self, records: &[DurableMutationRecord]) -> Result<()> {
+    pub fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
         let records = records.to_vec();
         self.execute_write(move |transaction| transaction.append_durable_records_batch(&records))?;
         Ok(())
     }
 
-    pub fn apply_durable_records_batch(&self, records: &[DurableMutationRecord]) -> Result<()> {
+    pub fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
         let records = records.to_vec();
         self.execute_write(move |transaction| transaction.apply_durable_records_batch(&records))?;
         Ok(())
@@ -934,10 +934,7 @@ impl PostgresWriteTransaction {
         Ok(())
     }
 
-    pub fn append_durable_records_batch(
-        &mut self,
-        records: &[DurableMutationRecord],
-    ) -> Result<()> {
+    pub fn append_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
         self.check_cancel()?;
         if records.is_empty() {
             return Ok(());
@@ -957,7 +954,7 @@ impl PostgresWriteTransaction {
                 )));
             }
             let sequence = i64_from_sequence(record.sequence)?;
-            let payload = serialize_durable_record(record)?;
+            let payload = serialize_tenant_event_record(record)?;
             let query = query.clone();
             let client = self.session()?;
             self.block_on(async move {
@@ -979,7 +976,7 @@ impl PostgresWriteTransaction {
         Ok(())
     }
 
-    pub fn apply_durable_records_batch(&mut self, records: &[DurableMutationRecord]) -> Result<()> {
+    pub fn apply_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
         self.check_cancel()?;
         if records.is_empty() {
             return Ok(());
@@ -1430,7 +1427,7 @@ impl PostgresWriteTransaction {
         })
     }
 
-    fn apply_durable_record(&mut self, record: &DurableMutationRecord) -> Result<()> {
+    fn apply_durable_record(&mut self, record: &TenantEventRecord) -> Result<()> {
         let schema_name = self.schema_name.clone();
         let record = record.clone();
         let changes_schema_cache = durable_record_changes_schema_cache(&record);

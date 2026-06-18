@@ -3,6 +3,7 @@ import { useQuery } from "@nimbus/nimbus/react";
 
 import { api } from "../../../convex/_generated/api";
 import { AppearanceSection } from "../../components/appearance-section";
+import { PageHeader } from "../../components/page-header";
 import { useContributeSubDrawer } from "../../shell/sub-drawer";
 import { ConfigurationSection } from "./settings/configuration";
 import { DangerZoneSection } from "./settings/danger-zone";
@@ -13,10 +14,7 @@ import {
   useRuntimeDiagnostics,
 } from "./settings/hooks";
 import { IntegrationsSection } from "./settings/integrations";
-import {
-  ServerInfoSection,
-  TenantHeaderStrip,
-} from "./settings/server-info";
+import { ServerInfoSection, TenantHeaderStrip } from "./settings/server-info";
 import { ADMIN_SETTINGS_SUB_DRAWER } from "./settings/sub-drawer";
 import type {
   AdapterCapabilityDoc,
@@ -56,20 +54,10 @@ function SettingsPage() {
       className="flex h-full flex-col gap-5 overflow-y-auto px-6 py-5"
       data-testid="page-settings"
     >
-      <header className="flex items-baseline justify-between">
-        <div>
-          <h1
-            className="text-xl text-default"
-            style={{ fontSize: "var(--text-xl)" }}
-          >
-            Settings
-          </h1>
-          <p className="text-sm text-muted">
-            Server info, configuration, integrations, deploy history, and
-            session lifecycle.
-          </p>
-        </div>
-      </header>
+      <PageHeader
+        title="Settings"
+        subtitle="Server info, configuration, integrations, deploy history, and session lifecycle."
+      />
 
       <AppearanceSection />
 

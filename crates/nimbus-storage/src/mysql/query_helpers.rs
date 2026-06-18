@@ -344,8 +344,51 @@ pub(super) fn unique_index_fields(table_schema: &TableSchema) -> Vec<&str> {
 }
 
 pub(super) fn mysql_generated_column_expr(field: &str) -> String {
-    format!(
-        "JSON_UNQUOTE(JSON_EXTRACT(data_json, '$.\"{}\"'))",
-        field.replace('\\', "\\\\").replace('"', "\\\"")
-    )
+    // Field names are validated as logical names before reaching here, so the
+    // escaping below is defense in depth. The JSON-path key is wrapped in `"`,
+    // and the whole path is a single-quoted MySQL string literal in which
+    // backslash is itself an escape character. Escape backslash first, then the
+    // JSON-key `"` and the SQL-literal `'` delimiter.
+    let escaped = field
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\'', "\\'");
+    format!("JSON_UNQUOTE(JSON_EXTRACT(data_json, '$.\"{escaped}\"'))")
+}
+
+#[cfg(test)]
+mod generated_column_tests {
+    use super::mysql_generated_column_expr;
+
+    #[test]
+    fn generated_column_passes_through_ordinary_field() {
+        assert_eq!(
+            mysql_generated_column_expr("status"),
+            r#"JSON_UNQUOTE(JSON_EXTRACT(data_json, '$."status"'))"#
+        );
+    }
+
+    #[test]
+    fn generated_column_escapes_sql_literal_delimiter() {
+        // Even if validation were bypassed, single quotes must be backslash
+        // escaped so the field cannot break out of the MySQL string literal.
+        let expr = mysql_generated_column_expr("name' || (SELECT secret) || '");
+        assert_eq!(
+            expr,
+            r#"JSON_UNQUOTE(JSON_EXTRACT(data_json, '$."name\' || (SELECT secret) || \'"'))"#
+        );
+        // Every injected quote is backslash escaped, so no bare quote (a quote
+        // not preceded by `\`) can close the literal early.
+        assert!(!expr.contains("name'"), "unescaped quote leaked: {expr}");
+        assert!(expr.contains(r"name\'"), "quote was not escaped: {expr}");
+    }
+
+    #[test]
+    fn generated_column_escapes_backslash_before_quote() {
+        // A trailing backslash must not consume the closing JSON/SQL quote.
+        assert_eq!(
+            mysql_generated_column_expr(r"back\slash"),
+            r#"JSON_UNQUOTE(JSON_EXTRACT(data_json, '$."back\\slash"'))"#
+        );
+    }
 }

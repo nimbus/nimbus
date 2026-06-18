@@ -344,7 +344,7 @@ impl MySqlTenantStore {
     pub fn read_durable_journal_from(
         &self,
         sequence: SequenceNumber,
-    ) -> Result<Vec<DurableMutationRecord>> {
+    ) -> Result<Vec<TenantEventRecord>> {
         let provider = self.provider.clone();
         let database_name = self.database_name.clone();
         self.block_on(async move {
@@ -401,7 +401,7 @@ impl MySqlTenantStore {
                     has_more = true;
                     break;
                 }
-                records.push(deserialize_durable_record(record_blob.as_slice())?);
+                records.push(deserialize_tenant_event_record(record_blob.as_slice())?);
             }
             let next_cursor = records
                 .last()

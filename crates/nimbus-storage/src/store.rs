@@ -73,9 +73,9 @@ pub(crate) const APPLIED_SEQUENCE_KEY: &str = "applied_sequence";
 pub(crate) const TRIGGER_DELIVERY_CURSOR_KEY: &str = "trigger_delivery_cursor";
 pub(crate) const EMPTY_TABLE_VALUE: &[u8] = &[];
 
-/// Authoritative tenant persistence surface during the migration window.
+/// Authoritative redb-backed tenant persistence surface.
 ///
-/// The engine currently depends on this type for more than CRUD:
+/// The engine depends on this type for more than CRUD:
 ///
 /// - direct point reads, scans, and planner-backed index reads
 /// - validated direct writes
@@ -84,8 +84,8 @@ pub(crate) const EMPTY_TABLE_VALUE: &[u8] = &[];
 /// - durable journal append/read/stream/bootstrap APIs
 /// - materialized journal snapshot export, restore, rebuild, and recovery
 ///
-/// SQLite migration work should preserve those product semantics while swapping
-/// the storage mechanics underneath them.
+/// The SQLite, libSQL, MySQL, and Postgres backends are live peers that
+/// implement the same product semantics over different storage mechanics.
 pub struct TenantStore {
     pub(crate) db: Database,
     pub(crate) clock: Arc<dyn Clock>,

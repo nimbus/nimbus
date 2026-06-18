@@ -16,7 +16,7 @@ Source corpus:
 This file records the currently manifested official-fixture subset for the
 `process-and-timing` family process and timing family. The canonical source of truth for the
 executed subset is
-[`PROCESS_AND_TIMING_BATCH`](../../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs)
+[`PROCESS_AND_TIMING_BATCH`](../../../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs)
 plus the explicit watchpoints in the same Rust file; this document summarizes
 that state so future work can resume without rediscovering it.
 

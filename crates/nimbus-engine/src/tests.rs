@@ -169,7 +169,13 @@ pub(crate) fn materialized_snapshot_with_documents(
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .map(|table| {
-            crate::TableIdentitySnapshotEntry::default_namespace(table, nimbus_core::TableId::new())
+            // Derive a stable table_id from the table name so two snapshots
+            // built from the same logical documents share identical table
+            // identities. A random `TableId::new()` per call would make the
+            // identity verifier (correctly) report spurious table_id drift.
+            let table_id = nimbus_core::TableId::try_from(format!("tableid-{table}"))
+                .expect("derived table id should be a valid logical name");
+            crate::TableIdentitySnapshotEntry::default_namespace(table, table_id)
         })
         .collect();
     crate::MaterializedJournalSnapshot {

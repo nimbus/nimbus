@@ -374,3 +374,46 @@ fn sandbox_not_found(tenant_id: &TenantId, sandbox_id: &str) -> AppError {
         "sandbox `{sandbox_id}` was not found for tenant `{tenant_id}`"
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn wasm_sandbox_requests_fail_closed() {
+        let request = json!({
+            "profile": "wasm",
+            "spec": {
+                "owner": {
+                    "kind": "standalone",
+                    "displayName": "unsupported-wasm"
+                },
+                "backend": "container",
+                "root": {
+                    "kind": "oci_image",
+                    "source": {
+                        "kind": "reference",
+                        "reference": "example.com/sandbox@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    }
+                },
+                "process": {
+                    "argv": ["/bin/true"]
+                }
+            }
+        });
+
+        let error = serde_json::from_value::<SandboxCreateRequest>(request)
+            .expect_err("public sandbox API must not accept a wasm profile yet");
+
+        assert!(
+            error.to_string().contains("unknown variant `wasm`"),
+            "error should name the unsupported profile: {error}"
+        );
+        assert!(
+            error.to_string().contains("worker") && error.to_string().contains("desktop"),
+            "error should list the currently supported sandbox profiles: {error}"
+        );
+    }
+}

@@ -9,19 +9,17 @@ mod catalog;
 mod clock;
 mod definitions;
 mod handles;
-mod launch;
 mod registry;
 mod sandboxes;
+mod service_start;
+mod session_channels;
 mod sessions;
 mod system_state;
 mod types;
 mod verification;
 
-#[cfg(test)]
-use activation::service_lifecycle_decision;
-
-use crate::ServiceDefinitionCatalog;
-use nimbus_tenant::TenantImageVerificationProvider;
+use crate::{DesiredWorkloadSnapshot, DesiredWorkloadStore, ServiceDefinitionCatalog};
+use nimbus_tenant::{TenantImagePolicyDecision, TenantImageVerificationProvider};
 
 use types::ServiceManagerState;
 use verification::DefaultTenantImageVerificationProvider;
@@ -31,10 +29,28 @@ pub use system_state::{NoopServiceEvidenceWriter, ServiceEvidenceFuture, Service
 const DEFAULT_ACTIVATION_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_ACTIVATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
+/// Whether the service manager admits local-build sandbox roots.
+///
+/// This is a manager runtime posture, not a durable catalog type, so it stays
+/// descriptive and verb-free rather than following the catalog `Spec`/`Kind`
+/// naming rules. It defaults fail-closed (`Denied`, the production posture):
+/// local builds carry no signature/provenance/SBOM evidence, so the manager
+/// rejects them unless the operator explicitly opts in, mirroring the compose
+/// and HTTP layers that only admit builds in local development.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LocalBuildAdmission {
+    /// Reject local-build sandbox roots (production posture, fail-closed).
+    #[default]
+    Denied,
+    /// Admit local-build sandbox roots (operator opt-in, local development).
+    Allowed,
+}
+
 pub struct ServiceManager {
     service_definitions: Arc<dyn ServiceDefinitionCatalog>,
     sandbox_backend: Arc<dyn SandboxBackend>,
     image_verification_provider: Arc<dyn TenantImageVerificationProvider>,
+    local_build_admission: LocalBuildAdmission,
     activation_timeout: Duration,
     activation_poll_interval: Duration,
     state: Mutex<ServiceManagerState>,
@@ -53,6 +69,7 @@ impl ServiceManager {
             service_definitions,
             sandbox_backend,
             image_verification_provider: Arc::new(DefaultTenantImageVerificationProvider),
+            local_build_admission: LocalBuildAdmission::Denied,
             activation_timeout: DEFAULT_ACTIVATION_TIMEOUT,
             activation_poll_interval: DEFAULT_ACTIVATION_POLL_INTERVAL,
             state: Mutex::new(ServiceManagerState::default()),
@@ -60,6 +77,31 @@ impl ServiceManager {
             activation_notify: Notify::new(),
             #[cfg(test)]
             activation_wait_observer: Mutex::new(None),
+        }
+    }
+
+    /// Sets the manager's local-build admission posture.
+    ///
+    /// Defaults fail-closed to [`LocalBuildAdmission::Denied`]; callers that
+    /// run in local development opt in with [`LocalBuildAdmission::Allowed`].
+    pub fn with_local_build_admission(mut self, admission: LocalBuildAdmission) -> Self {
+        self.local_build_admission = admission;
+        self
+    }
+
+    /// Returns the tenant image policy decision the manager layers onto every
+    /// lifecycle and sandbox admission decision.
+    ///
+    /// Production (`Denied`) layers the default fail-closed image policy, which
+    /// rejects local builds. Local development (`Allowed`) additionally admits
+    /// local builds. Registry-image admission floors (digest/signature/
+    /// provenance/SBOM) are unaffected by this posture.
+    pub(super) fn manager_image_policy(&self) -> TenantImagePolicyDecision {
+        match self.local_build_admission {
+            LocalBuildAdmission::Denied => TenantImagePolicyDecision::default(),
+            LocalBuildAdmission::Allowed => {
+                TenantImagePolicyDecision::default().allow_local_build()
+            }
         }
     }
 
@@ -94,6 +136,14 @@ impl ServiceManager {
             .service_evidence_writer
             .lock()
             .expect("service evidence writer lock should not be poisoned") = writer;
+    }
+
+    pub fn desired_workload_snapshot(&self) -> DesiredWorkloadSnapshot {
+        self.state
+            .lock()
+            .expect("manager lock should not be poisoned")
+            .desired_workloads
+            .snapshot_desired_workloads()
     }
 
     #[cfg(test)]

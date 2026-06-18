@@ -84,7 +84,7 @@ rather than one tree gated by per-section scope toggles.
 | Persona | Identity | Asks | Cares about |
 | --- | --- | --- | --- |
 | **Developer** | App owner shipping code against a tenant | "Did my function succeed? What's in this table? Did my cron fire? Where's the log for this request?" | one tenant's data, code, schedules, files, traces |
-| **Operator** | DevOps / admin / host running Nimbus for others (or themselves) | "Is the server healthy? Which tenants exist? Are machines up? Are listeners reachable?" | server-wide state, infrastructure, multi-tenant administration |
+| **Operator** | DevOps / admin / host running Nimbus for others (or themselves) | "Is the node healthy? Which tenants exist? Are machines up? Are listeners reachable?" | server-wide state, infrastructure, multi-tenant administration |
 
 The console renders these as **two views** with a **view switcher** in the
 top horizontal nav. URL prefix is the source of truth:
@@ -126,9 +126,9 @@ IA decision rationale.
 
 | Section | Purpose | First required views |
 | --- | --- | --- |
-| System | Host status | Version, uptime, listeners, build info, pending upgrades, embed integrity, admin audit |
+| Nodes | Hosts running the Nimbus binary | Node list + detail: identity, health, role, version, uptime, listen address, and the tenants/machines/services/listeners hosted on it. One node today (the local host); shaped to scale to a cluster. |
 | Tenants | Tenant lifecycle | List with backend/quota/table-count, create, archive, per-tenant adapter binding |
-| Machines | Host/guest lifecycle | Machine list, detail (boot image, upgrade state, services placed on it), start/stop/restart/SSH/OS apply/remove |
+| Machines | Outer dev-VM lifecycle (macOS/Windows) | Machine list, detail (boot image, upgrade state, services placed on it), start/stop/restart/SSH/OS apply/remove. A machine is a guest VM that hosts sandboxes — **not** a cluster node. Absent on pure-Linux nodes. |
 | Network | Reachability | HTTP routes, WebSocket subscriptions, published ports, machine API forwarding, listener status, origin allowlist |
 | Services | Long-running placement (cross-tenant) | Compose-declared services across every tenant, service catalog, lifecycle state, endpoints, restart policy. **Dual-persona** with the Developer IA above; both sides share `ServicesTable`/`ServiceDoc` with a `showTenantColumn` toggle |
 | Observability | Cross-tenant debugging and audit | Logs, events, traces, error groups — default cross-tenant; optional `?tenant=<id>` filter |
@@ -184,18 +184,32 @@ Compute owns request-scoped function execution for the active tenant.
 Service lifecycle lives in `Services` — a dual-persona surface present
 in both consoles. Compute and Services are siblings, not parent/child.
 
-- Functions list: path, kind, adapter, bundle, args schema, returns schema,
-  last run, failure rate, p95 duration when available.
+- Compute has two **compute types**, Functions and Sandboxes, selected in the
+  secondary nav (the sub-drawer); Services and Sessions stay top-level. Search
+  and filters live in the main section's toolbar (shadcn data-table convention).
+- Functions: a bundle → module → function **tree** with folder/file/kind icons,
+  built from the deployed functions. Open one for its detail (Statistics,
+  Source, Logs, Runs).
+- Source tab: the deployed module source, served from the **content-addressed
+  source-package store** (`GET /api/console/source`), hash-verified, syntax-
+  highlighted, with the source-package digest shown as provenance. Source is the
+  read-artifact (original TS), distinct from the runtime bundle; it is captured
+  at `nimbus deploy` and deduplicated by content digest. A navigable
+  **DEFINES / CALLS** symbols strip (oxc structural index — exports + `api.*` /
+  `internal.*` references) links across functions.
 - Function runner: schema-aware argument editor, identity/mock identity
   controls where supported, query result panel, logs/result correlation,
   and clear execution mode for queries, mutations, actions, HTTP
   handlers, and scheduled functions.
 - Runs: status, function/action/route, request ID, duration, error,
   logs, trace waterfall. Filtered to the active tenant.
+- Sandboxes: live runtime state (not a deployment record); the view reads from
+  the sandbox runtime (wiring in progress) — no placeholder data.
 
-The Compute sub-drawer is a **dynamic list** of functions (grouped by
-path / kind). Tenant is implicit from the top-nav selector — the runner
-does not show a tenant chooser.
+Deploys are gated by a client-side TypeScript typecheck (`--typecheck
+enable|try|disable`, mirroring `convex deploy`): codegen → bundle → typecheck,
+aborting on type errors. Tenant is implicit from the top-nav selector — the
+runner does not show a tenant chooser.
 
 Convex-like function runner behavior is useful, but it must be Nimbus-aware:
 show which adapter handles the function and which execution mode is in
@@ -313,22 +327,26 @@ The Settings (tenant) sub-drawer is a **static menu** of sub-pages
 
 ## Core Screens — Operator console
 
-### System overview (Operator)
+### Nodes (Operator)
 
-The System screen is the Operator landing page. Server-wide, no tenant
-context.
+The Nodes screen is the Operator landing page. A **node** is a host
+running the Nimbus binary (the `nimbus node` lifecycle). Multi-node
+clustering is not wired yet, so this deployment is exactly one node — the
+local host, sourced from system status. The screen is shaped as a node
+list so it scales to a real cluster without a redesign. A node is
+distinct from a **machine** (the outer dev VM under Machines).
 
-- Host status: version, build info, uptime, embed integrity hash.
-- Listeners: per-adapter listener state (Convex HTTP/WS, MongoDB wire,
-  Firebase REST/Listen, native WebSocket, machine API).
+- Node identity and health: listen address, health, role (standalone
+  today), Nimbus version, build info, uptime, embed integrity hash.
+- Hosted on this node: live counts of tenants, machines, services, and
+  per-adapter listeners (Convex HTTP/WS, MongoDB wire, Firebase
+  REST/Listen, native WebSocket, machine API).
 - Upgrades: pending release / upgrade state, last upgrade, current
   channel.
-- Tenants snapshot: count by storage backend, busiest tenants, recent
-  creates / archives.
-- Machines snapshot: state counts, last boot, last upgrade.
 - Recent admin actions: token rotation, tenant create, machine restart.
 
-No sub-drawer.
+No sub-drawer. When clustering lands this becomes a multi-row node list
+with a per-node detail page (Raft role, peer reachability, placement).
 
 ### Tenants (Operator)
 
@@ -349,7 +367,11 @@ tenant opens its admin detail page.
 
 ### Machines (Operator)
 
-Machines owns host/guest platform lifecycle.
+Machines owns the **outer dev-VM** lifecycle on macOS and Windows
+(krunkit / WSL2). A machine is a single long-lived guest Linux VM that
+supplies the kernel sandboxes need; it is **not** a cluster node (see
+Nodes), and pure-Linux nodes have none. Do not frame this screen as
+"host" lifecycle — the host is the node.
 
 - Machine list: name, provider, architecture, OS image reference, digest,
   state, resource allocation, last boot, last upgrade.
@@ -357,9 +379,9 @@ Machines owns host/guest platform lifecycle.
   version/hash, forwarded API, services placed on it, ports, logs,
   upgrade/rollback state.
 - Actions: start, stop, restart, SSH, OS apply, OS upgrade, remove.
-- macOS copy must be clear that services run inside the Linux guest and
-  host actions converge machine state. Do not imply per-service nested
-  microVMs on macOS.
+- macOS copy must be clear that services run as containers inside the
+  Linux guest and that machine actions converge the guest VM's state. Do
+  not imply per-service nested microVMs on macOS.
 
 The Machines sub-drawer is a **dynamic list** of machines.
 

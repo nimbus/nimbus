@@ -212,13 +212,6 @@ jobs:
         run: npm ci
 
       - name: Run Bun/JSC runtime contract gate
-        env:
-          # This gate links nimbus-server test binaries with vendored OpenSSL.
-          # Keep the workspace default on mold, but use lld here because mold
-          # on ubuntu-24.04 has failed this lane with an unresolved OpenSSL
-          # assembly symbol (`bn_sqrx8x_internal`).
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=lld
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=lld
         run: make verify-bun-jsc-runtime-contract
 
   rust-workspace-tests:
@@ -283,11 +276,6 @@ jobs:
         # the dedicated harness matrix below, so this lane stays focused on the
         # main workspace suite outside the runtime crate.
         env:
-          # Workspace tests link OpenSSL-backed storage/server/engine test
-          # binaries. Keep this lane on lld; ubuntu-24.04 mold has failed
-          # vendored OpenSSL assembly resolution (`bn_sqrx8x_internal`).
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=lld
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=lld
           NIMBUS_NEXTEST_PARTITION: ${{ matrix.partition }}
         run: make test-rust-workspace
 
@@ -296,9 +284,6 @@ jobs:
         # nextest intentionally does not run doctests, so keep this explicit
         # libtest pass to preserve the coverage of the previous cargo test lane.
         # Pinned to shard 1 so it runs exactly once across the matrix.
-        env:
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=lld
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=lld
         run: make test-rust-docs
 
   external-provider-tests:
@@ -558,9 +543,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name != 'schedule'
-    # The LR12 live node-run test builds nimbus-bin, which embeds the
-    # operator UI through nimbus-assets — reuse the ui-artifacts leader
-    # build like the other nimbus-bin-building lanes.
+    # The LR12 live node-workload-executor test builds nimbus-bin, which
+    # embeds the operator UI through nimbus-assets — reuse the ui-artifacts
+    # leader build like the other nimbus-bin-building lanes.
     needs: [ui-artifacts]
 
     steps:
@@ -628,10 +613,10 @@ jobs:
       - name: Refresh embedded package payload mtimes
         run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
-      - name: Run live node-run reconciler test (LR12)
+      - name: Run live node workload executor test (LR12)
         run: |
           set -o pipefail
-          make test-node-run-live 2>&1 | tee -a /tmp/ndb-live.log
+          make test-node-workload-executor-live 2>&1 | tee -a /tmp/ndb-live.log
 
       - name: Summarize per-test results
         if: always()

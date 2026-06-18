@@ -1,6 +1,6 @@
 use nimbus_core::{
-    CommitEntry, DurableMutationRecord, Error, Result, SchemaChangeEvent, SequenceNumber,
-    TableLifecycleEvent, TenantEventKind, TenantEventRecord, Timestamp, WriteOp,
+    CommitEntry, Error, Result, SchemaChangeEvent, SequenceNumber, TableLifecycleEvent,
+    TenantEventKind, TenantEventRecord, Timestamp, WriteOp,
 };
 use redb::{ReadableTable, TableError};
 
@@ -40,7 +40,7 @@ impl TenantStore {
     pub fn read_durable_journal_from(
         &self,
         sequence: SequenceNumber,
-    ) -> Result<Vec<DurableMutationRecord>> {
+    ) -> Result<Vec<TenantEventRecord>> {
         let read_txn = self.db.begin_read().map_err(map_redb_error)?;
         let table_handle = match read_txn.open_table(COMMIT_LOG) {
             Ok(table_handle) => table_handle,
@@ -51,7 +51,7 @@ impl TenantStore {
         let mut entries = Vec::new();
         for item in table_handle.range(sequence.0..).map_err(map_redb_error)? {
             let (_, value) = item.map_err(map_redb_error)?;
-            entries.push(crate::commit_log::deserialize_durable_record(
+            entries.push(crate::commit_log::deserialize_tenant_event_record(
                 value.value(),
             )?);
         }
@@ -76,7 +76,7 @@ impl TenantStore {
         )
     }
 
-    pub fn append_durable_records_batch(&self, records: &[DurableMutationRecord]) -> Result<()> {
+    pub fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
         if records.is_empty() {
             return Ok(());
         }
@@ -97,7 +97,7 @@ impl TenantStore {
                         next, record.sequence.0
                     )));
                 }
-                let payload = crate::commit_log::serialize_durable_record(record)?;
+                let payload = crate::commit_log::serialize_tenant_event_record(record)?;
                 log.insert(next, payload.as_slice())
                     .map_err(map_redb_error)?;
                 next = next.saturating_add(1);
@@ -112,7 +112,7 @@ impl TenantStore {
         Ok(())
     }
 
-    pub fn apply_durable_records_batch(&self, records: &[DurableMutationRecord]) -> Result<()> {
+    pub fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
         if records.is_empty() {
             return Ok(());
         }
@@ -194,7 +194,7 @@ pub(super) fn append_tenant_event(
 
 fn apply_durable_record_in_write_txn(
     write_txn: &redb::WriteTransaction,
-    record: &DurableMutationRecord,
+    record: &TenantEventRecord,
 ) -> Result<()> {
     if record.events.is_empty() {
         if let Some(execution_id) = record.scheduled_execution_id.as_deref() {

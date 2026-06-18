@@ -4,6 +4,7 @@ import { useNimbusConnectionState, useQuery } from "@nimbus/nimbus/react";
 import { api } from "../../../convex/_generated/api";
 import { CopyChip } from "../../components/copy-chip";
 import { LoadingCell } from "../../components/loading-cell";
+import { PageHeader } from "../../components/page-header";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime, Uptime } from "../../components/time";
 import { formatDuration, shortId } from "../../lib/format";
@@ -12,6 +13,7 @@ import {
   type LoadingValue,
   toLoadingValue,
 } from "../../shell/loading-value";
+import { useUiStore } from "../../store/ui-store";
 
 export const Route = createFileRoute("/developer/")({
   component: OverviewPage,
@@ -79,19 +81,10 @@ function OverviewPage() {
       className="flex h-full flex-col gap-4 overflow-y-auto px-6 py-5"
       data-testid="page-overview"
     >
-      <header className="flex items-baseline justify-between">
-        <div>
-          <h1
-            className="text-xl text-default"
-            style={{ fontSize: "var(--text-xl)" }}
-          >
-            Overview
-          </h1>
-          <p className="text-sm text-muted">
-            Deployment health, recent activity, and live resource counts.
-          </p>
-        </div>
-      </header>
+      <PageHeader
+        title="Overview"
+        subtitle="Deployment health, recent activity, and live resource counts."
+      />
 
       <TopStrip status={status} />
 
@@ -124,6 +117,7 @@ function useConnSnapshot(): ConnectionSnapshot {
 }
 
 function TopStrip({ status }: { status: SystemStatusDoc | undefined }) {
+  const activeTenant = useUiStore((s) => s.activeTenant);
   const details = (status?.details ?? {}) as Record<string, unknown>;
   const storageBackend =
     typeof details.storageBackend === "string"
@@ -182,7 +176,7 @@ function TopStrip({ status }: { status: SystemStatusDoc | undefined }) {
       <Cell label="Tenant">
         <CopyChip
           label="active tenant"
-          value="_nimbus"
+          value={activeTenant ?? "—"}
           testid="overview-tenant"
         />
       </Cell>
@@ -239,7 +233,7 @@ function ResourceCountsGrid({
         testid="overview-count-services"
         docs={services}
         groupBy="state"
-        to="/developer/compute"
+        to="/developer/services"
       />
       <CountPanel
         title="Tenants"
@@ -289,6 +283,7 @@ function CountPanel({
   to:
     | "/operator/machines"
     | "/developer/compute"
+    | "/developer/services"
     | "/developer/storage"
     | "/developer/observability";
   explicitTotal?: number;

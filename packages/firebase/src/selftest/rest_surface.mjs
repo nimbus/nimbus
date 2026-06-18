@@ -886,7 +886,7 @@ export async function testQueryConstraintSurface(firestoreModule, appModule) {
 
   assert.throws(
     () => firestoreModule.where("nested.active", "==", true),
-    /nested field paths are not supported yet/,
+    /nested field paths are not supported/,
   );
   assert.throws(
     () =>
@@ -1347,6 +1347,110 @@ export async function testConverterSurface(firestoreModule, appModule) {
     population: { integerValue: "11" },
     slug: { stringValue: "charlie" },
   });
+
+  await appModule.deleteApp(app);
+}
+
+export async function testTemporalAndBytesCodecSurface(firestoreModule, appModule) {
+  const app = appModule.initializeApp({ projectId: "codec-project" }, "codec-runtime");
+  const requests = [];
+  const queuedResponses = [];
+  const fetch = async (url, options) => {
+    requests.push(await recordRequest(url, options));
+    const nextResponse = queuedResponses.shift();
+    assert.ok(nextResponse, `Unexpected Firestore codec request to ${url}`);
+    return nextResponse();
+  };
+  const firestore = firestoreModule.initializeFirestore(
+    app,
+    {
+      experimentalFetch: fetch,
+      host: "codec.test",
+      ssl: false,
+    },
+    "codec",
+  );
+  const events = firestoreModule.collection(firestore, "events");
+  const event = firestoreModule.doc(events, "launch");
+  const eventName = "projects/codec-project/databases/codec/documents/events/launch";
+
+  const occurredAt = new Date("2026-04-25T12:34:56.000Z");
+  const payload = new Uint8Array([1, 2, 3, 255]);
+
+  // Encode: Date -> timestampValue (RFC 3339), Uint8Array -> bytesValue (base64).
+  queuedResponses.push(() => createJsonResponse(200, { commitTime: "2026-04-25T00:00:00Z" }));
+  await firestoreModule.setDoc(event, { occurredAt, payload });
+  const encodedFields = requests[0].body.writes[0].update.fields;
+  assert.deepEqual(encodedFields.occurredAt, {
+    timestampValue: "2026-04-25T12:34:56.000Z",
+  });
+  assert.equal(typeof encodedFields.payload.bytesValue, "string");
+  assert.ok(encodedFields.payload.bytesValue.length > 0);
+
+  // Decode: the same wire fields round-trip back to Date / Uint8Array.
+  queuedResponses.push(() =>
+    createJsonLinesResponse([
+      {
+        found: {
+          fields: {
+            occurredAt: { timestampValue: encodedFields.occurredAt.timestampValue },
+            payload: { bytesValue: encodedFields.payload.bytesValue },
+          },
+          name: eventName,
+        },
+      },
+    ]),
+  );
+  const snapshot = await firestoreModule.getDoc(event);
+  const data = snapshot.data();
+  assert.ok(data.occurredAt instanceof Date, "timestampValue decodes to a Date");
+  assert.equal(data.occurredAt.getTime(), occurredAt.getTime());
+  assert.ok(data.payload instanceof Uint8Array, "bytesValue decodes to a Uint8Array");
+  assert.deepEqual(Array.from(data.payload), Array.from(payload));
+
+  // Unsupported value kinds reject on decode rather than leaking the raw wire
+  // shape, keeping the supported value set symmetric with the encoder.
+  queuedResponses.push(() =>
+    createJsonLinesResponse([
+      {
+        found: {
+          fields: {
+            location: { geoPointValue: { latitude: 1, longitude: 2 } },
+          },
+          name: eventName,
+        },
+      },
+    ]),
+  );
+  await assert.rejects(
+    () => firestoreModule.getDoc(event),
+    /geo point values are not supported/,
+  );
+
+  queuedResponses.push(() =>
+    createJsonLinesResponse([
+      {
+        found: {
+          fields: {
+            parent: {
+              referenceValue: "projects/codec-project/databases/codec/documents/cities/SF",
+            },
+          },
+          name: eventName,
+        },
+      },
+    ]),
+  );
+  await assert.rejects(
+    () => firestoreModule.getDoc(event),
+    /reference values are not supported/,
+  );
+
+  // Encoding an invalid Date must fail loudly rather than emit a bad timestamp.
+  await assert.rejects(
+    () => firestoreModule.setDoc(event, { occurredAt: new Date(Number.NaN) }),
+    /timestamp values must be valid Date instances/,
+  );
 
   await appModule.deleteApp(app);
 }

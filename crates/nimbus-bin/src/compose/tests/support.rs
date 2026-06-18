@@ -175,7 +175,7 @@ pub(super) fn write_container_machine_manifest(
             }
         },
         "last_exit_code": null,
-        "launch_mode": "plan_only",
+        "start_mode": "plan_only",
         "shutdown_requested": matches!(status, SandboxStatus::Stopped),
         "status": status
     });

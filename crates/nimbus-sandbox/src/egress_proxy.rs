@@ -317,9 +317,15 @@ fn handle_client(
         ProxyRequestMode::ForwardHttp { .. } => {
             let request = render_upstream_request(&parsed);
             upstream.write_all(request.as_bytes())?;
+            // Flush the body bytes that arrived co-buffered with the headers,
+            // then relay both directions: the rest of the client request body
+            // streams to upstream while the response streams back. Without the
+            // bidirectional relay, a request body larger than the initial header
+            // read was silently truncated and the request stalled until timeout
+            // (M3). CONNECT already did this via `tunnel_connect`; the forward
+            // path was the asymmetric exception.
             upstream.write_all(&buffer[parsed.body_offset..])?;
-            io::copy(&mut upstream, &mut client)?;
-            Ok(())
+            relay_bidirectional(client, upstream)
         }
         ProxyRequestMode::ConnectTunnel => {
             tunnel_connect(client, upstream, &buffer[parsed.body_offset..])
@@ -467,6 +473,15 @@ fn tunnel_connect(
     if !buffered_client_bytes.is_empty() {
         upstream.write_all(buffered_client_bytes)?;
     }
+    relay_bidirectional(client, upstream)
+}
+
+/// Relays bytes in both directions between an already-prepared client and
+/// upstream socket until each side closes its write half. Both the CONNECT
+/// tunnel and the plain-HTTP forward path use this so a request body larger
+/// than the initial header read is fully delivered upstream (and the full
+/// response streamed back), instead of being truncated.
+fn relay_bidirectional(mut client: TcpStream, mut upstream: TcpStream) -> io::Result<()> {
     let mut upstream_reader = upstream.try_clone()?;
     let mut client_writer = client.try_clone()?;
     let upstream_to_client = thread::spawn(move || {
@@ -640,6 +655,49 @@ mod tests {
         assert!(
             upstream_request.starts_with("GET /ok HTTP/1.1"),
             "proxy should forward origin-form request, got: {upstream_request}"
+        );
+    }
+
+    #[test]
+    fn egress_proxy_forwards_full_request_body_larger_than_header_buffer() {
+        // The proxy reads headers in 1024-byte chunks and stops at the header
+        // terminator, so only a small body prefix is co-buffered. A 16 KiB body
+        // must still reach upstream in full via the bidirectional relay; before
+        // M3 the forward path truncated it to the co-buffered prefix.
+        let body_len = 16 * 1024;
+        let upstream = TestHttpBodyEchoServer::start();
+        let proxy = start_test_proxy(allow_policy([SandboxEgressRule::new(
+            "allowed",
+            PublishedEndpointProtocol::Http,
+            "allowed.test",
+            upstream.addr.port(),
+        )
+        .with_methods(["POST"])
+        .with_path_prefixes(["/upload"])
+        .allow_internal_ips(true)]));
+
+        let body = "x".repeat(body_len);
+        let response = proxy_request(
+            proxy.local_addr(),
+            format!(
+                "POST http://allowed.test:{}/upload HTTP/1.1\r\nHost: allowed.test\r\nContent-Length: {}\r\n\r\n{}",
+                upstream.addr.port(),
+                body_len,
+                body
+            ),
+        );
+
+        assert!(
+            response.starts_with("HTTP/1.1 200 OK"),
+            "proxy should relay the upstream response after the full body, got: {response}"
+        );
+        let received = upstream
+            .body_len
+            .recv_timeout(Duration::from_secs(2))
+            .expect("upstream should receive the request body");
+        assert_eq!(
+            received, body_len,
+            "proxy must forward the entire request body, not just the co-buffered prefix"
         );
     }
 
@@ -1082,6 +1140,75 @@ mod tests {
             Self {
                 addr,
                 request: request_rx,
+            }
+        }
+    }
+
+    /// Upstream that reads a full Content-Length request body and reports how
+    /// many body bytes it actually received, so a test can prove the proxy
+    /// relayed the entire body rather than a truncated prefix.
+    struct TestHttpBodyEchoServer {
+        addr: SocketAddr,
+        body_len: mpsc::Receiver<usize>,
+    }
+
+    impl TestHttpBodyEchoServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).expect("test upstream should bind");
+            let addr = listener
+                .local_addr()
+                .expect("upstream address should resolve");
+            let (body_tx, body_rx) = mpsc::channel();
+            thread::spawn(move || {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let mut buffer = Vec::new();
+                let mut chunk = [0_u8; 1024];
+                let header_end = loop {
+                    match stream.read(&mut chunk) {
+                        Ok(0) => break None,
+                        Ok(read) => {
+                            buffer.extend_from_slice(&chunk[..read]);
+                            if let Some(pos) =
+                                buffer.windows(4).position(|window| window == b"\r\n\r\n")
+                            {
+                                break Some(pos);
+                            }
+                        }
+                        Err(_) => break None,
+                    }
+                };
+                let Some(header_end) = header_end else {
+                    return;
+                };
+                let content_length = String::from_utf8_lossy(&buffer[..header_end])
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.trim()
+                            .eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .unwrap_or(0);
+                let mut received = buffer.len() - (header_end + 4);
+                while received < content_length {
+                    match stream.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(read) => received += read,
+                        Err(_) => break,
+                    }
+                }
+                let _ = body_tx.send(received);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                );
+            });
+            Self {
+                addr,
+                body_len: body_rx,
             }
         }
     }

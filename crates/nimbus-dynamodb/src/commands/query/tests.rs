@@ -928,16 +928,26 @@ fn scan_invalid_segment_is_rejected() {
 }
 
 #[test]
-fn scan_index_name_is_rejected_until_d4() {
+fn scan_unknown_index_name_is_rejected() {
     let (engine, ctx, _t) = fixture();
     create_events(&engine, &ctx);
+    // "Events" has no index named "gsi1"; scanning a known index is covered by
+    // `scan_index_is_sparse_and_projected`.
     let err = scan(
         &engine,
         &ctx,
         serde_json::from_value(json!({ "TableName": "Events", "IndexName": "gsi1" })).unwrap(),
     )
-    .expect_err("GSI scan not yet supported");
-    assert!(matches!(err, DynamoDbError::ValidationException(_)));
+    .expect_err("scanning a nonexistent index must fail");
+    match err {
+        DynamoDbError::ValidationException(message) => {
+            assert!(
+                message.contains("does not have the specified index") && message.contains("gsi1"),
+                "validation error should name the unknown index: {message}"
+            );
+        }
+        other => panic!("expected ValidationException for an unknown index, got {other:?}"),
+    }
 }
 
 #[test]

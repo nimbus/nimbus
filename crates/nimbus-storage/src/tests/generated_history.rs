@@ -324,7 +324,7 @@ fn build_generated_task_durable_record(
     step_index: usize,
     table_id: &TableId,
     documents_by_slot: &mut BTreeMap<u32, Document>,
-) -> DurableMutationRecord {
+) -> TenantEventRecord {
     let sequence = SequenceNumber(
         store
             .latest_sequence()
@@ -401,7 +401,7 @@ fn build_generated_task_durable_record(
         }
     };
 
-    DurableMutationRecord::new(
+    TenantEventRecord::new(
         sequence,
         Timestamp(80_000_u64.saturating_add(step_index as u64)),
         writes,
@@ -773,7 +773,7 @@ fn crash_replay_diagnostic_and_retention_snapshot_diagnostic_are_seed_replayable
     let path = dir.path().join("tenant.redb");
     let table_id = TableId::new();
     let document = sample_document("tasks_crash_replay", "pending");
-    let record = DurableMutationRecord::new(
+    let record = TenantEventRecord::new(
         SequenceNumber(1),
         Timestamp(100),
         vec![WriteOp {

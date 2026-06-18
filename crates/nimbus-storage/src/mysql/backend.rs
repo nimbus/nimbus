@@ -478,7 +478,7 @@ pub(super) async fn load_durable_records_from_session<C>(
     session: &mut C,
     database_name: &str,
     sequence: SequenceNumber,
-) -> Result<Vec<DurableMutationRecord>>
+) -> Result<Vec<TenantEventRecord>>
 where
     C: Queryable,
 {
@@ -493,7 +493,7 @@ where
     rows.into_iter()
         .map(|row| {
             let (record_blob,): (Vec<u8>,) = mysql_async::from_row(row);
-            deserialize_durable_record(record_blob.as_slice())
+            deserialize_tenant_event_record(record_blob.as_slice())
         })
         .collect()
 }
@@ -943,7 +943,7 @@ where
 pub(super) async fn apply_durable_record_in_session<C>(
     session: &mut C,
     database_name: &str,
-    record: &DurableMutationRecord,
+    record: &TenantEventRecord,
 ) -> Result<()>
 where
     C: Queryable,

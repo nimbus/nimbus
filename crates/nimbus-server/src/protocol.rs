@@ -1,4 +1,4 @@
-use nimbus_core::{Document, DurableMutationRecord, Query, Schema};
+use nimbus_core::{Document, Query, Schema, TenantEventRecord};
 use nimbus_engine::{MaterializedJournalSnapshot, TenantEngineDiagnosticsSnapshot};
 use nimbus_runtime::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
@@ -168,7 +168,7 @@ pub(crate) struct JournalStreamRequest {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct JournalStreamResponse {
-    pub records: Vec<DurableMutationRecord>,
+    pub records: Vec<TenantEventRecord>,
     pub next_cursor: u64,
     pub latest_sequence: u64,
     pub cursor_floor: u64,

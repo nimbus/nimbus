@@ -44,7 +44,7 @@ impl SqliteTenantStore {
     pub fn read_durable_journal_from(
         &self,
         sequence: SequenceNumber,
-    ) -> Result<Vec<DurableMutationRecord>> {
+    ) -> Result<Vec<TenantEventRecord>> {
         self.read_snapshot()?.read_durable_journal_from(sequence)
     }
 
@@ -128,7 +128,7 @@ impl SqliteTenantStore {
     pub fn rebuild_materialized_journal_from_snapshot(
         &self,
         snapshot: &MaterializedJournalSnapshot,
-        journal_tail: &[DurableMutationRecord],
+        journal_tail: &[TenantEventRecord],
         target_sequence: Option<SequenceNumber>,
     ) -> Result<JournalProgress> {
         snapshot.validate()?;
@@ -216,7 +216,7 @@ impl SqliteTenantStore {
         Ok(progress)
     }
 
-    pub fn append_durable_records_batch(&self, records: &[DurableMutationRecord]) -> Result<()> {
+    pub fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
         if records.is_empty() {
             return Ok(());
         }
@@ -234,7 +234,7 @@ impl SqliteTenantStore {
             }
             conn.execute(
                 "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
-                params![record.sequence.0, serialize_durable_record(record)?],
+                params![record.sequence.0, serialize_tenant_event_record(record)?],
             )
             .map_err(map_sqlite_error)?;
             next = next.saturating_add(1);
@@ -248,7 +248,7 @@ impl SqliteTenantStore {
         Ok(())
     }
 
-    pub fn apply_durable_records_batch(&self, records: &[DurableMutationRecord]) -> Result<()> {
+    pub fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
         if records.is_empty() {
             return Ok(());
         }
@@ -316,7 +316,7 @@ impl SqliteTenantStore {
     }
 }
 
-fn durable_record_changes_schema_cache(record: &DurableMutationRecord) -> bool {
+fn durable_record_changes_schema_cache(record: &TenantEventRecord) -> bool {
     record.events.iter().any(|event| {
         matches!(
             event,
@@ -357,7 +357,7 @@ pub(super) fn append_tenant_event_record(
         &record.events,
     )?;
     record_index_versions_for_events_in_conn(conn, record.sequence, &record.events)?;
-    let payload = serialize_durable_record(&record)?;
+    let payload = serialize_tenant_event_record(&record)?;
     conn.execute(
         "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
         params![sequence.0, payload],
@@ -374,7 +374,7 @@ pub(super) fn append_tenant_event_record(
 
 pub(super) fn apply_durable_record_in_conn(
     conn: &Connection,
-    record: &DurableMutationRecord,
+    record: &TenantEventRecord,
 ) -> Result<()> {
     if record.events.is_empty() {
         if let Some(execution_id) = record.scheduled_execution_id.as_deref() {

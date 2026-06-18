@@ -49,6 +49,8 @@ pub(crate) fn evaluate_with_index_cancellable_for_principal(
             Ok(documents)
         }
         Some(prepared) => {
+            runtime.wait_for_applied_sequence_blocking(required_sequence);
+            check_cancel()?;
             let plan_kind = query_plan_metric_kind(&prepared.plan);
             let documents = query_documents_for_read_surface_prepared_cancellable(
                 &runtime.store,

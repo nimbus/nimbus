@@ -10,6 +10,7 @@ import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import { formatAbsoluteTime, formatDuration, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
+import { locationLine, parseRunError } from "../../lib/run-error";
 
 export const Route = createFileRoute("/developer/compute_/runs_/$runId")({
   loader: async ({ params }) => {
@@ -93,7 +94,9 @@ function RunDetailBody({
         events={events}
       />
       <CorrelatedEvents events={events} runId={runId} />
-      {run.error ? <ErrorPanel error={run.error} /> : null}
+      {run.error ? (
+        <ErrorPanel error={run.error} functionPath={run.functionPath} />
+      ) : null}
     </div>
   );
 }
@@ -382,13 +385,15 @@ function CorrelatedEvents({
   );
 }
 
-function ErrorPanel({ error }: { error: unknown }) {
-  let body: string;
-  try {
-    body = typeof error === "string" ? error : JSON.stringify(error, null, 2);
-  } catch {
-    body = String(error);
-  }
+function ErrorPanel({
+  error,
+  functionPath,
+}: {
+  error: unknown;
+  functionPath?: string;
+}) {
+  const { message, location } = parseRunError(error);
+  const line = location ? locationLine(location) : undefined;
   return (
     <div
       className="rounded-md border border-danger bg-surface p-4"
@@ -397,8 +402,28 @@ function ErrorPanel({ error }: { error: unknown }) {
       <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.14em] text-danger">
         Error
       </h2>
+      {location ? (
+        functionPath && line ? (
+          <Link
+            to="/developer/compute/$function"
+            params={{ function: functionPath }}
+            search={{ tab: "source", line }}
+            className="mb-2 inline-block rounded border border-danger px-2 py-0.5 font-mono text-[11px] text-danger hover:bg-surface-2"
+            data-testid="run-detail-error-location"
+          >
+            at {location} ↗
+          </Link>
+        ) : (
+          <span
+            className="mb-2 inline-block font-mono text-[11px] text-danger"
+            data-testid="run-detail-error-location"
+          >
+            at {location}
+          </span>
+        )
+      ) : null}
       <pre className="overflow-auto font-mono text-xs text-default whitespace-pre-wrap">
-        {body}
+        {message}
       </pre>
     </div>
   );

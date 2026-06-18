@@ -1,23 +1,28 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { useNimbusConnectionState, useQuery } from "@nimbus/nimbus/react";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Doc } from "../../../convex/_generated/dataModel";
+import { CopyChip } from "../../components/copy-chip";
 import { LoadingCell } from "../../components/loading-cell";
-import { RelativeTime } from "../../components/time";
+import { PageHeader } from "../../components/page-header";
+import { StateChip } from "../../components/state-chip";
+import { RelativeTime, Uptime } from "../../components/time";
 import {
   type ConnectionSnapshot,
+  type LoadingValue,
   toLoadingValue,
 } from "../../shell/loading-value";
 import { fetchTenants } from "../../shell/tenants-fetch";
 
 export const Route = createFileRoute("/operator/")({
-  component: SystemOverviewPage,
+  component: NodesPage,
 });
 
 type SystemStatus = {
   version?: string;
+  buildHash?: string;
   health?: string;
   startedAt?: number;
   updatedAt?: number;
@@ -26,7 +31,12 @@ type SystemStatus = {
 
 type ListenerDoc = Doc<"listeners">;
 
-function SystemOverviewPage() {
+// A "node" is a host running the Nimbus binary (the `nimbus node` lifecycle).
+// Multi-node clustering is not wired yet, so this deployment is exactly one
+// node — the local host, sourced from system status. The page is shaped as a
+// node list so it scales to a real cluster without a redesign. This is
+// distinct from a "machine" (the outer dev VM under Operator → Machines).
+function NodesPage() {
   const conn = useConnSnapshot();
   const status = useQuery(api.system.status, {}) as
     | SystemStatus
@@ -60,33 +70,127 @@ function SystemOverviewPage() {
   return (
     <section
       className="flex h-full flex-col gap-4 overflow-auto px-6 py-5"
-      data-testid="page-admin-system"
+      data-testid="page-operator-nodes"
     >
-      <header>
-        <h1 className="text-default" style={{ fontSize: "var(--text-xl)" }}>
-          System
-        </h1>
-        <p className="text-sm text-muted">
-          Server-wide health, runtime, and live counts across every tenant.
-        </p>
-      </header>
+      <PageHeader
+        title="Nodes"
+        subtitle="Hosts running the Nimbus binary. This deployment is a single node today — multi-node clustering is not active yet."
+      />
 
-      <div
-        className="grid grid-cols-1 gap-3 md:grid-cols-2"
-        data-testid="system-overview"
-      >
-        <Field label="Nimbus version" testid="system-overview-version">
-          <LoadingCell value={statusLv} testid="system-overview-version">
-            {(s) => s.version ?? "—"}
+      <NodeCard status={statusLv} />
+
+      <section className="flex flex-col gap-2">
+        <h2 className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+          Hosted on this node
+        </h2>
+        <div
+          className="grid grid-cols-2 gap-3 md:grid-cols-4"
+          data-testid="nodes-hosted"
+        >
+          <Field
+            label="Tenants"
+            testid="nodes-hosted-tenants"
+            to="/operator/tenants"
+          >
+            <LoadingCell value={tenantsLv} testid="nodes-hosted-tenants">
+              {(n) => n.toString()}
+            </LoadingCell>
+          </Field>
+          <Field
+            label="Machines"
+            testid="nodes-hosted-machines"
+            to="/operator/machines"
+          >
+            <LoadingCell value={machinesLv} testid="nodes-hosted-machines">
+              {(m) => m.length.toString()}
+            </LoadingCell>
+          </Field>
+          <Field
+            label="Services"
+            testid="nodes-hosted-services"
+            to="/operator/services"
+          >
+            <LoadingCell value={servicesLv} testid="nodes-hosted-services">
+              {(s) => s.length.toString()}
+            </LoadingCell>
+          </Field>
+          <Field
+            label="Listeners"
+            testid="nodes-hosted-listeners"
+            to="/operator/network"
+          >
+            <LoadingCell value={listenersLv} testid="nodes-hosted-listeners">
+              {(items) => <ListenersValue listeners={items} />}
+            </LoadingCell>
+          </Field>
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function NodeCard({ status }: { status: LoadingValue<SystemStatus> }) {
+  return (
+    <article
+      className="flex flex-col overflow-hidden rounded-md border border-app bg-surface"
+      data-testid="node-row"
+    >
+      <header className="flex items-start justify-between gap-3 border-b border-app px-4 py-3">
+        <div className="flex flex-col gap-1">
+          <LoadingCell value={status} testid="node-address">
+            {(s) =>
+              s.details?.listenAddress ? (
+                <CopyChip
+                  label="listen address"
+                  value={s.details.listenAddress}
+                  testid="node-address"
+                >
+                  {s.details.listenAddress}
+                </CopyChip>
+              ) : (
+                <span className="font-mono text-sm text-default">
+                  local node
+                </span>
+              )
+            }
           </LoadingCell>
-        </Field>
-        <Field label="Health" testid="system-overview-health">
-          <LoadingCell value={statusLv} testid="system-overview-health">
-            {(s) => s.health ?? "—"}
+          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+            local host · standalone
+          </span>
+        </div>
+        <LoadingCell value={status} testid="node-health">
+          {(s) => <StateChip state={s.health ?? "unknown"} />}
+        </LoadingCell>
+      </header>
+      <div className="grid grid-cols-2 gap-px bg-surface-2 md:grid-cols-4">
+        <Cell label="Nimbus version">
+          <LoadingCell value={status} testid="node-version">
+            {(s) => (
+              <>
+                {s.version ?? "—"}
+                {s.buildHash ? (
+                  <span className="text-muted">
+                    {" "}
+                    +{s.buildHash.slice(0, 7)}
+                  </span>
+                ) : null}
+              </>
+            )}
           </LoadingCell>
-        </Field>
-        <Field label="Server uptime" testid="system-overview-uptime">
-          <LoadingCell value={statusLv} testid="system-overview-uptime">
+        </Cell>
+        <Cell label="Uptime">
+          <LoadingCell value={status} testid="node-uptime">
+            {(s) =>
+              typeof s.startedAt === "number" ? (
+                <Uptime startedAtMs={s.startedAt} />
+              ) : (
+                "—"
+              )
+            }
+          </LoadingCell>
+        </Cell>
+        <Cell label="Started">
+          <LoadingCell value={status} testid="node-started">
             {(s) =>
               typeof s.startedAt === "number" ? (
                 <RelativeTime epochMs={s.startedAt} />
@@ -95,34 +199,20 @@ function SystemOverviewPage() {
               )
             }
           </LoadingCell>
-        </Field>
-        <Field label="Listen address" testid="system-overview-listen">
-          <LoadingCell value={statusLv} testid="system-overview-listen">
-            {(s) => s.details?.listenAddress ?? "—"}
+        </Cell>
+        <Cell label="Updated">
+          <LoadingCell value={status} testid="node-updated">
+            {(s) =>
+              typeof s.updatedAt === "number" ? (
+                <RelativeTime epochMs={s.updatedAt} />
+              ) : (
+                "—"
+              )
+            }
           </LoadingCell>
-        </Field>
-        <Field label="Tenants" testid="system-overview-tenants">
-          <LoadingCell value={tenantsLv} testid="system-overview-tenants">
-            {(n) => n.toString()}
-          </LoadingCell>
-        </Field>
-        <Field label="Machines" testid="system-overview-machines">
-          <LoadingCell value={machinesLv} testid="system-overview-machines">
-            {(m) => m.length.toString()}
-          </LoadingCell>
-        </Field>
-        <Field label="Services" testid="system-overview-services">
-          <LoadingCell value={servicesLv} testid="system-overview-services">
-            {(s) => s.length.toString()}
-          </LoadingCell>
-        </Field>
-        <Field label="Listeners" testid="system-overview-listeners">
-          <LoadingCell value={listenersLv} testid="system-overview-listeners">
-            {(items) => <ListenersValue listeners={items} />}
-          </LoadingCell>
-        </Field>
+        </Cell>
       </div>
-    </section>
+    </article>
   );
 }
 
@@ -130,17 +220,56 @@ function Field({
   label,
   children,
   testid,
+  to,
 }: {
   label: string;
   children: React.ReactNode;
   testid: string;
+  to?:
+    | "/operator/tenants"
+    | "/operator/machines"
+    | "/operator/services"
+    | "/operator/network";
 }) {
+  const body = (
+    <>
+      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+        {label}
+      </span>
+      <span className="font-mono text-sm text-default">{children}</span>
+    </>
+  );
+  if (to) {
+    return (
+      <Link
+        to={to}
+        data-testid={testid}
+        className="flex flex-col gap-1 rounded-md border border-app bg-surface px-3 py-2 hover:border-strong"
+      >
+        {body}
+      </Link>
+    );
+  }
   return (
     <div
       className="flex flex-col gap-1 rounded-md border border-app bg-surface px-3 py-2"
       data-testid={testid}
     >
-      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+      {body}
+    </div>
+  );
+}
+
+function Cell({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1 bg-surface px-3 py-2">
+      <span className="text-[10px] uppercase tracking-[0.14em] text-muted">
         {label}
       </span>
       <span className="font-mono text-sm text-default">{children}</span>
@@ -155,9 +284,7 @@ function ListenersValue({ listeners }: { listeners: ListenerDoc[] }) {
     if (listener.adapter) adapters.add(listener.adapter);
   }
   const adapterLabel =
-    adapters.size === 0
-      ? ""
-      : ` · ${Array.from(adapters).sort().join(", ")}`;
+    adapters.size === 0 ? "" : ` · ${Array.from(adapters).sort().join(", ")}`;
   return (
     <>
       {listeners.length}

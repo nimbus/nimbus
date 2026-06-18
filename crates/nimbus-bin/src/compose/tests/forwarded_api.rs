@@ -414,7 +414,7 @@ services:
             .join("service-sandboxes")
             .join("container"),
     );
-    backend_config.launch_mode = ContainerLaunchMode::PlanOnly;
+    backend_config.start_mode = ContainerStartMode::PlanOnly;
     let state = MachineApiState {
         control_data_dir: machine_control_data_dir.clone(),
         listen_mode: MachineApiListenMode::DirectSocket,

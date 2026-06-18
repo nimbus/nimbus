@@ -1,14 +1,14 @@
-//! LR12: `nimbus node run` — the production caller for
-//! `NodeWorkloadReconciler`, lifting the TSB14 deferral ("no production
-//! node/control-plane caller that starts, stops, or inspects tenant
-//! workloads through `HostLifecycleBackend`").
+//! Internal node-local workload executor for `NodeWorkloadReconciler`,
+//! lifting the TSB14 deferral ("no production node/control-plane caller
+//! that starts, stops, or inspects tenant workloads through
+//! `HostLifecycleBackend`").
 //!
-//! Scope is deliberately the node side only: an operator (or a unit file)
-//! describes one workload, the workload is admitted through the real
-//! tenant-isolation authority (`TenantIsolationContext::operator`), and
-//! the reconciler drives it to its desired state against the NDB systemd
-//! transient-unit backend in a converge loop. Control-plane scheduling
-//! and multi-node assignment remain out of scope.
+//! Scope is deliberately the node side only: an internal caller describes
+//! one assigned workload, the workload is admitted through the real
+//! tenant-isolation authority (`TenantIsolationContext::operator`), and the
+//! reconciler drives it to its desired state against the NDB systemd transient
+//! unit backend in a converge loop. User-facing workload commands live above
+//! this mechanism.
 
 use std::error::Error;
 use std::path::PathBuf;
@@ -23,7 +23,7 @@ use nimbus_server::{TenantIsolationContext, TenantIsolationPolicyInput, Workload
 use crate::cli_ux;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum NodeRunBus {
+pub(crate) enum NodeWorkloadExecutorBus {
     /// Per-user systemd manager (`systemctl --user`).
     Session,
     /// System systemd manager.
@@ -32,7 +32,7 @@ pub(crate) enum NodeRunBus {
 
 #[derive(Debug, Args)]
 #[command(help_template = cli_ux::COMMAND_HELP_TEMPLATE)]
-pub(crate) struct NodeRunCommand {
+pub(crate) struct NodeWorkloadExecutorCommand {
     /// Tenant the workload belongs to.
     #[arg(long)]
     pub(crate) tenant: String,
@@ -55,8 +55,8 @@ pub(crate) struct NodeRunCommand {
 
     /// systemd bus to drive (production units use the system bus; the
     /// integration lane uses the session bus).
-    #[arg(long, value_enum, default_value_t = NodeRunBus::System)]
-    pub(crate) bus: NodeRunBus,
+    #[arg(long, value_enum, default_value_t = NodeWorkloadExecutorBus::System)]
+    pub(crate) bus: NodeWorkloadExecutorBus,
 
     /// JSONL file the reconciler appends status evidence to.
     #[arg(long)]
@@ -150,7 +150,7 @@ pub(crate) fn admit_workload_spec(
     stop: bool,
 ) -> Result<TenantWorkloadSpec, Box<dyn Error>> {
     let tenant_id = nimbus::TenantId::new(tenant)?;
-    let context = TenantIsolationContext::operator(tenant_id, "node.run")
+    let context = TenantIsolationContext::operator(tenant_id, "node.workload_executor")
         .with_workload_location(nimbus_server::WorkloadLocation::new().with_node_id(node_id));
     let decision = context.admit_decision(TenantIsolationPolicyInput::new(
         WorkloadAttributes::service(workload),
@@ -175,18 +175,20 @@ pub(crate) fn lifecycle_request(
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) async fn run_node_run_command(command: NodeRunCommand) -> Result<(), Box<dyn Error>> {
+pub(crate) async fn run_node_workload_executor_command(
+    command: NodeWorkloadExecutorCommand,
+) -> Result<(), Box<dyn Error>> {
     use nimbus_server::local_enforcement::{
         BusKind, NodeWorkloadReconciler, SystemdTransientUnitBackend, ZbusSystemdClient,
     };
 
     let bus = match command.bus {
-        NodeRunBus::Session => BusKind::Session,
-        NodeRunBus::System => BusKind::System,
+        NodeWorkloadExecutorBus::Session => BusKind::Session,
+        NodeWorkloadExecutorBus::System => BusKind::System,
     };
     let client = ZbusSystemdClient::new(bus).await.map_err(|error| {
         format!(
-            "nimbus node run requires a reachable systemd D-Bus manager \
+            "nimbus node-workload-executor requires a reachable systemd D-Bus manager \
              ({:?} bus): {error}",
             command.bus
         )
@@ -207,7 +209,7 @@ pub(crate) async fn run_node_run_command(command: NodeRunCommand) -> Result<(), 
         let outcome = reconciler
             .reconcile_spec(spec.clone(), request.clone())
             .await?;
-        emit_node_run_info(format!(
+        emit_node_workload_executor_info(format!(
             "workload {} desired={:?} action={:?}",
             outcome.workload_id().as_str(),
             outcome.desired_state(),
@@ -220,7 +222,7 @@ pub(crate) async fn run_node_run_command(command: NodeRunCommand) -> Result<(), 
             _ = tokio::time::sleep(std::time::Duration::from_secs(command.interval_secs.max(1))) => {}
             result = tokio::signal::ctrl_c() => {
                 result?;
-                emit_node_run_info("shutting down node reconcile loop");
+                emit_node_workload_executor_info("shutting down node reconcile loop");
                 return Ok(());
             }
         }
@@ -228,7 +230,9 @@ pub(crate) async fn run_node_run_command(command: NodeRunCommand) -> Result<(), 
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(crate) async fn run_node_run_command(command: NodeRunCommand) -> Result<(), Box<dyn Error>> {
+pub(crate) async fn run_node_workload_executor_command(
+    command: NodeWorkloadExecutorCommand,
+) -> Result<(), Box<dyn Error>> {
     // Validate the inputs so configuration errors surface on any platform,
     // then fail actionably: the reconciler drives systemd transient units.
     let _spec = admit_workload_spec(
@@ -239,14 +243,14 @@ pub(crate) async fn run_node_run_command(command: NodeRunCommand) -> Result<(), 
     )?;
     let _request = lifecycle_request(&command.exec, &command.args)?;
     Err(
-        "nimbus node run drives systemd transient units and requires a Linux systemd host"
+        "nimbus node-workload-executor drives systemd transient units and requires a Linux systemd host"
             .to_string()
             .into(),
     )
 }
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn emit_node_run_info(message: impl AsRef<str>) {
+fn emit_node_workload_executor_info(message: impl AsRef<str>) {
     if cli_ux::info_output_enabled() {
         let _ = cli_ux::write_stderr_prefixed_line("info:", message.as_ref());
     } else {
@@ -254,23 +258,31 @@ fn emit_node_run_info(message: impl AsRef<str>) {
     }
 }
 
-/// NDB-lane live test: the full `nimbus node run --once` path converges a
+/// NDB-lane live test: the hidden node-workload-executor path converges a
 /// real session-systemd transient unit to running, observes idempotency,
 /// then converges it to stopped — with JSONL evidence for every pass.
 /// Same no-silent-skip posture as `zbus_systemd_live`: when the gate is
 /// on, an unreachable session bus is a FAILURE.
-#[cfg(all(test, target_os = "linux", feature = "node-run-integration-tests"))]
+#[cfg(all(
+    test,
+    target_os = "linux",
+    feature = "node-workload-executor-integration-tests"
+))]
 mod live_tests {
     use super::*;
 
-    fn command(workload: &str, status_path: std::path::PathBuf, stop: bool) -> NodeRunCommand {
-        NodeRunCommand {
+    fn command(
+        workload: &str,
+        status_path: std::path::PathBuf,
+        stop: bool,
+    ) -> NodeWorkloadExecutorCommand {
+        NodeWorkloadExecutorCommand {
             tenant: "demo".to_string(),
             workload: workload.to_string(),
             exec: "/usr/bin/sleep".to_string(),
             args: vec!["30".to_string()],
             node_id: "ci-node".to_string(),
-            bus: NodeRunBus::Session,
+            bus: NodeWorkloadExecutorBus::Session,
             status_path,
             interval_secs: 1,
             once: true,
@@ -279,7 +291,7 @@ mod live_tests {
     }
 
     #[tokio::test]
-    async fn node_run_converges_transient_unit() {
+    async fn node_workload_executor_converges_transient_unit() {
         let temp = tempfile::tempdir().expect("tempdir should build");
         let status_path = temp.path().join("status.jsonl");
         let workload = format!(
@@ -291,13 +303,13 @@ mod live_tests {
                 .as_nanos()
         );
 
-        run_node_run_command(command(&workload, status_path.clone(), false))
+        run_node_workload_executor_command(command(&workload, status_path.clone(), false))
             .await
             .expect("first pass must converge the workload to running");
-        run_node_run_command(command(&workload, status_path.clone(), false))
+        run_node_workload_executor_command(command(&workload, status_path.clone(), false))
             .await
             .expect("second pass must observe the running unit idempotently");
-        run_node_run_command(command(&workload, status_path.clone(), true))
+        run_node_workload_executor_command(command(&workload, status_path.clone(), true))
             .await
             .expect("stop pass must converge the workload to stopped");
 

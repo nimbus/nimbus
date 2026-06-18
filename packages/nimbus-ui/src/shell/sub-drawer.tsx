@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { X } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, type LucideIcon } from "lucide-react";
 import {
   createContext,
   type ReactNode,
@@ -11,6 +11,14 @@ import {
 import { cn } from "../lib/cn";
 import { useUiStore } from "../store/ui-store";
 
+// Background double-click toggles collapse; ignore double-clicks that land on an
+// interactive element (links, buttons, inputs) so they keep their own behavior.
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return Boolean(
+    (target as HTMLElement | null)?.closest("a,button,input,textarea,select"),
+  );
+}
+
 export type SubDrawerItem<TId extends string = string> = {
   readonly id: TId;
   readonly label: string;
@@ -21,10 +29,21 @@ export type SubDrawerItem<TId extends string = string> = {
   readonly count?: number | null;
 };
 
+// Items shown in the collapsed rail: each sub-view as an icon with the active
+// one indicated. Clicking one switches sub-view without expanding the drawer.
+export type SubDrawerRailItem = {
+  readonly id: string;
+  readonly label: string;
+  readonly icon: LucideIcon;
+  readonly active: boolean;
+  readonly onSelect: () => void;
+};
+
 export type StaticSubDrawerSpec<TId extends string = string> = {
   readonly kind: "static";
   readonly title: string;
   readonly items: ReadonlyArray<SubDrawerItem<TId>>;
+  readonly railItems?: ReadonlyArray<SubDrawerRailItem>;
 };
 
 export type DynamicSubDrawerSpec = {
@@ -32,6 +51,7 @@ export type DynamicSubDrawerSpec = {
   readonly title: string;
   readonly search?: { placeholder: string };
   readonly children: ReactNode;
+  readonly railItems?: ReadonlyArray<SubDrawerRailItem>;
 };
 
 export type SubDrawerSpec<TId extends string = string> =
@@ -91,15 +111,75 @@ export function SubDrawer() {
   const ctx = useContext(SubDrawerContext);
   const open = useUiStore((s) => s.subDrawerOpen);
   const setSubDrawerOpen = useUiStore((s) => s.setSubDrawerOpen);
+  const toggleSubDrawer = useUiStore((s) => s.toggleSubDrawer);
   const spec = ctx?.spec ?? null;
   const search = ctx?.search ?? "";
   const setSearch = ctx?.setSearch ?? (() => {});
-  if (!spec || !open) return null;
+  if (!spec) return null;
+
+  // Collapsed: a thin rail with an expand toggle (mirrors the primary drawer).
+  // The panel is never fully removed, so it is always reachable again.
+  if (!open) {
+    return (
+      <aside
+        aria-label={spec.title}
+        data-testid="sub-drawer"
+        data-kind={spec.kind}
+        data-collapsed="true"
+        onDoubleClick={(e) => {
+          if (!isInteractiveTarget(e.target)) toggleSubDrawer();
+        }}
+        className="flex h-full w-8 shrink-0 flex-col gap-1 border-r border-app bg-surface py-2"
+      >
+        <button
+          type="button"
+          onClick={() => setSubDrawerOpen(true)}
+          aria-label="Expand sub-drawer"
+          title="Expand sub-drawer"
+          data-testid="sub-drawer-toggle"
+          className="flex h-7 w-full items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-default"
+        >
+          <ChevronsRight size={12} aria-hidden />
+        </button>
+        {spec.railItems?.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={item.onSelect}
+              aria-label={item.label}
+              aria-current={item.active ? "page" : undefined}
+              title={item.label}
+              data-testid={`sub-drawer-rail-item-${item.id}`}
+              data-active={item.active ? "true" : "false"}
+              className={cn(
+                "flex h-8 w-full items-center justify-center border-l-2 border-transparent text-muted transition-colors hover:bg-surface-2 hover:text-default",
+                item.active && "bg-surface-2 text-default",
+              )}
+              style={
+                item.active
+                  ? { borderLeftColor: "var(--color-brand)" }
+                  : undefined
+              }
+            >
+              <Icon size={14} aria-hidden />
+            </button>
+          );
+        })}
+      </aside>
+    );
+  }
+
   return (
     <aside
       aria-label={spec.title}
       data-testid="sub-drawer"
       data-kind={spec.kind}
+      data-collapsed="false"
+      onDoubleClick={(e) => {
+        if (!isInteractiveTarget(e.target)) toggleSubDrawer();
+      }}
       className="flex h-full w-64 shrink-0 flex-col border-r border-app bg-surface"
     >
       <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-app px-3">
@@ -109,12 +189,12 @@ export function SubDrawer() {
         <button
           type="button"
           onClick={() => setSubDrawerOpen(false)}
-          aria-label="Close sub-drawer"
-          title="Close sub-drawer"
-          data-testid="sub-drawer-close"
+          aria-label="Collapse sub-drawer"
+          title="Collapse sub-drawer"
+          data-testid="sub-drawer-toggle"
           className="flex h-6 w-6 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-default"
         >
-          <X size={12} aria-hidden />
+          <ChevronsLeft size={12} aria-hidden />
         </button>
       </header>
       {spec.kind === "dynamic" && spec.search ? (

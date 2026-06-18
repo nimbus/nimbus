@@ -47,8 +47,9 @@ pub use nimbus_server::{
     BuiltInServiceSpec, ConvexRegistry, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
     ExternalServiceSpec, LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind,
     LicenseLoadError, LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState,
-    LicenseStatus, LicenseUsageSnapshot, RouterOptions, ServeOptions, ServiceBackend,
-    ServiceDefinitionCatalog, ServiceInstanceCatalog, ServiceManager, build_router, serve,
+    LicenseStatus, LicenseUsageSnapshot, LocalBuildAdmission, RouterOptions, ServeOptions,
+    ServiceBackend, ServiceDefinitionCatalog, ServiceInstanceCatalog, ServiceManager, build_router,
+    serve,
 };
 #[cfg(feature = "aws-kms")]
 pub use nimbus_storage::AwsKmsKeyProvider;

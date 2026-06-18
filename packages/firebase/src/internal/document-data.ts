@@ -1,4 +1,5 @@
 import type { DocumentData } from "../firestore.ts";
+import { decodeBase64, encodeBase64 } from "./base64.ts";
 
 type FieldValueKind =
   | "delete"
@@ -171,6 +172,15 @@ export function encodeFirestoreValue(value: unknown): Record<string, unknown> {
   if (typeof value === "string") {
     return { stringValue: value };
   }
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw new Error("Firestore timestamp values must be valid Date instances.");
+    }
+    return { timestampValue: value.toISOString() };
+  }
+  if (value instanceof Uint8Array) {
+    return { bytesValue: encodeBase64(value) };
+  }
   if (Array.isArray(value)) {
     if (value.some(Array.isArray)) {
       throw new Error("Firestore arrays cannot directly contain arrays.");
@@ -236,16 +246,31 @@ function decodeFirestoreValue(value: unknown): unknown {
       return Number.parseInt(rawValue, 10);
     case "doubleValue":
       return decodeFirestoreDouble(rawValue);
-    case "timestampValue":
-      return rawValue;
+    case "timestampValue": {
+      if (typeof rawValue !== "string") {
+        throw new Error("Firestore timestampValue must be an RFC 3339 string.");
+      }
+      const timestamp = new Date(rawValue);
+      if (Number.isNaN(timestamp.getTime())) {
+        throw new Error(`Firestore timestampValue is not a valid RFC 3339 string: ${rawValue}.`);
+      }
+      return timestamp;
+    }
     case "stringValue":
       return rawValue;
     case "bytesValue":
-      return rawValue;
+      if (typeof rawValue !== "string") {
+        throw new Error("Firestore bytesValue must be a base64 string.");
+      }
+      return decodeBase64(rawValue);
+    // referenceValue and geoPointValue have no native JavaScript representation
+    // in this SDK, so they are intentionally not supported on either side of the
+    // codec. Encoding never produces them and decoding rejects them rather than
+    // leaking the raw wire shape, keeping the supported value set symmetric.
     case "referenceValue":
-      return rawValue;
+      throw new Error("Firestore reference values are not supported.");
     case "geoPointValue":
-      return rawValue;
+      throw new Error("Firestore geo point values are not supported.");
     case "arrayValue": {
       const values =
         isPlainObject(rawValue) && Array.isArray(rawValue.values) ? rawValue.values : [];

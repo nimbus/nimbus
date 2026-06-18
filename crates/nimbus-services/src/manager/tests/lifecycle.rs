@@ -11,7 +11,8 @@ async fn start_service_for_decision_rejects_built_in_backend_before_launch() {
         backend.clone(),
     );
     let isolation = TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
-    let decision = service_lifecycle_decision(&isolation, "browser")
+    let decision = manager
+        .service_lifecycle_decision(&isolation, "browser")
         .expect("browser service activation decision should build");
 
     let error = manager
@@ -21,17 +22,17 @@ async fn start_service_for_decision_rejects_built_in_backend_before_launch() {
 
     assert!(
         error.to_string().contains("built-in backend"),
-        "error should name unsupported backing: {error}"
+        "error should name unsupported backend: {error}"
     );
     assert_eq!(
         backend.image_starts.load(Ordering::SeqCst),
         0,
-        "built-in services must not reach image launch"
+        "built-in services must not reach image start"
     );
     assert_eq!(
         backend.build_starts.load(Ordering::SeqCst),
         0,
-        "built-in services must not reach build launch"
+        "built-in services must not reach build start"
     );
 }
 
@@ -49,7 +50,8 @@ async fn start_service_for_decision_rejects_unadmitted_service_before_launch() {
         backend.clone(),
     );
     let isolation = TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
-    let decision = service_lifecycle_decision(&isolation, "db")
+    let decision = manager
+        .service_lifecycle_decision(&isolation, "db")
         .expect("db service activation decision should build");
 
     let error = manager
@@ -94,7 +96,8 @@ async fn start_service_for_decision_rejects_unadmitted_sandbox_egress_before_lau
         backend.clone(),
     );
     let isolation = TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
-    let decision = service_lifecycle_decision(&isolation, "db")
+    let decision = manager
+        .service_lifecycle_decision(&isolation, "db")
         .expect("db service activation decision should build");
 
     let error = manager
@@ -261,7 +264,8 @@ async fn reload_service_egress_for_decision_updates_active_backend_policy() {
     .with_activation_poll_interval(Duration::from_millis(1))
     .with_activation_timeout(Duration::from_secs(1));
     let isolation = TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
-    let start_decision = service_lifecycle_decision(&isolation, "db")
+    let start_decision = manager
+        .service_lifecycle_decision(&isolation, "db")
         .expect("db service activation decision should build");
     let handle = manager
         .start_service_for_decision_async(&start_decision, "db", HostCallCancellation::default())
@@ -584,7 +588,7 @@ async fn ensure_service_binding_async_rejects_backend_handle_for_wrong_tenant() 
                 image_service_backend("db", "postgres:16"),
             )]),
         }),
-        backend,
+        backend.clone(),
     )
     .with_activation_poll_interval(Duration::from_millis(1))
     .with_activation_timeout(Duration::from_secs(1));
@@ -599,6 +603,61 @@ async fn ensure_service_binding_async_rejects_backend_handle_for_wrong_tenant() 
             .to_string()
             .contains("backend returned handle for tenant tenant-b"),
         "error should name the backend tenant mismatch: {error}"
+    );
+    assert_eq!(
+        backend.stop_calls.load(Ordering::SeqCst),
+        1,
+        "rejecting the mismatched handle must stop the untracked sandbox it started"
+    );
+    assert!(
+        backend
+            .handles
+            .lock()
+            .expect("backend lock should not be poisoned")
+            .is_empty(),
+        "cleanup should remove the orphaned started handle from the backend"
+    );
+}
+
+#[tokio::test]
+async fn ensure_service_binding_async_rejects_backend_handle_for_wrong_service() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let backend = Arc::new(StubSandboxBackend::new(1).with_handle_name_override("not-db"));
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::from([(
+                "db".to_owned(),
+                image_service_backend("db", "postgres:16"),
+            )]),
+        }),
+        backend.clone(),
+    )
+    .with_activation_poll_interval(Duration::from_millis(1))
+    .with_activation_timeout(Duration::from_secs(1));
+
+    let error = manager
+        .ensure_service_binding_async(&tenant_id, "db", HostCallCancellation::default())
+        .await
+        .expect_err("backend handle for another service should be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("backend returned handle for service not-db"),
+        "error should name the backend service mismatch: {error}"
+    );
+    assert_eq!(
+        backend.stop_calls.load(Ordering::SeqCst),
+        1,
+        "rejecting the mismatched handle must stop the untracked sandbox it started"
+    );
+    assert!(
+        backend
+            .handles
+            .lock()
+            .expect("backend lock should not be poisoned")
+            .is_empty(),
+        "cleanup should remove the orphaned started handle from the backend"
     );
 }
 
@@ -615,6 +674,7 @@ async fn ensure_service_binding_async_uses_build_launch_for_build_backed_service
         }),
         backend.clone(),
     )
+    .with_local_build_admission(LocalBuildAdmission::Allowed)
     .with_activation_poll_interval(Duration::from_millis(1))
     .with_activation_timeout(Duration::from_secs(1));
 
@@ -627,6 +687,131 @@ async fn ensure_service_binding_async_uses_build_launch_for_build_backed_service
     assert_eq!(binding.port, 15432);
     assert_eq!(backend.image_starts.load(Ordering::SeqCst), 0);
     assert_eq!(backend.build_starts.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn start_service_for_decision_rejects_build_backed_service_under_production_build_admission()
+{
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let backend = Arc::new(StubSandboxBackend::new(1));
+    // No `.with_local_build_admission(...)` call: the manager defaults to the
+    // fail-closed production posture (`LocalBuildAdmission::Denied`).
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::from([(
+                "api".to_owned(),
+                build_service_backend("api", "nimbus-api", "/workspace/Dockerfile", "/workspace"),
+            )]),
+        }),
+        backend.clone(),
+    )
+    .with_activation_poll_interval(Duration::from_millis(1))
+    .with_activation_timeout(Duration::from_secs(1));
+    let isolation = TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+
+    let error = manager
+        .start_service_for_context_async(&isolation, "api", HostCallCancellation::default())
+        .await
+        .expect_err("production build admission must reject a local-build sandbox root");
+
+    assert!(
+        error.to_string().contains("permission denied"),
+        "build rejection should map to permission denial: {error}"
+    );
+    assert!(
+        error.to_string().contains("local build"),
+        "error should name the rejected local build admission boundary: {error}"
+    );
+    assert!(
+        error.to_string().contains("nimbus-api"),
+        "error should name the rejected local build image: {error}"
+    );
+    assert_eq!(
+        backend.build_starts.load(Ordering::SeqCst),
+        0,
+        "build root must be rejected at the manager admission boundary before any backend start"
+    );
+    assert_eq!(
+        backend.image_starts.load(Ordering::SeqCst),
+        0,
+        "a rejected build must not reach any sandbox materialization path"
+    );
+}
+
+#[tokio::test]
+async fn start_service_for_decision_admits_reference_image_under_production_build_admission() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let backend = Arc::new(StubSandboxBackend::new(1));
+    // Default (Denied) build admission: the fail-closed posture must still admit
+    // a plain reference image so it does not over-block non-build roots.
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::from([(
+                "db".to_owned(),
+                image_service_backend("db", "postgres:16"),
+            )]),
+        }),
+        backend.clone(),
+    )
+    .with_activation_poll_interval(Duration::from_millis(1))
+    .with_activation_timeout(Duration::from_secs(1));
+    let isolation = TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+
+    let handle = manager
+        .start_service_for_context_async(&isolation, "db", HostCallCancellation::default())
+        .await
+        .expect("reference-image service should start under the fail-closed default")
+        .expect("ready handle should be returned");
+
+    assert_eq!(handle.status, SandboxStatus::Ready);
+    assert_eq!(
+        backend.image_starts.load(Ordering::SeqCst),
+        1,
+        "reference image must materialize exactly once under the production default"
+    );
+    assert_eq!(
+        backend.build_starts.load(Ordering::SeqCst),
+        0,
+        "a reference image must never take the build start path"
+    );
+}
+
+#[tokio::test]
+async fn start_service_for_decision_admits_build_backed_service_under_dev_build_admission() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let backend = Arc::new(StubSandboxBackend::new(1));
+    // Operator opt-in to local development: the manager admits local builds.
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::from([(
+                "api".to_owned(),
+                build_service_backend("api", "nimbus-api", "/workspace/Dockerfile", "/workspace"),
+            )]),
+        }),
+        backend.clone(),
+    )
+    .with_local_build_admission(LocalBuildAdmission::Allowed)
+    .with_activation_poll_interval(Duration::from_millis(1))
+    .with_activation_timeout(Duration::from_secs(1));
+    let isolation = TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+
+    let handle = manager
+        .start_service_for_context_async(&isolation, "api", HostCallCancellation::default())
+        .await
+        .expect("dev build admission should admit a local-build sandbox root")
+        .expect("ready handle should be returned");
+
+    assert_eq!(handle.status, SandboxStatus::Ready);
+    assert_eq!(
+        backend.build_starts.load(Ordering::SeqCst),
+        1,
+        "the local-build root must materialize through the build start path"
+    );
+    assert_eq!(
+        backend.image_starts.load(Ordering::SeqCst),
+        0,
+        "a local-build root must never take the reference-image start path"
+    );
 }
 
 #[tokio::test]

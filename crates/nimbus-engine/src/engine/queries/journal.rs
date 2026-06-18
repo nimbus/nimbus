@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use nimbus_core::{DurableMutationRecord, Result, SequenceNumber, TenantId};
+use nimbus_core::{Result, SequenceNumber, TenantEventRecord, TenantId};
 use nimbus_storage::{
     ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage, DurableJournalBootstrap,
     DurableJournalPage, PointInTimeRestoreArchive, PointInTimeRestoreTarget, RetentionGcConfig,
@@ -36,7 +36,7 @@ impl Engine {
         &self,
         tenant_id: &TenantId,
         after: SequenceNumber,
-    ) -> Result<Vec<DurableMutationRecord>> {
+    ) -> Result<Vec<TenantEventRecord>> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
         let from = SequenceNumber(after.0.saturating_add(1));
@@ -48,7 +48,7 @@ impl Engine {
         self: &Arc<Self>,
         tenant_id: TenantId,
         after: SequenceNumber,
-    ) -> Result<Vec<DurableMutationRecord>> {
+    ) -> Result<Vec<TenantEventRecord>> {
         self.execute_journal_read_async(tenant_id, move |store| {
             let from = SequenceNumber(after.0.saturating_add(1));
             store.read_durable_journal_from(from)

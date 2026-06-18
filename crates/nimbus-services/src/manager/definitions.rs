@@ -13,6 +13,7 @@ use crate::{
 
 use super::ServiceManager;
 use super::clock::{next_version, now_millis};
+use super::session_channels::close_session_channels;
 use super::types::{ServiceManagerState, TenantServiceKey, sandbox_backend_error};
 
 const SUPPORTED_BUILT_IN_PROVIDERS: &[&str] = &[
@@ -22,7 +23,9 @@ const SUPPORTED_BUILT_IN_PROVIDERS: &[&str] = &[
     "modelGateway",
 ];
 
-pub(super) struct ServiceLaunchDefinition {
+/// The resolved inputs for activating one tenant's service: which backend to
+/// start and the tenant's volume policy to enforce against the sandbox spec.
+pub(super) struct ServiceActivationPlan {
     pub(super) backend: ServiceBackend,
     pub(super) volume_policy: TenantVolumePolicyDecision,
 }
@@ -351,15 +354,15 @@ impl ServiceManager {
         tenant_id: &TenantId,
         service_name: &str,
     ) -> Option<ServiceBackend> {
-        self.service_launch_for_tenant(tenant_id, service_name)
+        self.service_activation_for_tenant(tenant_id, service_name)
             .map(|definition| definition.backend)
     }
 
-    pub(super) fn service_launch_for_tenant(
+    pub(super) fn service_activation_for_tenant(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Option<ServiceLaunchDefinition> {
+    ) -> Option<ServiceActivationPlan> {
         let key = TenantServiceKey::new(tenant_id, service_name);
         if let Some(definition) = self
             .state
@@ -369,7 +372,7 @@ impl ServiceManager {
             .get(&key)
             .cloned()
         {
-            return Some(ServiceLaunchDefinition {
+            return Some(ServiceActivationPlan {
                 backend: definition.backend,
                 volume_policy: TenantVolumePolicyDecision::default(),
             });
@@ -381,7 +384,7 @@ impl ServiceManager {
         let volume_policy = self
             .service_definitions
             .service_volume_policy_for_tenant(tenant_id, service_name);
-        Some(ServiceLaunchDefinition {
+        Some(ServiceActivationPlan {
             backend,
             volume_policy,
         })
@@ -472,6 +475,7 @@ fn close_open_service_sessions(
             session.closed_at_millis = Some(now);
             session.close_reason = Some(reason.to_owned());
         }
+        close_session_channels(state, session_id, reason);
     }
 }
 

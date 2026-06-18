@@ -25,6 +25,7 @@ nimbus-assets = { path = "../nimbus-assets", features = ["ui"] }
 nimbus-auth = { path = "../nimbus-auth" }
 nimbus-bridge = { path = "../nimbus-bridge" }
 nimbus-cloud-functions = { path = "../nimbus-cloud-functions" }
+nimbus-code-index = { path = "../nimbus-code-index" }
 nimbus-convex = { path = "../nimbus-convex" }
 nimbus-dynamodb = { path = "../nimbus-dynamodb" }
 nimbus-license = { path = "../nimbus-license" }

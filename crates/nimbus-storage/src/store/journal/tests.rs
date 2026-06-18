@@ -1,7 +1,7 @@
 use nimbus_core::{
-    DocumentId, DurableMutationRecord, Error, FieldSchema, FieldType, IndexDefinition,
-    IndexLifecycleEvent, SchemaChangeEvent, SequenceNumber, TableId, TableName, TableSchema,
-    TenantEventKind, TenantEventRecord, Timestamp, TriggerDeliveryCursor, WriteOp, WriteOpType,
+    DocumentId, Error, FieldSchema, FieldType, IndexDefinition, IndexLifecycleEvent,
+    SchemaChangeEvent, SequenceNumber, TableId, TableName, TableSchema, TenantEventKind,
+    TenantEventRecord, Timestamp, TriggerDeliveryCursor, WriteOp, WriteOpType,
 };
 use serde_json::json;
 
@@ -46,7 +46,7 @@ fn ranked_document(table: &TableName, title: &str, rank: i64) -> nimbus_core::Do
 fn durable_journal_batch_append_enforces_no_holes() {
     let store = TenantStore::create_in_memory().expect("store should open");
     let table_id = TableId::new();
-    let first = DurableMutationRecord::new(
+    let first = TenantEventRecord::new(
         SequenceNumber(1),
         Timestamp(10),
         vec![WriteOp {
@@ -62,7 +62,7 @@ fn durable_journal_batch_append_enforces_no_holes() {
         None,
     )
     .expect("first durable record should build");
-    let second = DurableMutationRecord::new(
+    let second = TenantEventRecord::new(
         SequenceNumber(2),
         Timestamp(11),
         vec![WriteOp {
@@ -93,7 +93,7 @@ fn durable_journal_batch_append_enforces_no_holes() {
     );
 
     let error = store
-        .append_durable_records_batch(&[DurableMutationRecord::new(
+        .append_durable_records_batch(&[TenantEventRecord::new(
             SequenceNumber(4),
             Timestamp(12),
             vec![WriteOp {
@@ -137,7 +137,7 @@ fn recovery_replays_durable_but_unapplied_records() {
     let second = sample_document("tasks", "Second");
     let table_id = TableId::new();
     let records = vec![
-        DurableMutationRecord::new(
+        TenantEventRecord::new(
             SequenceNumber(1),
             Timestamp(100),
             vec![WriteOp {
@@ -153,7 +153,7 @@ fn recovery_replays_durable_but_unapplied_records() {
             None,
         )
         .expect("first durable record should build"),
-        DurableMutationRecord::new(
+        TenantEventRecord::new(
             SequenceNumber(2),
             Timestamp(101),
             vec![WriteOp {
@@ -344,7 +344,7 @@ fn redb_tenant_event_journal_replays_mixed_history() {
         ],
     )
     .expect("schema tenant event should build");
-    let record_document = DurableMutationRecord::new(
+    let record_document = TenantEventRecord::new(
         SequenceNumber(2),
         Timestamp(11),
         vec![WriteOp {

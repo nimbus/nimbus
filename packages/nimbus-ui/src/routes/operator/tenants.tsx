@@ -6,7 +6,8 @@ import { api } from "../../../convex/_generated/api";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { CopyChip } from "../../components/copy-chip";
 import { EmptyState } from "../../components/empty-state";
-import { Td, Th } from "../../components/table-cells";
+import { Td, Th } from "../../components/data-table";
+import { PageHeader } from "../../components/page-header";
 import { cn } from "../../lib/cn";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import {
@@ -205,18 +206,16 @@ function TenantsPage() {
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-storage"
     >
-      <header className="flex flex-col gap-2">
-        <div className="flex items-baseline justify-between">
-          <div>
-            <h1 className="text-default" style={{ fontSize: "var(--text-xl)" }}>
-              Tenants
-            </h1>
-            <p className="text-sm text-muted">
-              Tenants own tables and documents. The{" "}
-              <code className="font-mono text-default">_nimbus</code> system
-              tenant is operator-only and not listed here.
-            </p>
-          </div>
+      <PageHeader
+        title="Tenants"
+        subtitle={
+          <>
+            Tenants own tables and documents. The{" "}
+            <code className="font-mono text-default">_nimbus</code> system
+            tenant is operator-only and not listed here.
+          </>
+        }
+        trailing={
           <form
             onSubmit={handleCreate}
             className="flex items-center gap-2"
@@ -249,8 +248,8 @@ function TenantsPage() {
               {creating ? "creating…" : "create tenant"}
             </button>
           </form>
-        </div>
-      </header>
+        }
+      />
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
         {serverError ? (

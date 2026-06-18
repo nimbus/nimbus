@@ -1,23 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const { pathnameRef, searchRef } = vi.hoisted(() => ({
-  pathnameRef: { current: "/developer" },
-  searchRef: { current: {} as Record<string, unknown> },
-}));
-
-vi.mock("@tanstack/react-router", () => ({
-  useRouterState: ({
-    select,
-  }: {
-    select: (s: {
-      location: { pathname: string; search: Record<string, unknown> };
-    }) => unknown;
-  }) =>
-    select({
-      location: { pathname: pathnameRef.current, search: searchRef.current },
-    }),
-}));
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@nimbus/nimbus/react", () => ({
   useNimbus: () => ({ url: "http://localhost:9000" }),
@@ -44,43 +26,29 @@ vi.mock("../hooks/use-staleness", () => ({
 }));
 
 import { StatusBar } from "./status-bar";
-import { useUiStore } from "../store/ui-store";
 
-function setLocation(path: string, search: Record<string, unknown> = {}) {
-  pathnameRef.current = path;
-  searchRef.current = search;
-}
-
-beforeEach(() => {
-  setLocation("/developer");
-  useUiStore.setState({ activeTenant: null });
-});
-
-describe("StatusBar tenant slot", () => {
-  it("shows the active dev tenant on /developer/*", () => {
-    setLocation("/developer/compute");
-    useUiStore.setState({ activeTenant: "beta" });
+describe("StatusBar", () => {
+  it("shows the connection status", () => {
     render(<StatusBar />);
-    expect(screen.getByTestId("status-tenant")).toHaveTextContent("beta");
-  });
-
-  it("shows 'all tenants' on /operator/observability without a tenant query", () => {
-    setLocation("/operator/observability");
-    render(<StatusBar />);
-    expect(screen.getByTestId("status-tenant")).toHaveTextContent(
-      "all tenants",
+    expect(screen.getByTestId("status-connection")).toHaveTextContent(
+      "Connected",
     );
   });
 
-  it("shows the requested tenant on /operator/observability?tenant=beta", () => {
-    setLocation("/operator/observability", { tenant: "beta" });
+  it("shows the server URL", () => {
     render(<StatusBar />);
-    expect(screen.getByTestId("status-tenant")).toHaveTextContent("beta");
+    expect(screen.getByTestId("status-server-url")).toHaveTextContent(
+      "http://localhost:9000",
+    );
   });
 
-  it("shows _nimbus on system-tenant /operator/* views", () => {
-    setLocation("/operator/machines");
+  it("no longer renders a steady-state version (moved to the top nav)", () => {
     render(<StatusBar />);
-    expect(screen.getByTestId("status-tenant")).toHaveTextContent("_nimbus");
+    expect(screen.queryByTestId("status-version")).toBeNull();
+  });
+
+  it("no longer renders a tenant slot in the footer", () => {
+    render(<StatusBar />);
+    expect(screen.queryByTestId("status-tenant")).toBeNull();
   });
 });

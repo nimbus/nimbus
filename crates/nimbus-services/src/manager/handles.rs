@@ -3,7 +3,6 @@ use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_tenant::TenantIsolationContext;
 
 use super::ServiceManager;
-use super::activation::service_lifecycle_decision;
 use super::types::{TenantServiceKey, sandbox_backend_error};
 
 impl ServiceManager {
@@ -64,7 +63,7 @@ impl ServiceManager {
         isolation: &TenantIsolationContext,
         service_name: &str,
     ) -> Result<Option<SandboxHandle>, Error> {
-        let decision = service_lifecycle_decision(isolation, service_name)?;
+        let decision = self.service_lifecycle_decision(isolation, service_name)?;
         let key = TenantServiceKey::new(decision.tenant_id(), service_name);
         self.refresh_handle_async(&key).await
     }

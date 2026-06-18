@@ -22,10 +22,11 @@ pub use host_lifecycle::{
     HostLifecycleBackendCapabilities, HostLifecycleBackendKind, HostLifecycleFuture,
     HostLifecycleJournalSelectorEvidence, HostLifecyclePlan, HostLifecycleProperty,
     HostLifecyclePropertySet, HostLifecycleRequest, HostLifecycleStatus, HostLifecycleStatusReason,
-    HostRestartPolicy, RuntimePoolTrustClass, RuntimePoolTrustState, SystemdUnitKind,
-    SystemdUnitName, TenantWorkloadId, TenantWorkloadLifecycleEvidence,
+    HostRestartPolicy, RunnerKind, RunnerSpec, RuntimePoolTrustClass, RuntimePoolTrustState,
+    SystemdUnitKind, SystemdUnitName, TenantWorkloadId, TenantWorkloadLifecycleEvidence,
 };
 pub use reconciler::{
+    NodeAgent, NodeAgentAssignment, NodeAgentReconcileReport, NodeAssignmentDisposition,
     NodeWorkloadDesiredState, NodeWorkloadReconcileAction, NodeWorkloadReconcileOutcome,
     NodeWorkloadReconciler, StatusEvidenceWrite, StatusEvidenceWriter,
 };

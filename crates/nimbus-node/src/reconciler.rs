@@ -4,7 +4,7 @@ use nimbus_core::{Error, Result};
 
 use super::{
     HostLifecycleBackend, HostLifecycleFuture, HostLifecyclePlan, HostLifecycleRequest,
-    HostLifecycleStatus, HostLifecycleStatusReason, LocalEnforcementBinding,
+    HostLifecycleStatus, HostLifecycleStatusReason, LocalEnforcementBinding, NodeIdentity,
     TenantSystemEvidenceProjection, TenantWorkloadDeletionState, TenantWorkloadId,
     TenantWorkloadSpec, TenantWorkloadStatus,
 };
@@ -75,6 +75,135 @@ pub struct NodeWorkloadReconcileOutcome {
     desired_state: NodeWorkloadDesiredState,
     action: NodeWorkloadReconcileAction,
     status: TenantWorkloadStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeAgentAssignment {
+    binding: LocalEnforcementBinding,
+    request: HostLifecycleRequest,
+}
+
+impl NodeAgentAssignment {
+    pub fn new(binding: LocalEnforcementBinding, request: HostLifecycleRequest) -> Self {
+        Self { binding, request }
+    }
+
+    pub fn from_spec(spec: TenantWorkloadSpec, request: HostLifecycleRequest) -> Self {
+        Self::new(LocalEnforcementBinding::from_spec(spec), request)
+    }
+
+    pub fn binding(&self) -> &LocalEnforcementBinding {
+        &self.binding
+    }
+
+    pub fn request(&self) -> &HostLifecycleRequest {
+        &self.request
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NodeAssignmentDisposition {
+    Reconciled {
+        workload_id: TenantWorkloadId,
+        action: NodeWorkloadReconcileAction,
+    },
+    Failed {
+        workload_uid: String,
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeAgentReconcileReport {
+    node_id: NodeIdentity,
+    outcomes: Vec<NodeWorkloadReconcileOutcome>,
+    dispositions: Vec<NodeAssignmentDisposition>,
+}
+
+impl NodeAgentReconcileReport {
+    fn new(
+        node_id: NodeIdentity,
+        outcomes: Vec<NodeWorkloadReconcileOutcome>,
+        dispositions: Vec<NodeAssignmentDisposition>,
+    ) -> Self {
+        Self {
+            node_id,
+            outcomes,
+            dispositions,
+        }
+    }
+
+    pub fn node_id(&self) -> &NodeIdentity {
+        &self.node_id
+    }
+
+    pub fn outcomes(&self) -> &[NodeWorkloadReconcileOutcome] {
+        &self.outcomes
+    }
+
+    pub fn dispositions(&self) -> &[NodeAssignmentDisposition] {
+        &self.dispositions
+    }
+}
+
+#[derive(Debug)]
+pub struct NodeAgent<B, W> {
+    node_id: NodeIdentity,
+    reconciler: NodeWorkloadReconciler<B, W>,
+}
+
+impl<B, W> NodeAgent<B, W> {
+    pub fn new(node_id: NodeIdentity, backend: B, writer: W) -> Self {
+        Self {
+            node_id,
+            reconciler: NodeWorkloadReconciler::new(backend, writer),
+        }
+    }
+
+    pub fn node_id(&self) -> &NodeIdentity {
+        &self.node_id
+    }
+
+    pub fn reconciler(&self) -> &NodeWorkloadReconciler<B, W> {
+        &self.reconciler
+    }
+}
+
+impl<B, W> NodeAgent<B, W>
+where
+    B: HostLifecycleBackend,
+    W: StatusEvidenceWriter,
+{
+    pub async fn reconcile_assignments(
+        &self,
+        assignments: impl IntoIterator<Item = NodeAgentAssignment>,
+    ) -> NodeAgentReconcileReport {
+        let mut outcomes = Vec::new();
+        let mut dispositions = Vec::new();
+        for assignment in assignments {
+            let workload_uid = assignment.binding.spec().workload_uid().as_str().to_owned();
+            match self
+                .reconciler
+                .reconcile_binding(&assignment.binding, assignment.request)
+                .await
+            {
+                Ok(outcome) => {
+                    dispositions.push(NodeAssignmentDisposition::Reconciled {
+                        workload_id: outcome.workload_id().clone(),
+                        action: outcome.action(),
+                    });
+                    outcomes.push(outcome);
+                }
+                Err(error) => {
+                    dispositions.push(NodeAssignmentDisposition::Failed {
+                        workload_uid,
+                        reason: error.to_string(),
+                    });
+                }
+            }
+        }
+        NodeAgentReconcileReport::new(self.node_id.clone(), outcomes, dispositions)
+    }
 }
 
 impl NodeWorkloadReconcileOutcome {
@@ -176,7 +305,13 @@ where
                 NodeWorkloadReconcileAction::ObservedRunning,
                 status.to_workload_status(plan)?,
             )),
-            Ok(_) | Err(Error::InvalidInput(_)) => {
+            // Inspect succeeded-but-not-running, or the workload is absent
+            // (`NotFound`): converge by starting it. A genuine inspect fault —
+            // e.g. a live systemd unit in `.Failed` mapped to `InvalidInput` —
+            // must NOT be treated as workload-missing; it falls through to the
+            // final `Err` arm so the fault surfaces instead of being masked by a
+            // redundant `StartTransientUnit`.
+            Ok(_) | Err(Error::NotFound(_)) => {
                 self.backend.start(plan.clone()).await?;
                 let observed = self.backend.inspect(workload_id).await?;
                 Ok((
@@ -623,6 +758,195 @@ mod tests {
             deleting.spec().resources().admitted_quotas(),
             binding.spec().resources().admitted_quotas(),
             "observed reconcile writes must not mutate admitted quota policy"
+        );
+    }
+
+    #[tokio::test]
+    async fn node_agent_reconciles_multiple_workloads_idempotently() {
+        let backend = CountingBackend::new(DirectProcessBackend::new());
+        let writer = RecordingStatusEvidenceWriter::default();
+        let node_agent = NodeAgent::new(
+            NodeIdentity::new("node-a").expect("node id should parse"),
+            backend,
+            writer.clone(),
+        );
+        let first = LocalEnforcementBinding::from_decision(&admitted_decision(
+            "messages:send",
+            "invoke-1",
+            7,
+        ))
+        .expect("first binding should materialize");
+        let second = LocalEnforcementBinding::from_decision(&admitted_decision(
+            "jobs:compact",
+            "invoke-2",
+            7,
+        ))
+        .expect("second binding should materialize");
+        let assignments = vec![
+            NodeAgentAssignment::new(first, direct_request()),
+            NodeAgentAssignment::new(second, direct_request()),
+        ];
+
+        let initial = node_agent.reconcile_assignments(assignments.clone()).await;
+        assert_eq!(initial.node_id().as_str(), "node-a");
+        assert_eq!(initial.outcomes().len(), 2);
+        assert!(
+            initial
+                .outcomes()
+                .iter()
+                .all(|outcome| outcome.action() == NodeWorkloadReconcileAction::Started),
+            "first pass should start both missing workloads: {:?}",
+            initial.outcomes()
+        );
+        assert!(
+            initial.dispositions().iter().all(|disposition| matches!(
+                disposition,
+                NodeAssignmentDisposition::Reconciled { .. }
+            )),
+            "first pass should record successful assignment dispositions"
+        );
+
+        let second_pass = node_agent.reconcile_assignments(assignments).await;
+        assert_eq!(second_pass.outcomes().len(), 2);
+        assert!(
+            second_pass
+                .outcomes()
+                .iter()
+                .all(|outcome| outcome.action() == NodeWorkloadReconcileAction::ObservedRunning),
+            "second pass should observe the already-running workloads: {:?}",
+            second_pass.outcomes()
+        );
+        assert_eq!(
+            writer.writes().len(),
+            4,
+            "each reconcile pass should write status evidence for each assignment"
+        );
+    }
+
+    #[tokio::test]
+    async fn node_state_transition_assignment_disposition() {
+        let backend = CountingBackend::new(DirectProcessBackend::new());
+        let writer = RecordingStatusEvidenceWriter::default();
+        let node_agent = NodeAgent::new(
+            NodeIdentity::new("node-a").expect("node id should parse"),
+            backend,
+            writer.clone(),
+        );
+        let valid = LocalEnforcementBinding::from_decision(&admitted_decision(
+            "messages:send",
+            "invoke-1",
+            7,
+        ))
+        .expect("valid binding should materialize");
+        let invalid = LocalEnforcementBinding::from_decision(&admitted_decision(
+            "jobs:compact",
+            "invoke-2",
+            7,
+        ))
+        .expect("invalid binding should materialize");
+
+        let report = node_agent
+            .reconcile_assignments([
+                NodeAgentAssignment::new(valid, direct_request()),
+                NodeAgentAssignment::new(invalid, systemd_request()),
+            ])
+            .await;
+
+        assert_eq!(report.outcomes().len(), 1);
+        assert_eq!(report.dispositions().len(), 2);
+        assert!(
+            matches!(
+                &report.dispositions()[0],
+                NodeAssignmentDisposition::Reconciled {
+                    action: NodeWorkloadReconcileAction::Started,
+                    ..
+                }
+            ),
+            "valid assignment should reconcile"
+        );
+        let NodeAssignmentDisposition::Failed { reason, .. } = &report.dispositions()[1] else {
+            panic!("invalid assignment should have a failed disposition");
+        };
+        assert!(
+            reason.contains("DirectProcessBackend requires a direct_process plan"),
+            "failed disposition should preserve the validation reason: {reason}"
+        );
+        assert_eq!(
+            writer.writes().len(),
+            1,
+            "failed assignment must not write status evidence"
+        );
+    }
+
+    /// Backend that validates and starts/stops via an inner DirectProcess
+    /// backend but always fails `inspect` with `InvalidInput`, modelling a live
+    /// systemd `.Failed` inspect fault (NoSuchUnit → NotFound, but a failed-state
+    /// inspect maps to InvalidInput).
+    #[derive(Clone)]
+    struct InspectInvalidInputBackend {
+        inner: DirectProcessBackend,
+    }
+
+    impl HostLifecycleBackend for InspectInvalidInputBackend {
+        fn validate(
+            &self,
+            binding: &LocalEnforcementBinding,
+            request: HostLifecycleRequest,
+        ) -> Result<HostLifecyclePlan> {
+            self.inner.validate(binding, request)
+        }
+
+        fn start<'a>(
+            &'a self,
+            plan: HostLifecyclePlan,
+        ) -> HostLifecycleFuture<'a, TenantWorkloadStatus> {
+            self.inner.start(plan)
+        }
+
+        fn stop<'a>(
+            &'a self,
+            workload_id: TenantWorkloadId,
+        ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+            self.inner.stop(workload_id)
+        }
+
+        fn inspect<'a>(
+            &'a self,
+            _workload_id: TenantWorkloadId,
+        ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+            Box::pin(async move {
+                Err(Error::InvalidInput(
+                    "systemd inspect reports unit entered failed state".to_string(),
+                ))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn reconcile_running_propagates_inspect_invalid_input_without_starting() {
+        let backend = CountingBackend::new(InspectInvalidInputBackend {
+            inner: DirectProcessBackend::new(),
+        });
+        let writer = RecordingStatusEvidenceWriter::default();
+        let reconciler = NodeWorkloadReconciler::new(backend.clone(), writer.clone());
+        let binding = binding();
+
+        let error = reconciler
+            .reconcile_binding(&binding, direct_request())
+            .await
+            .expect_err("a genuine inspect fault must propagate, not trigger a redundant start");
+        assert!(
+            matches!(error, Error::InvalidInput(_)),
+            "inspect InvalidInput must surface unchanged: {error:?}"
+        );
+        assert_eq!(
+            backend.calls(),
+            vec!["validate", "inspect"],
+            "reconciler must not call start after an inspect fault"
+        );
+        assert!(
+            writer.writes().is_empty(),
+            "no status evidence should be written when inspect faults"
         );
     }
 

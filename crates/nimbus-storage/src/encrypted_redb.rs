@@ -429,10 +429,16 @@ impl StorageBackend for EncryptedFileBackend {
                 remaining.min(available)
             };
 
-            // Read existing page content for partial writes (read-modify-write)
+            // Read existing page content for partial writes (read-modify-write).
+            // Propagate the read with `?` rather than swallowing it: the bounds
+            // check above guarantees an in-bounds page is physically present, so
+            // the only reachable failure here is an AES-256-GCM-SIV integrity
+            // failure (InvalidData). That must abort the write, not silently
+            // zero-clobber the page and re-encrypt it cleanly — which would
+            // destroy the tamper evidence the security model promises. Mirrors
+            // the `read` and `set_len` read paths.
             let mut page_data = if page_offset > 0 || write_len < LOGICAL_PAGE_SIZE {
-                self.read_encrypted_page(&mut state.file, page_index)
-                    .unwrap_or([0u8; LOGICAL_PAGE_SIZE])
+                self.read_encrypted_page(&mut state.file, page_index)?
             } else {
                 [0u8; LOGICAL_PAGE_SIZE]
             };
@@ -712,9 +718,13 @@ impl StorageBackend for EncryptedMemoryBackend {
                 remaining.min(available)
             };
 
+            // Partial-write read-modify-write: propagate integrity failures with
+            // `?` instead of swallowing them. See the file-backend `write` for the
+            // full rationale — an in-bounds page is always present, so the only
+            // reachable failure is an AES-256-GCM-SIV integrity failure that must
+            // abort the write rather than silently zero-clobber the page.
             let mut page_data = if page_offset > 0 || write_len < LOGICAL_PAGE_SIZE {
-                self.read_encrypted_page(&state.data, page_index)
-                    .unwrap_or([0u8; LOGICAL_PAGE_SIZE])
+                self.read_encrypted_page(&state.data, page_index)?
             } else {
                 [0u8; LOGICAL_PAGE_SIZE]
             };
@@ -948,5 +958,85 @@ mod tests {
         // Reading should fail because AAD includes page index
         let result = backend.read(0, 14);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn partial_write_over_corrupted_page_propagates_integrity_error() {
+        let dek = [0x42u8; 32];
+        let backend = EncryptedMemoryBackend::new(&dek).expect("backend should create");
+        backend
+            .set_len(LOGICAL_PAGE_SIZE as u64)
+            .expect("set_len should work");
+        // Full-page write so page 0 is materialized and authenticates cleanly.
+        backend
+            .write(0, &[0xAB; LOGICAL_PAGE_SIZE])
+            .expect("initial write should work");
+
+        // Tamper one ciphertext byte of page 0 (inside the ciphertext region,
+        // not the nonce or tag).
+        {
+            let mut state = backend.state.lock();
+            state.data[NONCE_SIZE + 100] ^= 0xFF;
+        }
+
+        // A PARTIAL write (write_len < LOGICAL_PAGE_SIZE) forces the
+        // read-modify-write read of the tampered page. It must surface the
+        // integrity failure, not silently zero-fill and re-encrypt.
+        let result = backend.write(0, b"x");
+        assert!(
+            result.is_err(),
+            "partial write over a tampered page must fail, not silently zero-fill"
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+
+        // The corruption evidence must remain: the write did not re-encrypt a
+        // zeroed page over the tampered one.
+        assert!(
+            backend.read(0, LOGICAL_PAGE_SIZE).is_err(),
+            "page must still be detectably corrupt after the rejected write"
+        );
+    }
+
+    #[test]
+    fn partial_write_over_corrupted_page_propagates_integrity_error_file_backend() {
+        let dir = tempdir().expect("tempdir should create");
+        let path = dir.path().join("partial-write-tamper.redb.enc");
+        let dek = [0x42u8; 32];
+
+        let backend = EncryptedFileBackend::create(&path, &dek).expect("backend should create");
+        backend
+            .set_len(LOGICAL_PAGE_SIZE as u64)
+            .expect("set_len should work");
+        // Full-page write materializes page 0 with a valid nonce+tag.
+        backend
+            .write(0, &[0xAB; LOGICAL_PAGE_SIZE])
+            .expect("initial write should work");
+        backend.sync_data(false).expect("sync should work");
+
+        // Tamper one ciphertext byte of page 0 directly in the physical slot.
+        {
+            let mut state = backend.state.lock();
+            state
+                .file
+                .seek(SeekFrom::Start((NONCE_SIZE + 100) as u64))
+                .expect("seek should work");
+            let mut byte = [0u8; 1];
+            state.file.read_exact(&mut byte).expect("read should work");
+            byte[0] ^= 0xFF;
+            state
+                .file
+                .seek(SeekFrom::Start((NONCE_SIZE + 100) as u64))
+                .expect("seek should work");
+            state.file.write_all(&byte).expect("write should work");
+            state.file.flush().expect("flush should work");
+        }
+
+        // Partial write forces the read-modify-write read of the tampered page.
+        let result = backend.write(0, b"x");
+        assert!(
+            result.is_err(),
+            "partial write over a tampered page must fail, not silently zero-fill"
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
     }
 }

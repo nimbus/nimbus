@@ -23,7 +23,7 @@ use super::runtime_limits::runtime_limits_from_command;
 use crate::cli_ux;
 use crate::codegen::{CodegenOptions, run_codegen_for_app_dir_with_options};
 use crate::compose::discovery::{
-    ResolvedComposeSelection, compose_selection_summary, resolve_compose_selection,
+    ResolvedComposeSelection, compose_selection_summary, resolve_explicit_compose_selection,
 };
 use crate::compose::load_host_backed_service_manager_for_selection_with_isolation_mode;
 use crate::deploy::resolve_deploy_app_dir;
@@ -270,7 +270,7 @@ pub(crate) fn resolve_optional_compose_selection(
         Error::Internal(format!("failed to determine current directory: {error}"))
     })?;
     let explicit_compose_files = command.compose_file.as_slice();
-    resolve_compose_selection(explicit_compose_files, &cwd)
+    resolve_explicit_compose_selection(explicit_compose_files, &cwd)
         .map_err(|error| Error::InvalidInput(error.to_string()))
 }
 

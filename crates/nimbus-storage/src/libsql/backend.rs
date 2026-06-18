@@ -369,7 +369,7 @@ pub(super) async fn put_remote_metadata_u64(
 
 pub(super) async fn apply_durable_record_in_remote_conn(
     conn: &Connection,
-    record: &DurableMutationRecord,
+    record: &TenantEventRecord,
 ) -> Result<()> {
     if record.events.is_empty() {
         if let Some(execution_id) = record.scheduled_execution_id.as_deref() {

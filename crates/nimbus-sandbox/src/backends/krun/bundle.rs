@@ -440,9 +440,9 @@ fn validate_resource_limits(resources: &SandboxResourceLimits) -> Result<()> {
             message: "krun sandbox memory_limit_bytes must be greater than zero".to_owned(),
         });
     }
-    if matches!(resources.disk_limit_bytes, Some(0)) {
+    if resources.disk_limit_bytes.is_some() {
         return Err(SandboxError::InvalidSpec {
-            message: "krun sandbox disk_limit_bytes must be greater than zero".to_owned(),
+            message: "krun sandbox disk_limit_bytes is not enforceable: the writable surface is a host bind-mount and OCI linux.resources has no total-disk-capacity control".to_owned(),
         });
     }
     if matches!(resources.log_limit_bytes, Some(0)) {
@@ -989,6 +989,31 @@ mod tests {
                 .contains("guest_port must be greater than zero"),
             "expected actionable guest port validation error, got: {error}"
         );
+    }
+
+    #[test]
+    fn bundle_config_rejects_unenforceable_disk_limit() {
+        let spec = sample_spec()
+            .with_resource_limits(SandboxResourceLimits::default().with_disk_limit_bytes(1024));
+
+        let error = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+            .expect_err("an unenforceable disk_limit_bytes must fail closed");
+
+        assert!(
+            error
+                .to_string()
+                .contains("disk_limit_bytes is not enforceable"),
+            "expected actionable disk-limit validation error, got: {error}"
+        );
+
+        // An enforceable limit (memory) on the same spec must still build a bundle:
+        // the guard is specific to the disk knob crun cannot honor, not a blanket
+        // rejection of resource limits.
+        let with_memory = sample_spec().with_resource_limits(
+            SandboxResourceLimits::default().with_memory_limit_bytes(256 * 1024 * 1024),
+        );
+        build_bundle_config("nimbus-db", &with_memory, &KrunBundleOptions::default())
+            .expect("a spec without disk_limit_bytes should still render a bundle");
     }
 
     fn sample_spec() -> SandboxSpec {

@@ -74,8 +74,8 @@ pub use nimbus_artifacts::{
 };
 pub use nimbus_services::{
     BuiltInServiceSpec, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
-    ExternalServiceSpec, ServiceBackend, ServiceDefinitionCatalog, ServiceInstanceCatalog,
-    ServiceManager,
+    ExternalServiceSpec, LocalBuildAdmission, ServiceBackend, ServiceDefinitionCatalog,
+    ServiceInstanceCatalog, ServiceManager,
 };
 pub use nimbus_system::SystemTenantStatusEvidenceWriter;
 pub use router::{RouterOptions, build_router, normalize_cors_origin};

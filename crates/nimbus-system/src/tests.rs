@@ -60,11 +60,13 @@ fn system_table_schemas_are_valid_and_cover_control_plane_contract() {
         "functions",
         "listeners",
         "machines",
+        "modules",
         "ports",
         "routes",
         "runs",
         "scheduled_jobs",
         "services",
+        "source_packages",
         "subscriptions",
         "system_status",
         "tables",
@@ -209,6 +211,173 @@ async fn prepare_system_tenant_seeds_network_and_adapter_posture_documents() {
         status.fields.get("startedAt").is_some_and(Value::is_number),
         "system status should record server start time: {status:?}"
     );
+}
+
+#[tokio::test]
+async fn source_package_build_store_record_and_read_round_trip() {
+    let temp = tempfile::tempdir().expect("tempdir should create");
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+    let store = DiskSourcePackageStore::new(temp.path().join("source-packages"));
+
+    // Build a source package the way the deploy client does, store it
+    // content-addressed, project its rows, then read a module back end-to-end.
+    let modules = std::collections::BTreeMap::from([
+        (
+            "messages".to_owned(),
+            crate::ModuleInput {
+                source: "export const list = query({});\n".to_owned(),
+                source_map: None,
+                type_info: None,
+            },
+        ),
+        (
+            "admin/users".to_owned(),
+            crate::ModuleInput {
+                source: "export const create = mutation({});\n".to_owned(),
+                source_map: None,
+                type_info: None,
+            },
+        ),
+    ]);
+    let bytes = build_source_package(&modules);
+    let stored = store.put(&bytes).expect("store put");
+    let parsed = parse_source_package(&bytes).expect("parse");
+    let module_inputs = parsed
+        .modules
+        .iter()
+        .map(|module| SystemModuleRecordInput {
+            path: &module.path,
+            sha256: &module.sha256,
+        })
+        .collect::<Vec<_>>();
+    record_source_package_state_async(
+        &engine,
+        &SystemSourcePackageRecordInput {
+            digest: &stored.digest,
+            storage_key: &stored.storage_key,
+            size_bytes: stored.size_bytes,
+            unpacked_bytes: parsed.unpacked_bytes,
+            modules: module_inputs,
+        },
+    )
+    .await
+    .expect("record source package");
+
+    let resolved = read_module_source_async(&engine, &store, "messages")
+        .await
+        .expect("read module source")
+        .expect("messages module present");
+    assert_eq!(resolved.path, "messages");
+    assert_eq!(resolved.digest, stored.digest);
+    assert!(resolved.source.contains("query"));
+
+    let nested = read_module_source_async(&engine, &store, "admin/users")
+        .await
+        .expect("read nested module")
+        .expect("admin/users module present");
+    assert!(nested.source.contains("mutation"));
+
+    // Unknown module resolves to None (the endpoint returns 404).
+    assert!(
+        read_module_source_async(&engine, &store, "does/not/exist")
+            .await
+            .expect("read unknown module")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn record_source_package_state_projects_package_and_modules_with_gc() {
+    let temp = tempfile::tempdir().expect("tempdir should create");
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+
+    let input = SystemSourcePackageRecordInput {
+        digest: "aaaa1111",
+        storage_key: "source-packages/aa/aaaa1111",
+        size_bytes: 120,
+        unpacked_bytes: 300,
+        modules: vec![
+            SystemModuleRecordInput {
+                path: "messages",
+                sha256: "messages-v1",
+            },
+            SystemModuleRecordInput {
+                path: "admin/users",
+                sha256: "admin-users-v1",
+            },
+        ],
+    };
+    record_source_package_state_async(&engine, &input)
+        .await
+        .expect("source package state should project");
+
+    let tenant_id = system_tenant_id().expect("system id should parse");
+    let packages = engine
+        .list_documents_async(tenant_id.clone(), table_name(SystemTable::SourcePackages))
+        .await
+        .expect("source packages should list");
+    assert_eq!(packages.len(), 1);
+    assert_eq!(packages[0].fields.get("digest"), Some(&json!("aaaa1111")));
+    assert_eq!(packages[0].fields.get("status"), Some(&json!("active")));
+    assert_eq!(
+        packages[0].fields.get("sizeBytes").and_then(Value::as_u64),
+        Some(120)
+    );
+
+    let modules = engine
+        .list_documents_async(tenant_id.clone(), table_name(SystemTable::Modules))
+        .await
+        .expect("modules should list");
+    assert_eq!(modules.len(), 2);
+    assert!(modules.iter().any(|document| {
+        document.fields.get("path") == Some(&json!("admin/users"))
+            && document.fields.get("sourcePackageId") == Some(&json!("aaaa1111"))
+            && document.fields.get("sha256") == Some(&json!("admin-users-v1"))
+    }));
+
+    // Re-recording the same digest is idempotent.
+    record_source_package_state_async(&engine, &input)
+        .await
+        .expect("re-record should be idempotent");
+    let packages = engine
+        .list_documents_async(tenant_id.clone(), table_name(SystemTable::SourcePackages))
+        .await
+        .expect("source packages should list");
+    assert_eq!(packages.len(), 1);
+
+    // A new digest with fewer modules GCs the prior package and its stale modules.
+    let next = SystemSourcePackageRecordInput {
+        digest: "bbbb2222",
+        storage_key: "source-packages/bb/bbbb2222",
+        size_bytes: 90,
+        unpacked_bytes: 200,
+        modules: vec![SystemModuleRecordInput {
+            path: "messages",
+            sha256: "messages-v2",
+        }],
+    };
+    record_source_package_state_async(&engine, &next)
+        .await
+        .expect("next source package state should project");
+
+    let packages = engine
+        .list_documents_async(tenant_id.clone(), table_name(SystemTable::SourcePackages))
+        .await
+        .expect("source packages should list");
+    assert_eq!(packages.len(), 1, "prior source package should be GC'd");
+    assert_eq!(packages[0].fields.get("digest"), Some(&json!("bbbb2222")));
+
+    let modules = engine
+        .list_documents_async(tenant_id.clone(), table_name(SystemTable::Modules))
+        .await
+        .expect("modules should list");
+    assert_eq!(modules.len(), 1, "stale modules should be GC'd");
+    assert_eq!(modules[0].fields.get("path"), Some(&json!("messages")));
+    assert_eq!(
+        modules[0].fields.get("sourcePackageId"),
+        Some(&json!("bbbb2222"))
+    );
+    assert_eq!(modules[0].fields.get("sha256"), Some(&json!("messages-v2")));
 }
 
 #[tokio::test]

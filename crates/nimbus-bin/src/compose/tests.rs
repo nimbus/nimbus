@@ -13,7 +13,7 @@ use nimbus::{
 };
 use nimbus_sandbox::SandboxFuture;
 use nimbus_sandbox::backends::container::{
-    ContainerLaunchMode, ContainerSandboxBackend, ContainerSandboxBackendConfig,
+    ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
 };
 use serde_json::json;
 use tempfile::TempDir;
@@ -22,7 +22,9 @@ use crate::compose::execution::{
     load_host_backed_project_backend, load_host_backed_service_manager_for_platform,
     should_auto_start_default_machine_for_host_loader,
 };
-use crate::compose::lifecycle::{start_service_launch, stop_service_target};
+use crate::compose::lifecycle::{
+    SandboxBackendComposeExecutor, start_service_launch, stop_service_target,
+};
 use crate::compose::logs::{read_log_chunk, resolve_service_ctr_log_path};
 use crate::compose::process::{parse_process_rows, read_pid_file_if_exists};
 use crate::machine::{

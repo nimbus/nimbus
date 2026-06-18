@@ -11,9 +11,9 @@ license-file.workspace = true
 workspace = true
 
 [features]
-# LR12: opt-in lane for the live `nimbus node run` integration test against
-# session systemd (mirrors nimbus-node's systemd-dbus-integration-tests).
-node-run-integration-tests = []
+# LR12: opt-in lane for the live hidden node workload executor integration
+# test against session systemd (mirrors nimbus-node's systemd-dbus-integration-tests).
+node-workload-executor-integration-tests = []
 bun-jsc-linked-adapter = [
     "nimbus/bun-jsc-linked-adapter",
     "nimbus-server/bun-jsc-linked-adapter",
@@ -36,6 +36,7 @@ nimbus-assets = { path = "../nimbus-assets", features = ["js-packages", "templat
 nimbus-machine = { path = "../nimbus-machine" }
 nimbus-server = { path = "../nimbus-server" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
+nimbus-system = { path = "../nimbus-system" }
 open = "5.3"
 rand.workspace = true
 reqwest.workspace = true
@@ -63,3 +64,4 @@ serde_json.workspace = true
 
 [dev-dependencies]
 nimbus-testing = { path = "../nimbus-testing" }
+tempfile.workspace = true

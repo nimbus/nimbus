@@ -5,10 +5,10 @@ pub(crate) use std::sync::atomic::{AtomicBool, Ordering};
 pub(crate) use std::sync::{Condvar, Mutex};
 
 pub(crate) use nimbus_core::{
-    DependencySet, Document, DocumentId, DurableMutationRecord, Error, FieldSchema, FieldType,
-    IndexDefinition, IndexLifecycleEvent, IndexRangeDependency, Schema, SchemaChangeEvent,
-    SequenceNumber, TableId, TableName, TableSchema, TenantEventKind, TenantEventRecord, Timestamp,
-    TriggerDeliveryCursor, WriteOp, WriteOpType, durable_record_intersects_dependency_set,
+    DependencySet, Document, DocumentId, Error, FieldSchema, FieldType, IndexDefinition,
+    IndexLifecycleEvent, IndexRangeDependency, Schema, SchemaChangeEvent, SequenceNumber, TableId,
+    TableName, TableSchema, TenantEventKind, TenantEventRecord, Timestamp, TriggerDeliveryCursor,
+    WriteOp, WriteOpType, durable_record_intersects_dependency_set,
 };
 pub(crate) use serde_json::json;
 pub(crate) use tempfile::tempdir;

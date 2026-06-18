@@ -41,16 +41,16 @@ use crate::spec::{
     SandboxSpec, resolve_process_without_image_defaults,
 };
 
-mod launch;
 mod lifecycle;
 mod readiness;
+mod start;
 
-#[cfg(test)]
-use self::launch::{desired_krun_vm_config, krun_vm_config_path, parse_guest_user};
 #[cfg(test)]
 use self::readiness::{
     probe_target_ready, readiness_probe_target, running_status, visible_published_endpoints,
 };
+#[cfg(test)]
+use self::start::{desired_krun_vm_config, krun_vm_config_path, parse_guest_user};
 
 const DEFAULT_RUNTIME_PATH: &str = "/usr/libexec/nimbus/crun";
 const DEFAULT_CONMON_PATH: &str = "conmon";
@@ -71,7 +71,7 @@ const BYTES_PER_MIB: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum KrunLaunchMode {
+pub enum KrunStartMode {
     Execute,
     PlanOnly,
 }
@@ -90,7 +90,7 @@ pub struct KrunSandboxBackendConfig {
     pub published_port_range: RangeInclusive<u16>,
     pub max_published_ports_per_tenant: Option<usize>,
     pub resource_quota_policy: SandboxResourceQuotaPolicy,
-    pub launch_mode: KrunLaunchMode,
+    pub start_mode: KrunStartMode,
     pub log_level: String,
     pub start_timeout: Duration,
     pub stop_timeout: Duration,
@@ -109,7 +109,7 @@ impl KrunSandboxBackendConfig {
         Self {
             bundle_root: bundle_root.into(),
             state_root: state_root.into(),
-            launch_mode: KrunLaunchMode::PlanOnly,
+            start_mode: KrunStartMode::PlanOnly,
             ..Self::default()
         }
     }
@@ -131,7 +131,7 @@ impl Default for KrunSandboxBackendConfig {
             published_port_range: DEFAULT_PUBLISHED_PORT_START..=DEFAULT_PUBLISHED_PORT_END,
             max_published_ports_per_tenant: Some(DEFAULT_MAX_PORTS_PER_TENANT),
             resource_quota_policy: SandboxResourceQuotaPolicy::default(),
-            launch_mode: KrunLaunchMode::Execute,
+            start_mode: KrunStartMode::Execute,
             log_level: "debug".to_owned(),
             start_timeout: Duration::from_secs(DEFAULT_START_TIMEOUT_SECS),
             stop_timeout: Duration::from_secs(DEFAULT_STOP_TIMEOUT_SECS),
@@ -169,21 +169,21 @@ impl KrunSandboxBackend {
         self.finish_start(launch_plan)
     }
 
-    fn finish_start(&self, launch_plan: KrunLaunchPlan) -> Result<SandboxHandle> {
+    fn finish_start(&self, launch_plan: KrunStartPlan) -> Result<SandboxHandle> {
         let mut manifest = launch_plan.manifest;
         self.materialize_auto_port_bindings(&mut manifest)?;
         self.materialize_krun_vm_config(&manifest)?;
-        let launch_plan = KrunLaunchPlan { manifest };
+        let launch_plan = KrunStartPlan { manifest };
 
-        match self.config.launch_mode {
-            KrunLaunchMode::PlanOnly => {
+        match self.config.start_mode {
+            KrunStartMode::PlanOnly => {
                 let mut manifest = launch_plan.manifest.clone();
                 manifest.last_exit_code = None;
                 manifest.shutdown_requested = false;
                 self.write_manifest(&manifest)?;
                 Ok(manifest.handle)
             }
-            KrunLaunchMode::Execute => self.execute_start(&launch_plan).inspect_err(|_| {
+            KrunStartMode::Execute => self.execute_start(&launch_plan).inspect_err(|_| {
                 let _ = self.cleanup_manifest_launch_artifacts(&launch_plan.manifest);
             }),
         }
@@ -226,7 +226,7 @@ impl SandboxBackend for KrunSandboxBackend {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct KrunLaunchPlan {
+pub(crate) struct KrunStartPlan {
     manifest: KrunSandboxManifest,
 }
 
@@ -244,7 +244,7 @@ struct KrunSandboxManifest {
     restart_count: u32,
     #[serde(default)]
     next_restart_at_millis: Option<u64>,
-    launch_mode: KrunLaunchMode,
+    start_mode: KrunStartMode,
     shutdown_requested: bool,
     status: SandboxStatus,
 }

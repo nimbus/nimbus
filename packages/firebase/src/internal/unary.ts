@@ -18,6 +18,7 @@ import {
   runQueryGrpcWeb,
   type FirestoreGrpcWebContext,
 } from "./grpc-web.ts";
+import { encodeBase64, decodeBase64 } from "./base64.ts";
 import { encodeFirestoreValue } from "./document-data.ts";
 import { firestoreV1, fromJson, toJson } from "./protobuf.ts";
 
@@ -499,41 +500,3 @@ function encodedPath(path: string): string {
     .join("/");
 }
 
-function encodeBase64(bytes: Uint8Array): string {
-  const bufferCtor = (globalThis as {
-    Buffer?: {
-      from(bytes: Uint8Array): {
-        toString(encoding: "base64"): string;
-      };
-    };
-  }).Buffer;
-  if (bufferCtor) {
-    return bufferCtor.from(bytes).toString("base64");
-  }
-  const encode = globalThis.btoa;
-  if (typeof encode !== "function") {
-    throw new Error("No base64 encoder is available for Firestore transaction bytes.");
-  }
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return encode(binary);
-}
-
-function decodeBase64(value: string): Uint8Array {
-  const bufferCtor = (globalThis as {
-    Buffer?: {
-      from(value: string, encoding: "base64"): Uint8Array;
-    };
-  }).Buffer;
-  if (bufferCtor) {
-    return new Uint8Array(bufferCtor.from(value, "base64"));
-  }
-  const decode = globalThis.atob;
-  if (typeof decode !== "function") {
-    throw new Error("No base64 decoder is available for Firestore transaction bytes.");
-  }
-  const binary = decode(value);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-}

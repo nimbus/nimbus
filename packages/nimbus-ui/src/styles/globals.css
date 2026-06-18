@@ -232,3 +232,40 @@
     color: var(--color-violet);
   }
 }
+
+/* Shiki dual-theme code blocks (see components/code-block.tsx). With
+   defaultColor:false, shiki emits --shiki-light / --shiki-dark CSS vars; pick
+   the set that matches the app's data-theme. */
+.nimbus-code .shiki {
+  margin: 0;
+  padding: 1rem;
+  background-color: var(--shiki-light-bg);
+}
+.nimbus-code .shiki,
+.nimbus-code .shiki span {
+  color: var(--shiki-light);
+}
+[data-theme="dark"] .nimbus-code .shiki {
+  background-color: var(--shiki-dark-bg);
+}
+[data-theme="dark"] .nimbus-code .shiki,
+[data-theme="dark"] .nimbus-code .shiki span {
+  color: var(--shiki-dark);
+}
+
+/* FSV8: identifiers with a TS-compiler type hint get a hover affordance. */
+.nimbus-code .shiki span[data-typed] {
+  cursor: help;
+  text-decoration: underline dotted
+    color-mix(in oklch, var(--color-muted) 55%, transparent);
+  text-underline-offset: 3px;
+}
+
+/* A run's error source line, when arrived at via the error-location link. The
+   shiki line span is made full-width so the highlight reads as a row. */
+.nimbus-code .shiki .line[data-highlighted-line] {
+  display: inline-block;
+  width: 100%;
+  background: color-mix(in oklch, var(--color-danger) 18%, transparent);
+  box-shadow: inset 2px 0 0 var(--color-danger);
+}

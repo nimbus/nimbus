@@ -21,7 +21,7 @@ All 27 workspace members, per the root `Cargo.toml`.
 | `nimbus-artifacts` | Artifact verification: OCI references, SLSA provenance, admission checks. |
 | `nimbus-assets` | Embedded production asset catalog (distribution payloads, UI bytes, templates). |
 | `nimbus-auth` | Application auth contract: `ApplicationAuthVerifier` bearer-token verification into `InvocationAuth`. |
-| `nimbus-bin` | The `nimbus` CLI binary: `start`, `dev`, `deploy`, `init`, `machine`, `data`, `compose`, `encryption`, codegen, and more. |
+| `nimbus-bin` | The `nimbus` CLI binary: `start`, `dev`, `deploy`, `run`, `sandbox`, `init`, `machine`, `backup`, `compose`, `encryption`, codegen, and more. |
 | `nimbus-bridge` | Runtime host bridge: bootstraps per-invocation host state and routes V8 host calls into the engine. |
 | `nimbus-cloud-functions` | Cloud Functions-compatible adapter contracts and runtime bridge. |
 | `nimbus-convex` | Convex protocol semantics: function registry, subscriptions, document identity, host-call payloads. |
@@ -78,8 +78,12 @@ discussion, not a workaround.
    effects, and the commit-log append happen in one storage transaction.
    Never a document without its index entries; never a commit entry without
    its document write.
-5. **Runtime bundles are integrity-checked.** The bundle's SHA-256 hash is
-   verified before every invocation; a tampered or stale bundle is rejected.
+5. **Runtime bundles are integrity-checked against their provenance.** A bundle
+   loaded with a recorded SHA-256 is re-hashed and compared against that hash
+   before every invocation; a tampered or stale bundle is rejected
+   (`verify_integrity`, `crates/nimbus-runtime/src/runtime/bundle.rs`). A
+   path-backed bundle loaded without recorded provenance carries no expected
+   hash, so it is admitted on filesystem trust alone.
 6. **Schema is optional.** A table without a schema accepts any document.
    Setting a schema adds constraints but never removes the ability to write.
 
@@ -167,8 +171,9 @@ status evidence.
 
 `nimbus-bin` builds the `nimbus` binary. `crates/nimbus-bin/src/start/` boots
 the server; sibling modules implement the rest of the command surface (`dev`,
-`deploy`, `init`, `machine`, `data`, `compose`, `encryption`, auth/token
-management, and codegen, which embeds `@nimbus/codegen`).
+`deploy`, `run`, `sandbox`, `init`, `machine`, `backup`, `compose`,
+`encryption`, auth/token management, and codegen, which embeds
+`@nimbus/codegen`).
 → <https://nimbusdocs.com/concepts/architecture/cli-codegen/>
 
 ### SDK & packages

@@ -1,3 +1,32 @@
+//! Wire `$db` name → Nimbus tenant resolution for the MongoDB adapter.
+//!
+//! **Cross-adapter contract (the canonical rule).** A tenant boundary is only as
+//! strong as whatever *decides* the tenant. The trustworthy model — implemented
+//! by the DynamoDB adapter's `AccessKeyRegistry` (`crates/nimbus-dynamodb/src/
+//! tenant.rs`) — binds each credential to exactly one `TenantId`, so
+//! authentication alone fixes the tenant and no request-supplied field can
+//! broaden it. A wire-supplied namespace token (an access key's table prefix, a
+//! MongoDB `$db` name) may then only *select within* the already-authenticated
+//! tenant's scope, never widen it. "Authentication decides the tenant; a
+//! wire-supplied name never does."
+//!
+//! **Where this adapter stands today (the open deviation, tracked as
+//! launch-readiness item M9).** MongoDB authenticates the connection against a
+//! single SCRAM credential and then derives the tenant from the wire database
+//! name via [`resolve_tenant_id`] — *not* from the authenticated principal. A
+//! caller who holds that one credential can therefore reach any tenant by
+//! varying the `$db` name on the wire. [`ensure_database_matches_context`] pins
+//! every command to the tenant its connection first resolved (so a session
+//! scoped to `tenant-a` cannot name `tenant-b`'s database mid-stream), but it
+//! cannot constrain which tenant the shared credential was allowed to pick in
+//! the first place.
+//!
+//! This deviation from the contract is load-bearing-mitigated *only* by
+//! `guard_listener_is_loopback_only` refusing any non-loopback bind. Before the
+//! adapter may bind a routable address, each SCRAM credential must be bound to a
+//! specific tenant (mirroring DynamoDB's `AccessKeyRegistry`); until then the
+//! loopback guard must stay.
+
 use std::sync::Arc;
 
 use nimbus_core::{PrincipalContext, TenantId};

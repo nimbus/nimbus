@@ -1,4 +1,3 @@
-import { useRouterState } from "@tanstack/react-router";
 import { useNimbus, useNimbusConnectionState, useQuery } from "@nimbus/nimbus/react";
 
 import { api } from "../../convex/_generated/api";
@@ -8,7 +7,6 @@ import { type ConnState, StateDot } from "../components/state-dot";
 import { UpgradePopover } from "../components/upgrade-popover";
 import { useStalenessContext } from "../hooks/use-staleness";
 import { metaGlyph } from "../lib/platform";
-import { useUiStore } from "../store/ui-store";
 
 type SystemStatus = {
   version?: string | null;
@@ -35,7 +33,6 @@ export function StatusBar() {
 
   const version = status?.version ?? "—";
   const buildHash = status?.buildHash ?? "";
-  const tenant = useStatusBarTenant();
 
   const staleness = useStalenessContext();
   const baseValue = `${version}${buildHash ? `+${buildHash.slice(0, 7)}` : ""}`;
@@ -44,48 +41,52 @@ export function StatusBar() {
     <footer
       role="contentinfo"
       aria-label="Status bar"
-      className="flex h-[var(--statusbar-height)] items-center gap-3 border-t border-app bg-surface px-3 text-xs font-mono text-muted"
+      className="flex h-[var(--statusbar-height)] items-center justify-between gap-3 border-t border-app bg-surface px-3 text-xs font-mono text-muted"
     >
-      <span
-        className="inline-flex items-center gap-1.5"
-        data-testid="status-connection"
-      >
-        <StateDot state={connState} />
-        <span>{connLabel}</span>
-      </span>
-      <Divider />
-      <CopyChip
-        label="server URL"
-        value={serverUrl}
-        testid="status-server-url"
-      />
-      <Divider />
-      <VersionSlot
-        baseValue={baseValue}
-        currentVersion={version}
-        staleness={staleness}
-      />
-      <Divider />
-      <CopyChip label="tenant" value={tenant} testid="status-tenant" />
-      {conn.hasInflightRequests ? (
-        <>
-          <Divider />
-          <span data-testid="status-inflight" className="tabular">
-            {conn.inflightMutations + conn.inflightActions} inflight
-          </span>
-        </>
-      ) : null}
-      <span className="ml-auto inline-flex items-center gap-3">
-        <span className="inline-flex items-center gap-1">
-          <Kbd>{metaGlyph}</Kbd>
-          <Kbd>K</Kbd>
-          <span className="text-muted">palette</span>
-        </span>
+      {/* Left: keyboard hints (least important — Chrome's link-hover URL
+          preview covers this corner, so the connection/url/tenant info lives
+          on the right where it stays readable). */}
+      <span className="inline-flex items-center gap-3">
         <span className="inline-flex items-center gap-1">
           <Kbd>{metaGlyph}</Kbd>
           <Kbd>\</Kbd>
           <span className="text-muted">system tenant lens</span>
         </span>
+        <span className="inline-flex items-center gap-1">
+          <Kbd>{metaGlyph}</Kbd>
+          <Kbd>K</Kbd>
+          <span className="text-muted">palette</span>
+        </span>
+      </span>
+      {/* Right: connection status, server URL, version (the info that matters,
+          kept clear of the bottom-left link-hover URL preview). */}
+      <span className="inline-flex items-center gap-3">
+        <span
+          className="inline-flex items-center gap-1.5"
+          data-testid="status-connection"
+        >
+          <StateDot state={connState} />
+          <span>{connLabel}</span>
+        </span>
+        <Divider />
+        <CopyChip
+          label="server URL"
+          value={serverUrl}
+          testid="status-server-url"
+        />
+        <VersionSlot
+          baseValue={baseValue}
+          currentVersion={version}
+          staleness={staleness}
+        />
+        {conn.hasInflightRequests ? (
+          <>
+            <Divider />
+            <span data-testid="status-inflight" className="tabular">
+              {conn.inflightMutations + conn.inflightActions} inflight
+            </span>
+          </>
+        ) : null}
       </span>
     </footer>
   );
@@ -104,39 +105,45 @@ function VersionSlot({
     staleness;
   const { state, info, targetLatest } = snapshot;
 
+  // The steady-state version lives in the top nav (`nimbus v…`); this footer
+  // slot only appears when there is an actionable upgrade.
   if (state === "hidden" || !info) {
-    return (
-      <CopyChip label="version" value={baseValue} testid="status-version" />
-    );
+    return null;
   }
 
   if (state === "upgrading") {
     return (
-      <span
-        role="status"
-        aria-live="polite"
-        data-testid="status-version-upgrading"
-        className="inline-flex items-center gap-1.5"
-      >
-        <UpgradeDot tone="starting" />
-        <span className="text-default">
-          Updating to {targetLatest ?? info.latest}…
+      <>
+        <Divider />
+        <span
+          role="status"
+          aria-live="polite"
+          data-testid="status-version-upgrading"
+          className="inline-flex items-center gap-1.5"
+        >
+          <UpgradeDot tone="starting" />
+          <span className="text-default">
+            Updating to {targetLatest ?? info.latest}…
+          </span>
         </span>
-      </span>
+      </>
     );
   }
 
   if (state === "upgraded") {
     return (
-      <span
-        role="status"
-        aria-live="polite"
-        data-testid="status-version-upgraded"
-        className="inline-flex items-center gap-1.5"
-      >
-        <UpgradeDot tone="success" />
-        <span className="text-default">{baseValue}</span>
-      </span>
+      <>
+        <Divider />
+        <span
+          role="status"
+          aria-live="polite"
+          data-testid="status-version-upgraded"
+          className="inline-flex items-center gap-1.5"
+        >
+          <UpgradeDot tone="success" />
+          <span className="text-default">{baseValue}</span>
+        </span>
+      </>
     );
   }
 
@@ -144,33 +151,36 @@ function VersionSlot({
   // determines whether the popup is mounted next to it.
   const open = state === "confirming";
   return (
-    <span
-      role="status"
-      aria-live="polite"
-      data-testid="status-version-available"
-      className="inline-flex items-center"
-    >
-      <UpgradePopover
-        open={open}
-        onOpenChange={(next) => {
-          if (next) openPopover();
-          else closePopover();
-        }}
-        info={info}
-        isLocal={staleness.isLocal}
-        hasDesktopBridge={staleness.hasDesktopBridge}
-        onUpdate={startUpgrade}
-        onCopyCommand={copyCommand}
-        trigger={
-          <>
-            <UpgradeDot tone="accent" />
-            <span className="text-default">v{currentVersion}</span>
-            <span className="text-muted">·</span>
-            <span className="text-default">update to {info.latest} →</span>
-          </>
-        }
-      />
-    </span>
+    <>
+      <Divider />
+      <span
+        role="status"
+        aria-live="polite"
+        data-testid="status-version-available"
+        className="inline-flex items-center"
+      >
+        <UpgradePopover
+          open={open}
+          onOpenChange={(next) => {
+            if (next) openPopover();
+            else closePopover();
+          }}
+          info={info}
+          isLocal={staleness.isLocal}
+          hasDesktopBridge={staleness.hasDesktopBridge}
+          onUpdate={startUpgrade}
+          onCopyCommand={copyCommand}
+          trigger={
+            <>
+              <UpgradeDot tone="accent" />
+              <span className="text-default">v{currentVersion}</span>
+              <span className="text-muted">·</span>
+              <span className="text-default">update to {info.latest} →</span>
+            </>
+          }
+        />
+      </span>
+    </>
   );
 }
 
@@ -201,23 +211,4 @@ function Divider() {
 function deriveOrigin(): string {
   if (typeof window === "undefined") return "—";
   return window.location.origin;
-}
-
-function useStatusBarTenant(): string {
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const search = useRouterState({
-    select: (s) => s.location.search as Record<string, unknown> | undefined,
-  });
-  const activeTenant = useUiStore((s) => s.activeTenant);
-
-  if (pathname.startsWith("/developer")) {
-    return activeTenant ?? "—";
-  }
-  if (pathname === "/operator/observability" || pathname.startsWith("/operator/observability/")) {
-    const tenant = search?.tenant;
-    return typeof tenant === "string" && tenant.trim().length > 0
-      ? tenant.trim()
-      : "all tenants";
-  }
-  return "_nimbus";
 }

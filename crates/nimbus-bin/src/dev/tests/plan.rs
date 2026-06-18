@@ -344,7 +344,7 @@ fn dev_plan_respects_explicit_app_and_data_dirs() {
 }
 
 #[test]
-fn dev_start_and_compose_resolve_same_project_from_same_cwd() {
+fn dev_auto_discovers_compose_for_local_development() {
     let temp = tempdir().expect("tempdir should build");
     create_source_root(temp.path(), "convex");
     fs::write(
@@ -358,29 +358,12 @@ fn dev_start_and_compose_resolve_same_project_from_same_cwd() {
         crate::compose::resolve_required_compose_selection(&[])
     })
     .expect("compose selection should resolve");
-    let start_selection = with_current_dir(&nested_cwd, || {
-        crate::start::resolve_optional_compose_selection(&StartCommand::default())
-    })
-    .expect("start selection should resolve")
-    .expect("start selection should exist");
     let dev_plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), &nested_cwd)
         .expect("dev plan should resolve");
     let dev_selection = dev_plan
         .compose_selection
         .expect("dev selection should exist");
 
-    assert_eq!(
-        compose_selection
-            .files
-            .iter()
-            .map(|path| fs::canonicalize(path).unwrap())
-            .collect::<Vec<_>>(),
-        start_selection
-            .files
-            .iter()
-            .map(|path| fs::canonicalize(path).unwrap())
-            .collect::<Vec<_>>()
-    );
     assert_eq!(
         compose_selection
             .files

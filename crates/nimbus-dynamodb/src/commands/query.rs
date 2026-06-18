@@ -178,12 +178,14 @@ pub fn query(
     })
 }
 
-/// Scan a full table with an optional `FilterExpression`, paginating by the
-/// primary-key `DocumentId` (a stable total order over the table).
+/// Scan a table — or a secondary index when `IndexName` is set, returning only
+/// the items that carry the index's key attributes (sparse) projected to the
+/// index's attribute set — with an optional `FilterExpression`, paginating by
+/// the base table's primary-key `DocumentId` (a stable total order).
 ///
 /// # Errors
 /// `ResourceNotFoundException` if the table is absent; `ValidationException`
-/// for an `IndexName` (D4) or a malformed `ExclusiveStartKey`.
+/// for an unknown `IndexName` or a malformed `ExclusiveStartKey`.
 pub fn scan(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,

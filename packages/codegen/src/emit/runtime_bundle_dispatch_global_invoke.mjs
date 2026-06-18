@@ -17,7 +17,7 @@ function runtimeBundleDispatchGlobalInvoke({ module = true } = {}) {
       });
     }
 
-    throw new Error(\`convex function or route not found: \${request.function_name}\`);
+    throw new Error(\`nimbus function or route not found: \${request.function_name}\`);
   } catch (error) {
     if (error && typeof error === "object" && "nimbusHostError" in error) {
       return {

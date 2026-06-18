@@ -2,10 +2,11 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
+import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
+import { PageHeader } from "../../components/page-header";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
-import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
@@ -90,22 +91,17 @@ function ServicesPage() {
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-services"
     >
-      <header className="flex items-baseline justify-between">
-        <div>
-          <h1
-            className="text-xl text-default"
-            style={{ fontSize: "var(--text-xl)" }}
-          >
-            Services
-          </h1>
-          <p className="text-sm text-muted">
+      <PageHeader
+        title="Services"
+        subtitle={
+          <>
             Services this tenant declares in <code>compose.yaml</code>. They run
             as microVMs on Linux and as containers inside the developer machine
             VM on macOS.
-          </p>
-        </div>
-        <ScopeChip activeTenant={activeTenant} />
-      </header>
+          </>
+        }
+        trailing={<ScopeChip activeTenant={activeTenant} />}
+      />
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
         <ServicesTable
@@ -232,9 +228,7 @@ export function ServicesTable({
         </thead>
         <tbody>
           {services.map((svc) => {
-            const endpoints = Array.isArray(svc.endpoints)
-              ? svc.endpoints
-              : [];
+            const endpoints = Array.isArray(svc.endpoints) ? svc.endpoints : [];
             return (
               <tr
                 key={svc._id}
@@ -292,36 +286,5 @@ export function ServicesTable({
         </tbody>
       </table>
     </div>
-  );
-}
-
-function Th({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <th
-      className={cn(
-        "border-b border-app px-3 py-2 text-left font-normal",
-        className,
-      )}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <td className={cn("px-3 py-2 align-middle", className)}>{children}</td>
   );
 }

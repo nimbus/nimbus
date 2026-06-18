@@ -6,18 +6,17 @@ use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuar
 use std::time::Duration;
 
 use nimbus_core::{
-    CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, Filter,
-    IndexLifecycleEvent, JobId, Result, ScheduledJob, ScheduledJobResult, Schema,
-    SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName,
-    TableSchema, TableState, TenantEventKind, TenantEventRecord, Timestamp, TriggerDeliveryCursor,
-    TriggerWriteOrigin, WriteOp, WriteOpType,
+    CommitEntry, CronJob, Document, DocumentId, Error, Filter, IndexLifecycleEvent, JobId, Result,
+    ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind,
+    TableId, TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind,
+    TenantEventRecord, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::commit_log::{deserialize_durable_record, serialize_durable_record};
+use crate::commit_log::{deserialize_tenant_event_record, serialize_tenant_event_record};
 use crate::encryption::DataEncryptionKey;
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{

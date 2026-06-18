@@ -23,7 +23,7 @@ function helperName(kind) {
     case "action":
       return "makeActionReference";
     default:
-      throw new Error(`unknown convex function kind: ${kind}`);
+      throw new Error(`unknown nimbus function kind: ${kind}`);
   }
 }
 

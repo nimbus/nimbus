@@ -7,6 +7,8 @@ import { api } from "../../../convex/_generated/api";
 import type { Doc } from "../../../convex/_generated/dataModel";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { CopyChip } from "../../components/copy-chip";
+import { Td, Th } from "../../components/data-table";
+import { PageHeader } from "../../components/page-header";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
@@ -189,7 +191,18 @@ function MachinesPage() {
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-machines"
     >
-      <PageHeader count={machines?.length} loading={machines === undefined} />
+      <PageHeader
+        title="Machines"
+        subtitle="Outer Linux VMs that host sandboxes on macOS and Windows dev hosts (krunkit / WSL2). Start, stop, and inspect them. Not the same as cluster Nodes."
+        trailing={
+          <span
+            className="font-mono text-xs text-muted"
+            data-testid="machines-total"
+          >
+            {machines === undefined ? "loading…" : `${machines.length} total`}
+          </span>
+        }
+      />
       <div className="flex min-h-0 flex-1 gap-4">
         <div
           className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-app bg-surface"
@@ -200,7 +213,7 @@ function MachinesPage() {
           ) : machines.length === 0 ? (
             <EmptyState
               title="No machines"
-              detail="When you create a machine with the CLI it will appear here in real time."
+              detail="Machines are the outer dev VM on macOS and Windows. Run `nimbus machine init` to create one — it appears here in real time. Pure-Linux nodes run sandboxes directly and have none."
             />
           ) : (
             <MachineTable
@@ -246,37 +259,6 @@ function MachinesPage() {
         testid="machines-delete-dialog"
       />
     </section>
-  );
-}
-
-function PageHeader({
-  count,
-  loading,
-}: {
-  count: number | undefined;
-  loading: boolean;
-}) {
-  return (
-    <header className="flex items-baseline justify-between">
-      <div>
-        <h1
-          className="text-xl text-default"
-          style={{ fontSize: "var(--text-xl)" }}
-        >
-          Machines
-        </h1>
-        <p className="text-sm text-muted">
-          Host and guest lifecycle. Start, stop, and inspect machines bound to
-          this deployment.
-        </p>
-      </div>
-      <div
-        className="font-mono text-xs text-muted"
-        data-testid="machines-total"
-      >
-        {loading ? "loading…" : `${count ?? 0} total`}
-      </div>
-    </header>
   );
 }
 
@@ -466,7 +448,7 @@ function MachineDetail({
         </button>
       </header>
 
-      <Section title="Identifiers">
+      <Section title="Status">
         <KvRow label="state">
           <StateChip state={machine.state} />
         </KvRow>
@@ -646,37 +628,6 @@ function KvRow({
       </span>
       <span className="min-w-0 text-right">{children}</span>
     </div>
-  );
-}
-
-function Th({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <th
-      className={cn(
-        "border-b border-app px-3 py-2 text-left font-normal",
-        className,
-      )}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <td className={cn("px-3 py-2 align-middle", className)}>{children}</td>
   );
 }
 

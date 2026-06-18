@@ -23,10 +23,13 @@ use super::inventory::{adapter_capability_inventory, route_inventory};
 use super::keys::{
     bundle_document_id, cron_job_document_id, function_document_id, listener_document_id,
     machine_document_id, machine_listener_document_id, machine_port_document_id,
-    scheduled_job_document_id, service_document_id, service_port_document_id,
-    subscription_document_id, table_document_id, workload_status_document_id,
+    module_document_id, scheduled_job_document_id, service_document_id, service_port_document_id,
+    source_package_document_id, subscription_document_id, table_document_id,
+    workload_status_document_id,
 };
 use super::schema::{SystemTable, system_table_schemas};
+use super::source_package::parse_source_package;
+use super::source_store::SourcePackageStore;
 
 pub async fn ensure_system_tenant_async(engine: &Arc<Engine>) -> Result<()> {
     let tenant_id = system_tenant_id()?;
@@ -440,6 +443,177 @@ pub async fn record_deployment_state_async(
     delete_stale_deployment_documents_async(engine, &bundle_sha256, &active_function_ids).await
 }
 
+/// The deploy-captured source package (the read-artifact behind the console
+/// Source view) and its modules. The bytes themselves are persisted separately
+/// in the content-addressed source-package store; this projects the metadata
+/// rows that let the console resolve `module:function` -> module -> package.
+/// See the Function Source Visibility plan (FSV3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemSourcePackageRecordInput<'a> {
+    pub digest: &'a str,
+    pub storage_key: &'a str,
+    pub size_bytes: u64,
+    pub unpacked_bytes: u64,
+    pub modules: Vec<SystemModuleRecordInput<'a>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemModuleRecordInput<'a> {
+    pub path: &'a str,
+    pub sha256: &'a str,
+}
+
+/// Project a deployed source package and its modules into the system tenant,
+/// then GC any prior package (and its modules) so the console always reflects
+/// the active deployment. Re-recording the same digest is idempotent.
+pub async fn record_source_package_state_async(
+    engine: &Arc<Engine>,
+    input: &SystemSourcePackageRecordInput<'_>,
+) -> Result<()> {
+    ensure_system_tenant_async(engine).await?;
+
+    upsert_system_document_async(
+        engine,
+        SystemTable::SourcePackages,
+        &source_package_document_id(input.digest),
+        object_fields(json!({
+            "digest": input.digest,
+            "storageKey": input.storage_key,
+            "sizeBytes": input.size_bytes,
+            "unpackedBytes": input.unpacked_bytes,
+            "status": "active",
+        })),
+    )
+    .await?;
+
+    let active_module_ids = input
+        .modules
+        .iter()
+        .map(|module| module_document_id(input.digest, module.path))
+        .collect::<std::collections::BTreeSet<_>>();
+    for module in &input.modules {
+        upsert_system_document_async(
+            engine,
+            SystemTable::Modules,
+            &module_document_id(input.digest, module.path),
+            object_fields(json!({
+                "path": module.path,
+                "sourcePackageId": input.digest,
+                "sha256": module.sha256,
+            })),
+        )
+        .await?;
+    }
+
+    delete_stale_source_package_documents_async(engine, input.digest, &active_module_ids).await
+}
+
+/// A module's source resolved from the active source package, for the console
+/// Source view. Read path (FSV4): module path -> `sourcePackageId` -> CAS bytes
+/// (hash-verified by the store) -> the module's source text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleSource {
+    pub path: String,
+    pub source: String,
+    pub source_map: Option<String>,
+    pub type_info: Option<Value>,
+    pub digest: String,
+}
+
+/// Resolve a module's source from the content-addressed store, or `None` when
+/// the module is unknown. The store verifies the bytes against the digest, so a
+/// tampered package fails closed rather than serving wrong source.
+pub async fn read_module_source_async(
+    engine: &Arc<Engine>,
+    store: &dyn SourcePackageStore,
+    module_path: &str,
+) -> Result<Option<ModuleSource>> {
+    let modules = query_system_documents_by_eq_async(
+        engine,
+        SystemTable::Modules,
+        [("path", json!(module_path))],
+    )
+    .await?;
+    let Some(module) = modules.into_iter().next() else {
+        return Ok(None);
+    };
+    let Some(digest) = module.fields.get("sourcePackageId").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let bytes = store.get(digest)?;
+    let parsed = parse_source_package(&bytes)?;
+    let Some(found) = parsed
+        .modules
+        .into_iter()
+        .find(|candidate| candidate.path == module_path)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(ModuleSource {
+        path: found.path,
+        source: found.source,
+        source_map: found.source_map,
+        type_info: found.type_info,
+        digest: digest.to_owned(),
+    }))
+}
+
+/// All modules (path + source) in the source package that contains
+/// `module_path`. Backs the cross-module call graph ("called by"); empty when
+/// the module is unknown. See the Function Source Visibility plan (FSV7).
+pub async fn read_source_package_modules_async(
+    engine: &Arc<Engine>,
+    store: &dyn SourcePackageStore,
+    module_path: &str,
+) -> Result<Vec<(String, String)>> {
+    let modules = query_system_documents_by_eq_async(
+        engine,
+        SystemTable::Modules,
+        [("path", json!(module_path))],
+    )
+    .await?;
+    let Some(module) = modules.into_iter().next() else {
+        return Ok(Vec::new());
+    };
+    let Some(digest) = module.fields.get("sourcePackageId").and_then(Value::as_str) else {
+        return Ok(Vec::new());
+    };
+    let bytes = store.get(digest)?;
+    let parsed = parse_source_package(&bytes)?;
+    Ok(parsed
+        .modules
+        .into_iter()
+        .map(|module| (module.path, module.source))
+        .collect())
+}
+
+/// All modules (path + source) in the active deployment's source package.
+/// Backs the deployment-wide call graph; empty when nothing is deployed. FSV7.
+pub async fn read_active_source_package_modules_async(
+    engine: &Arc<Engine>,
+    store: &dyn SourcePackageStore,
+) -> Result<Vec<(String, String)>> {
+    let packages = query_system_documents_by_eq_async(
+        engine,
+        SystemTable::SourcePackages,
+        [("status", json!("active"))],
+    )
+    .await?;
+    let Some(package) = packages.into_iter().next() else {
+        return Ok(Vec::new());
+    };
+    let Some(digest) = package.fields.get("digest").and_then(Value::as_str) else {
+        return Ok(Vec::new());
+    };
+    let bytes = store.get(digest)?;
+    let parsed = parse_source_package(&bytes)?;
+    Ok(parsed
+        .modules
+        .into_iter()
+        .map(|module| (module.path, module.source))
+        .collect())
+}
+
 pub struct RunRecord<'a> {
     pub tenant_id: &'a TenantId,
     pub function_path: &'a str,
@@ -463,12 +637,37 @@ pub async fn record_run_async(engine: &Arc<Engine>, record: RunRecord<'_>) -> Re
         "startedAt": record.started_at,
     }));
     if let Some(error) = record.error {
-        fields.insert("error".to_owned(), json!({ "message": error }));
+        let mut error_value = json!({ "message": error });
+        if let (Some(location), Some(map)) =
+            (extract_error_location(error), error_value.as_object_mut())
+        {
+            map.insert("location".to_owned(), json!(location));
+        }
+        fields.insert("error".to_owned(), error_value);
     }
     engine
         .insert_document_async(system_tenant_id()?, SystemTable::Runs.table_name()?, fields)
         .await?;
     Ok(())
+}
+
+/// Lift a `module:line` source location out of a remapped runtime-handler error.
+///
+/// The runtime remap (codegen `emit/runtime_remap.mjs`) appends ` (at module:line)`
+/// to the thrown message so a failed run names the developer's own source line.
+/// Storing that location as a structured field lets the console link the failure
+/// straight to its source line instead of forcing the reader to parse the
+/// message string. Returns `None` for messages without a well-formed location.
+fn extract_error_location(message: &str) -> Option<&str> {
+    let after = message.find("(at ")? + "(at ".len();
+    let rest = &message[after..];
+    let close = rest.find(')')?;
+    let location = &rest[..close];
+    let (module, line) = location.rsplit_once(':')?;
+    if module.is_empty() || line.is_empty() || !line.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(location)
 }
 
 pub(crate) async fn record_scheduled_job_state_async(
@@ -837,6 +1036,66 @@ async fn delete_functions_for_bundle_async(
     Ok(())
 }
 
+async fn delete_stale_source_package_documents_async(
+    engine: &Arc<Engine>,
+    active_digest: &str,
+    active_module_ids: &std::collections::BTreeSet<String>,
+) -> Result<()> {
+    let system_tenant = system_tenant_id()?;
+    let packages_table = SystemTable::SourcePackages.table_name()?;
+    let packages = query_system_documents_by_eq_async(
+        engine,
+        SystemTable::SourcePackages,
+        [("status", json!("active"))],
+    )
+    .await?;
+    for package in packages {
+        let Some(digest) = package.fields.get("digest").and_then(Value::as_str) else {
+            engine
+                .delete_document_async(system_tenant.clone(), packages_table.clone(), package.id)
+                .await?;
+            continue;
+        };
+        if digest == active_digest {
+            continue;
+        }
+        delete_modules_for_source_package_async(engine, digest, |_| true).await?;
+        engine
+            .delete_document_async(system_tenant.clone(), packages_table.clone(), package.id)
+            .await?;
+    }
+
+    delete_modules_for_source_package_async(engine, active_digest, |module| {
+        !active_module_ids.contains(&module.id.to_string())
+    })
+    .await?;
+
+    Ok(())
+}
+
+async fn delete_modules_for_source_package_async(
+    engine: &Arc<Engine>,
+    digest: &str,
+    should_delete: impl Fn(&Document) -> bool,
+) -> Result<()> {
+    let system_tenant = system_tenant_id()?;
+    let modules_table = SystemTable::Modules.table_name()?;
+    let modules = query_system_documents_by_eq_async(
+        engine,
+        SystemTable::Modules,
+        [("sourcePackageId", json!(digest))],
+    )
+    .await?;
+    for module in modules {
+        if should_delete(&module) {
+            engine
+                .delete_document_async(system_tenant.clone(), modules_table.clone(), module.id)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
 async fn delete_stale_scheduler_documents_async(
     engine: &Arc<Engine>,
     table: SystemTable,
@@ -1160,5 +1419,27 @@ mod tests {
 
         assert_eq!(started_at_or_else(&missing, || Ok(7)).unwrap(), 7);
         assert_eq!(started_at_or_else(&invalid, || Ok(9)).unwrap(), 9);
+    }
+
+    #[test]
+    fn extract_error_location_lifts_remapped_source_location() {
+        // The runtime remap appends ` (at module:line)` to the thrown message.
+        let message = "runtime JavaScript error: Error: message body must not be empty (at messages:24)\n    at eval";
+        assert_eq!(extract_error_location(message), Some("messages:24"));
+
+        // Nested module paths (admin/users) and the first `(at ...)` win.
+        assert_eq!(
+            extract_error_location("Error: nope (at admin/users:7)"),
+            Some("admin/users:7"),
+        );
+    }
+
+    #[test]
+    fn extract_error_location_returns_none_without_a_wellformed_location() {
+        assert_eq!(extract_error_location("plain error, no location"), None);
+        // Missing line number / malformed are rejected, not stored as garbage.
+        assert_eq!(extract_error_location("boom (at messages)"), None);
+        assert_eq!(extract_error_location("boom (at messages:abc)"), None);
+        assert_eq!(extract_error_location("boom (at :24)"), None);
     }
 }

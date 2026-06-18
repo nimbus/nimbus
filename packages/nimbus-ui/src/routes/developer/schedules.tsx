@@ -2,9 +2,10 @@ import { createFileRoute, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@nimbus/nimbus/react";
 
 import { api } from "../../../convex/_generated/api";
+import { Td, Th } from "../../components/data-table";
+import { PageHeader } from "../../components/page-header";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
-import { cn } from "../../lib/cn";
 import { formatDuration, shortId } from "../../lib/format";
 import {
   type SubDrawerSpec,
@@ -93,20 +94,10 @@ function SchedulesPage() {
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-schedules"
     >
-      <header className="flex items-baseline justify-between">
-        <div>
-          <h1
-            className="text-xl text-default"
-            style={{ fontSize: "var(--text-xl)" }}
-          >
-            Schedules
-          </h1>
-          <p className="text-sm text-muted">
-            Scheduler-driven and cron-driven invocations for this tenant.
-            Switch between one-shot scheduled jobs and recurring cron entries.
-          </p>
-        </div>
-      </header>
+      <PageHeader
+        title="Schedules"
+        subtitle="Scheduler-driven and cron-driven invocations for this tenant. Switch between one-shot scheduled jobs and recurring cron entries."
+      />
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
         {section === "scheduled" ? (
@@ -265,37 +256,6 @@ function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
         </tbody>
       </table>
     </div>
-  );
-}
-
-function Th({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <th
-      className={cn(
-        "border-b border-app px-3 py-2 text-left font-normal",
-        className,
-      )}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <td className={cn("px-3 py-2 align-middle", className)}>{children}</td>
   );
 }
 

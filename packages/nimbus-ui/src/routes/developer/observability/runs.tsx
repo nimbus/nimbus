@@ -5,7 +5,7 @@ import { useCallback } from "react";
 import { api } from "../../../../convex/_generated/api";
 import { CopyChip } from "../../../components/copy-chip";
 import { StateChip } from "../../../components/state-chip";
-import { Td, Th } from "../../../components/table-cells";
+import { Td, Th } from "../../../components/data-table";
 import { RelativeTime } from "../../../components/time";
 import { formatDuration, shortId } from "../../../lib/format";
 import { FilterInput, FilterSelect } from "./_filters";
@@ -192,4 +192,3 @@ function RunsTable({ runs }: { runs: RunDoc[] | undefined }) {
     </div>
   );
 }
-

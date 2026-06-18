@@ -360,6 +360,3 @@ fn compatibility_events(
     }
     events
 }
-
-/// Compatibility alias while call sites migrate to tenant-event terminology.
-pub type DurableMutationRecord = TenantEventRecord;

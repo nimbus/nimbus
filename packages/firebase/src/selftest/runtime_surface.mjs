@@ -1,5 +1,5 @@
 import { assert, path, pathToFileURL, require } from "./support.mjs";
-import { testConverterSurface, testCrudTransportSurface, testEqualityHelpers, testAuthRefreshAndErrorMapping, testFieldValueSentinelWriteSurface, testQueryConstraintSurface, testQueryExecutionSurface, testTransactionSurface } from "./rest_surface.mjs";
+import { testConverterSurface, testCrudTransportSurface, testEqualityHelpers, testAuthRefreshAndErrorMapping, testFieldValueSentinelWriteSurface, testQueryConstraintSurface, testQueryExecutionSurface, testTemporalAndBytesCodecSurface, testTransactionSurface } from "./rest_surface.mjs";
 import { testGrpcWebFieldValueSentinelSurface, testGrpcWebTransactionSurface, testGrpcWebUnaryTransportSurface, testProtobufFoundation } from "./grpc_surface.mjs";
 import { testListenWatchSurface } from "./watch_surface.mjs";
 
@@ -14,6 +14,7 @@ export async function testRuntimeSurface(bundleDir) {
   await testAppLifecycle(appModule);
   await testFirestoreLifecycle(firestoreModule, appModule);
   await testCrudTransportSurface(firestoreModule, appModule);
+  await testTemporalAndBytesCodecSurface(firestoreModule, appModule);
   await testTransactionSurface(firestoreModule, appModule);
   await testFieldValueSentinelWriteSurface(firestoreModule, appModule);
   await testAuthRefreshAndErrorMapping(firestoreModule, appModule);

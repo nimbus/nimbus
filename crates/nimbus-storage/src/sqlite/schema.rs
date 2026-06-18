@@ -315,10 +315,13 @@ where
 }
 
 fn json_extract_expr(field: &str) -> String {
-    format!(
-        "json_extract(data_json, '$.\"{}\"')",
-        field.replace('"', "\\\"")
-    )
+    // Field names are validated as logical names before reaching here, so the
+    // escaping below is defense in depth. The JSON-path key is wrapped in `"`,
+    // and the whole path is a single-quoted SQLite string literal; escape both
+    // delimiters (`"` for the JSON key, `''` for the SQL literal — SQLite does
+    // not treat backslash as special inside string literals).
+    let escaped = field.replace('"', "\\\"").replace('\'', "''");
+    format!("json_extract(data_json, '$.\"{escaped}\"')")
 }
 
 fn sanitize_identifier_component(input: &str) -> String {
@@ -326,4 +329,35 @@ fn sanitize_identifier_component(input: &str) -> String {
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::json_extract_expr;
+
+    #[test]
+    fn json_extract_expr_passes_through_ordinary_field() {
+        assert_eq!(
+            json_extract_expr("status"),
+            r#"json_extract(data_json, '$."status"')"#
+        );
+    }
+
+    #[test]
+    fn json_extract_expr_escapes_sql_literal_delimiter() {
+        // Even if validation were bypassed, a field carrying single quotes must
+        // stay inside the SQL string literal rather than escaping it.
+        let expr = json_extract_expr("name' || (SELECT secret) || '");
+        assert_eq!(
+            expr,
+            r#"json_extract(data_json, '$."name'' || (SELECT secret) || ''"')"#
+        );
+        // A correctly escaped single-quoted SQL literal always has a balanced
+        // (even) count of `'`, so the literal can never be closed early.
+        assert_eq!(
+            expr.matches('\'').count() % 2,
+            0,
+            "unbalanced quotes leaked: {expr}"
+        );
+    }
 }
