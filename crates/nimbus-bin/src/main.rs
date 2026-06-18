@@ -19,8 +19,11 @@ mod node_workload_executor;
 mod path_boundary;
 mod policy;
 mod provision;
+mod run;
+mod sandbox;
 mod sandbox_supervisor;
 mod start;
+mod target_context;
 #[cfg(test)]
 mod test_support;
 mod token;
@@ -40,6 +43,8 @@ use crate::machine::{MachineCommand, run_machine_command};
 use crate::node_service::{NodeCommand, run_node_command};
 use crate::policy::{PolicyCommand, run_policy_command};
 use crate::provision::{PackagesCommand, run_packages_command};
+use crate::run::{RunCommand, run_run_command};
+use crate::sandbox::{SandboxCommand, run_sandbox_command};
 use crate::sandbox_supervisor::{SandboxSupervisorCommand, run_sandbox_supervisor_command};
 use crate::start::{StartCommand, persistence_config_from_start_command, run_start_command};
 use crate::token::{TokenCommand, run_token_command};
@@ -67,6 +72,10 @@ enum Command {
     Dev(Box<DevCommand>),
     /// Push app artifacts to an explicit self-hosted Nimbus instance.
     Deploy(DeployCommand),
+    /// Run a workload against an explicit Nimbus target.
+    Run(RunCommand),
+    /// Manage sandbox resources on an explicit Nimbus target.
+    Sandbox(SandboxCommand),
     /// Generate app artifacts from nimbus/ or convex/ source code.
     Codegen(CodegenCommand),
     /// Scaffold a new Nimbus project.
@@ -114,6 +123,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Start(command) => run_start_command(*command).await?,
         Command::Dev(command) => run_dev_command(*command).await?,
         Command::Deploy(command) => run_deploy_command(command).await?,
+        Command::Run(command) => run_run_command(command).await?,
+        Command::Sandbox(command) => run_sandbox_command(command).await?,
         Command::Codegen(command) => run_codegen_command(command).await?,
         Command::Init(command) => run_init_command(command).await?,
         Command::Token(command) => run_token_command(command).await?,

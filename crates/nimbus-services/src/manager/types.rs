@@ -5,6 +5,9 @@ use nimbus_sandbox::{SandboxError, SandboxHandle};
 
 use crate::{SandboxResource, ServiceDefinition, SessionResource};
 
+use super::session_channels::{SessionChannelKey, SessionChannelState};
+use crate::InMemoryDesiredWorkloadStore;
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct TenantServiceKey {
     pub(super) tenant_id: TenantId,
@@ -26,6 +29,8 @@ pub(super) struct ServiceManagerState {
     pub(super) definitions: BTreeMap<TenantServiceKey, ServiceDefinition>,
     pub(super) sandbox_resources: BTreeMap<String, SandboxResource>,
     pub(super) sessions: BTreeMap<String, SessionResource>,
+    pub(super) session_channels: BTreeMap<SessionChannelKey, SessionChannelState>,
+    pub(super) desired_workloads: InMemoryDesiredWorkloadStore,
     pub(super) activations_in_progress: BTreeSet<TenantServiceKey>,
     pub(super) next_definition_version: u64,
     pub(super) next_sandbox_resource_version: u64,

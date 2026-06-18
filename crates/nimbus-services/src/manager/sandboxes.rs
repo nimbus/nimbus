@@ -6,7 +6,7 @@ use nimbus_tenant::{
     TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput, WorkloadAttributes,
 };
 
-use crate::SandboxResource;
+use crate::{DesiredWorkload, DesiredWorkloadState, DesiredWorkloadStore, SandboxResource};
 
 use super::ServiceManager;
 use super::clock::{next_version, now_millis};
@@ -79,6 +79,8 @@ impl ServiceManager {
         }
 
         let id = handle.id.as_str().to_owned();
+        let desired =
+            DesiredWorkload::sandbox(tenant_id.clone(), &id, DesiredWorkloadState::Running, 1)?;
         let duplicate_id = {
             let state = self
                 .state
@@ -121,6 +123,9 @@ impl ServiceManager {
                     updated_at_millis: now,
                     labels,
                 };
+                state
+                    .desired_workloads
+                    .upsert_desired_workload(desired.clone());
                 state.sandbox_resources.insert(id.clone(), resource.clone());
                 Some(resource)
             }
@@ -237,12 +242,23 @@ impl ServiceManager {
         resource.handle.status = SandboxStatus::Stopped;
         resource.handle.published_endpoints.clear();
         resource.updated_at_millis = now_millis();
+        let desired = DesiredWorkload::sandbox(
+            tenant_id.clone(),
+            sandbox_id,
+            DesiredWorkloadState::Stopped,
+            resource.generation,
+        )?;
 
-        self.state
-            .lock()
-            .expect("manager lock should not be poisoned")
-            .sandbox_resources
-            .insert(sandbox_id.to_owned(), resource.clone());
+        {
+            let mut state = self
+                .state
+                .lock()
+                .expect("manager lock should not be poisoned");
+            state.desired_workloads.upsert_desired_workload(desired);
+            state
+                .sandbox_resources
+                .insert(sandbox_id.to_owned(), resource.clone());
+        }
         Ok(Some(resource))
     }
 

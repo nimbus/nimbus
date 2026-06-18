@@ -180,12 +180,15 @@ fn cli_help_describes_codegen_machine_and_compose_surface() {
     assert!(rendered.contains("Examples:"));
     assert!(rendered.contains("nimbus start"));
     assert!(rendered.contains("nimbus dev"));
+    assert!(rendered.contains("nimbus run"));
     assert!(rendered.contains("nimbus codegen --app ./demos/convex/html"));
     assert!(rendered.contains("nimbus token rotate"));
     assert!(rendered.contains("nimbus machine start"));
     assert!(rendered.contains("nimbus compose up"));
     assert!(rendered.contains("start"));
     assert!(rendered.contains("dev"));
+    assert!(rendered.contains("run"));
+    assert!(rendered.contains("sandbox"));
     assert!(rendered.contains("codegen"));
     assert!(rendered.contains("token"));
     assert!(rendered.contains("machine     Manage local developer machines"));
@@ -466,16 +469,15 @@ fn start_startup_summary_reports_compose_file_environment_selection() {
 }
 
 #[test]
-fn start_compose_selection_discovers_from_current_dir_not_app_dir() {
+fn start_does_not_auto_admit_ambient_compose() {
     let temp = tempfile::tempdir().expect("tempdir should build");
     let project_root = temp.path().join("workspace");
     let nested_cwd = project_root.join("apps").join("web");
     let app_dir = temp.path().join("separate-app");
     fs::create_dir_all(&nested_cwd).expect("nested cwd should build");
     fs::create_dir_all(app_dir.join("convex")).expect("app dir should build");
-    let compose_path = project_root.join("compose.yaml");
     fs::write(
-        &compose_path,
+        project_root.join("compose.yaml"),
         "name: demo\nservices:\n  db:\n    image: busybox:latest\n",
     )
     .expect("compose fixture should write");
@@ -488,16 +490,11 @@ fn start_compose_selection_discovers_from_current_dir_not_app_dir() {
     let selection = with_current_dir(&nested_cwd, || {
         super::boot::resolve_optional_compose_selection(&command)
     })
-    .expect("compose selection should resolve")
-    .expect("compose selection should be discovered");
+    .expect("compose selection should resolve");
 
-    assert_eq!(
-        fs::canonicalize(selection.primary_file()).unwrap(),
-        fs::canonicalize(&compose_path).unwrap()
-    );
-    assert_eq!(
-        fs::canonicalize(&selection.project_root).unwrap(),
-        fs::canonicalize(&project_root).unwrap()
+    assert!(
+        selection.is_none(),
+        "nimbus start must not auto-admit an ambient Compose project from cwd/app-dir"
     );
 }
 

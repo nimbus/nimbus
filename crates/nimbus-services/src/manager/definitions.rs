@@ -13,6 +13,7 @@ use crate::{
 
 use super::ServiceManager;
 use super::clock::{next_version, now_millis};
+use super::session_channels::close_session_channels;
 use super::types::{ServiceManagerState, TenantServiceKey, sandbox_backend_error};
 
 const SUPPORTED_BUILT_IN_PROVIDERS: &[&str] = &[
@@ -474,6 +475,7 @@ fn close_open_service_sessions(
             session.closed_at_millis = Some(now);
             session.close_reason = Some(reason.to_owned());
         }
+        close_session_channels(state, session_id, reason);
     }
 }
 

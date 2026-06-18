@@ -174,6 +174,31 @@ pub(crate) fn resolve_compose_selection_with_environment(
     cwd: &Path,
     environment: &ComposeDiscoveryEnvironment,
 ) -> Result<Option<ResolvedComposeSelection>, ComposeDiscoveryError> {
+    if let Some(selection) =
+        resolve_explicit_compose_selection_with_environment(explicit_files, cwd, environment)?
+    {
+        return Ok(Some(selection));
+    }
+
+    resolve_auto_discovered_compose_selection(cwd)
+}
+
+pub(crate) fn resolve_explicit_compose_selection(
+    explicit_files: &[PathBuf],
+    cwd: &Path,
+) -> Result<Option<ResolvedComposeSelection>, ComposeDiscoveryError> {
+    resolve_explicit_compose_selection_with_environment(
+        explicit_files,
+        cwd,
+        &ComposeDiscoveryEnvironment::current(),
+    )
+}
+
+pub(crate) fn resolve_explicit_compose_selection_with_environment(
+    explicit_files: &[PathBuf],
+    cwd: &Path,
+    environment: &ComposeDiscoveryEnvironment,
+) -> Result<Option<ResolvedComposeSelection>, ComposeDiscoveryError> {
     if !explicit_files.is_empty() {
         return Ok(Some(ResolvedComposeSelection::from_explicit_files(
             explicit_files,
@@ -190,7 +215,7 @@ pub(crate) fn resolve_compose_selection_with_environment(
         )?));
     }
 
-    resolve_auto_discovered_compose_selection(cwd)
+    Ok(None)
 }
 
 fn resolve_auto_discovered_compose_selection(

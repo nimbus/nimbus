@@ -21,7 +21,7 @@ All 27 workspace members, per the root `Cargo.toml`.
 | `nimbus-artifacts` | Artifact verification: OCI references, SLSA provenance, admission checks. |
 | `nimbus-assets` | Embedded production asset catalog (distribution payloads, UI bytes, templates). |
 | `nimbus-auth` | Application auth contract: `ApplicationAuthVerifier` bearer-token verification into `InvocationAuth`. |
-| `nimbus-bin` | The `nimbus` CLI binary: `start`, `dev`, `deploy`, `init`, `machine`, `data`, `compose`, `encryption`, codegen, and more. |
+| `nimbus-bin` | The `nimbus` CLI binary: `start`, `dev`, `deploy`, `run`, `sandbox`, `init`, `machine`, `backup`, `compose`, `encryption`, codegen, and more. |
 | `nimbus-bridge` | Runtime host bridge: bootstraps per-invocation host state and routes V8 host calls into the engine. |
 | `nimbus-cloud-functions` | Cloud Functions-compatible adapter contracts and runtime bridge. |
 | `nimbus-convex` | Convex protocol semantics: function registry, subscriptions, document identity, host-call payloads. |
@@ -171,8 +171,9 @@ status evidence.
 
 `nimbus-bin` builds the `nimbus` binary. `crates/nimbus-bin/src/start/` boots
 the server; sibling modules implement the rest of the command surface (`dev`,
-`deploy`, `init`, `machine`, `data`, `compose`, `encryption`, auth/token
-management, and codegen, which embeds `@nimbus/codegen`).
+`deploy`, `run`, `sandbox`, `init`, `machine`, `backup`, `compose`,
+`encryption`, auth/token management, and codegen, which embeds
+`@nimbus/codegen`).
 → <https://nimbusdocs.com/concepts/architecture/cli-codegen/>
 
 ### SDK & packages

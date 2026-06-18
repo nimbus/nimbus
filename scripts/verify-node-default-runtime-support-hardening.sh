@@ -254,7 +254,7 @@ printf '\033[1mNDS verification gate - node-default-runtime-support-hardening\03
 printf 'Repo: %s\n' "${REPO_ROOT}"
 
 PLAN_FILE="$(plan_file)"
-if [ -z "${PLAN_FILE}" ] && [ "${NIMBUS_NDS_STRICT_PRIVATE_PROOFS:-0}" != "1" ]; then
+if [ "${NIMBUS_NDS_STRICT_PRIVATE_PROOFS:-0}" != "1" ]; then
   run_public_generated_gate
 fi
 

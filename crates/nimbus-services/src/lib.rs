@@ -3,6 +3,7 @@
 mod catalog;
 mod manager;
 mod registry;
+mod workload_control;
 
 pub use catalog::{
     BuiltInServiceSpec, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
@@ -17,4 +18,11 @@ pub use manager::{
 pub use registry::{
     RuntimeServiceBindingFuture, RuntimeServiceRegistry, RuntimeServiceTeardownFuture,
     ServiceInstanceBindingRegistry, service_binding_from_handle,
+};
+pub use workload_control::{
+    DesiredWorkload, DesiredWorkloadKind, DesiredWorkloadSnapshot, DesiredWorkloadState,
+    DesiredWorkloadStore, EmbeddedNodeClient, InMemoryDesiredWorkloadStore, NodeCapacity,
+    PlacementPlan, SchedulingExplanation, WorkloadChannelDescriptor, WorkloadController,
+    WorkloadEvaluation, WorkloadEventQueue, WorkloadExecutionPhase, WorkloadExecutionStatus,
+    WorkloadExecutor, WorkloadPlacementEngine, WorkloadScheduler,
 };
