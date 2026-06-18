@@ -3,6 +3,7 @@ import { useCallback, useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { EmptyState } from "../../components/empty-state";
+import { PageHeader } from "../../components/page-header";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
@@ -80,22 +81,11 @@ function AdminServicesPage() {
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-admin-services"
     >
-      <header className="flex items-baseline justify-between">
-        <div>
-          <h1
-            className="text-xl text-default"
-            style={{ fontSize: "var(--text-xl)" }}
-          >
-            Services
-          </h1>
-          <p className="text-sm text-muted">
-            Every service running on this Nimbus cluster, grouped by tenant.
-            Operator-only view: inspect placement, restarts, density, and bundle
-            drift across all tenants.
-          </p>
-        </div>
-        <SummaryChip services={services} />
-      </header>
+      <PageHeader
+        title="Services"
+        subtitle="Every service running on this Nimbus cluster, grouped by tenant. Operator-only view: inspect placement, restarts, density, and bundle drift across all tenants."
+        trailing={<SummaryChip services={services} />}
+      />
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
         <ServicesTable

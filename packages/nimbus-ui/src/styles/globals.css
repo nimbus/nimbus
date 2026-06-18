@@ -232,3 +232,23 @@
     color: var(--color-violet);
   }
 }
+
+/* Shiki dual-theme code blocks (see components/code-block.tsx). With
+   defaultColor:false, shiki emits --shiki-light / --shiki-dark CSS vars; pick
+   the set that matches the app's data-theme. */
+.nimbus-code .shiki {
+  margin: 0;
+  padding: 1rem;
+  background-color: var(--shiki-light-bg);
+}
+.nimbus-code .shiki,
+.nimbus-code .shiki span {
+  color: var(--shiki-light);
+}
+[data-theme="dark"] .nimbus-code .shiki {
+  background-color: var(--shiki-dark-bg);
+}
+[data-theme="dark"] .nimbus-code .shiki,
+[data-theme="dark"] .nimbus-code .shiki span {
+  color: var(--shiki-dark);
+}

@@ -8,6 +8,7 @@ import {
   Database,
   Gauge,
   HardDrive,
+  MonitorCog,
   Network,
   Server,
   Settings,
@@ -23,6 +24,10 @@ import { api } from "../../convex/_generated/api";
 // shape can host counts with different arg shapes.
 export type NavCountEntry = QueryEntry<any, readonly unknown[]>;
 
+// Non-query nav-count sources: tenants come from the HTTP tenant list and
+// "nodes" is the single local host — neither is a convex array query.
+export type NavCountKind = "tenants" | "nodes";
+
 export type NavView = "developer" | "operator";
 
 export type NavEntry = {
@@ -32,6 +37,7 @@ export type NavEntry = {
   icon: LucideIcon;
   view: NavView;
   count: NavCountEntry | null;
+  countKind?: NavCountKind;
 };
 
 export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
@@ -121,12 +127,13 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
 
 export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
   {
-    id: "system",
-    label: "System",
+    id: "nodes",
+    label: "Nodes",
     to: "/operator",
-    icon: Gauge,
+    icon: Server,
     view: "operator",
     count: null,
+    countKind: "nodes",
   },
   {
     id: "tenants",
@@ -135,12 +142,13 @@ export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
     icon: Building2,
     view: "operator",
     count: null,
+    countKind: "tenants",
   },
   {
     id: "machines",
     label: "Machines",
     to: "/operator/machines",
-    icon: Server,
+    icon: MonitorCog,
     view: "operator",
     count: queryEntry(api.machines.list, {
       state: null,

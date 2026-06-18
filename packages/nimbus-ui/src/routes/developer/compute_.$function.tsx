@@ -5,10 +5,11 @@ import {
   useSearch,
 } from "@tanstack/react-router";
 import { useQuery } from "@nimbus/nimbus/react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
+import { CodeBlock } from "../../components/code-block";
 import { CopyChip } from "../../components/copy-chip";
 import { FunctionRunner } from "../../components/function-runner/function-runner";
 import { StateChip } from "../../components/state-chip";
@@ -59,7 +60,6 @@ type FunctionDoc = {
   kind?: string;
   adapter?: string;
   bundleId?: string;
-  source?: string;
   argsSchema?: unknown;
   returnsSchema?: unknown;
   lastStatus?: string;
@@ -167,9 +167,7 @@ function FunctionDetailPage() {
               {fn.adapter}
             </span>
           ) : null}
-          {fn?.lastStatus ? (
-            <StateChip state={fn.lastStatus} />
-          ) : null}
+          {fn?.lastStatus ? <StateChip state={fn.lastStatus} /> : null}
           {bundle?.sha256 ? (
             <CopyChip
               label="bundle sha256"
@@ -283,13 +281,7 @@ function StatisticsTab({
   );
 }
 
-function Stat({
-  label,
-  value,
-}: {
-  label: string;
-  value: React.ReactNode;
-}) {
+function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-3">
       <span className="w-32 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
@@ -300,41 +292,186 @@ function Stat({
   );
 }
 
+// The Source tab reads the deployed module source from the content-addressed
+// source-package store via the console source endpoint (FSV4) — never a copy
+// stored on the function row. A function path `module:export` resolves to its
+// module file, whose source backs every function defined in it.
+type ModuleAnalysis = {
+  exports: Array<{ name: string; line: number }>;
+  imports: Array<{ specifier: string; name: string }>;
+  references: Array<{ target: string; line: number }>;
+};
+
+type SourceState =
+  | { status: "loading" }
+  | {
+      status: "ready";
+      source: string;
+      digest: string;
+      analysis: ModuleAnalysis | null;
+    }
+  | { status: "missing" }
+  | { status: "error"; message: string };
+
 function SourceTab({ fn }: { fn: FunctionDoc }) {
-  if (!fn.source || fn.source.length === 0) {
+  const modulePath = useMemo(() => {
+    const path = fn.path ?? "";
+    const separator = path.indexOf(":");
+    return separator >= 0 ? path.slice(0, separator) : path;
+  }, [fn.path]);
+
+  const [state, setState] = useState<SourceState>({ status: "loading" });
+
+  useEffect(() => {
+    if (!modulePath) {
+      setState({ status: "missing" });
+      return;
+    }
+    let cancelled = false;
+    setState({ status: "loading" });
+    fetch(`/api/console/source?module=${encodeURIComponent(modulePath)}`, {
+      credentials: "include",
+    })
+      .then(async (response) => {
+        if (cancelled) return;
+        if (response.status === 404) {
+          setState({ status: "missing" });
+          return;
+        }
+        if (!response.ok) {
+          setState({ status: "error", message: `HTTP ${response.status}` });
+          return;
+        }
+        const body = (await response.json()) as {
+          source?: string;
+          digest?: string;
+          analysis?: ModuleAnalysis;
+        };
+        setState({
+          status: "ready",
+          source: body.source ?? "",
+          digest: body.digest ?? "",
+          analysis: body.analysis ?? null,
+        });
+      })
+      .catch((error) => {
+        if (!cancelled) setState({ status: "error", message: String(error) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [modulePath]);
+
+  if (state.status === "loading") return <Loading label="Loading source…" />;
+  if (state.status === "missing") {
     return (
       <Empty
-        title="Source not bundled"
-        detail="This function's bundle does not include source. Re-bundle with source included to view it here."
+        title="Source not available"
+        detail="This deployment did not capture source for this module. Deploy with the Nimbus CLI to make source viewable here."
       />
     );
   }
-  const lines = fn.source.split("\n");
-  const width = String(lines.length).length;
+  if (state.status === "error") {
+    return (
+      <Empty
+        title="Could not load source"
+        detail={`The source endpoint returned an error (${state.message}).`}
+      />
+    );
+  }
   return (
     <div
-      className="h-full overflow-auto"
+      className="flex h-full flex-col overflow-hidden"
       data-testid="function-tab-source"
     >
-      <pre className="m-0 min-w-full bg-surface p-0 font-mono text-[12px] leading-5 text-default">
-        <table className="w-full border-collapse">
-          <tbody>
-            {lines.map((line, idx) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: stable per source line
-              <tr key={idx} className="hover:bg-surface-2">
-                <td
-                  className="select-none border-r border-app bg-surface-2 px-3 py-0 text-right text-muted"
-                  style={{ width: `${width + 2}ch` }}
-                >
-                  {idx + 1}
-                </td>
-                <td className="whitespace-pre px-3 py-0">{line}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </pre>
+      <div className="flex shrink-0 items-center gap-2 border-b border-app bg-surface-2 px-6 py-1.5 font-mono text-[10px] uppercase tracking-wide text-muted">
+        <span>{modulePath}</span>
+        {state.digest ? (
+          <span className="ml-auto normal-case" title={state.digest}>
+            source package {state.digest.slice(0, 12)}…
+          </span>
+        ) : null}
+      </div>
+      {state.analysis ? (
+        <SymbolsBar modulePath={modulePath} analysis={state.analysis} />
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <CodeBlock code={state.source} lang="typescript" />
+      </div>
     </div>
+  );
+}
+
+// Navigable code-intelligence strip (oxc structural index, FSV7): functions
+// defined in this module and the functions it calls, each a link.
+function SymbolsBar({
+  modulePath,
+  analysis,
+}: {
+  modulePath: string;
+  analysis: ModuleAnalysis;
+}) {
+  if (analysis.exports.length === 0 && analysis.references.length === 0) {
+    return null;
+  }
+  return (
+    <div
+      className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-app bg-surface px-6 py-2"
+      data-testid="function-source-symbols"
+    >
+      {analysis.exports.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+            defines
+          </span>
+          {analysis.exports.map((symbol) => (
+            <SymbolLink
+              key={symbol.name}
+              path={`${modulePath}:${symbol.name}`}
+              label={symbol.name}
+              testid={`function-source-define-${symbol.name}`}
+            />
+          ))}
+        </div>
+      ) : null}
+      {analysis.references.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+            calls
+          </span>
+          {analysis.references.map((reference) => (
+            <SymbolLink
+              key={reference.target}
+              path={reference.target}
+              label={reference.target}
+              testid={`function-source-call-${reference.target}`}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SymbolLink({
+  path,
+  label,
+  testid,
+}: {
+  path: string;
+  label: string;
+  testid: string;
+}) {
+  return (
+    <Link
+      to="/developer/compute/$function"
+      params={{ function: path }}
+      search={{ tab: "source" }}
+      data-testid={testid}
+      className="rounded border border-app px-1.5 py-0.5 font-mono text-[11px] text-link hover:bg-surface-2 hover:underline"
+    >
+      {label}
+    </Link>
   );
 }
 
@@ -435,7 +572,10 @@ function RunsTab({ fn }: { fn: FunctionDoc }) {
         </thead>
         <tbody>
           {runs.map((run) => (
-            <tr key={run._id} className="border-t border-app hover:bg-surface-2">
+            <tr
+              key={run._id}
+              className="border-t border-app hover:bg-surface-2"
+            >
               <td className="px-3 py-2">
                 <Link
                   to="/developer/compute/runs/$runId"
@@ -507,8 +647,8 @@ function NotFound({ path }: { path: string }) {
       <span className="font-mono text-sm text-default">Function not found</span>
       <span className="max-w-md text-xs text-muted">
         No function matches the path{" "}
-        <code className="font-mono text-default">{path}</code>. It may have
-        been removed or renamed. Open Compute to see the current inventory.
+        <code className="font-mono text-default">{path}</code>. It may have been
+        removed or renamed. Open Compute to see the current inventory.
       </span>
       <Link
         to="/developer/compute"

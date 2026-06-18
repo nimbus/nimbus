@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { Box } from "lucide-react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -146,7 +147,7 @@ describe("SubDrawer", () => {
     expect(screen.getByTestId("dynamic-body")).toBeInTheDocument();
   });
 
-  it("close button hides the drawer and persists subDrawerOpen=false", () => {
+  it("collapse toggle rails the drawer (still reachable) and persists subDrawerOpen=false", () => {
     const spec: SubDrawerSpec = {
       kind: "static",
       title: "Network",
@@ -158,15 +159,28 @@ describe("SubDrawer", () => {
         <SubDrawer />
       </SubDrawerProvider>,
     );
-    expect(screen.getByTestId("sub-drawer")).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("sub-drawer-close"));
-    expect(screen.queryByTestId("sub-drawer")).toBeNull();
+    expect(screen.getByTestId("sub-drawer")).toHaveAttribute(
+      "data-collapsed",
+      "false",
+    );
+    fireEvent.click(screen.getByTestId("sub-drawer-toggle"));
+    // Collapsed to a rail — still present and reachable, not removed.
+    expect(screen.getByTestId("sub-drawer")).toHaveAttribute(
+      "data-collapsed",
+      "true",
+    );
     expect(window.localStorage.getItem("nimbus-ui:sub-drawer-open")).toBe(
+      "false",
+    );
+    // And it re-expands from the rail.
+    fireEvent.click(screen.getByTestId("sub-drawer-toggle"));
+    expect(screen.getByTestId("sub-drawer")).toHaveAttribute(
+      "data-collapsed",
       "false",
     );
   });
 
-  it("hydrates from persisted subDrawerOpen=false (drawer stays hidden)", async () => {
+  it("hydrates from persisted subDrawerOpen=false (drawer renders collapsed)", async () => {
     window.localStorage.setItem("nimbus-ui:sub-drawer-open", "false");
     vi.resetModules();
     const mod = await import("./sub-drawer");
@@ -187,7 +201,88 @@ describe("SubDrawer", () => {
         <mod.SubDrawer />
       </mod.SubDrawerProvider>,
     );
-    expect(screen.queryByTestId("sub-drawer")).toBeNull();
+    expect(screen.getByTestId("sub-drawer")).toHaveAttribute(
+      "data-collapsed",
+      "true",
+    );
+    expect(screen.getByTestId("sub-drawer-toggle")).toBeInTheDocument();
+  });
+
+  it("shows all rail items in the collapsed rail and switches on click without expanding", () => {
+    const onFunctions = vi.fn();
+    const onSandboxes = vi.fn();
+    const spec: SubDrawerSpec = {
+      kind: "dynamic",
+      title: "Compute",
+      children: <div data-testid="dynamic-body" />,
+      railItems: [
+        {
+          id: "functions",
+          label: "Functions",
+          icon: Box,
+          active: true,
+          onSelect: onFunctions,
+        },
+        {
+          id: "sandboxes",
+          label: "Sandboxes",
+          icon: Box,
+          active: false,
+          onSelect: onSandboxes,
+        },
+      ],
+    };
+    useUiStore.setState({ subDrawerOpen: false });
+    render(
+      <SubDrawerProvider>
+        <Contributor spec={spec} />
+        <SubDrawer />
+      </SubDrawerProvider>,
+    );
+    expect(screen.getByTestId("sub-drawer")).toHaveAttribute(
+      "data-collapsed",
+      "true",
+    );
+    expect(screen.getByTestId("sub-drawer-rail-item-functions")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    expect(screen.getByTestId("sub-drawer-rail-item-sandboxes")).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+    fireEvent.click(screen.getByTestId("sub-drawer-rail-item-sandboxes"));
+    expect(onSandboxes).toHaveBeenCalledTimes(1);
+    // switching sub-view from the rail does not expand the drawer
+    expect(useUiStore.getState().subDrawerOpen).toBe(false);
+  });
+
+  it("toggles collapse on background double-click", () => {
+    const spec: SubDrawerSpec = {
+      kind: "static",
+      title: "Network",
+      items: [{ id: "routes", label: "Routes", to: "/operator/network" }],
+    };
+    render(
+      <SubDrawerProvider>
+        <Contributor spec={spec} />
+        <SubDrawer />
+      </SubDrawerProvider>,
+    );
+    expect(screen.getByTestId("sub-drawer")).toHaveAttribute(
+      "data-collapsed",
+      "false",
+    );
+    fireEvent.doubleClick(screen.getByTestId("sub-drawer"));
+    expect(screen.getByTestId("sub-drawer")).toHaveAttribute(
+      "data-collapsed",
+      "true",
+    );
+    fireEvent.doubleClick(screen.getByTestId("sub-drawer"));
+    expect(screen.getByTestId("sub-drawer")).toHaveAttribute(
+      "data-collapsed",
+      "false",
+    );
   });
 
   it("uses search-param match for active state when items declare search", () => {

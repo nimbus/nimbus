@@ -36,6 +36,7 @@ nimbus-assets = { path = "../nimbus-assets", features = ["js-packages", "templat
 nimbus-machine = { path = "../nimbus-machine" }
 nimbus-server = { path = "../nimbus-server" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
+nimbus-system = { path = "../nimbus-system" }
 open = "5.3"
 rand.workspace = true
 reqwest.workspace = true
@@ -63,3 +64,4 @@ serde_json.workspace = true
 
 [dev-dependencies]
 nimbus-testing = { path = "../nimbus-testing" }
+tempfile.workspace = true

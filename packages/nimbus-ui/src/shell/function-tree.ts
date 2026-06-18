@@ -2,6 +2,9 @@ export type FunctionLeaf = {
   kind: "function";
   path: string;
   name: string;
+  // The function's execution kind (query | mutation | action | http | …),
+  // used to pick a leaf icon. Distinct from the node `kind` discriminant.
+  fnKind?: string;
   lastStatus?: string;
 };
 
@@ -28,6 +31,7 @@ export type FunctionTree = {
 
 export type FunctionInput = {
   path?: string;
+  kind?: string;
   lastStatus?: string;
 };
 
@@ -61,6 +65,7 @@ export function buildFunctionTree(fns: FunctionInput[]): FunctionTree {
       kind: "function",
       path,
       name: parsed.fn,
+      fnKind: fn.kind,
       lastStatus: fn.lastStatus,
     });
     root.count += 1;

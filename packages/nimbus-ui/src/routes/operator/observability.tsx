@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@nimbus/nimbus/react";
 
 import { api } from "../../../convex/_generated/api";
+import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
@@ -24,7 +25,9 @@ type AdminObservabilitySearch = {
 
 export const Route = createFileRoute("/operator/observability")({
   component: AdminObservabilityPage,
-  validateSearch: (search: Record<string, unknown>): AdminObservabilitySearch => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): AdminObservabilitySearch => ({
     tab: parseTab(search.tab),
     tenant: typeof search.tenant === "string" ? search.tenant : undefined,
   }),
@@ -67,9 +70,7 @@ export const ADMIN_OBSERVABILITY_SUB_DRAWER = {
       disabled: true,
     },
   ],
-} as const satisfies StaticSubDrawerSpec<
-  "logs" | "runs" | "events" | "errors"
->;
+} as const satisfies StaticSubDrawerSpec<"logs" | "runs" | "events" | "errors">;
 
 export type AdminObservabilityTab =
   (typeof ADMIN_OBSERVABILITY_SUB_DRAWER.items)[number]["id"];
@@ -370,12 +371,4 @@ function RunsTab() {
       </table>
     </div>
   );
-}
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th className="px-3 py-2 text-left font-semibold">{children}</th>;
-}
-
-function Td({ children }: { children: React.ReactNode }) {
-  return <td className="px-3 py-2 text-default">{children}</td>;
 }

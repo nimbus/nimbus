@@ -20,6 +20,10 @@ use crate::adapters::convex::{
 use crate::local_server::authorize_deploy_admin_bearer;
 use crate::state::DeploymentState;
 use nimbus_auth::ApplicationAuthVerifier;
+use nimbus_system::{
+    DiskSourcePackageStore, SourcePackageStore, SystemModuleRecordInput,
+    SystemSourcePackageRecordInput, parse_source_package, record_source_package_state_async,
+};
 
 pub(crate) async fn deploy_app(
     State(state): State<Arc<AppState>>,
@@ -28,6 +32,14 @@ pub(crate) async fn deploy_app(
 ) -> Result<Json<DeployResponse>, AppError> {
     authorize_deploy_admin_bearer(state.deploy_admin_token.as_deref(), &headers)?;
     let DeployRequest { dry_run, artifacts } = request;
+    // Capture the source package before `artifacts` is moved into staging; it is
+    // persisted (content-addressed) and projected only on a real activation.
+    let source_package = artifacts.convex.as_ref().and_then(|convex| {
+        match (&convex.source_package, &convex.source_package_sha256) {
+            (Some(json), Some(digest)) => Some((json.clone(), digest.clone())),
+            _ => None,
+        }
+    });
     let previous_deployment = state.current_deployment();
     let previous_generation = previous_deployment.generation;
     let previous_registry = previous_deployment.convex_registry();
@@ -101,6 +113,9 @@ pub(crate) async fn deploy_app(
             let source_ref = format!("deploy:generation:{generation}");
             let input = convex_system_deployment_record_input(&summary, &source_ref);
             nimbus_system::record_deployment_state_async(&state.engine, &input).await?;
+            if let Some((source_package_json, expected_digest)) = source_package {
+                persist_source_package(&state, &source_package_json, &expected_digest).await?;
+            }
         }
         generation
     };
@@ -142,6 +157,13 @@ pub(crate) struct ConvexDeployArtifacts {
     bundle_mjs: Option<String>,
     #[serde(default)]
     bundle_sha256: Option<String>,
+    /// Canonical source-package JSON (original module source + maps) — the
+    /// read-artifact behind the console Source view. Optional; paired with its
+    /// digest. See the Function Source Visibility plan (FSV3).
+    #[serde(default)]
+    source_package: Option<String>,
+    #[serde(default)]
+    source_package_sha256: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -446,7 +468,58 @@ fn validate_deploy_artifacts(artifacts: &DeployArtifacts) -> Result<(), Error> {
                 ));
             }
         }
+        match (&convex.source_package, &convex.source_package_sha256) {
+            (Some(_), Some(_)) | (None, None) => {}
+            (Some(_), None) => {
+                return Err(Error::InvalidInput(
+                    "deploy artifact source_package requires source_package_sha256".to_string(),
+                ));
+            }
+            (None, Some(_)) => {
+                return Err(Error::InvalidInput(
+                    "deploy artifact source_package_sha256 requires source_package".to_string(),
+                ));
+            }
+        }
     }
+    Ok(())
+}
+
+/// Persist a deploy's source package: store the bytes content-addressed (dedup
+/// by digest), verify the client-provided digest, parse the modules, and project
+/// the `source_packages` + `modules` rows. See FSV3.
+async fn persist_source_package(
+    state: &AppState,
+    source_package_json: &str,
+    expected_digest: &str,
+) -> Result<(), AppError> {
+    let bytes = source_package_json.as_bytes();
+    let store = DiskSourcePackageStore::new(state.engine.data_dir().join("source-packages"));
+    let stored = store.put(bytes)?;
+    if stored.digest != expected_digest {
+        return Err(Error::InvalidInput(format!(
+            "source_package_sha256 mismatch: client sent {expected_digest}, server computed {}",
+            stored.digest
+        ))
+        .into());
+    }
+    let parsed = parse_source_package(bytes)?;
+    let modules = parsed
+        .modules
+        .iter()
+        .map(|module| SystemModuleRecordInput {
+            path: &module.path,
+            sha256: &module.sha256,
+        })
+        .collect::<Vec<_>>();
+    let input = SystemSourcePackageRecordInput {
+        digest: &stored.digest,
+        storage_key: &stored.storage_key,
+        size_bytes: stored.size_bytes,
+        unpacked_bytes: parsed.unpacked_bytes,
+        modules,
+    };
+    record_source_package_state_async(&state.engine, &input).await?;
     Ok(())
 }
 
@@ -481,6 +554,8 @@ mod tests {
                 auth_config_json: None,
                 bundle_mjs: None,
                 bundle_sha256: None,
+                source_package: None,
+                source_package_sha256: None,
             }),
             cloud_functions: None,
         };

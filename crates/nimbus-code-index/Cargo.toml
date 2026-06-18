@@ -1,0 +1,22 @@
+[package]
+name = "nimbus-code-index"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+# oxc 0.136 requires rustc >= 1.94; the deno fork pins 1.95.0 and the repo's
+# `channel = "stable"` resolves above both. Declared so a stale toolchain fails
+# with a clear MSRV error instead of an opaque oxc build error.
+rust-version = "1.94"
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+oxc = { workspace = true, features = ["ast_visit"] }
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -1,16 +1,27 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { ChevronsLeft, ChevronsRight } from "lucide-react";
 import { useQuery } from "@nimbus/nimbus/react";
+import { api } from "../../convex/_generated/api";
+import { useTenantList } from "../hooks/use-tenant-list";
 import { cn } from "../lib/cn";
 import { useUiStore } from "../store/ui-store";
 import {
   type NavCountEntry,
+  type NavCountKind,
   type NavEntry,
   navEntriesForView,
   viewFromPathname,
 } from "./nav-entries";
 
 const NAV_ID = "primary-drawer-nav";
+
+// Background double-click toggles collapse; ignore double-clicks on interactive
+// elements (links, buttons) so they keep their own behavior.
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return Boolean(
+    (target as HTMLElement | null)?.closest("a,button,input,textarea,select"),
+  );
+}
 
 export function PrimaryDrawer() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -22,6 +33,9 @@ export function PrimaryDrawer() {
     <nav
       id={NAV_ID}
       aria-label="Primary"
+      onDoubleClick={(e) => {
+        if (!isInteractiveTarget(e.target)) togglePrimaryDrawer();
+      }}
       className={cn(
         "flex h-full shrink-0 flex-col gap-1 border-r border-app bg-surface py-3 transition-[width] duration-150",
         collapsed ? "w-12 px-1" : "w-56 px-2",
@@ -96,7 +110,9 @@ function DrawerEntry({
           <>
             <span className="flex-1">{entry.label}</span>
             {entry.count ? (
-              <NavCount id={entry.id} count={entry.count} />
+              <QueryNavCount id={entry.id} count={entry.count} />
+            ) : entry.countKind ? (
+              <SpecialNavCount id={entry.id} kind={entry.countKind} />
             ) : null}
           </>
         )}
@@ -105,9 +121,7 @@ function DrawerEntry({
   );
 }
 
-function NavCount({ id, count }: { id: string; count: NavCountEntry }) {
-  const result = useQuery(count.ref, count.args);
-  const value = result?.length;
+function CountBadge({ id, value }: { id: string; value: number | undefined }) {
   if (value === undefined) {
     return (
       <>
@@ -130,4 +144,36 @@ function NavCount({ id, count }: { id: string; count: NavCountEntry }) {
       {value}
     </span>
   );
+}
+
+// Reactive convex array-length count (machines, services, routes, runs, …).
+function QueryNavCount({ id, count }: { id: string; count: NavCountEntry }) {
+  const result = useQuery(count.ref, count.args);
+  return <CountBadge id={id} value={result?.length} />;
+}
+
+// Non-query count sources. Each is its own component so hooks stay
+// unconditional (one source per render path).
+function SpecialNavCount({ id, kind }: { id: string; kind: NavCountKind }) {
+  return kind === "tenants" ? (
+    <TenantsNavCount id={id} />
+  ) : (
+    <NodesNavCount id={id} />
+  );
+}
+
+function TenantsNavCount({ id }: { id: string }) {
+  const state = useTenantList();
+  return (
+    <CountBadge
+      id={id}
+      value={state.kind === "loaded" ? state.tenants.length : undefined}
+    />
+  );
+}
+
+function NodesNavCount({ id }: { id: string }) {
+  // Single-node deployment today: any status response means one live node.
+  const status = useQuery(api.system.status, {});
+  return <CountBadge id={id} value={status === undefined ? undefined : 1} />;
 }

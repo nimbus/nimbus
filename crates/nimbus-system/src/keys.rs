@@ -48,6 +48,18 @@ pub(super) fn function_document_id(bundle_sha256: &str, function_name: &str) -> 
     )
 }
 
+pub(super) fn source_package_document_id(digest: &str) -> String {
+    format!("source-package:{}", stable_key_segment(digest))
+}
+
+pub(super) fn module_document_id(source_package_digest: &str, module_path: &str) -> String {
+    format!(
+        "module:{}:{}",
+        stable_key_segment(source_package_digest),
+        stable_key_segment(module_path)
+    )
+}
+
 pub(super) fn scheduled_job_document_id(tenant_id: &TenantId, job_id: &DocumentId) -> String {
     format!(
         "scheduled-job:{}:{}",

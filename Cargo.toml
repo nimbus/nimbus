@@ -8,6 +8,7 @@ members = [
     "crates/nimbus-bin",
     "crates/nimbus-bridge",
     "crates/nimbus-cloud-functions",
+    "crates/nimbus-code-index",
     "crates/nimbus-convex",
     "crates/nimbus-dynamodb",
     "crates/nimbus-firebase",
@@ -121,6 +122,9 @@ rmp-serde = "1"
 # runtime feature set enabled on the shared workspace dependency.
 rusqlite = { version = "0.37", features = ["bundled-sqlcipher-vendored-openssl", "unlock_notify", "session", "modern_sqlite", "limits", "backup"] }
 serial_test = "3"
+# oxc — JS/TS parser + semantic analysis for the deploy-time code-navigation
+# index (FSV7). Pinned exactly: oxc has no semver stability pre-1.0.
+oxc = "=0.136.0"
 serde = { version = "1", features = ["derive"] }
 # `raw_value` is additive-only (exposes `serde_json::value::RawValue`); it does
 # NOT change Map ordering or any existing serialization behavior. Used by the

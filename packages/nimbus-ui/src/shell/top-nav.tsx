@@ -1,4 +1,6 @@
+import { useQuery } from "@nimbus/nimbus/react";
 import { useRouterState } from "@tanstack/react-router";
+import { api } from "../../convex/_generated/api";
 import { LogoMark } from "./logo-mark";
 import { viewFromPathname } from "./nav-entries";
 import { TenantSelector, type TenantSelectorMode } from "./tenant-selector";
@@ -29,6 +31,11 @@ export function TopNav() {
   });
   const view = viewFromPathname(pathname);
   const mode = selectorModeForRoute(pathname, search);
+  const status = useQuery(api.system.status, {}) as
+    | { version?: string }
+    | null
+    | undefined;
+  const version = status?.version;
   return (
     <header
       className="flex h-10 shrink-0 items-center gap-4 border-b border-app bg-surface px-3"
@@ -38,7 +45,17 @@ export function TopNav() {
       <div className="flex items-center gap-2 text-default">
         <LogoMark className="h-6 w-[38px] shrink-0" />
         <div className="flex flex-col leading-tight">
-          <span className="text-sm font-medium">Nimbus</span>
+          <span className="text-sm">
+            <span className="font-semibold">nimbus</span>
+            {version ? (
+              <span
+                className="ml-1 font-mono text-muted"
+                data-testid="top-nav-version"
+              >
+                v{version}
+              </span>
+            ) : null}
+          </span>
           <span
             className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted"
             data-testid="top-nav-wordmark"

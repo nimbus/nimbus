@@ -24,6 +24,7 @@ mod start;
 #[cfg(test)]
 mod test_support;
 mod token;
+mod typeinfo;
 mod ui;
 mod wire_credentials;
 

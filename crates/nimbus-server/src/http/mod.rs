@@ -36,6 +36,7 @@ mod schema;
 mod service_grants;
 mod services;
 mod sessions;
+mod source;
 mod tenants;
 mod ui;
 mod version_info;
@@ -66,6 +67,7 @@ pub(crate) use services::{
     restart_service, start_service, stop_service, update_service_definition,
 };
 pub(crate) use sessions::{close_session, get_session, list_sessions, open_session};
+pub(crate) use source::module_source;
 pub(crate) use tenants::{create_tenant, delete_tenant, list_tenants};
 pub(crate) use ui::{
     consume_ui_launch_ticket, create_ui_session, mint_ui_launch_ticket, ui_auth, ui_auth_script,

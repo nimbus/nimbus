@@ -9,11 +9,13 @@ pub(crate) enum SystemTable {
     Functions,
     Listeners,
     Machines,
+    Modules,
     Ports,
     Routes,
     Runs,
     ScheduledJobs,
     Services,
+    SourcePackages,
     Subscriptions,
     SystemStatus,
     Tables,
@@ -22,7 +24,7 @@ pub(crate) enum SystemTable {
 
 impl SystemTable {
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 16] = [
+    pub(crate) const ALL: [Self; 18] = [
         Self::AdapterCapabilities,
         Self::Bundles,
         Self::CronJobs,
@@ -30,11 +32,13 @@ impl SystemTable {
         Self::Functions,
         Self::Listeners,
         Self::Machines,
+        Self::Modules,
         Self::Ports,
         Self::Routes,
         Self::Runs,
         Self::ScheduledJobs,
         Self::Services,
+        Self::SourcePackages,
         Self::Subscriptions,
         Self::SystemStatus,
         Self::Tables,
@@ -50,11 +54,13 @@ impl SystemTable {
             Self::Functions => "functions",
             Self::Listeners => "listeners",
             Self::Machines => "machines",
+            Self::Modules => "modules",
             Self::Ports => "ports",
             Self::Routes => "routes",
             Self::Runs => "runs",
             Self::ScheduledJobs => "scheduled_jobs",
             Self::Services => "services",
+            Self::SourcePackages => "source_packages",
             Self::Subscriptions => "subscriptions",
             Self::SystemStatus => "system_status",
             Self::Tables => "tables",
@@ -129,6 +135,40 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             &[
                 index("by_bundleId", &["bundleId"]),
                 index("by_kind", &["kind"]),
+            ],
+        )?,
+        // Content-addressed archive of original module source (+ source maps),
+        // deduped by digest. The read-artifact behind the console Source view;
+        // `storageKey` is the indirection into the source-package store
+        // (disk CAS now, nimbus-blob later). See the Function Source
+        // Visibility plan (FSV1).
+        table(
+            SystemTable::SourcePackages,
+            &[
+                string("digest", true),
+                string("storageKey", true),
+                number("sizeBytes", false),
+                number("unpackedBytes", false),
+                string("status", true),
+            ],
+            &[
+                index("by_digest", &["digest"]),
+                index("by_status", &["status"]),
+            ],
+        )?,
+        // Per-module metadata. `sourcePackageId` references
+        // `source_packages.digest`; a function path `module:function` resolves
+        // to its module here, and the module to its source package.
+        table(
+            SystemTable::Modules,
+            &[
+                string("path", true),
+                string("sourcePackageId", true),
+                string("sha256", true),
+            ],
+            &[
+                index("by_path", &["path"]),
+                index("by_sourcePackageId", &["sourcePackageId"]),
             ],
         )?,
         table(

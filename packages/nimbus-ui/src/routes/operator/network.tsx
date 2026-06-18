@@ -3,6 +3,8 @@ import { useQuery } from "@nimbus/nimbus/react";
 import { useMemo, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
+import { Td, Th } from "../../components/data-table";
+import { PageHeader } from "../../components/page-header";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import {
@@ -28,7 +30,9 @@ export const Route = createFileRoute("/operator/network")({
     section: parseSection(search.section) ?? "routes",
   }),
   beforeLoad: ({ search }) => {
-    if (parseSection((search as Record<string, unknown>).section) === undefined) {
+    if (
+      parseSection((search as Record<string, unknown>).section) === undefined
+    ) {
       throw redirect({
         to: "/operator/network",
         search: { section: "routes" },
@@ -135,28 +139,20 @@ function NetworkPage() {
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-network"
     >
-      <header className="flex items-baseline justify-between">
-        <div>
-          <h1
-            className="text-xl text-default"
-            style={{ fontSize: "var(--text-xl)" }}
+      <PageHeader
+        title="Network"
+        subtitle="HTTP routes, listeners, and published ports. Routes are sourced from the live registry — adapters appear as they register."
+        trailing={
+          <span
+            className="font-mono text-xs text-muted"
+            data-testid="network-total"
           >
-            Network
-          </h1>
-          <p className="text-sm text-muted">
-            HTTP routes, listeners, and published ports. Routes are sourced from
-            the live registry — adapters appear as they register.
-          </p>
-        </div>
-        <div
-          className="font-mono text-xs text-muted"
-          data-testid="network-total"
-        >
-          {routes === undefined
-            ? "loading…"
-            : `${filtered?.length ?? 0} of ${routes.length} routes`}
-        </div>
-      </header>
+            {routes === undefined
+              ? "loading…"
+              : `${filtered?.length ?? 0} of ${routes.length} routes`}
+          </span>
+        }
+      />
 
       <div
         className="flex flex-wrap items-center gap-2 rounded-md border border-app bg-surface-2 px-3 py-2"
@@ -319,36 +315,5 @@ function RoutesTable({ routes }: { routes: RouteDoc[] }) {
         </tbody>
       </table>
     </div>
-  );
-}
-
-function Th({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <th
-      className={cn(
-        "border-b border-app px-3 py-2 text-left font-normal",
-        className,
-      )}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <td className={cn("px-3 py-2 align-middle", className)}>{children}</td>
   );
 }

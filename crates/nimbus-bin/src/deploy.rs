@@ -50,6 +50,23 @@ pub(crate) struct DeployCommand {
     /// Show packaging and deploy phase detail.
     #[arg(long, default_value_t = false)]
     pub(crate) verbose: bool,
+
+    /// TypeScript typecheck gate, run after codegen and before upload (mirrors
+    /// `convex deploy`). `enable` fails on type errors or when tsc is missing;
+    /// `try` fails on type errors but skips when tsc is absent; `disable` skips.
+    #[arg(long, value_enum, default_value_t = TypeCheckMode::Try)]
+    pub(crate) typecheck: TypeCheckMode,
+}
+
+/// Deploy-time TypeScript typecheck policy, mirroring `convex deploy`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum TypeCheckMode {
+    /// Fail the deploy on type errors or when TypeScript is not installed.
+    Enable,
+    /// Fail on type errors; skip silently when TypeScript is not installed.
+    Try,
+    /// Skip the typecheck entirely.
+    Disable,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,6 +96,12 @@ pub(crate) struct ConvexDeployArtifacts {
     pub(crate) bundle_mjs: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) bundle_sha256: Option<String>,
+    /// Canonical source-package JSON built from the app's `convex/` source — the
+    /// read-artifact behind the console Source view (FSV3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) source_package: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) source_package_sha256: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -159,6 +182,10 @@ pub(crate) async fn run_deploy_command(
         emit_deploy_phase("Running codegen");
         run_codegen_for_app_dir(&app_dir).await?;
     }
+
+    // Typecheck gate: codegen -> (bundle) -> typecheck, so `_generated/` exists
+    // and user code type-resolves before tsc runs. Aborts the deploy on errors.
+    typecheck_app(&app_dir, command.typecheck)?;
 
     if command.verbose {
         emit_deploy_phase("Packaging generated app artifacts");
@@ -301,6 +328,108 @@ fn resolve_deploy_token(
         .into());
     }
     Ok(token)
+}
+
+// ---------------------------------------------------------------------------
+// Typecheck gate (FSV9) — mirrors `convex deploy`: locate the project's tsc,
+// run `tsc --noEmit` against its tsconfig, and abort the deploy on type errors.
+// ---------------------------------------------------------------------------
+
+/// Run the typecheck gate for `app_dir` under `mode`, aborting on failure.
+fn typecheck_app(app_dir: &Path, mode: TypeCheckMode) -> Result<(), Box<dyn std::error::Error>> {
+    if mode == TypeCheckMode::Disable {
+        return Ok(());
+    }
+    let tsconfig = find_tsconfig(app_dir);
+    let tsc = locate_tsc(app_dir);
+    let tsc_passed = match (&tsconfig, &tsc) {
+        (Some(config), Some(tsc_path)) => {
+            emit_deploy_phase("Type-checking TypeScript with tsc");
+            Some(run_tsc(tsc_path, config, app_dir)?)
+        }
+        _ => None,
+    };
+    typecheck_decision(mode, tsconfig.is_some(), tsc.is_some(), tsc_passed)
+        .map_err(Box::<dyn std::error::Error>::from)
+}
+
+/// The project's TypeScript compiler, if installed (Convex-style: the app's own
+/// `node_modules`, not a walk-up).
+fn locate_tsc(app_dir: &Path) -> Option<PathBuf> {
+    let candidate = app_dir
+        .join("node_modules")
+        .join("typescript")
+        .join("bin")
+        .join("tsc");
+    candidate.is_file().then_some(candidate)
+}
+
+/// The tsconfig to check: the `convex/` project first, else the app root.
+fn find_tsconfig(app_dir: &Path) -> Option<PathBuf> {
+    let convex = app_dir.join("convex").join("tsconfig.json");
+    if convex.is_file() {
+        return Some(convex);
+    }
+    let root = app_dir.join("tsconfig.json");
+    root.is_file().then_some(root)
+}
+
+/// Run `tsc --noEmit` against `tsconfig`. Returns whether it passed; prints the
+/// compiler's diagnostics to stderr when it fails.
+fn run_tsc(
+    tsc: &Path,
+    tsconfig: &Path,
+    app_dir: &Path,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let output = std::process::Command::new("node")
+        .arg(tsc)
+        .arg("--noEmit")
+        .arg("--pretty")
+        .arg("--project")
+        .arg(tsconfig)
+        .current_dir(app_dir)
+        .output()?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stdout.trim().is_empty() {
+            eprint!("{stdout}");
+        }
+        if !stderr.trim().is_empty() {
+            eprint!("{stderr}");
+        }
+    }
+    Ok(output.status.success())
+}
+
+/// Decide the typecheck outcome from the mode and environment. `tsc_passed` is
+/// `None` when tsc was not run (no tsconfig or no tsc). `Ok(())` proceeds;
+/// `Err` aborts the deploy with a message.
+fn typecheck_decision(
+    mode: TypeCheckMode,
+    has_tsconfig: bool,
+    has_tsc: bool,
+    tsc_passed: Option<bool>,
+) -> Result<(), String> {
+    if mode == TypeCheckMode::Disable || !has_tsconfig {
+        return Ok(());
+    }
+    if !has_tsc {
+        return match mode {
+            TypeCheckMode::Enable => Err("typecheck=enable but TypeScript (tsc) was not found in \
+                 node_modules; install dependencies or deploy with --typecheck=disable"
+                .to_string()),
+            _ => Ok(()),
+        };
+    }
+    match tsc_passed {
+        Some(false) => Err(
+            "TypeScript reported type errors (see above); fix them or deploy with \
+             --typecheck=disable"
+                .to_string(),
+        ),
+        _ => Ok(()),
+    }
 }
 
 pub(crate) fn resolve_deploy_app_dir(
@@ -557,6 +686,11 @@ fn package_convex_artifacts(
         .into());
     }
 
+    let (source_package, source_package_sha256) = match collect_convex_source_package(app_dir)? {
+        Some((json, digest)) => (Some(json), Some(digest)),
+        None => (None, None),
+    };
+
     Ok(Some(ConvexDeployArtifacts {
         functions_json,
         http_routes_json,
@@ -564,7 +698,75 @@ fn package_convex_artifacts(
         auth_config_json,
         bundle_mjs,
         bundle_sha256,
+        source_package,
+        source_package_sha256,
     }))
+}
+
+/// Build the canonical source package from the app's `convex/` source tree (the
+/// read-artifact behind the console Source view, FSV3). Walks original
+/// `.ts`/`.js` modules — skipping `_generated/`, `node_modules/`, and `.d.ts`
+/// declarations — keyed by module path (the function-path prefix). Returns the
+/// canonical JSON and its content digest, or `None` when there is no source.
+fn collect_convex_source_package(
+    app_dir: &Path,
+) -> Result<Option<(String, String)>, Box<dyn std::error::Error>> {
+    let convex_dir = app_dir.join("convex");
+    if !convex_dir.is_dir() {
+        return Ok(None);
+    }
+    let mut modules = std::collections::BTreeMap::new();
+    collect_source_modules(&convex_dir, &convex_dir, &mut modules)?;
+    if modules.is_empty() {
+        return Ok(None);
+    }
+    let bytes = nimbus_system::build_source_package(&modules);
+    let digest = nimbus_system::source_package_digest(&bytes);
+    let json = String::from_utf8(bytes).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("source package is not valid UTF-8: {error}"),
+        )
+    })?;
+    Ok(Some((json, digest)))
+}
+
+fn collect_source_modules(
+    root: &Path,
+    dir: &Path,
+    modules: &mut std::collections::BTreeMap<String, (String, Option<String>)>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name == "_generated" || name == "node_modules" {
+                continue;
+            }
+            collect_source_modules(root, &path, modules)?;
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+        if path.to_string_lossy().ends_with(".d.ts") {
+            continue;
+        }
+        let Some(extension) = path.extension().and_then(|ext| ext.to_str()) else {
+            continue;
+        };
+        if !matches!(extension, "ts" | "tsx" | "js" | "jsx" | "mjs") {
+            continue;
+        }
+        let relative = path.strip_prefix(root)?.with_extension("");
+        let module_path = relative.to_string_lossy().replace('\\', "/");
+        let source = fs::read_to_string(&path)?;
+        modules.insert(module_path, (source, None));
+    }
+    Ok(())
 }
 
 fn package_cloud_functions_artifacts(
@@ -1134,6 +1336,8 @@ mod tests {
                     auth_config_json: None,
                     bundle_mjs: None,
                     bundle_sha256: None,
+                    source_package: None,
+                    source_package_sha256: None,
                 }),
                 cloud_functions: None,
             },
@@ -1237,5 +1441,89 @@ mod tests {
         server_task.abort();
         let _ = server_task.await;
         engine.quiesce().await;
+    }
+}
+
+#[cfg(test)]
+mod typecheck_tests {
+    use super::*;
+
+    #[test]
+    fn decision_disable_always_proceeds() {
+        assert!(typecheck_decision(TypeCheckMode::Disable, true, true, Some(false)).is_ok());
+    }
+
+    #[test]
+    fn decision_without_tsconfig_proceeds() {
+        assert!(typecheck_decision(TypeCheckMode::Enable, false, true, None).is_ok());
+    }
+
+    #[test]
+    fn decision_enable_aborts_when_tsc_missing() {
+        assert!(typecheck_decision(TypeCheckMode::Enable, true, false, None).is_err());
+    }
+
+    #[test]
+    fn decision_try_skips_when_tsc_missing() {
+        assert!(typecheck_decision(TypeCheckMode::Try, true, false, None).is_ok());
+    }
+
+    #[test]
+    fn decision_aborts_on_type_errors_in_enable_and_try() {
+        assert!(typecheck_decision(TypeCheckMode::Enable, true, true, Some(false)).is_err());
+        assert!(typecheck_decision(TypeCheckMode::Try, true, true, Some(false)).is_err());
+    }
+
+    #[test]
+    fn decision_proceeds_on_clean_typecheck() {
+        assert!(typecheck_decision(TypeCheckMode::Enable, true, true, Some(true)).is_ok());
+        assert!(typecheck_decision(TypeCheckMode::Try, true, true, Some(true)).is_ok());
+    }
+
+    fn node_available() -> bool {
+        std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
+    fn workspace_tsc() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../node_modules/typescript/bin/tsc")
+    }
+
+    /// Real-compiler proof: tsc passes clean code and fails on a type error.
+    /// Gated on node + the workspace TypeScript being present.
+    #[test]
+    fn run_tsc_passes_clean_code_and_fails_on_type_error() {
+        let tsc = workspace_tsc();
+        if !tsc.is_file() || !node_available() {
+            eprintln!("skipping run_tsc live test: node or workspace tsc unavailable");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir should create");
+        let tsconfig = dir.path().join("tsconfig.json");
+        fs::write(
+            &tsconfig,
+            r#"{"compilerOptions":{"strict":true,"noEmit":true,"skipLibCheck":true},"files":["main.ts"]}"#,
+        )
+        .expect("write tsconfig");
+
+        fs::write(dir.path().join("main.ts"), "export const n: number = 1;\n")
+            .expect("write clean source");
+        assert!(
+            run_tsc(&tsc, &tsconfig, dir.path()).expect("tsc runs"),
+            "clean code should pass the typecheck"
+        );
+
+        fs::write(
+            dir.path().join("main.ts"),
+            "export const n: number = \"not a number\";\n",
+        )
+        .expect("write bad source");
+        assert!(
+            !run_tsc(&tsc, &tsconfig, dir.path()).expect("tsc runs"),
+            "a type error must fail the typecheck"
+        );
     }
 }

@@ -1,5 +1,17 @@
 import { Link } from "@tanstack/react-router";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Code,
+  Eye,
+  FileCode,
+  Folder,
+  FolderOpen,
+  Globe,
+  type LucideIcon,
+  Pencil,
+  Zap,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { cn } from "../lib/cn";
@@ -11,6 +23,25 @@ import {
   collectAllPaths,
   filterFunctionTree,
 } from "./function-tree";
+
+// Leaf icon by function kind (query reads, mutation writes, action runs,
+// http serves). Falls back to a generic code glyph.
+function kindIcon(kind: string | undefined): LucideIcon {
+  switch ((kind ?? "").toLowerCase()) {
+    case "query":
+      return Eye;
+    case "mutation":
+      return Pencil;
+    case "action":
+      return Zap;
+    case "http":
+    case "httpaction":
+    case "http_action":
+      return Globe;
+    default:
+      return Code;
+  }
+}
 
 export function FunctionTreeView({
   tree,
@@ -128,6 +159,11 @@ function FolderRow({
         ) : (
           <ChevronDown size={12} aria-hidden />
         )}
+        {collapsed ? (
+          <Folder size={13} aria-hidden className="shrink-0" />
+        ) : (
+          <FolderOpen size={13} aria-hidden className="shrink-0" />
+        )}
         <span className="truncate font-mono text-xs uppercase tracking-wide">
           {folder.name}
         </span>
@@ -185,6 +221,7 @@ function ModuleRow({
         ) : (
           <ChevronDown size={12} aria-hidden />
         )}
+        <FileCode size={13} aria-hidden className="shrink-0" />
         <span className="truncate font-mono text-xs">{mod.name}</span>
       </button>
       {collapsed
@@ -210,16 +247,23 @@ function LeafRow({
   depth: number;
   testidPrefix: string;
 }) {
+  const Icon = kindIcon(leaf.fnKind);
   return (
     <Link
       to="/developer/compute/$function"
       params={{ function: leaf.path }}
+      search={{ tab: "source" }}
       data-testid={`${testidPrefix}-fn-${leaf.path}`}
       className="flex h-7 items-center gap-2 rounded-md px-1 text-sm text-muted hover:bg-surface-2 hover:text-default"
       style={{ paddingLeft: `${depth * 12 + 16}px` }}
     >
+      <Icon size={13} aria-hidden className="shrink-0" />
       <span className="flex-1 truncate font-mono text-xs">{leaf.name}</span>
-      {leaf.lastStatus ? (
+      {leaf.fnKind ? (
+        <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted">
+          {leaf.fnKind}
+        </span>
+      ) : leaf.lastStatus ? (
         <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
           {leaf.lastStatus}
         </span>

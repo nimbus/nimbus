@@ -103,6 +103,12 @@ impl Engine {
         Self::new_with_embedded_provider(data_dir, EmbeddedProviderKind::default())
     }
 
+    /// The engine's root data directory. Host-side subsystems (e.g. the deploy
+    /// source-package store) root their own content directories under this.
+    pub fn data_dir(&self) -> &std::path::Path {
+        &self.data_dir
+    }
+
     /// Creates a new engine for the provided data directory using an explicit
     /// embedded persistence provider.
     pub fn new_with_embedded_provider(

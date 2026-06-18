@@ -20,6 +20,10 @@ vi.mock("@tanstack/react-router", () => ({
     }),
 }));
 
+vi.mock("@nimbus/nimbus/react", () => ({
+  useQuery: () => ({ version: "9.9.9" }),
+}));
+
 import { TopNav } from "./top-nav";
 
 function setLocation(path: string, search: Record<string, unknown> = {}) {
@@ -43,11 +47,16 @@ describe("TopNav", () => {
     render(<TopNav />);
     expect(screen.getByTestId("top-nav")).toBeInTheDocument();
     expect(screen.getByLabelText("Nimbus")).toBeInTheDocument();
-    expect(screen.getByText("Nimbus")).toBeInTheDocument();
+    expect(screen.getByText("nimbus")).toBeInTheDocument();
     expect(screen.getByTestId("view-switcher")).toBeInTheDocument();
     expect(screen.getByTestId("view-switcher-developer")).toBeInTheDocument();
     expect(screen.getByTestId("view-switcher-operator")).toBeInTheDocument();
     expect(screen.getByTestId("top-nav-tenant-slot")).toBeInTheDocument();
+  });
+
+  it("shows the version after the brand with a v prefix", () => {
+    render(<TopNav />);
+    expect(screen.getByTestId("top-nav-version")).toHaveTextContent("v9.9.9");
   });
 
   it("shows the developer wordmark on /app routes", () => {
