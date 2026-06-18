@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.34] - 2026-06-18
+
+### Changed
+
+- Route macOS machine service workload execution through the guest node-agent and systemd transient-unit path instead of the direct machine API sandbox backend path.
+- Add the NSR5 machine-os guest-node proof gates, packaged container runner wiring, and release-helper evidence required for published image promotion.
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.33...v0.1.34
+
 ## [0.1.33] - 2026-05-26
 
 ### Documentation
