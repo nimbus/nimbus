@@ -729,6 +729,9 @@ fn collect_convex_source_package(
             module_path,
             nimbus_system::ModuleInput {
                 source,
+                // No source map: the convex codegen emits a generated runtime
+                // dispatch bundle (not an esbuild transpile), so there is no
+                // bundle→original map to capture here. See ModuleInput::source_map.
                 source_map: None,
                 type_info,
             },

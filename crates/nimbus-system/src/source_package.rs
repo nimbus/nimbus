@@ -34,13 +34,21 @@ use crate::source_store::source_package_digest;
 /// Current source-package format version.
 pub const SOURCE_PACKAGE_VERSION: u64 = 1;
 
-/// A module to pack into a source package: original source, optional source map,
-/// and optional client-extracted type info (FSV8) — the JSON hint array from the
-/// TS compiler, computed at deploy where the toolchain exists.
+/// A module to pack into a source package.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleInput {
+    /// Original module source (the read-artifact shown in the console).
     pub source: String,
+    /// Per-module source map (`bundle position -> original`), mirroring Convex's
+    /// `module.sourceMap` (its esbuild bundler emits one per module and the
+    /// backend remaps stack traces via rust-sourcemap). Currently always `None`:
+    /// Nimbus's convex codegen emits a *generated runtime dispatch* bundle
+    /// (`emit/runtime_bundle*`), not an esbuild transpile, so no source map is
+    /// produced. Populating this for stack-trace remap is a scoped follow-up
+    /// (emit a bundle→original map + capture runtime error stacks).
     pub source_map: Option<String>,
+    /// Client-extracted type info (FSV8) — the TS-compiler hover hint array,
+    /// computed at deploy where the toolchain exists.
     pub type_info: Option<Value>,
 }
 
