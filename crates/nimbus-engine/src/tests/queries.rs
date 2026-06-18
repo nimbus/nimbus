@@ -752,22 +752,42 @@ async fn subscription_re_evaluation_uses_materialized_serving_path_for_full_scan
     assert_eq!(initial_surface_stats.table_load_count, 1);
     assert_eq!(initial_surface_stats.evaluation_count, 1);
 
-    engine
+    let follow_up_id = engine
         .insert_document(
             &tenant_id,
             tasks_table(),
             serde_json::Map::from_iter([("title".to_string(), json!("Beta"))]),
         )
         .expect("follow-up insert should succeed");
+    let follow_up_sequence = durable_journal_commits(&engine, &tenant_id, SequenceNumber(0))
+        .into_iter()
+        .find(|commit| {
+            commit
+                .writes
+                .iter()
+                .any(|write| write.doc_id == follow_up_id)
+        })
+        .expect("follow-up insert commit should be durable")
+        .sequence;
 
-    let update = rx.recv().await.expect("subscription update should arrive");
-    match update {
-        SubscriptionUpdate::Result { snapshot, .. } => {
-            let data = snapshot.to_json_documents();
-            assert_eq!(data.len(), 2);
+    timeout(Duration::from_secs(1), async {
+        loop {
+            let update = rx.recv().await.expect("subscription update should arrive");
+            match update {
+                SubscriptionUpdate::Result { snapshot, .. } => {
+                    if snapshot.covered_sequence.0 < follow_up_sequence.0 {
+                        continue;
+                    }
+                    let data = snapshot.to_json_documents();
+                    assert_eq!(data.len(), 2);
+                    break;
+                }
+                other => panic!("unexpected subscription event: {other:?}"),
+            }
         }
-        other => panic!("unexpected subscription event: {other:?}"),
-    }
+    })
+    .await
+    .expect("subscription update should cover the follow-up insert");
 
     let surface_stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
