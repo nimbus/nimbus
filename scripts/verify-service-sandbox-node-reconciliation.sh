@@ -48,6 +48,11 @@ plan_grep() {
   grep -q "$1" "${PLAN}" 2>/dev/null
 }
 
+compose_backend_lifecycle_leaks() {
+  grep -R -n --include='*.rs' -E '\.(start|stop|inspect)\(' "${COMPOSE_SRC}" 2>/dev/null \
+    | grep -v '^crates/nimbus-bin/src/compose/lifecycle.rs:' || true
+}
+
 # --- 1. NSR0 control-plane registration --------------------------------------
 C="1. NSR0 control plane, proof bundle, and verifier are registered"
 if [[ -f "${PLAN}" ]] \
@@ -174,14 +179,13 @@ else
 fi
 
 # --- 12. NSR6 Compose lifecycle no-bypass -------------------------------------
-C="12. NSR6 Compose lifecycle uses an explicit sandbox lifecycle adapter"
+C="12. NSR6 Compose lifecycle localizes sandbox backend calls"
 if [[ -d "${COMPOSE_SRC}" ]] \
-  && ! grep -rqE 'SandboxBackend::(start|stop|inspect)' "${COMPOSE_SRC}" 2>/dev/null \
-  && crates_grep 'trait ComposeSandboxLifecycleExecutor' \
-  && crates_grep 'compose_lifecycle_uses_explicit_sandbox_lifecycle_adapter'; then
+  && [[ -z "$(compose_backend_lifecycle_leaks)" ]] \
+  && crates_grep 'compose_lifecycle_localizes_sandbox_backend_lifecycle_calls'; then
   pass "${C}"
 else
-  fail "${C}" "Compose direct SandboxBackend lifecycle remains or explicit lifecycle-adapter guard test missing"
+  fail "${C}" "Compose sandbox backend lifecycle calls escaped compose/lifecycle.rs or guard test missing"
 fi
 
 # --- 13. NSR7 admitted Compose templates lease sandboxes safely ----------------

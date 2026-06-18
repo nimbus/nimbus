@@ -1,10 +1,6 @@
 use std::path::Path;
 
-use nimbus::{
-    Error, SandboxBackend, SandboxBackendKind, SandboxHandle, SandboxId, SandboxSpec,
-    SandboxStatus, ServiceBackend, TenantId,
-};
-use nimbus_sandbox::SandboxFuture;
+use nimbus::{Error, SandboxBackend, SandboxHandle, SandboxStatus, ServiceBackend, TenantId};
 use nimbus_sandbox::backends::krun::KrunSandboxStateView;
 use serde::Serialize;
 
@@ -84,41 +80,6 @@ impl ServiceLifecycleTarget {
     }
 }
 
-pub(super) trait ComposeSandboxLifecycleExecutor {
-    fn kind(&self) -> SandboxBackendKind;
-    fn start_service(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle>;
-    fn inspect_service(&self, sandbox_id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>>;
-    fn stop_service(&self, sandbox_id: &SandboxId) -> SandboxFuture<()>;
-}
-
-pub(super) struct SandboxBackendComposeLifecycle<'a> {
-    backend: &'a dyn SandboxBackend,
-}
-
-impl<'a> SandboxBackendComposeLifecycle<'a> {
-    pub(super) fn new(backend: &'a dyn SandboxBackend) -> Self {
-        Self { backend }
-    }
-}
-
-impl ComposeSandboxLifecycleExecutor for SandboxBackendComposeLifecycle<'_> {
-    fn kind(&self) -> SandboxBackendKind {
-        self.backend.kind()
-    }
-
-    fn start_service(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
-        self.backend.start(spec)
-    }
-
-    fn inspect_service(&self, sandbox_id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
-        self.backend.inspect(sandbox_id)
-    }
-
-    fn stop_service(&self, sandbox_id: &SandboxId) -> SandboxFuture<()> {
-        self.backend.stop(sandbox_id)
-    }
-}
-
 #[cfg(test)]
 pub(super) async fn service_up_outcomes_for_platform(
     command: &ComposeUpCommand,
@@ -164,12 +125,15 @@ pub(super) async fn service_up_outcomes_for_selection(
             state_view,
             backend,
         } => {
-            let executor = SandboxBackendComposeLifecycle::new(backend.as_ref());
             let mut outcomes = Vec::new();
             for service_name in service_names {
-                if let Some(handle) =
-                    resolve_live_service_handle(&state_view, &executor, &tenant, &service_name)
-                        .await?
+                if let Some(handle) = resolve_live_service_handle(
+                    &state_view,
+                    backend.as_ref(),
+                    &tenant,
+                    &service_name,
+                )
+                .await?
                 {
                     outcomes.push(ServiceLifecycleOutcome::from_handle(
                         ServiceLifecycleAction::AlreadyRunning,
@@ -189,7 +153,7 @@ pub(super) async fn service_up_outcomes_for_selection(
                         ))
                     })?;
                 let handle =
-                    start_service_launch(&executor, &tenant, &service_name, launch).await?;
+                    start_service_launch(backend.as_ref(), &tenant, &service_name, launch).await?;
                 outcomes.push(ServiceLifecycleOutcome::from_handle(
                     ServiceLifecycleAction::Started,
                     &tenant,
@@ -200,7 +164,6 @@ pub(super) async fn service_up_outcomes_for_selection(
             Ok(outcomes)
         }
         super::ServiceExecutionSurface::ForwardedContainer { client, backend } => {
-            let executor = SandboxBackendComposeLifecycle::new(backend.as_ref());
             validate_forwarded_machine_api_backend(&context, &client)?;
             let mut outcomes = Vec::new();
             for service_name in service_names {
@@ -231,7 +194,7 @@ pub(super) async fn service_up_outcomes_for_selection(
                         ))
                     })?;
                 let handle =
-                    start_service_launch(&executor, &tenant, &service_name, launch).await?;
+                    start_service_launch(backend.as_ref(), &tenant, &service_name, launch).await?;
                 outcomes.push(ServiceLifecycleOutcome::from_handle(
                     ServiceLifecycleAction::Started,
                     &tenant,
@@ -286,7 +249,6 @@ pub(super) async fn service_down_outcomes_for_selection(
             state_view,
             backend,
         } => {
-            let executor = SandboxBackendComposeLifecycle::new(backend.as_ref());
             let targets = resolve_service_down_targets(
                 &state_view,
                 &tenant,
@@ -295,7 +257,7 @@ pub(super) async fn service_down_outcomes_for_selection(
             )?;
             let mut outcomes = Vec::new();
             for target in targets {
-                outcomes.push(stop_service_target(&executor, &tenant, target).await?);
+                outcomes.push(stop_service_target(backend.as_ref(), &tenant, target).await?);
             }
             Ok(outcomes)
         }
@@ -325,9 +287,8 @@ pub(super) async fn service_down_outcomes_for_selection(
                 command.service.as_deref(),
             )?;
             let mut outcomes = Vec::new();
-            let executor = SandboxBackendComposeLifecycle::new(backend.as_ref());
             for target in targets {
-                outcomes.push(stop_service_target(&executor, &tenant, target).await?);
+                outcomes.push(stop_service_target(backend.as_ref(), &tenant, target).await?);
             }
             Ok(outcomes)
         }
@@ -335,7 +296,7 @@ pub(super) async fn service_down_outcomes_for_selection(
 }
 
 pub(super) async fn start_service_launch(
-    executor: &dyn ComposeSandboxLifecycleExecutor,
+    backend: &dyn SandboxBackend,
     tenant: &TenantId,
     service_name: &str,
     service_backend: ServiceBackend,
@@ -358,29 +319,29 @@ pub(super) async fn start_service_launch(
             spec.tenant_id, tenant
         )));
     }
-    if spec.backend != executor.kind() {
+    if spec.backend != backend.kind() {
         return Err(Error::InvalidInput(format!(
             "sandbox-backed service {} for tenant {} requested backend {:?}, but the configured backend is {:?}",
             service_name,
             tenant,
             spec.backend,
-            executor.kind()
+            backend.kind()
         )));
     }
 
-    executor
-        .start_service(spec)
+    backend
+        .start(spec)
         .await
         .map_err(|error| backend_operation_error("start", tenant, service_name, error))
 }
 
 pub(super) async fn stop_service_target(
-    executor: &dyn ComposeSandboxLifecycleExecutor,
+    backend: &dyn SandboxBackend,
     tenant: &TenantId,
     target: ServiceLifecycleTarget,
 ) -> Result<ServiceLifecycleOutcome, Error> {
-    let refreshed = executor
-        .inspect_service(&target.sandbox_id)
+    let refreshed = backend
+        .inspect(&target.sandbox_id)
         .await
         .map_err(|error| backend_operation_error("inspect", tenant, &target.service_name, error))?;
 
@@ -400,12 +361,12 @@ pub(super) async fn stop_service_target(
         });
     }
 
-    executor
-        .stop_service(&target.sandbox_id)
+    backend
+        .stop(&target.sandbox_id)
         .await
         .map_err(|error| backend_operation_error("stop", tenant, &target.service_name, error))?;
-    let status = executor
-        .inspect_service(&target.sandbox_id)
+    let status = backend
+        .inspect(&target.sandbox_id)
         .await
         .map_err(|error| backend_operation_error("inspect", tenant, &target.service_name, error))?
         .map(|handle| handle.status)
@@ -422,7 +383,7 @@ pub(super) async fn stop_service_target(
 
 async fn resolve_live_service_handle(
     state_view: &KrunSandboxStateView,
-    executor: &dyn ComposeSandboxLifecycleExecutor,
+    backend: &dyn SandboxBackend,
     tenant: &TenantId,
     service_name: &str,
 ) -> Result<Option<SandboxHandle>, Error> {
@@ -435,8 +396,8 @@ async fn resolve_live_service_handle(
         return Ok(None);
     };
 
-    let refreshed = executor
-        .inspect_service(&details.summary.sandbox_id)
+    let refreshed = backend
+        .inspect(&details.summary.sandbox_id)
         .await
         .map_err(|error| backend_operation_error("inspect", tenant, service_name, error))?;
 
