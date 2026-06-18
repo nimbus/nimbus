@@ -21,8 +21,9 @@ pub use registry::{
 };
 pub use workload_control::{
     DesiredWorkload, DesiredWorkloadKind, DesiredWorkloadSnapshot, DesiredWorkloadState,
-    DesiredWorkloadStore, EmbeddedNodeClient, InMemoryDesiredWorkloadStore, NodeCapacity,
-    PlacementPlan, SchedulingExplanation, WorkloadChannelDescriptor, WorkloadController,
-    WorkloadEvaluation, WorkloadEventQueue, WorkloadExecutionPhase, WorkloadExecutionStatus,
-    WorkloadExecutor, WorkloadPlacementEngine, WorkloadScheduler,
+    DesiredWorkloadStore, EmbeddedNodeClient, InMemoryDesiredWorkloadStore, NodeAssignment,
+    NodeCapacity, PlacementPlan, SchedulingExplanation, WorkloadChannelDescriptor,
+    WorkloadController, WorkloadEvaluation, WorkloadEventQueue, WorkloadExecutionPhase,
+    WorkloadExecutionStatus, WorkloadExecutor, WorkloadPlacementEngine, WorkloadScheduler,
+    WorkloadStatusUpdate,
 };

@@ -356,6 +356,50 @@ async fn ensure_service_binding_async_starts_declared_image_service_once() {
 }
 
 #[tokio::test]
+async fn service_start_records_desired_workload() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let backend = Arc::new(StubSandboxBackend::new(1));
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::from([(
+                "db".to_owned(),
+                image_service_backend("db", "postgres:16"),
+            )]),
+        }),
+        backend.clone(),
+    )
+    .with_activation_poll_interval(Duration::from_millis(1))
+    .with_activation_timeout(Duration::from_secs(1));
+    let isolation = TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+
+    let handle = manager
+        .start_service_for_context_async(&isolation, "db", HostCallCancellation::default())
+        .await
+        .expect("service should start")
+        .expect("ready handle should be returned");
+    let snapshot = manager.desired_workload_snapshot();
+    let desired = snapshot
+        .workloads()
+        .find(|workload| workload.workload_id() == "service:db")
+        .expect("service start should record desired workload state");
+
+    assert_eq!(handle.status, SandboxStatus::Ready);
+    assert_eq!(backend.image_starts.load(Ordering::SeqCst), 1);
+    assert_eq!(desired.tenant_id(), &tenant_id);
+    assert_eq!(desired.kind(), crate::DesiredWorkloadKind::Service);
+    assert_eq!(
+        desired.desired_state(),
+        crate::DesiredWorkloadState::Running
+    );
+    assert_eq!(
+        desired.generation(),
+        0,
+        "static catalog-backed service definitions start at generation zero"
+    );
+    assert_eq!(desired.binding_key(), Some("service:db"));
+}
+
+#[tokio::test]
 async fn resolve_service_binding_uses_cached_snapshot_without_backend_inspect() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
     let backend = Arc::new(StubSandboxBackend::new(1));

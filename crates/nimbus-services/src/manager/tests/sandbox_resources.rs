@@ -100,3 +100,41 @@ async fn create_sandbox_resource_preserves_existing_backend_after_duplicate_star
         "duplicate-id failure must leave the tracked backend handle intact"
     );
 }
+
+#[tokio::test]
+async fn sandbox_create_records_desired_workload() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let backend = Arc::new(StubSandboxBackend::new(1));
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::new(),
+        }),
+        backend.clone(),
+    );
+
+    let resource = manager
+        .create_sandbox_resource_async(
+            &tenant_id,
+            "worker",
+            standalone_resource_spec(&tenant_id, "task"),
+            BTreeMap::new(),
+        )
+        .await
+        .expect("standalone sandbox should start");
+    let workload_id = format!("sandbox:{}", resource.id);
+    let snapshot = manager.desired_workload_snapshot();
+    let desired = snapshot
+        .workloads()
+        .find(|workload| workload.workload_id() == workload_id)
+        .expect("sandbox create should record desired workload state");
+
+    assert_eq!(backend.image_starts.load(Ordering::SeqCst), 1);
+    assert_eq!(desired.tenant_id(), &tenant_id);
+    assert_eq!(desired.kind(), crate::DesiredWorkloadKind::Sandbox);
+    assert_eq!(
+        desired.desired_state(),
+        crate::DesiredWorkloadState::Running
+    );
+    assert_eq!(desired.generation(), resource.generation);
+    assert_eq!(desired.binding_key(), Some(workload_id.as_str()));
+}

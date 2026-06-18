@@ -1,6 +1,14 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
 use nimbus_core::{Error, TenantId};
+
+mod assignment;
+mod scheduling;
+
+pub use assignment::{NodeAssignment, WorkloadStatusUpdate};
+pub use scheduling::{
+    NodeCapacity, PlacementPlan, SchedulingExplanation, WorkloadPlacementEngine, WorkloadScheduler,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DesiredWorkloadState {
@@ -174,124 +182,6 @@ where
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NodeCapacity {
-    node_id: String,
-    available_slots: u32,
-    binding_keys: BTreeSet<String>,
-}
-
-impl NodeCapacity {
-    pub fn new(node_id: impl Into<String>, available_slots: u32) -> Result<Self, Error> {
-        Ok(Self {
-            node_id: validate_component("node id", node_id)?,
-            available_slots,
-            binding_keys: BTreeSet::new(),
-        })
-    }
-
-    pub fn with_binding_key(mut self, binding_key: impl Into<String>) -> Result<Self, Error> {
-        self.binding_keys
-            .insert(validate_component("binding key", binding_key)?);
-        Ok(self)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlacementPlan {
-    workload_id: String,
-    node_id: Option<String>,
-    explanation: SchedulingExplanation,
-}
-
-impl PlacementPlan {
-    pub fn node_id(&self) -> Option<&str> {
-        self.node_id.as_deref()
-    }
-
-    pub fn explanation(&self) -> &SchedulingExplanation {
-        &self.explanation
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SchedulingExplanation {
-    selected_node: Option<String>,
-    rejected_nodes: BTreeMap<String, String>,
-    reason: String,
-}
-
-impl SchedulingExplanation {
-    pub fn selected_node(&self) -> Option<&str> {
-        self.selected_node.as_deref()
-    }
-
-    pub fn rejected_nodes(&self) -> &BTreeMap<String, String> {
-        &self.rejected_nodes
-    }
-
-    pub fn reason(&self) -> &str {
-        &self.reason
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct WorkloadPlacementEngine;
-
-impl WorkloadPlacementEngine {
-    pub fn place(&self, workload: &DesiredWorkload, nodes: &[NodeCapacity]) -> PlacementPlan {
-        let mut selected_node = None;
-        let mut rejected_nodes = BTreeMap::new();
-        for node in nodes {
-            if node.available_slots == 0 {
-                rejected_nodes.insert(node.node_id.clone(), "node has no free slots".to_owned());
-                continue;
-            }
-            if let Some(binding_key) = workload.binding_key()
-                && node.binding_keys.contains(binding_key)
-            {
-                rejected_nodes.insert(
-                    node.node_id.clone(),
-                    format!("binding key `{binding_key}` is already reserved"),
-                );
-                continue;
-            }
-            match selected_node.as_ref() {
-                Some(current) if current <= &node.node_id => {}
-                _ => selected_node = Some(node.node_id.clone()),
-            }
-        }
-        let reason = selected_node
-            .as_ref()
-            .map(|node| format!("selected node `{node}` by deterministic id order"))
-            .unwrap_or_else(|| "no feasible node".to_owned());
-        PlacementPlan {
-            workload_id: workload.workload_id.clone(),
-            node_id: selected_node.clone(),
-            explanation: SchedulingExplanation {
-                selected_node,
-                rejected_nodes,
-                reason,
-            },
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct WorkloadScheduler {
-    placement: WorkloadPlacementEngine,
-}
-
-impl WorkloadScheduler {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn schedule(&self, workload: &DesiredWorkload, nodes: &[NodeCapacity]) -> PlacementPlan {
-        self.placement.place(workload, nodes)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkloadEvaluation {
     workload_id: String,
     observed_generation: u64,
@@ -420,6 +310,10 @@ impl WorkloadExecutionStatus {
         })
     }
 
+    pub fn workload_id(&self) -> &str {
+        &self.workload_id
+    }
+
     pub fn phase(&self) -> WorkloadExecutionPhase {
         self.phase
     }
@@ -536,36 +430,6 @@ mod tests {
     }
 
     #[test]
-    fn generated_workload_placement() {
-        let workload =
-            DesiredWorkload::service(tenant_id(), "api", DesiredWorkloadState::Running, 1)
-                .expect("desired workload should build");
-        let scheduler = WorkloadScheduler::new();
-        let plan = scheduler.schedule(
-            &workload,
-            &[
-                NodeCapacity::new("node-c", 0).expect("node should build"),
-                NodeCapacity::new("node-b", 2)
-                    .expect("node should build")
-                    .with_binding_key("service:api")
-                    .expect("binding key should build"),
-                NodeCapacity::new("node-a", 1).expect("node should build"),
-            ],
-        );
-
-        assert_eq!(plan.node_id(), Some("node-a"));
-        assert_eq!(plan.explanation().selected_node(), Some("node-a"));
-        assert_eq!(plan.explanation().rejected_nodes().len(), 2);
-        assert!(
-            plan.explanation()
-                .rejected_nodes()
-                .get("node-b")
-                .expect("node-b should be rejected")
-                .contains("already reserved")
-        );
-    }
-
-    #[test]
     fn stale_snapshot_requeues_workload_evaluation() {
         let mut queue = WorkloadEventQueue::default();
         let evaluation =
@@ -613,12 +477,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FakeWorkloadExecutor {
+    struct FakeRemoteWorkloadExecutor {
         statuses: BTreeMap<String, WorkloadExecutionStatus>,
         opened_channels: Vec<WorkloadChannelDescriptor>,
     }
 
-    impl WorkloadExecutor for FakeWorkloadExecutor {
+    impl WorkloadExecutor for FakeRemoteWorkloadExecutor {
         fn start(&mut self, desired: &DesiredWorkload) -> Result<WorkloadExecutionStatus, Error> {
             let status = WorkloadExecutionStatus::ready(desired.workload_id())?;
             self.statuses
@@ -652,13 +516,14 @@ mod tests {
     }
 
     #[test]
-    fn fake_executor_lifecycle_reaches_ready() {
+    fn fake_remote_executor_lifecycle_reaches_ready() {
         let desired =
             DesiredWorkload::sandbox(tenant_id(), "desktop-1", DesiredWorkloadState::Running, 1)
                 .expect("desired sandbox should build");
-        let mut client = EmbeddedNodeClient::new(FakeWorkloadExecutor::default());
+        let mut client = EmbeddedNodeClient::new(FakeRemoteWorkloadExecutor::default());
 
         let started = client.start(&desired).expect("fake executor should start");
+        assert_eq!(started.workload_id(), "sandbox:desktop-1");
         assert_eq!(started.phase(), WorkloadExecutionPhase::Ready);
         let inspected = client
             .inspect(desired.workload_id())
