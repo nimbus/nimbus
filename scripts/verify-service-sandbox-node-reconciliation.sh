@@ -20,8 +20,8 @@ NODE_CARGO="crates/nimbus-node/Cargo.toml"
 NODE_SRC="crates/nimbus-node/src"
 COMPOSE_SRC="crates/nimbus-bin/src/compose"
 SESSION_MODEL="docs/private/architecture/sandbox/service-sandbox-session-model.md"
-SDK_PLAN="docs/private/plans/nimbus-sdk-resource-model-plan.md"
-CAPABILITY_PLAN="docs/private/plans/nimbus-capability-segregation-plan.md"
+SDK_PLAN="docs/private/plans/archive/nimbus-sdk-resource-model-plan.md"
+CAPABILITY_PLAN="docs/private/plans/archive/nimbus-capability-segregation-plan.md"
 NODE_DBUS_DOC="docs/private/operating/node-dbus-binding.md"
 MICROVM_DOC="docs/private/architecture/sandbox/microvm-service-baseline.md"
 
@@ -174,13 +174,14 @@ else
 fi
 
 # --- 12. NSR6 Compose lifecycle no-bypass -------------------------------------
-C="12. NSR6 Compose lifecycle no longer bypasses workload executor"
+C="12. NSR6 Compose lifecycle uses an explicit sandbox lifecycle adapter"
 if [[ -d "${COMPOSE_SRC}" ]] \
   && ! grep -rqE 'SandboxBackend::(start|stop|inspect)' "${COMPOSE_SRC}" 2>/dev/null \
-  && crates_grep 'compose_lifecycle_uses_workload_executor'; then
+  && crates_grep 'trait ComposeSandboxLifecycleExecutor' \
+  && crates_grep 'compose_lifecycle_uses_explicit_sandbox_lifecycle_adapter'; then
   pass "${C}"
 else
-  fail "${C}" "Compose direct SandboxBackend lifecycle remains or guard test missing"
+  fail "${C}" "Compose direct SandboxBackend lifecycle remains or explicit lifecycle-adapter guard test missing"
 fi
 
 # --- 13. NSR7 admitted Compose templates lease sandboxes safely ----------------

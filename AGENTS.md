@@ -115,22 +115,26 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   backends + `FsCaps`, replacing `deno_fs::RealFs`), object storage (two-plane
   content-addressed chunk core + `s3s` S3 surface + Local/Mirror/Tier/
   Cloud-primary placement over `object_store` + "an S3 becomes a mount" FS
-  binder), or tier-neutral egress (extracting `EgressPolicy`/`EgressGateway`
-  from the container-only `SandboxEgressProxy`, binding isolate/wasm `fetch`):
-  the three-plan portfolio from the `/tmp/nimbus-isolate-architecture.html`
-  deep-dive — `docs/private/plans/nimbus-isolate-filesystem-plan.md` (NFS0..NFS7,
-  foundational; gated on `bash scripts/verify-nimbus-isolate-filesystem.sh`,
-  10 conditions), `docs/private/plans/nimbus-s3-object-storage-plan.md`
-  (NOS0..NOS7, depends on NFS6; gated on
-  `bash scripts/verify-nimbus-s3-object-storage.sh`, 12 conditions; Garage is
-  AGPL-3.0 and excluded), and
-  `docs/private/plans/nimbus-egress-gateway-extraction-plan.md` (NEG0..NEG7,
-  independent; gated on
-  `bash scripts/verify-nimbus-egress-gateway-extraction.sh`, 10 conditions).
-  Honor the `nimbus-runtime` zero-workspace-dep and `nimbus-core` zero-I/O
-  invariants via injected traits (`NimbusFsBackend`, `EgressGateway` — both the
-  HostBridge pattern). Coordinate the NimbusFS WASI binder and the egress wasm
-  binding with `docs/private/plans/wasi-agent-capabilities-plan.md` /
+  binder), tier-neutral egress (extracting `EgressPolicy`/`EgressGateway` from
+  the container-only `SandboxEgressProxy`, binding isolate/wasm `fetch`), or
+  at-rest crypto extraction (`nimbus-crypto`):
+  the isolate substrate portfolio from the `/tmp/nimbus-isolate-architecture.html`
+  deep-dive plus `docs/private/plans/nimbus-crypto-extraction-plan.md`.
+  Read `docs/private/plans/nimbus-crypto-extraction-plan.md` (NC0..NC4),
+  `docs/private/plans/nimbus-isolate-filesystem-plan.md` (NFS0..NFS7),
+  `docs/private/plans/nimbus-s3-object-storage-plan.md` (NOS0..NOS7), and
+  `docs/private/plans/nimbus-egress-gateway-extraction-plan.md` (NEG0..NEG7).
+  NC is the practical predecessor for NOS byte-plane crypto; NOS may do
+  metadata/interface design before NC, but do not duplicate the encryption
+  stack instead of sourcing it from `nimbus-crypto`. NFS/NOS/NEG/NC verifier
+  scripts are created by their phase-0 scaffold bands; before those bands land,
+  a missing verifier is expected, not a green signal. Honor the `nimbus-runtime`
+  zero-workspace-dep and `nimbus-core` zero-I/O invariants via injected traits
+  (`NimbusFsBackend`, `EgressGateway` — both the HostBridge pattern). If NFS and
+  NEG are active together, land a small runtime bootstrap extension registry
+  first so both plans do not hand-edit `extensions.rs` independently. Coordinate
+  the NimbusFS WASI binder and the egress wasm binding with
+  `docs/private/plans/wasi-agent-capabilities-plan.md` /
   `docs/private/plans/wasmtime-backend-plan.md`.
 - Sandbox backend / snapshot / desktop / GPU (unified-lift roadmap on
   `nimbus-libkrun`): `docs/private/plans/nimbus-sandbox-plan.md` is the single
@@ -267,10 +271,25 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `workers-types` are Apache-2.0/MIT and freely incorporable. Also read
   `docs/private/architecture/runtime/adapter-boundary.md` and
   `docs/private/architecture/server/auth-runtime-trust.md`.
+- Horizontal scaling, cluster substrate, cluster-riding secret management,
+  workload identity/provider auth, or the agent browser service:
+  `docs/private/plans/horizontal-scaling-plan.md` leads the lane and creates
+  `scripts/verify-horizontal-scaling.sh` in HS0. Then read
+  `docs/private/plans/secret-management-plan.md`,
+  `docs/private/plans/service-identity-provider-auth-plan.md`, and
+  `docs/private/plans/agent-browser-service-plan.md` as consumers. Single-node
+  remains the launch baseline; promote this lane only for a concrete multi-node
+  deployment or named consumer.
 - Convex or Nimbus CLI/codegen workflow:
   `docs/private/adapters/convex/ai-guidelines.md`,
   `docs/private/operating/cli.md`,
   `docs/private/adapters/convex/compatibility.md`
+- Function source visibility, source packages, module code navigation, console
+  Source tab, or deploy-time type hover/typecheck:
+  `docs/private/plans/nimbus-function-source-visibility-plan.md` is a completed
+  local baseline, not active roadmap work. The verifier is
+  `bash scripts/verify-nimbus-function-source-visibility.sh` and was green at
+  21 passed / 0 failed on 2026-06-18. New work needs a follow-on plan.
 - Node-compatible runtime / `deno_core` / `rusty_v8` / embedded-codegen:
   `docs/private/architecture/runtime/adapter-boundary.md` and
   `docs/private/architecture/server/auth-runtime-trust.md` after the top-level docs.

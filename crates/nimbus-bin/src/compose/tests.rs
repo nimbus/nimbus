@@ -23,7 +23,7 @@ use crate::compose::execution::{
     should_auto_start_default_machine_for_host_loader,
 };
 use crate::compose::lifecycle::{
-    SandboxBackendComposeExecutor, start_service_launch, stop_service_target,
+    SandboxBackendComposeLifecycle, start_service_launch, stop_service_target,
 };
 use crate::compose::logs::{read_log_chunk, resolve_service_ctr_log_path};
 use crate::compose::process::{parse_process_rows, read_pid_file_if_exists};
