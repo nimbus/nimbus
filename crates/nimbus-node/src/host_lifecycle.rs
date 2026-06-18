@@ -1154,37 +1154,17 @@ mod tests {
 
     #[test]
     fn runner_spec_renders_host_lifecycle_request() {
-        let binding = binding();
-        let request = RunnerSpec::container("/run/nimbus/bundles/workload")
-            .expect("container runner spec should parse")
-            .with_memory_max_bytes(512 * 1024 * 1024)
-            .with_cpu_weight(100)
-            .with_tasks_max(128)
-            .into_host_lifecycle_request(HostLifecycleBackendKind::SystemdTransientUnit)
-            .expect("runner spec should lower to host lifecycle request");
-        let plan = HostLifecyclePlan::from_binding(&binding, request)
-            .expect("runner request should plan from admitted binding");
-        let systemd = crate::SystemdStartTransientUnitRequest::from_plan(&plan)
-            .expect("runner plan should render to systemd transient unit request");
-        let exec = systemd
-            .properties()
-            .iter()
-            .find_map(|property| match property {
-                crate::SystemdDbusProperty::ExecStart(exec) => Some(exec),
-                _ => None,
-            })
-            .expect("systemd request should contain generated ExecStart");
-
-        assert_eq!(
-            exec.executable(),
-            "/usr/libexec/nimbus/nimbus-container-runner"
+        let systemd = render_runner_spec_to_systemd(
+            RunnerSpec::container("/run/nimbus/bundles/workload")
+                .expect("container runner spec should parse")
+                .with_memory_max_bytes(512 * 1024 * 1024)
+                .with_cpu_weight(100)
+                .with_tasks_max(128),
         );
-        assert_eq!(
-            exec.args(),
-            &[
-                "--bundle".to_owned(),
-                "/run/nimbus/bundles/workload".to_owned()
-            ]
+        assert_runner_exec(
+            &systemd,
+            "/usr/libexec/nimbus/nimbus-container-runner",
+            &["--bundle", "/run/nimbus/bundles/workload"],
         );
         assert!(systemd.properties().iter().any(|property| {
             matches!(
@@ -1194,6 +1174,63 @@ mod tests {
                     | crate::SystemdDbusProperty::TasksMax(128)
             )
         }));
+    }
+
+    #[test]
+    fn container_runner_spec_renders_host_lifecycle_request() {
+        let systemd = render_runner_spec_to_systemd(
+            RunnerSpec::container("/run/nimbus/bundles/container")
+                .expect("container runner spec should parse"),
+        );
+        assert_runner_exec(
+            &systemd,
+            "/usr/libexec/nimbus/nimbus-container-runner",
+            &["--bundle", "/run/nimbus/bundles/container"],
+        );
+    }
+
+    #[test]
+    fn krun_runner_spec_renders_host_lifecycle_request() {
+        let systemd = render_runner_spec_to_systemd(
+            RunnerSpec::krun("/run/nimbus/bundles/microvm").expect("krun runner spec should parse"),
+        );
+        assert_runner_exec(
+            &systemd,
+            "/usr/libexec/nimbus/nimbus-krun-runner",
+            &["--bundle", "/run/nimbus/bundles/microvm"],
+        );
+    }
+
+    fn render_runner_spec_to_systemd(spec: RunnerSpec) -> crate::SystemdStartTransientUnitRequest {
+        let binding = binding();
+        let request = spec
+            .into_host_lifecycle_request(HostLifecycleBackendKind::SystemdTransientUnit)
+            .expect("runner spec should lower to host lifecycle request");
+        let plan = HostLifecyclePlan::from_binding(&binding, request)
+            .expect("runner request should plan from admitted binding");
+        crate::SystemdStartTransientUnitRequest::from_plan(&plan)
+            .expect("runner plan should render to systemd transient unit request")
+    }
+
+    fn assert_runner_exec(
+        systemd: &crate::SystemdStartTransientUnitRequest,
+        executable: &str,
+        args: &[&str],
+    ) {
+        let exec = systemd
+            .properties()
+            .iter()
+            .find_map(|property| match property {
+                crate::SystemdDbusProperty::ExecStart(exec) => Some(exec),
+                _ => None,
+            })
+            .expect("systemd request should contain generated ExecStart");
+
+        assert_eq!(exec.executable(), executable);
+        assert_eq!(
+            exec.args(),
+            &args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>()
+        );
     }
 
     #[test]
