@@ -57,6 +57,7 @@ const DEFAULT_PUBLISHED_PORT_END: u16 = 16_000;
 const DEFAULT_START_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_STOP_TIMEOUT_SECS: u64 = 5;
 const DEFAULT_READINESS_PROBE_TIMEOUT_MILLIS: u64 = 1_000;
+const RUNNER_MANIFEST_POINTER_FILE: &str = ".nimbus-container-manifest";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -249,10 +250,52 @@ impl ContainerSandboxBackend {
                         .to_owned(),
             });
         }
-        let launch_plan = self.plan_start(&spec)?;
+        let mut launch_plan = self.plan_start(&spec)?;
+        self.attach_runner_owned_egress_proxy(&mut launch_plan)?;
+        self.write_runner_manifest_pointer(&launch_plan.manifest)?;
         let bundle_dir = launch_plan.manifest.bundle_layout.bundle_dir.clone();
         let handle = self.finish_start(launch_plan)?;
         Ok(PreparedContainerServiceWorkload { handle, bundle_dir })
+    }
+
+    fn attach_runner_owned_egress_proxy(&self, launch_plan: &mut ContainerStartPlan) -> Result<()> {
+        if launch_plan.manifest.egress_proxy.is_some() {
+            return Ok(());
+        }
+        let egress_proxy = self.allocate_egress_proxy(&launch_plan.manifest.spec)?;
+        write_bundle_config(
+            &launch_plan.manifest.bundle_layout,
+            &hostname_for(&launch_plan.manifest.spec),
+            &launch_plan.manifest.spec,
+            launch_plan.manifest.image_metadata.user.as_deref(),
+            Some(launch_plan.manifest.network_layout.netns_path.as_path()),
+            &ContainerBundleOptions {
+                additional_mounts: container_tenant_volume_mounts(
+                    &self.config.state_root,
+                    &launch_plan.manifest.spec,
+                )?,
+                egress_proxy_url: Some(egress_proxy.proxy_url()),
+            },
+        )?;
+        launch_plan.manifest.egress_proxy = Some(egress_proxy);
+        Ok(())
+    }
+
+    fn write_runner_manifest_pointer(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
+        let pointer_path = manifest
+            .bundle_layout
+            .bundle_dir
+            .join(RUNNER_MANIFEST_POINTER_FILE);
+        std::fs::write(
+            &pointer_path,
+            format!("{}\n", manifest.conmon_layout.manifest_path.display()),
+        )
+        .map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to write container runner manifest pointer {}: {error}",
+                pointer_path.display()
+            ),
+        })
     }
 
     fn finish_start(&self, launch_plan: ContainerStartPlan) -> Result<SandboxHandle> {
@@ -872,6 +915,84 @@ impl ContainerSandboxBackend {
             }
         })
     }
+}
+
+pub fn run_prepared_container_service_workload(bundle_dir: impl AsRef<Path>) -> Result<()> {
+    let bundle_dir = bundle_dir.as_ref();
+    let manifest_path = read_runner_manifest_pointer(bundle_dir)?;
+    let mut manifest = read_runner_manifest(&manifest_path)?;
+    if manifest.start_mode != ContainerStartMode::PlanOnly {
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "container runner expected a prepared plan-only workload manifest, got {:?}",
+                manifest.start_mode
+            ),
+        });
+    }
+    if manifest.bundle_layout.bundle_dir != bundle_dir {
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "container runner bundle {} does not match prepared manifest bundle {}",
+                bundle_dir.display(),
+                manifest.bundle_layout.bundle_dir.display()
+            ),
+        });
+    }
+    let backend = ContainerSandboxBackend::new(ContainerSandboxBackendConfig::default());
+    backend.launch_manifest(&mut manifest, true)?;
+    let exit_code = wait_for_container_runner_exit(&manifest)?;
+    if exit_code != 0 {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "container workload {} exited with status {exit_code}",
+                manifest.handle.id
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn wait_for_container_runner_exit(manifest: &ContainerSandboxManifest) -> Result<i32> {
+    while !manifest.conmon_layout.exit_status_file.exists() {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    read_exit_code(&manifest.conmon_layout.exit_status_file)
+}
+
+fn read_runner_manifest_pointer(bundle_dir: &Path) -> Result<PathBuf> {
+    let pointer_path = bundle_dir.join(RUNNER_MANIFEST_POINTER_FILE);
+    let contents =
+        std::fs::read_to_string(&pointer_path).map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to read container runner manifest pointer {}: {error}",
+                pointer_path.display()
+            ),
+        })?;
+    let path = contents.trim();
+    if path.is_empty() {
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "container runner manifest pointer {} is empty",
+                pointer_path.display()
+            ),
+        });
+    }
+    Ok(PathBuf::from(path))
+}
+
+fn read_runner_manifest(manifest_path: &Path) -> Result<ContainerSandboxManifest> {
+    let contents = std::fs::read(manifest_path).map_err(|error| SandboxError::OperationFailed {
+        message: format!(
+            "failed to read container runner manifest {}: {error}",
+            manifest_path.display()
+        ),
+    })?;
+    serde_json::from_slice(&contents).map_err(|error| SandboxError::OperationFailed {
+        message: format!(
+            "failed to parse container runner manifest {}: {error}",
+            manifest_path.display()
+        ),
+    })
 }
 
 fn container_tenant_volume_mounts(

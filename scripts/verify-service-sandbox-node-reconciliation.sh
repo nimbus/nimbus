@@ -30,6 +30,7 @@ CAPABILITY_PLAN="docs/private/plans/archive/nimbus-capability-segregation-plan.m
 NODE_DBUS_DOC="docs/private/operating/node-dbus-binding.md"
 MICROVM_DOC="docs/private/architecture/sandbox/microvm-service-baseline.md"
 MACHINE_OS_REPO="../machine-os"
+MACHINE_OS_CONTAINERFILE="${MACHINE_OS_REPO}/image/Containerfile"
 MACHINE_OS_RECIPE="${MACHINE_OS_REPO}/image/build-common.sh"
 MACHINE_OS_BUILD="${MACHINE_OS_REPO}/image/build.sh"
 MACHINE_OS_VERIFY_RECIPE="${MACHINE_OS_REPO}/scripts/verify-recipe.sh"
@@ -213,9 +214,11 @@ fi
 
 # --- 11b. NSR5b machine-os recipe bakes guest node workload contract ----------
 C="11b. NSR5b machine-os recipe bakes guest node workload contract"
-if [[ -f "${MACHINE_OS_RECIPE}" ]] \
+if [[ -f "${MACHINE_OS_CONTAINERFILE}" ]] \
+  && [[ -f "${MACHINE_OS_RECIPE}" ]] \
   && [[ -f "${MACHINE_OS_BUILD}" ]] \
   && [[ -f "${MACHINE_OS_VERIFY_RECIPE}" ]] \
+  && grep -q 'ln -fs /usr/local/bin/nimbus /usr/libexec/nimbus/nimbus-container-runner' "${MACHINE_OS_CONTAINERFILE}" \
   && grep -q -- '--guest-node-id machine-os-guest-node' "${MACHINE_OS_RECIPE}" \
   && grep -q '/var/lib/nimbus/control/node-agent' "${MACHINE_OS_RECIPE}" \
   && grep -q 'nimbus-guest-node-agent.cil' "${MACHINE_OS_RECIPE}" \

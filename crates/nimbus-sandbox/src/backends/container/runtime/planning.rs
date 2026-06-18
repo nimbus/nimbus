@@ -129,6 +129,60 @@ fn plan_only_launches_do_not_materialize_live_proxy_env() {
 }
 
 #[test]
+fn plan_only_service_workload_prepares_runner_manifest_pointer_and_proxy_env() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let mut config = ContainerSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
+    );
+    config.published_port_range = 15000..=15002;
+    let backend = ContainerSandboxBackend::new(config);
+
+    let prepared = backend
+        .prepare_plan_only_service_workload(sample_spec())
+        .expect("service workload should prepare");
+
+    let manifest_path = crate::artifact_paths::manifest_path(
+        &temp_dir.path().join("state"),
+        &sample_spec().tenant_id,
+        &prepared.handle.id,
+    );
+    let pointer_path = prepared.bundle_dir.join(RUNNER_MANIFEST_POINTER_FILE);
+    assert_eq!(
+        std::fs::read_to_string(&pointer_path)
+            .expect("runner manifest pointer should be readable")
+            .trim(),
+        manifest_path.to_string_lossy(),
+        "runner should receive an exact manifest pointer scoped to the prepared bundle"
+    );
+
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap())
+            .expect("manifest should parse");
+    assert_eq!(manifest["start_mode"], "plan_only");
+    assert_eq!(manifest["egress_proxy"]["host"], "10.89.0.1");
+    assert_eq!(manifest["egress_proxy"]["port"], 15000);
+
+    let config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(prepared.bundle_dir.join("config.json")).unwrap())
+            .expect("bundle config should parse");
+    let env = config["process"]["env"]
+        .as_array()
+        .expect("env should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("env entries should be strings"))
+        .collect::<Vec<_>>();
+    assert!(
+        env.contains(&"HTTP_PROXY=http://10.89.0.1:15000")
+            && env.contains(&"http_proxy=http://10.89.0.1:15000")
+            && env.contains(
+                &format!("{SANDBOX_EGRESS_PROXY_URL_ENV}=http://10.89.0.1:15000").as_str()
+            ),
+        "service bundle should route proxy-aware tools through the runner-owned egress proxy: {env:?}"
+    );
+}
+
+#[test]
 fn plan_only_backend_scopes_container_artifacts_by_tenant_for_same_service_name() {
     let temp_dir = TempDir::new().expect("tempdir should build");
     let backend = sample_plan_only_backend(temp_dir.path());

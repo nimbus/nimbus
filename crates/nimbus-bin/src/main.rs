@@ -5,6 +5,7 @@ mod backup;
 mod cli_ux;
 mod codegen;
 mod compose;
+mod container_runner;
 mod credentials;
 mod deploy;
 mod dev;
@@ -36,6 +37,7 @@ use crate::auth::{AuthCommand, run_auth_command};
 use crate::backup::{BackupCommand, run_backup_command};
 use crate::codegen::{CodegenCommand, run_codegen_command};
 use crate::compose::{ComposeCommand, run_compose_command};
+use crate::container_runner::{ContainerRunnerCommand, run_container_runner_command};
 use crate::deploy::{DeployCommand, run_deploy_command};
 use crate::dev::{DevCommand, run_dev_command};
 use crate::encryption::{EncryptionCommand, run_encryption_command};
@@ -99,6 +101,9 @@ enum Command {
     /// Internal node-local workload executor entrypoint.
     #[command(name = "node-workload-executor", hide = true)]
     NodeWorkloadExecutor(node_workload_executor::NodeWorkloadExecutorCommand),
+    /// Internal typed container runner entrypoint.
+    #[command(name = "container-runner", hide = true)]
+    ContainerRunner(ContainerRunnerCommand),
     /// Compose-backed local service lifecycle commands.
     #[command(name = "compose")]
     Compose(ComposeCommand),
@@ -119,6 +124,9 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
+    if container_runner::run_container_runner_argv0_if_requested().await? {
+        return Ok(());
+    }
     let cli = Cli::parse();
     match cli.command {
         Command::Start(command) => run_start_command(*command).await?,
@@ -139,6 +147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::NodeWorkloadExecutor(command) => {
             node_workload_executor::run_node_workload_executor_command(command).await?
         }
+        Command::ContainerRunner(command) => run_container_runner_command(command).await?,
         Command::Compose(command) => {
             let persistence_config =
                 persistence_config_from_start_command(&StartCommand::default())?;
@@ -229,6 +238,21 @@ mod tests {
         assert!(
             matches!(cli.command, Command::NodeWorkloadExecutor(_)),
             "node-workload-executor should parse as the packaged internal entrypoint"
+        );
+    }
+
+    #[test]
+    fn container_runner_command_parses_as_hidden_internal_entrypoint() {
+        let cli = Cli::parse_from([
+            "nimbus",
+            "container-runner",
+            "--bundle",
+            "/var/lib/nimbus/control/service-sandboxes/container/bundles/tenants/demo/sandboxes/db-01/bundle",
+        ]);
+
+        assert!(
+            matches!(cli.command, Command::ContainerRunner(_)),
+            "container-runner should parse as the packaged internal entrypoint"
         );
     }
 }
