@@ -124,7 +124,7 @@ jobs:
         with:
           shared-key: release-aarch64-unknown-linux-gnu-no-bin-v1
           save-cache: always
-          linux-linker: lld
+          linux-linker: default
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Download nimbus-ui artifacts
@@ -232,7 +232,7 @@ jobs:
         with:
           shared-key: release-${{ matrix.target }}-no-bin-v1
           save-cache: always
-          linux-linker: lld
+          linux-linker: default
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Download nimbus-ui artifacts

@@ -52,8 +52,9 @@ inputs:
   linux-linker:
     description: >-
       Linux linker to export through CARGO_TARGET_*_RUSTFLAGS. Defaults to
-      "mold" for CI acceleration. Use "lld" for OpenSSL-backed test/build
-      lanes that are known to trip mold on ubuntu runners.
+      "mold" for CI acceleration. Use "lld" for test lanes that combine
+      system OpenSSL with the LLVM linker. Use "default" for release lanes
+      that must keep vendored OpenSSL and the platform cc default linker.
     required: false
     default: "mold"
   linux-openssl-provider:
@@ -109,6 +110,8 @@ runs:
           lld)
             echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=lld" >> "${GITHUB_ENV}"
             echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=lld" >> "${GITHUB_ENV}"
+            ;;
+          default)
             ;;
           *)
             echo "unsupported linux-linker: ${NIMBUS_LINUX_LINKER}" >&2
