@@ -238,6 +238,12 @@ fi
 if [[ -n "${NIMBUS_MACHINE_API_READY_TIMEOUT_SECS:-}" ]]; then
   print_line "machine.api.ready_timeout_secs" "${NIMBUS_MACHINE_API_READY_TIMEOUT_SECS}"
 fi
+if [[ -n "${NIMBUS_MACHINE_READY_TIMEOUT_SECS:-}" ]]; then
+  print_line "machine.ready_timeout_secs" "${NIMBUS_MACHINE_READY_TIMEOUT_SECS}"
+fi
+if [[ -n "${NIMBUS_MACHINE_SSH_READY_TIMEOUT_SECS:-}" ]]; then
+  print_line "machine.ssh.ready_timeout_secs" "${NIMBUS_MACHINE_SSH_READY_TIMEOUT_SECS}"
+fi
 
 if [[ "${skip_pre_diagnostics}" -eq 0 ]]; then
   bash "${script_dir}/collect-nimbus-machine-diagnostics.sh" \
@@ -258,6 +264,7 @@ stop_cmd=(
   "${nimbus_bin}"
   machine
   stop
+  "${machine_name}"
 )
 write_command_file "${output_dir}/nimbus-machine-stop-command.txt" "${stop_cmd[@]}"
 capture_command_allow_failure \
@@ -272,6 +279,7 @@ rm_cmd=(
   "${nimbus_bin}"
   machine
   rm
+  "${machine_name}"
 )
 write_command_file "${output_dir}/nimbus-machine-rm-command.txt" "${rm_cmd[@]}"
 capture_command_allow_failure \
@@ -308,15 +316,14 @@ fi
 for volume in "${volumes[@]}"; do
   init_cmd+=( --volume "${volume}" )
 done
+init_cmd+=( "${machine_name}" )
 
 write_command_file "${output_dir}/nimbus-machine-init-command.txt" "${init_cmd[@]}"
-set +e
+init_status=0
 capture_command_allow_failure \
   "recreate.init" \
   "${output_dir}/nimbus-machine-init.txt" \
-  "${init_cmd[@]}"
-init_status=$?
-set -e
+  "${init_cmd[@]}" || init_status=$?
 
 start_status=0
 if [[ "${init_status}" -eq 0 ]]; then
@@ -331,19 +338,23 @@ if [[ "${init_status}" -eq 0 ]]; then
   if [[ -n "${NIMBUS_MACHINE_API_READY_TIMEOUT_SECS:-}" ]]; then
     start_cmd+=( "NIMBUS_MACHINE_API_READY_TIMEOUT_SECS=${NIMBUS_MACHINE_API_READY_TIMEOUT_SECS}" )
   fi
+  if [[ -n "${NIMBUS_MACHINE_READY_TIMEOUT_SECS:-}" ]]; then
+    start_cmd+=( "NIMBUS_MACHINE_READY_TIMEOUT_SECS=${NIMBUS_MACHINE_READY_TIMEOUT_SECS}" )
+  fi
+  if [[ -n "${NIMBUS_MACHINE_SSH_READY_TIMEOUT_SECS:-}" ]]; then
+    start_cmd+=( "NIMBUS_MACHINE_SSH_READY_TIMEOUT_SECS=${NIMBUS_MACHINE_SSH_READY_TIMEOUT_SECS}" )
+  fi
   start_cmd+=(
     "${nimbus_bin}"
     machine
     start
+    "${machine_name}"
   )
   write_command_file "${output_dir}/nimbus-machine-start-command.txt" "${start_cmd[@]}"
-  set +e
   capture_command_allow_failure \
     "recreate.start" \
     "${output_dir}/nimbus-machine-start.txt" \
-    "${start_cmd[@]}"
-  start_status=$?
-  set -e
+    "${start_cmd[@]}" || start_status=$?
 fi
 
 status_cmd=(
@@ -353,6 +364,7 @@ status_cmd=(
   "${nimbus_bin}"
   machine
   status
+  "${machine_name}"
 )
 write_command_file "${output_dir}/nimbus-machine-status-command.txt" "${status_cmd[@]}"
 capture_command_allow_failure \

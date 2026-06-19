@@ -12,10 +12,9 @@ home_dir="${tmp_dir}/home"
 runtime_root="${tmp_dir}/runtime-root"
 bin_dir="${tmp_dir}/bin"
 output_dir="${tmp_dir}/output"
-image_path="${tmp_dir}/machine.raw"
+image_path="docker://quay.io/podman/machine-os:5.0"
 
 mkdir -p "${home_dir}" "${runtime_root}" "${bin_dir}" "${output_dir}"
-printf 'fake raw image\n' > "${image_path}"
 
 cat > "${bin_dir}/nimbus" <<'EOF'
 #!/usr/bin/env bash
@@ -24,10 +23,12 @@ set -euo pipefail
 machine_name="default"
 home_dir="${HOME:?HOME must be set}"
 runtime_root="${NIMBUS_MACHINE_RUNTIME_ROOT:?runtime root must be set}"
-config_dir="${home_dir}/.config/nimbus/machine/${machine_name}"
-state_dir="${home_dir}/.local/state/nimbus/machine/${machine_name}"
 
-mkdir -p "${config_dir}" "${state_dir}"
+set_paths() {
+  config_dir="${home_dir}/.config/nimbus/machine/${machine_name}"
+  state_dir="${home_dir}/.local/state/nimbus/machine/${machine_name}"
+  mkdir -p "${config_dir}" "${state_dir}"
+}
 
 write_status() {
   local lifecycle="$1"
@@ -44,12 +45,16 @@ fi
 
 case "${2:-}" in
   stop)
+    machine_name="${3:-default}"
+    set_paths
     if [[ -f "${state_dir}/status.json" ]]; then
       write_status "stopped" "helpers-resolved"
     fi
     echo "stopped"
     ;;
   rm)
+    machine_name="${3:-default}"
+    set_paths
     rm -rf "${config_dir}" "${state_dir}"
     rm -f \
       "${runtime_root}/${machine_name}.sock" \
@@ -73,6 +78,9 @@ case "${2:-}" in
     shift 2
     while [[ $# -gt 0 ]]; do
       case "$1" in
+        --cpus|--memory|--disk-size)
+          shift 2
+          ;;
         --image)
           image="${2:?missing image path}"
           shift 2
@@ -94,10 +102,12 @@ case "${2:-}" in
           shift 2
           ;;
         *)
+          machine_name="$1"
           shift
           ;;
       esac
     done
+    set_paths
     mkdir -p "${config_dir}" "${state_dir}"
     cat > "${config_dir}/config.json" <<OUT
 {"image":"${image}","ssh_identity_path":"${ssh_identity}","ignition_file_path":"${ignition_file}","efi_variable_store_path":"${efi_store}","volumes":"${volumes[*]}"}
@@ -106,6 +116,13 @@ OUT
     echo "initialized"
     ;;
   start)
+    machine_name="${3:-default}"
+    set_paths
+    if [[ "${NIMBUS_FAKE_START_FAIL:-0}" == "1" ]]; then
+      write_status "failed" "failed"
+      echo "start failed" >&2
+      exit 1
+    fi
     mkdir -p "${runtime_root}"
     : > "${runtime_root}/${machine_name}.sock"
     : > "${runtime_root}/${machine_name}-gvproxy.sock"
@@ -119,6 +136,8 @@ OUT
     echo "started"
     ;;
   status)
+    machine_name="${3:-default}"
+    set_paths
     if [[ -f "${state_dir}/status.json" ]]; then
       cat <<OUT
 result: status
@@ -152,6 +171,7 @@ EOF
 chmod +x "${bin_dir}/nimbus" "${bin_dir}/ps"
 
 HOME="${home_dir}" bash "${repo_root}/scripts/recreate-nimbus-machine.sh" \
+  --machine team-a \
   --home "${home_dir}" \
   --runtime-root "${runtime_root}" \
   --output-dir "${output_dir}" \
@@ -182,6 +202,7 @@ do
 done
 
 grep -F "image.source                       ${image_path}" "${summary_file}" >/dev/null
+grep -F "machine.name                       team-a" "${summary_file}" >/dev/null
 grep -E "^recreate\\.init[[:space:]]+ok path=.*nimbus-machine-init\\.txt$" "${summary_file}" >/dev/null
 grep -E "^recreate\\.start[[:space:]]+ok path=.*nimbus-machine-start\\.txt$" "${summary_file}" >/dev/null
 grep -E "^capture\\.post_diagnostics[[:space:]]+ok path=.*post-diagnostics$" "${summary_file}" >/dev/null
@@ -189,9 +210,45 @@ grep -F "result                             ready" "${summary_file}" >/dev/null
 
 grep -F -- "--image ${image_path}" "${output_dir}/nimbus-machine-init-command.txt" >/dev/null
 grep -F -- "--volume /Users:/Users" "${output_dir}/nimbus-machine-init-command.txt" >/dev/null
+grep -F "team-a" "${output_dir}/nimbus-machine-stop-command.txt" >/dev/null
+grep -F "team-a" "${output_dir}/nimbus-machine-rm-command.txt" >/dev/null
+grep -F "team-a" "${output_dir}/nimbus-machine-init-command.txt" >/dev/null
+grep -F "team-a" "${output_dir}/nimbus-machine-start-command.txt" >/dev/null
+grep -F "team-a" "${output_dir}/nimbus-machine-status-command.txt" >/dev/null
 grep -F "started" "${output_dir}/nimbus-machine-start.txt" >/dev/null
 grep -F "machine booted" "${output_dir}/post-diagnostics/machine-log-tail.txt" >/dev/null
-grep -F "default-api.sock missing" "${output_dir}/post-diagnostics/socket-presence.txt" >/dev/null
-grep -F "default.sock present" "${output_dir}/post-diagnostics/socket-presence.txt" >/dev/null
+grep -F "team-a-api.sock missing" "${output_dir}/post-diagnostics/socket-presence.txt" >/dev/null
+grep -F "team-a.sock present" "${output_dir}/post-diagnostics/socket-presence.txt" >/dev/null
+
+failure_output_dir="${tmp_dir}/failure-output"
+set +e
+HOME="${home_dir}" NIMBUS_FAKE_START_FAIL=1 bash "${repo_root}/scripts/recreate-nimbus-machine.sh" \
+  --machine team-b \
+  --home "${home_dir}" \
+  --runtime-root "${runtime_root}" \
+  --output-dir "${failure_output_dir}" \
+  --nimbus "${bin_dir}/nimbus" \
+  --image "${image_path}" \
+  --identity "${tmp_dir}/machine-key" \
+  --ignition-path "${tmp_dir}/machine.ign" \
+  --firmware "${tmp_dir}/efi-store" \
+  --volume /Users:/Users \
+  > "${failure_output_dir}.stdout" 2>&1
+failure_status=$?
+set -e
+
+if [[ "${failure_status}" -eq 0 ]]; then
+  echo "expected failed recreate helper run to return non-zero" >&2
+  exit 71
+fi
+
+grep -E "^recreate\\.start[[:space:]]+failed status=1 path=.*nimbus-machine-start\\.txt$" \
+  "${failure_output_dir}/summary.txt" >/dev/null
+grep -E "^capture\\.final_status[[:space:]]+ok path=.*nimbus-machine-status\\.txt$" \
+  "${failure_output_dir}/summary.txt" >/dev/null
+grep -E "^capture\\.post_diagnostics[[:space:]]+ok path=.*post-diagnostics$" \
+  "${failure_output_dir}/summary.txt" >/dev/null
+grep -F "result                             failed" "${failure_output_dir}/summary.txt" >/dev/null
+test -f "${failure_output_dir}/post-diagnostics/machine-state.json"
 
 echo "verified: nimbus machine recreate helper captured deterministic artifacts"

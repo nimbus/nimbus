@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.37] - 2026-06-19
+
+### Fixed
+
+- Keep Nimbus machine recreate diagnostics complete after failed starts and
+  target the requested machine name throughout the recreate flow.
+- Refresh the machine-os machine-config activation path so the guest applies
+  the host-provided config and reaches the ready signal on macOS.
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.36...v0.1.37
+
 ## [0.1.36] - 2026-06-19
 
 
