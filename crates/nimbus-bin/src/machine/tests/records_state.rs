@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[serial_test::serial]
 fn hidden_machine_api_subcommand_falls_back_without_home() {
     let original_home = std::env::var_os("HOME");
     // SAFETY: this test runs in the serialized machine lane and restores HOME before returning.

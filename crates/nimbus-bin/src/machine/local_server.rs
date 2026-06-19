@@ -18,6 +18,10 @@ pub(super) async fn try_run_lifecycle_command_via_live_server(
     command: &MachineSubcommand,
     roots: &MachineRootLayout,
 ) -> Result<bool, Error> {
+    if !is_lifecycle_command(command) {
+        return Ok(false);
+    }
+
     let paths = LocalServerPaths::resolve_for_current_platform().map_err(|error| {
         Error::Internal(format!("failed to resolve local server paths: {error}"))
     })?;
@@ -224,6 +228,7 @@ struct MachineUpdateBody {
 #[cfg(test)]
 mod tests {
     use std::net::Ipv4Addr;
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
     use nimbus::Engine;
@@ -234,8 +239,41 @@ mod tests {
     };
     use tempfile::tempdir;
 
+    use super::super::command::{
+        MachineGuestConfigApplyCommand, MachineGuestConfigCommand, MachineGuestConfigSubcommand,
+    };
     use super::*;
     use crate::test_support::wait_for_live_server_health;
+
+    struct EnvVarGuard {
+        key: &'static str,
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn unset(key: &'static str) -> Self {
+            let original = std::env::var_os(key);
+            // SAFETY: serialized tests in this module use this guard to restore
+            // process-global environment state before returning.
+            unsafe { std::env::remove_var(key) };
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(value) => {
+                    // SAFETY: see EnvVarGuard::unset.
+                    unsafe { std::env::set_var(self.key, value) };
+                }
+                None => {
+                    // SAFETY: see EnvVarGuard::unset.
+                    unsafe { std::env::remove_var(self.key) };
+                }
+            }
+        }
+    }
 
     #[derive(Clone)]
     struct StubMachineLifecycleManager {
@@ -428,6 +466,29 @@ mod tests {
         )
         .await
         .expect("missing local server should not fail");
+
+        assert!(!handled);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn guest_config_apply_does_not_resolve_home_for_live_server_discovery() {
+        let _home = EnvVarGuard::unset("HOME");
+        let temp = tempdir().expect("tempdir should build");
+        let roots = MachineRootLayout::test_sibling_roots(
+            temp.path().join("machine-config"),
+            temp.path().join("machine-state"),
+            temp.path().join("run"),
+        );
+        let command = MachineSubcommand::GuestConfig(MachineGuestConfigCommand {
+            command: MachineGuestConfigSubcommand::Apply(MachineGuestConfigApplyCommand {
+                config_dir: PathBuf::from("/run/nimbus-machine-config"),
+            }),
+        });
+
+        let handled = try_run_lifecycle_command_via_live_server(&command, &roots)
+            .await
+            .expect("guest-config apply should skip HOME-dependent live server discovery");
 
         assert!(!handled);
     }

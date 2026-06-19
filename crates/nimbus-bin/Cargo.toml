@@ -65,4 +65,5 @@ serde_json.workspace = true
 
 [dev-dependencies]
 nimbus-testing = { path = "../nimbus-testing" }
+serial_test.workspace = true
 tempfile.workspace = true
