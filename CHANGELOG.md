@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.36] - 2026-06-19
+
+### Changed
+
+- Refresh the machine-os Fedora bootc base-image digest used by the release workflow.
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.35...v0.1.36
+
 ## [0.1.35] - 2026-06-19
 
 ### Changed
