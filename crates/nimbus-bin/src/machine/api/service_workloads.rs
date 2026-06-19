@@ -117,6 +117,11 @@ where
                     false,
                 )
                 .await?;
+            self.refresh_plan_only_manifest_status(
+                &prepared.handle.id,
+                sandbox_status_from_node_phase(status),
+            )
+            .await?;
             Ok(handle_with_node_phase(prepared.handle, Some(status)))
         })
     }
@@ -150,8 +155,17 @@ where
                 details.summary.status,
                 details.summary.published_endpoints,
             );
-            if status.is_none() {
-                self.mark_plan_only_manifest_stopped(&handle.id).await?;
+            match status {
+                Some(phase) => {
+                    self.refresh_plan_only_manifest_status(
+                        &handle.id,
+                        sandbox_status_from_node_phase(phase),
+                    )
+                    .await?;
+                }
+                None => {
+                    self.mark_plan_only_manifest_stopped(&handle.id).await?;
+                }
             }
             Ok(Some(handle_with_node_phase(handle, status)))
         })
@@ -266,6 +280,17 @@ where
     ) -> Result<(), MachineApiHttpError> {
         self.bundle_materializer
             .mark_plan_only_service_workload_stopped(id)
+            .map_err(sandbox_error_to_http_error)?;
+        Ok(())
+    }
+
+    async fn refresh_plan_only_manifest_status(
+        &self,
+        id: &SandboxId,
+        status: SandboxStatus,
+    ) -> Result<(), MachineApiHttpError> {
+        self.bundle_materializer
+            .refresh_plan_only_service_workload_status(id, status)
             .map_err(sandbox_error_to_http_error)?;
         Ok(())
     }
@@ -596,6 +621,17 @@ mod tests {
         let handle = service.start(spec).await.expect("start should reconcile");
 
         assert_eq!(handle.status, SandboxStatus::Ready);
+        let summary = service
+            .state_view
+            .inspect(&handle.id)
+            .expect("state view should load")
+            .expect("manifest should remain present")
+            .summary;
+        assert_eq!(
+            summary.status,
+            SandboxStatus::Ready,
+            "machine API list/current routes should not reread a stale plan-only starting status"
+        );
         assert_eq!(writer.write_count(), 1);
         assert!(
             backend

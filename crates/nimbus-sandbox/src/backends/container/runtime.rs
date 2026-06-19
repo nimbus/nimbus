@@ -262,6 +262,22 @@ impl ContainerSandboxBackend {
         &self,
         id: &SandboxId,
     ) -> Result<Option<SandboxHandle>> {
+        self.update_plan_only_service_workload_status(id, SandboxStatus::Stopped)
+    }
+
+    pub fn refresh_plan_only_service_workload_status(
+        &self,
+        id: &SandboxId,
+        status: SandboxStatus,
+    ) -> Result<Option<SandboxHandle>> {
+        self.update_plan_only_service_workload_status(id, status)
+    }
+
+    fn update_plan_only_service_workload_status(
+        &self,
+        id: &SandboxId,
+        status: SandboxStatus,
+    ) -> Result<Option<SandboxHandle>> {
         if self.config.start_mode != ContainerStartMode::PlanOnly {
             return Err(SandboxError::OperationFailed {
                 message: "container service workload status refresh requires plan-only mode"
@@ -271,10 +287,12 @@ impl ContainerSandboxBackend {
         let Some(mut manifest) = self.read_manifest(id)? else {
             return Ok(None);
         };
-        manifest.next_restart_at_millis = None;
-        synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
-        self.cleanup_manifest_launch_artifacts(&manifest)?;
-        manifest.launch_artifact = None;
+        synchronize_handle_status(&mut manifest, status);
+        if status == SandboxStatus::Stopped {
+            manifest.next_restart_at_millis = None;
+            self.cleanup_manifest_launch_artifacts(&manifest)?;
+            manifest.launch_artifact = None;
+        }
         self.write_manifest(&manifest)?;
         Ok(Some(manifest.handle))
     }

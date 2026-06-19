@@ -38,6 +38,7 @@ pub(crate) const DEFAULT_MACHINE_FORWARDER_PATH: &str = "/services/forwarder";
 
 const DEFAULT_CONTAINER_INTERFACE_NAME: &str = "eth0";
 const DEFAULT_NETWORK_ID: &str = "5e9b4c62f9f3e8b8d2c74b7388d8451f5e9b4c62f9f3e8b8d2c74b7388d8451f";
+const NETAVARK_OPTION_NO_DEFAULT_ROUTE: &str = "no_default_route";
 const MACHINE_FORWARDER_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -467,6 +468,13 @@ fn build_netavark_request(
 
 fn build_bridge_network(config: &OciNetworkConfig) -> Result<NetavarkNetwork> {
     let (subnet, gateway) = parse_ipv4_subnet_and_gateway(&config.network_subnet)?;
+    let mut options = BTreeMap::new();
+    if config.direct_egress.is_denied() {
+        options.insert(
+            NETAVARK_OPTION_NO_DEFAULT_ROUTE.to_owned(),
+            "true".to_owned(),
+        );
+    }
     Ok(NetavarkNetwork {
         name: config.network_name.clone(),
         id: DEFAULT_NETWORK_ID.to_owned(),
@@ -475,14 +483,14 @@ fn build_bridge_network(config: &OciNetworkConfig) -> Result<NetavarkNetwork> {
         created: None,
         subnets: vec![NetavarkSubnet { subnet, gateway }],
         ipv6_enabled: false,
-        internal: config.direct_egress.is_denied(),
+        internal: false,
         dns_enabled: true,
         network_dns_servers: Vec::new(),
         labels: BTreeMap::from([(
             "io.nimbus.egress.direct".to_owned(),
             config.direct_egress.label().to_owned(),
         )]),
-        options: BTreeMap::new(),
+        options,
         ipam_options: BTreeMap::from([("driver".to_owned(), "host-local".to_owned())]),
     })
 }
@@ -1031,10 +1039,11 @@ mod tests {
 
     use super::{
         DEFAULT_MACHINE_FORWARDER_HOST, DEFAULT_MACHINE_FORWARDER_PATH,
-        DEFAULT_MACHINE_FORWARDER_PORT, OciMachinePortForwarderConfig, OciNetworkConfig,
-        OciNetworkDirectEgress, OciNetworkLayout, allocate_container_ips, build_netavark_request,
-        deallocate_container_ips, load_container_ips, netavark_path_env,
-        parse_ipv4_subnet_and_gateway, render_netavark_failure,
+        DEFAULT_MACHINE_FORWARDER_PORT, NETAVARK_OPTION_NO_DEFAULT_ROUTE,
+        OciMachinePortForwarderConfig, OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout,
+        allocate_container_ips, build_netavark_request, deallocate_container_ips,
+        load_container_ips, netavark_path_env, parse_ipv4_subnet_and_gateway,
+        render_netavark_failure,
     };
     use crate::backend::SandboxBackendKind;
     use crate::error::SandboxError;
@@ -1072,8 +1081,12 @@ mod tests {
         assert_eq!(request.port_mappings[0].container_port, 8080);
         assert!(request.network_info.contains_key("nimbus"));
         assert!(
-            request.network_info["nimbus"].internal,
-            "Nimbus container networks should deny direct external egress by default"
+            !request.network_info["nimbus"].internal,
+            "default-deny networks must stay non-internal so netavark can install published-port firewall rules"
+        );
+        assert_eq!(
+            request.network_info["nimbus"].options[NETAVARK_OPTION_NO_DEFAULT_ROUTE], "true",
+            "default-deny networks should omit the container default route instead of disabling netavark firewall setup"
         );
         assert_eq!(
             request.network_info["nimbus"].labels["io.nimbus.egress.direct"],
@@ -1118,6 +1131,12 @@ mod tests {
         assert!(
             !request.network_info["nimbus"].internal,
             "explicit direct egress allow should keep the bridge non-internal"
+        );
+        assert!(
+            !request.network_info["nimbus"]
+                .options
+                .contains_key(NETAVARK_OPTION_NO_DEFAULT_ROUTE),
+            "explicit direct egress allow should keep the container default route"
         );
         assert_eq!(
             request.network_info["nimbus"].labels["io.nimbus.egress.direct"],
