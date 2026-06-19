@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.38] - 2026-06-19
+
+### Fixed
+
+- Pin `tracing-core` to the published `0.1.36` release so release runners can
+  resolve `cargo metadata --all-features` from a clean crates.io index.
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.37...v0.1.38
+
 ## [0.1.37] - 2026-06-19
 
 ### Fixed
