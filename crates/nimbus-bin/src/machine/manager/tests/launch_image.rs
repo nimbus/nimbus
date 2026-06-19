@@ -207,7 +207,7 @@ fn launch_plan_bootc_machine_config_attaches_bundle_without_ignition() {
 }
 
 #[test]
-fn launch_plan_adds_gvproxy_machine_api_forwarding_when_ssh_identity_exists() {
+fn launch_plan_keeps_gvproxy_network_only_and_builds_separate_machine_api_forward() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
     let image_path = temp_dir.path().join("disk.raw");
@@ -228,24 +228,31 @@ fn launch_plan_adds_gvproxy_machine_api_forwarding_when_ssh_identity_exists() {
     let state = MachineStateRecord::initialized();
     let plan = MachineLaunchPlan::build(&paths, &config, &state).expect("launch plan should build");
 
-    assert!(plan.gvproxy_command.args.windows(2).any(|pair| {
-        pair[0] == "-forward-sock" && pair[1] == paths.api_socket_path.display().to_string()
+    assert!(!plan.gvproxy_command.args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "-forward-sock" | "-forward-dest" | "-forward-user" | "-forward-identity"
+        )
     }));
+    let forward = build_machine_api_forward_command(&paths, &config, 20022)
+        .expect("machine API forward command should build");
+    let forward_args = forward
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert!(forward_args.windows(2).any(|pair| pair[0] == "-L"
+        && pair[1] == format!("{}:{GUEST_NIMBUS_SOCKET}", paths.api_socket_path.display())));
     assert!(
-        plan.gvproxy_command
-            .args
+        forward_args
             .windows(2)
-            .any(|pair| { pair[0] == "-forward-dest" && pair[1] == GUEST_NIMBUS_SOCKET })
+            .any(|pair| pair[0] == "-i" && pair[1] == ssh_identity_path.display().to_string())
     );
+    assert!(forward_args.iter().any(|arg| arg == "root@127.0.0.1"));
     assert!(
-        plan.gvproxy_command
-            .args
+        forward_args
             .windows(2)
-            .any(|pair| { pair[0] == "-forward-user" && pair[1] == MACHINE_API_FORWARD_USER })
+            .any(|pair| { pair[0] == "-o" && pair[1] == "ExitOnForwardFailure=yes" })
     );
-    assert!(plan.gvproxy_command.args.windows(2).any(|pair| {
-        pair[0] == "-forward-identity" && pair[1] == ssh_identity_path.display().to_string()
-    }));
 }
 
 #[test]

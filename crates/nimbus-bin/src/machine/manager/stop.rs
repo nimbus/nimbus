@@ -40,6 +40,12 @@ pub(super) fn stop_machine(
         ));
     }
     if !config.provider.uses_provider_networking()
+        && let Some(pid) = read_pid(&paths.api_forward_pid_path)?
+        && let Err(error) = stop_pid(pid, HARD_STOP_WAIT_TIMEOUT)
+    {
+        stop_errors.push(error.to_string());
+    }
+    if !config.provider.uses_provider_networking()
         && let Some(pid) = read_pid(&paths.gvproxy_pid_path)?
         && let Err(error) = stop_pid(pid, HARD_STOP_WAIT_TIMEOUT)
     {
@@ -127,8 +133,14 @@ pub(super) fn refresh_machine_state(
     let gvproxy_alive = read_pid(&paths.gvproxy_pid_path)?
         .map(pid_is_alive)
         .unwrap_or(false);
+    let api_forward_alive = read_pid(&paths.api_forward_pid_path)?
+        .map(pid_is_alive)
+        .unwrap_or(false);
 
-    if krunkit_alive && gvproxy_alive {
+    if krunkit_alive
+        && gvproxy_alive
+        && (state.lifecycle == MachineLifecycle::Starting || api_forward_alive)
+    {
         if state.lifecycle == MachineLifecycle::Starting && paths.ready_socket_path.exists() {
             state.manager = MachineManagerState::Launching;
         }
@@ -138,7 +150,7 @@ pub(super) fn refresh_machine_state(
     state.lifecycle = MachineLifecycle::Failed;
     state.manager = MachineManagerState::Stale;
     state.last_error = Some(format!(
-        "machine runtime is stale: krunkit_alive={krunkit_alive} gvproxy_alive={gvproxy_alive}"
+        "machine runtime is stale: krunkit_alive={krunkit_alive} gvproxy_alive={gvproxy_alive} api_forward_alive={api_forward_alive}"
     ));
     super::write_json_file(&paths.state_path, state)
 }
@@ -150,7 +162,11 @@ pub(super) fn handle_start_machine_error(
     error: Error,
     mut krunkit_child: Option<&mut Child>,
     mut gvproxy_child: Option<&mut Child>,
+    mut api_forward_child: Option<&mut Child>,
 ) -> Result<(), Error> {
+    if let Some(child) = api_forward_child.as_mut() {
+        let _ = cleanup_process(child);
+    }
     if let Some(child) = krunkit_child.as_mut() {
         let _ = cleanup_process(child);
     }
@@ -368,12 +384,14 @@ pub(super) fn cleanup_runtime_artifacts(paths: &MachinePaths) -> Result<(), Erro
         &paths.gvproxy_socket_path,
         &paths.krunkit_gvproxy_socket_path(),
         &paths.krunkit_endpoint_path,
+        &paths.api_forward_pid_path,
         &paths.gvproxy_pid_path,
         &paths.krunkit_pid_path,
     ] {
         remove_file_if_exists(path)?;
     }
     for path in [
+        &paths.api_forward_log_path,
         &paths.machine_log_path,
         &paths.krunkit_log_path,
         &paths.gvproxy_log_path,

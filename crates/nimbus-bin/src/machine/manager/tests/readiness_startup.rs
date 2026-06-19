@@ -167,12 +167,14 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
         &paths.api_socket_path,
         &paths.gvproxy_socket_path,
         &paths.krunkit_endpoint_path,
+        &paths.api_forward_pid_path,
         &paths.gvproxy_pid_path,
         &paths.krunkit_pid_path,
     ] {
         fs::write(path, b"artifact").expect("runtime artifact should write");
     }
     for path in [
+        &paths.api_forward_log_path,
         &paths.machine_log_path,
         &paths.krunkit_log_path,
         &paths.gvproxy_log_path,
@@ -192,6 +194,12 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
     }
     .spawn()
     .expect("gvproxy child should spawn");
+    let mut api_forward_child = MachineCommandLine {
+        program: PathBuf::from("/bin/sh"),
+        args: vec!["-c".to_owned(), "sleep 30".to_owned()],
+    }
+    .spawn()
+    .expect("machine API forward child should spawn");
 
     let mut state = MachineStateRecord::initialized();
     state.lifecycle = MachineLifecycle::Starting;
@@ -216,6 +224,7 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
         Error::Cancelled,
         Some(&mut krunkit_child),
         Some(&mut gvproxy_child),
+        Some(&mut api_forward_child),
     );
 
     assert!(matches!(result, Err(Error::Cancelled)));
@@ -236,12 +245,20 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
             .is_some(),
         "gvproxy child should be reaped on interrupted startup"
     );
+    assert!(
+        api_forward_child
+            .try_wait()
+            .expect("machine API forward child status should resolve")
+            .is_some(),
+        "machine API forward child should be reaped on interrupted startup"
+    );
     for path in [
         &paths.ready_socket_path,
         &paths.ignition_socket_path,
         &paths.api_socket_path,
         &paths.gvproxy_socket_path,
         &paths.krunkit_endpoint_path,
+        &paths.api_forward_pid_path,
         &paths.gvproxy_pid_path,
         &paths.krunkit_pid_path,
     ] {
@@ -252,6 +269,7 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
         );
     }
     for path in [
+        &paths.api_forward_log_path,
         &paths.machine_log_path,
         &paths.krunkit_log_path,
         &paths.gvproxy_log_path,

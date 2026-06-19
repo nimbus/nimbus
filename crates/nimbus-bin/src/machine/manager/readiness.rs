@@ -1,8 +1,10 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{self, Read as _};
 use std::os::unix::net::UnixListener;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::Child;
+use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -19,13 +21,16 @@ use super::super::{
 };
 use super::launch::MachineLaunchPlan;
 use super::ssh::run_silent_ssh_probe;
-use super::{GVPROXY_SOCKET_WAIT_TIMEOUT, POLL_INTERVAL, StartupSignalMonitor};
+use super::{
+    GVPROXY_SOCKET_WAIT_TIMEOUT, MACHINE_API_FORWARD_USER, POLL_INTERVAL, StartupSignalMonitor,
+};
 
 pub(super) fn wait_for_machine_api_ready(
     paths: &MachinePaths,
     timeout: Duration,
     krunkit_child: &mut Child,
     gvproxy_child: &mut Child,
+    api_forward_child: &mut Child,
     startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
     let deadline = Instant::now() + timeout;
@@ -44,6 +49,15 @@ pub(super) fn wait_for_machine_api_ready(
         })? {
             return Err(Error::Internal(format!(
                 "gvproxy exited before machine API readiness with status {status}"
+            )));
+        }
+        if let Some(status) = api_forward_child.try_wait().map_err(|error| {
+            Error::Internal(format!(
+                "failed to poll machine API forward process state: {error}"
+            ))
+        })? {
+            return Err(Error::Internal(format!(
+                "machine API forward exited before machine API readiness with status {status}"
             )));
         }
 
@@ -157,10 +171,11 @@ pub(super) fn wait_for_machine_ready(
 }
 
 pub(super) fn post_start_networking(
-    _paths: &MachinePaths,
+    paths: &MachinePaths,
     config: &MachineConfigRecord,
-    _gvproxy_child: &mut Option<Child>,
-    _startup_signals: &StartupSignalMonitor,
+    ssh_port: u16,
+    api_forward_child: &mut Option<Child>,
+    startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
     if config.provider.uses_provider_networking() {
         // Future providers such as WSL own their own host networking startup
@@ -168,9 +183,7 @@ pub(super) fn post_start_networking(
         return Ok(());
     }
 
-    // The current krunkit path launches gvproxy before VM boot, so there is no
-    // additional post-start networking step beyond readiness checks.
-    Ok(())
+    start_machine_api_forward(paths, config, ssh_port, api_forward_child, startup_signals)
 }
 
 pub(super) fn conduct_readiness_check(
@@ -389,6 +402,120 @@ pub(super) fn ssh_port_is_listening(ssh_port: u16) -> bool {
         let _ = stream.shutdown(std::net::Shutdown::Both);
     })
     .is_ok()
+}
+
+pub(super) fn build_machine_api_forward_command(
+    paths: &MachinePaths,
+    config: &MachineConfigRecord,
+    ssh_port: u16,
+) -> Result<Command, Error> {
+    let identity_path = config.guest.ssh_identity_path.as_ref().ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "machine '{}' has no SSH identity configured",
+            config.name
+        ))
+    })?;
+    if !identity_path.is_file() {
+        return Err(Error::InvalidInput(format!(
+            "machine '{}' SSH identity does not exist at {}",
+            config.name,
+            identity_path.display()
+        )));
+    }
+
+    let mut command = Command::new("ssh");
+    command
+        .arg("-N")
+        .arg("-L")
+        .arg(format!(
+            "{}:{}",
+            paths.api_socket_path.display(),
+            super::super::bootstrap::GUEST_NIMBUS_SOCKET
+        ))
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ExitOnForwardFailure=yes")
+        .arg("-o")
+        .arg("IdentitiesOnly=yes")
+        .arg("-o")
+        .arg("StrictHostKeyChecking=no")
+        .arg("-o")
+        .arg("UserKnownHostsFile=/dev/null")
+        .arg("-o")
+        .arg("CheckHostIP=no")
+        .arg("-o")
+        .arg("LogLevel=ERROR")
+        .arg("-o")
+        .arg("SetEnv=LC_ALL=")
+        .arg("-o")
+        .arg("StreamLocalBindUnlink=yes")
+        .arg("-i")
+        .arg(identity_path)
+        .arg("-p")
+        .arg(ssh_port.to_string())
+        .arg(format!("{MACHINE_API_FORWARD_USER}@127.0.0.1"));
+    Ok(command)
+}
+
+fn start_machine_api_forward(
+    paths: &MachinePaths,
+    config: &MachineConfigRecord,
+    ssh_port: u16,
+    api_forward_child: &mut Option<Child>,
+    startup_signals: &StartupSignalMonitor,
+) -> Result<(), Error> {
+    super::remove_file_if_exists(&paths.api_socket_path)?;
+    super::remove_file_if_exists(&paths.api_forward_pid_path)?;
+    let log_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&paths.api_forward_log_path)
+        .map_err(|error| {
+            Error::Internal(format!(
+                "failed to open machine API forward log {}: {error}",
+                paths.api_forward_log_path.display()
+            ))
+        })?;
+    let stderr = log_file.try_clone().map_err(|error| {
+        Error::Internal(format!(
+            "failed to clone machine API forward log {}: {error}",
+            paths.api_forward_log_path.display()
+        ))
+    })?;
+    let mut command = build_machine_api_forward_command(paths, config, ssh_port)?;
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(stderr));
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let child = command.spawn().map_err(|error| {
+        Error::Internal(format!(
+            "failed to start machine API SSH forward for '{}': {error}",
+            config.name
+        ))
+    })?;
+    fs::write(&paths.api_forward_pid_path, child.id().to_string()).map_err(|error| {
+        Error::Internal(format!(
+            "failed to write machine API forward pid {}: {error}",
+            paths.api_forward_pid_path.display()
+        ))
+    })?;
+    *api_forward_child = Some(child);
+    wait_for_path(
+        &paths.api_socket_path,
+        GVPROXY_SOCKET_WAIT_TIMEOUT,
+        required_child(api_forward_child, "machine API forward")?,
+        startup_signals,
+    )
 }
 
 fn resolve_ready_wait_timeout() -> Duration {

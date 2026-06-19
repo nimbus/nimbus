@@ -28,7 +28,9 @@ use super::ports::{
     load_machine_port_allocation_state, managed_machine_port_range_contains,
     with_port_allocation_lock, write_machine_port_allocation_state,
 };
-use super::readiness::{ssh_port_is_listening, wait_for_path, wait_for_ssh_ready};
+use super::readiness::{
+    build_machine_api_forward_command, ssh_port_is_listening, wait_for_path, wait_for_ssh_ready,
+};
 use super::ssh::remote_shell_command;
 use super::stop::{
     annotate_machine_start_error, cleanup_process, force_stop_pid, handle_start_machine_error,

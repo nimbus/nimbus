@@ -216,6 +216,7 @@ pub(super) fn start_machine(
     let _ignition_server = start_bootstrap_server(paths, config, &launch_plan)?;
 
     let mut gvproxy_child = None;
+    let mut api_forward_child = None;
     emit_machine_progress("Starting machine networking");
     if let Err(error) = pre_start_networking(
         paths,
@@ -231,6 +232,7 @@ pub(super) fn start_machine(
             error,
             None,
             gvproxy_child.as_mut(),
+            api_forward_child.as_mut(),
         );
     }
 
@@ -244,6 +246,7 @@ pub(super) fn start_machine(
             error,
             krunkit_child.as_mut(),
             gvproxy_child.as_mut(),
+            api_forward_child.as_mut(),
         );
     }
     emit_machine_progress("Waiting for guest boot");
@@ -261,16 +264,7 @@ pub(super) fn start_machine(
             error,
             krunkit_child.as_mut(),
             gvproxy_child.as_mut(),
-        );
-    }
-    if let Err(error) = post_start_networking(paths, config, &mut gvproxy_child, &startup_signals) {
-        return handle_start_machine_error(
-            paths,
-            config,
-            state,
-            error,
-            krunkit_child.as_mut(),
-            gvproxy_child.as_mut(),
+            api_forward_child.as_mut(),
         );
     }
     emit_machine_progress("Waiting for guest SSH");
@@ -288,14 +282,14 @@ pub(super) fn start_machine(
             error,
             krunkit_child.as_mut(),
             gvproxy_child.as_mut(),
+            api_forward_child.as_mut(),
         );
     }
-    if let Err(error) = ensure_guest_machine_api_ready(
+    if let Err(error) = post_start_networking(
         paths,
         config,
         launch_plan.runtime().ssh_port,
-        &mut krunkit_child,
-        &mut gvproxy_child,
+        &mut api_forward_child,
         &startup_signals,
     ) {
         return handle_start_machine_error(
@@ -305,6 +299,26 @@ pub(super) fn start_machine(
             error,
             krunkit_child.as_mut(),
             gvproxy_child.as_mut(),
+            api_forward_child.as_mut(),
+        );
+    }
+    if let Err(error) = ensure_guest_machine_api_ready(
+        paths,
+        config,
+        launch_plan.runtime().ssh_port,
+        &mut krunkit_child,
+        &mut gvproxy_child,
+        &mut api_forward_child,
+        &startup_signals,
+    ) {
+        return handle_start_machine_error(
+            paths,
+            config,
+            state,
+            error,
+            krunkit_child.as_mut(),
+            gvproxy_child.as_mut(),
+            api_forward_child.as_mut(),
         );
     }
 
@@ -367,6 +381,7 @@ fn ensure_machine_can_start(
 fn ensure_no_external_machine_collision(paths: &MachinePaths) -> Result<(), Error> {
     let krunkit_owner = self::stop::read_pid_if_alive(&paths.krunkit_pid_path)?;
     let gvproxy_owner = self::stop::read_pid_if_alive(&paths.gvproxy_pid_path)?;
+    let api_forward_owner = self::stop::read_pid_if_alive(&paths.api_forward_pid_path)?;
     let owners: Vec<(&str, i32, &Path)> = krunkit_owner
         .into_iter()
         .map(|pid| ("krunkit", pid, paths.krunkit_pid_path.as_path()))
@@ -375,6 +390,13 @@ fn ensure_no_external_machine_collision(paths: &MachinePaths) -> Result<(), Erro
                 .into_iter()
                 .map(|pid| ("gvproxy", pid, paths.gvproxy_pid_path.as_path())),
         )
+        .chain(api_forward_owner.into_iter().map(|pid| {
+            (
+                "machine-api-forward",
+                pid,
+                paths.api_forward_pid_path.as_path(),
+            )
+        }))
         .collect();
     if owners.is_empty() {
         return Ok(());
@@ -412,6 +434,7 @@ fn ensure_guest_machine_api_ready(
     ssh_port: u16,
     krunkit_child: &mut Option<Child>,
     gvproxy_child: &mut Option<Child>,
+    api_forward_child: &mut Option<Child>,
     startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
     self::guest::ensure_guest_machine_api_ready(
@@ -420,6 +443,7 @@ fn ensure_guest_machine_api_ready(
         ssh_port,
         krunkit_child,
         gvproxy_child,
+        api_forward_child,
         startup_signals,
     )
 }

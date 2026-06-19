@@ -6,7 +6,7 @@ use std::process::{Child, Command, Stdio};
 
 use nimbus::Error;
 
-use super::super::bootstrap::{GUEST_NIMBUS_SOCKET, resolve_ignition_file};
+use super::super::bootstrap::resolve_ignition_file;
 use super::super::guest_config::{GUEST_MACHINE_CONFIG_MOUNT_TAG, render_machine_config_bundle};
 use super::super::{
     MachineBootstrapMode, MachineConfigRecord, MachinePaths, MachineStateRecord, MachineVolume,
@@ -15,10 +15,7 @@ use super::super::{
 use super::helpers::resolve_machine_helper_binaries;
 use super::image::resolve_bootable_image_path;
 use super::ports::allocate_machine_ssh_port;
-use super::{
-    DEFAULT_MACHINE_MAC_ADDRESS, MACHINE_API_FORWARD_USER, MachineRuntimeState, READY_VSOCK_PORT,
-    mount_tag,
-};
+use super::{DEFAULT_MACHINE_MAC_ADDRESS, MachineRuntimeState, READY_VSOCK_PORT, mount_tag};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct MachineLaunchPlan {
@@ -112,7 +109,7 @@ impl MachineLaunchPlan {
 
         let gvproxy_command = MachineCommandLine {
             program: helper_binaries.gvproxy.clone(),
-            args: build_gvproxy_args(paths, config, ssh_port),
+            args: build_gvproxy_args(paths, ssh_port),
         };
 
         let mut krunkit_args = vec![
@@ -193,12 +190,8 @@ impl MachineLaunchPlan {
     }
 }
 
-fn build_gvproxy_args(
-    paths: &MachinePaths,
-    config: &MachineConfigRecord,
-    ssh_port: u16,
-) -> Vec<String> {
-    let mut args = vec![
+fn build_gvproxy_args(paths: &MachinePaths, ssh_port: u16) -> Vec<String> {
+    vec![
         "-listen-vfkit".to_owned(),
         format!("unixgram://{}", paths.gvproxy_socket_path.display()),
         "-pid-file".to_owned(),
@@ -207,26 +200,7 @@ fn build_gvproxy_args(
         paths.gvproxy_log_path.display().to_string(),
         "-ssh-port".to_owned(),
         ssh_port.to_string(),
-    ];
-
-    if let Some(identity_path) = config.guest.ssh_identity_path.as_ref() {
-        // Match Podman's machine-plumbing shape: gvproxy owns the host-local
-        // forwarded socket and reaches the guest system socket over SSH.
-        // The guest machine API lives at /run/nimbus/nimbus.sock, so we
-        // forward as root rather than the interactive SSH user.
-        args.extend([
-            "-forward-sock".to_owned(),
-            paths.api_socket_path.display().to_string(),
-            "-forward-dest".to_owned(),
-            GUEST_NIMBUS_SOCKET.to_owned(),
-            "-forward-user".to_owned(),
-            MACHINE_API_FORWARD_USER.to_owned(),
-            "-forward-identity".to_owned(),
-            identity_path.display().to_string(),
-        ]);
-    }
-
-    args
+    ]
 }
 
 pub(super) fn build_virtio_vsock_listen_arg(port: u32, socket_path: &Path) -> String {

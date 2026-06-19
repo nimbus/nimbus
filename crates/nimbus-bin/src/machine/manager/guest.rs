@@ -223,6 +223,7 @@ pub(super) fn ensure_guest_machine_api_ready(
     ssh_port: u16,
     krunkit_child: &mut Option<Child>,
     gvproxy_child: &mut Option<Child>,
+    api_forward_child: &mut Option<Child>,
     startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
     if config.provider != super::super::MachineProvider::Krunkit
@@ -241,6 +242,7 @@ pub(super) fn ensure_guest_machine_api_ready(
         resolve_machine_api_ready_wait_timeout(),
         required_child(krunkit_child, "krunkit")?,
         required_child(gvproxy_child, "gvproxy")?,
+        required_child(api_forward_child, "machine API forward")?,
         startup_signals,
     )
 }
