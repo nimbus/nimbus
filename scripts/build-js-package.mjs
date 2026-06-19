@@ -23,7 +23,7 @@ import {
 } from "./nimbus-root-sdk-artifact-policy.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const TSC = path.join(REPO_ROOT, "node_modules", ".bin", "tsc");
+const TSC = path.join(REPO_ROOT, "node_modules", "typescript", "bin", "tsc");
 
 // Per-package sanitization rules for the *provisioned* manifest. Source package
 // manifests are never modified by this script.
@@ -97,8 +97,9 @@ fs.mkdirSync(distDir, { recursive: true });
 const entryFiles = entries.map((e) => path.join(pkgRoot, e.srcRel));
 try {
   execFileSync(
-    TSC,
+    process.execPath,
     [
+      TSC,
       ...entryFiles,
       "--declaration",
       "--rootDir", srcDir,
