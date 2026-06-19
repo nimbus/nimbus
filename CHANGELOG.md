@@ -5,12 +5,189 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.34] - 2026-06-18
+## [0.1.34] - 2026-06-19
+
+### Added
+
+- **website**: Theme-aware favicon with brand sky tile by @jackspirou
+- **cli**: DXW3 — start serves all adapters by default, store-backed (D7) by @jackspirou
+- **dev**: Firebase migration hint on no-adapter; shorter landing tab comments by @jackspirou
+- **provision**: Auto-wire app package.json deps; landing shows migration commands by @jackspirou
+- **firebase**: Drop-in firebase package — stock imports work unchanged by @jackspirou
+- **cli**: LR12 — nimbus node run, the reconciler's production caller by @jackspirou
+- **packaging**: LR10 — ship a hardened systemd unit in deb/rpm by @jackspirou
+- **cli,engine**: LR9 — nimbus backup create/restore on SEQ8 archives by @jackspirou
+- **server,bin**: LR8 — in-server TLS termination for the main listener by @jackspirou
+- **sdk**: LR7 — rest.ts matches the server, with a 3-sided parity guard by @jackspirou
+- **cli**: LR6 — nimbus start enables Firestore, MongoDB, and DynamoDB by @jackspirou
+- **server,bin**: LR5 — configurable CORS origins by @jackspirou
+- **bin**: LR4 — public-bind rotation gate: explicit-once, age advisory by @jackspirou
+- **sdk**: LR3 — remove the dead X-Nimbus-Api-Key credential path by @jackspirou
+- **cli**: LR2 — nimbus deploy passes the AdminHeaderOnly gate by @jackspirou
+- **ndb7**: Default systemd-dbus + linux factory + operator doc by @jackspirou
+- **ndb6**: Node-dbus-integration CI lane on ubuntu-24.04 by @jackspirou
+- **ndb5**: Linux-gated live systemd integration tests by @jackspirou
+- **ndb4**: Zbus error taxonomy + nimbus_core Transport/NotFound by @jackspirou
+- **ndb3**: Signal-correlated completion + property encoder by @jackspirou
+- **ndb2**: ZbusSystemdClient skeleton + capability probe by @jackspirou
+- **ndb1**: Wire zbus_systemd + zbus behind systemd-dbus feature by @jackspirou
 
 ### Changed
 
-- Route macOS machine service workload execution through the guest node-agent and systemd transient-unit path instead of the direct machine API sandbox backend path.
-- Add the NSR5 machine-os guest-node proof gates, packaged container runner wiring, and release-helper evidence required for published image promotion.
+- **cli**: Render wire surfaces from one presentation list + adapter status in start summary by @jackspirou
+- **cli**: Dev-loop hygiene — adoption outcomes as data, cached covered set by @jackspirou
+- **server**: Add WireProtocolAdapter seam for sibling listeners by @jackspirou
+- **server**: Make Firestore REST auth structural via route-layer middleware by @jackspirou
+- **cli**: Decompose dev.rs — tests to dev/tests/, firebase wiring to dev/firebase.rs by @jackspirou
+- **repo**: Docs/private goes fully untracked; pipeline inputs move by @jackspirou
+- **bin**: LR1 — finish Service->Engine naming in start/ by @jackspirou
+
+### D5.5
+
+- ListStreams + read-triggered retention (T5 Streams complete) by @jackspirou
+
+### D6.1
+
+- UpdateTimeToLive + DescribeTimeToLive (T6 begins) by @jackspirou
+
+### D6.2
+
+- TTL sweeper integration by @jackspirou
+
+### D6.3
+
+- Tagging surface (T6 complete; full T0-T6 op surface) by @jackspirou
+
+### D7.3
+
+- Nimbus-native persisted access-key management (T7 complete) by @jackspirou
+
+### D8.7
+
+- Five DynamoDB verification-harness cases (PR + nightly lanes) by @jackspirou
+
+### D9.1
+
+- Feature-parity coverage table (T0-T7) by @jackspirou
+
+### D9.3
+
+- Failure-injection + fail-closed proof by @jackspirou
+
+### D9.4
+
+- Tenant + auth isolation proof by @jackspirou
+
+### D9.5
+
+- Mixed-workload soak test by @jackspirou
+
+### D9.6
+
+- Performance benchmark baseline (p50/p95/p99 for every op family) by @jackspirou
+
+### D9.7
+
+- Enterprise-readiness closeout; verifier green (23 passed, 0 failed) by @jackspirou
+
+### Documentation
+
+- Correctness + consistency pass across all six groups by @jackspirou
+- **website**: Tighten landing hero to "your cloud, one binary" by @jackspirou
+- Retire dead docs/private links from package READMEs by @jackspirou
+- DXD1 — flip docs to autodetect + default-on adapter reality by @jackspirou
+- **site**: Editorial pass — nimbus dev-led landing, de-self-praised voice, Diátaxis heading fixes by @jackspirou
+- **site**: Agents group, value-ladder landing, deploy tutorial, title hygiene by @jackspirou
+- Favicon follows the page theme; unique page titles; Firebase tab by @jackspirou
+- **site**: Brand glyphs in the landing adapter tabs by @jackspirou
+- **site**: Landing tabs named by surface, all six proof snippets by @jackspirou
+- **agents**: LR13 — launch-readiness baseline archived by @jackspirou
+- **plans**: LR0 — launch-readiness verifier + proof bundle by @jackspirou
+- **plans**: Launch-readiness plan — close the 13-item docs-truth gap list by @jackspirou
+- **private**: DOC13 closeout — nimbus-docs-site plan done + archived by @jackspirou
+- **private**: DOC13 staging retirement sweep + editorial fix by @jackspirou
+- **agents**: DOC12 — .agents/skills migration + docs skill + AGENTS.md routing by @jackspirou
+- **repo**: DOC11 — README front door refactor + repo metadata by @jackspirou
+- **site**: DOC8 — llms-small.txt corpus tuning + scripts/check-docs.sh honesty gate by @jackspirou
+- **site**: DOC7 — public architecture pages + ARCHITECTURE.md rewrite by @jackspirou
+- **site**: DOC6 — Concepts core + CLI/configuration/SDK/capabilities reference by @jackspirou
+- **site**: DOC5 — Operators group, tenancy concepts, server reference by @jackspirou
+- **site**: DOC4 — Developers and adapter Reference corpus by @jackspirou
+- DOC3 — restructure docs/, five-group IA, landing, get-started by @jackspirou
+- DOC9 CI pipeline + DOC10 custom domain — nimbusdocs.com live by @jackspirou
+- Tighten verifier condition 3 against comment false-positive by @jackspirou
+- DOC2 design harmonization — theme tokens + DESIGN.md docs surface by @jackspirou
+- DOC0 verifier + DOC1 Starlight scaffold by @jackspirou
+- Archive completed dynamodb-adapter-plan by @jackspirou
+- Point NDB routing at archived plan path by @jackspirou
+- Close remaining NDB review items (minor + verifier rigor) by @jackspirou
+- Harden NDB plan after pre-execution review by @jackspirou
+
+### Fixed
+
+- **engine**: Close lost-wakeup race in applied-visibility wait by @jackspirou
+- **cli**: Close artifact-order race in convex adoption test by @jackspirou
+- **bin**: Machine API client deadlocked on Connection: close responses by @jackspirou
+- **ci,server**: Ring-backed rustls + make-wrapped LR12 lane by @jackspirou
+- **ci**: Finish the docs/private relocation sweep + D-Bus lane UI deps by @jackspirou
+- **repo**: Restore docs/private/* gitignore pattern + recover orphans by @jackspirou
+- **release**: LR11 — apt channel live + release->distribution dispatch by @jackspirou
+- Pool floor 8, pinned rustls provider, Waker::noop — three CI reds by @jackspirou
+- **storage**: Bounded wait before sqlite read-pool exhaustion by @jackspirou
+- **bin**: Retry one-shot machine-API test requests on accept races by @jackspirou
+- **runtime**: Convert warm-pool partition test to invocation-kind reuse by @jackspirou
+- **nds**: Release-train proof gate paths + regenerated artifacts by @jackspirou
+- **runtime,ci**: Restore node22 grant contracts + finish stale-path sweep by @jackspirou
+- **ci**: Repair the two remaining red-main causes beyond the path hotfix by @jackspirou
+- Repair stale docs/private/staging/architecture paths in crates + NDS scripts by @jackspirou
+- Remediate full code review findings by @jackspirou
+- **ndb3**: Idempotent Manager.Subscribe (AlreadySubscribed) by @jackspirou
+
+### Miscellaneous
+
+- Point dev-autodetect verifier at the archived plan path by @jackspirou
+- Baseline service backend refactor by @jackspirou
+- Baseline workspace before service backend refactor by @jackspirou
+
+### Styling
+
+- Rustfmt the NDB systemd D-Bus binding by @jackspirou
+
+### Design
+
+- Nav lockup spacing, ink-cropped transparent marks, favicon tile by @jackspirou
+- Unify the sky-cycle default theme across console, docs, and brand by @jackspirou
+
+### Dev
+
+- DXL2 — mid-session app-adapter adoption through the boot-time flow by @jackspirou
+- DXL1 — live manifest re-detection with presentation-only adoption by @jackspirou
+- DXW2 — shared persisted wire credentials + Nimbus-owned .env.local keys by @jackspirou
+- D7 — start serves all adapters by default; reshape verifier condition 3 by @jackspirou
+- D6 — always-available wire listeners; reshape verifier condition 10 by @jackspirou
+- DXW1 — wire-surface detection reads runtime dependencies only by @jackspirou
+
+### Dev-autodetect
+
+- DXF5 — client-app loop semantics by @jackspirou
+- DXF4 — projectId→tenant mapping with live round-trip by @jackspirou
+- DXF1-DXF3 — scan-gated FirestoreClient detection + wiring by @jackspirou
+- DXA2 — always-on Firestore routes in dev by @jackspirou
+- DXA1 — app-adapter/wire-surface model split by @jackspirou
+- DXA0 — completion-gate verifier scaffold by @jackspirou
+
+### Hardening
+
+- **H7**: Evidence rigor + doc accuracy; plan complete by @jackspirou
+- **H6**: Query skips non-scalar/absent index keys instead of aborting by @jackspirou
+- **H5**: Reserved-tenant guard + redacted access-key listing by @jackspirou
+- **H4**: DeleteTable reclaims stream/streamseq/ttl/tag sidecars by @jackspirou
+- **H3**: Atomic stream capture for batch/transact + atomic sequencing by @jackspirou
+- **H2**: Atomic single-item + catalog writes, close conditional TOCTOU by @jackspirou
+- **H1**: Bind SigV4 body, harden auth robustness, strict-by-default by @jackspirou
+- Scaffold verifier + promote plan to in_progress by @jackspirou
+
+
 
 **Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.33...v0.1.34
 
@@ -18,6 +195,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Update CHANGELOG.md for v0.1.33 by @github-actions[bot]
 - Update CHANGELOG.md for v0.1.32 by @github-actions[bot]
 
 
@@ -49,10 +227,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### A7
 
 - Decompose observability route into tab-body siblings by @jackspirou
-
-### A8
-
-- Close + archive desktop-ui architecture-hardening plan by @jackspirou
 
 ### AP
 
@@ -90,6 +264,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add artifact provenance conformance gate by @jackspirou
 
+### Added
+
+- Add node workload reconciler by @jackspirou
+- Wire tenant lifecycle evidence by @jackspirou
+- Add compose quadlet export by @jackspirou
+- Add node service install surface by @jackspirou
+- Add systemd transient backend seam by @jackspirou
+- Add direct process backend by @jackspirou
+- Add host lifecycle seam by @jackspirou
+- Add local enforcement binding by @jackspirou
+
 ### Appearance
 
 - Palette/mode switcher + brand-token canonicalization by @jackspirou
@@ -97,7 +282,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### BS
 
 - Archive brand-system-plan by @jackspirou
-- Close brand-system-plan; all 10 lanes done by @jackspirou
 
 ### BS0-3+9
 
@@ -167,10 +351,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bump sccache-action v0.0.6→v0.0.10, retract save-always, audit stale pins by @jackspirou
 
-### CD
-
-- **l**: Doc-honesty pass on deploy-load autostart claims by @jackspirou
-
 ### CD1-CD5
 
 - Canonicalize nimbus start/dev/ui CLI surface by @jackspirou
@@ -190,7 +370,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### CD9
 
-- Capture final make-lane + archive-housekeeping verification by @jackspirou
 - Tighten --ensure grep gate, capture smoke matrix in execution log by @jackspirou
 - Close + archive CLI daemon canonicalization plan by @jackspirou
 
@@ -219,10 +398,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Emit job summaries from 4 high-value CI jobs by @jackspirou
 
-### CM7
-
-- Dependabot configuration + PR-queue audit (2026-05-22) by @jackspirou
-
 ### CM8
 
 - Closeout — archive plan, promote canonical contract, update routing by @jackspirou
@@ -241,18 +416,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### CW3
 
-- Backfill execution-log SHA for the per-provider split by @jackspirou
 - Split External Provider Integration Tests by provider by @jackspirou
 
 ### CW4
 
-- Backfill execution-log SHA for warm-sccache --tests drop by @jackspirou
 - Drop --tests from warm-sccache + document deferred target-cache lane by @jackspirou
 
 ### CW5
 
-- Backfill execution-log SHA for closeout by @jackspirou
 - Closeout — archive plan, promote contract, update routing by @jackspirou
+
+### Changed
+
+- Extract nimbus node crate by @jackspirou
+- Extract pure tenant crate by @jackspirou
+- Move artifact verifier effects out of tenant by @jackspirou
+- Audit tenant crate boundary by @jackspirou
+- Rename tenant isolation module path by @jackspirou
 
 ### DA1
 
@@ -261,14 +441,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### DA10
 
 - Agent auth contract + grep gate by @jackspirou
-
-### DA11
-
-- Archive desktop-auth-dx plan + proof artifacts by @jackspirou
-
-### DA11-fix
-
-- Rewrite disposition section with real plan items by @jackspirou
 
 ### DA12
 
@@ -302,10 +474,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Network-bind guardrails — --allow-network + rotation tripwire by @jackspirou
 
-### DR-fixes
-
-- Promote plan + lock DR0 baselines by @jackspirou
-
 ### DR1
 
 - Copy hygiene + canonical EmptyState (F1) by @jackspirou
@@ -333,56 +501,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### DR7
 
 - Polish breadcrumb, tab casing, sub-drawer grouping by @jackspirou
-
-### DR8
-
-- Close + archive desktop-ui design-review-fixes plan by @jackspirou
-
-### DS0
-
-- Defer Windows code signing; stage first release for macOS + Linux by @jackspirou
-
-### DS0A
-
-- Nimbus/desktop provisioned, decisions documented, DS0B verifier wired by @jackspirou
-
-### DS0B
-
-- Apple credentials uploaded; DS0 satisfied by @jackspirou
-
-### DS1
-
-- Hello-electron loop + security baseline (desktop@6ddf65d) by @jackspirou
-
-### DS10
-
-- Document nimbus ui command and nimbus-desktop in distribution by @jackspirou
-
-### DS2
-
-- Flip desktop-shell-plan status; record execution log by @jackspirou
-
-### DS3
-
-- Flip desktop-shell-plan status; record execution log by @jackspirou
-
-### DS4
-
-- Flip desktop-shell-plan status; record execution log by @jackspirou
-
-### DS5
-
-- Flip desktop-shell-plan status; record execution log by @jackspirou
-
-### DS6
-
-- Flip status to done — per-platform packaging matrix green by @jackspirou
-
-### DU-shell
-
-- Revise plan with two-view IA (Developer + Operator console) by @jackspirou
-- Revise plan with first-principles IA review by @jackspirou
-- Promote desktop-ui shell overhaul plan by @jackspirou
 
 ### DU1
 
@@ -423,7 +541,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### DU7
 
 - Second-pass audit — token values, focus restoration, destructive confirm by @jackspirou
-- Capture browser proof of audited UI by @jackspirou
 - Ux/ui audit — state-token compliance, modal confirms, link reservation by @jackspirou
 - Data browser, schema, indexes, tenants by @jackspirou
 
@@ -437,11 +554,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- Baseline enterprise policy research by @jackspirou
-- **plans**: Close ledger and execution log for ui-persona-route-rename by @jackspirou
-- **plans**: Archive ui-persona-route-rename-plan by @jackspirou
-- **plans**: Archive desktop-ui-ux-review-fixes-plan by @jackspirou
-- Fix DS1 electron pin 41 → 42 by @jackspirou
+- Scaffold node dbus client binding plan by @jackspirou
+- Clarify node lifecycle surfaces by @jackspirou
+- Define local enforcement boundary by @jackspirou
+- Align tenant module naming by @jackspirou
 - Update CHANGELOG.md for v0.1.31 by @github-actions[bot]
 
 ### EPS0-EPS2
@@ -496,6 +612,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Publish policy egress conformance by @jackspirou
 
+### Fixed
+
+- Catch up materialized serving snapshots by @jackspirou
+
 ### H1
 
 - Ratify dual-persona Services into DESIGN.md (BLOCKER) by @jackspirou
@@ -515,10 +635,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### H5
 
 - Cleanup + spec backfills — shared tenants fetch, abort guard, narrowing throws by @jackspirou
-
-### H6+H7
-
-- Close + archive desktop-ui followup hardening plan by @jackspirou
 
 ### I2
 
@@ -540,11 +656,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Archive install-script-plan; all 5 lanes done by @jackspirou
 
-### LD0
-
-- Fix step-count + grep-scope drift in local-dev plan by @jackspirou
-- Write local-dev-canonicalization plan + index entry by @jackspirou
-
 ### LD1
 
 - Makefile dependency graph for nimbus-ui artifacts by @jackspirou
@@ -561,41 +672,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Build-contract docs + CLAUDE.md routing entry by @jackspirou
 
-### LD5
-
-- Fresh-clone proof — make ci-required green in worktree by @jackspirou
-
 ### LD6
 
 - Add /goal control-plane verifier script by @jackspirou
 
-### LD7
+### Miscellaneous
 
-- Close out local-dev canonicalization plan by @jackspirou
+- Update tenant crate lockfile by @jackspirou
+- Checkpoint current workspace baseline by @jackspirou
 
 ### PW0
 
-- Backfill execution-log SHA for scaffold by @jackspirou
 - Scaffold ci-pr-wall-sub-15 plan + verifier + baseline proof by @jackspirou
 
 ### PW1
 
-- Backfill execution-log SHA for libsql pin + cache lane by @jackspirou
 - Pin libsql image to v0.24.26 + add docker-image cache lane by @jackspirou
 
 ### PW2
 
-- Backfill execution-log SHA for coverage.yml extraction by @jackspirou
 - Extract Coverage track to .github/workflows/coverage.yml by @jackspirou
 
 ### PW3
 
-- Backfill execution-log SHA for concurrency cap by @jackspirou
 - Flip ci.yml cancel-in-progress to branch-conditional by @jackspirou
-
-### PW4
-
-- Backfill execution-log SHA for warm-sccache retention by @jackspirou
 
 ### PW4c
 
@@ -603,21 +703,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### PW5
 
-- Fill green proof with 3 consecutive post-PW4 main runs by @jackspirou
 - Repin libsql to v0.24.33 (v0.24.26 had Host-header routing bug) by @jackspirou
 - Switch libsql fixture hosts to localhost for sqld v0.24.26 by @jackspirou
-
-### PW5+PW6
-
-- Backfill execution-log SHAs by @jackspirou
 
 ### PW6
 
 - Closeout — promote contract, archive plan, update routing by @jackspirou
-
-### R0
-
-- Read-in + before-state freeze for residue plan by @jackspirou
 
 ### R1
 
@@ -630,10 +721,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### R11
 
 - Polish — story state coverage + nit pass by @jackspirou
-
-### R12
-
-- Close + archive desktop-ui architecture-residue plan by @jackspirou
 
 ### R2
 
@@ -667,6 +754,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - CSP test tolerates attribute-bearing tags + workflow paths widened by @jackspirou
 
+### RAQ0
+
+- Add repo architecture guardrail by @jackspirou
+
+### RAQ1
+
+- Split tenant isolation root by @jackspirou
+
+### RAQ2
+
+- Split system tenant evidence by @jackspirou
+
+### RAQ3
+
+- Canonicalize server construction by @jackspirou
+
+### RAQ4
+
+- Split runtime policy and local ops by @jackspirou
+
+### RAQ5
+
+- Split sandbox service manager lifecycle by @jackspirou
+
+### RAQ6
+
+- Split policy and adapter surfaces by @jackspirou
+
+### RAQ7
+
+- Split CLI workflow surfaces by @jackspirou
+
+### RAQ8
+
+- Split JS compatibility surfaces by @jackspirou
+
+### RAQ9
+
+- Add evidence taxonomy guardrails by @jackspirou
+
 ### README
 
 - Document nimbus-desktop install path by @jackspirou
@@ -675,15 +802,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add CodeQL SAST workflow for Rust + JavaScript/TypeScript by @jackspirou
 - Bump actions/create-github-app-token v3.2.0 -> v3 by @jackspirou
-- Adopt (β+) UI-launched upgrade pattern from Podman Desktop by @jackspirou
 - Closure — archive Phase 1 + Phase 2 plans by @jackspirou
-- Flip Status to done; record execution-log row by @jackspirou
 
-### UL0
+### Testing
 
-- Restructure upgrade UX around DESIGN.md primitives + background brew by @jackspirou
-- Tighten upgrade UX to canonical Podman density by @jackspirou
-- Land update-lifecycle plan + decision 001 by @jackspirou
+- Add tenant node extraction verifier by @jackspirou
 
 ### UL1
 
@@ -696,10 +819,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### UL3
 
 - Capture full-flow screencast at .playwright-cli/ul3/full-flow.webm by @jackspirou
-
-### UX0
-
-- File desktop-ui UX/UI review fix plan + baseline screenshots by @jackspirou
 
 ### UX1
 
