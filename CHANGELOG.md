@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.40] - 2026-06-19
 
-### Fixed
+### Documentation
 
-- Allow bootc machine-config apply to run without host-local `HOME` discovery.
+- Update CHANGELOG.md for v0.1.39 by @github-actions[bot]
+
+
 
 **Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.39...v0.1.40
 
