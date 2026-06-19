@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.41] - 2026-06-19
 
-### Fixed
+### Documentation
 
-- Preserve resolved guest container runner helper paths and machine port-forwarding configuration for node-agent-backed service workloads.
+- Update CHANGELOG.md for v0.1.40 by @github-actions[bot]
+
+
 
 **Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.40...v0.1.41
 
