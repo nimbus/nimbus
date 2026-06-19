@@ -1,6 +1,6 @@
 {
   "name": "convex",
-  "version": "0.1.40",
+  "version": "0.1.41",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
@@ -20,8 +20,8 @@
     "./values": "./src/values.ts"
   },
   "dependencies": {
-    "@nimbus/codegen": "0.1.40",
-    "@nimbus/nimbus": "0.1.40",
+    "@nimbus/codegen": "0.1.41",
+    "@nimbus/nimbus": "0.1.41",
     "esbuild": "0.28.0"
   },
   "devDependencies": {

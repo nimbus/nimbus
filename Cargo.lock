@@ -5737,7 +5737,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nimbus"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "nimbus-core",
  "nimbus-engine",
@@ -5749,7 +5749,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-adapters"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "nimbus-cloud-functions",
  "nimbus-convex",
@@ -5760,7 +5760,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-artifacts"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "nimbus-core",
  "oci-client",
@@ -5769,7 +5769,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-assets"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "rust-embed",
  "serde",
@@ -5780,7 +5780,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-auth"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "futures",
  "nimbus-core",
@@ -5791,7 +5791,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-bin"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "aes-gcm-siv",
  "axum",
@@ -5834,7 +5834,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-bridge"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "base64 0.22.1",
  "nimbus-core",
@@ -5850,7 +5850,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-cloud-functions"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "http 1.4.0",
  "nimbus-artifacts",
@@ -5871,7 +5871,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-code-index"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "oxc",
  "serde",
@@ -5880,7 +5880,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-convex"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "base64 0.22.1",
  "futures",
@@ -5902,7 +5902,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-core"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "rmp-serde",
  "serde",
@@ -5914,7 +5914,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-dynamodb"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "base64 0.22.1",
  "bigdecimal",
@@ -5934,7 +5934,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-engine"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "arc-swap",
  "base64 0.22.1",
@@ -5964,7 +5964,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-firebase"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "base64 0.22.1",
  "futures",
@@ -5988,7 +5988,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-license"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "serde",
  "serde_json",
@@ -5998,7 +5998,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-machine"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "nimbus-core",
  "serde",
@@ -6006,7 +6006,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-mongodb"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "base64 0.22.1",
  "bson",
@@ -6026,7 +6026,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-node"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "futures",
  "nimbus-core",
@@ -6043,7 +6043,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-operator"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "base64 0.22.1",
  "fs2",
@@ -6057,14 +6057,14 @@ dependencies = [
 
 [[package]]
 name = "nimbus-provenance"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "nimbus-artifacts",
 ]
 
 [[package]]
 name = "nimbus-runtime"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "base64 0.22.1",
  "criterion",
@@ -6111,7 +6111,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-sandbox"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "flate2",
  "fs2",
@@ -6135,7 +6135,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-server"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "aws-sdk-dynamodb",
  "aws-sdk-dynamodbstreams",
@@ -6202,7 +6202,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-services"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "futures",
  "nimbus-core",
@@ -6218,7 +6218,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-storage"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "aes-gcm-siv",
  "aws-config",
@@ -6258,7 +6258,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-system"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "nimbus-core",
  "nimbus-engine",
@@ -6276,7 +6276,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-tenant"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "nimbus-artifacts",
  "nimbus-core",
@@ -6291,7 +6291,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-testing"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "axum",
  "futures",
