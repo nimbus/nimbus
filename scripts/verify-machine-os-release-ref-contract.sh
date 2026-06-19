@@ -152,6 +152,8 @@ require_in_section build-machine-os "${build_machine_os_section}" 'ref: ${{ env.
 require_in_section build-machine-os "${build_machine_os_section}" "path: machine-os"
 require_in_section build-machine-os "${build_machine_os_section}" "machine_os_source_revision:"
 require_in_section build-machine-os "${build_machine_os_section}" "bash scripts/build.sh"
+require_in_section build-machine-os "${build_machine_os_section}" '--fedora-bootc-base-image "${MACHINE_OS_FEDORA_BOOTC_IMAGE}"'
+require_in_section build-machine-os "${build_machine_os_section}" '--bib-image "${MACHINE_OS_BOOTC_IMAGE_BUILDER}"'
 require_in_section build-machine-os "${build_machine_os_section}" "bash scripts/package-oci.sh"
 require_in_section build-machine-os "${build_machine_os_section}" 'name: ${{ env.MACHINE_OS_STAGED_ARTIFACT }}'
 require_in_section build-machine-os "${build_machine_os_section}" 'path: ${{ env.STAGE_DIR }}/**'

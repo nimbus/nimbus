@@ -105,6 +105,30 @@ fi
 grep -F "release workflow must use one Fedora bootc image reference" \
   "${tmp_dir}/bad-fedora-drift.out" >/dev/null
 
+bad_fedora_build_arg="${tmp_dir}/bad-fedora-build-arg.yml"
+sed 's|            --fedora-bootc-base-image "${MACHINE_OS_FEDORA_BOOTC_IMAGE}" \\||' \
+  "${repo_root}/.github/workflows/release.yml" >"${bad_fedora_build_arg}"
+if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
+  --workflow "${bad_fedora_build_arg}" \
+  >"${tmp_dir}/bad-fedora-build-arg.out" 2>&1; then
+  echo "expected release ref contract to require passing the Fedora bootc digest to machine-os build.sh" >&2
+  exit 1
+fi
+grep -F -- '--fedora-bootc-base-image "${MACHINE_OS_FEDORA_BOOTC_IMAGE}"' \
+  "${tmp_dir}/bad-fedora-build-arg.out" >/dev/null
+
+bad_bib_build_arg="${tmp_dir}/bad-bib-build-arg.yml"
+sed 's|            --bib-image "${MACHINE_OS_BOOTC_IMAGE_BUILDER}" \\||' \
+  "${repo_root}/.github/workflows/release.yml" >"${bad_bib_build_arg}"
+if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
+  --workflow "${bad_bib_build_arg}" \
+  >"${tmp_dir}/bad-bib-build-arg.out" 2>&1; then
+  echo "expected release ref contract to require passing the bootc-image-builder digest to machine-os build.sh" >&2
+  exit 1
+fi
+grep -F -- '--bib-image "${MACHINE_OS_BOOTC_IMAGE_BUILDER}"' \
+  "${tmp_dir}/bad-bib-build-arg.out" >/dev/null
+
 bad_recipe_path="${tmp_dir}/bad-recipe-path.yml"
 sed 's|machine-os/image/|machine-os/images/|g' \
   "${repo_root}/.github/workflows/release.yml" >"${bad_recipe_path}"

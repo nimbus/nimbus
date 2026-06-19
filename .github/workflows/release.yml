@@ -466,6 +466,8 @@ jobs:
             --nimbus-binary "${NIMBUS_LINUX_ARM64_BINARY}" \
             --nimbus-version "${{ github.ref_name }}" \
             --source-revision "${{ steps.machine_os_source.outputs.revision }}" \
+            --fedora-bootc-base-image "${MACHINE_OS_FEDORA_BOOTC_IMAGE}" \
+            --bib-image "${MACHINE_OS_BOOTC_IMAGE_BUILDER}" \
             --output-dir "${BUILD_OUTPUT_DIR}"
           sudo chown -R "$(id -u):$(id -g)" \
             "${BUILD_OUTPUT_DIR}"
