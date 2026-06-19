@@ -7,21 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.38] - 2026-06-19
 
-### Fixed
 
-- Pin `tracing-core` to the published `0.1.36` release so release runners can
-  resolve `cargo metadata --all-features` from a clean crates.io index.
 
 **Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.37...v0.1.38
 
 ## [0.1.37] - 2026-06-19
 
-### Fixed
+### Documentation
 
-- Keep Nimbus machine recreate diagnostics complete after failed starts and
-  target the requested machine name throughout the recreate flow.
-- Refresh the machine-os machine-config activation path so the guest applies
-  the host-provided config and reaches the ready signal on macOS.
+- Update CHANGELOG.md for v0.1.36 by @github-actions[bot]
+
+
 
 **Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.36...v0.1.37
 
