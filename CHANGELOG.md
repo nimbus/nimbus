@@ -7,17 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.36] - 2026-06-19
 
-### Changed
 
-- Refresh the machine-os Fedora bootc base-image digest used by the release workflow.
 
 **Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.35...v0.1.36
 
 ## [0.1.35] - 2026-06-19
 
-### Changed
+### Documentation
 
-- Harden macOS machine-os first-boot machine-config activation and move host machine API forwarding behind guest SSH readiness.
+- Update CHANGELOG.md for v0.1.34 by @github-actions[bot]
+
+
 
 **Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.34...v0.1.35
 
