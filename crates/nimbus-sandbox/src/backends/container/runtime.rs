@@ -526,6 +526,7 @@ impl ContainerSandboxBackend {
                 network_layout,
                 egress_proxy,
                 conmon_launch,
+                runner_config: ContainerRunnerExecutionConfig::from_backend_config(&self.config),
                 last_exit_code: None,
                 restart_count: 0,
                 next_restart_at_millis: None,
@@ -959,7 +960,7 @@ pub fn run_prepared_container_service_workload(bundle_dir: impl AsRef<Path>) -> 
             ),
         });
     }
-    let backend = ContainerSandboxBackend::new(ContainerSandboxBackendConfig::default());
+    let backend = ContainerSandboxBackend::new(manifest.runner_config.to_backend_config());
     backend.launch_manifest(&mut manifest, true)?;
     let exit_code = wait_for_container_runner_exit(&manifest)?;
     if exit_code != 0 {
@@ -1114,6 +1115,8 @@ struct ContainerSandboxManifest {
     network_layout: OciNetworkLayout,
     egress_proxy: Option<ContainerEgressProxyManifest>,
     conmon_launch: OciConmonLaunchPlan,
+    #[serde(default)]
+    runner_config: ContainerRunnerExecutionConfig,
     last_exit_code: Option<i32>,
     #[serde(default)]
     restart_count: u32,
@@ -1122,6 +1125,46 @@ struct ContainerSandboxManifest {
     start_mode: ContainerStartMode,
     shutdown_requested: bool,
     status: SandboxStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ContainerRunnerExecutionConfig {
+    netavark_path: PathBuf,
+    aardvark_dns_path: PathBuf,
+    network_name: String,
+    network_interface: String,
+    network_subnet: String,
+    machine_port_forwarder: Option<OciMachinePortForwarderConfig>,
+}
+
+impl ContainerRunnerExecutionConfig {
+    fn from_backend_config(config: &ContainerSandboxBackendConfig) -> Self {
+        Self {
+            netavark_path: config.netavark_path.clone(),
+            aardvark_dns_path: config.aardvark_dns_path.clone(),
+            network_name: config.network_name.clone(),
+            network_interface: config.network_interface.clone(),
+            network_subnet: config.network_subnet.clone(),
+            machine_port_forwarder: config.machine_port_forwarder.clone(),
+        }
+    }
+
+    fn to_backend_config(&self) -> ContainerSandboxBackendConfig {
+        let mut config = ContainerSandboxBackendConfig::default();
+        config.netavark_path = self.netavark_path.clone();
+        config.aardvark_dns_path = self.aardvark_dns_path.clone();
+        config.network_name = self.network_name.clone();
+        config.network_interface = self.network_interface.clone();
+        config.network_subnet = self.network_subnet.clone();
+        config.machine_port_forwarder = self.machine_port_forwarder.clone();
+        config
+    }
+}
+
+impl Default for ContainerRunnerExecutionConfig {
+    fn default() -> Self {
+        Self::from_backend_config(&ContainerSandboxBackendConfig::default())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

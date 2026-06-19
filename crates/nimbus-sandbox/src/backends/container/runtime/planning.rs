@@ -1,6 +1,6 @@
 use super::support::*;
 
-use crate::backends::oci::network::OciNetworkDirectEgress;
+use crate::backends::oci::network::{OciMachinePortForwarderConfig, OciNetworkDirectEgress};
 use crate::egress::SANDBOX_EGRESS_PROXY_URL_ENV;
 use tempfile::TempDir;
 
@@ -136,6 +136,9 @@ fn plan_only_service_workload_prepares_runner_manifest_pointer_and_proxy_env() {
         temp_dir.path().join("state"),
     );
     config.published_port_range = 15000..=15002;
+    config.netavark_path = "/usr/libexec/podman/netavark".into();
+    config.aardvark_dns_path = "/usr/libexec/podman/aardvark-dns".into();
+    config.machine_port_forwarder = Some(OciMachinePortForwarderConfig::gvproxy_default());
     let backend = ContainerSandboxBackend::new(config);
 
     let prepared = backend
@@ -156,12 +159,42 @@ fn plan_only_service_workload_prepares_runner_manifest_pointer_and_proxy_env() {
         "runner should receive an exact manifest pointer scoped to the prepared bundle"
     );
 
+    let manifest_bytes = std::fs::read(&manifest_path).unwrap();
     let manifest: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap())
-            .expect("manifest should parse");
+        serde_json::from_slice(&manifest_bytes).expect("manifest should parse");
     assert_eq!(manifest["start_mode"], "plan_only");
     assert_eq!(manifest["egress_proxy"]["host"], "10.89.0.1");
     assert_eq!(manifest["egress_proxy"]["port"], 15000);
+    assert_eq!(
+        manifest["runner_config"]["netavark_path"],
+        "/usr/libexec/podman/netavark"
+    );
+    assert_eq!(
+        manifest["runner_config"]["aardvark_dns_path"],
+        "/usr/libexec/podman/aardvark-dns"
+    );
+    assert_eq!(
+        manifest["runner_config"]["machine_port_forwarder"]["path_prefix"],
+        "/services/forwarder"
+    );
+    let typed_manifest: ContainerSandboxManifest =
+        serde_json::from_slice(&manifest_bytes).expect("typed manifest should parse");
+    let runner_config = typed_manifest.runner_config.to_backend_config();
+    assert_eq!(
+        runner_config.netavark_path,
+        PathBuf::from("/usr/libexec/podman/netavark")
+    );
+    assert_eq!(
+        runner_config.aardvark_dns_path,
+        PathBuf::from("/usr/libexec/podman/aardvark-dns")
+    );
+    assert_eq!(
+        runner_config
+            .machine_port_forwarder
+            .expect("machine forwarder should survive runner reconstruction")
+            .path_prefix,
+        "/services/forwarder"
+    );
 
     let config: serde_json::Value =
         serde_json::from_slice(&std::fs::read(prepared.bundle_dir.join("config.json")).unwrap())
