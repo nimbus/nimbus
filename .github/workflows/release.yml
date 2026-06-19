@@ -27,7 +27,7 @@ env:
   MACHINE_OS_PACKAGE: ghcr.io/nimbus/machine-os
   MACHINE_OS_STAGED_ARTIFACT: nimbus-machine-os-arm64-staged
   MACHINE_OS_RELEASE_ARTIFACT: machine-os-arm64-release
-  MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:e3eaca476d25a47aec32f15fc5ee939a15a40d2cf163bc722d0a598d33558484
+  MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:e23805231218ecd1b98ee9ddf77a12661ceb44fcef74b4492fdb2e48d9d4d083
   MACHINE_OS_BOOTC_IMAGE_BUILDER: quay.io/centos-bootc/bootc-image-builder@sha256:754fc17718f977313885379e2c779066aba7d15af88fe04b486baec74759f574
   NIMBUS_IMAGE_PACKAGE: ghcr.io/nimbus/nimbus
   TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c
@@ -436,7 +436,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/image-cache
-          key: machine-os-base-image-arm64-${{ hashFiles('machine-os/image/Containerfile', 'machine-os/image/build-common.sh', 'machine-os/image/build.sh') }}
+          key: machine-os-base-image-arm64-${{ hashFiles('.github/workflows/release.yml', 'machine-os/image/Containerfile', 'machine-os/image/build-common.sh', 'machine-os/image/build.sh') }}
           restore-keys: |
             machine-os-base-image-arm64-
 
