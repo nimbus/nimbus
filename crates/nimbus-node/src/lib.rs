@@ -31,7 +31,7 @@ pub use reconciler::{
     NodeWorkloadDesiredState, NodeWorkloadReconcileAction, NodeWorkloadReconcileOutcome,
     NodeWorkloadReconciler, StatusEvidenceWrite, StatusEvidenceWriter,
 };
-#[cfg(feature = "systemd-dbus")]
+#[cfg(all(target_os = "linux", feature = "systemd-dbus"))]
 pub use systemd_transient::zbus_client::{BusKind, ZbusSystemdClient};
 pub use systemd_transient::{
     StartTransientMode, SystemdDbusClient, SystemdDbusProperty, SystemdExecStart,

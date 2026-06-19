@@ -12,10 +12,10 @@ use super::{
     TenantWorkloadStatus,
 };
 
-/// Live `zbus_systemd`-backed `SystemdDbusClient`. Present only when the
-/// `systemd-dbus` feature is enabled; otherwise the backend keeps its
+/// Live `zbus_systemd`-backed `SystemdDbusClient`. Present only on Linux when
+/// the `systemd-dbus` feature is enabled; otherwise the backend keeps its
 /// fail-closed `UnavailableSystemdDbusClient` default.
-#[cfg(feature = "systemd-dbus")]
+#[cfg(all(target_os = "linux", feature = "systemd-dbus"))]
 pub mod zbus_client;
 
 pub trait SystemdDbusClient: Send + Sync + 'static {

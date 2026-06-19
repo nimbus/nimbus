@@ -19,6 +19,8 @@ serde.workspace = true
 sha2.workspace = true
 futures = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
 zbus = { workspace = true, optional = true }
 zbus_systemd = { workspace = true, optional = true }
 
