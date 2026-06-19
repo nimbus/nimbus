@@ -110,7 +110,7 @@ jobs:
     name: Build (aarch64-unknown-linux-gnu)
     needs: [verify-release-contract, ui-artifacts]
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 90
+    timeout-minutes: 150
 
     steps:
       - uses: actions/checkout@v6
@@ -151,7 +151,17 @@ jobs:
         run: npm run build:embedded-packages
 
       - name: Build release binary
-        run: cargo build --release -p nimbus-bin
+        run: |
+          while sleep 120; do
+            echo "::group::arm64 release build heartbeat"
+            date -u
+            free -h || true
+            df -h . || true
+            echo "::endgroup::"
+          done &
+          heartbeat_pid=$!
+          trap 'kill "$heartbeat_pid" 2>/dev/null || true' EXIT
+          cargo build --release -p nimbus-bin -j 2
 
       - name: Prove SQLCipher release lane
         shell: bash
