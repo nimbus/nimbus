@@ -71,6 +71,7 @@ case "${2:-}" in
     ;;
   init)
     image=""
+    bootc_native="false"
     ssh_identity=""
     ignition_file=""
     efi_store=""
@@ -84,6 +85,10 @@ case "${2:-}" in
         --image)
           image="${2:?missing image path}"
           shift 2
+          ;;
+        --bootc-native)
+          bootc_native="true"
+          shift
           ;;
         --identity)
           ssh_identity="${2:?missing ssh identity path}"
@@ -110,7 +115,7 @@ case "${2:-}" in
     set_paths
     mkdir -p "${config_dir}" "${state_dir}"
     cat > "${config_dir}/config.json" <<OUT
-{"image":"${image}","ssh_identity_path":"${ssh_identity}","ignition_file_path":"${ignition_file}","efi_variable_store_path":"${efi_store}","volumes":"${volumes[*]}"}
+{"image":"${image}","bootc_native":${bootc_native},"ssh_identity_path":"${ssh_identity}","ignition_file_path":"${ignition_file}","efi_variable_store_path":"${efi_store}","volumes":"${volumes[*]}"}
 OUT
     write_status "stopped" "helpers-resolved"
     echo "initialized"
@@ -219,6 +224,100 @@ grep -F "started" "${output_dir}/nimbus-machine-start.txt" >/dev/null
 grep -F "machine booted" "${output_dir}/post-diagnostics/machine-log-tail.txt" >/dev/null
 grep -F "team-a-api.sock missing" "${output_dir}/post-diagnostics/socket-presence.txt" >/dev/null
 grep -F "team-a.sock present" "${output_dir}/post-diagnostics/socket-presence.txt" >/dev/null
+
+local_bootc_output_dir="${tmp_dir}/local-bootc-output"
+machine_os_repo="${tmp_dir}/machine-os"
+guest_binary="${tmp_dir}/guest-nimbus"
+mkdir -p "${machine_os_repo}/scripts"
+cat > "${machine_os_repo}/scripts/build.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+nimbus_binary=""
+nimbus_version=""
+source_revision=""
+output_dir=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --nimbus-binary)
+      nimbus_binary="${2:?missing nimbus binary}"
+      shift 2
+      ;;
+    --nimbus-version)
+      nimbus_version="${2:?missing nimbus version}"
+      shift 2
+      ;;
+    --source-revision)
+      source_revision="${2:?missing source revision}"
+      shift 2
+      ;;
+    --output-dir)
+      output_dir="${2:?missing output dir}"
+      shift 2
+      ;;
+    *)
+      echo "unexpected build arg: $1" >&2
+      exit 64
+      ;;
+  esac
+done
+
+mkdir -p "${output_dir}"
+{
+  printf 'nimbus_binary=%s\n' "${nimbus_binary}"
+  printf 'nimbus_version=%s\n' "${nimbus_version}"
+  printf 'source_revision=%s\n' "${source_revision}"
+} > "${output_dir}/build-args.txt"
+printf 'local bootc disk\n' > "${output_dir}/nimbus-machine-os.raw"
+EOF
+chmod +x "${machine_os_repo}/scripts/build.sh"
+
+cat > "${guest_binary}" <<'EOF'
+#!/usr/bin/env bash
+echo local guest nimbus
+EOF
+chmod +x "${guest_binary}"
+
+mkdir -p "${local_bootc_output_dir}"
+HOME="${home_dir}" \
+NIMBUS_MACHINE_GUEST_BINARY="${guest_binary}" \
+NIMBUS_MACHINE_OS_LOCAL_VERSION="dev-test" \
+NIMBUS_MACHINE_OS_LOCAL_SOURCE_REVISION="test-revision" \
+bash "${repo_root}/scripts/recreate-nimbus-machine.sh" \
+  --machine team-local \
+  --home "${home_dir}" \
+  --runtime-root "${runtime_root}" \
+  --output-dir "${local_bootc_output_dir}" \
+  --nimbus "${bin_dir}/nimbus" \
+  --machine-os-repo "${machine_os_repo}" \
+  --identity "${tmp_dir}/machine-key" \
+  --volume /Users:/Users \
+  > "${local_bootc_output_dir}/stdout.txt"
+
+local_bootc_raw="${local_bootc_output_dir}/local-bootc-image/nimbus-machine-os.raw"
+grep -E "^local_bootc\\.build[[:space:]]+ok path=.*nimbus-machine-local-bootc-build\\.txt$" \
+  "${local_bootc_output_dir}/summary.txt" >/dev/null
+grep -F "image.source                       ${local_bootc_raw}" \
+  "${local_bootc_output_dir}/summary.txt" >/dev/null
+grep -F "guest.binary.override              ${guest_binary} (baked into local bootc dev image)" \
+  "${local_bootc_output_dir}/summary.txt" >/dev/null
+grep -F "machine.provisioning               bootc-native" \
+  "${local_bootc_output_dir}/summary.txt" >/dev/null
+grep -F -- "--nimbus-binary ${guest_binary}" \
+  "${local_bootc_output_dir}/nimbus-machine-local-bootc-build-command.txt" >/dev/null
+grep -F -- "--nimbus-version dev-test" \
+  "${local_bootc_output_dir}/nimbus-machine-local-bootc-build-command.txt" >/dev/null
+grep -F -- "--source-revision test-revision" \
+  "${local_bootc_output_dir}/nimbus-machine-local-bootc-build-command.txt" >/dev/null
+grep -F -- "--image ${local_bootc_raw}" \
+  "${local_bootc_output_dir}/nimbus-machine-init-command.txt" >/dev/null
+grep -F -- "--bootc-native" \
+  "${local_bootc_output_dir}/nimbus-machine-init-command.txt" >/dev/null
+grep -F '"bootc_native":true' \
+  "${local_bootc_output_dir}/post-diagnostics/machine-config.json" >/dev/null
+grep -F "nimbus_binary=${guest_binary}" \
+  "${local_bootc_output_dir}/local-bootc-image/build-args.txt" >/dev/null
 
 failure_output_dir="${tmp_dir}/failure-output"
 set +e

@@ -22,6 +22,11 @@ options:
                                (default: <repo>/target/debug/nimbus)
   --image <source>             Explicit machine image source override passed to
                                `nimbus machine init` for diagnostics only
+  --bootc-native               Treat an explicit image override as a
+                               bootc-native Nimbus machine image
+  --machine-os-repo <path>     machine-os checkout used to build a local bootc
+                               image when NIMBUS_MACHINE_GUEST_BINARY is set
+                               (default: $NIMBUS_MACHINE_OS_REPO or ../machine-os)
   --identity <path>            SSH identity path for guest debugging
   --ignition-path <path>       Legacy Ignition file for explicit Podman image
                                diagnostic overrides only
@@ -83,12 +88,41 @@ capture_command_allow_failure() {
   return "${status}"
 }
 
+resolve_machine_os_repo() {
+  if [[ -n "${machine_os_repo}" ]]; then
+    printf '%s\n' "${machine_os_repo}"
+    return 0
+  fi
+  if [[ -n "${NIMBUS_MACHINE_OS_REPO:-}" ]]; then
+    printf '%s\n' "${NIMBUS_MACHINE_OS_REPO}"
+    return 0
+  fi
+  local sibling_repo
+  sibling_repo="$(cd "${repo_root}/.." && pwd)/machine-os"
+  if [[ -f "${sibling_repo}/scripts/build.sh" ]]; then
+    printf '%s\n' "${sibling_repo}"
+    return 0
+  fi
+  echo "set --machine-os-repo or NIMBUS_MACHINE_OS_REPO to a machine-os checkout before using NIMBUS_MACHINE_GUEST_BINARY with the bootc-native default" >&2
+  return 64
+}
+
+source_revision_for_local_bootc() {
+  if [[ -n "${NIMBUS_MACHINE_OS_LOCAL_SOURCE_REVISION:-}" ]]; then
+    printf '%s\n' "${NIMBUS_MACHINE_OS_LOCAL_SOURCE_REVISION}"
+    return 0
+  fi
+  git -C "${repo_root}" rev-parse HEAD 2>/dev/null || printf 'unknown\n'
+}
+
 machine_name="default"
 home_dir="${HOME:-}"
 runtime_root="${NIMBUS_MACHINE_RUNTIME_ROOT:-/tmp/nimbus}"
 output_dir=""
 nimbus_bin="${repo_root}/target/debug/nimbus"
 image_path=""
+bootc_native=0
+machine_os_repo=""
 ssh_identity=""
 ignition_file=""
 efi_store=""
@@ -123,6 +157,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --image)
       image_path="${2:?missing image path}"
+      shift 2
+      ;;
+    --bootc-native)
+      bootc_native=1
+      shift
+      ;;
+    --machine-os-repo)
+      machine_os_repo="${2:?missing machine-os repo path}"
       shift 2
       ;;
     --identity)
@@ -187,6 +229,58 @@ if [[ ! -x "${nimbus_bin}" ]]; then
   exit 64
 fi
 
+if [[ -z "${output_dir}" ]]; then
+  output_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-machine-recreate.XXXXXX")"
+else
+  mkdir -p "${output_dir}"
+fi
+
+output_dir="$(cd "${output_dir}" && pwd)"
+summary_file="${output_dir}/summary.txt"
+: > "${summary_file}"
+
+local_bootc_image_built=0
+if [[ -z "${image_path}" && -n "${NIMBUS_MACHINE_GUEST_BINARY:-}" ]]; then
+  if [[ -n "${ignition_file}" ]]; then
+    echo "--ignition-path is only supported with an explicit Podman machine-os --image override; local bootc builds use machine-config provisioning" >&2
+    exit 64
+  fi
+  if [[ ! -x "${NIMBUS_MACHINE_GUEST_BINARY}" ]]; then
+    echo "NIMBUS_MACHINE_GUEST_BINARY is not executable at ${NIMBUS_MACHINE_GUEST_BINARY}" >&2
+    exit 64
+  fi
+  resolved_machine_os_repo="$(resolve_machine_os_repo)"
+  if [[ ! -f "${resolved_machine_os_repo}/scripts/build.sh" ]]; then
+    echo "machine-os build script not found at ${resolved_machine_os_repo}/scripts/build.sh" >&2
+    exit 64
+  fi
+  local_bootc_output_dir="${output_dir}/local-bootc-image"
+  local_bootc_version="${NIMBUS_MACHINE_OS_LOCAL_VERSION:-dev-local}"
+  local_bootc_revision="$(source_revision_for_local_bootc)"
+  local_bootc_build_cmd=(
+    bash
+    "${resolved_machine_os_repo}/scripts/build.sh"
+    --nimbus-binary "${NIMBUS_MACHINE_GUEST_BINARY}"
+    --nimbus-version "${local_bootc_version}"
+    --source-revision "${local_bootc_revision}"
+    --output-dir "${local_bootc_output_dir}"
+  )
+  write_command_file \
+    "${output_dir}/nimbus-machine-local-bootc-build-command.txt" \
+    "${local_bootc_build_cmd[@]}"
+  capture_command_allow_failure \
+    "local_bootc.build" \
+    "${output_dir}/nimbus-machine-local-bootc-build.txt" \
+    "${local_bootc_build_cmd[@]}"
+  image_path="${local_bootc_output_dir}/nimbus-machine-os.raw"
+  if [[ ! -f "${image_path}" ]]; then
+    echo "local bootc build completed but did not produce ${image_path}" >&2
+    exit 70
+  fi
+  bootc_native=1
+  local_bootc_image_built=1
+fi
+
 uses_legacy_podman_image=0
 if [[ -n "${image_path}" ]]; then
   case "${image_path}" in
@@ -200,16 +294,6 @@ if [[ -n "${ignition_file}" && "${uses_legacy_podman_image}" -ne 1 ]]; then
   echo "--ignition-path is only supported by this repair helper with an explicit Podman machine-os --image override; the default Nimbus bootc machine OS uses machine-config provisioning" >&2
   exit 64
 fi
-
-if [[ -z "${output_dir}" ]]; then
-  output_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-machine-recreate.XXXXXX")"
-else
-  mkdir -p "${output_dir}"
-fi
-
-output_dir="$(cd "${output_dir}" && pwd)"
-summary_file="${output_dir}/summary.txt"
-: > "${summary_file}"
 
 print_line "output.dir" "${output_dir}"
 print_line "machine.name" "${machine_name}"
@@ -228,12 +312,17 @@ if [[ "${uses_legacy_podman_image}" -eq 1 ]]; then
   else
     print_line "guest.binary.override" "<release asset>"
   fi
+elif [[ "${local_bootc_image_built}" -eq 1 ]]; then
+  print_line "guest.binary.override" "${NIMBUS_MACHINE_GUEST_BINARY} (baked into local bootc dev image)"
 else
   if [[ -n "${NIMBUS_MACHINE_GUEST_BINARY:-}" ]]; then
-    print_line "guest.binary.override" "ignored for bootc-native default"
+    print_line "guest.binary.override" "ignored for bootc-native image; bake it into a local bootc disk"
   else
     print_line "guest.binary.override" "<baked into bootc image>"
   fi
+fi
+if [[ "${bootc_native}" -eq 1 ]]; then
+  print_line "machine.provisioning" "bootc-native"
 fi
 if [[ -n "${NIMBUS_MACHINE_API_READY_TIMEOUT_SECS:-}" ]]; then
   print_line "machine.api.ready_timeout_secs" "${NIMBUS_MACHINE_API_READY_TIMEOUT_SECS}"
@@ -301,6 +390,9 @@ init_cmd=(
 
 if [[ -n "${image_path}" ]]; then
   init_cmd+=( --image "${image_path}" )
+fi
+if [[ "${bootc_native}" -eq 1 ]]; then
+  init_cmd+=( --bootc-native )
 fi
 
 if [[ -n "${ssh_identity}" ]]; then
