@@ -1168,14 +1168,15 @@ impl ContainerRunnerExecutionConfig {
     }
 
     fn to_backend_config(&self) -> ContainerSandboxBackendConfig {
-        let mut config = ContainerSandboxBackendConfig::default();
-        config.netavark_path = self.netavark_path.clone();
-        config.aardvark_dns_path = self.aardvark_dns_path.clone();
-        config.network_name = self.network_name.clone();
-        config.network_interface = self.network_interface.clone();
-        config.network_subnet = self.network_subnet.clone();
-        config.machine_port_forwarder = self.machine_port_forwarder.clone();
-        config
+        ContainerSandboxBackendConfig {
+            netavark_path: self.netavark_path.clone(),
+            aardvark_dns_path: self.aardvark_dns_path.clone(),
+            network_name: self.network_name.clone(),
+            network_interface: self.network_interface.clone(),
+            network_subnet: self.network_subnet.clone(),
+            machine_port_forwarder: self.machine_port_forwarder.clone(),
+            ..ContainerSandboxBackendConfig::default()
+        }
     }
 }
 
