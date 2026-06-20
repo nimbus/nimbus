@@ -7,17 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.44] - 2026-06-20
 
-### Fixed
+### Documentation
 
-- Publish macOS machine-os service ports through a runner-owned guest TCP bridge so gvproxy reaches default-deny service containers without granting direct container egress.
+- Update CHANGELOG.md for v0.1.42 by @github-actions[bot]
+
+
 
 **Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.43...v0.1.44
 
-## [0.1.43] - 2026-06-19
+## [0.1.43] - 2026-06-20
 
-### Canceled
 
-- Canceled release candidate. The tag was created for an incomplete machine service port-forwarding attempt and was not promoted as the machine-os proof baseline.
 
 **Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.42...v0.1.43
 
