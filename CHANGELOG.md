@@ -15,10 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.42] - 2026-06-19
 
-### Fixed
+### Documentation
 
-- Keep default-deny guest container networks compatible with published service ports by using netavark `no_default_route` instead of internal-network mode.
-- Persist node-agent workload status back into plan-only service sandbox state so machine API list/current views reflect running guest workloads.
+- Update CHANGELOG.md for v0.1.41 by @github-actions[bot]
+
+
 
 **Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.41...v0.1.42
 
