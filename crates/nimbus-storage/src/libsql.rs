@@ -19,6 +19,9 @@ use nimbus_core::{
     TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor,
     TriggerWriteOrigin, WriteOp, WriteOpType,
 };
+use nimbus_crypto::{
+    LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_subject_encryption_key,
+};
 use reqwest::Client as HttpClient;
 use reqwest::header::AUTHORIZATION;
 use rusqlite::{Connection as LocalSqliteConnection, params};
@@ -39,9 +42,6 @@ use crate::async_storage::{
     map_executor_permit_error,
 };
 use crate::commit_log::{deserialize_tenant_event_record, serialize_tenant_event_record};
-use crate::encryption::{
-    LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_database_encryption_key,
-};
 use crate::runtime_bridge::{bridge_tokio_runtime, bridge_tokio_runtime_local};
 use crate::simulation::{Clock, FaultInjector, NoopFaultInjector, SystemClock};
 use crate::sqlite::{
@@ -486,7 +486,7 @@ impl LibsqlReplicaTenantStore {
         let tenant_id = self.tenant_id.clone();
         let next_store = {
             let dek = if let Some(provider) = provider {
-                Some(resolve_database_encryption_key(
+                Some(resolve_subject_encryption_key(
                     path_for_materialize.as_path(),
                     provider.as_ref(),
                     &LocalKeySubject::libsql_cache(tenant_id, LIBSQL_REPLICA_FILENAME),

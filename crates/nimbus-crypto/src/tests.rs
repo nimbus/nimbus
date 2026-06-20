@@ -36,7 +36,7 @@ fn manifest_file_round_trip() {
         provider::KeyProviderKind::MasterKeyFile {
             path: "/secure/master.key".to_string(),
         },
-        key::WrappedDatabaseKey::new(
+        key::WrappedDataKey::new(
             key::WrappingCipher::Aes256GcmSiv,
             vec![1, 2, 3, 4, 5, 6, 7, 8],
         ),
@@ -66,7 +66,7 @@ fn manifest_write_creates_missing_parent_directory() {
         provider::KeyProviderKind::MasterKeyFile {
             path: "/secure/master.key".to_string(),
         },
-        key::WrappedDatabaseKey::new(
+        key::WrappedDataKey::new(
             key::WrappingCipher::Aes256GcmSiv,
             vec![9, 8, 7, 6, 5, 4, 3, 2],
         ),
@@ -113,7 +113,7 @@ fn master_key_file_provider_manifest_integration() {
 
     // Generate a key using this header for AAD binding
     let generated = provider
-        .generate_database_key(&subject, &manifest_header)
+        .generate_data_key(&subject, &manifest_header)
         .expect("key should generate");
 
     // Store the plaintext before consuming into_wrapped
@@ -135,7 +135,7 @@ fn master_key_file_provider_manifest_integration() {
 
     // Unwrap the key using the provider — the loaded header must match
     let unwrapped = provider
-        .unwrap_database_key(&subject, &loaded.wrapped_key, &loaded.header)
+        .unwrap_data_key(&subject, &loaded.wrapped_key, &loaded.header)
         .expect("unwrap should succeed");
 
     assert_eq!(loaded.header.cipher, ManifestCipher::SqlCipher);
@@ -171,7 +171,7 @@ fn key_directory_provider_manifest_integration() {
 
     // Generate a key using this header
     let generated = provider
-        .generate_database_key(&subject, &manifest_header)
+        .generate_data_key(&subject, &manifest_header)
         .expect("key should generate");
 
     let expected_plaintext = *generated.plaintext();
@@ -192,7 +192,7 @@ fn key_directory_provider_manifest_integration() {
 
     // Unwrap the key using the provider
     let unwrapped = provider
-        .unwrap_database_key(&subject, &loaded.wrapped_key, &loaded.header)
+        .unwrap_data_key(&subject, &loaded.wrapped_key, &loaded.header)
         .expect("unwrap should succeed");
 
     assert_eq!(loaded.header.cipher, ManifestCipher::SqlCipher);
@@ -217,10 +217,10 @@ fn providers_generate_unique_deks() {
 
     // Generate multiple keys for the same subject
     let key1 = provider
-        .generate_database_key(&subject, &header)
+        .generate_data_key(&subject, &header)
         .expect("key1 should generate");
     let key2 = provider
-        .generate_database_key(&subject, &header)
+        .generate_data_key(&subject, &header)
         .expect("key2 should generate");
 
     // Plaintext keys should be different (random)
@@ -250,17 +250,17 @@ fn master_key_derives_different_wrapping_keys_per_subject() {
 
     // Generate keys for both subjects
     let key1 = provider
-        .generate_database_key(&subject1, &header1)
+        .generate_data_key(&subject1, &header1)
         .expect("key1 should generate");
     let key2 = provider
-        .generate_database_key(&subject2, &header2)
+        .generate_data_key(&subject2, &header2)
         .expect("key2 should generate");
 
     // Cross-subject unwrap should fail (different HKDF derivation path)
-    let result = provider.unwrap_database_key(&subject2, key1.wrapped(), &header1);
+    let result = provider.unwrap_data_key(&subject2, key1.wrapped(), &header1);
     assert!(result.is_err());
 
-    let result = provider.unwrap_database_key(&subject1, key2.wrapped(), &header2);
+    let result = provider.unwrap_data_key(&subject1, key2.wrapped(), &header2);
     assert!(result.is_err());
 }
 
@@ -280,7 +280,7 @@ fn control_plane_subject_encryption() {
 
     // Generate a key
     let generated = provider
-        .generate_database_key(&subject, &header)
+        .generate_data_key(&subject, &header)
         .expect("key should generate");
 
     // Create a manifest (using redb cipher for control plane)
@@ -313,12 +313,12 @@ fn artifact_subject_encryption() {
 
     // Generate a key
     let generated = provider
-        .generate_database_key(&subject, &header)
+        .generate_data_key(&subject, &header)
         .expect("key should generate");
 
     // Unwrap should work
     let unwrapped = provider
-        .unwrap_database_key(&subject, generated.wrapped(), &header)
+        .unwrap_data_key(&subject, generated.wrapped(), &header)
         .expect("unwrap should succeed");
 
     assert_eq!(generated.plaintext(), unwrapped.as_bytes());
@@ -341,7 +341,7 @@ fn manifest_tampering_detected() {
 
     // Generate a key
     let generated = provider
-        .generate_database_key(&subject, &header)
+        .generate_data_key(&subject, &header)
         .expect("key should generate");
 
     // Create a manifest
@@ -366,8 +366,7 @@ fn manifest_tampering_detected() {
 
     // Try to unwrap with the tampered subject - should fail due to HKDF derivation mismatch
     let loaded = KeyManifest::read_for(&protected_path).expect("read should succeed");
-    let result =
-        provider.unwrap_database_key(&tampered_subject, &loaded.wrapped_key, &loaded.header);
+    let result = provider.unwrap_data_key(&tampered_subject, &loaded.wrapped_key, &loaded.header);
     assert!(result.is_err());
 }
 
@@ -388,7 +387,7 @@ fn libsql_cache_subject_encryption() {
 
     // Generate a key
     let generated = provider
-        .generate_database_key(&subject, &header)
+        .generate_data_key(&subject, &header)
         .expect("key should generate");
 
     // Create manifest with libsql cipher

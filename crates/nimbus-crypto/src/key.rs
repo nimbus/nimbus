@@ -16,8 +16,10 @@ pub struct DataEncryptionKey {
 }
 
 impl DataEncryptionKey {
-    pub fn new(bytes: [u8; 32]) -> Self {
-        Self { bytes }
+    pub fn new(mut bytes: [u8; 32]) -> Self {
+        let key = Self { bytes };
+        bytes.zeroize();
+        key
     }
 
     pub fn as_bytes(&self) -> &[u8; 32] {
@@ -47,7 +49,7 @@ impl fmt::Debug for DataEncryptionKey {
     }
 }
 
-/// A freshly generated database encryption key with its wrapped form.
+/// A freshly generated data-encryption key with its wrapped form.
 ///
 /// The plaintext DEK is guaranteed to be zeroed when this value is dropped,
 /// using compiler-barrier-protected writes via the `zeroize` crate.
@@ -55,7 +57,7 @@ impl fmt::Debug for DataEncryptionKey {
 /// This type intentionally does NOT implement `Clone` — cloning would create
 /// a second copy of plaintext key material that might escape zeroing.
 #[derive(ZeroizeOnDrop)]
-pub struct GeneratedDatabaseKey {
+pub struct GeneratedDataKey {
     /// The plaintext 256-bit data-encryption key.
     ///
     /// This is only held in memory and never persisted directly.
@@ -63,12 +65,12 @@ pub struct GeneratedDatabaseKey {
 
     /// The wrapped (encrypted) form of the DEK, suitable for storage.
     #[zeroize(skip)]
-    wrapped: Option<WrappedDatabaseKey>,
+    wrapped: Option<WrappedDataKey>,
 }
 
-impl GeneratedDatabaseKey {
+impl GeneratedDataKey {
     /// Creates a new generated key from plaintext and wrapped forms.
-    pub fn new(plaintext: [u8; 32], wrapped: WrappedDatabaseKey) -> Self {
+    pub fn new(plaintext: [u8; 32], wrapped: WrappedDataKey) -> Self {
         Self {
             plaintext: Some(DataEncryptionKey::new(plaintext)),
             wrapped: Some(wrapped),
@@ -81,55 +83,55 @@ impl GeneratedDatabaseKey {
     pub fn plaintext(&self) -> &[u8; 32] {
         self.plaintext
             .as_ref()
-            .expect("generated database key must retain plaintext until consumed")
+            .expect("generated data key must retain plaintext until consumed")
             .as_bytes()
     }
 
     /// Returns the wrapped DEK for storage in a sidecar manifest.
-    pub fn wrapped(&self) -> &WrappedDatabaseKey {
+    pub fn wrapped(&self) -> &WrappedDataKey {
         self.wrapped
             .as_ref()
-            .expect("generated database key must retain wrapped form until consumed")
+            .expect("generated data key must retain wrapped form until consumed")
     }
 
     /// Consumes the generated key and returns the wrapped form.
     ///
     /// The stored plaintext field is zeroed before the wrapped key is returned.
-    pub fn into_wrapped(mut self) -> WrappedDatabaseKey {
+    pub fn into_wrapped(mut self) -> WrappedDataKey {
         self.zeroize_plaintext_and_take_wrapped()
     }
 
     pub fn into_plaintext(mut self) -> DataEncryptionKey {
         self.plaintext
             .take()
-            .expect("generated database key must retain plaintext until consumed")
+            .expect("generated data key must retain plaintext until consumed")
     }
 
-    fn zeroize_plaintext_and_take_wrapped(&mut self) -> WrappedDatabaseKey {
+    fn zeroize_plaintext_and_take_wrapped(&mut self) -> WrappedDataKey {
         if let Some(plaintext) = self.plaintext.as_mut() {
             plaintext.zeroize();
         }
         self.wrapped
             .take()
-            .expect("generated database key must retain wrapped form until consumed")
+            .expect("generated data key must retain wrapped form until consumed")
     }
 }
 
-impl fmt::Debug for GeneratedDatabaseKey {
+impl fmt::Debug for GeneratedDataKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("GeneratedDatabaseKey")
+        f.debug_struct("GeneratedDataKey")
             .field("plaintext", &"[REDACTED]")
             .field("wrapped", &self.wrapped)
             .finish()
     }
 }
 
-/// A wrapped (encrypted) database encryption key.
+/// A wrapped (encrypted) data-encryption key.
 ///
 /// This is the form stored in sidecar manifests. It can only be unwrapped
 /// by the key provider that created it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WrappedDatabaseKey {
+pub struct WrappedDataKey {
     /// The cipher used to wrap the key.
     pub cipher: WrappingCipher,
 
@@ -140,7 +142,7 @@ pub struct WrappedDatabaseKey {
     pub ciphertext: Vec<u8>,
 }
 
-impl WrappedDatabaseKey {
+impl WrappedDataKey {
     /// Creates a new wrapped key.
     pub fn new(cipher: WrappingCipher, ciphertext: Vec<u8>) -> Self {
         Self { cipher, ciphertext }
@@ -156,7 +158,7 @@ impl WrappedDatabaseKey {
     }
 }
 
-/// The cipher used to wrap database encryption keys.
+/// The cipher used to wrap data-encryption keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WrappingCipher {
     /// AES-256-GCM-SIV as specified in RFC 8452.
@@ -199,8 +201,8 @@ mod tests {
     #[test]
     fn generated_key_debug_redacts_plaintext() {
         let plaintext = [0xABu8; 32];
-        let wrapped = WrappedDatabaseKey::new(WrappingCipher::Aes256GcmSiv, vec![0u8; 60]);
-        let key = GeneratedDatabaseKey::new(plaintext, wrapped);
+        let wrapped = WrappedDataKey::new(WrappingCipher::Aes256GcmSiv, vec![0u8; 60]);
+        let key = GeneratedDataKey::new(plaintext, wrapped);
 
         let debug = format!("{key:?}");
 
@@ -221,7 +223,7 @@ mod tests {
     #[test]
     fn wrapped_key_expected_length_matches_cipher() {
         assert_eq!(
-            WrappedDatabaseKey::expected_ciphertext_len(WrappingCipher::Aes256GcmSiv),
+            WrappedDataKey::expected_ciphertext_len(WrappingCipher::Aes256GcmSiv),
             60
         );
     }
@@ -237,8 +239,8 @@ mod tests {
     #[test]
     fn into_wrapped_returns_wrapped_key() {
         let plaintext = [0x42u8; 32];
-        let expected_wrapped = WrappedDatabaseKey::new(WrappingCipher::Aes256GcmSiv, vec![1, 2, 3]);
-        let key = GeneratedDatabaseKey::new(plaintext, expected_wrapped.clone());
+        let expected_wrapped = WrappedDataKey::new(WrappingCipher::Aes256GcmSiv, vec![1, 2, 3]);
+        let key = GeneratedDataKey::new(plaintext, expected_wrapped.clone());
 
         let recovered = key.into_wrapped();
         assert_eq!(recovered, expected_wrapped);
@@ -247,8 +249,8 @@ mod tests {
     #[test]
     fn taking_wrapped_key_zeroizes_stored_plaintext() {
         let plaintext = [0x42u8; 32];
-        let expected_wrapped = WrappedDatabaseKey::new(WrappingCipher::Aes256GcmSiv, vec![1, 2, 3]);
-        let mut key = GeneratedDatabaseKey::new(plaintext, expected_wrapped.clone());
+        let expected_wrapped = WrappedDataKey::new(WrappingCipher::Aes256GcmSiv, vec![1, 2, 3]);
+        let mut key = GeneratedDataKey::new(plaintext, expected_wrapped.clone());
 
         let recovered = key.zeroize_plaintext_and_take_wrapped();
 
@@ -266,8 +268,8 @@ mod tests {
     #[test]
     fn generated_key_can_move_plaintext_without_copyable_array_escape() {
         let plaintext = [0x42u8; 32];
-        let wrapped = WrappedDatabaseKey::new(WrappingCipher::Aes256GcmSiv, vec![1, 2, 3]);
-        let key = GeneratedDatabaseKey::new(plaintext, wrapped);
+        let wrapped = WrappedDataKey::new(WrappingCipher::Aes256GcmSiv, vec![1, 2, 3]);
+        let key = GeneratedDataKey::new(plaintext, wrapped);
 
         let moved_plaintext = key.into_plaintext();
 

@@ -2,10 +2,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use nimbus_core::{Error, Result};
+use nimbus_crypto::LocalKeyProvider;
 use nimbus_storage::{
     Clock, EmbeddedProviderKind, EmbeddedRedbControlPlaneProvider, EmbeddedRedbProvider,
     EmbeddedSqliteProvider, FaultInjector, LibsqlReplicaProvider, LibsqlReplicaProviderConfig,
-    LocalKeyProvider, MySqlProvider, MySqlProviderConfig, PostgresProvider, PostgresProviderConfig,
+    MySqlProvider, MySqlProviderConfig, PostgresProvider, PostgresProviderConfig,
 };
 
 use super::{BackgroundExecutor, Engine, EngineBootstrapParts, encryption};

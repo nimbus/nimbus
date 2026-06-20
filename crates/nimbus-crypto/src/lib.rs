@@ -13,32 +13,44 @@
 
 #[cfg(feature = "aws-kms")]
 mod aws_kms;
+mod framed;
 mod key;
 mod key_directory;
 mod manifest;
 mod master_key_file;
+mod materials;
 mod provider;
-mod redb_rotation;
+mod rotation;
 mod runtime;
 mod subject;
 
 #[cfg(feature = "aws-kms")]
 pub use aws_kms::AwsKmsKeyProvider;
-pub use key::{DataEncryptionKey, GeneratedDatabaseKey, WrappedDatabaseKey};
+pub use framed::{
+    Aes256GcmSivFramedAead, FRAME_PLAINTEXT_LEN, FramedAead, FramedAeadSecurity,
+    FramedAlgorithmSuite, FramedBlobHeader, FramedBlobKey, FramedBlobSeed, FramedOpenSession,
+    FramedSealSession, FramedSeedKind, KEY_SEED_LEN, MAX_PLAINTEXT_BYTES, MAX_WRAPPED_DATA_KEYS,
+    NONCE_LEN, open_framed_blob, open_framed_blob_range, random_framed_salt, seal_framed_blob,
+};
+pub use key::{DataEncryptionKey, GeneratedDataKey, WrappedDataKey, WrappingCipher};
 pub use key_directory::KeyDirectoryProvider;
 pub use manifest::{
     KeyManifest, KeyManifestHeader, ManifestCipher, ManifestError, ManifestReadError,
     ManifestWriteError,
 };
 pub use master_key_file::MasterKeyFileProvider;
+pub use materials::{
+    AlgorithmSuite, CommitmentMetadata, CryptoMaterials, CryptoShredError, CryptoShredOutcome,
+    CryptoShredRegistry, DekTemplate, EnvelopeKeyring, KeyringTrace, KeyringTraceEvent,
+    ProviderFailureKind, ProviderFamily, ProviderIdentity, RevocableDataKey, crypto_shred_subject,
+    shred_tombstone_path,
+};
 pub use provider::{LocalKeyProvider, LocalKeyProviderError};
-pub use redb_rotation::{
-    commit_staged_redb_dek_rotation, recover_interrupted_redb_dek_rotation,
-    redb_dek_rotation_database_stage_path, redb_dek_rotation_manifest_stage_path,
+pub use rotation::{
+    commit_staged_dek_rotation, dek_rotation_data_stage_path, dek_rotation_manifest_stage_path,
+    recover_interrupted_dek_rotation,
 };
-pub use runtime::{
-    generate_database_manifest, resolve_database_encryption_key, unwrap_database_manifest_key,
-};
+pub use runtime::{generate_key_manifest, resolve_subject_encryption_key, unwrap_key_manifest};
 pub use subject::{LocalArtifactRole, LocalDatabaseRole, LocalKeySubject, LocalKeySubjectKind};
 
 #[cfg(test)]

@@ -43,6 +43,16 @@ pub use nimbus_sandbox::{
     SandboxSpec, SandboxStatus, validate_sandbox_mounts, validate_tenant_volume_name,
 };
 // Server integration and transport construction helpers.
+#[cfg(feature = "aws-kms")]
+pub use nimbus_crypto::AwsKmsKeyProvider;
+pub use nimbus_crypto::{
+    GeneratedDataKey, KeyDirectoryProvider, KeyManifest, KeyManifestHeader, LocalArtifactRole,
+    LocalDatabaseRole, LocalKeyProvider, LocalKeyProviderError, LocalKeySubject,
+    LocalKeySubjectKind, ManifestCipher, ManifestError, ManifestReadError, ManifestWriteError,
+    MasterKeyFileProvider, WrappedDataKey, commit_staged_dek_rotation,
+    dek_rotation_data_stage_path, dek_rotation_manifest_stage_path, generate_key_manifest,
+    recover_interrupted_dek_rotation, resolve_subject_encryption_key, unwrap_key_manifest,
+};
 pub use nimbus_server::{
     BuiltInServiceSpec, ConvexRegistry, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
     ExternalServiceSpec, LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind,
@@ -51,24 +61,13 @@ pub use nimbus_server::{
     ServiceBackend, ServiceDefinitionCatalog, ServiceInstanceCatalog, ServiceManager, build_router,
     serve,
 };
-#[cfg(feature = "aws-kms")]
-pub use nimbus_storage::AwsKmsKeyProvider;
 // Storage and encryption helpers.
 pub use nimbus_storage::EmbeddedProviderKind;
 pub use nimbus_storage::PointInTimeRestoreArchive;
 pub use nimbus_storage::TenantStore;
-pub use nimbus_storage::{
-    KeyDirectoryProvider, KeyManifest, KeyManifestHeader, LOGICAL_PAGE_SIZE, LocalArtifactRole,
-    LocalDatabaseRole, LocalKeyProvider, LocalKeySubject, LocalKeySubjectKind, ManifestCipher,
-    MasterKeyFileProvider, PHYSICAL_PAGE_SIZE, generate_database_manifest,
-    resolve_database_encryption_key, unwrap_database_manifest_key,
-};
+pub use nimbus_storage::{LOGICAL_PAGE_SIZE, PHYSICAL_PAGE_SIZE};
 pub use nimbus_storage::{
     checkpoint_encrypted_database_at_path, export_encrypted_to_plaintext,
     export_plaintext_to_encrypted, migrate_encrypted_to_plaintext, migrate_plaintext_to_encrypted,
     rekey_encrypted_database, rekey_encrypted_database_at_path,
-};
-pub use nimbus_storage::{
-    commit_staged_redb_dek_rotation, recover_interrupted_redb_dek_rotation,
-    redb_dek_rotation_database_stage_path, redb_dek_rotation_manifest_stage_path,
 };

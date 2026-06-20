@@ -130,7 +130,7 @@ pub(super) fn open_benchmark_sqlite_connection(
             .and_then(std::ffi::OsStr::to_str)
             .ok_or("sqlite benchmark path must have a UTF-8 filename")?;
         let subject = LocalKeySubject::sqlite_tenant(tenant_id.clone(), logical_name);
-        let dek = resolve_database_encryption_key(
+        let dek = resolve_subject_encryption_key(
             sqlite_path,
             &provider,
             &subject,

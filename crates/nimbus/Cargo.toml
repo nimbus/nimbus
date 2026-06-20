@@ -10,7 +10,7 @@ publish.workspace = true
 workspace = true
 
 [features]
-aws-kms = ["nimbus-engine/aws-kms", "nimbus-storage/aws-kms"]
+aws-kms = ["nimbus-crypto/aws-kms", "nimbus-engine/aws-kms", "nimbus-storage/aws-kms"]
 bun-jsc-linked-adapter = [
     "nimbus-runtime/bun-jsc-linked-adapter",
     "nimbus-server/bun-jsc-linked-adapter",
@@ -20,6 +20,7 @@ bun-jsc-linked-adapter = [
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-core = { path = "../nimbus-core" }
+nimbus-crypto = { path = "../nimbus-crypto" }
 nimbus-engine = { path = "../nimbus-engine" }
 nimbus-server = { path = "../nimbus-server" }
 nimbus-storage = { path = "../nimbus-storage" }

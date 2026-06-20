@@ -1,7 +1,5 @@
 use super::*;
-use crate::encryption::{
-    KeyManifest, LocalKeySubject, ManifestCipher, resolve_database_encryption_key,
-};
+use nimbus_crypto::{KeyManifest, LocalKeySubject, ManifestCipher, resolve_subject_encryption_key};
 
 impl LibsqlReplicaProvider {
     pub async fn connect(config: LibsqlReplicaProviderConfig) -> Result<Self> {
@@ -271,7 +269,7 @@ impl LibsqlReplicaProvider {
         self.runtime_handle
             .spawn_blocking(move || {
                 let encryption_dek = if let Some(provider) = provider {
-                    Some(resolve_database_encryption_key(
+                    Some(resolve_subject_encryption_key(
                         path_for_publish.as_path(),
                         provider.as_ref(),
                         &subject,
@@ -333,7 +331,7 @@ impl LibsqlReplicaProvider {
             .runtime_handle
             .spawn_blocking(move || {
                 if let Some(provider) = provider {
-                    let key = resolve_database_encryption_key(
+                    let key = resolve_subject_encryption_key(
                         &path_for_open,
                         provider.as_ref(),
                         &subject,

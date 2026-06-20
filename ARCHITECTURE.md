@@ -12,7 +12,7 @@ repo and find the owning crate. The full architecture tour lives at
 
 ### Rust crates (`crates/`)
 
-All 27 workspace members, per the root `Cargo.toml`.
+All 30 workspace members, per the root `Cargo.toml`.
 
 | Crate | Role |
 | --- | --- |
@@ -22,10 +22,13 @@ All 27 workspace members, per the root `Cargo.toml`.
 | `nimbus-assets` | Embedded production asset catalog (distribution payloads, UI bytes, templates). |
 | `nimbus-auth` | Application auth contract: `ApplicationAuthVerifier` bearer-token verification into `InvocationAuth`. |
 | `nimbus-bin` | The `nimbus` CLI binary: `start`, `dev`, `deploy`, `run`, `sandbox`, `init`, `machine`, `backup`, `compose`, `encryption`, codegen, and more. |
+| `nimbus-blob` | Content-addressed per-tenant byte storage and blob encryption decorator, with framed AEAD sourced from `nimbus-crypto`. |
 | `nimbus-bridge` | Runtime host bridge: bootstraps per-invocation host state and routes V8 host calls into the engine. |
 | `nimbus-cloud-functions` | Cloud Functions-compatible adapter contracts and runtime bridge. |
+| `nimbus-code-index` | Deploy-time structural JavaScript/TypeScript code-navigation index built with oxc. |
 | `nimbus-convex` | Convex protocol semantics: function registry, subscriptions, document identity, host-call payloads. |
 | `nimbus-core` | Shared types and validation. Zero I/O. |
+| `nimbus-crypto` | At-rest envelope/keyring primitives, crypto-shred, and framed blob AEAD; depends only on `nimbus-core` plus external crypto crates. |
 | `nimbus-dynamodb` | DynamoDB wire-protocol adapter: AttributeValue conversion, expressions, operation dispatch, SigV4, streams. |
 | `nimbus-engine` | Central coordinator (`Engine`): mutation path, query evaluation, subscriptions, scheduler, triggers. |
 | `nimbus-firebase` | Firestore protocol semantics: REST/gRPC request models, queries, transactions, serialization. |

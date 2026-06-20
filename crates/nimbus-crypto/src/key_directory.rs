@@ -13,7 +13,7 @@ use rand::RngCore;
 use rand::rngs::OsRng;
 use zeroize::{Zeroize, Zeroizing};
 
-use super::key::{DataEncryptionKey, GeneratedDatabaseKey, WrappedDatabaseKey, WrappingCipher};
+use super::key::{DataEncryptionKey, GeneratedDataKey, WrappedDataKey, WrappingCipher};
 use super::manifest::KeyManifestHeader;
 use super::provider::{
     KeyProviderKind, KeyProviderResult, LocalKeyProvider, LocalKeyProviderError,
@@ -104,7 +104,7 @@ impl KeyDirectoryProvider {
         subject: &LocalKeySubject,
         plaintext: &[u8; 32],
         header: &KeyManifestHeader,
-    ) -> KeyProviderResult<WrappedDatabaseKey> {
+    ) -> KeyProviderResult<WrappedDataKey> {
         let wrapping_key = self.read_wrapping_key(subject)?;
         let cipher = Aes256GcmSiv::new_from_slice(&wrapping_key[..]).map_err(|e| {
             LocalKeyProviderError::WrapError {
@@ -136,7 +136,7 @@ impl KeyDirectoryProvider {
         let mut full_ciphertext = nonce_bytes.to_vec();
         full_ciphertext.extend_from_slice(&ciphertext);
 
-        Ok(WrappedDatabaseKey::new(
+        Ok(WrappedDataKey::new(
             WrappingCipher::Aes256GcmSiv,
             full_ciphertext,
         ))
@@ -146,7 +146,7 @@ impl KeyDirectoryProvider {
     fn unwrap_key(
         &self,
         subject: &LocalKeySubject,
-        wrapped: &WrappedDatabaseKey,
+        wrapped: &WrappedDataKey,
         header: &KeyManifestHeader,
     ) -> KeyProviderResult<DataEncryptionKey> {
         if wrapped.cipher != WrappingCipher::Aes256GcmSiv {
@@ -155,8 +155,7 @@ impl KeyDirectoryProvider {
             });
         }
 
-        let expected_len =
-            WrappedDatabaseKey::expected_ciphertext_len(WrappingCipher::Aes256GcmSiv);
+        let expected_len = WrappedDataKey::expected_ciphertext_len(WrappingCipher::Aes256GcmSiv);
         if wrapped.ciphertext.len() != expected_len {
             return Err(LocalKeyProviderError::UnwrapError {
                 message: format!(
@@ -180,7 +179,7 @@ impl KeyDirectoryProvider {
         // Use header AAD for authenticated decryption
         let aad = header.to_aad();
 
-        let plaintext = cipher
+        let mut plaintext = cipher
             .decrypt(
                 nonce,
                 aes_gcm_siv::aead::Payload {
@@ -203,6 +202,7 @@ impl KeyDirectoryProvider {
 
         let mut key = [0u8; 32];
         key.copy_from_slice(&plaintext);
+        plaintext.zeroize();
         Ok(DataEncryptionKey::new(key))
     }
 }
@@ -219,35 +219,35 @@ fn encode_descriptor_stem(descriptor: &str) -> String {
 }
 
 impl LocalKeyProvider for KeyDirectoryProvider {
-    fn generate_database_key(
+    fn generate_data_key(
         &self,
         subject: &LocalKeySubject,
         header: &KeyManifestHeader,
-    ) -> KeyProviderResult<GeneratedDatabaseKey> {
+    ) -> KeyProviderResult<GeneratedDataKey> {
         // Generate a random 256-bit DEK from OS entropy
-        let mut plaintext = [0u8; 32];
-        OsRng.fill_bytes(&mut plaintext);
+        let mut plaintext = Zeroizing::new([0u8; 32]);
+        OsRng.fill_bytes(&mut plaintext[..]);
 
         let wrapped = self.wrap_key(subject, &plaintext, header)?;
 
-        Ok(GeneratedDatabaseKey::new(plaintext, wrapped))
+        Ok(GeneratedDataKey::new(*plaintext, wrapped))
     }
 
-    fn unwrap_database_key(
+    fn unwrap_data_key(
         &self,
         subject: &LocalKeySubject,
-        wrapped: &WrappedDatabaseKey,
+        wrapped: &WrappedDataKey,
         header: &KeyManifestHeader,
     ) -> KeyProviderResult<DataEncryptionKey> {
         self.unwrap_key(subject, wrapped, header)
     }
 
-    fn rewrap_database_key(
+    fn rewrap_data_key(
         &self,
         subject: &LocalKeySubject,
         plaintext: &[u8; 32],
         header: &KeyManifestHeader,
-    ) -> KeyProviderResult<WrappedDatabaseKey> {
+    ) -> KeyProviderResult<WrappedDataKey> {
         self.wrap_key(subject, plaintext, header)
     }
 
@@ -263,7 +263,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::encryption::manifest::{MANIFEST_VERSION, ManifestCipher};
+    use crate::manifest::{MANIFEST_VERSION, ManifestCipher};
     use nimbus_core::TenantId;
 
     fn write_test_key(dir: &std::path::Path, subject: &LocalKeySubject) -> PathBuf {
@@ -339,7 +339,7 @@ mod tests {
 
         write_test_key(dir.path(), &first);
         let second_header = test_header(&second, &provider);
-        let second_result = provider.generate_database_key(&second, &second_header);
+        let second_result = provider.generate_data_key(&second, &second_header);
         assert!(matches!(
             second_result,
             Err(LocalKeyProviderError::KeyFileNotFound { .. })
@@ -368,7 +368,7 @@ mod tests {
         fs::write(&key_path, [0u8; 16]).expect("bad key should write");
 
         let header = test_header(&subject, &provider);
-        let result = provider.generate_database_key(&subject, &header);
+        let result = provider.generate_data_key(&subject, &header);
         assert!(matches!(
             result,
             Err(LocalKeyProviderError::InvalidKeyFileSize { actual: 16, .. })
@@ -385,7 +385,7 @@ mod tests {
         let subject = LocalKeySubject::sqlite_tenant(tenant_id, "missing.sqlite3");
 
         let header = test_header(&subject, &provider);
-        let result = provider.generate_database_key(&subject, &header);
+        let result = provider.generate_data_key(&subject, &header);
         assert!(matches!(
             result,
             Err(LocalKeyProviderError::KeyFileNotFound { .. })
@@ -420,11 +420,11 @@ mod tests {
         let header = test_header(&subject, &provider);
 
         let generated = provider
-            .generate_database_key(&subject, &header)
+            .generate_data_key(&subject, &header)
             .expect("key should generate");
 
         let unwrapped = provider
-            .unwrap_database_key(&subject, generated.wrapped(), &header)
+            .unwrap_data_key(&subject, generated.wrapped(), &header)
             .expect("key should unwrap");
 
         assert_eq!(generated.plaintext(), unwrapped.as_bytes());
@@ -447,11 +447,11 @@ mod tests {
         let header2 = test_header(&subject2, &provider);
 
         // subject1 should work
-        let result1 = provider.generate_database_key(&subject1, &header1);
+        let result1 = provider.generate_data_key(&subject1, &header1);
         assert!(result1.is_ok());
 
         // subject2 should fail (no key file)
-        let result2 = provider.generate_database_key(&subject2, &header2);
+        let result2 = provider.generate_data_key(&subject2, &header2);
         assert!(matches!(
             result2,
             Err(LocalKeyProviderError::KeyFileNotFound { .. })
@@ -477,10 +477,10 @@ mod tests {
         let first_header = test_header(&first, &provider);
         let second_header = test_header(&second, &provider);
         let generated = provider
-            .generate_database_key(&first, &first_header)
+            .generate_data_key(&first, &first_header)
             .expect("first subject should generate");
 
-        let result = provider.unwrap_database_key(&second, generated.wrapped(), &second_header);
+        let result = provider.unwrap_data_key(&second, generated.wrapped(), &second_header);
         assert!(matches!(
             result,
             Err(LocalKeyProviderError::UnwrapError { .. })
@@ -500,18 +500,18 @@ mod tests {
 
         // Generate a key and extract the plaintext
         let generated = provider
-            .generate_database_key(&subject, &header)
+            .generate_data_key(&subject, &header)
             .expect("key should generate");
         let plaintext = *generated.plaintext();
 
         // Rewrap the same plaintext
         let rewrapped = provider
-            .rewrap_database_key(&subject, &plaintext, &header)
+            .rewrap_data_key(&subject, &plaintext, &header)
             .expect("rewrap should succeed");
 
         // Unwrap and verify
         let unwrapped = provider
-            .unwrap_database_key(&subject, &rewrapped, &header)
+            .unwrap_data_key(&subject, &rewrapped, &header)
             .expect("unwrap should succeed");
 
         assert_eq!(unwrapped.as_bytes(), &plaintext);
@@ -530,7 +530,7 @@ mod tests {
 
         // Generate a key
         let generated = provider
-            .generate_database_key(&subject, &header)
+            .generate_data_key(&subject, &header)
             .expect("key should generate");
 
         // Overwrite the key file with different content
@@ -538,7 +538,7 @@ mod tests {
         fs::write(&key_path, [0xABu8; 32]).expect("new key should write");
 
         // Unwrap should fail
-        let result = provider.unwrap_database_key(&subject, generated.wrapped(), &header);
+        let result = provider.unwrap_data_key(&subject, generated.wrapped(), &header);
         assert!(matches!(
             result,
             Err(LocalKeyProviderError::UnwrapError { .. })

@@ -6,7 +6,6 @@ pub mod commit_log;
 pub mod diagnostics;
 pub mod document_codec;
 pub mod encrypted_redb;
-pub mod encryption;
 pub mod format;
 pub mod index;
 pub mod keys;
@@ -46,17 +45,6 @@ pub use diagnostics::{
 pub use encrypted_redb::{
     ENCRYPTED_FORMAT_VERSION, EncryptedFileBackend, EncryptedMemoryBackend, LOGICAL_PAGE_SIZE,
     PHYSICAL_PAGE_SIZE,
-};
-#[cfg(feature = "aws-kms")]
-pub use encryption::AwsKmsKeyProvider;
-pub use encryption::{
-    GeneratedDatabaseKey, KeyDirectoryProvider, KeyManifest, KeyManifestHeader, LocalArtifactRole,
-    LocalDatabaseRole, LocalKeyProvider, LocalKeyProviderError, LocalKeySubject,
-    LocalKeySubjectKind, ManifestCipher, ManifestError, ManifestReadError, ManifestWriteError,
-    MasterKeyFileProvider, WrappedDatabaseKey, commit_staged_redb_dek_rotation,
-    generate_database_manifest, recover_interrupted_redb_dek_rotation,
-    redb_dek_rotation_database_stage_path, redb_dek_rotation_manifest_stage_path,
-    resolve_database_encryption_key, unwrap_database_manifest_key,
 };
 pub use format::{
     CURRENT_DOCUMENT_VERSION_STORAGE_FORMAT, CURRENT_INDEX_VERSION_STORAGE_FORMAT,

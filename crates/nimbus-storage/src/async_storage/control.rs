@@ -3,13 +3,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use nimbus_core::Result;
+use nimbus_crypto::{
+    LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_subject_encryption_key,
+};
 use parking_lot::Mutex;
 use tokio::runtime::Handle as TokioRuntimeHandle;
 
 use crate::UsageStore;
-use crate::encryption::{
-    LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_database_encryption_key,
-};
 
 use super::engine::EmbeddedProviderKind;
 use super::read::RedbUsageStorage;
@@ -99,7 +99,7 @@ impl EmbeddedRedbControlPlaneProvider {
         let started = Instant::now();
         let usage_store = Arc::new(match &self.state.encryption {
             Some(encryption) => {
-                let dek = resolve_database_encryption_key(
+                let dek = resolve_subject_encryption_key(
                     &self.state.path,
                     encryption.provider.as_ref(),
                     &encryption.subject,

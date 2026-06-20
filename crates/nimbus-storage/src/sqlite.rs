@@ -17,7 +17,6 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::commit_log::{deserialize_tenant_event_record, serialize_tenant_event_record};
-use crate::encryption::DataEncryptionKey;
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{
     APPLIED_SEQUENCE_KEY, DurableJournalBootstrap, DurableJournalPage, JournalProgress,
@@ -26,6 +25,7 @@ use crate::store::{
     TenantWriteCommit,
 };
 use crate::{RetentionFloor, RetentionGcConfig, RetentionGcSummary};
+use nimbus_crypto::DataEncryptionKey;
 
 mod backend;
 mod config;

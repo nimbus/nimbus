@@ -17,7 +17,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use super::key::{WrappedDatabaseKey, WrappingCipher};
+use super::key::{WrappedDataKey, WrappingCipher};
 use super::provider::KeyProviderKind;
 
 /// The current manifest format version.
@@ -230,7 +230,7 @@ pub struct KeyManifest {
     pub header: KeyManifestHeader,
 
     /// The wrapped data-encryption key.
-    pub wrapped_key: WrappedDatabaseKey,
+    pub wrapped_key: WrappedDataKey,
 }
 
 impl KeyManifest {
@@ -239,7 +239,7 @@ impl KeyManifest {
         cipher: ManifestCipher,
         subject_descriptor: String,
         key_provider: KeyProviderKind,
-        wrapped_key: WrappedDatabaseKey,
+        wrapped_key: WrappedDataKey,
     ) -> Self {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -409,7 +409,7 @@ impl KeyManifest {
                 created_at,
                 rotated_at,
             },
-            wrapped_key: WrappedDatabaseKey::new(wrapping_cipher, ciphertext),
+            wrapped_key: WrappedDataKey::new(wrapping_cipher, ciphertext),
         })
     }
 
@@ -614,7 +614,7 @@ mod tests {
             KeyProviderKind::MasterKeyFile {
                 path: "/secure/nimbus.key".to_string(),
             },
-            WrappedDatabaseKey::new(WrappingCipher::Aes256GcmSiv, vec![1, 2, 3, 4]),
+            WrappedDataKey::new(WrappingCipher::Aes256GcmSiv, vec![1, 2, 3, 4]),
         );
 
         let bytes = manifest.serialize();
@@ -690,7 +690,7 @@ mod tests {
             KeyProviderKind::MasterKeyFile {
                 path: "/key".to_string(),
             },
-            WrappedDatabaseKey::new(WrappingCipher::Aes256GcmSiv, vec![0u8; 60]),
+            WrappedDataKey::new(WrappingCipher::Aes256GcmSiv, vec![0u8; 60]),
         );
 
         let mut bytes = manifest.serialize();
@@ -711,7 +711,7 @@ mod tests {
             KeyProviderKind::MasterKeyFile {
                 path: "/key".to_string(),
             },
-            WrappedDatabaseKey::new(WrappingCipher::Aes256GcmSiv, vec![0u8; 60]),
+            WrappedDataKey::new(WrappingCipher::Aes256GcmSiv, vec![0u8; 60]),
         );
 
         let mut bytes = manifest.serialize();
@@ -732,7 +732,7 @@ mod tests {
             KeyProviderKind::MasterKeyFile {
                 path: "/key".to_string(),
             },
-            WrappedDatabaseKey::new(WrappingCipher::Aes256GcmSiv, vec![0u8; 60]),
+            WrappedDataKey::new(WrappingCipher::Aes256GcmSiv, vec![0u8; 60]),
         );
 
         let bytes = manifest.serialize();

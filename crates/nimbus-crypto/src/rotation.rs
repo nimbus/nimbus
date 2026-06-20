@@ -10,15 +10,15 @@ use super::KeyManifest;
 
 const MARKER_BYTES: &[u8] = b"nimbus-redb-dek-rotation-v1\n";
 
-pub fn redb_dek_rotation_database_stage_path(protected_path: &Path) -> PathBuf {
+pub fn dek_rotation_data_stage_path(protected_path: &Path) -> PathBuf {
     append_suffix(protected_path, ".rotating")
 }
 
-pub fn redb_dek_rotation_manifest_stage_path(protected_path: &Path) -> PathBuf {
+pub fn dek_rotation_manifest_stage_path(protected_path: &Path) -> PathBuf {
     append_suffix(&KeyManifest::manifest_path(protected_path), ".rotating")
 }
 
-pub fn recover_interrupted_redb_dek_rotation(protected_path: &Path) -> Result<bool> {
+pub fn recover_interrupted_dek_rotation(protected_path: &Path) -> Result<bool> {
     let paths = RedbDekRotationPaths::new(protected_path);
     if !try_exists(&paths.marker_path)? {
         return Ok(false);
@@ -28,7 +28,7 @@ pub fn recover_interrupted_redb_dek_rotation(protected_path: &Path) -> Result<bo
     Ok(true)
 }
 
-pub fn commit_staged_redb_dek_rotation(protected_path: &Path) -> Result<()> {
+pub fn commit_staged_dek_rotation(protected_path: &Path) -> Result<()> {
     let paths = RedbDekRotationPaths::new(protected_path);
     require_staged_artifact(&paths.database_stage_path, "redb rotation database")?;
     require_staged_artifact(&paths.manifest_stage_path, "redb rotation manifest")?;
@@ -49,8 +49,8 @@ impl RedbDekRotationPaths {
         Self {
             protected_path: protected_path.to_path_buf(),
             manifest_path: KeyManifest::manifest_path(protected_path),
-            database_stage_path: redb_dek_rotation_database_stage_path(protected_path),
-            manifest_stage_path: redb_dek_rotation_manifest_stage_path(protected_path),
+            database_stage_path: dek_rotation_data_stage_path(protected_path),
+            manifest_stage_path: dek_rotation_manifest_stage_path(protected_path),
             marker_path: append_suffix(protected_path, ".dek-rotation"),
         }
     }
@@ -218,33 +218,29 @@ fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::LocalKeySubject;
-    use crate::encryption::{
-        ManifestCipher, MasterKeyFileProvider, generate_database_manifest,
-        resolve_database_encryption_key,
+    use crate::{
+        LocalKeySubject, ManifestCipher, MasterKeyFileProvider, generate_key_manifest,
+        resolve_subject_encryption_key,
     };
     use nimbus_core::TenantId;
     use tempfile::tempdir;
 
     #[test]
-    fn commit_staged_redb_dek_rotation_replaces_database_and_manifest_pair() {
+    fn commit_staged_dek_rotation_replaces_database_and_manifest_pair() {
         let dir = tempdir().expect("tempdir should create");
         let protected_path = dir.path().join("tenant.redb");
         let manifest_path = KeyManifest::manifest_path(&protected_path);
         fs::write(&protected_path, b"old-db").expect("old db should write");
         fs::write(&manifest_path, b"old-manifest").expect("old manifest should write");
+        fs::write(dek_rotation_data_stage_path(&protected_path), b"new-db")
+            .expect("staged db should write");
         fs::write(
-            redb_dek_rotation_database_stage_path(&protected_path),
-            b"new-db",
-        )
-        .expect("staged db should write");
-        fs::write(
-            redb_dek_rotation_manifest_stage_path(&protected_path),
+            dek_rotation_manifest_stage_path(&protected_path),
             b"new-manifest",
         )
         .expect("staged manifest should write");
 
-        commit_staged_redb_dek_rotation(&protected_path).expect("commit should complete");
+        commit_staged_dek_rotation(&protected_path).expect("commit should complete");
 
         assert_eq!(
             fs::read(&protected_path).expect("db should read"),
@@ -261,27 +257,23 @@ mod tests {
     }
 
     #[test]
-    fn recover_redb_dek_rotation_finishes_before_any_artifact_is_published() {
+    fn recover_dek_rotation_finishes_before_any_artifact_is_published() {
         let dir = tempdir().expect("tempdir should create");
         let protected_path = dir.path().join("tenant.redb");
         let manifest_path = KeyManifest::manifest_path(&protected_path);
         fs::write(&protected_path, b"old-db").expect("old db should write");
         fs::write(&manifest_path, b"old-manifest").expect("old manifest should write");
+        fs::write(dek_rotation_data_stage_path(&protected_path), b"new-db")
+            .expect("staged db should write");
         fs::write(
-            redb_dek_rotation_database_stage_path(&protected_path),
-            b"new-db",
-        )
-        .expect("staged db should write");
-        fs::write(
-            redb_dek_rotation_manifest_stage_path(&protected_path),
+            dek_rotation_manifest_stage_path(&protected_path),
             b"new-manifest",
         )
         .expect("staged manifest should write");
         write_marker(&RedbDekRotationPaths::new(&protected_path)).expect("marker should write");
 
         assert!(
-            recover_interrupted_redb_dek_rotation(&protected_path)
-                .expect("recovery should complete"),
+            recover_interrupted_dek_rotation(&protected_path).expect("recovery should complete"),
             "marker should trigger recovery"
         );
 
@@ -294,30 +286,30 @@ mod tests {
             b"new-manifest"
         );
         assert!(
-            !redb_dek_rotation_database_stage_path(&protected_path).exists(),
+            !dek_rotation_data_stage_path(&protected_path).exists(),
             "staged db should be consumed"
         );
         assert!(
-            !redb_dek_rotation_manifest_stage_path(&protected_path).exists(),
+            !dek_rotation_manifest_stage_path(&protected_path).exists(),
             "staged manifest should be consumed"
         );
     }
 
     #[test]
-    fn recover_redb_dek_rotation_finishes_after_database_publish() {
+    fn recover_dek_rotation_finishes_after_data_publish() {
         let dir = tempdir().expect("tempdir should create");
         let protected_path = dir.path().join("tenant.redb");
         let manifest_path = KeyManifest::manifest_path(&protected_path);
         fs::write(&protected_path, b"new-db").expect("published db should write");
         fs::write(&manifest_path, b"old-manifest").expect("old manifest should write");
         fs::write(
-            redb_dek_rotation_manifest_stage_path(&protected_path),
+            dek_rotation_manifest_stage_path(&protected_path),
             b"new-manifest",
         )
         .expect("staged manifest should write");
         write_marker(&RedbDekRotationPaths::new(&protected_path)).expect("marker should write");
 
-        recover_interrupted_redb_dek_rotation(&protected_path).expect("recovery should complete");
+        recover_interrupted_dek_rotation(&protected_path).expect("recovery should complete");
 
         assert_eq!(
             fs::read(&protected_path).expect("db should read"),
@@ -330,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn recover_redb_dek_rotation_removes_marker_after_both_artifacts_are_published() {
+    fn recover_dek_rotation_removes_marker_after_both_artifacts_are_published() {
         let dir = tempdir().expect("tempdir should create");
         let protected_path = dir.path().join("tenant.redb");
         let manifest_path = KeyManifest::manifest_path(&protected_path);
@@ -339,7 +331,7 @@ mod tests {
         let marker_path = append_suffix(&protected_path, ".dek-rotation");
         write_marker(&RedbDekRotationPaths::new(&protected_path)).expect("marker should write");
 
-        recover_interrupted_redb_dek_rotation(&protected_path).expect("recovery should complete");
+        recover_interrupted_dek_rotation(&protected_path).expect("recovery should complete");
 
         assert_eq!(
             fs::read(&protected_path).expect("db should read"),
@@ -368,25 +360,22 @@ mod tests {
         let subject = LocalKeySubject::redb_tenant(tenant_id, "tenant.redb");
 
         let (old_manifest, _) =
-            generate_database_manifest(&provider, &subject, ManifestCipher::RedbAes256GcmSiv)
+            generate_key_manifest(&provider, &subject, ManifestCipher::RedbAes256GcmSiv)
                 .expect("old manifest should generate");
         old_manifest
             .write_for(&protected_path)
             .expect("old manifest should write");
         let (new_manifest, new_key) =
-            generate_database_manifest(&provider, &subject, ManifestCipher::RedbAes256GcmSiv)
+            generate_key_manifest(&provider, &subject, ManifestCipher::RedbAes256GcmSiv)
                 .expect("new manifest should generate");
         new_manifest
-            .write(&redb_dek_rotation_manifest_stage_path(&protected_path))
+            .write(&dek_rotation_manifest_stage_path(&protected_path))
             .expect("new manifest stage should write");
-        fs::write(
-            redb_dek_rotation_database_stage_path(&protected_path),
-            b"new-db",
-        )
-        .expect("new db stage should write");
+        fs::write(dek_rotation_data_stage_path(&protected_path), b"new-db")
+            .expect("new db stage should write");
         write_marker(&RedbDekRotationPaths::new(&protected_path)).expect("marker should write");
 
-        let resolved = resolve_database_encryption_key(
+        let resolved = resolve_subject_encryption_key(
             &protected_path,
             &provider,
             &subject,

@@ -1,0 +1,26 @@
+[package]
+name = "nimbus-blob"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+# Floor for native trait upcasting (`Arc<dyn ReplicatingBlobStore>` ->
+# `Arc<dyn BlobStore>`, spec §17 D2). Upcasting stabilized in Rust 1.86.
+rust-version = "1.86"
+
+[lints]
+workspace = true
+
+[features]
+# The cluster leg (`ReplicatingBlobStore` + `BlobTicket` + `PeerAddr`) is gated
+# off by default; it lands fully when `nimbus-cluster` (iroh substrate) lands.
+cluster = []
+
+[dependencies]
+nimbus-crypto = { path = "../nimbus-crypto" }
+nimbus-core = { path = "../nimbus-core" }
+async-trait.workspace = true
+blake3.workspace = true
+bytes.workspace = true
+tokio = { workspace = true }

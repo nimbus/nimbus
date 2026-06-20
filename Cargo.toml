@@ -6,10 +6,12 @@ members = [
     "crates/nimbus-assets",
     "crates/nimbus-auth",
     "crates/nimbus-bin",
+    "crates/nimbus-blob",
     "crates/nimbus-bridge",
     "crates/nimbus-cloud-functions",
     "crates/nimbus-code-index",
     "crates/nimbus-convex",
+    "crates/nimbus-crypto",
     "crates/nimbus-dynamodb",
     "crates/nimbus-firebase",
     "crates/nimbus-license",
@@ -58,9 +60,12 @@ aws-sdk-dynamodb = { version = "1", default-features = false, features = ["rt-to
 # same in-process listener. Same feature flags as aws-sdk-dynamodb.
 aws-sdk-dynamodbstreams = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
 arc-swap = "1"
+async-trait = "0.1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
+blake3 = "1"
 bson = { version = "3.1", features = ["serde"] }
+bytes = "1"
 clap = { version = "4", features = ["derive"] }
 comfy-table = "7"
 deadpool-postgres = "0.14"

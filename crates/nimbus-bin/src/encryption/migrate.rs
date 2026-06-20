@@ -4,10 +4,12 @@ use std::path::{Path, PathBuf};
 
 use clap::Args;
 use nimbus::{
-    EnginePersistenceConfig, Error, InitializedKeyProvider, KeyManifest, LOGICAL_PAGE_SIZE,
-    LocalKeySubject, ManifestCipher, PHYSICAL_PAGE_SIZE, Result, TenantId,
-    generate_database_manifest, migrate_encrypted_to_plaintext, migrate_plaintext_to_encrypted,
-    unwrap_database_manifest_key,
+    EnginePersistenceConfig, Error, InitializedKeyProvider, LOGICAL_PAGE_SIZE, PHYSICAL_PAGE_SIZE,
+    Result, TenantId, migrate_encrypted_to_plaintext, migrate_plaintext_to_encrypted,
+};
+use nimbus_crypto::{
+    KeyManifest, LocalKeyProvider, LocalKeySubject, ManifestCipher, generate_key_manifest,
+    unwrap_key_manifest,
 };
 
 /// Migrate plaintext databases to encrypted.
@@ -148,7 +150,7 @@ fn migrate_sqlite(
     let key_provider = initialized_provider(config)?;
     let subject = database_subject(ProviderFamily::Sqlite, command.tenant_id.as_deref(), target)?;
     let (manifest, generated) =
-        generate_database_manifest(key_provider.as_ref(), &subject, ManifestCipher::SqlCipher)?;
+        generate_key_manifest(key_provider.as_ref(), &subject, ManifestCipher::SqlCipher)?;
 
     let staging_target = staging_path(target, "encrypting")?;
     migrate_plaintext_to_encrypted(
@@ -182,7 +184,7 @@ fn migrate_redb(
 
     let key_provider = initialized_provider(config)?;
     let subject = database_subject(ProviderFamily::Redb, command.tenant_id.as_deref(), target)?;
-    let (manifest, generated) = generate_database_manifest(
+    let (manifest, generated) = generate_key_manifest(
         key_provider.as_ref(),
         &subject,
         ManifestCipher::RedbAes256GcmSiv,
@@ -215,7 +217,7 @@ fn export_sqlite(
     let manifest = KeyManifest::read_for(source).map_err(|error| {
         Error::InvalidInput(format!("failed to read encryption manifest: {error}"))
     })?;
-    let dek = unwrap_database_manifest_key(
+    let dek = unwrap_key_manifest(
         &manifest,
         key_provider.as_ref(),
         &subject,
@@ -249,7 +251,7 @@ fn export_redb(
     let manifest = KeyManifest::read_for(source).map_err(|error| {
         Error::InvalidInput(format!("failed to read encryption manifest: {error}"))
     })?;
-    let dek = unwrap_database_manifest_key(
+    let dek = unwrap_key_manifest(
         &manifest,
         key_provider.as_ref(),
         &subject,
@@ -267,7 +269,7 @@ fn export_redb(
 
 fn initialized_provider(
     config: &EnginePersistenceConfig,
-) -> Result<std::sync::Arc<dyn nimbus::LocalKeyProvider>> {
+) -> Result<std::sync::Arc<dyn LocalKeyProvider>> {
     let key_provider_config = config
         .local_encryption
         .key_provider()

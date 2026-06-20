@@ -10,12 +10,14 @@ use nimbus_core::{
     DocumentId, FieldSchema, FieldType, Filter, FilterOp, IndexDefinition, OrderBy, OrderDirection,
     Query, SequenceNumber, TableName, TableSchema, TenantId,
 };
+use nimbus_crypto::{
+    LocalKeySubject, ManifestCipher, MasterKeyFileProvider, resolve_subject_encryption_key,
+};
 use nimbus_engine::{
     EmbeddedProviderKind, Engine, EnginePersistenceConfig, LocalEncryptionConfig,
     LocalKeyProviderConfig, MasterKeyFileConfig, SubscriptionRegistration, SubscriptionUpdate,
 };
 use nimbus_storage::{
-    LocalKeySubject, ManifestCipher, MasterKeyFileProvider, resolve_database_encryption_key,
     sqlite_index_scan_composite_range_query_sql, sqlite_index_scan_prefix_query_sql,
 };
 use rusqlite::{Connection, params};

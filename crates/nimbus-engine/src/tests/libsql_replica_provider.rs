@@ -14,11 +14,9 @@ use nimbus_core::{
     StructuredOrder, StructuredQuery, TableId, TableName, TableSchema, TenantId, Timestamp,
     WriteKey, WritePrecondition, WriteSetMode,
 };
+use nimbus_crypto::{KeyManifest, LocalKeySubject, ManifestCipher};
 use nimbus_storage::libsql::libsql_transport_connector;
-use nimbus_storage::{
-    KeyManifest, LibsqlReplicaProvider, LibsqlReplicaProviderConfig, LocalKeySubject,
-    ManifestCipher,
-};
+use nimbus_storage::{LibsqlReplicaProvider, LibsqlReplicaProviderConfig};
 use testcontainers_modules::testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers_modules::testcontainers::{
     ContainerAsync, GenericImage, ImageExt, runners::AsyncRunner,

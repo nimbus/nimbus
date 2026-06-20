@@ -5,11 +5,11 @@ use std::sync::Arc;
 use nimbus_core::{Error, Result, TenantId};
 use tokio::runtime::Handle as TokioRuntimeHandle;
 
-use crate::encryption::{
-    KeyManifest, LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_database_encryption_key,
-};
 use crate::sqlite::{SqliteTenantStore, SqliteWriteTransaction};
 use crate::{Clock, FaultInjector, TenantWriteCommit};
+use nimbus_crypto::{
+    KeyManifest, LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_subject_encryption_key,
+};
 
 use super::EmbeddedProviderKind;
 use super::read::{BlockingReadExecutor, default_tenant_read_parallelism};
@@ -200,7 +200,7 @@ impl EmbeddedSqliteProvider {
                         .map(|name| name.to_string_lossy().to_string())
                         .unwrap_or_else(|| "tenant.sqlite3".to_string());
                     let subject = LocalKeySubject::sqlite_tenant(tenant_id, logical_name);
-                    let dek = resolve_database_encryption_key(
+                    let dek = resolve_subject_encryption_key(
                         &path,
                         provider.as_ref(),
                         &subject,

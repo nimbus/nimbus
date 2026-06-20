@@ -4,10 +4,10 @@ use std::sync::Arc;
 use nimbus_core::{Error, Result, TenantId};
 use tokio::runtime::Handle as TokioRuntimeHandle;
 
-use crate::encryption::{
-    KeyManifest, LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_database_encryption_key,
-};
 use crate::{Clock, FaultInjector, TenantStore};
+use nimbus_crypto::{
+    KeyManifest, LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_subject_encryption_key,
+};
 
 use super::read::{RedbTenantStorage, default_tenant_read_parallelism};
 use super::task_error::map_join_error;
@@ -174,7 +174,7 @@ impl EmbeddedRedbProvider {
                         .map(|name| name.to_string_lossy().to_string())
                         .unwrap_or_else(|| "tenant.redb".to_string());
                     let subject = LocalKeySubject::redb_tenant(tenant_id, logical_name);
-                    let dek = resolve_database_encryption_key(
+                    let dek = resolve_subject_encryption_key(
                         &path,
                         provider.as_ref(),
                         &subject,

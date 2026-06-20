@@ -3,7 +3,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use super::key::{DataEncryptionKey, GeneratedDatabaseKey, WrappedDatabaseKey};
+use super::key::{DataEncryptionKey, GeneratedDataKey, WrappedDataKey};
 use super::manifest::KeyManifestHeader;
 use super::subject::LocalKeySubject;
 
@@ -202,20 +202,20 @@ pub trait LocalKeyProvider: Send + Sync + 'static {
     ///
     /// The `header` is used as AAD during wrapping to bind the DEK to its
     /// manifest metadata.
-    fn generate_database_key(
+    fn generate_data_key(
         &self,
         subject: &LocalKeySubject,
         header: &KeyManifestHeader,
-    ) -> KeyProviderResult<GeneratedDatabaseKey>;
+    ) -> KeyProviderResult<GeneratedDataKey>;
 
     /// Unwraps a previously wrapped DEK for the given subject.
     ///
     /// Returns the plaintext DEK for use with storage engines.
     /// The `header` must match the one used during wrapping (AAD verification).
-    fn unwrap_database_key(
+    fn unwrap_data_key(
         &self,
         subject: &LocalKeySubject,
-        wrapped: &WrappedDatabaseKey,
+        wrapped: &WrappedDataKey,
         header: &KeyManifestHeader,
     ) -> KeyProviderResult<DataEncryptionKey>;
 
@@ -224,12 +224,12 @@ pub trait LocalKeyProvider: Send + Sync + 'static {
     /// This is used during KEK rotation to update sidecar manifests without
     /// rewriting database pages. The `header` is the new manifest header that
     /// will be written after rewrapping.
-    fn rewrap_database_key(
+    fn rewrap_data_key(
         &self,
         subject: &LocalKeySubject,
         plaintext: &[u8; 32],
         header: &KeyManifestHeader,
-    ) -> KeyProviderResult<WrappedDatabaseKey>;
+    ) -> KeyProviderResult<WrappedDataKey>;
 
     /// Attempts a provider-native rewrap of an existing wrapped DEK.
     ///
@@ -237,13 +237,13 @@ pub trait LocalKeyProvider: Send + Sync + 'static {
     /// override this hook and return `Some(wrapped)`. Providers that do not
     /// support this optimization should return `Ok(None)` and let callers fall
     /// back to unwrap-then-rewrap behavior.
-    fn rewrap_wrapped_database_key(
+    fn rewrap_wrapped_data_key(
         &self,
         _subject: &LocalKeySubject,
-        _wrapped: &WrappedDatabaseKey,
+        _wrapped: &WrappedDataKey,
         _current_header: &KeyManifestHeader,
         _new_header: &KeyManifestHeader,
-    ) -> KeyProviderResult<Option<WrappedDatabaseKey>> {
+    ) -> KeyProviderResult<Option<WrappedDataKey>> {
         Ok(None)
     }
 

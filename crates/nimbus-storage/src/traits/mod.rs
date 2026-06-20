@@ -11,6 +11,7 @@ use nimbus_core::{
     CommitEntry, Document, DocumentId, Filter, Result, SequenceNumber, TableName,
     TenantEventRecord, TenantId, Timestamp,
 };
+use nimbus_crypto::LocalKeyProvider;
 use serde_json::{Map, Value};
 
 use crate::async_storage::{
@@ -18,7 +19,6 @@ use crate::async_storage::{
     OpenedEmbeddedRedbTenant, OpenedEmbeddedSqliteTenant, UsageStorage,
 };
 use crate::changefeed::{ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage};
-use crate::encryption::LocalKeyProvider;
 use crate::libsql::OpenedLibsqlReplicaTenant;
 use crate::mysql::OpenedMySqlTenant;
 use crate::postgres::OpenedPostgresTenant;
@@ -527,10 +527,10 @@ impl_scheduler_store!(
 
 impl ControlPlaneUsage for RedbUsageStorage {}
 
-impl KeyProviderSurface for crate::MasterKeyFileProvider {}
-impl KeyProviderSurface for crate::KeyDirectoryProvider {}
+impl KeyProviderSurface for nimbus_crypto::MasterKeyFileProvider {}
+impl KeyProviderSurface for nimbus_crypto::KeyDirectoryProvider {}
 #[cfg(feature = "aws-kms")]
-impl KeyProviderSurface for crate::AwsKmsKeyProvider {}
+impl KeyProviderSurface for nimbus_crypto::AwsKmsKeyProvider {}
 
 impl<T> StorageEngine for T where
     T: TenantPointRead + TenantPointWrite + TenantRangeScan + DurableJournal + SchedulerStore

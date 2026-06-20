@@ -10,11 +10,13 @@ use zeroize::{Zeroize, Zeroizing};
 
 use nimbus::{
     AwsKmsConfig, EnginePersistenceConfig, Error, InitializedKeyProvider, KeyDirectoryConfig,
-    KeyManifest, LOGICAL_PAGE_SIZE, LocalArtifactRole, LocalKeyProvider, LocalKeyProviderConfig,
-    LocalKeySubject, LocalKeySubjectKind, ManifestCipher, MasterKeyFileConfig, PHYSICAL_PAGE_SIZE,
-    Result, TenantId, checkpoint_encrypted_database_at_path, commit_staged_redb_dek_rotation,
-    recover_interrupted_redb_dek_rotation, redb_dek_rotation_database_stage_path,
-    redb_dek_rotation_manifest_stage_path, unwrap_database_manifest_key,
+    LOGICAL_PAGE_SIZE, LocalKeyProviderConfig, MasterKeyFileConfig, PHYSICAL_PAGE_SIZE, Result,
+    TenantId, checkpoint_encrypted_database_at_path,
+};
+use nimbus_crypto::{
+    KeyManifest, LocalArtifactRole, LocalKeyProvider, LocalKeySubject, LocalKeySubjectKind,
+    ManifestCipher, commit_staged_dek_rotation, dek_rotation_data_stage_path,
+    dek_rotation_manifest_stage_path, recover_interrupted_dek_rotation, unwrap_key_manifest,
 };
 
 use super::migrate::{ProviderFamily, database_subject};
@@ -212,7 +214,7 @@ fn rotate_manifest(
     new_header.key_provider = new_provider.kind();
 
     let new_wrapped = match new_provider
-        .rewrap_wrapped_database_key(
+        .rewrap_wrapped_data_key(
             &subject,
             &manifest.wrapped_key,
             &manifest.header,
@@ -223,10 +225,10 @@ fn rotate_manifest(
         Some(wrapped) => wrapped,
         None => {
             let plaintext_dek = current_provider
-                .unwrap_database_key(&subject, &manifest.wrapped_key, &manifest.header)
+                .unwrap_data_key(&subject, &manifest.wrapped_key, &manifest.header)
                 .map_err(|e| Error::Internal(format!("failed to unwrap DEK: {e}")))?;
             new_provider
-                .rewrap_database_key(&subject, &plaintext_dek, &new_header)
+                .rewrap_data_key(&subject, &plaintext_dek, &new_header)
                 .map_err(|e| Error::Internal(format!("failed to rewrap DEK: {e}")))?
         }
     };
@@ -397,7 +399,7 @@ fn rotate_sqlite_dek(
     let subject = database_subject(ProviderFamily::Sqlite, command.tenant_id.as_deref(), path)?;
     let manifest = KeyManifest::read_for(path)
         .map_err(|e| Error::InvalidInput(format!("failed to read encryption manifest: {e}")))?;
-    let current_dek = unwrap_database_manifest_key(
+    let current_dek = unwrap_key_manifest(
         &manifest,
         provider.as_ref(),
         &subject,
@@ -438,7 +440,7 @@ fn rotate_redb_dek(
     command: &RotateDekCommand,
 ) -> Result<()> {
     println!("Rotating redb DEK: {}", path.display());
-    recover_interrupted_redb_dek_rotation(path)?;
+    recover_interrupted_dek_rotation(path)?;
 
     if !path.exists() {
         return Err(Error::InvalidInput(format!(
@@ -451,7 +453,7 @@ fn rotate_redb_dek(
     let subject = database_subject(ProviderFamily::Redb, command.tenant_id.as_deref(), path)?;
     let manifest = KeyManifest::read_for(path)
         .map_err(|e| Error::InvalidInput(format!("failed to read encryption manifest: {e}")))?;
-    let current_dek = unwrap_database_manifest_key(
+    let current_dek = unwrap_key_manifest(
         &manifest,
         provider.as_ref(),
         &subject,
@@ -468,13 +470,13 @@ fn rotate_redb_dek(
     let new_dek = generate_rotation_dek();
 
     println!("  Re-encrypting pages...");
-    let temp_path = redb_dek_rotation_database_stage_path(path);
+    let temp_path = dek_rotation_data_stage_path(path);
     if let Err(error) = reencrypt_redb_pages(path, &temp_path, &current_dek, &new_dek) {
         let _ = std::fs::remove_file(&temp_path);
         return Err(error);
     }
 
-    let manifest_stage_path = redb_dek_rotation_manifest_stage_path(path);
+    let manifest_stage_path = dek_rotation_manifest_stage_path(path);
     if let Err(error) = write_rotated_manifest_to_path(
         &manifest,
         provider.as_ref(),
@@ -486,7 +488,7 @@ fn rotate_redb_dek(
         return Err(error);
     }
 
-    commit_staged_redb_dek_rotation(path)?;
+    commit_staged_dek_rotation(path)?;
 
     println!("  redb DEK rotation complete.");
     Ok(())
@@ -564,7 +566,7 @@ fn build_rotated_manifest(
     new_header.key_provider = provider.kind();
 
     let new_wrapped = provider
-        .rewrap_database_key(subject, new_dek, &new_header)
+        .rewrap_data_key(subject, new_dek, &new_header)
         .map_err(|e| Error::Internal(format!("failed to rewrap DEK: {e}")))?;
 
     let new_manifest = KeyManifest {
@@ -849,9 +851,9 @@ fn parse_artifact_subject(remainder: &str, role: LocalArtifactRole) -> Result<Lo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nimbus::{
-        Document, LocalEncryptionConfig, LocalKeyProviderConfig, MasterKeyFileProvider, TableName,
-        TenantStore, generate_database_manifest, resolve_database_encryption_key,
+    use nimbus::{Document, LocalEncryptionConfig, LocalKeyProviderConfig, TableName, TenantStore};
+    use nimbus_crypto::{
+        MasterKeyFileProvider, generate_key_manifest, resolve_subject_encryption_key,
     };
     use serde_json::json;
     use tempfile::tempdir;
@@ -954,7 +956,7 @@ mod tests {
         let tenant_id = TenantId::new("demo".to_string()).expect("tenant id should build");
         let subject = LocalKeySubject::redb_tenant(tenant_id, "tenant.redb");
         let (manifest, generated) =
-            generate_database_manifest(&provider, &subject, ManifestCipher::RedbAes256GcmSiv)
+            generate_key_manifest(&provider, &subject, ManifestCipher::RedbAes256GcmSiv)
                 .expect("initial manifest should generate");
         manifest
             .write_for(&path)
@@ -986,18 +988,18 @@ mod tests {
         rotate_redb_dek(&path, &config, &command).expect("redb DEK rotation should complete");
 
         assert!(
-            !redb_dek_rotation_database_stage_path(&path).exists(),
+            !dek_rotation_data_stage_path(&path).exists(),
             "database stage should be consumed"
         );
         assert!(
-            !redb_dek_rotation_manifest_stage_path(&path).exists(),
+            !dek_rotation_manifest_stage_path(&path).exists(),
             "manifest stage should be consumed"
         );
         assert!(
             !append_suffix(&path, ".dek-rotation").exists(),
             "rotation marker should be removed after a complete commit"
         );
-        let rotated_dek = resolve_database_encryption_key(
+        let rotated_dek = resolve_subject_encryption_key(
             &path,
             &provider,
             &subject,

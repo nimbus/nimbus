@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use nimbus_core::{Error, Result};
 #[cfg(feature = "aws-kms")]
-use nimbus_storage::AwsKmsKeyProvider;
-use nimbus_storage::{
+use nimbus_crypto::AwsKmsKeyProvider;
+use nimbus_crypto::{
     KeyDirectoryProvider, LocalKeyProvider, LocalKeyProviderError, MasterKeyFileProvider,
 };
 

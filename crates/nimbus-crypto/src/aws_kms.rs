@@ -16,7 +16,7 @@ use aws_sdk_kms::types::DataKeySpec;
 use tokio::runtime::{Handle, RuntimeFlavor};
 use zeroize::Zeroize;
 
-use super::key::{DataEncryptionKey, GeneratedDatabaseKey, WrappedDatabaseKey, WrappingCipher};
+use super::key::{DataEncryptionKey, GeneratedDataKey, WrappedDataKey, WrappingCipher};
 use super::manifest::KeyManifestHeader;
 use super::provider::{
     KeyProviderKind, KeyProviderResult, LocalKeyProvider, LocalKeyProviderError,
@@ -115,11 +115,11 @@ impl AwsKmsKeyProvider {
 }
 
 impl LocalKeyProvider for AwsKmsKeyProvider {
-    fn generate_database_key(
+    fn generate_data_key(
         &self,
         _subject: &LocalKeySubject,
         header: &KeyManifestHeader,
-    ) -> KeyProviderResult<GeneratedDatabaseKey> {
+    ) -> KeyProviderResult<GeneratedDataKey> {
         let client = self.client.clone();
         let key_id = self.key_id.clone();
         let context = Self::encryption_context(header);
@@ -150,14 +150,14 @@ impl LocalKeyProvider for AwsKmsKeyProvider {
         })?;
 
         let plaintext = Self::extract_plaintext_key(plaintext_blob, "GenerateDataKey")?;
-        let wrapped = WrappedDatabaseKey::new(WrappingCipher::AwsKms, ciphertext_blob.into_inner());
-        Ok(GeneratedDatabaseKey::new(plaintext, wrapped))
+        let wrapped = WrappedDataKey::new(WrappingCipher::AwsKms, ciphertext_blob.into_inner());
+        Ok(GeneratedDataKey::new(plaintext, wrapped))
     }
 
-    fn unwrap_database_key(
+    fn unwrap_data_key(
         &self,
         _subject: &LocalKeySubject,
-        wrapped: &WrappedDatabaseKey,
+        wrapped: &WrappedDataKey,
         header: &KeyManifestHeader,
     ) -> KeyProviderResult<DataEncryptionKey> {
         if wrapped.cipher != WrappingCipher::AwsKms {
@@ -190,12 +190,12 @@ impl LocalKeyProvider for AwsKmsKeyProvider {
         Self::extract_plaintext_key(plaintext_blob, "Decrypt").map(DataEncryptionKey::new)
     }
 
-    fn rewrap_database_key(
+    fn rewrap_data_key(
         &self,
         _subject: &LocalKeySubject,
         plaintext: &[u8; 32],
         header: &KeyManifestHeader,
-    ) -> KeyProviderResult<WrappedDatabaseKey> {
+    ) -> KeyProviderResult<WrappedDataKey> {
         let client = self.client.clone();
         let key_id = self.key_id.clone();
         let plaintext = plaintext.to_vec();
@@ -217,19 +217,19 @@ impl LocalKeyProvider for AwsKmsKeyProvider {
                 message: "response did not include ciphertext".to_string(),
             }
         })?;
-        Ok(WrappedDatabaseKey::new(
+        Ok(WrappedDataKey::new(
             WrappingCipher::AwsKms,
             ciphertext_blob.into_inner(),
         ))
     }
 
-    fn rewrap_wrapped_database_key(
+    fn rewrap_wrapped_data_key(
         &self,
         _subject: &LocalKeySubject,
-        wrapped: &WrappedDatabaseKey,
+        wrapped: &WrappedDataKey,
         current_header: &KeyManifestHeader,
         new_header: &KeyManifestHeader,
-    ) -> KeyProviderResult<Option<WrappedDatabaseKey>> {
+    ) -> KeyProviderResult<Option<WrappedDataKey>> {
         if wrapped.cipher != WrappingCipher::AwsKms {
             return Ok(None);
         }
@@ -257,7 +257,7 @@ impl LocalKeyProvider for AwsKmsKeyProvider {
                 message: "response did not include ciphertext".to_string(),
             }
         })?;
-        Ok(Some(WrappedDatabaseKey::new(
+        Ok(Some(WrappedDataKey::new(
             WrappingCipher::AwsKms,
             ciphertext_blob.into_inner(),
         )))
@@ -369,7 +369,7 @@ mod tests {
     use serial_test::serial;
 
     use super::*;
-    use crate::encryption::manifest::{MANIFEST_VERSION, ManifestCipher};
+    use crate::manifest::{MANIFEST_VERSION, ManifestCipher};
 
     #[derive(Debug, Clone)]
     struct ResponseSpec {
@@ -616,13 +616,13 @@ mod tests {
         let header = test_header(&provider, 1000);
 
         let generated = provider
-            .generate_database_key(&subject, &header)
+            .generate_data_key(&subject, &header)
             .expect("generate should succeed");
         assert_eq!(generated.plaintext(), plaintext.as_slice());
         assert_eq!(generated.wrapped().cipher, WrappingCipher::AwsKms);
 
         let unwrapped = provider
-            .unwrap_database_key(&subject, generated.wrapped(), &header)
+            .unwrap_data_key(&subject, generated.wrapped(), &header)
             .expect("unwrap should succeed");
         assert_eq!(unwrapped.as_bytes(), generated.plaintext());
 
@@ -664,10 +664,10 @@ mod tests {
         let subject = test_subject();
         let current_header = test_header(&provider, 1000);
         let new_header = test_header(&provider, 2000);
-        let wrapped = WrappedDatabaseKey::new(WrappingCipher::AwsKms, b"old-ciphertext".to_vec());
+        let wrapped = WrappedDataKey::new(WrappingCipher::AwsKms, b"old-ciphertext".to_vec());
 
         let rewrapped = provider
-            .rewrap_wrapped_database_key(&subject, &wrapped, &current_header, &new_header)
+            .rewrap_wrapped_data_key(&subject, &wrapped, &current_header, &new_header)
             .expect("rewrap should succeed")
             .expect("kms should support provider-native rewrap");
         assert_eq!(rewrapped.cipher, WrappingCipher::AwsKms);
