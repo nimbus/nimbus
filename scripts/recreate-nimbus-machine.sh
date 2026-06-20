@@ -27,6 +27,13 @@ options:
   --machine-os-repo <path>     machine-os checkout used to build a local bootc
                                image when NIMBUS_MACHINE_GUEST_BINARY is set
                                (default: $NIMBUS_MACHINE_OS_REPO or ../machine-os)
+  --machine-os-builder <ssh-target>
+                               Optional Linux arm64/rootful-Podman SSH builder
+                               for local bootc image builds
+  --machine-os-builder-repo <path>
+                               machine-os checkout path on the SSH builder
+  --machine-os-builder-work-dir <path>
+                               Scratch/output root on the SSH builder
   --identity <path>            SSH identity path for guest debugging
   --ignition-path <path>       Legacy Ignition file for explicit Podman image
                                diagnostic overrides only
@@ -107,6 +114,18 @@ resolve_machine_os_repo() {
   return 64
 }
 
+resolve_machine_os_repo_if_present() {
+  if [[ -n "${machine_os_repo}" ]]; then
+    printf '%s\n' "${machine_os_repo}"
+    return 0
+  fi
+  if [[ -n "${NIMBUS_MACHINE_OS_REPO:-}" ]]; then
+    printf '%s\n' "${NIMBUS_MACHINE_OS_REPO}"
+    return 0
+  fi
+  return 1
+}
+
 source_revision_for_local_bootc() {
   if [[ -n "${NIMBUS_MACHINE_OS_LOCAL_SOURCE_REVISION:-}" ]]; then
     printf '%s\n' "${NIMBUS_MACHINE_OS_LOCAL_SOURCE_REVISION}"
@@ -123,6 +142,9 @@ nimbus_bin="${repo_root}/target/debug/nimbus"
 image_path=""
 bootc_native=0
 machine_os_repo=""
+machine_os_builder="${NIMBUS_MACHINE_OS_BUILDER:-}"
+machine_os_builder_repo="${NIMBUS_MACHINE_OS_BUILDER_REPO:-}"
+machine_os_builder_work_dir="${NIMBUS_MACHINE_OS_BUILDER_WORK_DIR:-}"
 ssh_identity=""
 ignition_file=""
 efi_store=""
@@ -165,6 +187,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --machine-os-repo)
       machine_os_repo="${2:?missing machine-os repo path}"
+      shift 2
+      ;;
+    --machine-os-builder)
+      machine_os_builder="${2:?missing machine-os builder}"
+      shift 2
+      ;;
+    --machine-os-builder-repo)
+      machine_os_builder_repo="${2:?missing machine-os builder repo path}"
+      shift 2
+      ;;
+    --machine-os-builder-work-dir)
+      machine_os_builder_work_dir="${2:?missing machine-os builder work dir}"
       shift 2
       ;;
     --identity)
@@ -249,22 +283,34 @@ if [[ -z "${image_path}" && -n "${NIMBUS_MACHINE_GUEST_BINARY:-}" ]]; then
     echo "NIMBUS_MACHINE_GUEST_BINARY is not executable at ${NIMBUS_MACHINE_GUEST_BINARY}" >&2
     exit 64
   fi
-  resolved_machine_os_repo="$(resolve_machine_os_repo)"
-  if [[ ! -f "${resolved_machine_os_repo}/scripts/build.sh" ]]; then
-    echo "machine-os build script not found at ${resolved_machine_os_repo}/scripts/build.sh" >&2
-    exit 64
+  if [[ -n "${machine_os_builder}" ]]; then
+    resolved_machine_os_repo="$(resolve_machine_os_repo_if_present || true)"
+  else
+    resolved_machine_os_repo="$(resolve_machine_os_repo)"
   fi
   local_bootc_output_dir="${output_dir}/local-bootc-image"
   local_bootc_version="${NIMBUS_MACHINE_OS_LOCAL_VERSION:-dev-local}"
   local_bootc_revision="$(source_revision_for_local_bootc)"
   local_bootc_build_cmd=(
     bash
-    "${resolved_machine_os_repo}/scripts/build.sh"
+    "${script_dir}/prepare-nimbus-machine-local-bootc-image.sh"
     --nimbus-binary "${NIMBUS_MACHINE_GUEST_BINARY}"
     --nimbus-version "${local_bootc_version}"
     --source-revision "${local_bootc_revision}"
     --output-dir "${local_bootc_output_dir}"
   )
+  if [[ -n "${resolved_machine_os_repo}" ]]; then
+    local_bootc_build_cmd+=( --machine-os-repo "${resolved_machine_os_repo}" )
+  fi
+  if [[ -n "${machine_os_builder}" ]]; then
+    local_bootc_build_cmd+=( --builder "${machine_os_builder}" )
+  fi
+  if [[ -n "${machine_os_builder_repo}" ]]; then
+    local_bootc_build_cmd+=( --builder-machine-os-repo "${machine_os_builder_repo}" )
+  fi
+  if [[ -n "${machine_os_builder_work_dir}" ]]; then
+    local_bootc_build_cmd+=( --builder-work-dir "${machine_os_builder_work_dir}" )
+  fi
   write_command_file \
     "${output_dir}/nimbus-machine-local-bootc-build-command.txt" \
     "${local_bootc_build_cmd[@]}"

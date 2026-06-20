@@ -173,7 +173,67 @@ cat <<'OUT'
 OUT
 EOF
 
-chmod +x "${bin_dir}/nimbus" "${bin_dir}/ps"
+cat > "${bin_dir}/ssh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+target="${1:?missing ssh target}"
+shift
+if [[ -z "${target}" ]]; then
+  echo "missing ssh target" >&2
+  exit 64
+fi
+
+bash -c "$*"
+EOF
+
+cat > "${bin_dir}/scp" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+recursive=0
+if [[ "${1:-}" == "-r" ]]; then
+  recursive=1
+  shift
+fi
+
+src="${1:?missing source}"
+dest="${2:?missing destination}"
+
+remote_path() {
+  printf '%s\n' "${1#*:}"
+}
+
+if [[ "${src}" == *:* && "${dest}" != *:* ]]; then
+  from="$(remote_path "${src}")"
+  mkdir -p "${dest}"
+  if [[ "${from}" == */. ]]; then
+    cp -R "${from%/.}/." "${dest}/"
+  elif [[ "${recursive}" -eq 1 ]]; then
+    cp -R "${from}" "${dest}/"
+  else
+    cp "${from}" "${dest}/"
+  fi
+elif [[ "${dest}" == *:* && "${src}" != *:* ]]; then
+  to="$(remote_path "${dest}")"
+  mkdir -p "$(dirname "${to}")"
+  cp "${src}" "${to}"
+else
+  if [[ "${recursive}" -eq 1 ]]; then
+    cp -R "${src}" "${dest}"
+  else
+    cp "${src}" "${dest}"
+  fi
+fi
+EOF
+
+cat > "${bin_dir}/sudo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$@"
+EOF
+
+chmod +x "${bin_dir}/nimbus" "${bin_dir}/ps" "${bin_dir}/ssh" "${bin_dir}/scp" "${bin_dir}/sudo"
 
 HOME="${home_dir}" bash "${repo_root}/scripts/recreate-nimbus-machine.sh" \
   --machine team-a \
@@ -318,6 +378,59 @@ grep -F '"bootc_native":true' \
   "${local_bootc_output_dir}/post-diagnostics/machine-config.json" >/dev/null
 grep -F "nimbus_binary=${guest_binary}" \
   "${local_bootc_output_dir}/local-bootc-image/build-args.txt" >/dev/null
+grep -F "artifact.producer=nimbus/machine-os" \
+  "${local_bootc_output_dir}/local-bootc-image/nimbus-machine-local-bootc-provenance.txt" >/dev/null
+grep -F "artifact.producer_script=${machine_os_repo}/scripts/build.sh" \
+  "${local_bootc_output_dir}/local-bootc-image/nimbus-machine-local-bootc-provenance.txt" >/dev/null
+
+remote_bootc_output_dir="${tmp_dir}/remote-bootc-output"
+remote_work_dir="${tmp_dir}/remote-work"
+mkdir -p "${remote_bootc_output_dir}" "${remote_work_dir}"
+PATH="${bin_dir}:${PATH}" \
+HOME="${home_dir}" \
+NIMBUS_MACHINE_GUEST_BINARY="${guest_binary}" \
+NIMBUS_MACHINE_OS_LOCAL_VERSION="dev-remote" \
+NIMBUS_MACHINE_OS_LOCAL_SOURCE_REVISION="remote-revision" \
+bash "${repo_root}/scripts/recreate-nimbus-machine.sh" \
+  --machine team-remote \
+  --home "${home_dir}" \
+  --runtime-root "${runtime_root}" \
+  --output-dir "${remote_bootc_output_dir}" \
+  --nimbus "${bin_dir}/nimbus" \
+  --machine-os-builder fake-builder \
+  --machine-os-builder-repo "${machine_os_repo}" \
+  --machine-os-builder-work-dir "${remote_work_dir}" \
+  --identity "${tmp_dir}/machine-key" \
+  --volume /Users:/Users \
+  > "${remote_bootc_output_dir}/stdout.txt"
+
+remote_bootc_raw="${remote_bootc_output_dir}/local-bootc-image/nimbus-machine-os.raw"
+grep -F "image.source                       ${remote_bootc_raw}" \
+  "${remote_bootc_output_dir}/summary.txt" >/dev/null
+grep -F -- "--builder fake-builder" \
+  "${remote_bootc_output_dir}/nimbus-machine-local-bootc-build-command.txt" >/dev/null
+grep -F "builder=fake-builder" \
+  "${remote_bootc_output_dir}/local-bootc-image/nimbus-machine-local-bootc-builder.txt" >/dev/null
+grep -F "artifact.producer=nimbus/machine-os" \
+  "${remote_bootc_output_dir}/local-bootc-image/nimbus-machine-local-bootc-builder.txt" >/dev/null
+grep -F "artifact.producer_script=${machine_os_repo}/scripts/build.sh" \
+  "${remote_bootc_output_dir}/local-bootc-image/nimbus-machine-local-bootc-builder.txt" >/dev/null
+grep -F "local_machine_os_repo=<unspecified>" \
+  "${remote_bootc_output_dir}/local-bootc-image/nimbus-machine-local-bootc-builder.txt" >/dev/null
+grep -F "builder_machine_os_repo=${machine_os_repo}" \
+  "${remote_bootc_output_dir}/local-bootc-image/nimbus-machine-local-bootc-builder.txt" >/dev/null
+grep -F "builder_work_dir=${remote_work_dir}" \
+  "${remote_bootc_output_dir}/local-bootc-image/nimbus-machine-local-bootc-builder.txt" >/dev/null
+grep -F "${guest_binary} fake-builder:" \
+  "${remote_bootc_output_dir}/local-bootc-image/nimbus-machine-local-bootc-copy-to-builder-command.txt" >/dev/null
+grep -F "fake-builder:" \
+  "${remote_bootc_output_dir}/local-bootc-image/nimbus-machine-local-bootc-copy-from-builder-command.txt" >/dev/null
+grep -F -- "--image ${remote_bootc_raw}" \
+  "${remote_bootc_output_dir}/nimbus-machine-init-command.txt" >/dev/null
+grep -F -- "--bootc-native" \
+  "${remote_bootc_output_dir}/nimbus-machine-init-command.txt" >/dev/null
+grep -F "nimbus_binary=${remote_work_dir}/nimbus-machine-os-dev-dev-remote-" \
+  "${remote_bootc_output_dir}/local-bootc-image/build-args.txt" >/dev/null
 
 failure_output_dir="${tmp_dir}/failure-output"
 set +e
