@@ -339,10 +339,13 @@ capture_command \
   "${output_dir}/service-ps.txt" \
   "${base_cmd[@]}" compose top "${service_name}" --file "${compose_file}" || true
 
-capture_command \
+capture_command_with_retries \
   "capture.service_logs" \
   "${output_dir}/service-logs-command.txt" \
   "${output_dir}/service-logs.txt" \
+  '.+' \
+  '' \
+  15 \
   "${base_cmd[@]}" compose logs "${service_name}" --file "${compose_file}" || true
 
 if [[ -n "${published_url}" ]]; then
