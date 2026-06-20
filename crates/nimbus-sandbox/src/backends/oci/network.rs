@@ -793,7 +793,7 @@ fn request_machine_port_forwarding(
     for binding in port_bindings {
         let request = MachinePortForwardRequest {
             local: format!("{}:{}", binding.host_address, binding.host_port),
-            remote: (action == "expose").then(|| format!(":{}", binding.host_port)),
+            remote: (action == "expose").then(|| machine_forward_remote(binding)),
             protocol: "tcp".to_owned(),
         };
         let body = serde_json::to_vec(&request).map_err(|error| SandboxError::OperationFailed {
@@ -896,6 +896,13 @@ fn request_machine_port_forwarding(
         }
     }
     Ok(())
+}
+
+fn machine_forward_remote(binding: &SandboxPortBinding) -> String {
+    if binding.host_address.is_loopback() {
+        return binding.host_socket_addr().to_string();
+    }
+    format!(":{}", binding.host_port)
 }
 
 fn trim_trailing_slash(path_prefix: &str) -> &str {
@@ -1032,7 +1039,7 @@ struct IpamState {
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
-    use std::net::Ipv4Addr;
+    use std::net::{IpAddr, Ipv4Addr};
 
     use nimbus_core::TenantId;
     use tempfile::tempdir;
@@ -1042,8 +1049,8 @@ mod tests {
         DEFAULT_MACHINE_FORWARDER_PORT, NETAVARK_OPTION_NO_DEFAULT_ROUTE,
         OciMachinePortForwarderConfig, OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout,
         allocate_container_ips, build_netavark_request, deallocate_container_ips,
-        load_container_ips, netavark_path_env, parse_ipv4_subnet_and_gateway,
-        render_netavark_failure,
+        load_container_ips, machine_forward_remote, netavark_path_env,
+        parse_ipv4_subnet_and_gateway, render_netavark_failure,
     };
     use crate::backend::SandboxBackendKind;
     use crate::error::SandboxError;
@@ -1183,6 +1190,21 @@ mod tests {
         assert_eq!(config.host, DEFAULT_MACHINE_FORWARDER_HOST);
         assert_eq!(config.port, DEFAULT_MACHINE_FORWARDER_PORT);
         assert_eq!(config.path_prefix, DEFAULT_MACHINE_FORWARDER_PATH);
+    }
+
+    #[test]
+    fn machine_forwarder_targets_guest_loopback_for_loopback_bindings() {
+        let binding = SandboxPortBinding::tcp("http", 18080, 8080);
+
+        assert_eq!(machine_forward_remote(&binding), "127.0.0.1:18080");
+    }
+
+    #[test]
+    fn machine_forwarder_preserves_gvproxy_inferred_remote_for_non_loopback_bindings() {
+        let binding = SandboxPortBinding::tcp("http", 18080, 8080)
+            .with_host_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+
+        assert_eq!(machine_forward_remote(&binding), ":18080");
     }
 
     #[test]
