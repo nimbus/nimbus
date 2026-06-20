@@ -2,22 +2,24 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
-use std::net::{Ipv4Addr, TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread;
 use std::time::Duration;
 
 use fs2::FileExt;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
 #[cfg(target_os = "linux")]
 use std::fs::File;
 #[cfg(target_os = "linux")]
 use std::os::unix::ffi::OsStrExt;
-#[cfg(target_os = "linux")]
-use std::thread;
-
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use nimbus_core::TenantId;
 
@@ -40,6 +42,8 @@ const DEFAULT_CONTAINER_INTERFACE_NAME: &str = "eth0";
 const DEFAULT_NETWORK_ID: &str = "5e9b4c62f9f3e8b8d2c74b7388d8451f5e9b4c62f9f3e8b8d2c74b7388d8451f";
 const NETAVARK_OPTION_NO_DEFAULT_ROUTE: &str = "no_default_route";
 const MACHINE_FORWARDER_TIMEOUT: Duration = Duration::from_secs(2);
+const MACHINE_PORT_PROXY_ACCEPT_SLEEP: Duration = Duration::from_millis(50);
+const MACHINE_PORT_PROXY_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OciNetworkLayout {
@@ -274,8 +278,9 @@ pub(crate) fn setup_container_network(
     hostname: &str,
     port_bindings: &[SandboxPortBinding],
     machine_port_forwarder: Option<&OciMachinePortForwarderConfig>,
-) -> Result<()> {
+) -> Result<Vec<Ipv4Addr>> {
     let assigned_ips = allocate_container_ips(layout, config, sandbox_id)?;
+    let netavark_port_bindings = netavark_port_bindings(port_bindings, machine_port_forwarder);
     let response = run_netavark(
         "setup",
         layout,
@@ -284,7 +289,7 @@ pub(crate) fn setup_container_network(
         sandbox_name,
         hostname,
         &assigned_ips,
-        port_bindings,
+        netavark_port_bindings,
         machine_port_forwarder.is_some(),
     )
     .inspect_err(|_| {
@@ -300,7 +305,7 @@ pub(crate) fn setup_container_network(
             layout.status_path.display()
         ),
     })?;
-    Ok(())
+    Ok(assigned_ips)
 }
 
 pub(crate) fn teardown_container_network(
@@ -318,6 +323,7 @@ pub(crate) fn teardown_container_network(
         return Ok(());
     }
     let assigned_ips = load_container_ips(layout, sandbox_id)?;
+    let netavark_port_bindings = netavark_port_bindings(port_bindings, machine_port_forwarder);
     let _ = run_netavark(
         "teardown",
         layout,
@@ -326,7 +332,7 @@ pub(crate) fn teardown_container_network(
         sandbox_name,
         hostname,
         &assigned_ips,
-        port_bindings,
+        netavark_port_bindings,
         machine_port_forwarder.is_some(),
     )?;
     let _ = fs::remove_file(&layout.status_path);
@@ -346,6 +352,144 @@ pub(crate) fn unexpose_machine_ports(
     port_bindings: &[SandboxPortBinding],
 ) -> Result<()> {
     request_machine_port_forwarding(config, "unexpose", port_bindings)
+}
+
+pub(crate) struct MachinePortProxy {
+    bind_addr: SocketAddr,
+    shutdown: Arc<AtomicBool>,
+    join: Option<thread::JoinHandle<()>>,
+}
+
+impl MachinePortProxy {
+    fn start(binding: &SandboxPortBinding, container_ip: Ipv4Addr) -> Result<Self> {
+        let bind_addr = machine_port_proxy_bind_addr(binding);
+        let target_addr = SocketAddr::new(IpAddr::V4(container_ip), binding.guest_port);
+        let listener =
+            TcpListener::bind(bind_addr).map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to bind machine port proxy {} -> {} for {}:{}: {error}",
+                    bind_addr, target_addr, binding.host_address, binding.host_port
+                ),
+            })?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to configure machine port proxy listener {}: {error}",
+                    bind_addr
+                ),
+            })?;
+
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let thread_shutdown = Arc::clone(&shutdown);
+        let join = thread::Builder::new()
+            .name(format!("nimbus-machine-port-{}", binding.host_port))
+            .spawn(move || accept_machine_port_proxy(listener, target_addr, thread_shutdown))
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to spawn machine port proxy {} -> {}: {error}",
+                    bind_addr, target_addr
+                ),
+            })?;
+
+        Ok(Self {
+            bind_addr,
+            shutdown,
+            join: Some(join),
+        })
+    }
+
+    fn stop(&mut self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect_timeout(
+            &machine_port_proxy_wake_addr(self.bind_addr),
+            Duration::from_millis(100),
+        );
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+impl Drop for MachinePortProxy {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+pub(crate) fn start_machine_port_proxies(
+    assigned_ips: &[Ipv4Addr],
+    port_bindings: &[SandboxPortBinding],
+) -> Result<Vec<MachinePortProxy>> {
+    if port_bindings.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(container_ip) = assigned_ips.first().copied() else {
+        return Err(SandboxError::OperationFailed {
+            message: "cannot start machine port proxies without a container IPv4 address"
+                .to_owned(),
+        });
+    };
+    port_bindings
+        .iter()
+        .map(|binding| MachinePortProxy::start(binding, container_ip))
+        .collect()
+}
+
+fn accept_machine_port_proxy(
+    listener: TcpListener,
+    target_addr: SocketAddr,
+    shutdown: Arc<AtomicBool>,
+) {
+    while !shutdown.load(Ordering::SeqCst) {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                let _ = thread::Builder::new()
+                    .name("nimbus-machine-port-connection".to_owned())
+                    .spawn(move || proxy_machine_port_connection(stream, target_addr));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(MACHINE_PORT_PROXY_ACCEPT_SLEEP);
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+fn proxy_machine_port_connection(mut inbound: TcpStream, target_addr: SocketAddr) {
+    let Ok(mut outbound) =
+        TcpStream::connect_timeout(&target_addr, MACHINE_PORT_PROXY_CONNECT_TIMEOUT)
+    else {
+        return;
+    };
+    let Ok(mut inbound_reader) = inbound.try_clone() else {
+        return;
+    };
+    let Ok(mut outbound_writer) = outbound.try_clone() else {
+        return;
+    };
+    let client_to_target = thread::spawn(move || {
+        let _ = std::io::copy(&mut inbound_reader, &mut outbound_writer);
+        let _ = outbound_writer.shutdown(Shutdown::Write);
+    });
+    let target_to_client = thread::spawn(move || {
+        let _ = std::io::copy(&mut outbound, &mut inbound);
+        let _ = inbound.shutdown(Shutdown::Write);
+    });
+    let _ = client_to_target.join();
+    let _ = target_to_client.join();
+}
+
+fn machine_port_proxy_bind_addr(binding: &SandboxPortBinding) -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), binding.host_port)
+}
+
+fn machine_port_proxy_wake_addr(bind_addr: SocketAddr) -> SocketAddr {
+    if bind_addr.ip().is_unspecified() {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), bind_addr.port())
+    } else {
+        bind_addr
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -899,10 +1043,23 @@ fn request_machine_port_forwarding(
 }
 
 fn machine_forward_remote(binding: &SandboxPortBinding) -> String {
-    if binding.host_address.is_loopback() {
-        return binding.host_socket_addr().to_string();
-    }
     format!(":{}", binding.host_port)
+}
+
+fn netavark_port_bindings<'a>(
+    port_bindings: &'a [SandboxPortBinding],
+    machine_port_forwarder: Option<&OciMachinePortForwarderConfig>,
+) -> &'a [SandboxPortBinding] {
+    if machine_port_forwarder.is_some() {
+        // In machine mode gvproxy publishes host ports to the guest, and this
+        // runner-owned guest listener bridges into the default-deny container
+        // network. Netavark host-port DNAT would route gvproxy traffic directly
+        // to the container, which needs a return route outside the service
+        // bridge and violates the no-default-route posture.
+        &[]
+    } else {
+        port_bindings
+    }
 }
 
 fn trim_trailing_slash(path_prefix: &str) -> &str {
@@ -1039,7 +1196,10 @@ struct IpamState {
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::io::{Read, Write};
+    use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
+    use std::thread;
+    use std::time::Duration;
 
     use nimbus_core::TenantId;
     use tempfile::tempdir;
@@ -1049,8 +1209,9 @@ mod tests {
         DEFAULT_MACHINE_FORWARDER_PORT, NETAVARK_OPTION_NO_DEFAULT_ROUTE,
         OciMachinePortForwarderConfig, OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout,
         allocate_container_ips, build_netavark_request, deallocate_container_ips,
-        load_container_ips, machine_forward_remote, netavark_path_env,
-        parse_ipv4_subnet_and_gateway, render_netavark_failure,
+        load_container_ips, machine_forward_remote, machine_port_proxy_bind_addr,
+        netavark_path_env, netavark_port_bindings, parse_ipv4_subnet_and_gateway,
+        render_netavark_failure, start_machine_port_proxies,
     };
     use crate::backend::SandboxBackendKind;
     use crate::error::SandboxError;
@@ -1102,19 +1263,15 @@ mod tests {
     }
 
     #[test]
-    fn netavark_request_strips_host_ip_when_machine_forwarding_is_enabled() {
-        let request = build_netavark_request(
-            &OciNetworkConfig::default(),
-            &crate::instance::SandboxId::new("db-01"),
-            "db",
-            "db",
-            &[],
-            &[SandboxPortBinding::tcp("http", 18080, 8080)],
-            true,
-        )
-        .expect("request should build");
+    fn netavark_port_bindings_are_omitted_when_machine_forwarding_is_enabled() {
+        let bindings = vec![SandboxPortBinding::tcp("http", 18080, 8080)];
+        let forwarder = OciMachinePortForwarderConfig::gvproxy_default();
 
-        assert_eq!(request.port_mappings[0].host_ip, "");
+        assert!(
+            netavark_port_bindings(&bindings, Some(&forwarder)).is_empty(),
+            "machine mode publishes through the runner-owned guest listener, not netavark host-port DNAT"
+        );
+        assert_eq!(netavark_port_bindings(&bindings, None), bindings);
     }
 
     #[test]
@@ -1193,10 +1350,10 @@ mod tests {
     }
 
     #[test]
-    fn machine_forwarder_targets_guest_loopback_for_loopback_bindings() {
+    fn machine_forwarder_uses_gvproxy_inferred_vm_remote_for_loopback_bindings() {
         let binding = SandboxPortBinding::tcp("http", 18080, 8080);
 
-        assert_eq!(machine_forward_remote(&binding), "127.0.0.1:18080");
+        assert_eq!(machine_forward_remote(&binding), ":18080");
     }
 
     #[test]
@@ -1205,6 +1362,83 @@ mod tests {
             .with_host_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
 
         assert_eq!(machine_forward_remote(&binding), ":18080");
+    }
+
+    #[test]
+    fn machine_port_proxy_binds_guest_wildcard_port() {
+        let binding = SandboxPortBinding::tcp("http", 18080, 8080);
+
+        assert_eq!(
+            machine_port_proxy_bind_addr(&binding),
+            "0.0.0.0:18080".parse().expect("socket addr should parse")
+        );
+    }
+
+    #[test]
+    fn machine_port_proxy_forwards_tcp_to_container_endpoint() {
+        let target =
+            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("target listener should bind");
+        let target_port = target
+            .local_addr()
+            .expect("target address should be available")
+            .port();
+        let proxy_port = unused_local_port();
+        let target_thread = thread::spawn(move || {
+            let (mut stream, _) = target.accept().expect("target should accept connection");
+            let mut request = [0_u8; 4];
+            stream
+                .read_exact(&mut request)
+                .expect("target should read proxy request");
+            assert_eq!(&request, b"ping");
+            stream
+                .write_all(b"pong")
+                .expect("target should write proxy response");
+        });
+
+        let binding = SandboxPortBinding::tcp("http", proxy_port, target_port);
+        let proxies = start_machine_port_proxies(&[Ipv4Addr::LOCALHOST], &[binding])
+            .expect("machine port proxy should start");
+        let mut stream = connect_with_retry(proxy_port);
+        stream
+            .write_all(b"ping")
+            .expect("client should write request");
+        let mut response = [0_u8; 4];
+        stream
+            .read_exact(&mut response)
+            .expect("client should read response");
+
+        assert_eq!(&response, b"pong");
+        drop(proxies);
+        target_thread
+            .join()
+            .expect("target thread should finish cleanly");
+    }
+
+    fn unused_local_port() -> u16 {
+        let listener =
+            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral listener should bind");
+        listener
+            .local_addr()
+            .expect("ephemeral address should be available")
+            .port()
+    }
+
+    fn connect_with_retry(port: u16) -> TcpStream {
+        let address = (Ipv4Addr::LOCALHOST, port);
+        let mut last_error = None;
+        for _ in 0..20 {
+            match TcpStream::connect(address) {
+                Ok(stream) => return stream,
+                Err(error) => {
+                    last_error = Some(error);
+                    thread::sleep(Duration::from_millis(25));
+                }
+            }
+        }
+        panic!(
+            "proxy listener on 127.0.0.1:{port} did not accept connections: {:?}",
+            last_error
+        );
     }
 
     #[test]

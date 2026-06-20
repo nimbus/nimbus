@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
-use std::net::{IpAddr, SocketAddr, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -32,10 +32,11 @@ use crate::backends::oci::materializer::{
     MaterializedImageRootfs, OciImageMaterializer, PreparedMaterializedImageLaunch,
 };
 use crate::backends::oci::network::{
-    DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, OciMachinePortForwarderConfig,
-    OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, bridge_gateway_addr,
-    create_persistent_network_namespace, expose_machine_ports, remove_persistent_network_namespace,
-    setup_container_network, teardown_container_network, unexpose_machine_ports,
+    DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, MachinePortProxy,
+    OciMachinePortForwarderConfig, OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout,
+    bridge_gateway_addr, create_persistent_network_namespace, expose_machine_ports,
+    remove_persistent_network_namespace, setup_container_network, start_machine_port_proxies,
+    teardown_container_network, unexpose_machine_ports,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -139,6 +140,7 @@ impl Default for ContainerSandboxBackendConfig {
 pub struct ContainerSandboxBackend {
     config: ContainerSandboxBackendConfig,
     egress_proxies: Arc<Mutex<HashMap<SandboxId, SandboxEgressProxy>>>,
+    machine_port_proxies: Arc<Mutex<HashMap<SandboxId, Vec<MachinePortProxy>>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +154,7 @@ impl ContainerSandboxBackend {
         Self {
             config,
             egress_proxies: Arc::new(Mutex::new(HashMap::new())),
+            machine_port_proxies: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -607,6 +610,9 @@ impl ContainerSandboxBackend {
         if let Err(error) = self.stop_egress_proxy(&manifest.handle.id) {
             errors.push(error.to_string());
         }
+        if let Err(error) = self.stop_machine_port_proxies(&manifest.handle.id) {
+            errors.push(error.to_string());
+        }
         if let Err(error) = run_status_checked(&manifest.conmon_launch.delete_command) {
             errors.push(error.to_string());
         }
@@ -776,17 +782,8 @@ impl ContainerSandboxBackend {
     }
 
     fn configure_network(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
-        if let Some(forwarder) = self.config.machine_port_forwarder.as_ref() {
-            expose_machine_ports(forwarder, &manifest.spec.port_bindings)?;
-        }
-        if let Err(error) = create_persistent_network_namespace(&manifest.network_layout.netns_path)
-        {
-            if let Some(forwarder) = self.config.machine_port_forwarder.as_ref() {
-                let _ = unexpose_machine_ports(forwarder, &manifest.spec.port_bindings);
-            }
-            return Err(error);
-        }
-        if let Err(error) = setup_container_network(
+        create_persistent_network_namespace(&manifest.network_layout.netns_path)?;
+        let assigned_ips = match setup_container_network(
             &manifest.network_layout,
             &self.network_config(),
             &manifest.handle.id,
@@ -795,11 +792,44 @@ impl ContainerSandboxBackend {
             &manifest.spec.port_bindings,
             self.config.machine_port_forwarder.as_ref(),
         ) {
-            let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
-            if let Some(forwarder) = self.config.machine_port_forwarder.as_ref() {
-                let _ = unexpose_machine_ports(forwarder, &manifest.spec.port_bindings);
+            Ok(assigned_ips) => assigned_ips,
+            Err(error) => {
+                let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
+                return Err(error);
             }
-            return Err(error);
+        };
+        if let Some(forwarder) = self.config.machine_port_forwarder.as_ref() {
+            if let Err(error) = self.ensure_machine_port_proxies_running(
+                &manifest.handle.id,
+                &assigned_ips,
+                manifest,
+            ) {
+                let _ = teardown_container_network(
+                    &manifest.network_layout,
+                    &self.network_config(),
+                    &manifest.handle.id,
+                    manifest.spec.display_name(),
+                    &hostname_for(&manifest.spec),
+                    &manifest.spec.port_bindings,
+                    self.config.machine_port_forwarder.as_ref(),
+                );
+                let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
+                return Err(error);
+            }
+            if let Err(error) = expose_machine_ports(forwarder, &manifest.spec.port_bindings) {
+                let _ = self.stop_machine_port_proxies(&manifest.handle.id);
+                let _ = teardown_container_network(
+                    &manifest.network_layout,
+                    &self.network_config(),
+                    &manifest.handle.id,
+                    manifest.spec.display_name(),
+                    &hostname_for(&manifest.spec),
+                    &manifest.spec.port_bindings,
+                    self.config.machine_port_forwarder.as_ref(),
+                );
+                let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
+                return Err(error);
+            }
         }
         Ok(())
     }
@@ -847,9 +877,34 @@ impl ContainerSandboxBackend {
         Ok(())
     }
 
+    fn ensure_machine_port_proxies_running(
+        &self,
+        id: &SandboxId,
+        assigned_ips: &[Ipv4Addr],
+        manifest: &ContainerSandboxManifest,
+    ) -> Result<()> {
+        let mut proxies =
+            self.machine_port_proxies
+                .lock()
+                .map_err(|_| SandboxError::OperationFailed {
+                    message: "container machine port proxy registry lock is poisoned".to_owned(),
+                })?;
+        if proxies.contains_key(id) {
+            return Ok(());
+        }
+        proxies.insert(
+            id.clone(),
+            start_machine_port_proxies(assigned_ips, &manifest.spec.port_bindings)?,
+        );
+        Ok(())
+    }
+
     fn release_execution_artifacts(&self, manifest: &mut ContainerSandboxManifest) -> Result<()> {
         let mut errors = Vec::new();
         if let Err(error) = self.stop_egress_proxy(&manifest.handle.id) {
+            errors.push(error.to_string());
+        }
+        if let Err(error) = self.stop_machine_port_proxies(&manifest.handle.id) {
             errors.push(error.to_string());
         }
         let _ = run_status_best_effort(&manifest.conmon_launch.delete_command);
@@ -894,6 +949,17 @@ impl ContainerSandboxBackend {
                 .lock()
                 .map_err(|_| SandboxError::OperationFailed {
                     message: "container egress proxy registry lock is poisoned".to_owned(),
+                })?;
+        proxies.remove(id);
+        Ok(())
+    }
+
+    fn stop_machine_port_proxies(&self, id: &SandboxId) -> Result<()> {
+        let mut proxies =
+            self.machine_port_proxies
+                .lock()
+                .map_err(|_| SandboxError::OperationFailed {
+                    message: "container machine port proxy registry lock is poisoned".to_owned(),
                 })?;
         proxies.remove(id);
         Ok(())
