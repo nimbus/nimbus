@@ -1238,7 +1238,25 @@ install_or_upgrade_homebrew_cask() {
 
   say_info "Tapping nimbus/tap..."
   brew tap nimbus/tap 2>/dev/null || true
-  brew tap slp/krunkit 2>/dev/null || true
+
+  # Homebrew 6.0 won't load casks or formulae from third-party taps until they
+  # are explicitly trusted (HOMEBREW_REQUIRE_TAP_TRUST, default true since 6.0).
+  # An untrusted tap is a hard error (UntrustedTapError) with no interactive
+  # prompt, so without this the install aborts. Pre-trust the two taps this
+  # install needs:
+  #   - nimbus/tap     the Nimbus cask itself
+  #   - libkrun/krun   the official containers/libkrun tap that provides the
+  #                    krunkit formula the cask declares via `depends_on
+  #                    formula: "libkrun/krun/krunkit"`. One trust covers the
+  #                    whole microVM chain (krunkit -> libkrun + gvproxy ->
+  #                    virglrenderer/libepoxy/libkrunfw) — the enterprise
+  #                    one-tap story.
+  # Homebrew auto-taps libkrun/krun and auto-installs that chain from the cask
+  # dependency; trusting only grants permission for the load. `brew trust` is
+  # idempotent and records to trust.json whether or not the tap is yet tapped.
+  say_info "Trusting the Nimbus and libkrun taps (Homebrew 6.0 tap-trust gate)..."
+  brew trust --cask nimbus/tap/nimbus || true
+  brew trust --tap libkrun/krun || true
 
   if brew list --cask nimbus >/dev/null 2>&1; then
     say_info "Upgrading nimbus cask..."

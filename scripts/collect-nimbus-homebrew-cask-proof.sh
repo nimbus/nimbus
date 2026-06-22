@@ -456,7 +456,7 @@ cask "${cask_token}" do
 
   depends_on arch: :arm64
   depends_on macos: :sonoma
-  depends_on formula: "slp/krunkit/krunkit"
+  depends_on formula: "libkrun/krun/krunkit"
 
   url "file://${archive_path}"
   sha256 "${archive_sha}"
