@@ -50,6 +50,7 @@ globalThis.__nimbusInvoke = function () {
     stdoutWriteType: typeof globalThis.process?.stdout?.write,
     stderrType: typeof globalThis.process?.stderr,
     stderrWriteType: typeof globalThis.process?.stderr?.write,
+    refreshOpStateHelperType: typeof globalThis.__nimbusRefreshNodeRuntimeOpState,
   };
 };
 
@@ -94,6 +95,7 @@ export {};
             "stdoutWriteType": "function",
             "stderrType": "object",
             "stderrWriteType": "function",
+            "refreshOpStateHelperType": "undefined",
         })
     );
 }

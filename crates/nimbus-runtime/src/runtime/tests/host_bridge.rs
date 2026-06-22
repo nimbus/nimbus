@@ -74,7 +74,16 @@ async fn runtime_query_context_is_reader_only_when_request_kind_is_present() {
         &bundle_path,
         r#"
 globalThis.__nimbusInvoke = async function (request) {
-  const ctx = globalThis.__nimbusCreateContext({ request });
+  const ctx = globalThis.__nimbusCreateContext({
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
+  });
+  globalThis.__nimbusInvokeNamedLocal = async function (nestedRequest) {
+    return {
+      kind: nestedRequest.kind,
+      functionName: nestedRequest.function_name,
+      args: nestedRequest.args,
+    };
+  };
   const capture = async (fn) => {
     try {
       await fn();
@@ -86,9 +95,14 @@ globalThis.__nimbusInvoke = async function (request) {
   return {
     getType: typeof ctx.db.get,
     queryType: typeof ctx.db.query,
+    runQueryResult: await ctx.runQuery(
+      { name: "messages:list", visibility: "public" },
+      { author: "Ada" },
+    ),
     insertError: await capture(() => ctx.db.insert("messages", { body: "blocked" })),
     schedulerError: await capture(() => ctx.scheduler.runAfter(1, "messages:send", {})),
     runMutationError: await capture(() => ctx.runMutation("messages:send", {})),
+    runActionError: await capture(() => ctx.runAction("messages:send", {})),
   };
 };
 
@@ -120,7 +134,20 @@ export {};
 
     assert_eq!(result["getType"], "function");
     assert_eq!(result["queryType"], "function");
-    for field in ["insertError", "schedulerError", "runMutationError"] {
+    assert_eq!(
+        result["runQueryResult"],
+        serde_json::json!({
+            "kind": "query",
+            "functionName": "messages:list",
+            "args": { "author": "Ada" },
+        })
+    );
+    for field in [
+        "insertError",
+        "schedulerError",
+        "runMutationError",
+        "runActionError",
+    ] {
         let message = result[field]
             .as_str()
             .expect("denied query context operation should return an error string");
@@ -129,12 +156,24 @@ export {};
             "unexpected {field}: {message}"
         );
     }
-    assert!(
-        host.calls
-            .lock()
-            .expect("host calls lock should not be poisoned")
-            .is_empty(),
-        "context-shape denials should not reach the host bridge"
+    let calls = host
+        .calls
+        .lock()
+        .expect("host calls lock should not be poisoned")
+        .clone();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(
+        calls[0].operation,
+        HostCallOperation::CtxRuntimeEnterNestedCall
+    );
+    assert_eq!(
+        calls[0].payload,
+        serde_json::json!({
+            "name": "messages:list",
+            "visibility": "public",
+            "kind": "query",
+            "host_call_session_id": "query:messages:reader",
+        })
     );
 }
 
@@ -1174,6 +1213,7 @@ export {};
         serde_json::json!({
             "name": "messages:list",
             "visibility": "public",
+            "kind": "query",
             "host_call_session_id": "query:messages:outer",
         })
     );

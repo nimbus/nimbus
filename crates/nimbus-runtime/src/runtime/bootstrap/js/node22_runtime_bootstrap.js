@@ -3945,7 +3945,16 @@ if (typeof runtimeTargetTriple === "string" && runtimeTargetTriple.length > 0) {
 }
 
 enableNextTick();
-op_stream_base_register_state(streamBaseState);
+function refreshNodeRuntimeOpState() {
+  op_stream_base_register_state(streamBaseState);
+}
+Object.defineProperty(globalThis, "__nimbusRefreshNodeRuntimeOpState", {
+  value: refreshNodeRuntimeOpState,
+  configurable: true,
+  enumerable: false,
+  writable: true,
+});
+refreshNodeRuntimeOpState();
 seedGlobalEventTargetSurface();
 saveWebGlobalThisReference(globalThis);
 defineWebEventHandler(globalThis, "unhandledrejection");

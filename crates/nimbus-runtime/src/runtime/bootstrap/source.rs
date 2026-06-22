@@ -334,6 +334,7 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
     syncHostValue("op_nimbus_ctx_runtime_enter_nested_call", {
       name: normalized.name,
       visibility: normalized.visibility,
+      kind,
       host_call_session_id: hostCallSessionId,
     });
     return await localInvoker({
@@ -421,24 +422,56 @@ globalThis.__nimbusCreateContext = function(options = {}) {
     return null;
   };
 
+  const requestKindFromSessionId = (() => {
+    const separator = hostCallSessionId.indexOf(":");
+    return separator > 0 ? hostCallSessionId.slice(0, separator) : null;
+  })();
   const requestKind =
     options.request !== null &&
     typeof options.request === "object" &&
     typeof options.request.kind === "string"
       ? options.request.kind
-      : null;
+      : requestKindFromSessionId;
   const capabilities = (() => {
     switch (requestKind) {
       case "query":
       case "paginated_query":
-        return { db: true, dbWrite: false, scheduler: false, nestedCalls: false };
+        return {
+          db: true,
+          dbWrite: false,
+          scheduler: false,
+          runQuery: true,
+          runMutation: false,
+          runAction: false,
+        };
       case "mutation":
-        return { db: true, dbWrite: true, scheduler: true, nestedCalls: false };
+        return {
+          db: true,
+          dbWrite: true,
+          scheduler: true,
+          runQuery: true,
+          runMutation: true,
+          runAction: false,
+        };
       case "action":
       case "http_action":
-        return { db: false, dbWrite: false, scheduler: true, nestedCalls: true };
+        return {
+          db: false,
+          dbWrite: false,
+          scheduler: true,
+          runQuery: true,
+          runMutation: true,
+          runAction: true,
+        };
       default:
-        return { db: true, dbWrite: true, scheduler: true, nestedCalls: true };
+        return {
+          db: true,
+          dbWrite: true,
+          scheduler: true,
+          runQuery: true,
+          runMutation: true,
+          runAction: true,
+        };
     }
   })();
   const unsupported = (label) => {
@@ -576,7 +609,7 @@ globalThis.__nimbusCreateContext = function(options = {}) {
     scheduler,
     runQuery(functionRef, args = {}) {
       guardStale();
-      if (!capabilities.nestedCalls) {
+      if (!capabilities.runQuery) {
         unsupported("runQuery");
       }
       return __nimbusRunNamedFunction(
@@ -592,7 +625,7 @@ globalThis.__nimbusCreateContext = function(options = {}) {
     },
     runMutation(functionRef, args = {}) {
       guardStale();
-      if (!capabilities.nestedCalls) {
+      if (!capabilities.runMutation) {
         unsupported("runMutation");
       }
       return __nimbusRunNamedFunction(
@@ -608,7 +641,7 @@ globalThis.__nimbusCreateContext = function(options = {}) {
     },
     runAction(functionRef, args = {}) {
       guardStale();
-      if (!capabilities.nestedCalls) {
+      if (!capabilities.runAction) {
         unsupported("runAction");
       }
       return __nimbusRunNamedFunction(
@@ -1196,6 +1229,9 @@ const __nimbusCompatibilityMatch =
     ? /^node(\d+)$/.exec(__nimbusCompatibilityTarget)
     : null;
 if (__nimbusCompatibilityMatch !== null) {
+  if (typeof globalThis.__nimbusRefreshNodeRuntimeOpState === "function") {
+    globalThis.__nimbusRefreshNodeRuntimeOpState();
+  }
   const __nimbusWasmStreamingCore = Deno.core;
   const __nimbusWasmStreamingFetchModule =
     globalThis.__nimbusDenoFetchModule ??
@@ -1206,6 +1242,7 @@ if (__nimbusCompatibilityMatch !== null) {
     },
   );
 }
+delete globalThis.__nimbusRefreshNodeRuntimeOpState;
 delete globalThis.__nimbusDenoFetchModule;
 if (globalThis.__nimbusRetainDenoForNodeLazyScripts !== true) {
   delete globalThis.Deno;

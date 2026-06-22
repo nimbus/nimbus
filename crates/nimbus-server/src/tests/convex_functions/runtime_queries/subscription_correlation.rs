@@ -67,7 +67,7 @@ export {};
         ),
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -101,27 +101,28 @@ export {};
     assert_eq!(initial["request_id"], json!("convex-runtime-correlation"));
     assert_eq!(initial["data"][0]["body"], json!("Tracked Ada"));
 
-    let bootstrap_metrics = wait_for_runtime_metrics(
-        &registry,
+    let bootstrap_metrics = wait_for_runtime_metrics_body(
+        &api,
         "websocket runtime subscription bootstrap correlation",
-        |metrics| {
-            metrics
-                .recent_request_correlations
+        |metrics_body| {
+            recent_runtime_correlations(metrics_body)
                 .iter()
                 .any(|correlation| {
-                    correlation.function_name == "messages:maybeByAuthor"
-                        && correlation
-                            .server_request_id
-                            .starts_with("convex-ws-subscription-bootstrap-")
+                    correlation["function_name"] == json!("messages:maybeByAuthor")
+                        && correlation["server_request_id"]
+                            .as_str()
+                            .is_some_and(|request_id| {
+                                request_id.starts_with("convex-ws-subscription-bootstrap-")
+                            })
                 })
         },
     )
     .await;
     assert!(
-        bootstrap_metrics
-            .recent_request_correlations
+        recent_runtime_correlations(&bootstrap_metrics)
             .iter()
-            .all(|correlation| correlation.server_request_id != "convex-runtime-correlation")
+            .all(|correlation| correlation["server_request_id"]
+                != json!("convex-runtime-correlation"))
     );
 
     assert_eq!(
@@ -140,42 +141,70 @@ export {};
     assert!(pushed.get("request_id").is_none());
     assert_eq!(pushed["data"].as_array().map(Vec::len), Some(2));
 
-    let reeval_metrics = wait_for_runtime_metrics(
-        &registry,
+    let reeval_metrics = wait_for_runtime_metrics_body(
+        &api,
         "websocket runtime subscription reevaluation correlation",
-        |metrics| {
-            metrics
-                .recent_request_correlations
+        |metrics_body| {
+            recent_runtime_correlations(metrics_body)
                 .iter()
                 .any(|correlation| {
-                    correlation.function_name == "messages:maybeByAuthor"
-                        && correlation
-                            .server_request_id
-                            .starts_with("convex-ws-subscription-reeval-")
+                    correlation["function_name"] == json!("messages:maybeByAuthor")
+                        && correlation["server_request_id"]
+                            .as_str()
+                            .is_some_and(|request_id| {
+                                request_id.starts_with("convex-ws-subscription-reeval-")
+                            })
                 })
         },
     )
     .await;
-    let runtime_correlations: Vec<_> = reeval_metrics
-        .recent_request_correlations
+    let runtime_correlations: Vec<_> = reeval_metrics["metrics"]["recent_request_correlations"]
+        .as_array()
+        .expect("runtime metrics should include recent request correlations")
         .iter()
-        .filter(|correlation| correlation.function_name == "messages:maybeByAuthor")
+        .filter(|correlation| correlation["function_name"] == json!("messages:maybeByAuthor"))
         .collect();
     assert!(runtime_correlations.iter().any(|correlation| {
-        correlation
-            .server_request_id
-            .starts_with("convex-ws-subscription-bootstrap-")
+        correlation["server_request_id"]
+            .as_str()
+            .is_some_and(|request_id| request_id.starts_with("convex-ws-subscription-bootstrap-"))
     }));
     assert!(runtime_correlations.iter().any(|correlation| {
-        correlation
-            .server_request_id
-            .starts_with("convex-ws-subscription-reeval-")
+        correlation["server_request_id"]
+            .as_str()
+            .is_some_and(|request_id| request_id.starts_with("convex-ws-subscription-reeval-"))
     }));
-    assert!(
-        runtime_correlations
-            .iter()
-            .all(|correlation| { correlation.server_request_id != "convex-runtime-correlation" })
-    );
+    assert!(runtime_correlations.iter().all(|correlation| {
+        correlation["server_request_id"] != json!("convex-runtime-correlation")
+    }));
+}
+
+async fn wait_for_runtime_metrics_body(
+    api: &HttpApiFixture<'_>,
+    description: &str,
+    predicate: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    wait_for_value(
+        description,
+        Duration::from_secs(3),
+        Duration::from_millis(25),
+        || async {
+            api.runtime_metrics()
+                .await
+                .json::<serde_json::Value>()
+                .await
+                .expect("runtime metrics response should parse")
+        },
+        predicate,
+    )
+    .await
+}
+
+fn recent_runtime_correlations(metrics_body: &serde_json::Value) -> &[serde_json::Value] {
+    metrics_body["metrics"]["recent_request_correlations"]
+        .as_array()
+        .map(Vec::as_slice)
+        .expect("runtime metrics should include recent request correlations")
 }
 
 #[tokio::test]
@@ -261,7 +290,7 @@ export {};
         ),
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -542,7 +571,7 @@ export {};
         ),
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

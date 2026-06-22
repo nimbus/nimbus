@@ -64,7 +64,7 @@ export {};
         ),
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -75,10 +75,13 @@ export {};
     let response = api
         .convex_named_query("demo", "messages:outer", json!({ "nested": true }))
         .await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = response
-        .json::<serde_json::Value>()
+    let status = response.status();
+    let response_body = response
+        .text()
         .await
+        .expect("same-isolate nested runtime response body should load");
+    assert_eq!(status, StatusCode::OK, "{response_body}");
+    let body = serde_json::from_str::<serde_json::Value>(&response_body)
         .expect("same-isolate nested runtime response should parse");
     assert_eq!(body, json!(2));
     let metrics_body = api
@@ -134,37 +137,23 @@ export {};
         metrics_body["metrics"]["tenants"]["demo"]["execution_distribution"]["samples"],
         json!(1)
     );
-    let metrics = registry.runtime_metrics_snapshot();
-    assert_eq!(metrics.nested_local_dispatches, 1);
-    assert_eq!(metrics.fallback_cross_runtime_dispatches, 0);
-    assert_eq!(metrics.worker_dispatched_invocations, 1);
-    assert_eq!(metrics.runtime_pool_misses, 1);
-    assert_eq!(metrics.runtime_pool_hits, 0);
-    assert_eq!(metrics.runtime_pool_replacements, 0);
-    assert_eq!(
-        metrics
-            .host_operations
-            .get("convex.ctx.runtime.enter_nested_call")
-            .expect("nested runtime host op metrics should be present")
-            .succeeded,
-        1
-    );
-    let correlation = metrics
-        .recent_request_correlations
+    let correlations = metrics_body["metrics"]["recent_request_correlations"]
+        .as_array()
+        .expect("runtime metrics should include recent request correlations");
+    let correlation = correlations
         .last()
         .expect("request correlation should be present");
-    assert_eq!(correlation.function_name, "messages:outer");
-    assert_eq!(correlation.kind, "query");
-    assert_eq!(correlation.tenant_label.as_deref(), Some("demo"));
-    assert!(correlation.server_request_id.starts_with("convex-query-"));
-    assert!(correlation.invocation_id > 0);
-    assert_eq!(
-        metrics
-            .tenants
-            .get("demo")
-            .expect("tenant runtime metrics should be present")
-            .execution_distribution
-            .samples,
-        1
+    assert_eq!(correlation["function_name"], json!("messages:outer"));
+    assert_eq!(correlation["kind"], json!("query"));
+    assert_eq!(correlation["tenant_label"], json!("demo"));
+    assert!(
+        correlation["server_request_id"]
+            .as_str()
+            .is_some_and(|request_id| request_id.starts_with("convex-query-"))
+    );
+    assert!(
+        correlation["invocation_id"]
+            .as_u64()
+            .is_some_and(|invocation_id| invocation_id > 0)
     );
 }

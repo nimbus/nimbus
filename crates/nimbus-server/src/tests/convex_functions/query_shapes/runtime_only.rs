@@ -78,9 +78,7 @@ export {};
         ),
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let registry_for_router = registry.clone();
-    let server =
-        ServerFixture::start(router_for_convex(fixture.engine(), registry_for_router)).await;
+    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -103,10 +101,13 @@ export {};
     let response = api
         .convex_named_query("demo", "messages:outer", json!({ "author": "Ada" }))
         .await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = response
-        .json::<serde_json::Value>()
+    let status = response.status();
+    let response_body = response
+        .text()
         .await
+        .expect("nested runtime query response body should load");
+    assert_eq!(status, StatusCode::OK, "{response_body}");
+    let body = serde_json::from_str::<serde_json::Value>(&response_body)
         .expect("nested runtime query response should parse");
     assert_eq!(body.as_array().map(Vec::len), Some(2));
     assert!(
@@ -129,38 +130,42 @@ export {};
         metrics_body["metrics"]["worker_dispatched_invocations"],
         json!(2)
     );
-    let metrics = registry.runtime_metrics_snapshot();
-    assert_eq!(metrics.fallback_cross_runtime_dispatches, 1);
-    assert_eq!(metrics.worker_dispatched_invocations, 2);
-    let server_request_id = metrics
-        .recent_request_correlations
+    let correlations = metrics_body["metrics"]["recent_request_correlations"]
+        .as_array()
+        .expect("runtime metrics should include recent request correlations");
+    let server_request_id = correlations
         .iter()
-        .find(|correlation| correlation.function_name == "messages:outer")
-        .expect("outer runtime request correlation should be present")
-        .server_request_id
-        .clone();
-    let outer_correlation = metrics
-        .recent_request_correlations
+        .find(|correlation| correlation["function_name"] == json!("messages:outer"))
+        .expect("outer runtime request correlation should be present")["server_request_id"]
+        .as_str()
+        .expect("outer runtime request correlation should include a server request id")
+        .to_owned();
+    let outer_correlation = correlations
         .iter()
         .find(|correlation| {
-            correlation.server_request_id == server_request_id
-                && correlation.function_name == "messages:outer"
+            correlation["server_request_id"] == json!(server_request_id)
+                && correlation["function_name"] == json!("messages:outer")
         })
         .expect("outer runtime request correlation should remain visible");
-    assert_eq!(outer_correlation.tenant_label.as_deref(), Some("demo"));
-    assert!(outer_correlation.is_top_level);
-    assert!(!outer_correlation.bypasses_concurrency_limit);
-    let nested_correlation = metrics
-        .recent_request_correlations
+    assert_eq!(outer_correlation["tenant_label"], json!("demo"));
+    assert_eq!(outer_correlation["is_top_level"], json!(true));
+    assert_eq!(
+        outer_correlation["bypasses_concurrency_limit"],
+        json!(false)
+    );
+    let nested_correlation = correlations
         .iter()
         .find(|correlation| {
-            correlation.server_request_id == server_request_id
-                && correlation.function_name == "messages:inner"
+            correlation["server_request_id"] == json!(server_request_id)
+                && correlation["function_name"] == json!("messages:inner")
         })
         .expect("nested runtime request correlation should be present");
-    assert_eq!(nested_correlation.tenant_label.as_deref(), Some("demo"));
-    assert!(!nested_correlation.is_top_level);
-    assert!(nested_correlation.bypasses_concurrency_limit);
+    assert_eq!(nested_correlation["tenant_label"], json!("demo"));
+    assert_eq!(nested_correlation["is_top_level"], json!(false));
+    assert_eq!(
+        nested_correlation["bypasses_concurrency_limit"],
+        json!(true)
+    );
 }
 
 #[tokio::test]

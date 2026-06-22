@@ -96,10 +96,10 @@ impl HostCallOperation {
             | Self::DocumentPatch
             | Self::DocumentDelete => RuntimeEffectClass::Write,
             Self::CtxAction | Self::CtxServiceLookup => RuntimeEffectClass::ServiceExternal,
-            Self::CtxRunQuery
-            | Self::CtxRunMutation
-            | Self::CtxRunAction
-            | Self::CtxRuntimeEnterNestedCall => RuntimeEffectClass::NestedRuntime,
+            Self::CtxRunQuery => RuntimeEffectClass::ObservableRead,
+            Self::CtxRunMutation | Self::CtxRunAction | Self::CtxRuntimeEnterNestedCall => {
+                RuntimeEffectClass::NestedRuntime
+            }
             Self::CtxSchedulerRunAfter | Self::CtxSchedulerRunAt | Self::CtxSchedulerCancel => {
                 RuntimeEffectClass::Scheduler
             }
@@ -284,6 +284,8 @@ pub struct RuntimeAsyncFunctionCallPayload {
 pub struct RuntimeSyncNestedCallPayload {
     pub name: String,
     pub visibility: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     #[serde(default)]
     pub host_call_session_id: Option<String>,
 }
@@ -603,7 +605,7 @@ mod tests {
             ),
             (
                 HostCallOperation::CtxRunQuery,
-                RuntimeEffectClass::NestedRuntime,
+                RuntimeEffectClass::ObservableRead,
             ),
             (
                 HostCallOperation::CtxRunMutation,

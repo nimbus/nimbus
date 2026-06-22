@@ -6,6 +6,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::backends::v8::embedder::{CancelFuture, JsErrorBox, OpState, op2};
+use crate::execution_plan::RuntimeEffectClass;
 use crate::executor::SharedInvocationPermit;
 use crate::host::{HostCallOperation, HostCallRequest};
 use crate::limits::{
@@ -160,7 +161,7 @@ where
         serde_json::to_value(payload).map_err(|error| JsErrorBox::generic(error.to_string()))?;
     enforce_live_host_call_session(operation, &payload_value, &host_call_binding)?;
     enforce_host_call_grants(operation, &payload_value, &contract)?;
-    enforce_observed_host_call_effect(operation, &execution_plan_binding)?;
+    enforce_observed_host_call_effect(operation, &payload_value, &execution_plan_binding)?;
     permit.record_host_operation_started(operation);
     let mut permit_lease = HostCallPermitLease::new(permit.clone()).await;
     let host_bridge_started_at = Instant::now();
@@ -229,7 +230,7 @@ where
         serde_json::to_value(payload).map_err(|error| JsErrorBox::generic(error.to_string()))?;
     enforce_live_host_call_session(operation, &payload_value, &host_call_binding)?;
     enforce_host_call_grants(operation, &payload_value, &contract)?;
-    enforce_observed_host_call_effect(operation, &execution_plan_binding)?;
+    enforce_observed_host_call_effect(operation, &payload_value, &execution_plan_binding)?;
     permit.record_host_operation_started(operation);
     let host_bridge_started_at = Instant::now();
     let result = host_bridge
@@ -318,12 +319,13 @@ fn enforce_host_call_grants(
 
 fn enforce_observed_host_call_effect(
     operation: HostCallOperation,
+    payload: &Value,
     execution_plan_binding: &RuntimeInvocationExecutionPlanBinding,
 ) -> std::result::Result<(), JsErrorBox> {
     let Some(plan) = execution_plan_binding.plan() else {
         return Ok(());
     };
-    let observed_effect_class = operation.runtime_effect_class();
+    let observed_effect_class = observed_host_call_effect_class(operation, payload);
     let Some(violation) = plan.observed_effect_violation(observed_effect_class) else {
         return Ok(());
     };
@@ -332,6 +334,22 @@ fn enforce_observed_host_call_effect(
         "runtime host-call effect violation for `{operation}`: planned {:?} but observed {:?} ({:?})",
         violation.planned_effect_class, violation.observed_effect_class, violation.reason
     )))
+}
+
+fn observed_host_call_effect_class(
+    operation: HostCallOperation,
+    payload: &Value,
+) -> RuntimeEffectClass {
+    if operation != HostCallOperation::CtxRuntimeEnterNestedCall {
+        return operation.runtime_effect_class();
+    }
+
+    match payload.get("kind").and_then(Value::as_str) {
+        Some("query" | "paginated_query") => RuntimeEffectClass::ObservableRead,
+        Some("mutation") => RuntimeEffectClass::Write,
+        Some("action" | "http_action") => RuntimeEffectClass::ServiceExternal,
+        _ => operation.runtime_effect_class(),
+    }
 }
 
 fn normalize_host_call_value(

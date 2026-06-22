@@ -1,5 +1,6 @@
 use super::*;
 use nimbus_bridge::capabilities::RuntimeServiceCapabilityHost;
+use nimbus_runtime::RuntimeSyncNestedCallPayload;
 
 impl ConvexHostBridge {
     pub(in crate::adapters::convex) async fn invoke_ctx_service_lookup_async_cancellable(
@@ -108,7 +109,7 @@ impl ConvexHostBridge {
         &self,
         payload: Value,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
-        let payload: ConvexRuntimeFunctionCallPayload = serde_json::from_value(payload)?;
+        let payload: RuntimeSyncNestedCallPayload = serde_json::from_value(payload)?;
         self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
         self.registry()
             .runtime_policy()
@@ -117,7 +118,8 @@ impl ConvexHostBridge {
         tracing::debug!(
             tenant = %self.tenant_id(),
             function = %payload.name,
-            visibility = %payload.visibility.unwrap_or(ConvexFunctionVisibility::Public).as_str(),
+            visibility = %payload.visibility,
+            kind = payload.kind.as_deref().unwrap_or("unknown"),
             "convex runtime entered same-isolate nested local dispatch"
         );
         let response = self
