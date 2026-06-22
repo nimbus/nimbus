@@ -14,10 +14,6 @@ env:
   # Git's long-path support for large Deno-family dependency submodules.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  # Mirror Podman's macOS packaging model: ship a pinned upstream gvproxy
-  # binary inside the darwin archive instead of publishing gvproxy as a
-  # separate Nimbus release asset or depending on Podman at runtime.
-  GVPROXY_VERSION: v0.8.8
   # Dedicated machine-os source ref used by the release graph. Nimbus stages
   # the bootc artifact as soon as the Linux arm64 binary exists, then dispatches
   # the machine-os repository to publish from its own package context after all
@@ -340,28 +336,17 @@ jobs:
           compression-level: 0
           if-no-files-found: ignore
 
-      - name: Bundle macOS machine helper
-        if: matrix.os == 'darwin'
-        run: |
-          mkdir -p dist/libexec
-          curl --fail -sSL --retry 5 \
-            -o dist/libexec/gvproxy \
-            "https://github.com/containers/gvisor-tap-vsock/releases/download/${GVPROXY_VERSION}/gvproxy-darwin"
-          chmod 0755 dist/libexec/gvproxy
-
       - name: Package archive (unix)
         if: matrix.archive == 'tar.gz'
         run: |
           mkdir -p dist
           cp target/release/nimbus dist/nimbus
           cp README.md LICENSE dist/
-          if [[ "${{ matrix.os }}" == "darwin" ]]; then
-            tar czf nimbus_${{ matrix.os }}_${{ matrix.arch }}.tar.gz \
-              -C dist nimbus libexec README.md LICENSE
-          else
+          # gvproxy is no longer bundled. On macOS it is provided by the krunkit
+          # Homebrew formula (libkrun/krun/krunkit) as a managed dependency and
+          # resolved from the Homebrew bin path at runtime.
           tar czf nimbus_${{ matrix.os }}_${{ matrix.arch }}.tar.gz \
-              -C dist nimbus README.md LICENSE
-          fi
+            -C dist nimbus README.md LICENSE
 
       - name: Package archive (windows)
         if: matrix.archive == 'zip'

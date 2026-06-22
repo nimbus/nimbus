@@ -21,11 +21,10 @@ command -v unzip >/dev/null 2>&1 || {
 good_artifacts="${output_dir}/good"
 bad_artifacts="${output_dir}/bad"
 bad_license_artifacts="${output_dir}/bad-license"
-mkdir -p "${good_artifacts}/darwin/libexec" "${good_artifacts}/linux-x86_64" \
+mkdir -p "${good_artifacts}/darwin" "${good_artifacts}/linux-x86_64" \
   "${good_artifacts}/linux-arm64" "${good_artifacts}/windows"
 
 printf 'stub darwin host binary\n' > "${good_artifacts}/darwin/nimbus"
-printf 'stub gvproxy\n' > "${good_artifacts}/darwin/libexec/gvproxy"
 printf 'stub linux amd64 binary\n' > "${good_artifacts}/linux-x86_64/nimbus"
 printf 'stub linux arm64 binary\n' > "${good_artifacts}/linux-arm64/nimbus"
 printf 'stub windows binary\n' > "${good_artifacts}/windows/nimbus.exe"
@@ -39,12 +38,11 @@ cp "${good_artifacts}/darwin/README.md" "${good_artifacts}/windows/README.md"
 cp "${good_artifacts}/darwin/LICENSE" "${good_artifacts}/windows/LICENSE"
 
 chmod 0755 "${good_artifacts}/darwin/nimbus" \
-  "${good_artifacts}/darwin/libexec/gvproxy" \
   "${good_artifacts}/linux-x86_64/nimbus" \
   "${good_artifacts}/linux-arm64/nimbus"
 
 tar -czf "${good_artifacts}/nimbus_darwin_arm64.tar.gz" \
-  -C "${good_artifacts}/darwin" nimbus libexec README.md LICENSE
+  -C "${good_artifacts}/darwin" nimbus README.md LICENSE
 tar -czf "${good_artifacts}/nimbus_linux_x86_64.tar.gz" \
   -C "${good_artifacts}/linux-x86_64" nimbus README.md LICENSE
 tar -czf "${good_artifacts}/nimbus_linux_arm64.tar.gz" \
@@ -62,18 +60,20 @@ grep -F "verified: release archives match the published binary/layout contract" 
 
 cp -R "${good_artifacts}" "${bad_artifacts}"
 rm -f "${bad_artifacts}/nimbus_darwin_arm64.tar.gz"
-rm -rf "${bad_artifacts}/darwin/libexec"
+mkdir -p "${bad_artifacts}/darwin/libexec"
+printf 'stub gvproxy\n' > "${bad_artifacts}/darwin/libexec/gvproxy"
+chmod 0755 "${bad_artifacts}/darwin/libexec/gvproxy"
 tar -czf "${bad_artifacts}/nimbus_darwin_arm64.tar.gz" \
-  -C "${bad_artifacts}/darwin" nimbus README.md LICENSE
+  -C "${bad_artifacts}/darwin" nimbus libexec README.md LICENSE
 
 if bash "${repo_root}/scripts/verify-release-archive-layout.sh" \
   --artifacts-dir "${bad_artifacts}" \
   > "${output_dir}/bad.txt" 2>&1; then
-  echo "expected release archive layout verification to fail when macOS gvproxy is missing" >&2
+  echo "expected release archive layout verification to fail when macOS bundles a gvproxy helper" >&2
   exit 1
 fi
 
-grep -F "expected path missing: " "${output_dir}/bad.txt" >/dev/null
+grep -F "unexpected path present: " "${output_dir}/bad.txt" >/dev/null
 grep -F "libexec/gvproxy" "${output_dir}/bad.txt" >/dev/null
 
 cp -R "${good_artifacts}" "${bad_license_artifacts}"
@@ -92,4 +92,4 @@ fi
 grep -F "expected path missing: " "${output_dir}/bad-license.txt" >/dev/null
 grep -F "LICENSE" "${output_dir}/bad-license.txt" >/dev/null
 
-printf 'verified: release archive layout helper accepts the shipped layout and rejects missing macOS helper or LICENSE payloads\n'
+printf 'verified: release archive layout helper accepts the shipped layout and rejects a bundled macOS gvproxy helper or missing LICENSE payloads\n'

@@ -329,60 +329,33 @@ verify_macos() {
   # nimbus binary
   check_command "nimbus" "nimbus" required
 
-  # krunkit
-  check_command "krunkit" "krunkit" required
+  # krunkit — optional macOS-dev dependency for the `nimbus machine` flow,
+  # installed via the libkrun/krun Homebrew tap. The server runs without it.
+  check_command "krunkit" "krunkit" recommended
 
   # Optional Bun/JSC in-process runtime adapter
   check_macos_bun_jsc_adapter
 
-  # gvproxy — find it relative to the installed nimbus binary in Caskroom
-  local nimbus_path=""
-  nimbus_path="$(command -v nimbus 2>/dev/null || true)"
-  if [[ -n "${nimbus_path}" ]]; then
-    # Resolve symlink to get Caskroom path
-    local real_path=""
-    real_path="$(readlink "${nimbus_path}" 2>/dev/null || echo "${nimbus_path}")"
-
-    # If it's a relative symlink, resolve from the symlink's directory
-    if [[ "${real_path}" != /* ]]; then
-      real_path="$(cd "$(dirname "${nimbus_path}")" && cd "$(dirname "${real_path}")" && pwd)/$(basename "${real_path}")"
+  # gvproxy ships as a managed dependency of the krunkit Homebrew formula
+  # (libkrun/krun/krunkit) and is resolved from the Homebrew bin path. It is no
+  # longer bundled inside the nimbus release archive.
+  local brew_prefix=""
+  brew_prefix="$(brew --prefix 2>/dev/null || echo "/opt/homebrew")"
+  local gvproxy_candidates=(
+    "${brew_prefix}/bin/gvproxy"
+    "/usr/local/bin/gvproxy"
+  )
+  local found_gvproxy=""
+  for candidate in "${gvproxy_candidates[@]}"; do
+    if [[ -x "${candidate}" ]]; then
+      print_line "gvproxy" "present path=${candidate}"
+      found_gvproxy="1"
+      break
     fi
-
-    # Check if it looks like a Caskroom path
-    if [[ "${real_path}" == *Caskroom* ]]; then
-      local caskroom_version_dir=""
-      caskroom_version_dir="$(dirname "${real_path}")"
-      local gvproxy_path="${caskroom_version_dir}/libexec/gvproxy"
-
-      if [[ -x "${gvproxy_path}" ]]; then
-        print_line "gvproxy" "present path=${gvproxy_path}"
-      else
-        print_line "gvproxy" "missing path=${gvproxy_path}"
-        mark_failure
-      fi
-    else
-      # Not a Caskroom install — check common locations
-      local brew_prefix=""
-      brew_prefix="$(brew --prefix 2>/dev/null || echo "/opt/homebrew")"
-      local gvproxy_candidates=(
-        "${brew_prefix}/bin/gvproxy"
-        "/usr/local/bin/gvproxy"
-      )
-      local found_gvproxy=""
-      for candidate in "${gvproxy_candidates[@]}"; do
-        if [[ -x "${candidate}" ]]; then
-          print_line "gvproxy" "present path=${candidate}"
-          found_gvproxy="1"
-          break
-        fi
-      done
-      if [[ -z "${found_gvproxy}" ]]; then
-        print_line "gvproxy" "missing (not found in standard locations)"
-        mark_failure
-      fi
-    fi
-  else
-    print_line "gvproxy" "skipped (nimbus not found)"
+  done
+  if [[ -z "${found_gvproxy}" ]]; then
+    print_line "gvproxy" "missing (run 'brew install libkrun/krun/krunkit' for 'nimbus machine')"
+    mark_warning
   fi
 }
 

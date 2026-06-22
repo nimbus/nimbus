@@ -340,12 +340,6 @@ check_macos_version() {
   fi
 }
 
-check_homebrew() {
-  if ! check_cmd brew; then
-    err "Homebrew is required on macOS — install from https://brew.sh"
-  fi
-}
-
 # --- Linux helpers ----------------------------------------------------------
 
 check_kvm_access() {
@@ -831,15 +825,7 @@ print_install_plan() {
 
   say ""
   say "Versions:"
-  if [ "$PLATFORM" = "darwin" ]; then
-    if [ -n "$NIMBUS_VERSION" ]; then
-      say "  nimbus:      current Homebrew cask (ignoring requested pin ${NIMBUS_VERSION})"
-    else
-      say "  nimbus:      current Homebrew cask"
-    fi
-  else
-    say "  nimbus:      ${NIMBUS_VERSION:-latest}"
-  fi
+  say "  nimbus:      ${NIMBUS_VERSION:-latest}"
   if [ "$PLATFORM" = "linux" ]; then
     say "  nimbus-libkrun: ${NIMBUS_LIBKRUN_VERSION:-latest}"
     say "  nimbus-crun: ${NIMBUS_CRUN_VERSION:-latest}"
@@ -858,9 +844,21 @@ print_install_plan() {
       say "  nimbus-bun-jsc-adapter: /usr/libexec/nimbus/runtime/bun-jsc/current"
     fi
   elif [ "$PLATFORM" = "darwin" ]; then
-    say "  nimbus:      \$(brew --prefix)/bin/nimbus (via Homebrew cask)"
-    say "  gvproxy:     \$(brew --prefix)/Caskroom/nimbus/<version>/libexec/gvproxy"
-    say "  krunkit:     \$(brew --prefix)/bin/krunkit (via Homebrew formula dependency)"
+    say "  nimbus:      ${NIMBUS_PREFIX}/bin/nimbus"
+    say "  krunkit:     \$(brew --prefix)/bin/krunkit (optional, via Homebrew libkrun/krun tap)"
+    say "  gvproxy:     \$(brew --prefix)/bin/gvproxy (optional, krunkit Homebrew dependency)"
+    say "  libkrun:     \$(brew --prefix)/lib (optional, krunkit Homebrew dependency)"
+  fi
+
+  if [ "$PLATFORM" = "darwin" ] && [ -z "$SKIP_DEPS" ]; then
+    say ""
+    say "Optional macOS microVM dependencies (only needed for 'nimbus machine'):"
+    if check_cmd brew; then
+      say "  Homebrew install: brew install libkrun/krun/krunkit (krunkit + gvproxy + libkrun)"
+    else
+      say "  Homebrew not found — 'nimbus' runs without it; install Homebrew (https://brew.sh)"
+      say "  then 'brew install libkrun/krun/krunkit' to enable the 'nimbus machine' dev flow"
+    fi
   fi
 
   if [ "$PLATFORM" = "linux" ] && [ -z "$SKIP_DEPS" ]; then
@@ -880,20 +878,18 @@ print_install_plan() {
     esac
   fi
 
-  if [ "$PLATFORM" = "linux" ]; then
-    say ""
-    say "Supply-chain verification:"
-    say "  checksum:     enforced"
-    if check_cmd gh; then
-      say "  attestation:  GitHub provenance verification enabled for nimbus"
-    elif [ -n "$REQUIRE_ATTESTATIONS" ]; then
-      say "  attestation:  required, but gh CLI is missing"
-    else
-      say "  attestation:  best-effort (install gh or set NIMBUS_REQUIRE_ATTESTATIONS=1 to fail closed)"
-    fi
-    if [ -n "$INSTALL_BUN_JSC_ADAPTER" ]; then
-      say "  bun/jsc:      optional adapter checksum, manifest, SBOM/SLSA, export, and dlopen-safety checks enforced"
-    fi
+  say ""
+  say "Supply-chain verification:"
+  say "  checksum:     enforced"
+  if check_cmd gh; then
+    say "  attestation:  GitHub provenance verification enabled for nimbus"
+  elif [ -n "$REQUIRE_ATTESTATIONS" ]; then
+    say "  attestation:  required, but gh CLI is missing"
+  else
+    say "  attestation:  best-effort (install gh or set NIMBUS_REQUIRE_ATTESTATIONS=1 to fail closed)"
+  fi
+  if [ "$PLATFORM" = "linux" ] && [ -n "$INSTALL_BUN_JSC_ADAPTER" ]; then
+    say "  bun/jsc:      optional adapter checksum, manifest, SBOM/SLSA, export, and dlopen-safety checks enforced"
   fi
 
   say ""
@@ -904,20 +900,14 @@ warn_ignored_args_for_platform() {
     return 0
   fi
 
-  if [ -n "$NIMBUS_VERSION" ]; then
-    say_warn "--version is currently ignored on macOS — Homebrew installs the published nimbus cask version"
-  fi
   if [ -n "$NIMBUS_CRUN_VERSION" ]; then
-    say_warn "--crun-version is ignored on macOS"
+    say_warn "--crun-version is ignored on macOS (nimbus-crun is a Linux-only dependency)"
   fi
   if [ -n "$NIMBUS_LIBKRUN_VERSION" ]; then
-    say_warn "--libkrun-version is ignored on macOS"
-  fi
-  if [ "$NIMBUS_PREFIX" != "/usr/local" ]; then
-    say_warn "--prefix is ignored on macOS — Homebrew manages the install prefix"
+    say_warn "--libkrun-version is ignored on macOS — libkrun ships via the krunkit Homebrew formula"
   fi
   if [ -n "$INSTALL_BUN_JSC_ADAPTER" ]; then
-    say_warn "--with-bun-jsc is not installed by the macOS Homebrew cask yet — use the nimbus-bun-jsc-adapter release asset or package lane for the same tag"
+    say_warn "--with-bun-jsc is not installed by the macOS path yet — use the nimbus-bun-jsc-adapter release asset or package lane for the same tag"
   fi
 }
 
@@ -970,7 +960,7 @@ install_system_deps() {
   esac
 }
 
-download_and_install_nimbus_linux() {
+download_and_install_nimbus() {
   if [ -n "$DRY_RUN" ]; then
     say_info "[dry-run] Would download and install nimbus $NIMBUS_VERSION to ${NIMBUS_PREFIX}/bin/nimbus"
     return 0
@@ -1206,7 +1196,7 @@ install_linux() {
   resolve_nimbus_version
   resolve_libkrun_version
   resolve_crun_version
-  download_and_install_nimbus_linux
+  download_and_install_nimbus
   download_and_install_bun_jsc_adapter_linux
   download_and_install_libkrun
   download_and_install_crun
@@ -1230,47 +1220,54 @@ print_getting_started_linux() {
 
 # --- macOS installation -----------------------------------------------------
 
-install_or_upgrade_homebrew_cask() {
-  if [ -n "$DRY_RUN" ]; then
-    say_info "[dry-run] Would install or upgrade nimbus/tap/nimbus via Homebrew"
+# The macOS `nimbus machine` dev flow boots a Linux outer VM through the krunkit
+# microVM chain (krunkit VMM + gvproxy network helper + libkrun). That chain is
+# published by the official libkrun/krun Homebrew tap. We install it as an
+# OPTIONAL fast-path: when Homebrew is present we tap + trust + install it, and
+# when it is absent we print guidance and continue. The nimbus binary itself is
+# already installed directly (curl|sh, like Linux) and the server runs without
+# the machine flow, so a missing Homebrew is never a hard failure on macOS.
+install_macos_microvm_deps() {
+  if [ -n "$SKIP_DEPS" ]; then
+    say_info "Skipping macOS microVM dependency installation (--skip-deps)"
+    say_info "Install the krunkit chain later with: brew install libkrun/krun/krunkit"
     return 0
   fi
 
-  say_info "Tapping nimbus/tap..."
-  brew tap nimbus/tap 2>/dev/null || true
+  if ! check_cmd brew; then
+    say_warn "Homebrew not found — skipping the optional macOS microVM dependency chain"
+    say_warn "The 'nimbus' server is installed and runs without it."
+    say_warn "The 'nimbus machine' dev flow needs krunkit, gvproxy, and libkrun."
+    say_warn "Install Homebrew (https://brew.sh), then run: brew install libkrun/krun/krunkit"
+    return 0
+  fi
 
-  # Homebrew 6.0 won't load casks or formulae from third-party taps until they
-  # are explicitly trusted (HOMEBREW_REQUIRE_TAP_TRUST, default true since 6.0).
-  # An untrusted tap is a hard error (UntrustedTapError) with no interactive
-  # prompt, so without this the install aborts. Pre-trust the two taps this
-  # install needs:
-  #   - nimbus/tap     the Nimbus cask itself
-  #   - libkrun/krun   the official containers/libkrun tap that provides the
-  #                    krunkit formula the cask declares via `depends_on
-  #                    formula: "libkrun/krun/krunkit"`. One trust covers the
-  #                    whole microVM chain (krunkit -> libkrun + gvproxy ->
-  #                    virglrenderer/libepoxy/libkrunfw) — the enterprise
-  #                    one-tap story.
-  # Homebrew auto-taps libkrun/krun and auto-installs that chain from the cask
-  # dependency; trusting only grants permission for the load. `brew trust` is
-  # idempotent and records to trust.json whether or not the tap is yet tapped.
-  say_info "Trusting the Nimbus and libkrun taps (Homebrew 6.0 tap-trust gate)..."
-  brew trust --cask nimbus/tap/nimbus || true
+  if [ -n "$DRY_RUN" ]; then
+    say_info "[dry-run] Would install the macOS microVM chain via Homebrew: krunkit + gvproxy + libkrun (brew install libkrun/krun/krunkit)"
+    return 0
+  fi
+
+  say_info "Tapping libkrun/krun..."
+  brew tap libkrun/krun 2>/dev/null || true
+
+  # Homebrew 6.0 won't load formulae from third-party taps until they are
+  # explicitly trusted (HOMEBREW_REQUIRE_TAP_TRUST, default true since 6.0). An
+  # untrusted tap is a hard error (UntrustedTapError) with no interactive
+  # prompt. `brew trust` is idempotent and records to trust.json whether or not
+  # the tap is yet tapped. One trust of libkrun/krun covers the whole microVM
+  # chain: krunkit -> libkrun + gvproxy -> virglrenderer/libepoxy/libkrunfw.
+  say_info "Trusting the libkrun/krun tap (Homebrew 6.0 tap-trust gate)..."
   brew trust --tap libkrun/krun || true
 
-  if brew list --cask nimbus >/dev/null 2>&1; then
-    say_info "Upgrading nimbus cask..."
-    brew upgrade --cask nimbus
-  else
-    say_info "Installing nimbus cask..."
-    brew install --cask nimbus/tap/nimbus
-  fi
+  say_info "Installing the macOS microVM chain (krunkit + gvproxy + libkrun)..."
+  brew install libkrun/krun/krunkit
 }
 
 install_macos() {
   check_macos_version
-  check_homebrew
-  install_or_upgrade_homebrew_cask
+  resolve_nimbus_version
+  download_and_install_nimbus
+  install_macos_microvm_deps
   verify_installation
   print_getting_started_macos
 }
@@ -1349,20 +1346,20 @@ uninstall_macos() {
   say_info "Uninstalling nimbus from macOS..."
 
   if [ -n "$DRY_RUN" ]; then
-    say_info "[dry-run] Would run: brew uninstall --cask nimbus"
+    say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/bin/nimbus"
     return 0
   fi
 
-  if brew list --cask nimbus >/dev/null 2>&1; then
-    brew uninstall --cask nimbus
-    say_info "Uninstalled nimbus cask"
+  if [ -f "${NIMBUS_PREFIX}/bin/nimbus" ]; then
+    maybe_sudo rm -f "${NIMBUS_PREFIX}/bin/nimbus"
+    say_info "Removed ${NIMBUS_PREFIX}/bin/nimbus"
   else
-    say_info "nimbus cask is not installed"
+    say_info "nimbus binary not found at ${NIMBUS_PREFIX}/bin/nimbus"
   fi
 
   say ""
-  say "Note: krunkit (installed as a dependency) was not removed."
-  say "Run 'brew autoremove' or 'brew uninstall krunkit' if no longer needed."
+  say "The macOS microVM chain (krunkit, gvproxy, libkrun) was not removed."
+  say "Run 'brew uninstall libkrun/krun/krunkit' (and 'brew autoremove') if no longer needed."
 }
 
 # --- Verification -----------------------------------------------------------
@@ -1585,24 +1582,10 @@ verify_linux_inline() {
   inline_check_bun_jsc_adapter
 }
 
+# gvproxy is provided by the krunkit Homebrew formula (a managed dependency of
+# libkrun/krun/krunkit), so it lands on the Homebrew bin path. It is no longer
+# bundled inside the nimbus release archive.
 resolve_macos_gvproxy_path() {
-  nimbus_path="$(command -v nimbus 2>/dev/null || true)"
-  if [ -z "$nimbus_path" ]; then
-    return 1
-  fi
-
-  real_path="$(readlink "$nimbus_path" 2>/dev/null || echo "$nimbus_path")"
-  if [ "${real_path#/}" = "$real_path" ]; then
-    real_path="$(cd "$(dirname "$nimbus_path")" && cd "$(dirname "$real_path")" && pwd)/$(basename "$real_path")"
-  fi
-
-  case "$real_path" in
-    *Caskroom*)
-      printf '%s\n' "$(dirname "$real_path")/libexec/gvproxy"
-      return 0
-      ;;
-  esac
-
   brew_prefix="$(brew --prefix 2>/dev/null || echo "/opt/homebrew")"
   for candidate in "${brew_prefix}/bin/gvproxy" "/usr/local/bin/gvproxy"; do
     if [ -x "$candidate" ]; then
@@ -1611,19 +1594,24 @@ resolve_macos_gvproxy_path() {
     fi
   done
 
+  if gvproxy_path="$(command -v gvproxy 2>/dev/null)"; then
+    printf '%s\n' "$gvproxy_path"
+    return 0
+  fi
+
   return 1
 }
 
 verify_macos_inline() {
   inline_check_command "nimbus" "nimbus" required
-  inline_check_command "krunkit" "krunkit" required
+  inline_check_command "krunkit" "krunkit" recommended
   inline_check_macos_bun_jsc_adapter
 
   if gvproxy_path="$(resolve_macos_gvproxy_path)"; then
     inline_print_line "gvproxy" "present path=$gvproxy_path"
   else
-    inline_print_line "gvproxy" "missing"
-    inline_mark_failure
+    inline_print_line "gvproxy" "missing (run 'brew install libkrun/krun/krunkit' for 'nimbus machine')"
+    inline_mark_warning
   fi
 }
 
@@ -1669,13 +1657,12 @@ Usage:
 
 Options:
   --version <tag>       Pin nimbus version (e.g., v0.1.14)
-                        Linux only; macOS installs the current Homebrew cask
   --crun-version <tag>  Pin nimbus-crun version (Linux only)
   --libkrun-version <tag>
                         Pin nimbus-libkrun version (Linux only)
   --with-bun-jsc        Install optional in-process Bun/JSC adapter when a
                         matching release asset exists (Linux x86_64 today)
-  --prefix <path>       Install prefix (default: /usr/local, Linux only)
+  --prefix <path>       Install prefix (default: /usr/local)
   --skip-deps           Skip system dependency installation
   --dry-run             Print what would happen without executing
   --uninstall           Remove nimbus, nimbus-libkrun, and nimbus-crun

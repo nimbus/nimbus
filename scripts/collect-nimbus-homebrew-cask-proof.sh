@@ -10,9 +10,12 @@ usage: collect-nimbus-homebrew-cask-proof.sh [options]
 
 Collect real-host proof for the supported macOS Homebrew/cask install surface
 without touching the user's shipped `nimbus` cask token or default machine
-roots. The collector packages a local release binary plus bundled `gvproxy`
-into a temporary proof cask, installs it under an isolated token, and then
-exercises the packaged `nimbus machine ...` path against isolated machine roots.
+roots. The collector packages a local release binary (no bundled `gvproxy`)
+into a temporary proof cask that declares `depends_on formula:
+"libkrun/krun/krunkit"`, installs it under an isolated token, and then exercises
+the packaged `nimbus machine ...` path against isolated machine roots. It proves
+that `gvproxy` resolves from the krunkit Homebrew dependency on the bin path
+rather than from a bundled helper inside the release archive.
 
 options:
   --machine <name>               Machine name (default: default)
@@ -25,8 +28,6 @@ options:
                                  (default: <repo>/target/release/nimbus)
   --guest-binary <path>          Optional Linux guest nimbus override to sync
                                  into the VM instead of the tagged release asset
-  --gvproxy <path>               gvproxy binary to bundle
-                                 (default: <brew-prefix>/opt/podman/libexec/podman/gvproxy)
   --brew <path>                  Brew binary path (default: brew)
   --brew-prefix <path>           Homebrew prefix to target
                                  (default: /opt/homebrew)
@@ -138,13 +139,37 @@ assert_file_empty() {
   fi
 }
 
+assert_file_nonempty() {
+  local label="$1"
+  local file_path="$2"
+
+  if [[ -s "${file_path}" ]]; then
+    print_line "${label}" "ok file=${file_path}"
+  else
+    print_line "${label}" "failed file=${file_path}"
+    return 1
+  fi
+}
+
+assert_file_not_contains() {
+  local label="$1"
+  local file_path="$2"
+  local pattern="$3"
+
+  if grep -Eq "${pattern}" "${file_path}"; then
+    print_line "${label}" "failed file=${file_path} pattern=${pattern}"
+    return 1
+  else
+    print_line "${label}" "ok file=${file_path} pattern=${pattern}"
+  fi
+}
+
 machine_name="default"
 output_dir=""
 home_dir=""
 runtime_root=""
 host_binary="${repo_root}/target/release/nimbus"
 guest_binary=""
-gvproxy_binary=""
 brew_bin="brew"
 brew_prefix="/opt/homebrew"
 readlink_bin="readlink"
@@ -177,10 +202,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --guest-binary)
       guest_binary="${2:?missing guest binary path}"
-      shift 2
-      ;;
-    --gvproxy)
-      gvproxy_binary="${2:?missing gvproxy path}"
       shift 2
       ;;
     --brew)
@@ -242,10 +263,6 @@ if [[ -z "${runtime_root}" ]]; then
 fi
 
 mkdir -p "${home_dir}" "${runtime_root}"
-
-if [[ -z "${gvproxy_binary}" ]]; then
-  gvproxy_binary="${brew_prefix}/opt/podman/libexec/podman/gvproxy"
-fi
 
 machine_stopped=0
 
@@ -319,8 +336,8 @@ if [[ -n "${guest_binary}" && ! -x "${guest_binary}" ]]; then
   exit 64
 fi
 
-if [[ ! -x "${gvproxy_binary}" ]]; then
-  echo "gvproxy binary is not executable at ${gvproxy_binary}; install Podman or pass --gvproxy" >&2
+if [[ ! -x "${brew_prefix}/bin/gvproxy" ]]; then
+  echo "gvproxy is not installed at ${brew_prefix}/bin/gvproxy; install the krunkit Homebrew chain first: brew install libkrun/krun/krunkit" >&2
   exit 64
 fi
 
@@ -355,7 +372,7 @@ cask_rendered="${output_dir}/${cask_token}.rb"
 ssh_identity="${output_dir}/machine-key"
 stripped_path="${brew_prefix}/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 installed_binary="${brew_prefix}/bin/${cask_token}"
-expected_gvproxy="${brew_prefix}/Caskroom/${cask_token}/${host_version}/libexec/gvproxy"
+expected_gvproxy="${brew_prefix}/bin/gvproxy"
 expected_symlink="${brew_prefix}/Caskroom/${cask_token}/${host_version}/nimbus"
 
 print_line "output.dir" "${output_dir}"
@@ -364,7 +381,7 @@ print_line "home.dir" "${home_dir}"
 print_line "runtime.root" "${runtime_root}"
 print_line "host.binary" "${host_binary}"
 print_line "guest.binary.override" "${guest_binary:-<none>}"
-print_line "gvproxy.binary" "${gvproxy_binary}"
+print_line "gvproxy.expected" "${expected_gvproxy} (krunkit Homebrew dependency)"
 print_line "brew.bin" "${brew_bin}"
 print_line "brew.prefix" "${brew_prefix}"
 print_line "tap.name" "${tap_name}"
@@ -373,10 +390,9 @@ print_line "host.version" "${host_version}"
 print_line "installed.binary" "${installed_binary}"
 
 rm -rf "${bundle_root}"
-mkdir -p "${bundle_contents}/libexec"
+mkdir -p "${bundle_contents}"
 cp "${host_binary}" "${bundle_contents}/nimbus"
-cp "${gvproxy_binary}" "${bundle_contents}/libexec/gvproxy"
-chmod 0755 "${bundle_contents}/nimbus" "${bundle_contents}/libexec/gvproxy"
+chmod 0755 "${bundle_contents}/nimbus"
 if [[ -f "${repo_root}/README.md" ]]; then
   cp "${repo_root}/README.md" "${bundle_contents}/README.md"
 fi
@@ -384,7 +400,7 @@ if [[ -f "${repo_root}/LICENSE" ]]; then
   cp "${repo_root}/LICENSE" "${bundle_contents}/LICENSE"
 fi
 
-archive_entries=(nimbus libexec)
+archive_entries=(nimbus)
 if [[ -f "${bundle_contents}/README.md" ]]; then
   archive_entries+=(README.md)
 fi
@@ -621,8 +637,8 @@ assert_file_contains \
   "${archive_manifest}" \
   '^nimbus$'
 
-assert_file_contains \
-  "assert.archive_manifest_has_gvproxy" \
+assert_file_not_contains \
+  "assert.archive_manifest_no_gvproxy" \
   "${archive_manifest}" \
   '^libexec/gvproxy$'
 
@@ -631,9 +647,16 @@ assert_file_contains \
   "${output_dir}/cask-symlink.txt" \
   "${expected_symlink}"
 
-assert_file_empty \
-  "assert.path_gvproxy_empty" \
+# gvproxy is no longer bundled, so it must resolve from the krunkit Homebrew
+# dependency on the bin path even under the stripped PATH.
+assert_file_nonempty \
+  "assert.path_gvproxy_resolves" \
   "${output_dir}/path-gvproxy.txt"
+
+assert_file_contains \
+  "assert.path_gvproxy_is_homebrew_dep" \
+  "${output_dir}/path-gvproxy.txt" \
+  "${expected_gvproxy}"
 
 assert_file_contains \
   "assert.host_version" \
@@ -666,7 +689,7 @@ assert_file_contains \
   'reachable: true'
 
 assert_file_contains \
-  "assert.packaged_gvproxy" \
+  "assert.gvproxy_from_homebrew_dep" \
   "${output_dir}/machine-status-running.txt" \
   "${expected_gvproxy}"
 

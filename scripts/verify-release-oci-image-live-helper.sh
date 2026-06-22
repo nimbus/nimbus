@@ -133,7 +133,7 @@ create_release_fixture() {
 
   mkdir -p \
     "${dir}" \
-    "${layout}/darwin/libexec" \
+    "${layout}/darwin" \
     "${layout}/linux-x86_64" \
     "${layout}/linux-arm64" \
     "${layout}/windows"
@@ -141,13 +141,11 @@ create_release_fixture() {
   printf '#!/bin/sh\nprintf "nimbus 9.9.9\\n"\n' >"${layout}/darwin/nimbus"
   printf '#!/bin/sh\nprintf "nimbus 9.9.9\\n"\n' >"${layout}/linux-x86_64/nimbus"
   printf '#!/bin/sh\nprintf "nimbus 9.9.9\\n"\n' >"${layout}/linux-arm64/nimbus"
-  printf '#!/bin/sh\nprintf "gvproxy fixture\\n"\n' >"${layout}/darwin/libexec/gvproxy"
   printf 'windows fixture\n' >"${layout}/windows/nimbus.exe"
   chmod 0755 \
     "${layout}/darwin/nimbus" \
     "${layout}/linux-x86_64/nimbus" \
-    "${layout}/linux-arm64/nimbus" \
-    "${layout}/darwin/libexec/gvproxy"
+    "${layout}/linux-arm64/nimbus"
 
   for platform in darwin linux-x86_64 linux-arm64 windows; do
     printf 'Nimbus release fixture\n' >"${layout}/${platform}/README.md"
@@ -155,7 +153,7 @@ create_release_fixture() {
   done
 
   tar -czf "${dir}/nimbus_darwin_arm64.tar.gz" \
-    -C "${layout}/darwin" nimbus libexec README.md LICENSE
+    -C "${layout}/darwin" nimbus README.md LICENSE
   tar -czf "${dir}/nimbus_linux_x86_64.tar.gz" \
     -C "${layout}/linux-x86_64" nimbus README.md LICENSE
   tar -czf "${dir}/nimbus_linux_arm64.tar.gz" \

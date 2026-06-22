@@ -11,14 +11,15 @@ creation, or downstream packaging updates consume it.
 Current contract:
 - nimbus_darwin_arm64.tar.gz contains:
   - nimbus
-  - libexec/gvproxy
   - README.md
   - LICENSE
+  - no bundled libexec/gvproxy helper (gvproxy ships via the krunkit Homebrew
+    formula, libkrun/krun/krunkit, as a managed dependency)
 - nimbus_linux_x86_64.tar.gz and nimbus_linux_arm64.tar.gz contain:
   - nimbus
   - README.md
   - LICENSE
-  - no macOS-only libexec/gvproxy helper
+  - no libexec/gvproxy helper
 - nimbus_windows_x86_64.zip contains:
   - nimbus.exe
   - README.md
@@ -99,8 +100,7 @@ assert_present "${darwin_dir}/README.md"
 assert_present "${darwin_dir}/LICENSE"
 assert_present "${darwin_dir}/nimbus"
 assert_executable "${darwin_dir}/nimbus"
-assert_present "${darwin_dir}/libexec/gvproxy"
-assert_executable "${darwin_dir}/libexec/gvproxy"
+assert_absent "${darwin_dir}/libexec/gvproxy"
 
 assert_present "${linux_x86_dir}/README.md"
 assert_present "${linux_x86_dir}/LICENSE"

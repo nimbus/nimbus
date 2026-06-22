@@ -31,7 +31,7 @@ brew_prefix="${tmp_dir}/brew-prefix"
 tap_root="${tmp_dir}/taps"
 state_dir="${tmp_dir}/state"
 host_binary="${bin_dir}/host-nimbus"
-gvproxy_binary="${bin_dir}/gvproxy"
+gvproxy_binary="${brew_prefix}/bin/gvproxy"
 brew_bin="${bin_dir}/brew"
 ssh_keygen_bin="${bin_dir}/ssh-keygen"
 curl_bin="${bin_dir}/curl"
@@ -62,7 +62,7 @@ api_pid="${runtime_root%/}/${machine_name}-api.pid"
 identity_record="${runtime_root%/}/${machine_name}.identity"
 
 brew_prefix="$(cd "$(dirname "$0")/.." && pwd)"
-gvproxy_path="${brew_prefix}/Caskroom/nimbus-dev/${host_version}/libexec/gvproxy"
+gvproxy_path="${brew_prefix}/bin/gvproxy"
 
 if [[ "${1:-}" == "--version" ]]; then
   printf 'nimbus %s\n' "${host_version}"
@@ -529,7 +529,6 @@ PATH="${bin_dir}:${PATH}" bash "${repo_root}/scripts/collect-nimbus-homebrew-cas
   --home "${home_dir}" \
   --runtime-root "${runtime_root}" \
   --host-binary "${host_binary}" \
-  --gvproxy "${gvproxy_binary}" \
   --brew "${brew_bin}" \
   --brew-prefix "${brew_prefix}" \
   --readlink "$(command -v readlink)" \
@@ -572,8 +571,8 @@ grep -Fq "${brew_prefix}/Caskroom/nimbus-dev/${host_version}/nimbus" "${output_d
   exit 1
 }
 
-grep -Fq "${brew_prefix}/Caskroom/nimbus-dev/${host_version}/libexec/gvproxy" "${output_dir}/machine-status-running.txt" || {
-  echo "expected machine status to report packaged gvproxy path" >&2
+grep -Fq "${brew_prefix}/bin/gvproxy" "${output_dir}/machine-status-running.txt" || {
+  echo "expected machine status to report the krunkit Homebrew dependency gvproxy path" >&2
   exit 1
 }
 
