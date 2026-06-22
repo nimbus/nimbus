@@ -824,7 +824,7 @@ fn current_rss_bytes() -> Option<u64> {
         return None;
     }
     let task_info = unsafe { task_info.assume_init() };
-    Some(task_info.resident_size as u64)
+    Some(task_info.resident_size)
 }
 
 #[cfg(target_os = "macos")]

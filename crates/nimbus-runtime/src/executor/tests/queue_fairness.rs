@@ -139,7 +139,7 @@ async fn permit_suspend_frees_capacity() {
 
 #[tokio::test]
 async fn host_pressure_reduces_runtime_dispatch_seats_before_tenant_quota_exhaustion() {
-    let _test_lock = acquire_runtime_suite_lock();
+    let _test_lock = acquire_runtime_suite_lock().await;
     let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.max_concurrent_runtime_instances = 4;
@@ -253,7 +253,7 @@ async fn host_pressure_reduces_runtime_dispatch_seats_before_tenant_quota_exhaus
 
 #[tokio::test]
 async fn host_pressure_queue_promotion_respects_effective_dispatch_seats() {
-    let _test_lock = acquire_runtime_suite_lock();
+    let _test_lock = acquire_runtime_suite_lock().await;
     let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.max_concurrent_runtime_instances = 3;
@@ -382,7 +382,7 @@ async fn host_pressure_queue_promotion_respects_effective_dispatch_seats() {
 
 #[tokio::test]
 async fn host_pressure_sheds_burstable_work_under_critical_pressure() {
-    let _test_lock = acquire_runtime_suite_lock();
+    let _test_lock = acquire_runtime_suite_lock().await;
     let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.max_concurrent_runtime_instances = 4;

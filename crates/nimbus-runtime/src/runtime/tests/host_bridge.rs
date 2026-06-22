@@ -25,7 +25,7 @@ fn run_to_completion_policy_with_secret_and_identity_grants() -> Arc<RuntimePoli
 
 #[tokio::test]
 async fn runtime_async_ops_use_async_host_bridge_path() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -67,7 +67,7 @@ export {};
 
 #[tokio::test]
 async fn runtime_query_context_is_reader_only_when_request_kind_is_present() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -140,7 +140,7 @@ export {};
 
 #[tokio::test]
 async fn runtime_action_context_exposes_nested_calls_without_direct_db() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -203,7 +203,7 @@ export {};
 
 #[tokio::test]
 async fn runtime_exposes_verified_identity_extension_separately_from_convex_identity() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -334,7 +334,7 @@ export {};
 #[tokio::test]
 async fn runtime_secret_and_identity_grants_do_not_materialize_without_request_auth_or_secret_api()
 {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -388,7 +388,7 @@ export {};
 
 #[tokio::test]
 async fn adapter_context_omits_services_and_request_services() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -451,7 +451,7 @@ export {};
 
 #[tokio::test]
 async fn adapter_context_with_service_grant_still_has_no_raw_service_op() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     #[derive(Default)]
     struct ServiceLookupHost {
         async_calls: std::sync::Mutex<Vec<HostCallRequest>>,
@@ -532,7 +532,7 @@ export {};
 
 #[tokio::test]
 async fn nimbus_native_service_op_uses_async_host_bridge_and_exact_grants() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     #[derive(Default)]
     struct ServiceLookupHost {
         sync_calls: std::sync::Mutex<Vec<HostCallRequest>>,
@@ -658,7 +658,7 @@ export {};
 
 #[tokio::test]
 async fn nimbus_native_service_op_requires_exact_service_grant() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     #[derive(Default)]
     struct ServiceLookupHost {
         async_calls: std::sync::Mutex<Vec<HostCallRequest>>,
@@ -739,7 +739,7 @@ export {};
 
 #[tokio::test]
 async fn runtime_query_builder_setup_uses_sync_host_bridge_path() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -804,7 +804,7 @@ export {};
 
 #[tokio::test]
 async fn runtime_async_write_and_scheduler_ops_use_async_host_bridge_path() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -915,7 +915,7 @@ export {};
 
 #[tokio::test]
 async fn runtime_extension_call_uses_async_host_bridge_path() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -972,7 +972,7 @@ export {};
 
 #[tokio::test]
 async fn runtime_query_paginate_uses_async_host_bridge_and_returns_official_shape() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -1060,7 +1060,7 @@ export {};
 
 #[tokio::test]
 async fn runtime_query_paginate_treats_full_page_with_cursor_as_not_done() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -1114,7 +1114,7 @@ export {};
 
 #[tokio::test]
 async fn runtime_same_isolate_nested_entry_uses_sync_host_bridge_path() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -1181,7 +1181,7 @@ export {};
 
 #[tokio::test]
 async fn runtime_async_ctx_run_ops_use_async_host_bridge_path() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(

@@ -792,14 +792,14 @@ mod tests {
     }
 
     fn node_authority(grants: &[&str]) -> RuntimePoolAuthorityKey {
-        RuntimePoolAuthorityKey::Exact(RuntimePoolAuthorityFacts::new(
+        RuntimePoolAuthorityKey::exact(RuntimePoolAuthorityFacts::new(
             RuntimeProfile::NodeFull,
             grants.iter().map(|grant| (*grant).to_string()).collect(),
         ))
     }
 
     fn web_authority() -> RuntimePoolAuthorityKey {
-        RuntimePoolAuthorityKey::Exact(RuntimePoolAuthorityFacts::new(
+        RuntimePoolAuthorityKey::exact(RuntimePoolAuthorityFacts::new(
             RuntimeProfile::WebLean,
             Vec::new(),
         ))

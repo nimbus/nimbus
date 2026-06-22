@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::*;
-use crate::test_support::acquire_runtime_suite_lock;
+use crate::test_support::acquire_runtime_suite_lock_blocking;
 use crate::{RuntimeCompatibilityTarget, RuntimeLimits};
 
 mod supplementary_batches;
@@ -212,7 +212,7 @@ impl ScopedProcessEnvVar {
     fn set(key: &'static str, value: &str) -> Self {
         let previous_value = std::env::var(key).ok();
         // SAFETY: node_compat fixture execution is serialized under
-        // acquire_runtime_suite_lock() before this helper is used, so the test
+        // acquire_runtime_suite_lock_blocking() before this helper is used, so the test
         // harness can temporarily model a process-level TERM value for the
         // embedded runtime without concurrent mutation from sibling tests.
         unsafe {
@@ -1702,15 +1702,15 @@ async fn invoke_node_compat_fixture_with_async_main_module(
         crate::executor::SharedInvocationPermit::new(runtime.policy(), None, None, true, None);
     let watchdog = crate::watchdog::WatchdogTimer::new();
     let context = crate::context::RuntimeInvocationContext::top_level(request);
-    let mut driver = runtime.prepare_runtime_invocation_driver(
-        reusable_runtime,
+    let mut driver = runtime.prepare_runtime_invocation_driver(RuntimeInvocationDriverPrepare {
+        runtime: reusable_runtime,
         watchdog,
-        None,
+        external_cancellation: None,
         permit,
-        &context,
-        None,
-        false,
-    )?;
+        context: &context,
+        execution_plan: None,
+        record_replacement_on_error: false,
+    })?;
 
     let result = async {
         runtime
@@ -1778,7 +1778,7 @@ fn execute_upstream_node_compat_test_with_extra_files(
     prelude_script: Option<&str>,
     postlude_script: Option<&str>,
 ) -> std::result::Result<NodeCompatFixtureOutcome, String> {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock_blocking();
     let fixture_node_options = fixture_requested_node_options(test_source);
     let fixture_needs_pending_deprecation = fixture_node_options
         .iter()
@@ -2354,7 +2354,7 @@ fn node_compat_harness_wall_clock_timeout_tracks_fixture_runtime_budget() {
 
 #[test]
 fn node_compat_harness_diagnostics_cover_hang_families() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock_blocking();
     let tempdir = tempfile::tempdir().expect("diagnostic tempdir should build");
     let _diagnostic_root_guard = ScopedProcessEnvVar::set(
         "NIMBUS_NODE_COMPAT_DIAGNOSTIC_ROOT",

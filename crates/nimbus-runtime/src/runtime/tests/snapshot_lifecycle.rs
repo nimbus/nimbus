@@ -174,15 +174,15 @@ export {};
             .expect("permit should admit invocation");
 
         let mut driver = runtime_owner
-            .prepare_runtime_invocation_driver(
-                reusable_runtime,
-                watchdog.clone(),
-                None,
-                permit.clone(),
-                &context,
-                None,
-                false,
-            )
+            .prepare_runtime_invocation_driver(RuntimeInvocationDriverPrepare {
+                runtime: reusable_runtime,
+                watchdog: watchdog.clone(),
+                external_cancellation: None,
+                permit: permit.clone(),
+                context: &context,
+                execution_plan: None,
+                record_replacement_on_error: false,
+            })
             .expect("driver preparation should succeed for snapshot-seeded runtime");
 
         runtime_owner
@@ -298,15 +298,15 @@ export {};
             .expect("permit should admit invocation");
 
         let mut driver = runtime_owner
-            .prepare_runtime_invocation_driver(
-                reusable_runtime,
-                watchdog.clone(),
-                None,
-                permit.clone(),
-                &context,
-                None,
-                false,
-            )
+            .prepare_runtime_invocation_driver(RuntimeInvocationDriverPrepare {
+                runtime: reusable_runtime,
+                watchdog: watchdog.clone(),
+                external_cancellation: None,
+                permit: permit.clone(),
+                context: &context,
+                execution_plan: None,
+                record_replacement_on_error: false,
+            })
             .expect("driver preparation should succeed for snapshot-seeded runtime");
 
         runtime_owner
@@ -425,15 +425,15 @@ export {};
                     .expect("permit should admit invocation");
 
                 let mut driver = runtime_owner
-                    .prepare_runtime_invocation_driver(
-                        reusable_runtime,
-                        watchdog.clone(),
-                        None,
-                        permit.clone(),
-                        &context,
-                        None,
-                        false,
-                    )
+                    .prepare_runtime_invocation_driver(RuntimeInvocationDriverPrepare {
+                        runtime: reusable_runtime,
+                        watchdog: watchdog.clone(),
+                        external_cancellation: None,
+                        permit: permit.clone(),
+                        context: &context,
+                        execution_plan: None,
+                        record_replacement_on_error: false,
+                    })
                     .expect(
                         "driver preparation should succeed for snapshot-seeded delayed runtime",
                     );

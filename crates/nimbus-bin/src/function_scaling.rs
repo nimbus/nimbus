@@ -286,7 +286,7 @@ pub(crate) fn load_optional_policy(
     policy.map(|path| load_policy_document(&path)).transpose()
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct FunctionScalingAdmissionEnvelope {
     pub(crate) runtime_resources: OperatorRuntimeResourceEnvelope,
     pub(crate) runtime_safety: OperatorRuntimeSafetyCaps,
@@ -297,39 +297,32 @@ impl FunctionScalingAdmissionEnvelope {
         budget: RuntimeHostResourceBudget,
         max_warm_pool_entries_per_worker: usize,
     ) -> Self {
-        let mut runtime_resources = OperatorRuntimeResourceEnvelope::default();
-        runtime_resources.cpu_millicpus =
-            usize::try_from(budget.host_millicpus).expect("u32 host millicpus always fits usize");
-        runtime_resources.host_cpu_reserve_millicpus = usize::try_from(
+        let host_cpu_reserve_millicpus = usize::try_from(
             budget
                 .system_reserved_millicpus
                 .saturating_add(budget.nimbus_control_plane_reserved_millicpus),
         )
         .expect("u32 reserved millicpus always fits usize");
+        let mut cpu_millicpus =
+            usize::try_from(budget.host_millicpus).expect("u32 host millicpus always fits usize");
         if let Some(runtime_hard_ceiling_millicpus) = budget.runtime_hard_ceiling_millicpus {
-            runtime_resources.cpu_millicpus =
-                runtime_resources.host_cpu_reserve_millicpus.saturating_add(
-                    usize::try_from(runtime_hard_ceiling_millicpus)
-                        .expect("u32 hard ceiling millicpus always fits usize"),
-                );
+            cpu_millicpus = host_cpu_reserve_millicpus.saturating_add(
+                usize::try_from(runtime_hard_ceiling_millicpus)
+                    .expect("u32 hard ceiling millicpus always fits usize"),
+            );
         }
 
         Self {
-            runtime_resources,
+            runtime_resources: OperatorRuntimeResourceEnvelope {
+                cpu_millicpus,
+                host_cpu_reserve_millicpus,
+                ..OperatorRuntimeResourceEnvelope::default()
+            },
             runtime_safety: OperatorRuntimeSafetyCaps {
                 max_total_warm: Some(max_warm_pool_entries_per_worker),
                 max_min_warm_total: Some(max_warm_pool_entries_per_worker),
                 max_warm_per_function: Some(max_warm_pool_entries_per_worker),
             },
-        }
-    }
-}
-
-impl Default for FunctionScalingAdmissionEnvelope {
-    fn default() -> Self {
-        Self {
-            runtime_resources: OperatorRuntimeResourceEnvelope::default(),
-            runtime_safety: OperatorRuntimeSafetyCaps::default(),
         }
     }
 }

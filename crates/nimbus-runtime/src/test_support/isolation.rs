@@ -2,17 +2,45 @@ use std::fs::OpenOptions;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::IsolatedRuntimeTestCase;
 
-pub(crate) fn acquire_runtime_suite_lock() -> MutexGuard<'static, ()> {
-    static IN_PROCESS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    IN_PROCESS_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+pub(crate) struct RuntimeSuiteLockGuard {
+    _permit: OwnedSemaphorePermit,
+}
+
+pub(crate) async fn acquire_runtime_suite_lock() -> RuntimeSuiteLockGuard {
+    RuntimeSuiteLockGuard {
+        _permit: runtime_suite_semaphore()
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("runtime suite semaphore should stay open"),
+    }
+}
+
+pub(crate) fn acquire_runtime_suite_lock_blocking() -> RuntimeSuiteLockGuard {
+    let semaphore = runtime_suite_semaphore().clone();
+    loop {
+        match semaphore.clone().try_acquire_owned() {
+            Ok(permit) => return RuntimeSuiteLockGuard { _permit: permit },
+            Err(tokio::sync::TryAcquireError::NoPermits) => {
+                std::thread::park_timeout(std::time::Duration::from_millis(1));
+            }
+            Err(tokio::sync::TryAcquireError::Closed) => {
+                panic!("runtime suite semaphore should stay open");
+            }
+        }
+    }
+}
+
+fn runtime_suite_semaphore() -> &'static Arc<Semaphore> {
+    static IN_PROCESS_LOCK: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    IN_PROCESS_LOCK.get_or_init(|| Arc::new(Semaphore::new(1)))
 }
 
 pub(crate) struct RuntimeSuiteSubprocessLockGuard {
@@ -55,7 +83,7 @@ fn acquire_runtime_suite_subprocess_lock() -> RuntimeSuiteSubprocessLockGuard {
 }
 
 pub(crate) fn run_v8_sensitive_runtime_test_in_subprocess(case: IsolatedRuntimeTestCase) {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock_blocking();
     let _subprocess_guard = acquire_runtime_suite_subprocess_lock();
     let tmp_dir = create_runtime_subprocess_tmp_dir(case);
     let output = std::process::Command::new(

@@ -1,5 +1,6 @@
 use super::*;
 use crate::backends::v8::V8WorkerRuntimePool;
+use crate::test_support::acquire_runtime_suite_lock_blocking;
 
 fn locker_test_policy() -> Arc<RuntimePolicy> {
     cooperative_startup_snapshot_runtime_test_policy()
@@ -27,7 +28,7 @@ fn runtime_builds_locker_jsruntime_from_snapshot() {
 #[test]
 #[ignore = "runs in a subprocess to isolate locker V8 state"]
 fn runtime_builds_locker_jsruntime_from_snapshot_subprocess() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock_blocking();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(&bundle_path, "export {};").expect("bundle should write");
@@ -79,7 +80,7 @@ fn runtime_snapshot_backed_locker_runtimes_interleave_on_same_thread() {
 #[test]
 #[ignore = "runs in a subprocess to isolate locker V8 state"]
 fn runtime_snapshot_backed_locker_runtimes_interleave_on_same_thread_subprocess() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock_blocking();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(&bundle_path, "export {};").expect("bundle should write");

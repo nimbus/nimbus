@@ -94,8 +94,14 @@ pub(crate) enum RuntimeSchedulingClass {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RuntimePoolAuthorityKey {
-    Exact(RuntimePoolAuthorityFacts),
+    Exact(Box<RuntimePoolAuthorityFacts>),
     Missing(RuntimePoolAuthorityMissingReason),
+}
+
+impl RuntimePoolAuthorityKey {
+    pub(crate) fn exact(facts: RuntimePoolAuthorityFacts) -> Self {
+        Self::Exact(Box::new(facts))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -502,15 +508,15 @@ fn cooperative_eligibility_for(input: &RuntimeExecutionPlanInput) -> Cooperative
             CooperativeIneligibilityReason::UnsupportedRuntimeSurface,
         );
     };
-    if matches!(runtime_profile, RuntimeProfile::NodeFull) {
-        if !matches!(
+    if matches!(runtime_profile, RuntimeProfile::NodeFull)
+        && !matches!(
             input.node_full_realm_reuse_policy,
             RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority
-        ) {
-            return CooperativeEligibility::Ineligible(
-                CooperativeIneligibilityReason::NodeFullUnproven,
-            );
-        }
+        )
+    {
+        return CooperativeEligibility::Ineligible(
+            CooperativeIneligibilityReason::NodeFullUnproven,
+        );
     }
     if matches!(
         input.pool_authority_key,
@@ -585,12 +591,10 @@ fn side_channel_posture_for_invocation(
     request: &InvocationRequest,
     runtime_profile: Option<RuntimeProfile>,
 ) -> RuntimeSideChannelPosture {
-    if matches!(runtime_profile, Some(RuntimeProfile::WebLean))
+    let web_lean_reuse_safe = matches!(runtime_profile, Some(RuntimeProfile::WebLean))
         && !policy.limits().grants.has_service_grants()
-        && request.services.is_empty()
-    {
-        RuntimeSideChannelPosture::ProvenSafeForCooperativeReuse
-    } else if matches!(runtime_profile, Some(RuntimeProfile::NodeFull))
+        && request.services.is_empty();
+    let node_full_reuse_safe = matches!(runtime_profile, Some(RuntimeProfile::NodeFull))
         && matches!(
             policy.limits().runtime_pool_kind,
             RuntimePoolKind::WarmContextRecycle
@@ -600,8 +604,8 @@ fn side_channel_posture_for_invocation(
             RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority
         )
         && policy.limits().grants.permits_same_process_realm_reuse()
-        && request.services.is_empty()
-    {
+        && request.services.is_empty();
+    if web_lean_reuse_safe || node_full_reuse_safe {
         RuntimeSideChannelPosture::ProvenSafeForCooperativeReuse
     } else {
         RuntimeSideChannelPosture::Unknown
@@ -621,7 +625,7 @@ fn pool_authority_key_for_invocation(
             RuntimePoolAuthorityMissingReason::TenantOrPrincipal,
         );
     }
-    RuntimePoolAuthorityKey::Exact(RuntimePoolAuthorityFacts::new(
+    RuntimePoolAuthorityKey::exact(RuntimePoolAuthorityFacts::new(
         runtime_profile,
         policy.limits().grants.sorted_service_grants(),
     ))
@@ -644,7 +648,7 @@ fn pool_authority_key_for_realm_reuse(
             RuntimePoolAuthorityMissingReason::TenantOrPrincipal,
         ));
     }
-    Ok(RuntimePoolAuthorityKey::Exact(
+    Ok(RuntimePoolAuthorityKey::exact(
         RuntimePoolAuthorityFacts::for_realm_reuse(
             runtime_profile,
             policy,
@@ -686,6 +690,8 @@ mod tests {
 
     use super::*;
 
+    type RuntimeLimitsCase = (&'static str, fn(&mut RuntimeLimits));
+
     fn budget() -> RuntimeTenantBudget {
         RuntimeTenantBudget {
             max_active_runtime_slots: 2,
@@ -707,7 +713,7 @@ mod tests {
             runtime_profile: Some(RuntimeProfile::WebLean),
             effect_class: RuntimeEffectClass::PureLocalRead,
             side_channel_posture: RuntimeSideChannelPosture::ProvenSafeForCooperativeReuse,
-            pool_authority_key: RuntimePoolAuthorityKey::Exact(RuntimePoolAuthorityFacts::new(
+            pool_authority_key: RuntimePoolAuthorityKey::exact(RuntimePoolAuthorityFacts::new(
                 RuntimeProfile::WebLean,
                 Vec::new(),
             )),
@@ -867,7 +873,7 @@ mod tests {
     fn runtime_execution_plan_keeps_node_full_ineligible_until_realm_proof() {
         let mut input = web_read_input();
         input.runtime_profile = Some(RuntimeProfile::NodeFull);
-        input.pool_authority_key = RuntimePoolAuthorityKey::Exact(RuntimePoolAuthorityFacts::new(
+        input.pool_authority_key = RuntimePoolAuthorityKey::exact(RuntimePoolAuthorityFacts::new(
             RuntimeProfile::NodeFull,
             Vec::new(),
         ));
@@ -974,7 +980,7 @@ mod tests {
 
     #[test]
     fn runtime_execution_plan_keeps_node_full_ineligible_for_uv_handle_grants() {
-        let cases: &[(&str, fn(&mut RuntimeLimits))] = &[
+        let cases: &[RuntimeLimitsCase] = &[
             ("net_connect", |limits| {
                 limits.grants.net_connect = vec!["127.0.0.1".to_string()];
             }),

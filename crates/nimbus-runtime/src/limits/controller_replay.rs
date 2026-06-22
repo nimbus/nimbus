@@ -396,7 +396,7 @@ impl ReplayWindow {
 }
 
 fn ceil_div_u64(numerator: u64, denominator: u64) -> u64 {
-    numerator / denominator + u64::from(numerator % denominator != 0)
+    numerator / denominator + u64::from(!numerator.is_multiple_of(denominator))
 }
 
 fn nonzero_usize(value: usize) -> NonZeroUsize {

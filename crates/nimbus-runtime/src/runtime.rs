@@ -76,7 +76,10 @@ pub(crate) use self::cooperative::{
     RuntimeInvocationExecution,
 };
 
-use self::driver::RuntimeInvocationDriver;
+pub(crate) use self::driver::{
+    FreshRealmInvocationResponse, FreshRealmInvocationTrace, RuntimeInvocationDriver,
+    RuntimeInvocationDriverPrepare,
+};
 
 #[cfg(test)]
 mod tests {

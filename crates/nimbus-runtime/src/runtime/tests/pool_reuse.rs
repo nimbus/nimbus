@@ -12,6 +12,20 @@ use crate::limits::{
     RuntimeNodeFullRealmReusePolicy, RuntimePoolKind, RuntimeRoutingAffinity,
 };
 
+fn fresh_realm_trace<'a>(
+    bundle: &'a RuntimeBundle,
+    request: &'a InvocationRequest,
+    construction_mode: V8RuntimeConstructionMode,
+    context: Option<&'a RuntimeInvocationContext>,
+) -> FreshRealmInvocationTrace<'a> {
+    FreshRealmInvocationTrace {
+        bundle,
+        request,
+        construction_mode,
+        context,
+    }
+}
+
 #[tokio::test]
 async fn pooled_runtime_invocations_keep_module_state_fresh() {
     let tempdir = tempdir().expect("tempdir should build");
@@ -396,7 +410,7 @@ export {};
             runtime.clone(),
             bundle.clone(),
             success_request.clone(),
-            RuntimeInvocationContext::top_level(&success_request),
+            RuntimeInvocationContext::top_level_for_tenant(&success_request, "tenant-a"),
             None,
         )
         .await
@@ -420,7 +434,7 @@ export {};
             runtime,
             bundle,
             failing_request.clone(),
-            RuntimeInvocationContext::top_level(&failing_request),
+            RuntimeInvocationContext::top_level_for_tenant(&failing_request, "tenant-a"),
             None,
         )
         .await
@@ -438,7 +452,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_replays_extension_js_before_bundle_load() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -486,22 +500,28 @@ export {};
     let (value, realm) = runtime_owner
         .start_fresh_realm_bundle_invocation_with_trace(
             &mut runtime,
-            &bundle,
-            &request,
-            V8RuntimeConstructionMode::StartupSnapshot,
-            Some(&context),
+            fresh_realm_trace(
+                &bundle,
+                &request,
+                V8RuntimeConstructionMode::StartupSnapshot,
+                Some(&context),
+            ),
         )
         .await
         .expect("NodeFull fresh realm invocation should start");
     let result = runtime_owner
         .resolve_fresh_realm_invocation_response_with_trace(
             &mut runtime,
-            &realm,
-            value,
-            &bundle,
-            &request,
-            V8RuntimeConstructionMode::StartupSnapshot,
-            Some(&context),
+            FreshRealmInvocationResponse {
+                realm: &realm,
+                value,
+                trace: fresh_realm_trace(
+                    &bundle,
+                    &request,
+                    V8RuntimeConstructionMode::StartupSnapshot,
+                    Some(&context),
+                ),
+            },
         )
         .await
         .expect("NodeFull fresh realm response should resolve");
@@ -521,7 +541,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_returns_clean_and_rejects_cross_tenant() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -623,10 +643,12 @@ globalThis.__nimbusInvoke = () => ({ mainRealmFallback: true });
         .start_fresh_realm_bundle_invocation_with_lease_and_trace(
             &controller,
             &mut runtime,
-            &bundle,
-            &tenant_b_request,
-            V8RuntimeConstructionMode::StartupSnapshot,
-            Some(&tenant_b_context),
+            fresh_realm_trace(
+                &bundle,
+                &tenant_b_request,
+                V8RuntimeConstructionMode::StartupSnapshot,
+                Some(&tenant_b_context),
+            ),
         )
         .await
     {
@@ -664,10 +686,12 @@ globalThis.__nimbusInvoke = () => ({ mainRealmFallback: true });
         .start_fresh_realm_bundle_invocation_with_lease_and_trace(
             &missing_context_controller,
             &mut runtime,
-            &bundle,
-            &third_request,
-            V8RuntimeConstructionMode::StartupSnapshot,
-            None,
+            fresh_realm_trace(
+                &bundle,
+                &third_request,
+                V8RuntimeConstructionMode::StartupSnapshot,
+                None,
+            ),
         )
         .await
     {
@@ -684,7 +708,7 @@ globalThis.__nimbusInvoke = () => ({ mainRealmFallback: true });
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_enforces_target_authority_and_metadata() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -824,10 +848,12 @@ export {};
         .start_fresh_realm_bundle_invocation_with_lease_and_trace(
             &controller,
             &mut runtime,
-            &bundle,
-            &node24_request,
-            V8RuntimeConstructionMode::StartupSnapshot,
-            Some(&node24_context),
+            fresh_realm_trace(
+                &bundle,
+                &node24_request,
+                V8RuntimeConstructionMode::StartupSnapshot,
+                Some(&node24_context),
+            ),
         )
         .await
     {
@@ -842,7 +868,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_rejects_cross_bundle_reuse() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_a_path = tempdir.path().join("bundle-a.mjs");
     let bundle_b_path = tempdir.path().join("bundle-b.mjs");
@@ -915,10 +941,12 @@ export {{}};
         .start_fresh_realm_bundle_invocation_with_lease_and_trace(
             &controller,
             &mut runtime,
-            &bundle_b,
-            &bundle_b_request,
-            V8RuntimeConstructionMode::StartupSnapshot,
-            Some(&bundle_b_context),
+            fresh_realm_trace(
+                &bundle_b,
+                &bundle_b_request,
+                V8RuntimeConstructionMode::StartupSnapshot,
+                Some(&bundle_b_context),
+            ),
         )
         .await
     {
@@ -954,7 +982,7 @@ export {{}};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_preserves_translator_mode_boundary_per_target() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     let dep_path = tempdir.path().join("dep.cjs");
@@ -1116,7 +1144,7 @@ fn node22_policy_with_native_service_grant(service_name: &str) -> Arc<RuntimePol
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_requires_exact_service_authority_on_retained_substrate() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -1200,10 +1228,12 @@ export {};
         .start_fresh_realm_bundle_invocation_with_lease_and_trace(
             &controller,
             &mut runtime,
-            &bundle,
-            &cache_policy_request,
-            V8RuntimeConstructionMode::StartupSnapshot,
-            Some(&cache_policy_context),
+            fresh_realm_trace(
+                &bundle,
+                &cache_policy_request,
+                V8RuntimeConstructionMode::StartupSnapshot,
+                Some(&cache_policy_context),
+            ),
         )
         .await
     {
@@ -1296,7 +1326,7 @@ fn assert_coarsened_timer_samples(samples: &Value, label: &str) {
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_applies_side_channel_hardening_per_realm() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -1419,7 +1449,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_denies_inspector_and_repl_in_production() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -1504,7 +1534,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_matches_startup_snapshot_for_node_fixture() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     let dep_path = tempdir.path().join("dep.cjs");
@@ -1601,7 +1631,7 @@ module.exports = { marker: "commonjs-default" };
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_denies_query_host_effects_before_dispatch() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -1687,7 +1717,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_resets_opstate_auth_host_session_and_globals() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -1782,7 +1812,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_condemns_dirty_invocation_before_reuse() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -1877,7 +1907,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_condemns_rejected_wait_until_before_reuse() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -1981,7 +2011,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_condemns_stalled_wait_until_before_reuse() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -2066,7 +2096,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_abandons_uncertain_cleanup_before_reuse() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -2120,26 +2150,28 @@ export {};
     );
 
     {
+        let trace = fresh_realm_trace(
+            &bundle,
+            &request,
+            V8RuntimeConstructionMode::StartupSnapshot,
+            Some(&context),
+        );
         let (value, realm, mut lease) = runtime_owner
             .start_fresh_realm_bundle_invocation_with_lease_and_trace(
                 &controller,
                 &mut runtime,
-                &bundle,
-                &request,
-                V8RuntimeConstructionMode::StartupSnapshot,
-                Some(&context),
+                trace,
             )
             .await
             .expect("fresh-realm invocation should start");
         let response = runtime_owner
             .resolve_fresh_realm_invocation_response_with_lease_and_trace(
                 &mut runtime,
-                &realm,
-                value,
-                &bundle,
-                &request,
-                V8RuntimeConstructionMode::StartupSnapshot,
-                Some(&context),
+                FreshRealmInvocationResponse {
+                    realm: &realm,
+                    value,
+                    trace,
+                },
                 &mut lease,
             )
             .await
@@ -2172,7 +2204,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_condemns_execution_timeout_before_reuse() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -2259,7 +2291,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_condemns_external_cancellation_before_reuse() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -2349,7 +2381,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_condemns_heap_limit_before_reuse() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -2436,7 +2468,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_drops_untracked_timer_host_work() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -2530,7 +2562,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_denies_process_and_worker_resource_surfaces_cleanly() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -2692,7 +2724,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_rejects_direct_core_host_op_forgery() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -2815,7 +2847,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_condemns_live_deno_resource_table_entries() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -2900,7 +2932,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_resets_env_path_and_load_env_file_state() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(tempdir.path().join("config.txt"), "realm-config").expect("config should write");
@@ -3068,7 +3100,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_resets_arraybuffer_and_structured_clone_state() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -3184,7 +3216,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_resets_shared_worker_env_helper_state() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -3297,7 +3329,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_rebuilds_dynamic_module_map_per_realm() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     let dep_path = tempdir.path().join("dynamic-dep.mjs");
@@ -3418,7 +3450,7 @@ export {};
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_code_cache_reloads_changed_dependency_source() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     let dep_path = tempdir.path().join("dep.mjs");
@@ -3549,25 +3581,23 @@ async fn invoke_node_full_fresh_realm_with_lease(
         Some(&execution_plan),
     );
 
+    let trace = fresh_realm_trace(
+        bundle,
+        request,
+        V8RuntimeConstructionMode::StartupSnapshot,
+        Some(context),
+    );
     let (value, realm, mut lease) = runtime_owner
-        .start_fresh_realm_bundle_invocation_with_lease_and_trace(
-            controller,
-            runtime,
-            bundle,
-            request,
-            V8RuntimeConstructionMode::StartupSnapshot,
-            Some(context),
-        )
+        .start_fresh_realm_bundle_invocation_with_lease_and_trace(controller, runtime, trace)
         .await?;
     let response = runtime_owner
         .resolve_fresh_realm_invocation_response_with_lease_and_trace(
             runtime,
-            &realm,
-            value,
-            bundle,
-            request,
-            V8RuntimeConstructionMode::StartupSnapshot,
-            Some(context),
+            FreshRealmInvocationResponse {
+                realm: &realm,
+                value,
+                trace,
+            },
             &mut lease,
         )
         .await;
@@ -3638,39 +3668,36 @@ async fn invoke_node_full_fresh_realm_with_driver(
         .expect("permit should admit NodeFull fresh-realm invocation");
     let execution_plan = RuntimeExecutionPlan::for_invocation(policy.as_ref(), request, context);
     let mut driver = runtime_owner
-        .prepare_runtime_invocation_driver(
-            reusable_runtime,
-            watchdog.clone(),
-            cancellation,
-            permit.clone(),
+        .prepare_runtime_invocation_driver(RuntimeInvocationDriverPrepare {
+            runtime: reusable_runtime,
+            watchdog: watchdog.clone(),
+            external_cancellation: cancellation,
+            permit: permit.clone(),
             context,
-            Some(&execution_plan),
-            false,
-        )
+            execution_plan: Some(&execution_plan),
+            record_replacement_on_error: false,
+        })
         .expect("driver preparation should install timeout and cancellation guards");
 
     let result = async {
         let lease_failure_reason = driver.realm_lease_condemnation_reason_classifier();
+        let trace = fresh_realm_trace(bundle, request, driver.construction_mode, Some(context));
         let (value, realm, mut lease) = runtime_owner
             .start_fresh_realm_bundle_invocation_with_lease_and_reason_trace(
                 &driver.realm_lease_controller,
                 &mut driver.runtime,
-                bundle,
-                request,
-                driver.construction_mode,
-                Some(context),
+                trace,
                 lease_failure_reason,
             )
             .await?;
         let response = runtime_owner
             .resolve_fresh_realm_invocation_response_with_lease_and_trace(
                 &mut driver.runtime,
-                &realm,
-                value,
-                bundle,
-                request,
-                driver.construction_mode,
-                Some(context),
+                FreshRealmInvocationResponse {
+                    realm: &realm,
+                    value,
+                    trace,
+                },
                 &mut lease,
             )
             .await;
@@ -3734,7 +3761,7 @@ async fn invoke_node_full_fresh_realm_with_driver(
 
 #[tokio::test]
 async fn node_full_fresh_realm_lease_host_pressure_eviction_preserves_authority_partition() {
-    let _guard = acquire_runtime_suite_lock();
+    let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -4259,15 +4286,15 @@ export {};
         .expect("permit should admit invocation");
 
     let mut driver = runtime_owner
-        .prepare_runtime_invocation_driver(
-            ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::StartupSnapshot),
-            watchdog.clone(),
-            None,
-            permit.clone(),
-            &context,
-            None,
-            false,
-        )
+        .prepare_runtime_invocation_driver(RuntimeInvocationDriverPrepare {
+            runtime: ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::StartupSnapshot),
+            watchdog: watchdog.clone(),
+            external_cancellation: None,
+            permit: permit.clone(),
+            context: &context,
+            execution_plan: None,
+            record_replacement_on_error: false,
+        })
         .expect("driver preparation should reset invocation state");
 
     {

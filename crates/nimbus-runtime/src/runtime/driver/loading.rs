@@ -30,6 +30,20 @@ use super::tracing::{
     trace_snapshot_seeded_runtime_phase, trace_snapshot_seeded_runtime_phase_with_optional_bundle,
 };
 
+#[derive(Clone, Copy)]
+pub(crate) struct FreshRealmInvocationTrace<'a> {
+    pub(crate) bundle: &'a RuntimeBundle,
+    pub(crate) request: &'a InvocationRequest,
+    pub(crate) construction_mode: V8RuntimeConstructionMode,
+    pub(crate) context: Option<&'a RuntimeInvocationContext>,
+}
+
+pub(crate) struct FreshRealmInvocationResponse<'a> {
+    pub(crate) realm: &'a JsRealm,
+    pub(crate) value: v8::Global<v8::Value>,
+    pub(crate) trace: FreshRealmInvocationTrace<'a>,
+}
+
 impl NimbusRuntime {
     pub(crate) fn checkout_fresh_realm_lease(
         &self,
@@ -321,18 +335,12 @@ impl NimbusRuntime {
     pub(crate) async fn start_fresh_realm_bundle_invocation_with_trace(
         &self,
         runtime: &mut JsRuntime,
-        bundle: &RuntimeBundle,
-        request: &InvocationRequest,
-        construction_mode: V8RuntimeConstructionMode,
-        context: Option<&RuntimeInvocationContext>,
+        trace: FreshRealmInvocationTrace<'_>,
     ) -> Result<(v8::Global<v8::Value>, JsRealm)> {
         let lease_error_reason = || RuntimeRealmLeaseCondemnationReason::Dirty;
         self.start_fresh_realm_bundle_invocation_with_optional_lease_and_trace(
             runtime,
-            bundle,
-            request,
-            construction_mode,
-            context,
+            trace,
             None,
             &lease_error_reason,
         )
@@ -344,18 +352,12 @@ impl NimbusRuntime {
         &self,
         controller: &RuntimeRealmLeaseController,
         runtime: &mut JsRuntime,
-        bundle: &RuntimeBundle,
-        request: &InvocationRequest,
-        construction_mode: V8RuntimeConstructionMode,
-        context: Option<&RuntimeInvocationContext>,
+        trace: FreshRealmInvocationTrace<'_>,
     ) -> Result<(v8::Global<v8::Value>, JsRealm, RuntimeRealmLease)> {
         self.start_fresh_realm_bundle_invocation_with_lease_and_reason_trace(
             controller,
             runtime,
-            bundle,
-            request,
-            construction_mode,
-            context,
+            trace,
             || RuntimeRealmLeaseCondemnationReason::Dirty,
         )
         .await
@@ -365,27 +367,21 @@ impl NimbusRuntime {
         &self,
         controller: &RuntimeRealmLeaseController,
         runtime: &mut JsRuntime,
-        bundle: &RuntimeBundle,
-        request: &InvocationRequest,
-        construction_mode: V8RuntimeConstructionMode,
-        context: Option<&RuntimeInvocationContext>,
+        trace: FreshRealmInvocationTrace<'_>,
         lease_error_reason: impl Fn() -> RuntimeRealmLeaseCondemnationReason,
     ) -> Result<(v8::Global<v8::Value>, JsRealm, RuntimeRealmLease)> {
         let mut lease = self.checkout_fresh_realm_lease(
             controller,
-            bundle,
-            request,
-            construction_mode,
-            context,
+            trace.bundle,
+            trace.request,
+            trace.construction_mode,
+            trace.context,
         )?;
-        reset_runtime_contract(runtime, self, bundle)?;
+        reset_runtime_contract(runtime, self, trace.bundle)?;
         match self
             .start_fresh_realm_bundle_invocation_with_optional_lease_and_trace(
                 runtime,
-                bundle,
-                request,
-                construction_mode,
-                context,
+                trace,
                 Some(&mut lease),
                 &lease_error_reason,
             )
@@ -402,13 +398,17 @@ impl NimbusRuntime {
     async fn start_fresh_realm_bundle_invocation_with_optional_lease_and_trace(
         &self,
         runtime: &mut JsRuntime,
-        bundle: &RuntimeBundle,
-        request: &InvocationRequest,
-        construction_mode: V8RuntimeConstructionMode,
-        context: Option<&RuntimeInvocationContext>,
-        mut lease: Option<&mut RuntimeRealmLease>,
+        trace: FreshRealmInvocationTrace<'_>,
+        lease: Option<&mut RuntimeRealmLease>,
         lease_error_reason: &dyn Fn() -> RuntimeRealmLeaseCondemnationReason,
     ) -> Result<(v8::Global<v8::Value>, JsRealm)> {
+        let FreshRealmInvocationTrace {
+            bundle,
+            request,
+            construction_mode,
+            context,
+        } = trace;
+        let mut lease = lease;
         trace_snapshot_seeded_runtime_phase(
             construction_mode,
             bundle,
@@ -431,7 +431,7 @@ impl NimbusRuntime {
                     "invoke_recycled_context:create_realm:error",
                     &error,
                 );
-                if let Some(lease) = lease.as_deref_mut() {
+                if let Some(lease) = &mut lease {
                     condemn_fresh_realm_lease(lease, lease_error_reason());
                 }
                 runtime_js_error(error)
@@ -448,15 +448,7 @@ impl NimbusRuntime {
         );
 
         match self
-            .start_existing_fresh_realm_bundle_invocation_with_trace(
-                runtime,
-                &realm,
-                bundle,
-                request,
-                construction_mode,
-                context,
-                lease.as_deref_mut(),
-            )
+            .start_existing_fresh_realm_bundle_invocation_with_trace(runtime, &realm, trace, lease)
             .await
         {
             Ok(value) => Ok((value, realm)),
@@ -475,22 +467,10 @@ impl NimbusRuntime {
     pub(crate) async fn resolve_fresh_realm_invocation_response_with_trace(
         &self,
         runtime: &mut JsRuntime,
-        realm: &JsRealm,
-        value: v8::Global<v8::Value>,
-        bundle: &RuntimeBundle,
-        request: &InvocationRequest,
-        construction_mode: V8RuntimeConstructionMode,
-        context: Option<&RuntimeInvocationContext>,
+        response: FreshRealmInvocationResponse<'_>,
     ) -> Result<serde_json::Value> {
         self.resolve_fresh_realm_invocation_response_with_optional_lease_and_trace(
-            runtime,
-            realm,
-            value,
-            bundle,
-            request,
-            construction_mode,
-            context,
-            None,
+            runtime, response, None,
         )
         .await
     }
@@ -498,22 +478,12 @@ impl NimbusRuntime {
     pub(crate) async fn resolve_fresh_realm_invocation_response_with_lease_and_trace(
         &self,
         runtime: &mut JsRuntime,
-        realm: &JsRealm,
-        value: v8::Global<v8::Value>,
-        bundle: &RuntimeBundle,
-        request: &InvocationRequest,
-        construction_mode: V8RuntimeConstructionMode,
-        context: Option<&RuntimeInvocationContext>,
+        response: FreshRealmInvocationResponse<'_>,
         lease: &mut RuntimeRealmLease,
     ) -> Result<serde_json::Value> {
         self.resolve_fresh_realm_invocation_response_with_optional_lease_and_trace(
             runtime,
-            realm,
-            value,
-            bundle,
-            request,
-            construction_mode,
-            context,
+            response,
             Some(lease),
         )
         .await
@@ -522,15 +492,22 @@ impl NimbusRuntime {
     async fn resolve_fresh_realm_invocation_response_with_optional_lease_and_trace(
         &self,
         runtime: &mut JsRuntime,
-        realm: &JsRealm,
-        value: v8::Global<v8::Value>,
-        bundle: &RuntimeBundle,
-        request: &InvocationRequest,
-        construction_mode: V8RuntimeConstructionMode,
-        context: Option<&RuntimeInvocationContext>,
-        mut lease: Option<&mut RuntimeRealmLease>,
+        response: FreshRealmInvocationResponse<'_>,
+        lease: Option<&mut RuntimeRealmLease>,
     ) -> Result<serde_json::Value> {
-        if let Some(lease) = lease.as_deref_mut() {
+        let FreshRealmInvocationResponse {
+            realm,
+            value,
+            trace:
+                FreshRealmInvocationTrace {
+                    bundle,
+                    request,
+                    construction_mode,
+                    context,
+                },
+        } = response;
+        let mut lease = lease;
+        if let Some(lease) = &mut lease {
             lease.mark_draining().map_err(realm_lease_error)?;
         }
         let resolve = runtime.resolve_in_realm(realm, value);
@@ -678,12 +655,16 @@ impl NimbusRuntime {
         &self,
         runtime: &mut JsRuntime,
         realm: &JsRealm,
-        bundle: &RuntimeBundle,
-        request: &InvocationRequest,
-        construction_mode: V8RuntimeConstructionMode,
-        context: Option<&RuntimeInvocationContext>,
-        mut lease: Option<&mut RuntimeRealmLease>,
+        trace: FreshRealmInvocationTrace<'_>,
+        lease: Option<&mut RuntimeRealmLease>,
     ) -> Result<v8::Global<v8::Value>> {
+        let FreshRealmInvocationTrace {
+            bundle,
+            request,
+            construction_mode,
+            context,
+        } = trace;
+        let mut lease = lease;
         trace_snapshot_seeded_runtime_phase(
             construction_mode,
             bundle,
@@ -725,7 +706,7 @@ impl NimbusRuntime {
         self.policy
             .metrics()
             .record_fresh_realm_bootstrap_reset(bootstrap_reset_started_at.elapsed());
-        if let Some(lease) = lease.as_deref_mut() {
+        if let Some(lease) = &mut lease {
             lease.mark_realm_ready().map_err(realm_lease_error)?;
         }
 
@@ -883,7 +864,7 @@ impl NimbusRuntime {
         self.policy
             .metrics()
             .record_bundle_load(started_at.elapsed());
-        if let Some(lease) = lease.as_deref_mut() {
+        if let Some(lease) = &mut lease {
             lease.mark_bundle_loaded().map_err(realm_lease_error)?;
         }
 
@@ -896,7 +877,7 @@ impl NimbusRuntime {
             Some(request),
             "invoke_recycled_context:execute_script:start",
         );
-        if let Some(lease) = lease.as_deref_mut() {
+        if let Some(lease) = &mut lease {
             lease.mark_invoking().map_err(realm_lease_error)?;
         }
         let invocation_script_started_at = Instant::now();

@@ -316,6 +316,19 @@ impl RuntimeHeapUsage {
 }
 
 #[cfg(test)]
+pub(crate) fn heap_carryover_limit_bytes_for_test(limits: &RuntimeLimits) -> usize {
+    heap_carryover_limit_bytes(limits)
+}
+
+#[cfg(test)]
+pub(crate) fn retained_entry_eviction_count_for_pressure_for_test(
+    pressure: RuntimeMemoryPressureLevel,
+    retained_entries: usize,
+) -> usize {
+    retained_entry_eviction_count_for_pressure(pressure, retained_entries)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -402,17 +415,4 @@ mod tests {
         assert_eq!(report.retained_memory_bytes, 12 * MIB_BYTES);
         assert_eq!(report.carryover_limit_bytes, 48 * MIB_BYTES);
     }
-}
-
-#[cfg(test)]
-pub(crate) fn heap_carryover_limit_bytes_for_test(limits: &RuntimeLimits) -> usize {
-    heap_carryover_limit_bytes(limits)
-}
-
-#[cfg(test)]
-pub(crate) fn retained_entry_eviction_count_for_pressure_for_test(
-    pressure: RuntimeMemoryPressureLevel,
-    retained_entries: usize,
-) -> usize {
-    retained_entry_eviction_count_for_pressure(pressure, retained_entries)
 }

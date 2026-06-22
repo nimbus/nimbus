@@ -15,7 +15,10 @@ use super::super::bootstrap::{RuntimeCancellationState, take_runtime_wait_until_
 use super::super::helpers::classify_runtime_error;
 use super::super::realm_lease::RuntimeRealmLeaseCondemnationReason;
 use super::super::realm_lifecycle::destroy_fresh_realm;
-use super::super::{NimbusRuntime, RuntimeInvocationExecution, RuntimeInvocationTimeoutController};
+use super::super::{
+    FreshRealmInvocationResponse, FreshRealmInvocationTrace, NimbusRuntime,
+    RuntimeInvocationExecution, RuntimeInvocationTimeoutController,
+};
 
 pub(crate) struct RuntimeInvocationDriver {
     pub(crate) runtime: JsRuntime,
@@ -35,6 +38,16 @@ pub(crate) struct RuntimeInvocationDriver {
     heap_limit_triggered: Arc<AtomicBool>,
     pub(crate) external_cancellation_triggered: Arc<AtomicBool>,
     record_replacement_on_error: bool,
+}
+
+pub(crate) struct RuntimeInvocationDriverPrepare<'a> {
+    pub(crate) runtime: ReusableV8Runtime,
+    pub(crate) watchdog: WatchdogTimer,
+    pub(crate) external_cancellation: Option<HostCallCancellation>,
+    pub(crate) permit: SharedInvocationPermit,
+    pub(crate) context: &'a crate::context::RuntimeInvocationContext,
+    pub(crate) execution_plan: Option<&'a RuntimeExecutionPlan>,
+    pub(crate) record_replacement_on_error: bool,
 }
 
 impl RuntimeInvocationDriver {
@@ -224,15 +237,16 @@ impl NimbusRuntime {
                 )
             }
         };
-        let mut driver = self.prepare_runtime_invocation_driver(
-            runtime,
-            watchdog.clone(),
-            external_cancellation.clone(),
-            permit.clone(),
-            &context,
-            Some(&execution_plan),
-            v8_runtime_pool.is_some(),
-        )?;
+        let mut driver =
+            self.prepare_runtime_invocation_driver(RuntimeInvocationDriverPrepare {
+                runtime,
+                watchdog: watchdog.clone(),
+                external_cancellation: external_cancellation.clone(),
+                permit: permit.clone(),
+                context: &context,
+                execution_plan: Some(&execution_plan),
+                record_replacement_on_error: v8_runtime_pool.is_some(),
+            })?;
 
         let result = {
             let isolate_handle = driver.runtime.v8_isolate().thread_safe_handle();
@@ -256,26 +270,28 @@ impl NimbusRuntime {
             let invoke = async {
                 if context_recycling {
                     let lease_failure_reason = driver.realm_lease_condemnation_reason_classifier();
+                    let trace = FreshRealmInvocationTrace {
+                        bundle: &bundle,
+                        request: &request,
+                        construction_mode: driver.construction_mode,
+                        context: Some(&context),
+                    };
                     let (value, realm, mut realm_lease) = self
                         .start_fresh_realm_bundle_invocation_with_lease_and_reason_trace(
                             &driver.realm_lease_controller,
                             &mut driver.runtime,
-                            &bundle,
-                            &request,
-                            driver.construction_mode,
-                            Some(&context),
+                            trace,
                             lease_failure_reason,
                         )
                         .await?;
                     let response = self
                         .resolve_fresh_realm_invocation_response_with_lease_and_trace(
                             &mut driver.runtime,
-                            &realm,
-                            value,
-                            &bundle,
-                            &request,
-                            driver.construction_mode,
-                            Some(&context),
+                            FreshRealmInvocationResponse {
+                                realm: &realm,
+                                value,
+                                trace,
+                            },
                             &mut realm_lease,
                         )
                         .await;
@@ -401,14 +417,17 @@ impl NimbusRuntime {
 
     pub(crate) fn prepare_runtime_invocation_driver(
         &self,
-        runtime: ReusableV8Runtime,
-        watchdog: WatchdogTimer,
-        external_cancellation: Option<HostCallCancellation>,
-        permit: SharedInvocationPermit,
-        context: &crate::context::RuntimeInvocationContext,
-        execution_plan: Option<&RuntimeExecutionPlan>,
-        record_replacement_on_error: bool,
+        prepare: RuntimeInvocationDriverPrepare<'_>,
     ) -> Result<RuntimeInvocationDriver> {
+        let RuntimeInvocationDriverPrepare {
+            runtime,
+            watchdog,
+            external_cancellation,
+            permit,
+            context,
+            execution_plan,
+            record_replacement_on_error,
+        } = prepare;
         let ReusableV8Runtime {
             mut runtime,
             warm_reuse_count,

@@ -20,7 +20,10 @@ use crate::watchdog::WatchdogTimer;
 use super::bootstrap::{clear_runtime_wait_until_pending, take_runtime_wait_until_pending};
 use super::helpers::{deserialize_json_value, ensure_wait_until_drain_succeeded, runtime_js_error};
 use super::realm_lifecycle::destroy_fresh_realm;
-use super::{InvocationRequest, NimbusRuntime, RuntimeBundle, RuntimeInvocationDriver};
+use super::{
+    FreshRealmInvocationTrace, InvocationRequest, NimbusRuntime, RuntimeBundle,
+    RuntimeInvocationDriver, RuntimeInvocationDriverPrepare,
+};
 
 pub(crate) struct RuntimeInvocationExecution {
     pub(crate) watchdog: WatchdogTimer,
@@ -452,15 +455,16 @@ impl NimbusRuntime {
             Some(&context),
             true,
         )?;
-        let mut driver = self.prepare_runtime_invocation_driver(
-            runtime,
-            watchdog,
-            external_cancellation,
-            permit,
-            &context,
-            Some(&execution_plan),
-            true,
-        )?;
+        let mut driver =
+            self.prepare_runtime_invocation_driver(RuntimeInvocationDriverPrepare {
+                runtime,
+                watchdog,
+                external_cancellation,
+                permit,
+                context: &context,
+                execution_plan: Some(&execution_plan),
+                record_replacement_on_error: true,
+            })?;
         let context_recycling = matches!(
             self.policy.limits().runtime_pool_kind,
             crate::limits::RuntimePoolKind::WarmContextRecycle,
@@ -491,10 +495,12 @@ impl NimbusRuntime {
             let (value, realm) = self
                 .start_fresh_realm_bundle_invocation_with_trace(
                     &mut driver.runtime,
-                    &bundle,
-                    &request,
-                    driver.construction_mode,
-                    Some(&context),
+                    FreshRealmInvocationTrace {
+                        bundle: &bundle,
+                        request: &request,
+                        construction_mode: driver.construction_mode,
+                        context: Some(&context),
+                    },
                 )
                 .await?;
             (Ok(value), Some(realm))

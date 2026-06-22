@@ -16,7 +16,7 @@ use crate::runtime::{
 use super::{CooperativeInvocation, CooperativeWorkerLoop};
 
 enum CooperativeAdmissionStart {
-    Slot(CooperativeLockerRuntimeSlot),
+    Slot(Box<CooperativeLockerRuntimeSlot>),
     DirectResult(crate::error::Result<serde_json::Value>),
     Deferred,
 }
@@ -200,7 +200,7 @@ impl CooperativeWorkerLoop {
                 .await
                 .map_err(|error| (error, execution_started_at))?;
             Ok::<_, (NimbusRuntimeError, Instant)>((
-                CooperativeAdmissionStart::Slot(slot),
+                CooperativeAdmissionStart::Slot(Box::new(slot)),
                 execution_started_at,
             ))
         });
@@ -210,7 +210,7 @@ impl CooperativeWorkerLoop {
                 self.scheduler.admit_runnable(CooperativeInvocation {
                     job,
                     permit,
-                    slot,
+                    slot: *slot,
                     execution_started_at,
                     cancellation_for_metrics,
                 });

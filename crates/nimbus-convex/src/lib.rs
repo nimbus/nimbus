@@ -147,7 +147,7 @@ impl ConvexRuntimeLane {
                 )
                 .with_adaptive_controller_settings(adaptive_settings),
             ),
-            self.execution_adapter_state.clone(),
+            self.execution_adapter_state,
             self.execution_adapter_artifact.clone(),
         )
     }
@@ -155,7 +155,7 @@ impl ConvexRuntimeLane {
     fn with_effective_scaling_plans(&self, plans: RuntimeScalingPlanSet) -> Self {
         Self::from_policy(
             Arc::new(self.policy.clone_with_effective_scaling_plans(plans)),
-            self.execution_adapter_state.clone(),
+            self.execution_adapter_state,
             self.execution_adapter_artifact.clone(),
         )
     }
