@@ -455,7 +455,7 @@ cask "${cask_token}" do
   end
 
   depends_on arch: :arm64
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
   depends_on formula: "slp/krunkit/krunkit"
 
   url "file://${archive_path}"
