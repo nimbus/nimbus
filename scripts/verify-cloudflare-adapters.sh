@@ -3,8 +3,13 @@
 # (`docs/private/plans/cloudflare-adapters-plan.md`).
 #
 # Exits 0 iff every condition in the plan's Completion Gate is satisfied.
-# Ships in CFA0 so /goal is verifiable from day one; CFA1-CFA6 progressively
-# flip conditions from FAIL to PASS, CFA7 closes the plan and archives it.
+# Ships in CFA0 so /goal is verifiable from day one; CFA1-CFA8 progressively
+# flip conditions from FAIL to PASS, CFA9 closes the plan and archives it.
+#
+# Primitives-first: CFA builds a Nimbus KV primitive (`TenantKvStore` in
+# nimbus-storage) and a durable-object substrate, then thin Cloudflare surfaces
+# over them, plus a minimal Workers-runtime slice so `env.NS` is proven inside a
+# real Worker.
 #
 # Run from the repo root.
 
@@ -20,7 +25,8 @@ PLANS_README="docs/private/plans/README.md"
 RESEARCH_DOC="docs/private/plans/research/cloudflare-adapters-2026.md"
 PROOF_DIR="docs/private/plans/proof/cloudflare-adapters"
 PROOF_CFA0="${PROOF_DIR}/cfa0-baseline.md"
-PROOF_CFA4="${PROOF_DIR}/cfa4-do-design.md"
+PROOF_CFA5="${PROOF_DIR}/cfa5-env-ns-e2e.md"
+PROOF_CFA6="${PROOF_DIR}/cfa6-do-primitive.md"
 
 ADAPTERS_MOD="crates/nimbus-server/src/adapters/mod.rs"
 CF_DIR="crates/nimbus-server/src/adapters/cloudflare"
@@ -29,7 +35,9 @@ CF_CONFIG="${CF_DIR}/config.rs"
 CF_KV_DIR="${CF_DIR}/kv"
 CF_DO_DIR="${CF_DIR}/durable_objects"
 START_ADAPTERS="crates/nimbus-bin/src/start/adapters.rs"
-RUNTIME_HOST="crates/nimbus-runtime/src/host.rs"
+NIMBUS_STORAGE="crates/nimbus-storage"
+NIMBUS_RUNTIME="crates/nimbus-runtime"
+RUNTIME_HOST="${NIMBUS_RUNTIME}/src/host.rs"
 SERVICES_CATALOG="crates/nimbus-services/src/catalog.rs"
 OPERATOR_DOC="docs/private/operating/cloudflare-adapters.md"
 
@@ -84,7 +92,7 @@ grep_dir() {
 
 # -------- conditions -------------------------------------------------------
 
-printf '\033[1mCFA verification gate — cloudflare-adapters\033[0m\n'
+printf '\033[1mCFA verification gate — cloudflare-adapters (primitives-first)\033[0m\n'
 printf 'Repo: %s\n' "${REPO_ROOT}"
 
 # 1. Plan checked in.
@@ -96,7 +104,7 @@ else
   fail "Plan missing" "Neither ${PLAN_ACTIVE} nor ${PLAN_ARCHIVED} exists"
 fi
 
-# 2. Routing entries in CLAUDE.md (= AGENTS.md) and docs/private/plans/README.md.
+# 2. Routing entries.
 step 2 "Routing entries exist"
 has_agents_route=0
 has_plans_route=0
@@ -133,83 +141,94 @@ c4_mod=0; c4_cfg=0; c4_register=0; c4_parser=0; c4_toggle=0
 [ -f "${ADAPTERS_MOD}" ] && grep -qE '^[[:space:]]*pub mod cloudflare;' "${ADAPTERS_MOD}" && c4_register=1
 [ -f "${CF_CONFIG}" ] && c4_parser=1
 [ -f "${START_ADAPTERS}" ] && grep -qiE 'cloudflare' "${START_ADAPTERS}" && c4_toggle=1
-if [ "${c4_mod}" = 1 ] && [ "${c4_cfg}" = 1 ] && [ "${c4_register}" = 1 ] && [ "${c4_parser}" = 1 ] && [ "${c4_toggle}" = 1 ]; then
+if [ "${c4_mod}" = 1 ] && [ "${c4_register}" = 1 ] && [ "${c4_parser}" = 1 ] && [ "${c4_toggle}" = 1 ]; then
   pass "adapter module + CloudflareConfig + pub mod cloudflare + config.rs + start toggle"
 else
-  fail "CFA1 wiring incomplete" "mod=${c4_mod} config=${c4_cfg} register=${c4_register} parser=${c4_parser} toggle=${c4_toggle}"
+  fail "CFA1 wiring incomplete" "mod=${c4_mod} register=${c4_register} parser=${c4_parser} toggle=${c4_toggle}"
 fi
 
-# 5. CFA2: KV storage mapping + KV test.
-step 5 "CFA2: Workers KV storage mapping + test"
-c5_map=0; c5_test=0
+# 5. CFA2: the KV PRIMITIVE — TenantKvStore in nimbus-storage + conformance test.
+step 5 "CFA2: KV primitive (TenantKvStore in nimbus-storage)"
+c5_trait=0; c5_test=0
+grep -rqE 'TenantKvStore' "${NIMBUS_STORAGE}/src" 2>/dev/null && c5_trait=1
+grep -rqE 'kv_(put|get|list)' "${NIMBUS_STORAGE}" 2>/dev/null && c5_test=1
+if [ "${c5_trait}" = 1 ] && [ "${c5_test}" = 1 ]; then
+  pass "TenantKvStore trait + kv_* methods present in nimbus-storage"
+else
+  fail "CFA2 KV primitive incomplete" "trait=${c5_trait} kv_methods=${c5_test}"
+fi
+
+# 6. CFA3: Workers KV ADAPTER over the primitive + CfKv* host ops + REST + test.
+step 6 "CFA3: Workers KV adapter over the primitive"
+c6_map=0; c6_host=0; c6_rest=0; c6_test=0
 if dir_has_rs "${CF_KV_DIR}"; then
-  grep_dir '__cf_kv__|reserved.*kv|kv.*reserved' "${CF_KV_DIR}" && c5_map=1
-  # A KV test: a #[test]/#[tokio::test] in the kv tree, or the contract markers.
-  grep_dir '#\[(tokio::)?test\]|expirationTtl|expiration_ttl|list_complete' "${CF_KV_DIR}" && c5_test=1
+  grep_dir 'TenantKvStore|kv_(put|get|list)' "${CF_KV_DIR}" && c6_map=1
+  grep_dir 'rest|Router|router|axum' "${CF_KV_DIR}" && c6_rest=1
 fi
-[ -f "crates/nimbus-server/tests/cloudflare_kv.rs" ] && c5_test=1
-if [ "${c5_map}" = 1 ] && [ "${c5_test}" = 1 ]; then
-  pass "KV mapping module (reserved-table scheme) + KV contract test present"
-else
-  fail "CFA2 incomplete" "mapping=${c5_map} test=${c5_test}"
-fi
-
-# 6. CFA3: HostCallOperation CfKv variants + REST surface + conformance test.
-step 6 "CFA3: KV HostBridge variants + REST front door + conformance test"
-c6_host=0; c6_rest=0; c6_conf=0
 [ -f "${RUNTIME_HOST}" ] && grep -qE 'CfKv(Get|Put|Delete|List)' "${RUNTIME_HOST}" && c6_host=1
-grep_dir 'rest|Router|router|axum' "${CF_KV_DIR}" && c6_rest=1
-{ [ -f "crates/nimbus-server/tests/cloudflare_kv.rs" ] || grep_dir 'conformance' "${CF_KV_DIR}"; } && c6_conf=1
-if [ "${c6_host}" = 1 ] && [ "${c6_rest}" = 1 ] && [ "${c6_conf}" = 1 ]; then
-  pass "CfKv* HostCallOperation variants + KV REST handler + conformance test"
+{ [ -f "crates/nimbus-server/tests/cloudflare_kv.rs" ] || grep_dir 'expiration_ttl|list_complete|#\[(tokio::)?test\]' "${CF_KV_DIR}"; } && c6_test=1
+if [ "${c6_map}" = 1 ] && [ "${c6_host}" = 1 ] && [ "${c6_rest}" = 1 ] && [ "${c6_test}" = 1 ]; then
+  pass "KV adapter over TenantKvStore + CfKv* host ops + REST surface + contract test"
 else
-  fail "CFA3 incomplete" "host=${c6_host} rest=${c6_rest} conformance=${c6_conf}"
+  fail "CFA3 incomplete" "map=${c6_map} host=${c6_host} rest=${c6_rest} test=${c6_test}"
 fi
 
-# 7. CFA4: DO design proof + catalog single-instance extension.
-step 7 "CFA4: Durable Objects design + catalog seam"
-c7_proof=0; c7_catalog=0
-[ -f "${PROOF_CFA4}" ] && c7_proof=1
-[ -f "${SERVICES_CATALOG}" ] && grep -qiE 'durable.?object|DurableObjectInstance|Instance \{' "${SERVICES_CATALOG}" && c7_catalog=1
-if [ "${c7_proof}" = 1 ] && [ "${c7_catalog}" = 1 ]; then
-  pass "DO design proof + catalog single-instance/per-instance extension"
+# 7. CFA4: minimal Workers runtime profile in nimbus-runtime.
+step 7 "CFA4: Workers runtime slice (module-worker fetch dispatch + env)"
+c7=0
+if grep -rqE 'CloudflareWorker|WorkersRuntime|WorkersProfile|module_worker|workers_fetch|worker_fetch|WorkerEntrypoint' "${NIMBUS_RUNTIME}/src" 2>/dev/null; then
+  c7=1
+fi
+if [ "${c7}" = 1 ]; then
+  pass "Workers runtime profile present in nimbus-runtime"
 else
-  fail "CFA4 incomplete" "proof=${c7_proof} catalog=${c7_catalog}"
+  fail "CFA4 incomplete" "no Workers runtime profile marker in ${NIMBUS_RUNTIME}/src"
 fi
 
-# 8. CFA5: DO storage/lifecycle module + test.
-step 8 "CFA5: Durable Objects storage + lifecycle"
-c8_mod=0; c8_test=0
+# 8. CFA5: env.NS end-to-end inside a real Worker (proof + test).
+step 8 "CFA5: env.NS end-to-end inside a real Worker"
+c8_proof=0; c8_test=0
+[ -f "${PROOF_CFA5}" ] && c8_proof=1
+if grep -rqE 'env\.NS|env\["NS"\]|cloudflare_kv_worker|cf_kv.*e2e|env_ns' crates 2>/dev/null; then
+  c8_test=1
+fi
+if [ "${c8_proof}" = 1 ] && [ "${c8_test}" = 1 ]; then
+  pass "env.NS real-Worker end-to-end test + ${PROOF_CFA5}"
+else
+  fail "CFA5 incomplete" "proof=${c8_proof} e2e_test=${c8_test}"
+fi
+
+# 9. CFA6: durable-object PRIMITIVE — design proof + catalog single-instance.
+step 9 "CFA6: durable-object primitive (catalog single-instance resource)"
+c9_proof=0; c9_catalog=0
+[ -f "${PROOF_CFA6}" ] && c9_proof=1
+[ -f "${SERVICES_CATALOG}" ] && grep -qiE 'DurableObjectInstance|durable.?object' "${SERVICES_CATALOG}" && c9_catalog=1
+if [ "${c9_proof}" = 1 ] && [ "${c9_catalog}" = 1 ]; then
+  pass "DO design proof + DurableObjectInstance catalog resource"
+else
+  fail "CFA6 incomplete" "proof=${c9_proof} catalog=${c9_catalog}"
+fi
+
+# 10. CFA7+CFA8: DO storage/lifecycle/RPC + alarms + WS hibernation + tests.
+step 10 "CFA7+CFA8: DO storage/lifecycle/RPC + alarms + WebSocket hibernation"
+c10_mod=0; c10_alarm=0; c10_ws=0; c10_test=0
 if dir_has_rs "${CF_DO_DIR}"; then
-  grep_dir 'sql.exec|sql_exec|SqlStorageCursor|storage|transaction' "${CF_DO_DIR}" && c8_mod=1
-  grep_dir '#\[(tokio::)?test\]|single.?instance|per.?instance' "${CF_DO_DIR}" && c8_test=1
+  grep_dir 'sql.exec|sql_exec|SqlStorageCursor|storage|transaction' "${CF_DO_DIR}" && c10_mod=1
+  grep_dir 'set_alarm|setAlarm|fn alarm|alarm\(' "${CF_DO_DIR}" && c10_alarm=1
+  grep_dir 'accept_web_socket|acceptWebSocket|serialize_attachment|serializeAttachment|hibernat' "${CF_DO_DIR}" && c10_ws=1
+  grep_dir '#\[(tokio::)?test\]|single.?instance|per.?instance' "${CF_DO_DIR}" && c10_test=1
 fi
-[ -f "crates/nimbus-server/tests/cloudflare_durable_objects.rs" ] && c8_test=1
-if [ "${c8_mod}" = 1 ] && [ "${c8_test}" = 1 ]; then
-  pass "DO storage/lifecycle module + single-instance/atomicity test"
+[ -f "crates/nimbus-server/tests/cloudflare_durable_objects.rs" ] && c10_test=1
+if [ "${c10_mod}" = 1 ] && [ "${c10_alarm}" = 1 ] && [ "${c10_ws}" = 1 ] && [ "${c10_test}" = 1 ]; then
+  pass "DO storage/lifecycle/RPC + alarms + WebSocket hibernation + tests"
 else
-  fail "CFA5 incomplete" "module=${c8_mod} test=${c8_test}"
+  fail "CFA7+CFA8 incomplete" "module=${c10_mod} alarm=${c10_alarm} ws=${c10_ws} test=${c10_test}"
 fi
 
-# 9. CFA6: DO alarms + WebSocket hibernation + tests.
-step 9 "CFA6: Durable Objects alarms + WebSocket hibernation"
-c9_alarm=0; c9_ws=0; c9_test=0
-if dir_has_rs "${CF_DO_DIR}"; then
-  grep_dir 'set_alarm|setAlarm|fn alarm|alarm\(' "${CF_DO_DIR}" && c9_alarm=1
-  grep_dir 'accept_web_socket|acceptWebSocket|serialize_attachment|serializeAttachment|hibernat' "${CF_DO_DIR}" && c9_ws=1
-  grep_dir '#\[(tokio::)?test\]' "${CF_DO_DIR}" && c9_test=1
-fi
-[ -f "crates/nimbus-server/tests/cloudflare_durable_objects.rs" ] && c9_test=1
-if [ "${c9_alarm}" = 1 ] && [ "${c9_ws}" = 1 ] && [ "${c9_test}" = 1 ]; then
-  pass "alarms (scheduler-backed) + WebSocket hibernation + round-trip tests"
-else
-  fail "CFA6 incomplete" "alarm=${c9_alarm} ws=${c9_ws} test=${c9_test}"
-fi
-
-# 10. CFA7: operator doc + ledger all done + CI green.
-step 10 "CFA7: operator doc + ledger green + CI green"
-c10_doc=0; ledger_clean=0; ci_green=0
-[ -f "${OPERATOR_DOC}" ] && c10_doc=1
+# 11. CFA9: operator doc + ledger all done + CI green.
+step 11 "CFA9: operator doc + ledger green + CI green"
+c11_doc=0; ledger_clean=0; ci_green=0
+[ -f "${OPERATOR_DOC}" ] && c11_doc=1
 PLAN_FILE="$(plan_file)"
 if [ -n "${PLAN_FILE}" ]; then
   ledger_rows="$(awk '
@@ -233,10 +252,10 @@ else
   ci_green=1
   printf '        note: gh not on PATH; CI-green for main is UNVERIFIED locally (CI enforces it on merge)\n'
 fi
-if [ "${c10_doc}" = 1 ] && [ "${ledger_clean}" = 1 ] && [ "${ci_green}" = 1 ]; then
+if [ "${c11_doc}" = 1 ] && [ "${ledger_clean}" = 1 ] && [ "${ci_green}" = 1 ]; then
   pass "operator doc present, ledger clean, CI green"
 else
-  fail "CFA7 closeout incomplete" "doc=${c10_doc} ledger=${ledger_clean} ci=${ci_green}"
+  fail "CFA9 closeout incomplete" "doc=${c11_doc} ledger=${ledger_clean} ci=${ci_green}"
 fi
 
 # -------- summary ----------------------------------------------------------

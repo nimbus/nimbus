@@ -156,6 +156,26 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   outer machine-os Linux VM and per-workload sandboxes inside it are
   standard Linux containers (crun), NOT nested microVMs (D11/D12).
   Snapshot/fork S0..S5 is Linux-KVM-only by construction.
+- Krun microVM egress enforcement (lifting the fail-closed Linux-production
+  execute path): `docs/private/plans/krun-microvm-egress-enforcement-plan.md`
+  (KME0..KME6). The conmon/crun `KrunSandboxBackend` execute mode is
+  fail-closed at `crates/nimbus-sandbox/src/backends/krun/vm/start.rs:155`
+  because libkrun **TSI** (transparent socket impersonation) has no host-side
+  packet path for `SandboxEgressPolicy` to attach to. Owner-ratified decision
+  (2026-06-22): **retire TSI-outbound for passt** and make the microVM the
+  **fourth NEG enforcement point** (container/isolate/wasm/microVM, one PDP
+  decision; HTTP(S) forwarded through `nimbus-proxy`). KME **consumes** NEG's
+  `nimbus-egress` PDP + `nimbus-proxy` PEP (sequence after NEG1/NEG4) and
+  shares the passt PEP + passt-mode bind-address hook with
+  `nimbus-sandbox-plan.md` Band B/D — build once, two consumers. The existing
+  TSI *inbound* bind-address patch (`15bcf49`) is kept; passt needs its own
+  inbound hook (fork-inventory §8 item 1). KME lifts the *execute gate* only;
+  "thousands of microVMs" still needs Band S snapshot/fork. Gated on
+  `bash scripts/verify-krun-microvm-egress-enforcement.sh` (10 conditions,
+  created by KME0; before it lands a missing verifier is expected, not green).
+  Touches the `nimbus-crun` fork (passt selection in `handlers/krun.c`) and
+  possibly `nimbus-libkrun` — add the `nimbus-crun` fork-health budget row
+  first. LOCAL-ONLY plan; only the verifier + this routing pointer are tracked.
 - Node-side systemd D-Bus binding (`SystemdDbusClient` /
   `SystemdTransientUnitBackend` / `NodeWorkloadReconciler`):
   `docs/private/operating/node-dbus-binding.md` for the canonical contract,
@@ -262,14 +282,25 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `docs/private/architecture/server/auth-runtime-trust.md`
 - Cloudflare adapters (inbound Workers / Workers KV / D1 / R2 / Durable Objects
   compatibility): `docs/private/plans/cloudflare-adapters-plan.md` is the active
-  control plane (CFA0..CFA7), gated on
-  `bash scripts/verify-cloudflare-adapters.sh` (10 conditions). Contract source
+  control plane (CFA0..CFA9), gated on
+  `bash scripts/verify-cloudflare-adapters.sh` (11 conditions). Contract source
   of truth is `docs/private/plans/research/cloudflare-adapters-2026.md` (do not
-  re-derive Cloudflare API contracts from memory). Direction is inbound-compat-
-  first; build wedge is Workers KV then Durable Objects; D1, R2, and full
-  Worker-code execution are named follow-on bands. `workerd`/`miniflare`/
-  `workers-types` are Apache-2.0/MIT and freely incorporable. Also read
-  `docs/private/architecture/runtime/adapter-boundary.md` and
+  re-derive Cloudflare API contracts from memory). **Primitives-first** (owner
+  decision 2026-06-22): adapters are thin compat surfaces over Nimbus primitives,
+  not foreign-runtime embeds — build the KV primitive (`TenantKvStore` seam in
+  `nimbus-storage`, NOT a standalone crate) and the durable-object substrate
+  (`nimbus-services` single-instance resource + engine + scheduler + WS), and
+  reimplement the Workers runtime as a V8 profile on `nimbus-runtime` (NOT embed
+  `workerd` — it locks DO storage to its own SQLite). Build wedge: Workers KV →
+  Durable Objects, with the bar raised to **`env.NS` running end-to-end inside a
+  real Worker** (pulls a minimal Workers-runtime slice forward). Cross-lane deps:
+  **R2 is gated on NOS Phase 3** (`nimbus-s3-object-storage` S3 surface);
+  cluster-scale single-instance DO routing is **HS5**'s (`horizontal-scaling`),
+  CFA6 is single-node MVP; D1 over the existing SQLite/libSQL family is an
+  independent follow-on. `workerd`/`miniflare`/`workers-types`/`lol-html` are
+  Apache-2.0/MIT/BSD-3 and freely incorporable. Also read
+  `docs/private/architecture/storage-seams-architecture.md`,
+  `docs/private/architecture/runtime/adapter-boundary.md`, and
   `docs/private/architecture/server/auth-runtime-trust.md`.
 - Horizontal scaling, cluster substrate, cluster-riding secret management,
   workload identity/provider auth, or the agent browser service:
