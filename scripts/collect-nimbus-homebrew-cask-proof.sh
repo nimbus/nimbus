@@ -11,11 +11,13 @@ usage: collect-nimbus-homebrew-cask-proof.sh [options]
 Collect real-host proof for the supported macOS Homebrew/cask install surface
 without touching the user's shipped `nimbus` cask token or default machine
 roots. The collector packages a local release binary (no bundled `gvproxy`)
-into a temporary proof cask that declares `depends_on formula:
-"libkrun/krun/krunkit"`, installs it under an isolated token, and then exercises
-the packaged `nimbus machine ...` path against isolated machine roots. It proves
-that `gvproxy` resolves from the krunkit Homebrew dependency on the bin path
-rather than from a bundled helper inside the release archive.
+into a temporary proof cask that mirrors the shipped binary-only `nimbus` cask
+(no `depends_on formula` for the third-party libkrun/krun tap, matching the
+non-transitive Homebrew 6.0 tap-trust model), installs it under an isolated
+token, and then exercises the packaged `nimbus machine ...` path against
+isolated machine roots. It proves that `gvproxy` resolves from the separately
+installed krunkit Homebrew chain on the bin path rather than from a bundled
+helper inside the release archive.
 
 options:
   --machine <name>               Machine name (default: default)
@@ -472,7 +474,9 @@ cask "${cask_token}" do
 
   depends_on arch: :arm64
   depends_on macos: :sonoma
-  depends_on formula: "libkrun/krun/krunkit"
+  # Mirrors the shipped binary-only cask: no cross-tap depends_on formula.
+  # gvproxy is supplied by the separately installed krunkit Homebrew chain,
+  # verified below via the stripped-PATH gvproxy resolution assertions.
 
   url "file://${archive_path}"
   sha256 "${archive_sha}"

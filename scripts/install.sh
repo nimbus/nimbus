@@ -32,6 +32,13 @@ ARCH=""
 DISTRO_ID=""
 DISTRO_VERSION=""
 
+# Single per-run scratch directory. Every download stages into a subdirectory
+# of this root so one EXIT trap (registered once by ensure_workdir) cleans up
+# everything. Do not set a per-function `trap ... EXIT`: POSIX sh keeps only one
+# EXIT trap, so a second download would clobber the first one's cleanup and leak
+# the earlier directory.
+NIMBUS_WORKDIR=""
+
 # Keep these constants aligned with scripts/bun-jsc-adapter-contract.sh and
 # crates/nimbus-runtime/src/backends/bun_jsc/manifest.rs.
 BUN_JSC_ADAPTER_SCHEMA_VERSION=1
@@ -960,6 +967,17 @@ install_system_deps() {
   esac
 }
 
+# Create the per-run scratch root (once) and register the single EXIT trap that
+# removes it. Idempotent: later calls reuse the existing directory. Each download
+# allocates its own `download.XXXXXX` subdirectory underneath, so cleanup of the
+# root removes every download's staging area without per-function traps.
+ensure_workdir() {
+  if [ -z "$NIMBUS_WORKDIR" ]; then
+    NIMBUS_WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-install.XXXXXX")"
+    trap 'rm -rf "$NIMBUS_WORKDIR"' EXIT
+  fi
+}
+
 download_and_install_nimbus() {
   if [ -n "$DRY_RUN" ]; then
     say_info "[dry-run] Would download and install nimbus $NIMBUS_VERSION to ${NIMBUS_PREFIX}/bin/nimbus"
@@ -970,8 +988,8 @@ download_and_install_nimbus() {
   download_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/${asset_name}"
   checksums_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/checksums-sha256.txt"
 
-  tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
+  ensure_workdir
+  tmpdir="$(mktemp -d "${NIMBUS_WORKDIR}/download.XXXXXX")"
 
   say_info "Downloading checksums for nimbus ${NIMBUS_VERSION}..."
   download_to_file "$checksums_url" "$tmpdir/checksums-sha256.txt"
@@ -1025,8 +1043,8 @@ download_and_install_bun_jsc_adapter_linux() {
   release_checksums_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/checksums-sha256.txt"
   require_bun_jsc_adapter_verifier_tools
 
-  tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
+  ensure_workdir
+  tmpdir="$(mktemp -d "${NIMBUS_WORKDIR}/download.XXXXXX")"
 
   say_info "Downloading Bun/JSC adapter checksums for nimbus ${NIMBUS_VERSION}..."
   if download_to_file "$adapter_checksums_url" "$tmpdir/adapter-checksums-sha256.txt" 2>/dev/null; then
@@ -1112,8 +1130,8 @@ download_and_install_libkrun() {
   download_url="${NIMBUS_LIBKRUN_RELEASES_DOWNLOAD}/${NIMBUS_LIBKRUN_VERSION}/${asset_name}"
   checksums_url="${NIMBUS_LIBKRUN_RELEASES_DOWNLOAD}/${NIMBUS_LIBKRUN_VERSION}/checksums.txt"
 
-  tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
+  ensure_workdir
+  tmpdir="$(mktemp -d "${NIMBUS_WORKDIR}/download.XXXXXX")"
 
   say_info "Downloading checksums for nimbus-libkrun ${NIMBUS_LIBKRUN_VERSION}..."
   download_to_file "$checksums_url" "$tmpdir/checksums.txt"
@@ -1155,8 +1173,8 @@ download_and_install_crun() {
   download_url="${NIMBUS_CRUN_RELEASES_DOWNLOAD}/${NIMBUS_CRUN_VERSION}/${asset_name}"
   checksums_url="${NIMBUS_CRUN_RELEASES_DOWNLOAD}/${NIMBUS_CRUN_VERSION}/checksums.txt"
 
-  tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
+  ensure_workdir
+  tmpdir="$(mktemp -d "${NIMBUS_WORKDIR}/download.XXXXXX")"
 
   say_info "Downloading checksums for nimbus-crun ${NIMBUS_CRUN_VERSION}..."
   download_to_file "$checksums_url" "$tmpdir/checksums.txt"
@@ -1259,8 +1277,19 @@ install_macos_microvm_deps() {
   say_info "Trusting the libkrun/krun tap (Homebrew 6.0 tap-trust gate)..."
   brew trust --tap libkrun/krun || true
 
+  # The whole microVM chain is an optional fast-path. Under `set -eu` an install
+  # failure (network blip, tap trust declined, Rosetta/arch mismatch) would
+  # otherwise abort the entire installer even though `nimbus` itself is already
+  # installed and runs without it. Degrade to a warning and continue.
   say_info "Installing the macOS microVM chain (krunkit + gvproxy + libkrun)..."
-  brew install libkrun/krun/krunkit
+  if brew install libkrun/krun/krunkit; then
+    say_info "Installed the macOS microVM chain via Homebrew"
+  else
+    say_warn "Could not install the krunkit chain via Homebrew (exit $?)"
+    say_warn "The 'nimbus' server is installed and runs without it."
+    say_warn "Retry later with: brew install libkrun/krun/krunkit"
+  fi
+  return 0
 }
 
 install_macos() {
@@ -1345,14 +1374,35 @@ uninstall_linux() {
 uninstall_macos() {
   say_info "Uninstalling nimbus from macOS..."
 
+  # macOS has two install channels that land the binary in different prefixes:
+  #   curl | sh   -> ${NIMBUS_PREFIX}/bin/nimbus    (default /usr/local/bin)
+  #   brew install -> $(brew --prefix)/bin/nimbus   (Homebrew-managed symlink)
+  # This script only owns the curl|sh copy. If the Homebrew cask is installed we
+  # defer to `brew uninstall` so Homebrew's receipts and the optional krunkit
+  # dependency chain stay consistent instead of leaving a dangling symlink.
+  cask_installed=""
+  if check_cmd brew && brew list --cask nimbus >/dev/null 2>&1; then
+    cask_installed=1
+  fi
+
   if [ -n "$DRY_RUN" ]; then
     say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/bin/nimbus"
+    if [ -n "$cask_installed" ]; then
+      say_info "[dry-run] Detected the 'nimbus' Homebrew cask — defer to: brew uninstall --cask nimbus"
+    fi
     return 0
+  fi
+
+  if [ -n "$cask_installed" ]; then
+    say_info "nimbus is also installed via the Homebrew cask."
+    say_info "Remove that copy with: brew uninstall --cask nimbus"
   fi
 
   if [ -f "${NIMBUS_PREFIX}/bin/nimbus" ]; then
     maybe_sudo rm -f "${NIMBUS_PREFIX}/bin/nimbus"
     say_info "Removed ${NIMBUS_PREFIX}/bin/nimbus"
+  elif [ -n "$cask_installed" ]; then
+    say_info "No curl|sh-installed binary at ${NIMBUS_PREFIX}/bin/nimbus (cask copy left to Homebrew)"
   else
     say_info "nimbus binary not found at ${NIMBUS_PREFIX}/bin/nimbus"
   fi
@@ -1776,8 +1826,12 @@ main() {
   fi
 
   if [ -n "$DRY_RUN" ]; then
+    # Resolve the nimbus version on every platform so the plan shows the real
+    # tag instead of "latest". resolve_nimbus_version short-circuits when the
+    # version was passed explicitly, so a forced --version stays network-free.
+    # The libkrun/crun helper components are Linux-only.
+    resolve_nimbus_version
     if [ "$PLATFORM" = "linux" ]; then
-      resolve_nimbus_version
       resolve_libkrun_version
       resolve_crun_version
     fi
