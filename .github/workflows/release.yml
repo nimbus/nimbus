@@ -58,7 +58,7 @@ jobs:
           bash -n scripts/nimbus-release-rust-features.sh
           test "$(bash scripts/nimbus-release-rust-features.sh --target x86_64-unknown-linux-gnu --format cargo-args)" = "--features v8-pointer-compression"
           test "$(bash scripts/nimbus-release-rust-features.sh --target aarch64-apple-darwin --format cargo-args)" = "--features v8-pointer-compression"
-          test -z "$(bash scripts/nimbus-release-rust-features.sh --target aarch64-unknown-linux-gnu --format cargo-args)"
+          test "$(bash scripts/nimbus-release-rust-features.sh --target aarch64-unknown-linux-gnu --format cargo-args)" = "--features v8-pointer-compression"
           test -z "$(bash scripts/nimbus-release-rust-features.sh --target x86_64-pc-windows-msvc --format cargo-args)"
 
       - name: Verify machine-os release ref contract
@@ -131,7 +131,7 @@ jobs:
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
         with:
-          shared-key: release-aarch64-unknown-linux-gnu-non-ptrcomp-no-bin-v1
+          shared-key: release-aarch64-unknown-linux-gnu-ptrcomp-no-bin-v1
           save-cache: always
           linux-linker: default
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}

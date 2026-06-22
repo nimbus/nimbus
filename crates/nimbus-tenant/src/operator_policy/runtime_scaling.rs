@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use super::{OperatorPolicyDocument, OperatorPolicyWorkload};
 use crate::WorkloadKind;
 
+const DERIVED_RUNTIME_SEAT_MILLICPUS: usize = 250;
+const DERIVED_RETAINED_RUNTIME_RSS_BYTES: u64 = 64 * 1024 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TenantRuntimeScalingRequest {
@@ -30,6 +33,10 @@ impl TenantRuntimeScalingRequest {
             requested,
         }
     }
+
+    pub fn autoscaling_inferred(&self) -> bool {
+        self.requested.inferred_autoscaling(self.preset)
+    }
 }
 
 impl OperatorPolicyDocument {
@@ -46,46 +53,52 @@ impl OperatorPolicyDocument {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RuntimeScalingEnvelope {
+    derived_from_resources: usize,
     max_total_warm: usize,
     max_min_warm_total: usize,
     max_warm_per_function: usize,
-    allow_live_scaling: bool,
 }
 
 impl RuntimeScalingEnvelope {
     fn from_policy(policy: &OperatorPolicyDocument, function: &str) -> Self {
-        let defaults = policy.defaults.runtime_scaling_limits;
+        let resources = policy.defaults.runtime_resources;
+        let safety = policy.defaults.runtime_safety;
         let workload = policy.workloads.iter().find(|workload| {
             workload.kind == WorkloadKind::RuntimeFunction && workload.name == function
         });
-        Self::from_workload(defaults, workload)
+        Self::from_workload(resources, safety, workload)
     }
 
     fn from_workload(
-        defaults: super::OperatorRuntimeScalingLimits,
+        resources: super::OperatorRuntimeResourceEnvelope,
+        safety: super::OperatorRuntimeSafetyCaps,
         workload: Option<&OperatorPolicyWorkload>,
     ) -> Self {
+        let derived_from_resources = derived_from_resources(resources);
+        let max_total_warm = safety
+            .max_total_warm
+            .unwrap_or(derived_from_resources)
+            .min(derived_from_resources);
         let quota = workload.map(|workload| workload.quotas.runtime_scaling);
         let max_warm_per_function = quota
             .and_then(|quota| quota.max_warm)
-            .unwrap_or(defaults.max_warm_per_function)
-            .min(defaults.max_warm_per_function)
-            .min(defaults.max_total_warm);
-        let max_min_warm_total = defaults.max_min_warm_total.min(defaults.max_total_warm);
+            .or(safety.max_warm_per_function)
+            .unwrap_or(max_total_warm)
+            .min(max_total_warm);
+        let max_min_warm_total = safety
+            .max_min_warm_total
+            .unwrap_or(max_total_warm)
+            .min(max_total_warm);
         let max_min_warm = quota
             .and_then(|quota| quota.max_min_warm)
             .unwrap_or(max_min_warm_total)
             .min(max_min_warm_total)
             .min(max_warm_per_function);
-        let allow_live_scaling = defaults.allow_live_scaling
-            && quota
-                .and_then(|quota| quota.allow_live_scaling)
-                .unwrap_or(defaults.allow_live_scaling);
         Self {
-            max_total_warm: defaults.max_total_warm,
+            derived_from_resources,
+            max_total_warm,
             max_min_warm_total: max_min_warm,
             max_warm_per_function,
-            allow_live_scaling,
         }
     }
 
@@ -93,7 +106,7 @@ impl RuntimeScalingEnvelope {
         let requested = request.requested;
         if requested.min_warm > self.max_min_warm_total {
             return Err(Error::InvalidInput(format!(
-                "{} rejected: requested min_warm={} exceeds operator max_min_warm_total remaining={}; lower min_warm to <= {} or ask an operator to raise runtime_scaling_limits.max_min_warm_total",
+                "{} rejected: requested min_warm={} exceeds operator effective max_min_warm_total remaining={}; lower min_warm to <= {} or ask an operator to raise tenant runtime resources or runtime_safety.max_min_warm_total",
                 request.function,
                 requested.min_warm,
                 self.max_min_warm_total,
@@ -105,7 +118,7 @@ impl RuntimeScalingEnvelope {
             RuntimeScalingLimit::Fixed(value) => {
                 if value > self.max_warm_per_function {
                     return Err(Error::InvalidInput(format!(
-                        "{} rejected: requested max_warm={} exceeds operator max_warm_per_function={}; lower max_warm to <= {} or ask an operator to raise quotas.runtime_scaling.max_warm",
+                        "{} rejected: requested max_warm={} exceeds operator effective max_warm_per_function={}; lower max_warm to <= {} or ask an operator to raise tenant runtime resources or quotas.runtime_scaling.max_warm",
                         request.function,
                         value,
                         self.max_warm_per_function,
@@ -115,12 +128,6 @@ impl RuntimeScalingEnvelope {
                 value
             }
         };
-        if requested.activation_warm > admitted_max {
-            return Err(Error::InvalidInput(format!(
-                "{} rejected: requested activation_warm={} exceeds admitted max_warm={}",
-                request.function, requested.activation_warm, admitted_max
-            )));
-        }
         if requested.min_warm > admitted_max {
             return Err(Error::InvalidInput(format!(
                 "{} rejected: requested min_warm={} exceeds admitted max_warm={}",
@@ -128,15 +135,16 @@ impl RuntimeScalingEnvelope {
             )));
         }
 
+        let requested_autoscaling = request.autoscaling_inferred();
+        let admitted_autoscaling = requested_autoscaling && admitted_max > requested.min_warm;
         let admitted = RuntimeScalingTarget {
             min_warm: requested.min_warm,
-            activation_warm: requested.activation_warm,
             max_warm: admitted_max,
             scale_down_delay_secs: requested.scale_down_delay_secs,
-            live_scaling: requested.live_scaling && self.allow_live_scaling,
+            autoscaling: admitted_autoscaling,
         };
         let pressure_adjustment = if requested.max_warm == RuntimeScalingLimit::Auto
-            || requested.live_scaling != admitted.live_scaling
+            || requested_autoscaling != admitted_autoscaling
         {
             RuntimeScalingAdjustmentReason::OperatorEnvelope
         } else {
@@ -152,6 +160,23 @@ impl RuntimeScalingEnvelope {
             rejection: None,
         })
     }
+}
+
+fn derived_from_resources(resources: super::OperatorRuntimeResourceEnvelope) -> usize {
+    let allocatable_millicpus = resources
+        .cpu_millicpus
+        .saturating_sub(resources.host_cpu_reserve_millicpus);
+    let cpu_limit = allocatable_millicpus
+        .checked_div(DERIVED_RUNTIME_SEAT_MILLICPUS)
+        .unwrap_or(0);
+    let allocatable_memory = resources
+        .memory_bytes
+        .saturating_sub(resources.host_memory_reserve_bytes);
+    let memory_limit = allocatable_memory
+        .checked_div(DERIVED_RETAINED_RUNTIME_RSS_BYTES)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0);
+    cpu_limit.min(memory_limit).max(1)
 }
 
 fn validate_request_shape(request: &TenantRuntimeScalingRequest) -> Result<()> {
@@ -196,26 +221,25 @@ mod tests {
             RuntimeScalingPreset::Warm,
             RequestedRuntimeScalingTarget {
                 min_warm,
-                activation_warm: 1,
                 max_warm,
                 scale_down_delay_secs: 600,
-                live_scaling: true,
             },
         )
     }
 
     #[test]
-    fn admits_auto_inside_operator_envelope() {
+    fn admits_auto_inside_resource_derived_operator_envelope() {
         let policy = parse_policy(
             r#"
 schema_version: 1
 tenant: tenant-a
 defaults:
-  runtime_scaling_limits:
-    max_total_warm: 32
-    max_min_warm_total: 8
-    max_warm_per_function: 8
-    allow_live_scaling: true
+  runtime_resources:
+    cpu_millicpus: 2000
+    memory_bytes: 1073741824
+    storage_bytes: 10737418240
+    host_cpu_reserve_millicpus: 500
+    host_memory_reserve_bytes: 268435456
 workloads:
   - kind: runtime_function
     name: messages:send
@@ -231,8 +255,8 @@ workloads:
             .expect("request should admit");
 
         assert_eq!(plan.admitted.min_warm, 2);
-        assert_eq!(plan.admitted.max_warm, 8);
-        assert!(plan.admitted.live_scaling);
+        assert_eq!(plan.admitted.max_warm, 6);
+        assert!(plan.admitted.autoscaling);
         assert_eq!(
             plan.pressure_adjustment,
             RuntimeScalingAdjustmentReason::OperatorEnvelope
@@ -246,10 +270,14 @@ workloads:
 schema_version: 1
 tenant: tenant-a
 defaults:
-  runtime_scaling_limits:
-    max_total_warm: 4
+  runtime_resources:
+    cpu_millicpus: 1000
+    memory_bytes: 536870912
+    storage_bytes: 10737418240
+    host_cpu_reserve_millicpus: 250
+    host_memory_reserve_bytes: 134217728
+  runtime_safety:
     max_min_warm_total: 2
-    max_warm_per_function: 4
 workloads:
   - kind: runtime_function
     name: messages:send
@@ -264,7 +292,7 @@ workloads:
         assert!(
             error
                 .to_string()
-                .contains("runtime_scaling_limits.max_min_warm_total")
+                .contains("operator effective max_min_warm_total")
         );
     }
 
@@ -275,9 +303,13 @@ workloads:
 schema_version: 1
 tenant: tenant-a
 defaults:
-  runtime_scaling_limits:
-    max_total_warm: 4
-    max_min_warm_total: 2
+  runtime_resources:
+    cpu_millicpus: 1000
+    memory_bytes: 536870912
+    storage_bytes: 10737418240
+    host_cpu_reserve_millicpus: 250
+    host_memory_reserve_bytes: 134217728
+  runtime_safety:
     max_warm_per_function: 4
 workloads:
   - kind: runtime_function
@@ -293,22 +325,23 @@ workloads:
         assert!(
             error
                 .to_string()
-                .contains("operator max_warm_per_function=4")
+                .contains("operator effective max_warm_per_function=3")
         );
     }
 
     #[test]
-    fn live_scaling_is_operator_gated() {
+    fn fixed_range_disables_admitted_autoscaling() {
         let policy = parse_policy(
             r#"
 schema_version: 1
 tenant: tenant-a
 defaults:
-  runtime_scaling_limits:
-    max_total_warm: 4
-    max_min_warm_total: 2
-    max_warm_per_function: 4
-    allow_live_scaling: false
+  runtime_resources:
+    cpu_millicpus: 1000
+    memory_bytes: 536870912
+    storage_bytes: 10737418240
+    host_cpu_reserve_millicpus: 250
+    host_memory_reserve_bytes: 134217728
 workloads:
   - kind: runtime_function
     name: messages:send
@@ -316,14 +349,15 @@ workloads:
         );
 
         let plan = policy
-            .admit_runtime_scaling(request("messages:send", 1, RuntimeScalingLimit::Auto))
-            .expect("auto request should admit inside operator envelope");
+            .admit_runtime_scaling(request("messages:send", 2, RuntimeScalingLimit::Fixed(2)))
+            .expect("fixed range should admit inside operator envelope");
 
-        assert!(!plan.admitted.live_scaling);
-        assert!(!plan.effective.live_scaling);
+        assert!(!plan.autoscaling_inferred());
+        assert!(!plan.admitted.autoscaling);
+        assert!(!plan.effective.autoscaling);
         assert_eq!(
             plan.pressure_adjustment,
-            RuntimeScalingAdjustmentReason::OperatorEnvelope
+            RuntimeScalingAdjustmentReason::None
         );
     }
 }

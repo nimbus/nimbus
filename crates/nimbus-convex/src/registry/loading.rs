@@ -260,23 +260,36 @@ impl ConvexRegistry {
     }
 
     pub fn with_effective_runtime_scaling_plan(
-        mut self,
+        self,
         plan: nimbus_runtime::EffectiveRuntimeScalingPlan,
     ) -> Self {
-        self.runtime_lane = self.runtime_lane.with_effective_scaling_plan(plan.clone());
+        self.with_effective_runtime_scaling_plans(nimbus_runtime::RuntimeScalingPlanSet::single(
+            plan,
+        ))
+    }
+
+    pub fn with_effective_runtime_scaling_plans(
+        mut self,
+        plans: nimbus_runtime::RuntimeScalingPlanSet,
+    ) -> Self {
+        self.runtime_lane = self
+            .runtime_lane
+            .with_effective_scaling_plans(plans.clone());
         self.node20_runtime_lane = self
             .node20_runtime_lane
-            .with_effective_scaling_plan(plan.clone());
+            .with_effective_scaling_plans(plans.clone());
         self.node22_runtime_lane = self
             .node22_runtime_lane
-            .with_effective_scaling_plan(plan.clone());
+            .with_effective_scaling_plans(plans.clone());
         self.node24_runtime_lane = self
             .node24_runtime_lane
-            .with_effective_scaling_plan(plan.clone());
+            .with_effective_scaling_plans(plans.clone());
         self.node26_runtime_lane = self
             .node26_runtime_lane
-            .with_effective_scaling_plan(plan.clone());
-        self.bun_jsc_runtime_lane = self.bun_jsc_runtime_lane.with_effective_scaling_plan(plan);
+            .with_effective_scaling_plans(plans.clone());
+        self.bun_jsc_runtime_lane = self
+            .bun_jsc_runtime_lane
+            .with_effective_scaling_plans(plans);
         self
     }
 

@@ -48,6 +48,10 @@ pub(crate) struct StartCommand {
     #[arg(long)]
     pub(crate) config: Option<PathBuf>,
 
+    /// Path to nimbus.policy.yaml for operator quota admission.
+    #[arg(long, value_name = "FILE")]
+    pub(crate) policy: Option<PathBuf>,
+
     /// Port to listen on.
     #[arg(long, default_value_t = 8080)]
     pub(crate) port: u16,
@@ -385,6 +389,7 @@ impl Default for StartCommand {
     fn default() -> Self {
         Self {
             config: None,
+            policy: None,
             port: 8080,
             host: "127.0.0.1".to_string(),
             allow_network: false,

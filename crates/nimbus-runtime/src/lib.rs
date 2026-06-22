@@ -68,7 +68,8 @@ pub use limits::{
     RuntimeNodeSupportPhase, RuntimePolicy, RuntimePoolKind, RuntimePreset,
     RuntimePrewarmScheduleDecision, RuntimeProfile, RuntimeResetCapabilities,
     RuntimeRoutingAffinity, RuntimeScalingAdjustmentReason, RuntimeScalingLimit,
-    RuntimeScalingPreset, RuntimeScalingTarget, RuntimeTenantBudget, replay_runtime_controller,
+    RuntimeScalingPlanSet, RuntimeScalingPreset, RuntimeScalingTarget, RuntimeTenantBudget,
+    replay_runtime_controller,
 };
 pub use metrics::{
     RuntimeAdaptiveControllerMetricsSnapshot, RuntimeDurationDistributionSnapshot,

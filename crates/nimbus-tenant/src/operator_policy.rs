@@ -84,7 +84,9 @@ pub struct OperatorPolicyDefaults {
     #[serde(default = "default_redacted_fields")]
     pub audit_redactions: Vec<String>,
     #[serde(default)]
-    pub runtime_scaling_limits: OperatorRuntimeScalingLimits,
+    pub runtime_resources: OperatorRuntimeResourceEnvelope,
+    #[serde(default)]
+    pub runtime_safety: OperatorRuntimeSafetyCaps,
 }
 
 impl Default for OperatorPolicyDefaults {
@@ -93,7 +95,8 @@ impl Default for OperatorPolicyDefaults {
             tenant_isolation_mode: TenantIsolationMode::Production,
             storage_namespace: default_storage_namespace(),
             audit_redactions: default_redacted_fields(),
-            runtime_scaling_limits: OperatorRuntimeScalingLimits::default(),
+            runtime_resources: OperatorRuntimeResourceEnvelope::default(),
+            runtime_safety: OperatorRuntimeSafetyCaps::default(),
         }
     }
 }
@@ -501,23 +504,35 @@ pub struct OperatorQuotaPolicy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct OperatorRuntimeScalingLimits {
-    pub max_total_warm: usize,
-    pub max_min_warm_total: usize,
-    pub max_warm_per_function: usize,
+pub struct OperatorRuntimeResourceEnvelope {
+    pub cpu_millicpus: usize,
+    pub memory_bytes: u64,
+    pub storage_bytes: u64,
     #[serde(default)]
-    pub allow_live_scaling: bool,
+    pub network_egress_bytes_per_sec: Option<u64>,
+    pub host_cpu_reserve_millicpus: usize,
+    pub host_memory_reserve_bytes: u64,
 }
 
-impl Default for OperatorRuntimeScalingLimits {
+impl Default for OperatorRuntimeResourceEnvelope {
     fn default() -> Self {
         Self {
-            max_total_warm: 32,
-            max_min_warm_total: 8,
-            max_warm_per_function: 8,
-            allow_live_scaling: false,
+            cpu_millicpus: 2_000,
+            memory_bytes: 1_073_741_824,
+            storage_bytes: 10_737_418_240,
+            network_egress_bytes_per_sec: None,
+            host_cpu_reserve_millicpus: 500,
+            host_memory_reserve_bytes: 268_435_456,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorRuntimeSafetyCaps {
+    pub max_total_warm: Option<usize>,
+    pub max_min_warm_total: Option<usize>,
+    pub max_warm_per_function: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -525,7 +540,6 @@ impl Default for OperatorRuntimeScalingLimits {
 pub struct OperatorRuntimeScalingQuota {
     pub max_warm: Option<usize>,
     pub max_min_warm: Option<usize>,
-    pub allow_live_scaling: Option<bool>,
 }
 
 impl OperatorQuotaPolicy {

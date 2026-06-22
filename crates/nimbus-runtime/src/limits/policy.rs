@@ -8,7 +8,7 @@ use super::{
     EffectiveRuntimeScalingPlan, NominalRuntimeHostPressureSource,
     RuntimeAdaptiveControllerSettings, RuntimeAdaptivePressureAdapter, RuntimeBundleContentKind,
     RuntimeHostPressureSource, RuntimeHostResourceBudget, RuntimeHostResourceDecision,
-    RuntimeLimits, RuntimeProfile, RuntimeTenantBudget,
+    RuntimeLimits, RuntimeProfile, RuntimeScalingPlanSet, RuntimeTenantBudget,
 };
 
 #[derive(Debug)]
@@ -20,7 +20,7 @@ pub struct RuntimePolicy {
     host_pressure_source: Arc<dyn RuntimeHostPressureSource>,
     host_resource_governor_enabled: bool,
     adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
-    effective_scaling_plan: EffectiveRuntimeScalingPlan,
+    effective_scaling_plans: RuntimeScalingPlanSet,
 }
 
 impl RuntimePolicy {
@@ -60,7 +60,7 @@ impl RuntimePolicy {
             host_pressure_source,
             host_resource_governor_enabled,
             adaptive_controller_settings: RuntimeAdaptiveControllerSettings::default(),
-            effective_scaling_plan: EffectiveRuntimeScalingPlan::default(),
+            effective_scaling_plans: RuntimeScalingPlanSet::default(),
         }
     }
 
@@ -73,11 +73,20 @@ impl RuntimePolicy {
     }
 
     pub fn with_effective_scaling_plan(mut self, plan: EffectiveRuntimeScalingPlan) -> Self {
-        self.effective_scaling_plan = plan;
+        self.effective_scaling_plans = RuntimeScalingPlanSet::single(plan);
+        self
+    }
+
+    pub fn with_effective_scaling_plans(mut self, plans: RuntimeScalingPlanSet) -> Self {
+        self.effective_scaling_plans = plans;
         self
     }
 
     pub fn clone_with_effective_scaling_plan(&self, plan: EffectiveRuntimeScalingPlan) -> Self {
+        self.clone_with_effective_scaling_plans(RuntimeScalingPlanSet::single(plan))
+    }
+
+    pub fn clone_with_effective_scaling_plans(&self, plans: RuntimeScalingPlanSet) -> Self {
         Self {
             runtime_instance_semaphore: Arc::new(Semaphore::new(
                 self.limits.max_concurrent_runtime_instances,
@@ -88,7 +97,7 @@ impl RuntimePolicy {
             host_pressure_source: self.host_pressure_source.clone(),
             host_resource_governor_enabled: self.host_resource_governor_enabled,
             adaptive_controller_settings: self.adaptive_controller_settings,
-            effective_scaling_plan: plan,
+            effective_scaling_plans: plans,
         }
     }
 
@@ -149,7 +158,19 @@ impl RuntimePolicy {
     }
 
     pub fn effective_scaling_plan(&self) -> &EffectiveRuntimeScalingPlan {
-        &self.effective_scaling_plan
+        self.effective_scaling_plans.default_plan()
+    }
+
+    pub fn effective_scaling_plans(&self) -> &RuntimeScalingPlanSet {
+        &self.effective_scaling_plans
+    }
+
+    pub fn effective_scaling_plan_for_function(
+        &self,
+        function_name: &str,
+    ) -> &EffectiveRuntimeScalingPlan {
+        self.effective_scaling_plans
+            .plan_for_function(function_name)
     }
 
     pub fn tenant_budget(&self) -> RuntimeTenantBudget {

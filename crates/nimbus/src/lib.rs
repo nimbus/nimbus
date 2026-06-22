@@ -35,8 +35,8 @@ pub use nimbus_runtime::{
     RuntimeMemoryPressureDecision, RuntimeMemoryPressureLevel, RuntimeMemoryPressureSample,
     RuntimeMemoryPressureSourceStatus, RuntimePolicy, RuntimePoolKind,
     RuntimePrewarmScheduleDecision, RuntimeProfile, RuntimeScalingAdjustmentReason,
-    RuntimeScalingLimit, RuntimeScalingPreset, RuntimeScalingTarget, VerifiedUserIdentity,
-    VerifiedUserIdentityKind,
+    RuntimeScalingLimit, RuntimeScalingPlanSet, RuntimeScalingPreset, RuntimeScalingTarget,
+    VerifiedUserIdentity, VerifiedUserIdentityKind,
 };
 // Sandbox orchestration surface.
 pub use nimbus_sandbox::{

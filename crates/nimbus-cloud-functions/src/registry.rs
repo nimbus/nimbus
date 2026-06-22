@@ -9,7 +9,7 @@ use nimbus_provenance::RuntimeBundleProvenanceConfig;
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, NominalRuntimeHostPressureSource,
     RuntimeAdaptiveControllerSettings, RuntimeBundle, RuntimeExecutor, RuntimeHostPressureSource,
-    RuntimeHostResourceBudget, RuntimeLimits, RuntimePolicy,
+    RuntimeHostResourceBudget, RuntimeLimits, RuntimePolicy, RuntimeScalingPlanSet,
 };
 
 use crate::{
@@ -100,11 +100,15 @@ impl CloudFunctionsRegistry {
         self
     }
 
-    pub fn with_effective_runtime_scaling_plan(
-        mut self,
-        plan: EffectiveRuntimeScalingPlan,
-    ) -> Self {
-        let runtime_policy = Arc::new(self.runtime_policy.clone_with_effective_scaling_plan(plan));
+    pub fn with_effective_runtime_scaling_plan(self, plan: EffectiveRuntimeScalingPlan) -> Self {
+        self.with_effective_runtime_scaling_plans(RuntimeScalingPlanSet::single(plan))
+    }
+
+    pub fn with_effective_runtime_scaling_plans(mut self, plans: RuntimeScalingPlanSet) -> Self {
+        let runtime_policy = Arc::new(
+            self.runtime_policy
+                .clone_with_effective_scaling_plans(plans),
+        );
         self.runtime_policy = runtime_policy.clone();
         self.runtime_executor = Arc::new(RuntimeExecutor::new(runtime_policy));
         self

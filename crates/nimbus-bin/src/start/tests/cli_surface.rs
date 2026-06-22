@@ -293,6 +293,13 @@ fn cli_parses_runtime_host_budget_policy_flags() {
 }
 
 #[test]
+fn cli_parses_start_operator_policy_path() {
+    let cli = parse_start(["nimbus", "start", "--policy", "./nimbus.policy.yaml"]);
+
+    assert_eq!(cli.policy, Some(PathBuf::from("./nimbus.policy.yaml")));
+}
+
+#[test]
 fn cli_parses_runtime_adaptive_operator_controls() {
     let cli = parse_start([
         "nimbus",
@@ -385,6 +392,112 @@ fn runtime_host_resource_budget_from_command_applies_operator_policy() {
     assert_eq!(
         budget.nominal_dispatch_seats(command.runtime_max_instances),
         5
+    );
+}
+
+#[test]
+fn start_function_scaling_admission_keeps_selector_overrides() {
+    let command = StartCommand {
+        runtime_host_millicpus: 2_000,
+        runtime_system_reserve_millicpus: 500,
+        runtime_control_plane_reserve_millicpus: 0,
+        runtime_seat_millicpus: 250,
+        ..StartCommand::default()
+    };
+    let runtime_config: RuntimeConfigFile = serde_yaml::from_str(
+        r#"
+functions:
+  scaling:
+    overrides:
+      "messages:send":
+        preset: latency
+        reason: "primary write path"
+"#,
+    )
+    .expect("runtime config should parse");
+    let runtime_limits = super::super::runtime_limits::runtime_limits_from_command(&command);
+    let runtime_host_budget =
+        super::super::runtime_limits::runtime_host_resource_budget_from_command(&command);
+
+    let admission = super::boot::admit_start_function_scaling_plans(
+        &command,
+        &runtime_config,
+        &runtime_limits,
+        runtime_host_budget,
+        None,
+    )
+    .expect("start function scaling should admit");
+
+    assert_eq!(admission.plans.default_plan().function, "__default__");
+    assert_eq!(admission.plans.default_plan().effective.min_warm, 0);
+    assert_eq!(admission.plans.function_override_count(), 1);
+    let hot_plan = admission.plans.plan_for_function("messages:send");
+    assert_eq!(hot_plan.function, "messages:send");
+    assert_eq!(hot_plan.effective.min_warm, 1);
+    assert_eq!(hot_plan.effective.max_warm, 4);
+    assert!(hot_plan.effective.autoscaling);
+    assert_eq!(
+        admission
+            .plans
+            .plan_for_function("messages:list")
+            .effective
+            .min_warm,
+        admission.plans.default_plan().effective.min_warm
+    );
+}
+
+#[test]
+fn start_function_scaling_admission_uses_explicit_operator_policy() {
+    let command = StartCommand::default();
+    let runtime_config: RuntimeConfigFile = serde_yaml::from_str(
+        r#"
+functions:
+  scaling:
+    overrides:
+      "messages:send":
+        min_warm: 1
+        max_warm: 4
+        reason: "hot path"
+"#,
+    )
+    .expect("runtime config should parse");
+    let operator_policy: nimbus_server::OperatorPolicyDocument = serde_yaml::from_str(
+        r#"
+schema_version: 1
+tenant: tenant-a
+defaults:
+  runtime_resources:
+    cpu_millicpus: 1000
+    memory_bytes: 536870912
+    storage_bytes: 10737418240
+    host_cpu_reserve_millicpus: 250
+    host_memory_reserve_bytes: 134217728
+  runtime_safety:
+    max_warm_per_function: 2
+workloads:
+  - kind: runtime_function
+    name: messages:send
+"#,
+    )
+    .expect("operator policy should parse");
+    let runtime_limits = super::super::runtime_limits::runtime_limits_from_command(&command);
+    let runtime_host_budget =
+        super::super::runtime_limits::runtime_host_resource_budget_from_command(&command);
+
+    let error = super::boot::admit_start_function_scaling_plans(
+        &command,
+        &runtime_config,
+        &runtime_limits,
+        runtime_host_budget,
+        Some(&operator_policy),
+    )
+    .expect_err("explicit operator policy should reject over-limit max_warm");
+
+    assert!(error.to_string().contains("requested max_warm=4"));
+    assert!(
+        error
+            .to_string()
+            .contains("operator effective max_warm_per_function=2")
     );
 }
 
@@ -539,7 +652,7 @@ fn start_startup_summary_mentions_baked_function_scaling_defaults() {
     );
     assert!(start_lines.iter().any(|line| {
         line
-            == "Function scaling: start defaults, active_recent_min_warm=0, max_warm=auto. Run nimbus explain functions <name>."
+            == "Function scaling: start defaults, min_warm=0, max_warm=auto, scale_down_delay=600s, autoscaling inferred=true. Run nimbus explain functions <name>."
     }));
 
     let dev_command = StartCommand {
@@ -556,7 +669,7 @@ fn start_startup_summary_mentions_baked_function_scaling_defaults() {
     );
     assert!(dev_lines.iter().any(|line| {
         line
-            == "Function scaling: dev defaults, active_recent_min_warm=1, max_warm=auto. Run nimbus explain functions <name>."
+            == "Function scaling: dev defaults, min_warm=0, max_warm=auto, scale_down_delay=120s, autoscaling inferred=true. Run nimbus explain functions <name>."
     }));
 }
 

@@ -604,17 +604,36 @@ fn runtime_policy_clone_with_effective_plan_preserves_operational_controls() {
     .with_adaptive_controller_settings(adaptive);
     let effective = RuntimeScalingTarget {
         min_warm: 0,
-        activation_warm: 0,
         max_warm: 2,
         scale_down_delay_secs: 120,
-        live_scaling: false,
+        autoscaling: true,
     };
     let plan = EffectiveRuntimeScalingPlan::baked_standard("messages:send", 6)
         .with_pressure_adjustment(effective, RuntimeScalingAdjustmentReason::HostPressure);
 
-    let cloned = policy.clone_with_effective_scaling_plan(plan.clone());
+    let mut plans = RuntimeScalingPlanSet::single(EffectiveRuntimeScalingPlan::baked_standard(
+        "__default__",
+        4,
+    ));
+    plans.insert_function_override(plan.clone());
 
-    assert_eq!(cloned.effective_scaling_plan(), &plan);
+    let cloned = policy.clone_with_effective_scaling_plans(plans);
+
+    assert_eq!(cloned.effective_scaling_plan().function, "__default__");
+    assert_eq!(
+        cloned.effective_scaling_plan_for_function("messages:send"),
+        &plan
+    );
+    assert_eq!(
+        cloned
+            .effective_scaling_plan_for_function("messages:list")
+            .function,
+        "__default__"
+    );
+    assert_eq!(
+        cloned.effective_scaling_plans().function_override_count(),
+        1
+    );
     assert_eq!(cloned.host_resource_budget(), budget);
     assert_eq!(
         cloned.adaptive_controller_settings().mode(),

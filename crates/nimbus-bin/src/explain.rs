@@ -4,9 +4,10 @@ use clap::{Args, Subcommand};
 use nimbus::Error;
 
 use crate::function_scaling::{
-    FunctionScalingContext, FunctionScalingFileConfig, known_function_selectors, load_config,
-    load_optional_policy, policy_for_function, render_resolved_effective_plan,
-    resolve_function_scaling_intent, scaling_limit_label, scaling_source_label,
+    FunctionScalingAdmissionEnvelope, FunctionScalingContext, FunctionScalingFileConfig,
+    admit_function_scaling_intent, known_function_selectors, load_config, load_optional_policy,
+    policy_for_function, render_resolved_effective_plan, resolve_function_scaling_intent,
+    scaling_limit_label, scaling_source_label,
 };
 
 #[derive(Debug, Args)]
@@ -81,7 +82,12 @@ fn run_explain_functions(command: ExplainFunctionsCommand) -> nimbus::Result<()>
             &selector,
         )?;
         let policy = policy_for_function(policy.as_ref(), command.tenant.as_deref(), &selector);
-        let plan = policy.admit_runtime_scaling(intent.request.clone())?;
+        let plan = admit_function_scaling_intent(
+            &intent,
+            Some(&policy),
+            command.tenant.as_deref(),
+            FunctionScalingAdmissionEnvelope::default(),
+        )?;
         print!(
             "{}",
             render_resolved_effective_plan(&intent, &plan, &policy)
@@ -104,15 +110,16 @@ fn run_explain_config(command: ExplainConfigCommand) -> nimbus::Result<()> {
         "__default__",
     )?;
     println!(
-        "Config functions.scaling:\n  baked default: preset=warm min_warm=0 activation_warm=1 max_warm=auto\n  tenant default present: {}\n  classes: {}\n  function overrides: {}\n  effective default source: {}\n  effective default: preset={:?} min_warm={} activation_warm={} max_warm={}",
+        "Config functions.scaling:\n  baked default: preset=warm min_warm=0 max_warm=auto scale_down_delay=600s autoscaling: inferred=true\n  tenant default present: {}\n  classes: {}\n  function overrides: {}\n  effective default source: {}\n  effective default: preset={:?} min_warm={} max_warm={} scale_down_delay={}s autoscaling: inferred={}",
         config.functions.scaling.default.is_some(),
         config.functions.scaling.classes.len(),
         config.functions.scaling.overrides.len(),
         scaling_source_label(&default),
         default.request.preset,
         default.request.requested.min_warm,
-        default.request.requested.activation_warm,
-        scaling_limit_label(default.request.requested.max_warm)
+        scaling_limit_label(default.request.requested.max_warm),
+        default.request.requested.scale_down_delay_secs,
+        default.request.autoscaling_inferred()
     );
     Ok(())
 }

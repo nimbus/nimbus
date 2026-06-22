@@ -6,7 +6,7 @@ use nimbus_core::Error;
 use nimbus_engine::Engine;
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, HostCallCancellation, InvocationAuth,
-    RuntimeAdaptiveControllerSettings, RuntimeHostResourceBudget,
+    RuntimeAdaptiveControllerSettings, RuntimeHostResourceBudget, RuntimeScalingPlanSet,
 };
 use tokio::sync::watch;
 use tracing::warn;
@@ -45,7 +45,7 @@ pub(crate) struct AppStateConfig {
     pub(crate) version_check: Arc<VersionCheck>,
     pub(crate) runtime_host_resource_budget: RuntimeHostResourceBudget,
     pub(crate) runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
-    pub(crate) effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan,
+    pub(crate) effective_runtime_scaling_plans: RuntimeScalingPlanSet,
 }
 
 /// Shared application state.
@@ -65,7 +65,7 @@ pub(crate) struct AppState {
     pub(crate) version_check: Arc<VersionCheck>,
     runtime_host_resource_budget: RuntimeHostResourceBudget,
     runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
-    effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan,
+    effective_runtime_scaling_plans: RuntimeScalingPlanSet,
 }
 
 impl AppState {
@@ -89,7 +89,7 @@ impl AppState {
             version_check,
             runtime_host_resource_budget,
             runtime_adaptive_controller_settings,
-            effective_runtime_scaling_plan,
+            effective_runtime_scaling_plans,
         } = config;
         let convex_registry = convex_registry.map(Arc::new);
         let system_convex_registry = system_convex_registry.map(Arc::new);
@@ -118,7 +118,7 @@ impl AppState {
             version_check,
             runtime_host_resource_budget,
             runtime_adaptive_controller_settings,
-            effective_runtime_scaling_plan,
+            effective_runtime_scaling_plans,
         }
     }
 
@@ -139,7 +139,11 @@ impl AppState {
     }
 
     pub(crate) fn effective_runtime_scaling_plan(&self) -> &EffectiveRuntimeScalingPlan {
-        &self.effective_runtime_scaling_plan
+        self.effective_runtime_scaling_plans.default_plan()
+    }
+
+    pub(crate) fn effective_runtime_scaling_plans(&self) -> &RuntimeScalingPlanSet {
+        &self.effective_runtime_scaling_plans
     }
 
     pub(crate) fn service_manager(&self) -> Option<Arc<ServiceManager>> {
@@ -386,9 +390,8 @@ mod tests {
                 std::num::NonZeroUsize::new(4).expect("fixture CPU count is nonzero"),
             ),
             runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings::default(),
-            effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan::baked_standard(
-                "__default__",
-                4,
+            effective_runtime_scaling_plans: RuntimeScalingPlanSet::single(
+                EffectiveRuntimeScalingPlan::baked_standard("__default__", 4),
             ),
         });
 
@@ -447,9 +450,8 @@ mod tests {
             runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings::shadow(
                 nimbus_runtime::RuntimeControllerReplayConfig::default(),
             ),
-            effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan::baked_standard(
-                "messages:send",
-                6,
+            effective_runtime_scaling_plans: RuntimeScalingPlanSet::single(
+                EffectiveRuntimeScalingPlan::baked_standard("messages:send", 6),
             ),
         });
 

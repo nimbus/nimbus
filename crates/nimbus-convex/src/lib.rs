@@ -9,12 +9,11 @@ pub(crate) use nimbus_core::{
 };
 use nimbus_provenance::RuntimeBundleProvenanceConfig;
 pub(crate) use nimbus_runtime::{
-    EffectiveRuntimeScalingPlan, InvocationAuth, InvocationRequest, NimbusRuntimeError,
-    RuntimeAdaptiveControllerSettings, RuntimeBackendKind, RuntimeBundle,
-    RuntimeCompatibilityTarget, RuntimeExecutionAdapterArtifactDiagnostics,
-    RuntimeExecutionAdapterState, RuntimeExecutor, RuntimeHostPressureSource,
-    RuntimeHostResourceBudget, RuntimeLimits, RuntimeMetricsSnapshot, RuntimePolicy,
-    RuntimeResetCapabilities,
+    InvocationAuth, InvocationRequest, NimbusRuntimeError, RuntimeAdaptiveControllerSettings,
+    RuntimeBackendKind, RuntimeBundle, RuntimeCompatibilityTarget,
+    RuntimeExecutionAdapterArtifactDiagnostics, RuntimeExecutionAdapterState, RuntimeExecutor,
+    RuntimeHostPressureSource, RuntimeHostResourceBudget, RuntimeLimits, RuntimeMetricsSnapshot,
+    RuntimePolicy, RuntimeResetCapabilities, RuntimeScalingPlanSet,
 };
 pub(crate) use serde::{Deserialize, Serialize};
 pub(crate) use serde_json::Value;
@@ -153,9 +152,9 @@ impl ConvexRuntimeLane {
         )
     }
 
-    fn with_effective_scaling_plan(&self, plan: EffectiveRuntimeScalingPlan) -> Self {
+    fn with_effective_scaling_plans(&self, plans: RuntimeScalingPlanSet) -> Self {
         Self::from_policy(
-            Arc::new(self.policy.clone_with_effective_scaling_plan(plan)),
+            Arc::new(self.policy.clone_with_effective_scaling_plans(plans)),
             self.execution_adapter_state.clone(),
             self.execution_adapter_artifact.clone(),
         )

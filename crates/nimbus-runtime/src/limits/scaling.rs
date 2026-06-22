@@ -1,31 +1,23 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeScalingPreset {
     Economy,
+    #[default]
     Warm,
     Latency,
     Fixed,
 }
 
-impl Default for RuntimeScalingPreset {
-    fn default() -> Self {
-        Self::Warm
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeScalingLimit {
+    #[default]
     Auto,
     Fixed(usize),
-}
-
-impl Default for RuntimeScalingLimit {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 impl<'de> Deserialize<'de> for RuntimeScalingLimit {
@@ -76,20 +68,26 @@ impl<'de> Deserialize<'de> for RuntimeScalingLimit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestedRuntimeScalingTarget {
     pub min_warm: usize,
-    pub activation_warm: usize,
     pub max_warm: RuntimeScalingLimit,
     pub scale_down_delay_secs: u64,
-    pub live_scaling: bool,
 }
 
 impl RequestedRuntimeScalingTarget {
     pub const fn warm_standard() -> Self {
         Self {
             min_warm: 0,
-            activation_warm: 1,
             max_warm: RuntimeScalingLimit::Auto,
             scale_down_delay_secs: 600,
-            live_scaling: false,
+        }
+    }
+
+    pub fn inferred_autoscaling(self, preset: RuntimeScalingPreset) -> bool {
+        if matches!(preset, RuntimeScalingPreset::Fixed) {
+            return false;
+        }
+        match self.max_warm {
+            RuntimeScalingLimit::Auto => true,
+            RuntimeScalingLimit::Fixed(max_warm) => self.min_warm != max_warm,
         }
     }
 }
@@ -103,20 +101,18 @@ impl Default for RequestedRuntimeScalingTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeScalingTarget {
     pub min_warm: usize,
-    pub activation_warm: usize,
     pub max_warm: usize,
     pub scale_down_delay_secs: u64,
-    pub live_scaling: bool,
+    pub autoscaling: bool,
 }
 
 impl RuntimeScalingTarget {
     pub const fn warm_standard(max_warm: usize) -> Self {
         Self {
             min_warm: 0,
-            activation_warm: 1,
             max_warm,
             scale_down_delay_secs: 600,
-            live_scaling: false,
+            autoscaling: true,
         }
     }
 }
@@ -127,18 +123,13 @@ impl Default for RuntimeScalingTarget {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeScalingAdjustmentReason {
+    #[default]
     None,
     OperatorEnvelope,
     HostPressure,
-}
-
-impl Default for RuntimeScalingAdjustmentReason {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,10 +167,64 @@ impl EffectiveRuntimeScalingPlan {
         self.pressure_adjustment = reason;
         self
     }
+
+    pub fn autoscaling_inferred(&self) -> bool {
+        self.requested.inferred_autoscaling(self.preset)
+    }
 }
 
 impl Default for EffectiveRuntimeScalingPlan {
     fn default() -> Self {
         Self::baked_standard("__default__", 4)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeScalingPlanSet {
+    default_plan: EffectiveRuntimeScalingPlan,
+    function_overrides: BTreeMap<String, EffectiveRuntimeScalingPlan>,
+}
+
+impl RuntimeScalingPlanSet {
+    pub fn new(default_plan: EffectiveRuntimeScalingPlan) -> Self {
+        Self {
+            default_plan,
+            function_overrides: BTreeMap::new(),
+        }
+    }
+
+    pub fn single(plan: EffectiveRuntimeScalingPlan) -> Self {
+        Self::new(plan)
+    }
+
+    pub fn default_plan(&self) -> &EffectiveRuntimeScalingPlan {
+        &self.default_plan
+    }
+
+    pub fn insert_function_override(
+        &mut self,
+        plan: EffectiveRuntimeScalingPlan,
+    ) -> Option<EffectiveRuntimeScalingPlan> {
+        self.function_overrides.insert(plan.function.clone(), plan)
+    }
+
+    pub fn plan_for_function(&self, function_name: &str) -> &EffectiveRuntimeScalingPlan {
+        self.function_overrides
+            .get(function_name)
+            .unwrap_or(&self.default_plan)
+    }
+
+    pub fn function_overrides(&self) -> &BTreeMap<String, EffectiveRuntimeScalingPlan> {
+        &self.function_overrides
+    }
+
+    pub fn function_override_count(&self) -> usize {
+        self.function_overrides.len()
+    }
+}
+
+impl Default for RuntimeScalingPlanSet {
+    fn default() -> Self {
+        Self::single(EffectiveRuntimeScalingPlan::default())
     }
 }

@@ -10,9 +10,9 @@ use super::{
     DEFAULT_REDACTED_FIELDS, OPERATOR_POLICY_SCHEMA_VERSION, OperatorAuditPolicy,
     OperatorImagePolicy, OperatorImageProvenancePolicy, OperatorImageSignaturePolicy,
     OperatorNetworkEndpointPolicy, OperatorNetworkPolicy, OperatorPolicyDocument,
-    OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorRuntimeScalingLimits,
-    OperatorRuntimeScalingQuota, OperatorSandboxPolicy, OperatorSecretPolicy,
-    OperatorServicePolicy, OperatorStoragePolicy, OperatorVolumePolicy,
+    OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorRuntimeScalingQuota,
+    OperatorSandboxPolicy, OperatorSecretPolicy, OperatorServicePolicy, OperatorStoragePolicy,
+    OperatorVolumePolicy,
 };
 use crate::{TenantIsolationMode, WorkloadKind};
 
@@ -40,7 +40,8 @@ impl OperatorPolicyDocument {
             "defaults.storage_namespace",
         )?;
         validate_redactions(&self.defaults.audit_redactions, "defaults.audit_redactions")?;
-        self.defaults.runtime_scaling_limits.validate()?;
+        self.defaults.runtime_resources.validate()?;
+        self.defaults.runtime_safety.validate()?;
 
         let mut seen = BTreeSet::new();
         for workload in &self.workloads {
@@ -266,16 +267,54 @@ impl OperatorQuotaPolicy {
     }
 }
 
-impl OperatorRuntimeScalingLimits {
+impl super::OperatorRuntimeResourceEnvelope {
     fn validate(&self) -> Result<()> {
-        if self.max_min_warm_total > self.max_total_warm {
+        if self.cpu_millicpus == 0 {
+            return invalid_policy("defaults.runtime_resources.cpu_millicpus must be non-zero");
+        }
+        if self.memory_bytes == 0 {
+            return invalid_policy("defaults.runtime_resources.memory_bytes must be non-zero");
+        }
+        if self.storage_bytes == 0 {
+            return invalid_policy("defaults.runtime_resources.storage_bytes must be non-zero");
+        }
+        if self.host_cpu_reserve_millicpus >= self.cpu_millicpus {
             return invalid_policy(
-                "defaults.runtime_scaling_limits.max_min_warm_total must be <= max_total_warm",
+                "defaults.runtime_resources.host_cpu_reserve_millicpus must be less than cpu_millicpus",
             );
         }
-        if self.max_warm_per_function > self.max_total_warm {
+        if self.host_memory_reserve_bytes >= self.memory_bytes {
             return invalid_policy(
-                "defaults.runtime_scaling_limits.max_warm_per_function must be <= max_total_warm",
+                "defaults.runtime_resources.host_memory_reserve_bytes must be less than memory_bytes",
+            );
+        }
+        if let Some(bytes_per_sec) = self.network_egress_bytes_per_sec
+            && bytes_per_sec == 0
+        {
+            return invalid_policy(
+                "defaults.runtime_resources.network_egress_bytes_per_sec must be non-zero when set",
+            );
+        }
+        Ok(())
+    }
+}
+
+impl super::OperatorRuntimeSafetyCaps {
+    fn validate(&self) -> Result<()> {
+        if let (Some(max_min_warm_total), Some(max_total_warm)) =
+            (self.max_min_warm_total, self.max_total_warm)
+            && max_min_warm_total > max_total_warm
+        {
+            return invalid_policy(
+                "defaults.runtime_safety.max_min_warm_total must be <= max_total_warm",
+            );
+        }
+        if let (Some(max_warm_per_function), Some(max_total_warm)) =
+            (self.max_warm_per_function, self.max_total_warm)
+            && max_warm_per_function > max_total_warm
+        {
+            return invalid_policy(
+                "defaults.runtime_safety.max_warm_per_function must be <= max_total_warm",
             );
         }
         Ok(())

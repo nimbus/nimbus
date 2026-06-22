@@ -10,8 +10,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::function_scaling::{
-    FunctionScalingContext, load_config, load_optional_policy, policy_for_function,
-    resolve_function_scaling_intent,
+    FunctionScalingAdmissionEnvelope, FunctionScalingContext, admit_function_scaling_intent,
+    load_config, load_optional_policy, resolve_function_scaling_intent,
 };
 use crate::local_server_client::LocalServerHttpClient;
 use crate::target_context::{
@@ -158,8 +158,12 @@ async fn run_function_command(
         FunctionScalingContext::Start,
         &command.selector,
     )?;
-    let policy = policy_for_function(policy.as_ref(), Some(&command.tenant), &command.selector);
-    policy.admit_runtime_scaling(intent.request)?;
+    admit_function_scaling_intent(
+        &intent,
+        policy.as_ref(),
+        Some(&command.tenant),
+        FunctionScalingAdmissionEnvelope::default(),
+    )?;
     let kind = resolve_run_function_kind(&command)?;
     let payload = kind.payload(
         &command.selector,
@@ -514,10 +518,14 @@ functions:
 schema_version: 1
 tenant: tenant-a
 defaults:
-  runtime_scaling_limits:
-    max_total_warm: 4
+  runtime_resources:
+    cpu_millicpus: 1000
+    memory_bytes: 536870912
+    storage_bytes: 10737418240
+    host_cpu_reserve_millicpus: 250
+    host_memory_reserve_bytes: 134217728
+  runtime_safety:
     max_min_warm_total: 1
-    max_warm_per_function: 4
 workloads:
   - kind: runtime_function
     name: messages:send
@@ -550,7 +558,7 @@ workloads:
         assert!(
             error
                 .to_string()
-                .contains("runtime_scaling_limits.max_min_warm_total")
+                .contains("runtime_safety.max_min_warm_total")
         );
     }
 }

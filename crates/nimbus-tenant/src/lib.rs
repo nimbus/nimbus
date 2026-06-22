@@ -58,9 +58,9 @@ pub use operator_policy::{
     OperatorPolicyMetadata, OperatorPolicyProofReport, OperatorPolicyQuotaSummary,
     OperatorPolicyReloadOutcome, OperatorPolicyReloadState, OperatorPolicyWorkload,
     OperatorQuotaPolicy, OperatorRuntimePolicy, OperatorRuntimeProfile,
-    OperatorRuntimeScalingLimits, OperatorRuntimeScalingQuota, OperatorSandboxEgressPolicy,
-    OperatorSandboxEgressRulePolicy, OperatorSandboxPolicy, OperatorSecretPolicy,
-    OperatorServicePolicy, OperatorStoragePolicy, OperatorVolumePolicy,
+    OperatorRuntimeResourceEnvelope, OperatorRuntimeSafetyCaps, OperatorRuntimeScalingQuota,
+    OperatorSandboxEgressPolicy, OperatorSandboxEgressRulePolicy, OperatorSandboxPolicy,
+    OperatorSecretPolicy, OperatorServicePolicy, OperatorStoragePolicy, OperatorVolumePolicy,
     TenantRuntimeScalingRequest,
 };
 pub use policy_input::{

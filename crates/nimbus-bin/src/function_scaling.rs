@@ -2,12 +2,13 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use nimbus::{
-    EffectiveRuntimeScalingPlan, Error, RequestedRuntimeScalingTarget, RuntimeScalingLimit,
-    RuntimeScalingPreset,
+    EffectiveRuntimeScalingPlan, Error, RequestedRuntimeScalingTarget, RuntimeHostResourceBudget,
+    RuntimeScalingLimit, RuntimeScalingPlanSet, RuntimeScalingPreset,
 };
 use nimbus_server::{
     OPERATOR_POLICY_SCHEMA_VERSION, OperatorPolicyDefaults, OperatorPolicyDocument,
-    OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorRuntimePolicy, OperatorSandboxPolicy,
+    OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorRuntimePolicy,
+    OperatorRuntimeResourceEnvelope, OperatorRuntimeSafetyCaps, OperatorSandboxPolicy,
     OperatorServicePolicy, WorkloadKind,
 };
 use serde::Deserialize;
@@ -33,27 +34,16 @@ impl FunctionScalingContext {
         match self {
             Self::Dev => RuntimeScalingPolicyBuilder {
                 preset: RuntimeScalingPreset::Warm,
-                min_warm: 1,
-                activation_warm: 1,
+                min_warm: 0,
                 max_warm: RuntimeScalingLimit::Auto,
                 scale_down_delay_secs: 120,
-                live_scaling: false,
             },
             Self::Start => RuntimeScalingPolicyBuilder {
                 preset: RuntimeScalingPreset::Warm,
                 min_warm: 0,
-                activation_warm: 1,
                 max_warm: RuntimeScalingLimit::Auto,
                 scale_down_delay_secs: 600,
-                live_scaling: false,
             },
-        }
-    }
-
-    pub(crate) fn active_recent_min_warm(self) -> usize {
-        match self {
-            Self::Dev => 1,
-            Self::Start => 0,
         }
     }
 }
@@ -77,10 +67,8 @@ pub(crate) struct FunctionScalingFileConfig {
 pub(crate) struct FunctionScalingPolicyConfig {
     pub(crate) preset: Option<RuntimeScalingPreset>,
     pub(crate) min_warm: Option<usize>,
-    pub(crate) activation_warm: Option<usize>,
     pub(crate) max_warm: Option<RuntimeScalingLimit>,
     pub(crate) scale_down_delay: Option<DurationInput>,
-    pub(crate) live_scaling: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -89,10 +77,8 @@ pub(crate) struct FunctionScalingOverrideConfig {
     pub(crate) class: Option<String>,
     pub(crate) preset: Option<RuntimeScalingPreset>,
     pub(crate) min_warm: Option<usize>,
-    pub(crate) activation_warm: Option<usize>,
     pub(crate) max_warm: Option<RuntimeScalingLimit>,
     pub(crate) scale_down_delay: Option<DurationInput>,
-    pub(crate) live_scaling: Option<bool>,
     pub(crate) reason: Option<String>,
 }
 
@@ -101,10 +87,8 @@ impl FunctionScalingOverrideConfig {
         FunctionScalingPolicyConfig {
             preset: self.preset,
             min_warm: self.min_warm,
-            activation_warm: self.activation_warm,
             max_warm: self.max_warm,
             scale_down_delay: self.scale_down_delay.clone(),
-            live_scaling: self.live_scaling,
         }
     }
 }
@@ -128,7 +112,6 @@ impl DurationInput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedFunctionScalingIntent {
     pub(crate) request: nimbus_server::TenantRuntimeScalingRequest,
-    pub(crate) active_recent_min_warm: usize,
     pub(crate) class: Option<String>,
     pub(crate) reason: Option<String>,
     pub(crate) used_baked_defaults: bool,
@@ -137,10 +120,12 @@ pub(crate) struct ResolvedFunctionScalingIntent {
 impl ResolvedFunctionScalingIntent {
     pub(crate) fn boot_summary(&self, context: FunctionScalingContext) -> String {
         format!(
-            "Function scaling: {} defaults, active_recent_min_warm={}, max_warm={}. Run nimbus explain functions <name>.",
+            "Function scaling: {} defaults, min_warm={}, max_warm={}, scale_down_delay={}s, autoscaling inferred={}. Run nimbus explain functions <name>.",
             context.label(),
-            self.active_recent_min_warm,
-            scaling_limit_label(self.request.requested.max_warm)
+            self.request.requested.min_warm,
+            scaling_limit_label(self.request.requested.max_warm),
+            self.request.requested.scale_down_delay_secs,
+            self.request.autoscaling_inferred()
         )
     }
 }
@@ -149,10 +134,8 @@ impl ResolvedFunctionScalingIntent {
 struct RuntimeScalingPolicyBuilder {
     preset: RuntimeScalingPreset,
     min_warm: usize,
-    activation_warm: usize,
     max_warm: RuntimeScalingLimit,
     scale_down_delay_secs: u64,
-    live_scaling: bool,
 }
 
 impl RuntimeScalingPolicyBuilder {
@@ -161,34 +144,26 @@ impl RuntimeScalingPolicyBuilder {
             RuntimeScalingPreset::Economy => Self {
                 preset,
                 min_warm: 0,
-                activation_warm: 0,
                 max_warm: RuntimeScalingLimit::Auto,
                 scale_down_delay_secs: 60,
-                live_scaling: false,
             },
             RuntimeScalingPreset::Warm => Self {
                 preset,
                 min_warm: 0,
-                activation_warm: 1,
                 max_warm: RuntimeScalingLimit::Auto,
                 scale_down_delay_secs: 600,
-                live_scaling: false,
             },
             RuntimeScalingPreset::Latency => Self {
                 preset,
                 min_warm: 1,
-                activation_warm: 1,
                 max_warm: RuntimeScalingLimit::Auto,
                 scale_down_delay_secs: 900,
-                live_scaling: false,
             },
             RuntimeScalingPreset::Fixed => Self {
                 preset,
                 min_warm: self.min_warm,
-                activation_warm: self.activation_warm,
                 max_warm: self.max_warm,
                 scale_down_delay_secs: self.scale_down_delay_secs,
-                live_scaling: self.live_scaling,
             },
         };
     }
@@ -200,19 +175,31 @@ impl RuntimeScalingPolicyBuilder {
         if let Some(min_warm) = config.min_warm {
             self.min_warm = min_warm;
         }
-        if let Some(activation_warm) = config.activation_warm {
-            self.activation_warm = activation_warm;
-        }
         if let Some(max_warm) = config.max_warm {
             self.max_warm = max_warm;
         }
         if let Some(delay) = &config.scale_down_delay {
             self.scale_down_delay_secs = delay.as_secs()?;
         }
-        if let Some(live_scaling) = config.live_scaling {
-            self.live_scaling = live_scaling;
-        }
+        self.derive_fixed_bounds(config);
         Ok(())
+    }
+
+    fn derive_fixed_bounds(&mut self, config: &FunctionScalingPolicyConfig) {
+        if !matches!(self.preset, RuntimeScalingPreset::Fixed) {
+            return;
+        }
+        match (config.min_warm, config.max_warm) {
+            (Some(min_warm), None) => self.max_warm = RuntimeScalingLimit::Fixed(min_warm),
+            (None, Some(RuntimeScalingLimit::Fixed(max_warm))) => self.min_warm = max_warm,
+            (None, None) => match self.max_warm {
+                RuntimeScalingLimit::Fixed(max_warm) => self.min_warm = max_warm,
+                RuntimeScalingLimit::Auto => {
+                    self.max_warm = RuntimeScalingLimit::Fixed(self.min_warm)
+                }
+            },
+            _ => {}
+        }
     }
 
     fn request(self, function: &str) -> nimbus_server::TenantRuntimeScalingRequest {
@@ -221,10 +208,8 @@ impl RuntimeScalingPolicyBuilder {
             self.preset,
             RequestedRuntimeScalingTarget {
                 min_warm: self.min_warm,
-                activation_warm: self.activation_warm,
                 max_warm: self.max_warm,
                 scale_down_delay_secs: self.scale_down_delay_secs,
-                live_scaling: self.live_scaling,
             },
         )
     }
@@ -274,7 +259,6 @@ pub(crate) fn resolve_function_scaling_intent(
     validate_fixed_preset(function, builder)?;
     Ok(ResolvedFunctionScalingIntent {
         request: builder.request(function),
-        active_recent_min_warm: context.active_recent_min_warm(),
         class,
         reason,
         used_baked_defaults,
@@ -302,26 +286,127 @@ pub(crate) fn load_optional_policy(
     policy.map(|path| load_policy_document(&path)).transpose()
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FunctionScalingAdmissionEnvelope {
+    pub(crate) runtime_resources: OperatorRuntimeResourceEnvelope,
+    pub(crate) runtime_safety: OperatorRuntimeSafetyCaps,
+}
+
+impl FunctionScalingAdmissionEnvelope {
+    pub(crate) fn from_host_budget(
+        budget: RuntimeHostResourceBudget,
+        max_warm_pool_entries_per_worker: usize,
+    ) -> Self {
+        let mut runtime_resources = OperatorRuntimeResourceEnvelope::default();
+        runtime_resources.cpu_millicpus =
+            usize::try_from(budget.host_millicpus).expect("u32 host millicpus always fits usize");
+        runtime_resources.host_cpu_reserve_millicpus = usize::try_from(
+            budget
+                .system_reserved_millicpus
+                .saturating_add(budget.nimbus_control_plane_reserved_millicpus),
+        )
+        .expect("u32 reserved millicpus always fits usize");
+        if let Some(runtime_hard_ceiling_millicpus) = budget.runtime_hard_ceiling_millicpus {
+            runtime_resources.cpu_millicpus =
+                runtime_resources.host_cpu_reserve_millicpus.saturating_add(
+                    usize::try_from(runtime_hard_ceiling_millicpus)
+                        .expect("u32 hard ceiling millicpus always fits usize"),
+                );
+        }
+
+        Self {
+            runtime_resources,
+            runtime_safety: OperatorRuntimeSafetyCaps {
+                max_total_warm: Some(max_warm_pool_entries_per_worker),
+                max_min_warm_total: Some(max_warm_pool_entries_per_worker),
+                max_warm_per_function: Some(max_warm_pool_entries_per_worker),
+            },
+        }
+    }
+}
+
+impl Default for FunctionScalingAdmissionEnvelope {
+    fn default() -> Self {
+        Self {
+            runtime_resources: OperatorRuntimeResourceEnvelope::default(),
+            runtime_safety: OperatorRuntimeSafetyCaps::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct FunctionScalingAdmissionSet {
+    pub(crate) plans: RuntimeScalingPlanSet,
+}
+
+pub(crate) fn admit_function_scaling_plans(
+    config: &FunctionScalingFileConfig,
+    context: FunctionScalingContext,
+    policy: Option<&OperatorPolicyDocument>,
+    tenant: Option<&str>,
+    envelope: FunctionScalingAdmissionEnvelope,
+) -> Result<FunctionScalingAdmissionSet, Error> {
+    let default_intent = resolve_function_scaling_intent(config, context, "__default__")?;
+    let default_plan = admit_function_scaling_intent(&default_intent, policy, tenant, envelope)?;
+    let mut plans = RuntimeScalingPlanSet::new(default_plan);
+    for selector in known_function_selectors(config) {
+        let intent = resolve_function_scaling_intent(config, context, &selector)?;
+        let plan = admit_function_scaling_intent(&intent, policy, tenant, envelope)?;
+        plans.insert_function_override(plan);
+    }
+    Ok(FunctionScalingAdmissionSet { plans })
+}
+
+pub(crate) fn admit_function_scaling_intent(
+    intent: &ResolvedFunctionScalingIntent,
+    policy: Option<&OperatorPolicyDocument>,
+    tenant: Option<&str>,
+    envelope: FunctionScalingAdmissionEnvelope,
+) -> Result<EffectiveRuntimeScalingPlan, Error> {
+    let policy =
+        policy_for_function_with_envelope(policy, tenant, &intent.request.function, envelope);
+    policy.admit_runtime_scaling(intent.request.clone())
+}
+
 pub(crate) fn policy_for_function(
     policy: Option<&OperatorPolicyDocument>,
     tenant: Option<&str>,
     function: &str,
 ) -> OperatorPolicyDocument {
-    policy
-        .cloned()
-        .unwrap_or_else(|| default_policy_for_function(tenant, function))
+    policy_for_function_with_envelope(
+        policy,
+        tenant,
+        function,
+        FunctionScalingAdmissionEnvelope::default(),
+    )
 }
 
-pub(crate) fn default_policy_for_function(
+pub(crate) fn policy_for_function_with_envelope(
+    policy: Option<&OperatorPolicyDocument>,
     tenant: Option<&str>,
     function: &str,
+    envelope: FunctionScalingAdmissionEnvelope,
+) -> OperatorPolicyDocument {
+    policy
+        .cloned()
+        .unwrap_or_else(|| default_policy_for_function_with_envelope(tenant, function, envelope))
+}
+
+pub(crate) fn default_policy_for_function_with_envelope(
+    tenant: Option<&str>,
+    function: &str,
+    envelope: FunctionScalingAdmissionEnvelope,
 ) -> OperatorPolicyDocument {
     OperatorPolicyDocument {
         schema_version: OPERATOR_POLICY_SCHEMA_VERSION,
         tenant: tenant.unwrap_or("tenant-a").to_string(),
         metadata: Default::default(),
         accepted_risks: Vec::new(),
-        defaults: OperatorPolicyDefaults::default(),
+        defaults: OperatorPolicyDefaults {
+            runtime_resources: envelope.runtime_resources,
+            runtime_safety: envelope.runtime_safety,
+            ..OperatorPolicyDefaults::default()
+        },
         workloads: vec![OperatorPolicyWorkload {
             kind: WorkloadKind::RuntimeFunction,
             name: function.to_string(),
@@ -357,20 +442,23 @@ pub(crate) fn render_effective_plan(
     plan: &EffectiveRuntimeScalingPlan,
     policy: &OperatorPolicyDocument,
 ) -> String {
-    let limits = policy.defaults.runtime_scaling_limits;
+    let safety = policy.defaults.runtime_safety;
     format!(
-        "Tenant request: {} preset={:?} min_warm={} max_warm={}\nOperator envelope: max_warm_per_function={} max_min_warm_total remaining={} max_total_warm={} allow_live_scaling={}\nEffective: min_warm={} activation_warm={} max_warm={} pressure_adjustment={:?}\n",
+        "Tenant request: {} preset={:?} min_warm={} max_warm={} scale_down_delay={}s autoscaling: inferred={}\nOperator envelope: cpu_millicpus={} memory_bytes={} runtime_safety.max_warm_per_function={} runtime_safety.max_min_warm_total={} runtime_safety.max_total_warm={}\nEffective: min_warm={} max_warm={} autoscaling={} pressure_adjustment={:?}\n",
         plan.function,
         plan.preset,
         plan.requested.min_warm,
         scaling_limit_label(plan.requested.max_warm),
-        limits.max_warm_per_function,
-        limits.max_min_warm_total,
-        limits.max_total_warm,
-        limits.allow_live_scaling,
+        plan.requested.scale_down_delay_secs,
+        plan.autoscaling_inferred(),
+        policy.defaults.runtime_resources.cpu_millicpus,
+        policy.defaults.runtime_resources.memory_bytes,
+        optional_usize_label(safety.max_warm_per_function),
+        optional_usize_label(safety.max_min_warm_total),
+        optional_usize_label(safety.max_total_warm),
         plan.effective.min_warm,
-        plan.effective.activation_warm,
         plan.effective.max_warm,
+        plan.effective.autoscaling,
         plan.pressure_adjustment
     )
 }
@@ -471,6 +559,12 @@ pub(crate) fn scaling_limit_label(limit: RuntimeScalingLimit) -> String {
     }
 }
 
+fn optional_usize_label(value: Option<usize>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "resource-derived".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,19 +574,20 @@ mod tests {
     }
 
     #[test]
-    fn no_yaml_dev_uses_baked_showcase_default() {
+    fn no_yaml_dev_uses_zero_min_warm_with_retention() {
         let config = FunctionScalingFileConfig::default();
         let resolved =
             resolve_function_scaling_intent(&config, FunctionScalingContext::Dev, "messages:send")
                 .expect("default should resolve");
 
         assert!(resolved.used_baked_defaults);
-        assert_eq!(resolved.request.requested.min_warm, 1);
-        assert_eq!(resolved.active_recent_min_warm, 1);
+        assert_eq!(resolved.request.requested.min_warm, 0);
+        assert_eq!(resolved.request.requested.scale_down_delay_secs, 120);
         assert_eq!(
             resolved.request.requested.max_warm,
             RuntimeScalingLimit::Auto
         );
+        assert!(resolved.request.autoscaling_inferred());
     }
 
     #[test]
@@ -507,12 +602,12 @@ mod tests {
 
         assert!(resolved.used_baked_defaults);
         assert_eq!(resolved.request.requested.min_warm, 0);
-        assert_eq!(resolved.active_recent_min_warm, 0);
-        assert_eq!(resolved.request.requested.activation_warm, 1);
+        assert_eq!(resolved.request.requested.scale_down_delay_secs, 600);
         assert_eq!(
             resolved.request.requested.max_warm,
             RuntimeScalingLimit::Auto
         );
+        assert!(resolved.request.autoscaling_inferred());
     }
 
     #[test]
@@ -578,6 +673,48 @@ scaling:
     }
 
     #[test]
+    fn unknown_public_activation_warm_rejects() {
+        let error = serde_yaml::from_str::<NimbusFunctionsFileConfig>(
+            r#"
+scaling:
+  default:
+    activation_warm: 1
+"#,
+        )
+        .expect_err("activation_warm is not public v1 config");
+
+        assert!(error.to_string().contains("activation_warm"));
+    }
+
+    #[test]
+    fn unknown_public_autoscaling_rejects() {
+        let error = serde_yaml::from_str::<NimbusFunctionsFileConfig>(
+            r#"
+scaling:
+  default:
+    autoscaling: true
+"#,
+        )
+        .expect_err("autoscaling is inferred, not user-authored");
+
+        assert!(error.to_string().contains("autoscaling"));
+    }
+
+    #[test]
+    fn unknown_public_live_scaling_rejects() {
+        let error = serde_yaml::from_str::<NimbusFunctionsFileConfig>(
+            r#"
+scaling:
+  default:
+    live_scaling: true
+"#,
+        )
+        .expect_err("live_scaling is not public tenant config");
+
+        assert!(error.to_string().contains("live_scaling"));
+    }
+
+    #[test]
     fn preset_class_and_override_merge_in_order() {
         let config = parse(
             r#"
@@ -615,6 +752,7 @@ scaling:
             RuntimeScalingLimit::Fixed(16)
         );
         assert_eq!(resolved.request.requested.scale_down_delay_secs, 900);
+        assert!(resolved.request.autoscaling_inferred());
     }
 
     #[test]
@@ -638,5 +776,33 @@ scaling:
         .expect_err("missing reason should reject");
 
         assert!(error.to_string().contains("reason is required"));
+    }
+
+    #[test]
+    fn fixed_preset_derives_missing_bound_and_disables_inferred_autoscaling() {
+        let config = parse(
+            r#"
+scaling:
+  overrides:
+    "messages:send":
+      preset: fixed
+      max_warm: 2
+      reason: "fixed capacity for deterministic soak"
+"#,
+        );
+
+        let resolved = resolve_function_scaling_intent(
+            &config.scaling,
+            FunctionScalingContext::Start,
+            "messages:send",
+        )
+        .expect("fixed override should derive min_warm from max_warm");
+
+        assert_eq!(resolved.request.requested.min_warm, 2);
+        assert_eq!(
+            resolved.request.requested.max_warm,
+            RuntimeScalingLimit::Fixed(2)
+        );
+        assert!(!resolved.request.autoscaling_inferred());
     }
 }

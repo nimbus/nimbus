@@ -3,6 +3,7 @@ use std::sync::Arc;
 use nimbus_engine::Engine;
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, RuntimeAdaptiveControllerSettings, RuntimeHostResourceBudget,
+    RuntimeScalingPlanSet,
 };
 
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
@@ -166,6 +167,13 @@ impl ServeOptions {
         self.router_options = self
             .router_options
             .with_effective_runtime_scaling_plan(plan);
+        self
+    }
+
+    pub fn with_effective_runtime_scaling_plans(mut self, plans: RuntimeScalingPlanSet) -> Self {
+        self.router_options = self
+            .router_options
+            .with_effective_runtime_scaling_plans(plans);
         self
     }
 

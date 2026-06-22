@@ -56,5 +56,5 @@ pub use profile::RuntimeProfile;
 pub use resources::{RuntimeLimits, RuntimeTenantBudget};
 pub use scaling::{
     EffectiveRuntimeScalingPlan, RequestedRuntimeScalingTarget, RuntimeScalingAdjustmentReason,
-    RuntimeScalingLimit, RuntimeScalingPreset, RuntimeScalingTarget,
+    RuntimeScalingLimit, RuntimeScalingPlanSet, RuntimeScalingPreset, RuntimeScalingTarget,
 };

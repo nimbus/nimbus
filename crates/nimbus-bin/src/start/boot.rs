@@ -7,13 +7,12 @@ use std::sync::Arc;
 use std::{env, process};
 
 use nimbus::{
-    ConvexRegistry, EffectiveRuntimeScalingPlan, Engine, Error, LicenseState,
-    RuntimeHostResourceBudget, RuntimeLimits, RuntimeScalingAdjustmentReason, RuntimeScalingLimit,
-    RuntimeScalingTarget, TenantId, run_scheduler,
+    ConvexRegistry, Engine, Error, LicenseState, RuntimeHostResourceBudget, RuntimeLimits,
+    TenantId, run_scheduler,
 };
 use nimbus_server::{
-    CloudFunctionsRegistry, LocalServerPaths, LocalServerSecurityState, ServeOptions,
-    ServerDiscoveryLease, load_or_create_local_admin_token, serve,
+    CloudFunctionsRegistry, LocalServerPaths, LocalServerSecurityState, OperatorPolicyDocument,
+    ServeOptions, ServerDiscoveryLease, load_or_create_local_admin_token, serve,
 };
 
 use super::StartCommand;
@@ -37,7 +36,9 @@ use crate::compose::load_host_backed_service_manager_for_selection_with_isolatio
 use crate::deploy::resolve_deploy_app_dir;
 use crate::dirs;
 use crate::function_scaling::{
-    FunctionScalingContext, FunctionScalingFileConfig, resolve_function_scaling_intent,
+    FunctionScalingAdmissionEnvelope, FunctionScalingAdmissionSet, FunctionScalingContext,
+    FunctionScalingFileConfig, admit_function_scaling_plans, load_optional_policy,
+    resolve_function_scaling_intent,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -72,11 +73,6 @@ pub(crate) async fn run_start_command(
     let tls_enabled = tls_config.is_some();
     let persistence_config = persistence_config_from_start_command(&command)?;
     let runtime_config = runtime_config_from_start_command(&command)?;
-    let function_scaling_intent = resolve_function_scaling_intent(
-        &runtime_config.functions.scaling,
-        function_scaling_context_from_command(&command),
-        "__default__",
-    )?;
     let compose_control_data_dir =
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
     // Adapter enablement resolves after the control data dir: default-on
@@ -93,9 +89,16 @@ pub(crate) async fn run_start_command(
     let resolved_app_dir = resolve_start_app_dir(&command)?;
     run_codegen_preflight(&command, resolved_app_dir.as_ref()).await?;
     let runtime_limits = runtime_limits_from_command(&command);
-    let effective_runtime_scaling_plan =
-        effective_runtime_scaling_plan_from_intent(&function_scaling_intent, &runtime_limits);
     let runtime_host_resource_budget = runtime_host_resource_budget_from_command(&command);
+    let operator_policy = load_optional_policy(command.policy.clone())?;
+    let function_scaling_admission = admit_start_function_scaling_plans(
+        &command,
+        &runtime_config,
+        &runtime_limits,
+        runtime_host_resource_budget,
+        operator_policy.as_ref(),
+    )?;
+    let effective_runtime_scaling_plans = function_scaling_admission.plans.clone();
     let runtime_adaptive_controller_settings =
         runtime_adaptive_controller_settings_from_command(&command);
     let license_file = resolve_license_path(command.license_file.as_deref());
@@ -213,7 +216,7 @@ pub(crate) async fn run_start_command(
         .with_license(license_state)
         .with_runtime_host_resource_budget(runtime_host_resource_budget)
         .with_runtime_adaptive_controller_settings(runtime_adaptive_controller_settings)
-        .with_effective_runtime_scaling_plan(effective_runtime_scaling_plan);
+        .with_effective_runtime_scaling_plans(effective_runtime_scaling_plans);
     if let Some(registry) = convex_registry {
         serve_options = serve_options.with_convex_registry(registry);
     }
@@ -455,31 +458,23 @@ fn default_function_scaling_summary_line(command: &StartCommand) -> String {
     intent.boot_summary(context)
 }
 
-fn effective_runtime_scaling_plan_from_intent(
-    intent: &crate::function_scaling::ResolvedFunctionScalingIntent,
-    limits: &RuntimeLimits,
-) -> EffectiveRuntimeScalingPlan {
-    let requested = intent.request.requested;
-    let max_warm = match requested.max_warm {
-        RuntimeScalingLimit::Auto => limits.max_warm_pool_entries_per_worker,
-        RuntimeScalingLimit::Fixed(value) => value,
-    };
-    let target = RuntimeScalingTarget {
-        min_warm: requested.min_warm.min(max_warm),
-        activation_warm: requested.activation_warm.min(max_warm),
-        max_warm,
-        scale_down_delay_secs: requested.scale_down_delay_secs,
-        live_scaling: requested.live_scaling,
-    };
-    EffectiveRuntimeScalingPlan {
-        function: intent.request.function.clone(),
-        preset: intent.request.preset,
-        requested,
-        admitted: target,
-        effective: target,
-        pressure_adjustment: RuntimeScalingAdjustmentReason::None,
-        rejection: None,
-    }
+pub(super) fn admit_start_function_scaling_plans(
+    command: &StartCommand,
+    runtime_config: &crate::start::RuntimeConfigFile,
+    runtime_limits: &RuntimeLimits,
+    runtime_host_resource_budget: RuntimeHostResourceBudget,
+    operator_policy: Option<&OperatorPolicyDocument>,
+) -> Result<FunctionScalingAdmissionSet, Error> {
+    admit_function_scaling_plans(
+        &runtime_config.functions.scaling,
+        function_scaling_context_from_command(command),
+        operator_policy,
+        command.auto_tenant.as_deref(),
+        FunctionScalingAdmissionEnvelope::from_host_budget(
+            runtime_host_resource_budget,
+            runtime_limits.max_warm_pool_entries_per_worker,
+        ),
+    )
 }
 
 fn function_scaling_context_from_command(command: &StartCommand) -> FunctionScalingContext {

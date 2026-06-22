@@ -106,6 +106,7 @@ PIR5_POINTER_COMPRESSION_PATCH="docs/private/plans/proof/profile-aware-isolate-r
 PIR5_POINTER_COMPRESSION_WINDOWS_HOTFIX_PATCH="docs/private/plans/proof/profile-aware-isolate-runtime/artifacts/0001-Skip-Windows-ptrcomp-simdutf-artifacts.patch"
 PIR5_POINTER_COMPRESSION_UPSTREAM_JOB_PATCH="docs/private/plans/proof/profile-aware-isolate-runtime/artifacts/0001-Split-ptrcomp-simdutf-release-job.patch"
 PIR5_POINTER_COMPRESSION_MATRIX_FIX_PATCH="docs/private/plans/proof/profile-aware-isolate-runtime/artifacts/0001-Fix-ptrcomp-release-matrix-target-selection.patch"
+PIR5_POINTER_COMPRESSION_LINUX_ARM_RELEASE_PATCH="docs/private/plans/proof/profile-aware-isolate-runtime/artifacts/0001-Add-Linux-ARM64-ptrcomp-release-artifact.patch"
 PIR5_RETAINED_DENSITY_TRACE="docs/private/plans/proof/profile-aware-isolate-runtime/artifacts/pir5-retained-density-current-rss.jsonl"
 PIR5_RETAINED_DENSITY_PTRCOMP_TRACE="docs/private/plans/proof/profile-aware-isolate-runtime/artifacts/pir5-retained-density-current-rss-ptrcomp.jsonl"
 PIR2_SYNTHETIC_AWAIT_TRACE="docs/private/plans/proof/profile-aware-isolate-runtime/artifacts/pir2-synthetic-await-warm-pool-trace.jsonl"
@@ -114,6 +115,8 @@ PIR3_PROOF="docs/private/plans/proof/profile-aware-isolate-runtime/pir3-side-cha
 PIR4_PROOF="docs/private/plans/proof/profile-aware-isolate-runtime/pir4-host-call-session-binding.md"
 PIR7_HOST_BUDGET_PROOF="docs/private/plans/proof/profile-aware-isolate-runtime/pir7-host-resource-budget.md"
 PIR7M_FUNCTION_SCALING_PROOF="docs/private/plans/proof/profile-aware-isolate-runtime/pir7m-function-scaling-ux.md"
+TFA_PLAN="docs/private/plans/tenant-function-autoscaling-plan.md"
+TFA_PROOF="docs/private/plans/proof/tenant-function-autoscaling/README.md"
 POST_PIR_OPTIMIZATION_PROOF="docs/private/plans/proof/profile-aware-isolate-runtime/post-pir-optimization-benchmarks.md"
 POST_PIR_OPTIMIZATION_SMOKE_TRACE="docs/private/plans/proof/profile-aware-isolate-runtime/artifacts/post-pir-optimization-smoke.jsonl"
 POST_PIR_OPTIMIZATION_FIRST_WAVE_TRACE="docs/private/plans/proof/profile-aware-isolate-runtime/artifacts/post-pir-optimization-first-wave.jsonl"
@@ -1029,15 +1032,16 @@ if [ -f "${PIR5_POINTER_COMPRESSION_PROOF}" ] &&
   [ -f "${PIR5_POINTER_COMPRESSION_WINDOWS_HOTFIX_PATCH}" ] &&
   [ -f "${PIR5_POINTER_COMPRESSION_UPSTREAM_JOB_PATCH}" ] &&
   [ -f "${PIR5_POINTER_COMPRESSION_MATRIX_FIX_PATCH}" ] &&
+  [ -f "${PIR5_POINTER_COMPRESSION_LINUX_ARM_RELEASE_PATCH}" ] &&
   [ -f "${PIR5_RETAINED_DENSITY_PTRCOMP_TRACE}" ] &&
   [ "${retained_density_ptrcomp_rows}" -ge 5 ] &&
   contains 'v8-pointer-compression = \["deno_core/v8_enable_pointer_compression"\]' "crates/nimbus-runtime/Cargo.toml" &&
   ! grep -E 'deno_core.*v8_enable_pointer_compression' Cargo.toml >/dev/null 2>&1 &&
-	  contains 'v2.8.3-nimbus.79' Cargo.toml &&
-	  contains 'v149.4.0-nimbus.8' Cargo.toml &&
-	  contains 'RUSTY_V8_VERSION = "149.4.0-nimbus.8"' ".cargo/config.toml" &&
-	  contains 'v2.8.3-nimbus.79#828cd062096fc765d672f8678b8b39f9cca148c6' Cargo.lock &&
-	  contains 'v149.4.0-nimbus.8#3aefa0a2730db325cb66d387fad0fdcc01182594' Cargo.lock &&
+	  contains 'v2.8.3-nimbus.80' Cargo.toml &&
+	  contains 'v149.4.0-nimbus.10' Cargo.toml &&
+	  contains 'RUSTY_V8_VERSION = "149.4.0-nimbus.10"' ".cargo/config.toml" &&
+	  contains 'v2.8.3-nimbus.80#5414432bfe59346f442e81d8c50d04e39d4f1611' Cargo.lock &&
+	  contains 'v149.4.0-nimbus.10#f9457373150679d9db9eb577dcd3a687a3ec25ef' Cargo.lock &&
   contains_all "${PIR5_RETAINED_DENSITY_PTRCOMP_TRACE}" \
     '"profile":"web_standard"' \
     '"profile":"node20"' \
@@ -1055,7 +1059,7 @@ if [ -f "${PIR5_POINTER_COMPRESSION_PROOF}" ] &&
 	    '"measured_per_runtime_rss_bytes":3600384' \
 	    '"measured_per_runtime_rss_bytes":2772992' >/tmp/pir5-pointer-compression-trace-missing.txt &&
   contains_all "${PIR5_POINTER_COMPRESSION_PROOF}" \
-    'release-artifact blocker unblocked by `v149.4.0-nimbus.7`' \
+    'release-artifact blocker unblocked by `v149.4.0-nimbus.10`' \
     'downstream compile and retained-RSS impact measured' \
     'cargo check -p nimbus-runtime --lib --features v8-pointer-compression' \
     'env -u V8_FROM_SOURCE cargo check -p nimbus-runtime --lib --features v8-pointer-compression' \
@@ -1072,7 +1076,11 @@ if [ -f "${PIR5_POINTER_COMPRESSION_PROOF}" ] &&
 	    'v2.8.3-nimbus.76' \
 	    '828cd062096fc765d672f8678b8b39f9cca148c6' \
 	    'v2.8.3-nimbus.79' \
-	    'RUSTY_V8_VERSION = "149.4.0-nimbus.8"' \
+	    '5414432bfe59346f442e81d8c50d04e39d4f1611' \
+	    'v2.8.3-nimbus.80' \
+	    'f9457373150679d9db9eb577dcd3a687a3ec25ef' \
+	    'v149.4.0-nimbus.10' \
+	    'RUSTY_V8_VERSION = "149.4.0-nimbus.10"' \
     'without falling back to `V8_FROM_SOURCE`' \
     'normal and simdutf assets only' \
     'no `ptrcomp_simdutf` assets' \
@@ -1084,10 +1092,20 @@ if [ -f "${PIR5_POINTER_COMPRESSION_PROOF}" ] &&
     '27876168204' \
     '82495913025' \
     'qemu: uncaught target signal 11' \
-    'QEMU Linux ARM64 ptrcomp may be artifact construction evidence only' \
-    'native ARM64 runtime proof is required' \
-    'intentionally add Linux ARM64 ptrcomp as a source-owned candidate artifact lane' \
-    'skip full nextest under user-mode QEMU for `aarch64-unknown-linux-gnu` like OpenWorkers does' \
+    'QEMU Linux ARM64 ptrcomp `nextest` may be execution stability evidence only' \
+    'native Nimbus Linux ARM64 release build consuming it' \
+    'Linux ARM64 ptrcomp release artifact' \
+    'skips only the full' \
+    'Clippy ptrcomp simdutf' \
+    'Build ptrcomp simdutf release artifacts' \
+    'v149.4.0-nimbus.10' \
+    '27930407697' \
+    'release aarch64-unknown-linux-gnu ptrcomp simdutf' \
+    'published release has 22 assets' \
+    'librusty_v8_ptrcomp_simdutf_release_aarch64-unknown-linux-gnu.a.gz' \
+    'src_binding_ptrcomp_simdutf_release_aarch64-unknown-linux-gnu.rs' \
+    '0001-Add-Linux-ARM64-ptrcomp-release-artifact.patch' \
+    '2f329e173b918672e330451ad0a1a33054cc27638bd25e1b81cf91d1bf8a68fa' \
     'v149.4.0-nimbus.6' \
     '27877679911' \
     'v149.4.0-nimbus.7' \
@@ -1162,29 +1180,43 @@ if [ -f "${PIR5_POINTER_COMPRESSION_PROOF}" ] &&
     '[+]            target: aarch64-unknown-linux-gnu' \
     '[-]          - os: ubuntu-22.04' \
     '[-]            target: aarch64-unknown-linux-gnu' >/tmp/pir5-pointer-compression-matrix-fix-patch-missing.txt &&
+  contains_all "${PIR5_POINTER_COMPRESSION_LINUX_ARM_RELEASE_PATCH}" \
+    'From f9457373150679d9db9eb577dcd3a687a3ec25ef' \
+    'Subject: \[PATCH\] Add Linux ARM64 ptrcomp release artifact' \
+    'build-ptrcomp-simdutf' \
+    'target: aarch64-unknown-linux-gnu' \
+    "matrix.config.target != 'aarch64-unknown-linux-gnu'" \
+    'Clippy ptrcomp simdutf' \
+    'rusty-v8-ptrcomp-simdutf-release-\$\{\{ matrix.config.target \}\}' \
+    'librusty_v8_ptrcomp_simdutf_release_aarch64-unknown-linux-gnu.a.gz' \
+    'src_binding_ptrcomp_simdutf_release_aarch64-unknown-linux-gnu.rs' >/tmp/pir5-pointer-compression-linux-arm-release-patch-missing.txt &&
   [ "$(shasum -a 256 "${PIR5_POINTER_COMPRESSION_PATCH}" | awk '{print $1}')" = "690eff81ae335ac35f42fb15a0500a7bd9e115880597e8a32100ca4eccaf254f" ] &&
   [ "$(shasum -a 256 "${PIR5_POINTER_COMPRESSION_WINDOWS_HOTFIX_PATCH}" | awk '{print $1}')" = "ba7df1e76e845624a61517fe42ecaac51c799b12aca40896bba7e39a0a1bceb6" ] &&
   [ "$(shasum -a 256 "${PIR5_POINTER_COMPRESSION_UPSTREAM_JOB_PATCH}" | awk '{print $1}')" = "8e061987c00d69e7e43c4edd27e07fe4eac383384689480ceabc8bd7244cd761" ] &&
   [ "$(shasum -a 256 "${PIR5_POINTER_COMPRESSION_MATRIX_FIX_PATCH}" | awk '{print $1}')" = "4821cdc512d204638aec51f2df0ef6dc641571f9dc2b8de0ccab0cfcf3ce8e4c" ] &&
+  [ "$(shasum -a 256 "${PIR5_POINTER_COMPRESSION_LINUX_ARM_RELEASE_PATCH}" | awk '{print $1}')" = "2f329e173b918672e330451ad0a1a33054cc27638bd25e1b81cf91d1bf8a68fa" ] &&
   contains 'pir5-pointer-compression.md' "${PLAN}" &&
   contains 'pointer-compression artifact blocker' "${PLAN}" &&
   contains 'rusty-v8-ptrcomp-simdutf-release-assets.patch' "${PLAN}" &&
   contains 'v149.4.0-nimbus.7' "${PLAN}" &&
   contains '27877737361' "${PLAN}" &&
   contains 'completed successfully and published upstream-supported' "${PLAN}" &&
-  contains 'published release has 20' "${PLAN}" &&
-  contains 'remove it from `build-ptrcomp-simdutf`' "${PLAN}" &&
-  contains 'v149.4.0-nimbus.8' "${PLAN}" &&
-	  contains 'v2.8.3-nimbus.79' "${PLAN}" &&
+  contains 'published release has 22' "${PLAN}" &&
+  contains 'release aarch64-unknown-linux-gnu ptrcomp simdutf' "${PLAN}" &&
+  contains 'v149.4.0-nimbus.10' "${PLAN}" &&
+	  contains 'v2.8.3-nimbus.80' "${PLAN}" &&
   contains 'pir5-retained-density-current-rss-ptrcomp.jsonl' "${PLAN}" &&
   contains 'pointer compression remains opt-in, not default' "${PLAN}" &&
+	  contains 'PIR5 Linux ARM64 ptrcomp release artifact' "${PLAN}" &&
+	  contains 'skip only the QEMU `nextest` step' "${PLAN}" &&
+	  contains 'librusty_v8_ptrcomp_simdutf_release_aarch64-unknown-linux-gnu.a.gz' "${PLAN}" &&
   contains 'PIR3 is now `in_progress`' "${PLAN}" &&
   contains 'https://github.com/nimbus/rusty_v8/issues/1' "${PLAN}" &&
   contains 'workflow-file write restriction' "${PLAN}"; then
   pass "PIR5 keeps pointer compression opt-in, records release support boundaries, and measures retained-RSS impact"
 else
   fail "PIR5 pointer-compression closeout is not explicit" \
-    "ptrcomp_rows=${retained_density_ptrcomp_rows}; $(cat /tmp/pir5-pointer-compression-missing.txt 2>/dev/null) $(cat /tmp/pir5-pointer-compression-trace-missing.txt 2>/dev/null) $(cat /tmp/pir5-pointer-compression-patch-missing.txt 2>/dev/null) $(cat /tmp/pir5-pointer-compression-hotfix-patch-missing.txt 2>/dev/null) $(cat /tmp/pir5-pointer-compression-job-patch-missing.txt 2>/dev/null) $(cat /tmp/pir5-pointer-compression-matrix-fix-patch-missing.txt 2>/dev/null)"
+    "ptrcomp_rows=${retained_density_ptrcomp_rows}; $(cat /tmp/pir5-pointer-compression-missing.txt 2>/dev/null) $(cat /tmp/pir5-pointer-compression-trace-missing.txt 2>/dev/null) $(cat /tmp/pir5-pointer-compression-patch-missing.txt 2>/dev/null) $(cat /tmp/pir5-pointer-compression-hotfix-patch-missing.txt 2>/dev/null) $(cat /tmp/pir5-pointer-compression-job-patch-missing.txt 2>/dev/null) $(cat /tmp/pir5-pointer-compression-matrix-fix-patch-missing.txt 2>/dev/null) $(cat /tmp/pir5-pointer-compression-linux-arm-release-patch-missing.txt 2>/dev/null)"
 fi
 
 step 43 "PIR3 native and bootstrap side-channel hardening is wired"
@@ -3331,19 +3363,20 @@ if [ -f "${FINAL_ARCH_PLAN}" ] &&
     'Startup snapshot versus module code cache' \
     'Explicit host-value transfer interface' \
     'prebuilt-supported ptrcomp' \
-    'source-owned ptrcomp candidate' \
-    'Nimbus source-owned ptrcomp expansion lane' \
+    'supported Linux ARM64 ptrcomp release artifact' \
     'not a wholesale target-set contract' \
-    'intentionally adds `aarch64-unknown-linux-gnu` as' \
-    'must not run the full `nextest` suite under user-mode QEMU' \
-    'skip full `nextest` under user-mode QEMU' \
+    'production-default targets' \
+    'skips only full `nextest` under user-mode QEMU' \
     'aarch64-apple-darwin' \
     'x86_64-unknown-linux-gnu' \
     'aarch64-unknown-linux-gnu' \
     'Windows MSVC \| non-ptrcomp' \
-    'native Linux ARM64 runtime smoke/test lane' \
-    'user-mode QEMU source build alone can prove artifact' \
-    'not production behavior' \
+    'native Linux ARM64 Nimbus release build lane' \
+	    'not production behavior' \
+	    'skips only full `nextest` under user-mode QEMU' \
+	    'release aarch64-unknown-linux-gnu ptrcomp simdutf' \
+	    'Clippy ptrcomp simdutf' \
+    'published release has 22 assets' \
     'QEMU runtime success or failure as production proof for Linux ARM64 ptrcomp' \
     'Node/Deno warm reuse must remain fail-closed' \
     'Nimbus.s runtime Interface should stay deeper than the exemplars' \
@@ -3385,7 +3418,7 @@ if [ -f "${RELEASE_FEATURE_SCRIPT}" ] &&
   windows_args="$(bash "${RELEASE_FEATURE_SCRIPT}" --target x86_64-pc-windows-msvc --format cargo-args)" &&
   [ "${linux_args}" = "--features v8-pointer-compression" ] &&
   [ "${darwin_args}" = "--features v8-pointer-compression" ] &&
-  [ -z "${linux_arm_args}" ] &&
+  [ "${linux_arm_args}" = "--features v8-pointer-compression" ] &&
   [ -z "${windows_args}" ] &&
   contains_all "${RELEASE_FEATURE_SCRIPT}" \
     'x86_64-unknown-linux-gnu' \
@@ -3412,7 +3445,7 @@ if [ -f "${RELEASE_FEATURE_SCRIPT}" ] &&
     'runtime_feature_mode: ptrcomp' \
     'runtime_feature_mode: non-ptrcomp' \
     'release-\$\{\{ matrix.target \}\}-\$\{\{ matrix.runtime_feature_mode \}\}-no-bin-v1' \
-    'release-aarch64-unknown-linux-gnu-non-ptrcomp-no-bin-v1' \
+    'release-aarch64-unknown-linux-gnu-ptrcomp-no-bin-v1' \
     'cargo build --release -p nimbus-bin \$\{cargo_features\}' >/tmp/pir-release-features-workflow-missing.txt &&
   contains_all "${CI_WORKFLOW}" \
     'rust-runtime-ptrcomp-check' \
@@ -3426,25 +3459,25 @@ if [ -f "${RELEASE_FEATURE_SCRIPT}" ] &&
     'scripts/nimbus-release-rust-features.sh' \
     'x86_64-unknown-linux-gnu` -> `--features v8-pointer-compression' \
     'aarch64-apple-darwin` -> `--features v8-pointer-compression' \
-    'aarch64-unknown-linux-gnu` -> no additional Cargo feature' \
+    'aarch64-unknown-linux-gnu` -> `--features v8-pointer-compression' \
     'x86_64-pc-windows-msvc` -> no additional Cargo feature' \
     'rust-runtime-ptrcomp-check' \
-    'Summary: 90 passed, 0 failed' >/tmp/pir-release-features-proof-missing.txt &&
+    'Summary: 108 passed, 0 failed' >/tmp/pir-release-features-proof-missing.txt &&
   contains_all "${FINAL_ARCH_PLAN}" \
     'Target-specific pointer-compression release-default policy is implemented' \
     'scripts/nimbus-release-rust-features.sh' \
-    'Release builds enable `v8-pointer-compression` only for' \
+    'Release builds enable `v8-pointer-compression` for' \
     'x86_64-unknown-linux-gnu' \
     'aarch64-apple-darwin' \
-    'Release builds intentionally emit no pointer-compression feature for' \
     'aarch64-unknown-linux-gnu' \
+    'Release builds intentionally emit no pointer-compression feature for' \
     'x86_64-pc-windows-msvc' \
     'rust-runtime-ptrcomp-check' >/tmp/pir-release-features-arch-missing.txt &&
   contains_all "${PLAN}" \
     'PIR target-specific pointer-compression release-default' \
     'stabilizer: added `scripts/nimbus-release-rust-features.sh`' \
     'scripts/nimbus-release-rust-features.sh' \
-    'Summary: 90 passed, 0 failed' >/tmp/pir-release-features-plan-missing.txt; then
+    'Summary: 108 passed, 0 failed' >/tmp/pir-release-features-plan-missing.txt; then
   pass "release feature policy is target-specific, supported-target ptrcomp, and unsupported-target non-ptrcomp"
 else
   fail "PIR target-specific pointer-compression release-default stabilizer is incomplete" \
@@ -4400,251 +4433,133 @@ else
     "$(cat /tmp/pir7l-impl-controller-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-exports-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-start-command-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-start-lowerer-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-start-tests-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-dev-tests-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-node-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-server-construction-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-server-router-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-server-state-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-convex-lib-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-convex-loading-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-convex-runtime-access-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-cloud-functions-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-metrics-api-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-metrics-global-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-bench-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-trace-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-proof-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-plan-missing.txt 2>/dev/null) $(cat /tmp/pir7l-impl-arch-missing.txt 2>/dev/null)"
 fi
 
-step 107 "PIR7M function scaling UX plan is scoped behind operator quotas"
+step 107 "TFA supersedes PIR7M with inferred autoscaling and resource-first operator envelopes"
 if contains_all "${PLAN}" \
     '\| PIR7M \| `done`' \
-    'PIR7M — Function Scaling UX And Quota Admission' \
-    'functions.scaling.default' \
-    'functions.scaling.overrides' \
-    'functions.scaling.classes' \
-    'runtime_scaling_limits' \
-    'quotas.runtime_scaling' \
-    'DX touchpoints' \
-    'Existing CLI fit' \
-    'reserved trailing-argv workload placeholder' \
-    'nimbus run exec --' \
-    'nimbus run functions messages:send' \
-    'nimbus run functions <name> \[jsonArgs\]' \
-    'not reserved for Convex' \
-    'nimbus explain functions messages:send' \
-    'nimbus validate functions' \
-    'nimbus <verb> <resource-family> \[selector\]' \
-    'Function command namespace: `functions`, not `function`' \
-    'Do not document noun-first variants' \
-    'Scaling presets' \
-    '`economy`' \
-    '`warm`' \
-    '`latency`' \
-    '`fixed`' \
-    'active_recent_min_warm' \
-    'nimbus explain config functions.scaling' \
-    'nimbus explain functions --all --tenant tenant-a' \
-    'Tenant request: messages:send' \
-    'Operator envelope:' \
-    'Function scaling: dev defaults' \
-    'Define `min_warm` as the admitted function-level ready-retention floor' \
-    'Human/config flow' \
-    'flowchart TD' \
-    'Authority-key guardrail' \
-    'sequenceDiagram' \
-    'With no `nimbus.yaml`, dev/start use baked defaults' \
-    'PIR7M acceptance matrix' \
-    'Baked defaults' \
-    'Public app intent schema' \
-    'Function override discipline' \
-    'Operator quota admission' \
-    'Effective-plan diagnostics' \
-    'CLI grammar, parser split, and function invocation' \
-    'Runtime enforcement' \
-    'Exact-key guardrail' \
-    'Proof, verifier, and autonomous state' \
-    'Explicit tenant settings that exceed operator limits are rejected' \
-    'Exact authority-key dimensions remain intact' \
-    'No public config may expose pool kind, runtime profile, execution model' >/tmp/pir7m-plan-missing.txt &&
+    'tenant-function-autoscaling-plan.md` supersedes PIR7M' \
+    'pool-first `live_scaling` vocabulary and public `activation_warm` field' >/tmp/tfa-plan-routing-missing.txt &&
+  contains_all "${TFA_PLAN}" \
+    'Public v1 function scaling knobs are `preset`, `min_warm`, `max_warm`, and `scale_down_delay`' \
+    'Autoscaling is inferred' \
+    '`min_warm: 0` is the default for `nimbus start`' \
+    '`nimbus dev` also uses `min_warm: 0`' \
+    'Resource-First Operator Envelope' \
+    'runtime_safety' \
+    'Tenant-inferred autoscaling does not mean "turn on live adaptive controller mode"' \
+    'TFA0 — Scaffold And Failing Verifier' \
+    'TFA6 — Closeout' >/tmp/tfa-plan-contract-missing.txt &&
   contains_all "${FINAL_ARCH_PLAN}" \
-    'Function Scaling UX Is The Public Default Surface' \
-    'DX touchpoints' \
-    'Current CLI fit' \
-    'reserved trailing-argv workload placeholder' \
-    'nimbus run exec --' \
-    'nimbus run functions messages:send' \
-    'nimbus run functions <name> \[jsonArgs\]' \
-    'not reserved for Convex' \
-    'nimbus explain functions messages:send' \
-    'nimbus validate functions' \
-    'nimbus <verb> <resource-family> \[selector\]' \
-    'Use plural resource-family nouns' \
-    'Scaling presets' \
-    '`economy`' \
-    '`warm`' \
-    '`latency`' \
-    '`fixed`' \
-    'functions.scaling.classes' \
-    'active_recent_min_warm' \
-    'nimbus explain config functions.scaling' \
-    'Tenant request: messages:send' \
-    'Operator envelope:' \
-    'Function scaling: dev defaults' \
-    'Flow:' \
-    'PIR7M implementation acceptance' \
-    'Tests prove no-YAML dev/start behavior' \
-    'CLI tests prove the top-level plural-resource grammar' \
-    'The runtime consumes effective plans without parsing `nimbus.yaml`' \
-    'verifier condition growth' \
-    'flowchart TD' \
-    'functions.scaling' \
-    'Function names live under `functions.scaling.overrides`' \
-    'Operator policy bounds runtime resource use with `runtime_scaling_limits`' \
-    'Global min-warm applied to every theoretical authority key' \
-    'PIR7M function scaling UX follow-up' >/tmp/pir7m-arch-missing.txt; then
-  pass "PIR7M records public function-scaling UX, operator envelopes, and exact-key guardrails"
+    'TFA supersedes PIR7M' \
+    'autoscaling is inferred' \
+    'Current TFA operator envelope' \
+    'runtime_safety' >/tmp/tfa-arch-missing.txt; then
+  pass "TFA records the current public function-scaling contract and PIR7M supersession"
 else
-  fail "PIR7M function scaling UX plan contract is incomplete" \
-    "$(cat /tmp/pir7m-plan-missing.txt 2>/dev/null) $(cat /tmp/pir7m-arch-missing.txt 2>/dev/null)"
+  fail "TFA/PIR7M function scaling contract is incomplete" \
+    "$(cat /tmp/tfa-plan-routing-missing.txt 2>/dev/null) $(cat /tmp/tfa-plan-contract-missing.txt 2>/dev/null) $(cat /tmp/tfa-arch-missing.txt 2>/dev/null)"
 fi
 
-step 108 "PIR7M function scaling UX is implemented and proven"
+step 108 "TFA inferred autoscaling implementation is present and proven"
 if contains_all "${RUNTIME_LIMITS_SCALING}" \
-    'pub enum RuntimeScalingPreset' \
-    'Economy' \
-    'Warm' \
-    'Latency' \
-    'Fixed' \
-    'pub enum RuntimeScalingLimit' \
     'RequestedRuntimeScalingTarget' \
+    'pub fn inferred_autoscaling' \
     'RuntimeScalingTarget' \
-    'RuntimeScalingAdjustmentReason' \
-    'EffectiveRuntimeScalingPlan' \
-    'with_pressure_adjustment' >/tmp/pir7m-impl-runtime-scaling-missing.txt &&
+    'pub autoscaling: bool' \
+    'pub fn autoscaling_inferred' \
+    'pub struct RuntimeScalingPlanSet' \
+    'pub fn plan_for_function' >/tmp/tfa-impl-runtime-scaling-missing.txt &&
+  ! grep -E 'pub (activation_warm|live_scaling)' "${RUNTIME_LIMITS_SCALING}" >/tmp/tfa-impl-runtime-forbidden.txt 2>/dev/null &&
   contains_all "${RUNTIME_LIMITS_POLICY}" \
-    'effective_scaling_plan: EffectiveRuntimeScalingPlan' \
-    'with_effective_scaling_plan' \
-    'clone_with_effective_scaling_plan' \
-    'pub fn effective_scaling_plan' >/tmp/pir7m-impl-runtime-policy-missing.txt &&
-  contains_all "${RUNTIME_LIMITS_TEST}" \
-    'runtime_policy_clone_with_effective_plan_preserves_operational_controls' \
-    'EffectiveRuntimeScalingPlan::baked_standard' \
-    'RuntimeScalingAdjustmentReason::HostPressure' >/tmp/pir7m-impl-runtime-test-missing.txt &&
+    'effective_scaling_plans: RuntimeScalingPlanSet' \
+    'clone_with_effective_scaling_plans' \
+    'effective_scaling_plan_for_function' >/tmp/tfa-impl-runtime-policy-missing.txt &&
   contains_all "${TENANT_OPERATOR_POLICY}" \
-    'runtime_scaling_limits: OperatorRuntimeScalingLimits' \
-    'runtime_scaling: OperatorRuntimeScalingQuota' \
-    'pub struct OperatorRuntimeScalingLimits' \
-    'pub struct OperatorRuntimeScalingQuota' >/tmp/pir7m-impl-tenant-policy-missing.txt &&
+    'runtime_resources: OperatorRuntimeResourceEnvelope' \
+    'runtime_safety: OperatorRuntimeSafetyCaps' \
+    'pub struct OperatorRuntimeResourceEnvelope' \
+    'pub struct OperatorRuntimeSafetyCaps' \
+    'runtime_scaling: OperatorRuntimeScalingQuota' >/tmp/tfa-impl-tenant-policy-missing.txt &&
+  ! grep -E 'allow_live_scaling|OperatorRuntimeScalingLimits|runtime_scaling_limits:' "${TENANT_OPERATOR_POLICY}" >/tmp/tfa-impl-tenant-forbidden.txt 2>/dev/null &&
   contains_all "${TENANT_OPERATOR_VALIDATION}" \
-    'max_min_warm_total' \
-    'max_warm_per_function' \
-    'quotas.runtime_scaling.max_min_warm must be <= max_warm' >/tmp/pir7m-impl-tenant-validation-missing.txt &&
+    'defaults.runtime_resources.cpu_millicpus must be non-zero' \
+    'defaults.runtime_safety.max_min_warm_total must be <= max_total_warm' \
+    'quotas.runtime_scaling.max_min_warm must be <= max_warm' >/tmp/tfa-impl-tenant-validation-missing.txt &&
   contains_all "${TENANT_RUNTIME_SCALING}" \
     'pub struct TenantRuntimeScalingRequest' \
+    'pub fn autoscaling_inferred' \
     'pub fn admit_runtime_scaling' \
-    'requested min_warm=' \
-    'requested max_warm=' \
-    'live_scaling_is_operator_gated' \
-    'rejects_explicit_max_above_operator_per_function_limit' \
-    'admits_auto_inside_operator_envelope' >/tmp/pir7m-impl-tenant-runtime-missing.txt &&
+    'derived_from_resources' \
+    'runtime_safety.max_min_warm_total' \
+    'effective max_warm_per_function' \
+    'runtime_safety:' \
+    'fixed_range_disables_admitted_autoscaling' \
+    'admits_auto_inside_resource_derived_operator_envelope' >/tmp/tfa-impl-tenant-runtime-missing.txt &&
   contains_all "${NIMBUS_BIN_FUNCTION_SCALING}" \
-    'enum FunctionScalingContext' \
-    'active_recent_min_warm' \
     'NimbusFunctionsFileConfig' \
     'FunctionScalingFileConfig' \
     'classes: BTreeMap' \
     'overrides: BTreeMap' \
     'resolve_function_scaling_intent' \
-    'load_optional_policy' \
+    'admit_function_scaling_plans' \
+    'fn from_host_budget' \
     'policy_for_function' \
     'render_resolved_effective_plan' \
-    'scaling_source_label' \
-    'reason is required' \
-    'no_yaml_dev_uses_baked_showcase_default' \
-    'no_yaml_start_uses_measured_standard_default' \
-    'unrelated_classes_do_not_hide_baked_default_source' \
-    'selectors_do_not_fan_out_to_theoretical_authority_keys' \
-    'unknown_function_scaling_shapes_reject_actionably' >/tmp/pir7m-impl-bin-lowering-missing.txt &&
+    'autoscaling: inferred' \
+    'no_yaml_dev_uses_zero_min_warm_with_retention' \
+    'unknown_public_activation_warm_rejects' \
+    'unknown_public_autoscaling_rejects' \
+    'unknown_public_live_scaling_rejects' \
+    'fixed_preset_derives_missing_bound_and_disables_inferred_autoscaling' \
+    'selectors_do_not_fan_out_to_theoretical_authority_keys' >/tmp/tfa-impl-bin-lowering-missing.txt &&
   contains_all "${NIMBUS_BIN_EXPLAIN}" \
     'ExplainResource::Functions' \
     'ExplainResource::Config' \
-    'render_resolved_effective_plan' \
-    'effective default source' >/tmp/pir7m-impl-bin-explain-missing.txt &&
+    'autoscaling: inferred' >/tmp/tfa-impl-bin-explain-missing.txt &&
   contains_all "${NIMBUS_BIN_VALIDATE}" \
     'ValidateResource::Functions' \
     'ValidateResource::Policy' \
     'policy: Option<PathBuf>' \
-    'run_validate_functions' \
-    'validate_functions_uses_explicit_operator_policy_for_quota_admission' >/tmp/pir7m-impl-bin-validate-missing.txt &&
-  contains_all "${NIMBUS_BIN_LIST}" \
-    'ListResource::Functions' \
-    'known_function_selectors' >/tmp/pir7m-impl-bin-list-missing.txt &&
+    'validate_functions_uses_explicit_operator_policy_for_quota_admission' >/tmp/tfa-impl-bin-validate-missing.txt &&
   contains_all "${NIMBUS_BIN_RUN}" \
     'RunResource::Functions' \
     'RunResource::Exec' \
-    'RunFunctionKind' \
-    'infer_function_kind_from_generated_manifest' \
-    'invoke_run_function' \
-    'LocalServerHttpClient' \
-    'ImplicitLocalDefault' \
-    'nimbus run functions' \
-    'nimbus run exec --' \
-    'policy: Option<PathBuf>' \
-    'generated_manifest_infers_function_kind' \
-    'run_functions_requires_kind_when_manifest_is_absent' \
-    'run_functions_defaults_to_local_discovery_without_target' \
-    'run_functions_uses_explicit_operator_policy_for_quota_admission' >/tmp/pir7m-impl-bin-run-missing.txt &&
-  contains_all "${NIMBUS_BIN_MAIN}" \
-    'ExplainCommand' \
-    'ValidateCommand' \
-    'ListCommand' \
-    'function_scaling_root_verb_commands_parse' \
-    'nimbus run functions <name> \[jsonArgs\] --policy <file> should parse' >/tmp/pir7m-impl-bin-main-missing.txt &&
-  contains_all "${START_CONFIG}" \
-    'functions: NimbusFunctionsFileConfig' \
-    'runtime_config_from_start_command' \
-    'serde_yaml::from_slice' >/tmp/pir7m-impl-start-config-missing.txt &&
+    'run_functions_uses_explicit_operator_policy_for_quota_admission' >/tmp/tfa-impl-bin-run-missing.txt &&
   contains_all "${START_BOOT}" \
     'resolve_function_scaling_intent' \
-    'effective_runtime_scaling_plan_from_intent' \
-    'with_effective_runtime_scaling_plan' \
-    'default_function_scaling_summary_line' >/tmp/pir7m-impl-start-boot-missing.txt &&
+    'load_optional_policy' \
+    'admit_start_function_scaling_plans' \
+    'admit_function_scaling_plans' \
+    'FunctionScalingAdmissionEnvelope::from_host_budget' \
+    'with_effective_runtime_scaling_plans' \
+    'default_function_scaling_summary_line' >/tmp/tfa-impl-start-boot-missing.txt &&
+  ! grep -E 'effective_runtime_scaling_plan_from_intent' "${START_BOOT}" >/tmp/tfa-impl-start-forbidden.txt 2>/dev/null &&
   contains_all "${START_CLI_TEST}" \
     'start_startup_summary_mentions_baked_function_scaling_defaults' \
-    'Function scaling: start defaults' \
-    'Function scaling: dev defaults' >/tmp/pir7m-impl-start-test-missing.txt &&
-  contains_all "${SERVER_CONSTRUCTION}" \
-    'with_effective_runtime_scaling_plan' >/tmp/pir7m-impl-server-construction-missing.txt &&
+    'cli_parses_start_operator_policy_path' \
+    'start_function_scaling_admission_keeps_selector_overrides' \
+    'start_function_scaling_admission_uses_explicit_operator_policy' \
+    'min_warm=0, max_warm=auto, scale_down_delay=600s, autoscaling inferred=true' \
+    'min_warm=0, max_warm=auto, scale_down_delay=120s, autoscaling inferred=true' >/tmp/tfa-impl-start-test-missing.txt &&
   contains_all "${SERVER_ROUTER}" \
-    'effective_runtime_scaling_plan' \
-    'with_effective_runtime_scaling_plan' \
-    'configured effective runtime scaling plan' >/tmp/pir7m-impl-server-router-missing.txt &&
-  contains_all "${SERVER_STATE}" \
-    'effective_runtime_scaling_plan' \
-    'fn effective_runtime_scaling_plan' >/tmp/pir7m-impl-server-state-missing.txt &&
-  contains_all "${CONVEX_LIB}" \
-    'with_effective_scaling_plan' \
-    'clone_with_effective_scaling_plan' >/tmp/pir7m-impl-convex-lib-missing.txt &&
-  contains_all "${CONVEX_REGISTRY_LOADING}" \
-    'with_effective_runtime_scaling_plan' \
-    'node20_runtime_lane' \
-    'node26_runtime_lane' \
-    'bun_jsc_runtime_lane' >/tmp/pir7m-impl-convex-loading-missing.txt &&
+    'effective_runtime_scaling_plans' \
+    'with_effective_runtime_scaling_plans' \
+    'autoscaling = effective_runtime_scaling_plan.effective.autoscaling' \
+    'configured effective runtime scaling plans' >/tmp/tfa-impl-server-router-missing.txt &&
   contains_all "${CONVEX_RUNTIME_ACCESS}" \
-    'convex_registry_applies_effective_runtime_scaling_plan_to_runtime_policy' \
-    'EffectiveRuntimeScalingPlan::baked_standard' >/tmp/pir7m-impl-convex-test-missing.txt &&
-  contains_all "${CLOUD_FUNCTIONS_REGISTRY}" \
-    'with_effective_runtime_scaling_plan' \
-    'cloud_functions_registry_applies_effective_runtime_scaling_plan_to_runtime_policy' \
-    'EffectiveRuntimeScalingPlan::baked_standard' >/tmp/pir7m-impl-cloud-functions-missing.txt &&
-  contains_all "${PIR7M_FUNCTION_SCALING_PROOF}" \
-    'PIR7M status: done' \
-    'Function Scaling UX And Quota Admission' \
-    'Runtime typed plan' \
-    'Operator admission' \
-    'CLI and config UX' \
-    'Server and registry propagation' \
-    'The authority-key guardrail is preserved' \
-    'cargo test -p nimbus-bin function_scaling::tests --bin nimbus' \
-    'cargo test -p nimbus-tenant runtime_scaling --lib' \
-    'cargo check -p nimbus-runtime -p nimbus-tenant -p nimbus-convex -p nimbus-cloud-functions -p nimbus-server -p nimbus-bin' >/tmp/pir7m-impl-proof-missing.txt &&
-  contains_all "${PLAN}" \
-    '\| PIR7M \| `done`' \
-    'pir7m-function-scaling-ux.md' \
-    'Condition 108 now checks the implementation' >/tmp/pir7m-impl-plan-missing.txt &&
-  contains_all "${FINAL_ARCH_PLAN}" \
-    'PIR7M implementation acceptance' \
-    'The runtime consumes effective plans without parsing `nimbus.yaml`' \
-    'verifier condition growth' >/tmp/pir7m-impl-arch-missing.txt; then
-  pass "PIR7M implementation, proof, and verifier coverage are complete"
+    'convex_registry_applies_selector_scaling_plan_set_to_runtime_lanes' \
+    'effective_scaling_plan_for_function' >/tmp/tfa-impl-convex-runtime-missing.txt &&
+  contains_all "${TFA_PROOF}" \
+    'TFA0' \
+    'TFA1' \
+    'TFA2' \
+    'TFA3' \
+    'TFA4' \
+    'TFA5' \
+    'TFA6' >/tmp/tfa-impl-proof-missing.txt; then
+  pass "TFA implementation, proof, and verifier coverage are complete"
 else
-  fail "PIR7M implementation proof is incomplete" \
-    "$(cat /tmp/pir7m-impl-runtime-scaling-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-runtime-policy-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-runtime-test-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-tenant-policy-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-tenant-validation-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-tenant-runtime-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-bin-lowering-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-bin-explain-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-bin-validate-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-bin-list-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-bin-run-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-bin-main-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-start-config-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-start-boot-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-start-test-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-server-construction-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-server-router-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-server-state-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-convex-lib-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-convex-loading-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-convex-test-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-cloud-functions-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-proof-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-plan-missing.txt 2>/dev/null) $(cat /tmp/pir7m-impl-arch-missing.txt 2>/dev/null)"
+  fail "TFA implementation proof is incomplete" \
+    "$(cat /tmp/tfa-impl-runtime-scaling-missing.txt 2>/dev/null) $(cat /tmp/tfa-impl-runtime-forbidden.txt 2>/dev/null) $(cat /tmp/tfa-impl-tenant-policy-missing.txt 2>/dev/null) $(cat /tmp/tfa-impl-tenant-forbidden.txt 2>/dev/null) $(cat /tmp/tfa-impl-tenant-validation-missing.txt 2>/dev/null) $(cat /tmp/tfa-impl-tenant-runtime-missing.txt 2>/dev/null) $(cat /tmp/tfa-impl-bin-lowering-missing.txt 2>/dev/null) $(cat /tmp/tfa-impl-bin-explain-missing.txt 2>/dev/null) $(cat /tmp/tfa-impl-bin-validate-missing.txt 2>/dev/null) $(cat /tmp/tfa-impl-bin-run-missing.txt 2>/dev/null) $(cat /tmp/tfa-impl-start-boot-missing.txt 2>/dev/null) $(cat /tmp/tfa-impl-start-forbidden.txt 2>/dev/null) $(cat /tmp/tfa-impl-start-test-missing.txt 2>/dev/null) $(cat /tmp/tfa-impl-server-router-missing.txt 2>/dev/null) $(cat /tmp/tfa-impl-proof-missing.txt 2>/dev/null)"
 fi
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS}" "${FAIL}"

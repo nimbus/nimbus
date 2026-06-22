@@ -253,6 +253,32 @@ mod tests {
     }
 
     #[test]
+    fn convex_registry_applies_selector_scaling_plan_set_to_runtime_lanes() {
+        let default_plan =
+            nimbus_runtime::EffectiveRuntimeScalingPlan::baked_standard("__default__", 3);
+        let hot_plan =
+            nimbus_runtime::EffectiveRuntimeScalingPlan::baked_standard("messages:send", 9);
+        let mut plans = nimbus_runtime::RuntimeScalingPlanSet::single(default_plan.clone());
+        plans.insert_function_override(hot_plan.clone());
+        let registry = ConvexRegistry::empty().with_effective_runtime_scaling_plans(plans);
+
+        let (_executor, hot_policy) = registry
+            .runtime_lane_for_function("messages:send")
+            .expect("default lane should be linked");
+        assert_eq!(
+            hot_policy.effective_scaling_plan_for_function("messages:send"),
+            &hot_plan
+        );
+        assert_eq!(
+            hot_policy
+                .effective_scaling_plan_for_function("messages:list")
+                .effective
+                .max_warm,
+            default_plan.effective.max_warm
+        );
+    }
+
+    #[test]
     fn convex_node_runtime_lanes_follow_lts_registry_targets() {
         let tempdir = tempdir().expect("convex manifest tempdir should build");
         let convex_dir = tempdir.path().join(".nimbus").join("convex");

@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand};
 
 use crate::function_scaling::{
-    FunctionScalingContext, known_function_selectors, load_config, load_optional_policy,
-    policy_for_function, resolve_function_scaling_intent,
+    FunctionScalingAdmissionEnvelope, FunctionScalingContext, admit_function_scaling_intent,
+    known_function_selectors, load_config, load_optional_policy, resolve_function_scaling_intent,
 };
 use crate::policy::{PolicyFileCommand, PolicyOutputFormat, run_policy_command};
 
@@ -72,8 +72,12 @@ fn run_validate_functions(command: ValidateFunctionsCommand) -> nimbus::Result<(
             FunctionScalingContext::Start,
             selector,
         )?;
-        let policy = policy_for_function(policy.as_ref(), command.tenant.as_deref(), selector);
-        policy.admit_runtime_scaling(intent.request)?;
+        admit_function_scaling_intent(
+            &intent,
+            policy.as_ref(),
+            command.tenant.as_deref(),
+            FunctionScalingAdmissionEnvelope::default(),
+        )?;
     }
     println!(
         "Function scaling validation: allowed ({} function plan{})",
@@ -120,10 +124,14 @@ functions:
 schema_version: 1
 tenant: tenant-a
 defaults:
-  runtime_scaling_limits:
-    max_total_warm: 4
+  runtime_resources:
+    cpu_millicpus: 1000
+    memory_bytes: 536870912
+    storage_bytes: 10737418240
+    host_cpu_reserve_millicpus: 250
+    host_memory_reserve_bytes: 134217728
+  runtime_safety:
     max_min_warm_total: 1
-    max_warm_per_function: 4
 workloads:
   - kind: runtime_function
     name: messages:send
@@ -142,7 +150,7 @@ workloads:
         assert!(
             error
                 .to_string()
-                .contains("runtime_scaling_limits.max_min_warm_total")
+                .contains("runtime_safety.max_min_warm_total")
         );
     }
 }

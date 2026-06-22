@@ -9,6 +9,7 @@ use nimbus_engine::Engine;
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, NominalRuntimeHostPressureSource,
     RuntimeAdaptiveControllerSettings, RuntimeHostPressureSource, RuntimeHostResourceBudget,
+    RuntimeScalingPlanSet,
 };
 use tokio::sync::watch;
 use tower::ServiceBuilder;
@@ -86,7 +87,7 @@ pub struct RouterOptions {
     runtime_host_resource_budget: RuntimeHostResourceBudget,
     runtime_host_pressure_source: Arc<dyn RuntimeHostPressureSource>,
     runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
-    effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan,
+    effective_runtime_scaling_plans: RuntimeScalingPlanSet,
 }
 
 impl RouterOptions {
@@ -108,7 +109,7 @@ impl RouterOptions {
             runtime_host_resource_budget: default_runtime_host_resource_budget(),
             runtime_host_pressure_source: default_runtime_host_pressure_source(),
             runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings::default(),
-            effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan::default(),
+            effective_runtime_scaling_plans: RuntimeScalingPlanSet::default(),
         }
     }
 
@@ -211,11 +212,12 @@ impl RouterOptions {
         self
     }
 
-    pub fn with_effective_runtime_scaling_plan(
-        mut self,
-        plan: EffectiveRuntimeScalingPlan,
-    ) -> Self {
-        self.effective_runtime_scaling_plan = plan;
+    pub fn with_effective_runtime_scaling_plan(self, plan: EffectiveRuntimeScalingPlan) -> Self {
+        self.with_effective_runtime_scaling_plans(RuntimeScalingPlanSet::single(plan))
+    }
+
+    pub fn with_effective_runtime_scaling_plans(mut self, plans: RuntimeScalingPlanSet) -> Self {
+        self.effective_runtime_scaling_plans = plans;
         self
     }
 
@@ -263,7 +265,7 @@ impl RouterOptions {
         config = config.with_runtime_host_pressure_source(self.runtime_host_pressure_source);
         config = config
             .with_runtime_adaptive_controller_settings(self.runtime_adaptive_controller_settings);
-        config = config.with_effective_runtime_scaling_plan(self.effective_runtime_scaling_plan);
+        config = config.with_effective_runtime_scaling_plans(self.effective_runtime_scaling_plans);
         config
     }
 }
@@ -287,7 +289,7 @@ pub(crate) struct RouterBuildConfig {
     runtime_host_resource_budget: RuntimeHostResourceBudget,
     runtime_host_pressure_source: Arc<dyn RuntimeHostPressureSource>,
     runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
-    effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan,
+    effective_runtime_scaling_plans: RuntimeScalingPlanSet,
 }
 
 impl RouterBuildConfig {
@@ -313,7 +315,7 @@ impl RouterBuildConfig {
             runtime_host_resource_budget: default_runtime_host_resource_budget(),
             runtime_host_pressure_source: default_runtime_host_pressure_source(),
             runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings::default(),
-            effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan::default(),
+            effective_runtime_scaling_plans: RuntimeScalingPlanSet::default(),
         }
     }
 
@@ -346,11 +348,11 @@ impl RouterBuildConfig {
         self
     }
 
-    pub(crate) fn with_effective_runtime_scaling_plan(
+    pub(crate) fn with_effective_runtime_scaling_plans(
         mut self,
-        plan: EffectiveRuntimeScalingPlan,
+        plans: RuntimeScalingPlanSet,
     ) -> Self {
-        self.effective_runtime_scaling_plan = plan;
+        self.effective_runtime_scaling_plans = plans;
         self
     }
 
@@ -507,7 +509,7 @@ impl RouterBuildConfig {
         let runtime_host_resource_budget = self.runtime_host_resource_budget;
         let runtime_host_pressure_source = self.runtime_host_pressure_source;
         let runtime_adaptive_controller_settings = self.runtime_adaptive_controller_settings;
-        let effective_runtime_scaling_plan = self.effective_runtime_scaling_plan;
+        let effective_runtime_scaling_plans = self.effective_runtime_scaling_plans;
         let convex_registry = self.convex_registry.map(|registry| {
             registry
                 .with_runtime_host_governor(
@@ -515,7 +517,7 @@ impl RouterBuildConfig {
                     runtime_host_pressure_source.clone(),
                     runtime_adaptive_controller_settings,
                 )
-                .with_effective_runtime_scaling_plan(effective_runtime_scaling_plan.clone())
+                .with_effective_runtime_scaling_plans(effective_runtime_scaling_plans.clone())
         });
         let system_convex_registry = self.system_convex_registry.map(|registry| {
             registry
@@ -524,7 +526,7 @@ impl RouterBuildConfig {
                     runtime_host_pressure_source.clone(),
                     runtime_adaptive_controller_settings,
                 )
-                .with_effective_runtime_scaling_plan(effective_runtime_scaling_plan.clone())
+                .with_effective_runtime_scaling_plans(effective_runtime_scaling_plans.clone())
         });
         let cloud_functions_registry = self.cloud_functions_registry.map(|registry| {
             registry
@@ -533,7 +535,7 @@ impl RouterBuildConfig {
                     runtime_host_pressure_source.clone(),
                     runtime_adaptive_controller_settings,
                 )
-                .with_effective_runtime_scaling_plan(effective_runtime_scaling_plan.clone())
+                .with_effective_runtime_scaling_plans(effective_runtime_scaling_plans.clone())
         });
         let state = Arc::new(AppState::from_config(AppStateConfig {
             engine: self.engine,
@@ -556,7 +558,7 @@ impl RouterBuildConfig {
             version_check,
             runtime_host_resource_budget: self.runtime_host_resource_budget,
             runtime_adaptive_controller_settings,
-            effective_runtime_scaling_plan,
+            effective_runtime_scaling_plans,
         }));
         let runtime_host_resource_budget = state.runtime_host_resource_budget();
         tracing::info!(
@@ -585,13 +587,15 @@ impl RouterBuildConfig {
             "configured runtime adaptive controller"
         );
         let effective_runtime_scaling_plan = state.effective_runtime_scaling_plan();
+        let effective_runtime_scaling_plans = state.effective_runtime_scaling_plans();
         tracing::info!(
             function = %effective_runtime_scaling_plan.function,
             min_warm = effective_runtime_scaling_plan.effective.min_warm,
-            activation_warm = effective_runtime_scaling_plan.effective.activation_warm,
             max_warm = effective_runtime_scaling_plan.effective.max_warm,
+            autoscaling = effective_runtime_scaling_plan.effective.autoscaling,
+            function_overrides = effective_runtime_scaling_plans.function_override_count(),
             pressure_adjustment = ?effective_runtime_scaling_plan.pressure_adjustment,
-            "configured effective runtime scaling plan"
+            "configured effective runtime scaling plans"
         );
         let deployment = state.current_deployment();
         if let Some(registry) = deployment.cloud_functions_registry() {
