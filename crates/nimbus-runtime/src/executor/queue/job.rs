@@ -5,6 +5,7 @@ use tokio::sync::oneshot;
 
 use crate::context::RuntimeInvocationContext;
 use crate::error::Result;
+use crate::execution_plan::RuntimeExecutionPlan;
 use crate::host::HostCallCancellation;
 use crate::runtime::{InvocationRequest, RuntimeBundle, RuntimeHost};
 
@@ -15,8 +16,10 @@ pub(crate) struct RuntimeWorkerJob {
     pub(crate) bundle: RuntimeBundle,
     pub(crate) request: InvocationRequest,
     pub(crate) context: RuntimeInvocationContext,
+    pub(crate) execution_plan: RuntimeExecutionPlan,
     pub(crate) cancellation: Option<HostCallCancellation>,
     pub(crate) enqueued_at: Instant,
+    pub(crate) response_ready_tx: Option<oneshot::Sender<Value>>,
     pub(crate) result_tx: RuntimeWorkerResultSender,
     pub(crate) dispatch_handle: Option<RuntimeInvocationDispatchHandle>,
 }

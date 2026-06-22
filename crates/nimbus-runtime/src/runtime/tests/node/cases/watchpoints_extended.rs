@@ -6201,7 +6201,6 @@ fn node24_fs_promises_watch_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers"]
 fn node22_buffer_isascii_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-buffer-isascii.js",
@@ -6211,7 +6210,6 @@ fn node22_buffer_isascii_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers"]
 fn node20_buffer_isascii_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-buffer-isascii.js",
@@ -6221,7 +6219,6 @@ fn node20_buffer_isascii_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers"]
 fn node22_buffer_isutf8_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-buffer-isutf8.js",
@@ -6231,7 +6228,6 @@ fn node22_buffer_isutf8_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers"]
 fn node20_buffer_isutf8_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-buffer-isutf8.js",

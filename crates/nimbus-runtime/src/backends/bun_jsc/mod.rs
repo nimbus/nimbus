@@ -152,12 +152,13 @@ fn scaffold_contract_error_message(error: NimbusRuntimeError) -> String {
 }
 
 fn reject_unenforced_linked_execution_timeout(invocation: &RuntimeBackendInvocation) -> Result<()> {
-    let timeout = invocation.policy.limits().execution_timeout;
-    if timeout.is_zero() {
+    let execution_timeout = invocation.policy.limits().execution_timeout;
+    let system_timeout = invocation.policy.limits().system_timeout;
+    if execution_timeout.is_zero() && system_timeout.is_zero() {
         return Ok(());
     }
     Err(NimbusRuntimeError::Contract(format!(
-        "Bun/JSC linked execution cannot enforce execution_timeout {timeout:?}; use a V8-backed policy or an explicit no-timeout Bun/JSC policy"
+        "Bun/JSC linked execution cannot enforce execution_timeout {execution_timeout:?} or system_timeout {system_timeout:?}; use a V8-backed policy or an explicit no-timeout Bun/JSC policy"
     )))
 }
 
@@ -228,6 +229,7 @@ mod tests {
     fn bun_no_timeout_policy() -> Arc<crate::limits::RuntimePolicy> {
         let mut limits = RuntimeLimits::application_bun_jsc();
         limits.execution_timeout = Duration::ZERO;
+        limits.system_timeout = Duration::ZERO;
         Arc::new(crate::limits::RuntimePolicy::new(limits))
     }
 

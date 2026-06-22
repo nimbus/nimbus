@@ -35,6 +35,7 @@ pub(crate) enum TargetContextKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TargetContextSource {
     ExplicitLocalFlag,
+    ImplicitLocalDefault,
     ExplicitTargetFlag,
     ExplicitUrlFlag,
     EnvironmentTarget,

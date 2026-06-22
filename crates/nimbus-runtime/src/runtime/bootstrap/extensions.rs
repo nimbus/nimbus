@@ -17,6 +17,58 @@ use super::node22_runtime::node22_runtime_bootstrap_extension;
 use super::ops::runtime_test_extension;
 use super::ops::{runtime_extension, service_extension};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NodeBootstrapExtensionSlot {
+    Telemetry,
+    WebIdl,
+    Web,
+    Crypto,
+    Fetch,
+    WebSocket,
+    Net,
+    Tls,
+    Napi,
+    Http,
+    Io,
+    Fs,
+    Os,
+    Process,
+    NodeCrypto,
+    NodeSqlite,
+    Node,
+    NodeRuntimeBootstrap,
+}
+
+const NODE_BOOTSTRAP_EXTENSION_SLOTS: &[NodeBootstrapExtensionSlot] = &[
+    NodeBootstrapExtensionSlot::Telemetry,
+    NodeBootstrapExtensionSlot::WebIdl,
+    NodeBootstrapExtensionSlot::Web,
+    NodeBootstrapExtensionSlot::Crypto,
+    NodeBootstrapExtensionSlot::Fetch,
+    NodeBootstrapExtensionSlot::WebSocket,
+    NodeBootstrapExtensionSlot::Net,
+    NodeBootstrapExtensionSlot::Tls,
+    NodeBootstrapExtensionSlot::Napi,
+    NodeBootstrapExtensionSlot::Http,
+    NodeBootstrapExtensionSlot::Io,
+    NodeBootstrapExtensionSlot::Fs,
+    NodeBootstrapExtensionSlot::Os,
+    NodeBootstrapExtensionSlot::Process,
+    NodeBootstrapExtensionSlot::NodeCrypto,
+    NodeBootstrapExtensionSlot::NodeSqlite,
+    NodeBootstrapExtensionSlot::Node,
+    NodeBootstrapExtensionSlot::NodeRuntimeBootstrap,
+];
+
+struct RuntimeBootstrapExtensionRegistry;
+
+struct NodeExecutionExtensionContext<'a> {
+    path_policy: &'a RuntimePathPolicy,
+    loader_hook_registry: Option<LoaderHookRegistry>,
+    limits: &'a RuntimeLimits,
+    fs: deno_fs::FileSystemRc,
+}
+
 fn install_rustls_default_provider_once() {
     static RUSTLS_PROVIDER: OnceLock<()> = OnceLock::new();
     RUSTLS_PROVIDER.get_or_init(|| {
@@ -26,39 +78,11 @@ fn install_rustls_default_provider_once() {
     });
 }
 
-pub(crate) fn snapshot_extensions(target: RuntimeCompatibilityTarget) -> Vec<Extension> {
-    let mut extensions = Vec::new();
-    if target.is_node() {
-        install_rustls_default_provider_once();
-        extensions.extend([
-            deno_telemetry::deno_telemetry::lazy_init(),
-            deno_webidl::deno_webidl::lazy_init(),
-            deno_web::deno_web::lazy_init(),
-            deno_crypto::deno_crypto::lazy_init(),
-            deno_fetch::deno_fetch::lazy_init(),
-            deno_websocket::deno_websocket::lazy_init(),
-            deno_net::deno_net::lazy_init(),
-            deno_tls::deno_tls::lazy_init(),
-            deno_napi::deno_napi::lazy_init(),
-            deno_http::deno_http::lazy_init(),
-            deno_io::deno_io::lazy_init(),
-            deno_fs::deno_fs::lazy_init(),
-            deno_os::deno_os::lazy_init(),
-            deno_process::deno_process::lazy_init(),
-            deno_node_crypto::deno_node_crypto::lazy_init(),
-            deno_node_sqlite::deno_node_sqlite::lazy_init(),
-            deno_node::deno_node::lazy_init::<
-                ScopedInNpmPackageChecker,
-                ScopedNodeModulesResolver,
-                RealSys,
-            >(),
-            node22_runtime_bootstrap_extension(),
-        ]);
-    }
-    extensions.push(runtime_extension());
-    #[cfg(test)]
-    extensions.push(runtime_test_extension());
-    extensions
+pub(crate) fn snapshot_extensions(
+    target: RuntimeCompatibilityTarget,
+    service_extension_enabled: bool,
+) -> Vec<Extension> {
+    RuntimeBootstrapExtensionRegistry::snapshot_extensions(target, service_extension_enabled)
 }
 
 pub(crate) fn execution_extensions(
@@ -67,52 +91,238 @@ pub(crate) fn execution_extensions(
     loader_hook_registry: Option<LoaderHookRegistry>,
     limits: &RuntimeLimits,
 ) -> Vec<Extension> {
-    let mut extensions = Vec::new();
-    if target.is_node() {
-        install_rustls_default_provider_once();
-        let fs: deno_fs::FileSystemRc = MaybeArc::new(deno_fs::RealFs);
-        extensions.extend([
-            deno_telemetry::deno_telemetry::init(),
-            deno_webidl::deno_webidl::init(),
-            deno_web::deno_web::init(
+    RuntimeBootstrapExtensionRegistry::execution_extensions(
+        target,
+        path_policy,
+        loader_hook_registry,
+        limits,
+    )
+}
+
+impl RuntimeBootstrapExtensionRegistry {
+    fn snapshot_extensions(
+        target: RuntimeCompatibilityTarget,
+        service_extension_enabled: bool,
+    ) -> Vec<Extension> {
+        let mut extensions = Vec::new();
+        if target.is_node() {
+            install_rustls_default_provider_once();
+            extensions.extend(
+                NODE_BOOTSTRAP_EXTENSION_SLOTS
+                    .iter()
+                    .copied()
+                    .map(NodeBootstrapExtensionSlot::snapshot_extension),
+            );
+        }
+        extensions.push(runtime_extension());
+        #[cfg(test)]
+        extensions.push(runtime_test_extension());
+        if service_extension_enabled {
+            extensions.push(service_extension());
+        }
+        extensions
+    }
+
+    fn execution_extensions(
+        target: RuntimeCompatibilityTarget,
+        path_policy: &RuntimePathPolicy,
+        loader_hook_registry: Option<LoaderHookRegistry>,
+        limits: &RuntimeLimits,
+    ) -> Vec<Extension> {
+        let mut extensions = Vec::new();
+        if target.is_node() {
+            install_rustls_default_provider_once();
+            let context = NodeExecutionExtensionContext {
+                path_policy,
+                loader_hook_registry,
+                limits,
+                fs: MaybeArc::new(deno_fs::RealFs),
+            };
+            extensions.extend(
+                NODE_BOOTSTRAP_EXTENSION_SLOTS
+                    .iter()
+                    .map(|slot| slot.execution_extension(&context)),
+            );
+        }
+        extensions.push(runtime_extension());
+        #[cfg(test)]
+        extensions.push(runtime_test_extension());
+        if limits.service_capability_enabled && limits.grants.has_service_grants() {
+            extensions.push(service_extension());
+        }
+        extensions
+    }
+
+    #[cfg(test)]
+    fn snapshot_extension_labels(target: RuntimeCompatibilityTarget) -> Vec<&'static str> {
+        let mut labels = Vec::new();
+        if target.is_node() {
+            labels.extend(
+                NODE_BOOTSTRAP_EXTENSION_SLOTS
+                    .iter()
+                    .copied()
+                    .map(NodeBootstrapExtensionSlot::label),
+            );
+        }
+        labels.push("nimbus_runtime");
+        labels.push("nimbus_runtime_test");
+        labels
+    }
+}
+
+impl NodeBootstrapExtensionSlot {
+    fn snapshot_extension(self) -> Extension {
+        match self {
+            Self::Telemetry => deno_telemetry::deno_telemetry::lazy_init(),
+            Self::WebIdl => deno_webidl::deno_webidl::lazy_init(),
+            Self::Web => deno_web::deno_web::lazy_init(),
+            Self::Crypto => deno_crypto::deno_crypto::lazy_init(),
+            Self::Fetch => deno_fetch::deno_fetch::lazy_init(),
+            Self::WebSocket => deno_websocket::deno_websocket::lazy_init(),
+            Self::Net => deno_net::deno_net::lazy_init(),
+            Self::Tls => deno_tls::deno_tls::lazy_init(),
+            Self::Napi => deno_napi::deno_napi::lazy_init(),
+            Self::Http => deno_http::deno_http::lazy_init(),
+            Self::Io => deno_io::deno_io::lazy_init(),
+            Self::Fs => deno_fs::deno_fs::lazy_init(),
+            Self::Os => deno_os::deno_os::lazy_init(),
+            Self::Process => deno_process::deno_process::lazy_init(),
+            Self::NodeCrypto => deno_node_crypto::deno_node_crypto::lazy_init(),
+            Self::NodeSqlite => deno_node_sqlite::deno_node_sqlite::lazy_init(),
+            Self::Node => deno_node::deno_node::lazy_init::<
+                ScopedInNpmPackageChecker,
+                ScopedNodeModulesResolver,
+                RealSys,
+            >(),
+            Self::NodeRuntimeBootstrap => node22_runtime_bootstrap_extension(),
+        }
+    }
+
+    fn execution_extension(self, context: &NodeExecutionExtensionContext<'_>) -> Extension {
+        match self {
+            Self::Telemetry => deno_telemetry::deno_telemetry::init(),
+            Self::WebIdl => deno_webidl::deno_webidl::init(),
+            Self::Web => deno_web::deno_web::init(
                 deno_web::BlobStore::default_arc(),
                 Default::default(),
                 false,
                 InMemoryBroadcastChannel::default(),
             ),
-            deno_crypto::deno_crypto::init(None),
-            deno_fetch::deno_fetch::init(Default::default()),
-            deno_websocket::deno_websocket::init(),
-            deno_net::deno_net::init(None, None),
-            deno_tls::deno_tls::init(),
-            deno_napi::deno_napi::init(None),
-            deno_http::deno_http::init(deno_http::Options::default()),
-            deno_io::deno_io::init(Some(Default::default())),
-            deno_fs::deno_fs::init(fs.clone()),
-            deno_os::deno_os::init(Some(deno_os::ExitCode::default())),
-            deno_process::deno_process::init(Default::default()),
-            deno_node_crypto::deno_node_crypto::init(),
-            deno_node_sqlite::deno_node_sqlite::init(),
-            deno_node::deno_node::init::<
+            Self::Crypto => deno_crypto::deno_crypto::init(None),
+            Self::Fetch => deno_fetch::deno_fetch::init(Default::default()),
+            Self::WebSocket => deno_websocket::deno_websocket::init(),
+            Self::Net => deno_net::deno_net::init(None, None),
+            Self::Tls => deno_tls::deno_tls::init(),
+            Self::Napi => deno_napi::deno_napi::init(None),
+            Self::Http => deno_http::deno_http::init(deno_http::Options::default()),
+            Self::Io => deno_io::deno_io::init(Some(Default::default())),
+            Self::Fs => deno_fs::deno_fs::init(context.fs.clone()),
+            Self::Os => deno_os::deno_os::init(Some(deno_os::ExitCode::default())),
+            Self::Process => deno_process::deno_process::init(Default::default()),
+            Self::NodeCrypto => deno_node_crypto::deno_node_crypto::init(),
+            Self::NodeSqlite => deno_node_sqlite::deno_node_sqlite::init(),
+            Self::Node => deno_node::deno_node::init::<
                 ScopedInNpmPackageChecker,
                 ScopedNodeModulesResolver,
                 RealSys,
             >(
                 Some(build_node_init_services(
-                    path_policy,
-                    loader_hook_registry,
-                    &limits.node_conditions,
+                    context.path_policy,
+                    context.loader_hook_registry.clone(),
+                    &context.limits.node_conditions,
                 )),
-                fs,
+                context.fs.clone(),
             ),
-            node22_runtime_bootstrap_extension(),
-        ]);
+            Self::NodeRuntimeBootstrap => node22_runtime_bootstrap_extension(),
+        }
     }
-    extensions.push(runtime_extension());
+
     #[cfg(test)]
-    extensions.push(runtime_test_extension());
-    if limits.service_capability_enabled && limits.grants.has_service_grants() {
-        extensions.push(service_extension());
+    fn label(self) -> &'static str {
+        match self {
+            Self::Telemetry => "telemetry",
+            Self::WebIdl => "webidl",
+            Self::Web => "web",
+            Self::Crypto => "crypto",
+            Self::Fetch => "fetch",
+            Self::WebSocket => "websocket",
+            Self::Net => "net",
+            Self::Tls => "tls",
+            Self::Napi => "napi",
+            Self::Http => "http",
+            Self::Io => "io",
+            Self::Fs => "fs",
+            Self::Os => "os",
+            Self::Process => "process",
+            Self::NodeCrypto => "node_crypto",
+            Self::NodeSqlite => "node_sqlite",
+            Self::Node => "node",
+            Self::NodeRuntimeBootstrap => "node_runtime_bootstrap",
+        }
     }
-    extensions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn node_extension_registry_is_single_ordered_source() {
+        let labels = NODE_BOOTSTRAP_EXTENSION_SLOTS
+            .iter()
+            .map(|slot| slot.label())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            labels,
+            vec![
+                "telemetry",
+                "webidl",
+                "web",
+                "crypto",
+                "fetch",
+                "websocket",
+                "net",
+                "tls",
+                "napi",
+                "http",
+                "io",
+                "fs",
+                "os",
+                "process",
+                "node_crypto",
+                "node_sqlite",
+                "node",
+                "node_runtime_bootstrap",
+            ]
+        );
+    }
+
+    #[test]
+    fn web_standard_snapshot_registry_is_lean_runtime_only() {
+        assert_eq!(
+            RuntimeBootstrapExtensionRegistry::snapshot_extension_labels(
+                RuntimeCompatibilityTarget::WebStandardIsolate
+            ),
+            vec!["nimbus_runtime", "nimbus_runtime_test"]
+        );
+    }
+
+    #[test]
+    fn node_snapshot_registry_extends_ordered_node_slots() {
+        let labels = RuntimeBootstrapExtensionRegistry::snapshot_extension_labels(
+            RuntimeCompatibilityTarget::Node22,
+        );
+        assert_eq!(
+            &labels[..NODE_BOOTSTRAP_EXTENSION_SLOTS.len()],
+            NODE_BOOTSTRAP_EXTENSION_SLOTS
+                .iter()
+                .map(|slot| slot.label())
+                .collect::<Vec<_>>()
+                .as_slice()
+        );
+        assert_eq!(
+            &labels[NODE_BOOTSTRAP_EXTENSION_SLOTS.len()..],
+            ["nimbus_runtime", "nimbus_runtime_test"]
+        );
+    }
 }

@@ -23,6 +23,8 @@ mod driver;
 mod facade;
 mod helpers;
 mod invocation;
+pub(crate) mod realm_lease;
+mod realm_lifecycle;
 
 #[cfg(test)]
 use self::bootstrap::RuntimeCancellationState;
@@ -83,6 +85,7 @@ mod tests {
     use super::*;
     use crate::test_support::{
         IsolatedRuntimeTestCase, acquire_runtime_suite_lock, acquire_snapshot_reset_test_lock,
+        cooperative_context_recycle_runtime_test_limits,
         cooperative_startup_snapshot_runtime_test_limits,
         cooperative_startup_snapshot_runtime_test_policy,
         cooperative_warm_pool_runtime_test_limits, cooperative_warm_pool_runtime_test_policy,

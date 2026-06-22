@@ -128,6 +128,44 @@ impl HostBridge for ControlledAsyncWorkerRuntimeIdHost {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct SyntheticAwaitHost {
+    delay: Duration,
+}
+
+impl SyntheticAwaitHost {
+    pub(super) fn new(delay: Duration) -> Self {
+        Self { delay }
+    }
+}
+
+impl HostBridge for SyntheticAwaitHost {
+    fn call(&self, request: HostCallRequest) -> Result<Value> {
+        Err(NimbusRuntimeError::Contract(format!(
+            "synthetic-await host expects async db.get path: {}",
+            request.operation
+        )))
+    }
+
+    fn call_async(
+        &self,
+        request: HostCallRequest,
+        _cancellation: HostCallCancellation,
+    ) -> HostBridgeFuture {
+        let delay = self.delay;
+        Box::pin(async move {
+            tokio::time::sleep(delay).await;
+            Ok(json!({
+                "status": "ok",
+                "value": {
+                    "operation": request.operation,
+                    "payload": request.payload,
+                },
+            }))
+        })
+    }
+}
+
 #[derive(Default)]
 pub(super) struct TenantFairnessHost {
     started_ids: StdMutex<Vec<String>>,
@@ -202,6 +240,165 @@ impl HostBridge for TenantFairnessHost {
             if document_id == "slow-1" {
                 slow_started.notify_waiters();
                 release_slow.notified().await;
+            }
+            Ok(json!({
+                "status": "ok",
+                "value": {
+                    "id": document_id,
+                },
+            }))
+        })
+    }
+}
+
+#[derive(Default)]
+pub(super) struct StepControlledAsyncGetHost {
+    state: Arc<StdMutex<StepControlledAsyncGetHostState>>,
+    started_notify: Arc<Notify>,
+}
+
+#[derive(Default)]
+struct StepControlledAsyncGetHostState {
+    started_ids: Vec<String>,
+    release_by_id: std::collections::HashMap<String, Arc<Notify>>,
+    released_ids: std::collections::HashSet<String>,
+    active_host_calls: usize,
+    max_active_host_calls: usize,
+}
+
+impl StepControlledAsyncGetHost {
+    pub(super) async fn wait_until_started(&self, document_id: &str) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let notified = self.started_notify.notified();
+                if self
+                    .started_ids()
+                    .iter()
+                    .any(|started| started == document_id)
+                {
+                    return;
+                }
+                notified.await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("host request {document_id} should start"));
+    }
+
+    pub(super) async fn assert_not_started_within(&self, document_id: &str, duration: Duration) {
+        let deadline = tokio::time::Instant::now() + duration;
+        loop {
+            assert!(
+                !self
+                    .started_ids()
+                    .iter()
+                    .any(|started| started == document_id),
+                "host request {document_id} should remain queued"
+            );
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return;
+            }
+            let notified = self.started_notify.notified();
+            if tokio::time::timeout(deadline.saturating_duration_since(now), notified)
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+    }
+
+    pub(super) fn release(&self, document_id: &str) {
+        let notify = {
+            let mut state = self
+                .state
+                .lock()
+                .expect("step-controlled async host lock should not be poisoned");
+            state.released_ids.insert(document_id.to_string());
+            state.release_by_id.get(document_id).cloned()
+        };
+        if let Some(notify) = notify {
+            notify.notify_waiters();
+        }
+    }
+
+    pub(super) fn max_active_host_calls(&self) -> usize {
+        self.state
+            .lock()
+            .expect("step-controlled async host lock should not be poisoned")
+            .max_active_host_calls
+    }
+
+    fn started_ids(&self) -> Vec<String> {
+        self.state
+            .lock()
+            .expect("step-controlled async host lock should not be poisoned")
+            .started_ids
+            .clone()
+    }
+}
+
+struct StepControlledActiveHostCall {
+    state: Arc<StdMutex<StepControlledAsyncGetHostState>>,
+}
+
+impl Drop for StepControlledActiveHostCall {
+    fn drop(&mut self) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("step-controlled async host lock should not be poisoned");
+        state.active_host_calls = state.active_host_calls.saturating_sub(1);
+    }
+}
+
+impl HostBridge for StepControlledAsyncGetHost {
+    fn call(&self, _request: HostCallRequest) -> Result<Value> {
+        Err(NimbusRuntimeError::Contract(
+            "step-controlled async host expects async db.get path".to_string(),
+        ))
+    }
+
+    fn call_async(
+        &self,
+        request: HostCallRequest,
+        _cancellation: HostCallCancellation,
+    ) -> HostBridgeFuture {
+        let document_id = request
+            .payload
+            .get("id")
+            .and_then(Value::as_str)
+            .expect("db.get payload should carry an id")
+            .to_string();
+        let state = self.state.clone();
+        let release = {
+            let mut state = self
+                .state
+                .lock()
+                .expect("step-controlled async host lock should not be poisoned");
+            state.started_ids.push(document_id.clone());
+            state.active_host_calls += 1;
+            state.max_active_host_calls = state.max_active_host_calls.max(state.active_host_calls);
+            if state.released_ids.contains(&document_id) {
+                None
+            } else {
+                Some(
+                    state
+                        .release_by_id
+                        .entry(document_id.clone())
+                        .or_insert_with(|| Arc::new(Notify::new()))
+                        .clone(),
+                )
+            }
+        };
+        self.started_notify.notify_waiters();
+        Box::pin(async move {
+            let _active = StepControlledActiveHostCall {
+                state: state.clone(),
+            };
+            if let Some(release) = release {
+                release.notified().await;
             }
             Ok(json!({
                 "status": "ok",
@@ -308,6 +505,51 @@ impl HostBridge for ControlledAsyncGetHost {
                 && !release_slow_flag.load(std::sync::atomic::Ordering::SeqCst)
             {
                 release_slow.notified().await;
+            }
+            Ok(json!({
+                "status": "ok",
+                "value": {
+                    "id": document_id,
+                },
+            }))
+        })
+    }
+}
+
+pub(super) struct RejectingAsyncGetHost {
+    reject_document_id: &'static str,
+}
+
+impl RejectingAsyncGetHost {
+    pub(super) fn new(reject_document_id: &'static str) -> Self {
+        Self { reject_document_id }
+    }
+}
+
+impl HostBridge for RejectingAsyncGetHost {
+    fn call(&self, _request: HostCallRequest) -> Result<Value> {
+        Err(NimbusRuntimeError::Contract(
+            "rejecting async host expects async db.get path".to_string(),
+        ))
+    }
+
+    fn call_async(
+        &self,
+        request: HostCallRequest,
+        _cancellation: HostCallCancellation,
+    ) -> HostBridgeFuture {
+        let document_id = request
+            .payload
+            .get("id")
+            .and_then(Value::as_str)
+            .expect("db.get payload should carry an id")
+            .to_string();
+        let reject_document_id = self.reject_document_id;
+        Box::pin(async move {
+            if document_id == reject_document_id {
+                return Err(NimbusRuntimeError::Contract(format!(
+                    "background document get rejected for {document_id}"
+                )));
             }
             Ok(json!({
                 "status": "ok",
@@ -450,6 +692,51 @@ pub(super) fn write_constant_bundle() -> (tempfile::TempDir, std::path::PathBuf)
         r#"
 globalThis.__nimbusInvoke = async function () {
   return "ok";
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+    (bundle_dir, bundle_path)
+}
+
+pub(super) fn write_wait_until_bundle() -> (tempfile::TempDir, std::path::PathBuf) {
+    let bundle_dir = tempdir().expect("tempdir should build");
+    let bundle_path = bundle_dir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function (request) {
+  const ctx = globalThis.__nimbusCreateContext({
+    request,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
+  });
+  await ctx.db.get("messages", "response");
+  globalThis.__nimbusWaitUntil(ctx.db.get("messages", "slow-background"));
+  return { responseReady: true };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+    (bundle_dir, bundle_path)
+}
+
+pub(super) fn write_rejected_wait_until_bundle() -> (tempfile::TempDir, std::path::PathBuf) {
+    let bundle_dir = tempdir().expect("tempdir should build");
+    let bundle_path = bundle_dir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function (request) {
+  const ctx = globalThis.__nimbusCreateContext({
+    request,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
+  });
+  globalThis.__nimbusWaitUntil(ctx.db.get("messages", "reject-background"));
+  return { responseReady: true };
 };
 
 export {};

@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeMode {
     Restricted,
@@ -8,13 +8,13 @@ pub enum RuntimeMode {
     Privileged,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeLanguage {
     JavaScript,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimePreset {
     Application,
@@ -57,6 +57,17 @@ impl RuntimeGrants {
 
     pub(crate) fn has_service_grants(&self) -> bool {
         !self.service.is_empty()
+    }
+
+    pub(crate) fn permits_same_process_realm_reuse(&self) -> bool {
+        self.service.is_empty()
+            && self.net_connect.is_empty()
+            && self.net_listen.is_empty()
+            && self.run.is_empty()
+            && self.ffi.is_empty()
+            && self.worker.is_empty()
+            && self.tool.is_empty()
+            && !self.sys.iter().any(|grant| grant == "inspector")
     }
 
     fn application_base() -> Self {

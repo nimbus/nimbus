@@ -27,6 +27,7 @@ where
     Fut: Future<Output = Result<Value>>,
 {
     let metrics = policy.metrics();
+    let runtime_profile = policy.runtime_profile();
     let execution_started_at = Instant::now();
     let result = async {
         permit.acquire_initial(queue_started_at).await?;
@@ -58,7 +59,9 @@ where
     }
     .await
     .inspect_err(|error| match error {
-        NimbusRuntimeError::ExecutionTimeout(_) => metrics.record_timeout(),
+        NimbusRuntimeError::ExecutionTimeout(_) | NimbusRuntimeError::SystemTimeout(_) => {
+            metrics.record_timeout()
+        }
         NimbusRuntimeError::Cancelled => metrics.record_in_flight_canceled_invocation_for_tenant(
             context.tenant_label.as_deref(),
             cancellation_for_metrics
@@ -70,6 +73,7 @@ where
     .inspect(|_| {
         let execution = execution_started_at.elapsed();
         metrics.record_execution_for_tenant(context.tenant_label.as_deref(), execution);
+        metrics.record_profile_execution(runtime_profile, execution);
         match worker_id {
             Some(worker_id) => {
                 debug!(
@@ -101,6 +105,7 @@ where
     .inspect_err(|_| {
         let execution = execution_started_at.elapsed();
         metrics.record_execution_for_tenant(context.tenant_label.as_deref(), execution);
+        metrics.record_profile_execution(runtime_profile, execution);
     });
     let ready_jobs = permit.finish_invocation().await;
     (result, ready_jobs)

@@ -20,6 +20,11 @@ use crate::node_workload_executor::admit_workload_spec;
 use super::state::container_state_error_to_http_error;
 use super::{MachineApiHttpError, sandbox_error_to_http_error};
 
+const SERVICE_WORKLOAD_DEFAULT_CPU_WEIGHT: u64 = 100;
+const SERVICE_WORKLOAD_CPU_WEIGHT_PER_VCPU: u64 = 100;
+const SERVICE_WORKLOAD_MAX_CPU_WEIGHT: u64 = 10_000;
+const SERVICE_WORKLOAD_DEFAULT_TASKS_MAX: u64 = 512;
+
 pub(super) type MachineApiServiceFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, MachineApiHttpError>> + Send + 'a>>;
 
@@ -343,9 +348,30 @@ fn service_container_runner_request(
     if let Some(memory_limit_bytes) = resources.memory_limit_bytes {
         runner = runner.with_memory_max_bytes(memory_limit_bytes);
     }
+    runner = runner
+        .with_cpu_weight(service_workload_cpu_weight(resources)?)
+        .with_tasks_max(SERVICE_WORKLOAD_DEFAULT_TASKS_MAX);
     runner
         .into_host_lifecycle_request(HostLifecycleBackendKind::SystemdTransientUnit)
         .map_err(core_error_to_http)
+}
+
+fn service_workload_cpu_weight(
+    resources: &nimbus::SandboxResourceLimits,
+) -> Result<u64, MachineApiHttpError> {
+    let Some(cpu_count) = resources.cpu_count else {
+        return Ok(SERVICE_WORKLOAD_DEFAULT_CPU_WEIGHT);
+    };
+    if cpu_count == 0 {
+        return Err(MachineApiHttpError {
+            status: StatusCode::BAD_REQUEST,
+            message: "service workload cpu_count must be greater than zero".to_owned(),
+        });
+    }
+    Ok(
+        (u64::from(cpu_count) * SERVICE_WORKLOAD_CPU_WEIGHT_PER_VCPU)
+            .min(SERVICE_WORKLOAD_MAX_CPU_WEIGHT),
+    )
 }
 
 fn bundle_dir_from_manifest_path(manifest_path: &Path) -> Result<PathBuf, MachineApiHttpError> {
@@ -616,6 +642,7 @@ mod tests {
             SandboxRootSpec::rootfs("/tmp/rootfs"),
             SandboxProcessSpec::new(["/bin/server"]),
         )
+        .with_cpu_count(2)
         .with_memory_limit_bytes(64 * 1024 * 1024);
 
         let handle = service.start(spec).await.expect("start should reconcile");
@@ -660,6 +687,12 @@ mod tests {
                 property,
                 HostLifecycleProperty::MemoryMaxBytes(bytes) if *bytes == 64 * 1024 * 1024
             )
+        }));
+        assert!(plan.properties().properties().iter().any(|property| {
+            matches!(property, HostLifecycleProperty::CpuWeight(weight) if *weight == 200)
+        }));
+        assert!(plan.properties().properties().iter().any(|property| {
+            matches!(property, HostLifecycleProperty::TasksMax(max) if *max == 512)
         }));
     }
 
@@ -723,5 +756,19 @@ mod tests {
 
         assert_eq!(error.status, StatusCode::BAD_REQUEST);
         assert!(error.message.contains("absolute path"));
+    }
+
+    #[test]
+    fn service_container_runner_request_rejects_zero_cpu_count() {
+        let resources = nimbus::SandboxResourceLimits::default().with_cpu_count(0);
+        let error = service_container_runner_request(Path::new("/run/nimbus/bundle"), &resources)
+            .expect_err("zero cpu count must be rejected before systemd rendering");
+
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert!(
+            error
+                .message
+                .contains("cpu_count must be greater than zero")
+        );
     }
 }

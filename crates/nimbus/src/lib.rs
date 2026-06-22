@@ -22,11 +22,21 @@ pub use nimbus_engine::{
 };
 // Runtime execution contract and limits.
 pub use nimbus_runtime::{
-    HostBridge, HostBridgeFuture, HostCallRequest, InvocationKind, InvocationRequest,
-    NimbusRuntime, NimbusRuntimeError, RuntimeBackendKind, RuntimeBackendLifecyclePolicy,
-    RuntimeBackendLockdownProfile, RuntimeBackendTrustTier, RuntimeBundle, RuntimeExecutionModel,
-    RuntimeExecutor, RuntimeInvocationContext, RuntimeLimits, RuntimePolicy, RuntimePoolKind,
-    VerifiedUserIdentity, VerifiedUserIdentityKind,
+    EffectiveRuntimeScalingPlan, HostBridge, HostBridgeFuture, HostCallRequest, InvocationKind,
+    InvocationRequest, NimbusRuntime, NimbusRuntimeError, RequestedRuntimeScalingTarget,
+    RuntimeAdaptiveCanaryPolicy, RuntimeAdaptiveControllerMode, RuntimeAdaptiveControllerSettings,
+    RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
+    RuntimeBackendTrustTier, RuntimeBundle, RuntimeControllerReplayConfig, RuntimeDensityBudget,
+    RuntimeDensityMeasurement, RuntimeDensityMeasurementMethod, RuntimeDensityPlan,
+    RuntimeExecutionModel, RuntimeExecutor, RuntimeHostAdmissionAction,
+    RuntimeHostAdmissionDecision, RuntimeHostPressureLevel, RuntimeHostPressureSample,
+    RuntimeHostPressureSourceStatus, RuntimeHostResourceBudget, RuntimeHostResourceDecision,
+    RuntimeHostWorkClass, RuntimeInvocationContext, RuntimeIsolateGroupFfiStatus, RuntimeLimits,
+    RuntimeMemoryPressureDecision, RuntimeMemoryPressureLevel, RuntimeMemoryPressureSample,
+    RuntimeMemoryPressureSourceStatus, RuntimePolicy, RuntimePoolKind,
+    RuntimePrewarmScheduleDecision, RuntimeProfile, RuntimeScalingAdjustmentReason,
+    RuntimeScalingLimit, RuntimeScalingPreset, RuntimeScalingTarget, VerifiedUserIdentity,
+    VerifiedUserIdentityKind,
 };
 // Sandbox orchestration surface.
 pub use nimbus_sandbox::{

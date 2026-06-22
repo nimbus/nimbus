@@ -1701,11 +1701,14 @@ async fn invoke_node_compat_fixture_with_async_main_module(
     let permit =
         crate::executor::SharedInvocationPermit::new(runtime.policy(), None, None, true, None);
     let watchdog = crate::watchdog::WatchdogTimer::new();
+    let context = crate::context::RuntimeInvocationContext::top_level(request);
     let mut driver = runtime.prepare_runtime_invocation_driver(
         reusable_runtime,
         watchdog,
         None,
         permit,
+        &context,
+        None,
         false,
     )?;
 
@@ -1715,7 +1718,7 @@ async fn invoke_node_compat_fixture_with_async_main_module(
                 &mut driver.runtime,
                 harness_bundle,
                 driver.construction_mode,
-                None,
+                Some(&context),
                 Some(request),
             )
             .await?;

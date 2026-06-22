@@ -10,7 +10,8 @@ use super::{
     DEFAULT_REDACTED_FIELDS, OPERATOR_POLICY_SCHEMA_VERSION, OperatorAuditPolicy,
     OperatorImagePolicy, OperatorImageProvenancePolicy, OperatorImageSignaturePolicy,
     OperatorNetworkEndpointPolicy, OperatorNetworkPolicy, OperatorPolicyDocument,
-    OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorSandboxPolicy, OperatorSecretPolicy,
+    OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorRuntimeScalingLimits,
+    OperatorRuntimeScalingQuota, OperatorSandboxPolicy, OperatorSecretPolicy,
     OperatorServicePolicy, OperatorStoragePolicy, OperatorVolumePolicy,
 };
 use crate::{TenantIsolationMode, WorkloadKind};
@@ -39,6 +40,7 @@ impl OperatorPolicyDocument {
             "defaults.storage_namespace",
         )?;
         validate_redactions(&self.defaults.audit_redactions, "defaults.audit_redactions")?;
+        self.defaults.runtime_scaling_limits.validate()?;
 
         let mut seen = BTreeSet::new();
         for workload in &self.workloads {
@@ -257,6 +259,36 @@ impl OperatorQuotaPolicy {
         {
             return invalid_policy(format!(
                 "workload `{workload_key}` sandbox_charge must set non-zero active_sandboxes, vcpus, memory_bytes, and disk_bytes"
+            ));
+        }
+        self.runtime_scaling.validate(workload_key)?;
+        Ok(())
+    }
+}
+
+impl OperatorRuntimeScalingLimits {
+    fn validate(&self) -> Result<()> {
+        if self.max_min_warm_total > self.max_total_warm {
+            return invalid_policy(
+                "defaults.runtime_scaling_limits.max_min_warm_total must be <= max_total_warm",
+            );
+        }
+        if self.max_warm_per_function > self.max_total_warm {
+            return invalid_policy(
+                "defaults.runtime_scaling_limits.max_warm_per_function must be <= max_total_warm",
+            );
+        }
+        Ok(())
+    }
+}
+
+impl OperatorRuntimeScalingQuota {
+    fn validate(&self, workload_key: &str) -> Result<()> {
+        if let (Some(max_min_warm), Some(max_warm)) = (self.max_min_warm, self.max_warm)
+            && max_min_warm > max_warm
+        {
+            return invalid_policy(format!(
+                "workload `{workload_key}` quotas.runtime_scaling.max_min_warm must be <= max_warm"
             ));
         }
         Ok(())

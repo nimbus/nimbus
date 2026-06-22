@@ -2,6 +2,104 @@ use deno_core::JsRuntime;
 
 use super::*;
 use crate::backends::v8::{ReusableV8Runtime, V8RuntimeConstructionMode, V8WorkerRuntimePool};
+use crate::limits::{RuntimeCompatibilityTarget, RuntimeLimits};
+
+#[test]
+fn node_major_startup_snapshots_share_node_full_cell() {
+    let _test_lock = acquire_snapshot_reset_test_lock();
+    let before = crate::backends::v8::v8_bootstrap_snapshot_build_count_for_test();
+    let mut first_snapshot = None;
+
+    for target in [
+        RuntimeCompatibilityTarget::Node20,
+        RuntimeCompatibilityTarget::Node22,
+        RuntimeCompatibilityTarget::Node24,
+        RuntimeCompatibilityTarget::Node26,
+    ] {
+        let runtime_owner = NimbusRuntime::with_policy(
+            Arc::new(AsyncEchoHost),
+            Arc::new(RuntimePolicy::new(RuntimeLimits::application_node(target))),
+        );
+        let snapshot = runtime_owner
+            .bootstrap_snapshot()
+            .expect("NodeFull bootstrap snapshot should build");
+        if let Some(first_snapshot) = first_snapshot {
+            assert!(
+                std::ptr::eq(first_snapshot, snapshot),
+                "{target:?} should reuse the same NodeFull startup snapshot"
+            );
+        } else {
+            first_snapshot = Some(snapshot);
+        }
+    }
+
+    let after = crate::backends::v8::v8_bootstrap_snapshot_build_count_for_test();
+    assert!(
+        after.saturating_sub(before) <= 1,
+        "Node20/22/24/26 should build at most one shared NodeFull startup snapshot"
+    );
+}
+
+#[tokio::test]
+async fn node_full_shared_snapshot_keeps_exact_node_target_metadata() {
+    let _test_lock = acquire_snapshot_reset_test_lock();
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = function () {
+  return {
+    processVersion: globalThis.process?.version,
+    versionsNode: globalThis.process?.versions?.node,
+    releaseName: globalThis.process?.release?.name,
+    globalMajor: globalThis.__nimbusNodeRuntimeMajor,
+    processMajor: globalThis.process?.__nimbusNodeRuntimeMajor,
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+    let bundle = RuntimeBundle::new(&bundle_path);
+
+    for target in [
+        RuntimeCompatibilityTarget::Node20,
+        RuntimeCompatibilityTarget::Node22,
+        RuntimeCompatibilityTarget::Node24,
+        RuntimeCompatibilityTarget::Node26,
+    ] {
+        let runtime_owner = NimbusRuntime::with_policy(
+            Arc::new(AsyncEchoHost),
+            Arc::new(RuntimePolicy::new(RuntimeLimits::application_node(target))),
+        );
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:nodeMetadata".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: Default::default(),
+        };
+        let result = runtime_owner
+            .invoke_bundle(&bundle, &request)
+            .await
+            .unwrap_or_else(|error| panic!("{target:?} metadata invocation should pass: {error}"));
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "processVersion": target.node_runtime_version().expect("node target version"),
+                "versionsNode": target.node_runtime_version_number().expect("node version number"),
+                "releaseName": target.node_release_name().expect("node release name"),
+                "globalMajor": target.node_major_version().expect("node major version"),
+                "processMajor": target.node_major_version().expect("node major version"),
+            }),
+            "{target:?} should keep exact Node metadata over the shared NodeFull snapshot"
+        );
+    }
+}
 
 #[tokio::test]
 async fn snapshot_seeded_runtime_driver_cycles_survive_repeated_async_host_invocations() {
@@ -81,6 +179,8 @@ export {};
                 watchdog.clone(),
                 None,
                 permit.clone(),
+                &context,
+                None,
                 false,
             )
             .expect("driver preparation should succeed for snapshot-seeded runtime");
@@ -203,6 +303,8 @@ export {};
                 watchdog.clone(),
                 None,
                 permit.clone(),
+                &context,
+                None,
                 false,
             )
             .expect("driver preparation should succeed for snapshot-seeded runtime");
@@ -328,6 +430,8 @@ export {};
                         watchdog.clone(),
                         None,
                         permit.clone(),
+                        &context,
+                        None,
                         false,
                     )
                     .expect(
@@ -416,25 +520,26 @@ export {};
         runtime_owner: &NimbusRuntime,
         runtime: &mut JsRuntime,
     ) -> Value {
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:get".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: Default::default(),
+        };
+        let context = RuntimeInvocationContext::top_level(&request);
         bootstrap::reset_runtime_invocation_state(
             runtime,
             SharedInvocationPermit::new(runtime_owner.policy(), None, None, true, None),
+            Some(&context),
+            None,
         );
         bootstrap::reset_bootstrap_invocation_state(runtime)
             .expect("bootstrap invocation reset should succeed");
         runtime_owner
-            .invoke_loaded_bundle(
-                runtime,
-                &InvocationRequest {
-                    kind: InvocationKind::Query,
-                    function_name: "messages:get".to_string(),
-                    args: Value::Null,
-                    page_size: None,
-                    cursor: None,
-                    auth: None,
-                    services: Default::default(),
-                },
-            )
+            .invoke_loaded_bundle(runtime, &request)
             .await
             .expect("invocation should succeed")
     }

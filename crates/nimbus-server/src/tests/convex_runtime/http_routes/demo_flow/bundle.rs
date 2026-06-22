@@ -274,7 +274,6 @@ async function executeResolvedQueryPlan(ctx, plan) {
   }
   return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_query", {
     query: plan,
-    host_call_session_id: "convex-runtime-query-plan",
   });
 }
 
@@ -321,7 +320,6 @@ async function executeResolvedMutationPlan(ctx, plan) {
   }
   return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_mutation", {
     mutation: plan,
-    host_call_session_id: "convex-runtime-mutation-plan",
   });
 }
 

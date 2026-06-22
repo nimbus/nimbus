@@ -4,5 +4,6 @@ use crate::RuntimeLimits;
 mod node_bootstrap;
 mod node_capabilities;
 mod package_resolution;
+mod side_channel;
 mod support;
 mod web_standard;

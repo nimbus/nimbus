@@ -7,6 +7,8 @@ use nimbus::{
 };
 use serde::Deserialize;
 
+use crate::function_scaling::NimbusFunctionsFileConfig;
+
 use super::StartCommand;
 
 const DEFAULT_DATA_DIR: &str = "./data";
@@ -94,6 +96,7 @@ impl CliKeyProvider {
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct RuntimeConfigFile {
     pub(crate) persistence: PersistenceFileConfig,
+    pub(crate) functions: NimbusFunctionsFileConfig,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -790,13 +793,17 @@ impl ResolvedPersistenceInputs {
 pub(crate) fn persistence_config_from_start_command(
     command: &StartCommand,
 ) -> nimbus::Result<EnginePersistenceConfig> {
-    let config_path = command
-        .config
-        .clone()
-        .or_else(|| std::env::var_os(CONFIG_FILE_ENV).map(PathBuf::from));
+    let config_path = runtime_config_path(command);
     let file_config = load_runtime_config_file(config_path.as_deref())?;
     let env = PersistenceEnv::load()?;
     persistence_config_from_sources(command, &file_config.persistence, &env)
+}
+
+pub(crate) fn runtime_config_from_start_command(
+    command: &StartCommand,
+) -> nimbus::Result<RuntimeConfigFile> {
+    let config_path = runtime_config_path(command);
+    load_runtime_config_file(config_path.as_deref())
 }
 
 pub(crate) fn persistence_config_from_sources(
@@ -823,12 +830,31 @@ pub(crate) fn load_runtime_config_file(path: Option<&Path>) -> nimbus::Result<Ru
             path.display()
         ))
     })?;
-    serde_json::from_slice(&bytes).map_err(|error| {
+    serde_yaml::from_slice(&bytes).map_err(|error| {
         Error::InvalidInput(format!(
-            "failed to parse config file {} as JSON: {error}",
+            "failed to parse config file {} as YAML/JSON: {error}",
             path.display()
         ))
     })
+}
+
+fn runtime_config_path(command: &StartCommand) -> Option<PathBuf> {
+    command
+        .config
+        .clone()
+        .or_else(|| std::env::var_os(CONFIG_FILE_ENV).map(PathBuf::from))
+        .or_else(discover_default_runtime_config_path)
+}
+
+fn discover_default_runtime_config_path() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    for name in ["nimbus.yaml", "nimbus.yml"] {
+        let candidate = cwd.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn optional_env_tenant_provider(key: &str) -> nimbus::Result<Option<CliTenantProvider>> {

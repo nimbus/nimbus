@@ -184,6 +184,52 @@ jobs:
         # CLAUDE.md) so this lane intentionally has no Node/UI prerequisites.
         run: make test-rust-runtime
 
+  rust-runtime-ptrcomp-check:
+    name: Rust Runtime Ptrcomp Check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    if: github.event_name != 'schedule'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: ci-ubuntu-stable-runtime-ptrcomp-no-bin-v1
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Check supported pointer-compression runtime path
+        run: |
+          env -u V8_FROM_SOURCE cargo check -p nimbus-runtime --lib --features v8-pointer-compression
+          cargo tree -p nimbus-runtime --features v8-pointer-compression -e features -i v8 > /tmp/runtime-ptrcomp-tree.txt
+          grep -F 'v8 feature "v8_enable_pointer_compression"' /tmp/runtime-ptrcomp-tree.txt
+          grep -F 'v8 feature "simdutf"' /tmp/runtime-ptrcomp-tree.txt
+
+  profile-aware-runtime-crossover:
+    name: Profile-Aware Runtime Crossover
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: ci-ubuntu-stable-profile-aware-runtime-crossover-no-bin-v1
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Run PIR0/PIR2 crossover smoke benches
+        env:
+          NIMBUS_PIR_CROSSOVER_SAMPLE_SIZE: "10"
+          NIMBUS_PIR_CROSSOVER_MEASUREMENT_TIME: "1"
+          NIMBUS_PIR_CROSSOVER_WARM_UP_TIME: "1"
+        run: make verify-profile-aware-runtime-crossover
+
   bun-runtime-contract:
     name: Bun/JSC Runtime Contract
     runs-on: ubuntu-24.04
@@ -653,6 +699,7 @@ jobs:
       - rust-clippy
       - deny
       - rust-runtime-tests
+      - rust-runtime-ptrcomp-check
       - bun-runtime-contract
       - rust-workspace-tests
       - external-provider-tests
@@ -666,6 +713,7 @@ jobs:
           CLIPPY_RESULT: ${{ needs['rust-clippy'].result }}
           DEPENDENCY_AUDIT_RESULT: ${{ needs['deny'].result }}
           RUNTIME_TEST_RESULT: ${{ needs['rust-runtime-tests'].result }}
+          RUNTIME_PTRCOMP_RESULT: ${{ needs['rust-runtime-ptrcomp-check'].result }}
           BUN_RUNTIME_CONTRACT_RESULT: ${{ needs['bun-runtime-contract'].result }}
           WORKSPACE_TEST_RESULT: ${{ needs['rust-workspace-tests'].result }}
           EXTERNAL_PROVIDER_TEST_RESULT: ${{ needs['external-provider-tests'].result }}
@@ -676,6 +724,7 @@ jobs:
           printf 'clippy=%s\n' "${CLIPPY_RESULT}"
           printf 'dependency-audit=%s\n' "${DEPENDENCY_AUDIT_RESULT}"
           printf 'runtime-test=%s\n' "${RUNTIME_TEST_RESULT}"
+          printf 'runtime-ptrcomp=%s\n' "${RUNTIME_PTRCOMP_RESULT}"
           printf 'bun-runtime-contract=%s\n' "${BUN_RUNTIME_CONTRACT_RESULT}"
           printf 'workspace-test=%s\n' "${WORKSPACE_TEST_RESULT}"
           printf 'external-provider-test=%s\n' "${EXTERNAL_PROVIDER_TEST_RESULT}"
@@ -699,6 +748,7 @@ jobs:
             echo "| rust-clippy | $(icon "${CLIPPY_RESULT}") ${CLIPPY_RESULT} |"
             echo "| deny | $(icon "${DEPENDENCY_AUDIT_RESULT}") ${DEPENDENCY_AUDIT_RESULT} |"
             echo "| rust-runtime-tests | $(icon "${RUNTIME_TEST_RESULT}") ${RUNTIME_TEST_RESULT} |"
+            echo "| rust-runtime-ptrcomp-check | $(icon "${RUNTIME_PTRCOMP_RESULT}") ${RUNTIME_PTRCOMP_RESULT} |"
             echo "| bun-runtime-contract | $(icon "${BUN_RUNTIME_CONTRACT_RESULT}") ${BUN_RUNTIME_CONTRACT_RESULT} |"
             echo "| rust-workspace-tests | $(icon "${WORKSPACE_TEST_RESULT}") ${WORKSPACE_TEST_RESULT} |"
             echo "| external-provider-tests | $(icon "${EXTERNAL_PROVIDER_TEST_RESULT}") ${EXTERNAL_PROVIDER_TEST_RESULT} |"
@@ -709,6 +759,7 @@ jobs:
           test "${CLIPPY_RESULT}" = success
           test "${DEPENDENCY_AUDIT_RESULT}" = success
           test "${RUNTIME_TEST_RESULT}" = success
+          test "${RUNTIME_PTRCOMP_RESULT}" = success
           test "${BUN_RUNTIME_CONTRACT_RESULT}" = success
           test "${WORKSPACE_TEST_RESULT}" = success
           test "${EXTERNAL_PROVIDER_TEST_RESULT}" = success
@@ -1007,6 +1058,9 @@ jobs:
           bash -n scripts/verify-bun-jsc-adapter-package-helper.sh
           bash -n scripts/verify-bun-jsc-release-assets.sh
           bash -n scripts/verify-bun-jsc-release-assets-helper.sh
+          bash -n scripts/verify-node-full-substrate-realm.sh
+          bash -n scripts/verify-runtime-execution-classification.sh
+          bash -n scripts/verify-profile-aware-isolate-runtime-crossover.sh
           bash -n scripts/verify-node-release-train.sh
           bash -n scripts/verify-node-ci-nightly-lanes.sh
           bash -n scripts/build-linux-release-packages.sh

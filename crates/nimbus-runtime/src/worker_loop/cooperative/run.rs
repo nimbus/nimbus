@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::error::NimbusRuntimeError;
-use crate::executor::{RuntimeWorkerQueue, RuntimeWorkerShutdown};
+use crate::executor::{RuntimeWorkerJob, RuntimeWorkerQueue, RuntimeWorkerShutdown};
 use crate::runtime::CooperativeRuntimeSlotPoll;
 
 use super::{CooperativeInvocation, CooperativeRunnableSlot, CooperativeWorkerLoop, WorkerLoop};
@@ -56,6 +56,21 @@ impl CooperativeWorkerLoop {
         }
     }
 
+    fn drain_pending_admissions(&mut self, queue: &Arc<dyn RuntimeWorkerQueue>) {
+        for job in self.pending_admissions.drain(..) {
+            queue.complete_job(job, Err(NimbusRuntimeError::Cancelled), Vec::new());
+        }
+    }
+
+    fn next_admission_job(
+        &mut self,
+        queue: &Arc<dyn RuntimeWorkerQueue>,
+    ) -> Option<RuntimeWorkerJob> {
+        self.pending_admissions
+            .pop_front()
+            .or_else(|| queue.try_recv())
+    }
+
     pub(super) fn next_slot(
         &mut self,
         queue: &Arc<dyn RuntimeWorkerQueue>,
@@ -68,14 +83,29 @@ impl CooperativeWorkerLoop {
                 return Some(slot);
             }
 
-            // Admit at most one job per iteration. Each admission calls
-            // block_on(acquire_initial()) which acquires the global isolate
-            // semaphore. Admitting a second job before the first has been
-            // polled (and released its semaphore via completion or parking)
-            // would deadlock the single-threaded worker runtime.
-            if let Some(job) = queue.try_recv() {
-                self.admit_job(queue, job);
-                continue;
+            // Admit at most one job per iteration. A parked slot can reacquire
+            // the runtime semaphore between the ready drain above and a fresh
+            // queue admission. While parked work exists, avoid blocking this
+            // single worker on a new admission; defer the job locally so the
+            // slot holding capacity can be polled.
+            if let Some(job) = self.next_admission_job(queue) {
+                if !job.execution_plan.permits_cooperative_scheduler_admission()
+                    && !self.scheduler.is_idle()
+                {
+                    self.pending_admissions.push_front(job);
+                } else {
+                    let deferred = if self.scheduler.has_parked() {
+                        self.try_admit_job(queue, job)
+                    } else {
+                        self.admit_job(queue, job);
+                        None
+                    };
+                    if let Some(job) = deferred {
+                        self.pending_admissions.push_front(job);
+                    } else {
+                        continue;
+                    }
+                }
             }
 
             if shutdown.is_cancelled() {
@@ -117,6 +147,12 @@ impl WorkerLoop for CooperativeWorkerLoop {
             let mut invocation = slot.payload;
             match self.worker_runtime.block_on(invocation.slot.poll_once()) {
                 Ok(CooperativeRuntimeSlotPoll::Runnable) => {
+                    self.scheduler.requeue_runnable(CooperativeRunnableSlot {
+                        slot_id,
+                        payload: invocation,
+                    });
+                }
+                Ok(CooperativeRuntimeSlotPoll::ResponseReady) => {
                     self.scheduler.requeue_runnable(CooperativeRunnableSlot {
                         slot_id,
                         payload: invocation,
@@ -168,6 +204,7 @@ impl WorkerLoop for CooperativeWorkerLoop {
 
         if shutdown.is_cancelled() {
             self.drain_cancelled_slots(&queue);
+            self.drain_pending_admissions(&queue);
         }
         self.deferred_v8_runtime_drops.clear();
     }

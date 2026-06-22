@@ -17,6 +17,7 @@ mod external;
 mod formatting;
 mod prove;
 mod reload;
+mod runtime_scaling;
 mod validation;
 
 pub use diff::{OperatorPolicyDiff, OperatorPolicyDiffSummary, OperatorPolicyLifecycle};
@@ -40,6 +41,7 @@ pub use prove::{
     OperatorPolicyAdvisorySeverity, OperatorPolicyProofReport,
 };
 pub use reload::{OperatorPolicyReloadOutcome, OperatorPolicyReloadState};
+pub use runtime_scaling::TenantRuntimeScalingRequest;
 use validation::invalid_policy;
 
 pub const OPERATOR_POLICY_SCHEMA_VERSION: u32 = 1;
@@ -81,6 +83,8 @@ pub struct OperatorPolicyDefaults {
     pub storage_namespace: String,
     #[serde(default = "default_redacted_fields")]
     pub audit_redactions: Vec<String>,
+    #[serde(default)]
+    pub runtime_scaling_limits: OperatorRuntimeScalingLimits,
 }
 
 impl Default for OperatorPolicyDefaults {
@@ -89,6 +93,7 @@ impl Default for OperatorPolicyDefaults {
             tenant_isolation_mode: TenantIsolationMode::Production,
             storage_namespace: default_storage_namespace(),
             audit_redactions: default_redacted_fields(),
+            runtime_scaling_limits: OperatorRuntimeScalingLimits::default(),
         }
     }
 }
@@ -490,6 +495,37 @@ pub struct OperatorSecretPolicy {
 #[serde(deny_unknown_fields)]
 pub struct OperatorQuotaPolicy {
     pub sandbox_charge: Option<SandboxResourceCharge>,
+    #[serde(default)]
+    pub runtime_scaling: OperatorRuntimeScalingQuota,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorRuntimeScalingLimits {
+    pub max_total_warm: usize,
+    pub max_min_warm_total: usize,
+    pub max_warm_per_function: usize,
+    #[serde(default)]
+    pub allow_live_scaling: bool,
+}
+
+impl Default for OperatorRuntimeScalingLimits {
+    fn default() -> Self {
+        Self {
+            max_total_warm: 32,
+            max_min_warm_total: 8,
+            max_warm_per_function: 8,
+            allow_live_scaling: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorRuntimeScalingQuota {
+    pub max_warm: Option<usize>,
+    pub max_min_warm: Option<usize>,
+    pub allow_live_scaling: Option<bool>,
 }
 
 impl OperatorQuotaPolicy {

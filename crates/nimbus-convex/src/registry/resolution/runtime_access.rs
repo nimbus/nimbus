@@ -180,11 +180,77 @@ impl ConvexRegistry {
 mod tests {
     use super::*;
     use nimbus_runtime::{
-        RuntimeBundle, RuntimeCompatibilityTarget, RuntimeLimits, RuntimeNodeSupportPhase,
+        RuntimeBundle, RuntimeCompatibilityTarget, RuntimeHostPressureLevel,
+        RuntimeHostPressureSample, RuntimeHostPressureSource, RuntimeHostResourceBudget,
+        RuntimeLimits, RuntimeMemoryPressureDecision, RuntimeMemoryPressureLevel,
+        RuntimeMemoryPressureSourceStatus, RuntimeNodeSupportPhase,
     };
     use serde_json::json;
     use std::fs;
+    use std::sync::Arc;
     use tempfile::tempdir;
+
+    #[derive(Debug)]
+    struct FixedRuntimeHostPressureSource(RuntimeHostPressureSample);
+
+    impl RuntimeHostPressureSource for FixedRuntimeHostPressureSource {
+        fn sample(&self) -> RuntimeHostPressureSample {
+            self.0
+        }
+    }
+
+    fn two_seat_runtime_host_budget() -> RuntimeHostResourceBudget {
+        RuntimeHostResourceBudget {
+            host_millicpus: 2000,
+            system_reserved_millicpus: 0,
+            nimbus_control_plane_reserved_millicpus: 0,
+            runtime_hard_ceiling_millicpus: None,
+            runtime_seat_millicpus: std::num::NonZeroU32::new(1000)
+                .expect("one CPU seat is nonzero"),
+        }
+    }
+
+    fn critical_runtime_host_pressure_source() -> Arc<dyn RuntimeHostPressureSource> {
+        Arc::new(FixedRuntimeHostPressureSource(
+            RuntimeHostPressureSample::observed(
+                RuntimeHostPressureLevel::Critical,
+                RuntimeMemoryPressureDecision::for_level(
+                    RuntimeMemoryPressureLevel::Nominal,
+                    RuntimeMemoryPressureSourceStatus::Observed,
+                ),
+                false,
+            ),
+        ))
+    }
+
+    #[test]
+    fn convex_registry_applies_runtime_host_resource_budget_to_runtime_policy() {
+        let budget = two_seat_runtime_host_budget();
+        let registry = ConvexRegistry::empty().with_runtime_host_governor(
+            budget,
+            critical_runtime_host_pressure_source(),
+            nimbus_runtime::RuntimeAdaptiveControllerSettings::default(),
+        );
+        let policy = registry.runtime_policy();
+
+        assert_eq!(policy.host_resource_budget(), budget);
+        assert_eq!(
+            policy.host_resource_decision().host_pressure_level,
+            RuntimeHostPressureLevel::Critical
+        );
+        assert_eq!(policy.host_resource_decision().effective_dispatch_seats, 0);
+    }
+
+    #[test]
+    fn convex_registry_applies_effective_runtime_scaling_plan_to_runtime_policy() {
+        let plan = nimbus_runtime::EffectiveRuntimeScalingPlan::baked_standard("messages:send", 6);
+        let registry = ConvexRegistry::empty().with_effective_runtime_scaling_plan(plan.clone());
+        let policy = registry.runtime_policy();
+
+        assert_eq!(policy.effective_scaling_plan(), &plan);
+        assert_eq!(policy.effective_scaling_plan().function, "messages:send");
+        assert_eq!(policy.effective_scaling_plan().effective.max_warm, 6);
+    }
 
     #[test]
     fn convex_node_runtime_lanes_follow_lts_registry_targets() {
@@ -234,8 +300,16 @@ mod tests {
         )
         .expect("convex http route manifest should write");
 
-        let registry =
-            ConvexRegistry::from_app_dir(tempdir.path()).expect("convex registry should load");
+        let budget = two_seat_runtime_host_budget();
+        let registry = ConvexRegistry::from_app_dir(tempdir.path())
+            .expect("convex registry should load")
+            .with_runtime_host_governor(
+                budget,
+                critical_runtime_host_pressure_source(),
+                nimbus_runtime::RuntimeAdaptiveControllerSettings::shadow(
+                    nimbus_runtime::RuntimeControllerReplayConfig::default(),
+                ),
+            );
         for (function_name, expected_target, expected_phase, product_default) in [
             (
                 "messages:legacyNode20",
@@ -262,6 +336,18 @@ mod tests {
                 false,
             ),
         ] {
+            let policy = registry.runtime_lane_policy_for_function(function_name);
+            assert_eq!(policy.host_resource_budget(), budget);
+            assert_eq!(
+                policy.adaptive_controller_settings().mode(),
+                nimbus_runtime::RuntimeAdaptiveControllerMode::Shadow
+            );
+            assert_eq!(
+                policy.host_resource_decision().host_pressure_level,
+                RuntimeHostPressureLevel::Critical
+            );
+            assert_eq!(policy.host_resource_decision().effective_dispatch_seats, 0);
+
             let limits = registry.runtime_limits_for_function(function_name);
             let metadata = limits
                 .compatibility_target

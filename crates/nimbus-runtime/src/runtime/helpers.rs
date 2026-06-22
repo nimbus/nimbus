@@ -16,6 +16,27 @@ pub(crate) fn deserialize_json_value(
         .map_err(|error| NimbusRuntimeError::JavaScript(error.to_string()))
 }
 
+pub(crate) fn ensure_wait_until_drain_succeeded(
+    runtime: &mut JsRuntime,
+    value: v8::Global<v8::Value>,
+) -> Result<()> {
+    let value = deserialize_json_value(runtime, value)?;
+    let rejected = value
+        .get("rejected")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            NimbusRuntimeError::Contract(
+                "runtime waitUntil drain result must carry a rejected count".to_string(),
+            )
+        })?;
+    if rejected > 0 {
+        return Err(NimbusRuntimeError::JavaScript(format!(
+            "Nimbus waitUntil background drain rejected {rejected} promise(s)"
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn runtime_js_error(error: impl std::fmt::Display) -> NimbusRuntimeError {
     NimbusRuntimeError::JavaScript(error.to_string())
 }
@@ -23,6 +44,7 @@ pub(crate) fn runtime_js_error(error: impl std::fmt::Display) -> NimbusRuntimeEr
 pub(crate) fn classify_runtime_error(
     error: NimbusRuntimeError,
     timeout_triggered: &AtomicBool,
+    system_timeout_triggered: &AtomicBool,
     heap_limit_triggered: &AtomicBool,
     external_cancellation_triggered: &AtomicBool,
     limits: &RuntimeLimits,
@@ -34,16 +56,21 @@ pub(crate) fn classify_runtime_error(
         {
             NimbusRuntimeError::HeapLimitExceeded(limits.max_heap_mb)
         }
-        NimbusRuntimeError::JavaScript(message) if is_host_call_canceled_error(&message) => {
-            NimbusRuntimeError::Cancelled
+        NimbusRuntimeError::JavaScript(_message)
+            if system_timeout_triggered.load(Ordering::SeqCst) =>
+        {
+            NimbusRuntimeError::SystemTimeout(limits.system_timeout)
+        }
+        NimbusRuntimeError::JavaScript(_message) if timeout_triggered.load(Ordering::SeqCst) => {
+            NimbusRuntimeError::ExecutionTimeout(limits.execution_timeout)
         }
         NimbusRuntimeError::JavaScript(_message)
             if external_cancellation_triggered.load(Ordering::SeqCst) =>
         {
             NimbusRuntimeError::Cancelled
         }
-        NimbusRuntimeError::JavaScript(_message) if timeout_triggered.load(Ordering::SeqCst) => {
-            NimbusRuntimeError::ExecutionTimeout(limits.execution_timeout)
+        NimbusRuntimeError::JavaScript(message) if is_host_call_canceled_error(&message) => {
+            NimbusRuntimeError::Cancelled
         }
         other => other,
     }

@@ -2,7 +2,7 @@
 export
 
 .PHONY: test-node-workload-executor-live all build build-ui build-packages release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-release-version-contract verify-release-archive-layout-helper verify-release-oci-image-helper verify-release-oci-image-build-helper verify-release-oci-image-live verify-release-oci-image-live-helper verify-desktop-ui verify-tenant-isolation-conformance verify-enterprise-policy-egress verify-artifact-provenance verify-bun-jsc-runtime-contract verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime node-compat-report node-compat-dashboard node-compat-status node-compat-inventory node-compat-classifications node-compat-sync node-compat-refresh node-compat-validate-fixtures node-compat-verify-fixture-upstream node-compat-publish-evidence node-compat-publish-docs node-compat-release-train node-compat-trends node-compat-required-surface-blockers node-compat-sync-watchpoints node-compat-validate-watchpoints node-compat-oracle node-compat-canaries-bootstrap node-compat-canaries node-compat-validate-claims check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-nimbus-machine-diagnostics collect-nimbus-machine-cli-proof collect-nimbus-machine-guest-proof collect-nimbus-machine-service-proof collect-nimbus-homebrew-cask-proof collect-sqlcipher-proof-bundles collect-encryption-benchmark-evidence build-nimbus-machine-guest-binary build-linux-release-packages build-apt-repository build-fedora-release-srpms check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-nimbus-machine prepare-linux-vmm-validation-bundle verify-build-nimbus-machine-guest-binary-helper verify-build-linux-release-packages-helper verify-build-apt-repository-helper verify-build-fedora-release-srpms-helper verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-nimbus-machine-diagnostics-helper verify-nimbus-machine-recreate-helper verify-nimbus-machine-cli-proof-helper verify-nimbus-machine-guest-proof-helper verify-nimbus-homebrew-cask-proof-helper verify-collect-sqlcipher-proof-bundles-helper verify-install-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
-.PHONY: test-rust-runtime test-rust-workspace test-rust-docs test-external-providers proof-helpers ci-required prove-linux-cgroup-memory-limit verify-bun-jsc-linked-adapter verify-bun-jsc-adapter-package verify-bun-jsc-release-assets verify-bun-jsc-installed-package-proof
+.PHONY: test-rust-runtime test-rust-workspace test-rust-docs test-external-providers proof-helpers ci-required prove-linux-cgroup-memory-limit verify-bun-jsc-linked-adapter verify-bun-jsc-adapter-package verify-bun-jsc-release-assets verify-bun-jsc-installed-package-proof verify-profile-aware-runtime-crossover
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
@@ -106,7 +106,8 @@ build: build-ui build-packages
 
 # Release build (binary only)
 release: build-ui build-packages
-	cargo build --release -p nimbus-bin
+	cargo_features="$$(bash scripts/nimbus-release-rust-features.sh --format cargo-args)"; \
+	cargo build --release -p nimbus-bin $$cargo_features
 
 # Check compilation without producing artifacts
 check: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
@@ -195,6 +196,10 @@ proof-helpers:
 	bash -n scripts/verify-bun-jsc-release-assets-helper.sh
 	bash -n scripts/render-release-oci-image-report.sh
 	bash -n scripts/verify-release-oci-image-report.sh
+	bash -n scripts/nimbus-release-rust-features.sh
+	bash -n scripts/verify-node-full-substrate-realm.sh
+	bash -n scripts/verify-runtime-execution-classification.sh
+	bash -n scripts/verify-profile-aware-isolate-runtime-crossover.sh
 	bash -n scripts/verify-release-oci-image-assets.sh
 	bash -n scripts/smoke-release-oci-image.sh
 	bash -n scripts/verify-release-oci-image-helper.sh
@@ -315,6 +320,9 @@ verify-bun-jsc-release-assets:
 verify-bun-jsc-installed-package-proof:
 	@test -n "$(ARCHIVE)" || (echo "set ARCHIVE=/path/to/nimbus-bun-jsc-adapter-*.tar.gz" && exit 1)
 	bash scripts/verify-bun-jsc-installed-package-proof.sh --archive "$(ARCHIVE)"
+
+verify-profile-aware-runtime-crossover:
+	bash scripts/verify-profile-aware-isolate-runtime-crossover.sh
 
 prove-linux-cgroup-memory-limit:
 	bash scripts/prove-linux-cgroup-memory-limit.sh

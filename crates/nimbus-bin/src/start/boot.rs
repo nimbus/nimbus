@@ -6,7 +6,11 @@ use std::sync::Arc;
 #[cfg(unix)]
 use std::{env, process};
 
-use nimbus::{ConvexRegistry, Engine, Error, LicenseState, TenantId, run_scheduler};
+use nimbus::{
+    ConvexRegistry, EffectiveRuntimeScalingPlan, Engine, Error, LicenseState,
+    RuntimeHostResourceBudget, RuntimeLimits, RuntimeScalingAdjustmentReason, RuntimeScalingLimit,
+    RuntimeScalingTarget, TenantId, run_scheduler,
+};
 use nimbus_server::{
     CloudFunctionsRegistry, LocalServerPaths, LocalServerSecurityState, ServeOptions,
     ServerDiscoveryLease, load_or_create_local_admin_token, serve,
@@ -16,10 +20,14 @@ use super::StartCommand;
 use super::adapters::{AdapterEnablement, resolve_adapter_enablement};
 use super::config::{
     control_data_dir_from_persistence_config, persistence_config_from_start_command,
+    runtime_config_from_start_command,
 };
 use super::first_boot::{is_first_boot, spawn_first_boot_announce};
 use super::network_bind::{ensure_admin_token_rotated_for_public_bind, ensure_host_opt_in};
-use super::runtime_limits::runtime_limits_from_command;
+use super::runtime_limits::{
+    runtime_adaptive_controller_settings_from_command, runtime_host_resource_budget_from_command,
+    runtime_limits_from_command,
+};
 use crate::cli_ux;
 use crate::codegen::{CodegenOptions, run_codegen_for_app_dir_with_options};
 use crate::compose::discovery::{
@@ -28,6 +36,9 @@ use crate::compose::discovery::{
 use crate::compose::load_host_backed_service_manager_for_selection_with_isolation_mode;
 use crate::deploy::resolve_deploy_app_dir;
 use crate::dirs;
+use crate::function_scaling::{
+    FunctionScalingContext, FunctionScalingFileConfig, resolve_function_scaling_intent,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ResolvedStartAppDir {
@@ -60,6 +71,12 @@ pub(crate) async fn run_start_command(
     };
     let tls_enabled = tls_config.is_some();
     let persistence_config = persistence_config_from_start_command(&command)?;
+    let runtime_config = runtime_config_from_start_command(&command)?;
+    let function_scaling_intent = resolve_function_scaling_intent(
+        &runtime_config.functions.scaling,
+        function_scaling_context_from_command(&command),
+        "__default__",
+    )?;
     let compose_control_data_dir =
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
     // Adapter enablement resolves after the control data dir: default-on
@@ -76,6 +93,11 @@ pub(crate) async fn run_start_command(
     let resolved_app_dir = resolve_start_app_dir(&command)?;
     run_codegen_preflight(&command, resolved_app_dir.as_ref()).await?;
     let runtime_limits = runtime_limits_from_command(&command);
+    let effective_runtime_scaling_plan =
+        effective_runtime_scaling_plan_from_intent(&function_scaling_intent, &runtime_limits);
+    let runtime_host_resource_budget = runtime_host_resource_budget_from_command(&command);
+    let runtime_adaptive_controller_settings =
+        runtime_adaptive_controller_settings_from_command(&command);
     let license_file = resolve_license_path(command.license_file.as_deref());
     let license_state = LicenseState::load(license_file.as_deref())?;
     let license_snapshot = license_state.snapshot();
@@ -187,7 +209,11 @@ pub(crate) async fn run_start_command(
     }
 
     tracing::info!("nimbus listening on {}", listener.local_addr()?);
-    let mut serve_options = ServeOptions::new(engine.clone()).with_license(license_state);
+    let mut serve_options = ServeOptions::new(engine.clone())
+        .with_license(license_state)
+        .with_runtime_host_resource_budget(runtime_host_resource_budget)
+        .with_runtime_adaptive_controller_settings(runtime_adaptive_controller_settings)
+        .with_effective_runtime_scaling_plan(effective_runtime_scaling_plan);
     if let Some(registry) = convex_registry {
         serve_options = serve_options.with_convex_registry(registry);
     }
@@ -378,6 +404,7 @@ pub(super) fn start_startup_summary_lines(
         listen_addr,
         command.tls_cert.is_some() && command.tls_key.is_some(),
     );
+    let runtime_host_resource_budget = runtime_host_resource_budget_from_command(command);
     let mut lines = vec![
         format!("Nimbus server listening at {base_url}"),
         format!(
@@ -389,6 +416,8 @@ pub(super) fn start_startup_summary_lines(
             "tenant isolation:\t{}",
             command.tenant_isolation_mode.as_str()
         ),
+        runtime_host_budget_summary_line(runtime_host_resource_budget),
+        default_function_scaling_summary_line(command),
     ];
     lines.extend(adapter_enablement.status_lines());
     match resolved_app_dir {
@@ -413,6 +442,70 @@ pub(super) fn start_startup_summary_lines(
         lines.push("deploy admin API: enabled".to_string());
     }
     lines
+}
+
+fn default_function_scaling_summary_line(command: &StartCommand) -> String {
+    let context = function_scaling_context_from_command(command);
+    let intent = resolve_function_scaling_intent(
+        &FunctionScalingFileConfig::default(),
+        context,
+        "__default__",
+    )
+    .expect("baked function scaling defaults should always resolve");
+    intent.boot_summary(context)
+}
+
+fn effective_runtime_scaling_plan_from_intent(
+    intent: &crate::function_scaling::ResolvedFunctionScalingIntent,
+    limits: &RuntimeLimits,
+) -> EffectiveRuntimeScalingPlan {
+    let requested = intent.request.requested;
+    let max_warm = match requested.max_warm {
+        RuntimeScalingLimit::Auto => limits.max_warm_pool_entries_per_worker,
+        RuntimeScalingLimit::Fixed(value) => value,
+    };
+    let target = RuntimeScalingTarget {
+        min_warm: requested.min_warm.min(max_warm),
+        activation_warm: requested.activation_warm.min(max_warm),
+        max_warm,
+        scale_down_delay_secs: requested.scale_down_delay_secs,
+        live_scaling: requested.live_scaling,
+    };
+    EffectiveRuntimeScalingPlan {
+        function: intent.request.function.clone(),
+        preset: intent.request.preset,
+        requested,
+        admitted: target,
+        effective: target,
+        pressure_adjustment: RuntimeScalingAdjustmentReason::None,
+        rejection: None,
+    }
+}
+
+fn function_scaling_context_from_command(command: &StartCommand) -> FunctionScalingContext {
+    if matches!(
+        command.tenant_isolation_mode,
+        nimbus_server::TenantIsolationMode::LocalDevelopment
+    ) {
+        FunctionScalingContext::Dev
+    } else {
+        FunctionScalingContext::Start
+    }
+}
+
+fn runtime_host_budget_summary_line(budget: RuntimeHostResourceBudget) -> String {
+    let hard_ceiling = budget
+        .runtime_hard_ceiling_millicpus
+        .map(|ceiling| format!("{ceiling}m"))
+        .unwrap_or_else(|| "none".to_string());
+    format!(
+        "runtime host budget:\t{}m allocatable CPU ({}m host - {}m system reserve - {}m Nimbus control-plane reserve; hard ceiling {hard_ceiling}; seat {}m)",
+        budget.runtime_allocatable_millicpus(),
+        budget.host_millicpus,
+        budget.system_reserved_millicpus,
+        budget.nimbus_control_plane_reserved_millicpus,
+        budget.runtime_seat_millicpus.get()
+    )
 }
 
 pub(crate) fn resolve_start_app_dir(

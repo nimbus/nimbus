@@ -9,6 +9,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::cli_ux;
+use crate::start::StartCommand;
 
 const SERVICE_NAME: &str = "nimbus.service";
 const SOCKET_NAME: &str = "nimbus.socket";
@@ -504,6 +505,7 @@ impl NativeSystemdNodeService {
             "--control-data-dir".to_string(),
             self.control_dir.as_str().to_string(),
         ];
+        args.extend(default_runtime_host_budget_start_args());
         if self.socket_activation {
             args.push("--systemd-socket-activation".to_string());
         } else {
@@ -515,6 +517,47 @@ impl NativeSystemdNodeService {
             ]);
         }
         args.join(" ")
+    }
+}
+
+fn default_runtime_host_budget_start_args() -> Vec<String> {
+    let start_defaults = StartCommand::default();
+    let mut args = vec![
+        "--runtime-host-millicpus".to_string(),
+        start_defaults.runtime_host_millicpus.to_string(),
+        "--runtime-system-reserve-millicpus".to_string(),
+        start_defaults.runtime_system_reserve_millicpus.to_string(),
+        "--runtime-control-plane-reserve-millicpus".to_string(),
+        start_defaults
+            .runtime_control_plane_reserve_millicpus
+            .to_string(),
+        "--runtime-seat-millicpus".to_string(),
+        start_defaults.runtime_seat_millicpus.to_string(),
+    ];
+    if let Some(ceiling) = start_defaults.runtime_hard_ceiling_millicpus {
+        args.extend([
+            "--runtime-hard-ceiling-millicpus".to_string(),
+            ceiling.to_string(),
+        ]);
+    }
+    args.extend([
+        "--runtime-adaptive-mode".to_string(),
+        runtime_adaptive_mode_start_arg(start_defaults.runtime_adaptive_mode).to_string(),
+        "--runtime-adaptive-canary-percent".to_string(),
+        start_defaults.runtime_adaptive_canary_percent.to_string(),
+    ]);
+    if start_defaults.runtime_adaptive_rollback {
+        args.push("--runtime-adaptive-rollback".to_string());
+    }
+    args
+}
+
+fn runtime_adaptive_mode_start_arg(mode: crate::start::CliRuntimeAdaptiveMode) -> &'static str {
+    match mode {
+        crate::start::CliRuntimeAdaptiveMode::Disabled => "disabled",
+        crate::start::CliRuntimeAdaptiveMode::Shadow => "shadow",
+        crate::start::CliRuntimeAdaptiveMode::Canary => "canary",
+        crate::start::CliRuntimeAdaptiveMode::Live => "live",
     }
 }
 
@@ -947,6 +990,10 @@ mod tests {
         assert!(rendered.contains("# Nimbus-Provenance-SHA256: sha256:"));
         assert!(rendered.contains("ExecStart=/usr/local/bin/nimbus start"));
         assert!(rendered.contains("--host 127.0.0.1 --port 8080"));
+        assert!(rendered.contains("--runtime-host-millicpus"));
+        assert!(rendered.contains("--runtime-system-reserve-millicpus"));
+        assert!(rendered.contains("--runtime-control-plane-reserve-millicpus"));
+        assert!(rendered.contains("--runtime-seat-millicpus"));
         assert!(rendered.contains("NoNewPrivileges=true"));
         assert!(rendered.contains("ProtectSystem=full"));
         assert!(!rendered.contains("PodmanArgs"));
@@ -980,6 +1027,45 @@ mod tests {
             socket
                 .contents
                 .contains("# Nimbus-Template: native-systemd-node-socket/v1")
+        );
+    }
+
+    #[test]
+    fn native_systemd_renders_runtime_host_budget_start_flags() {
+        let service = NativeSystemdNodeService::new(
+            NodeServiceScope::System,
+            PathBuf::from("/usr/local/bin/nimbus"),
+            false,
+        )
+        .expect("service should build");
+        let start_defaults = StartCommand::default();
+        let rendered = service.render_service();
+
+        assert!(rendered.contains(&format!(
+            "--runtime-host-millicpus {}",
+            start_defaults.runtime_host_millicpus
+        )));
+        assert!(rendered.contains(&format!(
+            "--runtime-system-reserve-millicpus {}",
+            start_defaults.runtime_system_reserve_millicpus
+        )));
+        assert!(rendered.contains(&format!(
+            "--runtime-control-plane-reserve-millicpus {}",
+            start_defaults.runtime_control_plane_reserve_millicpus
+        )));
+        assert!(rendered.contains(&format!(
+            "--runtime-seat-millicpus {}",
+            start_defaults.runtime_seat_millicpus
+        )));
+        assert!(
+            !rendered.contains("--runtime-hard-ceiling-millicpus"),
+            "default native node service should omit unset optional hard ceiling"
+        );
+        assert!(rendered.contains("--runtime-adaptive-mode disabled"));
+        assert!(rendered.contains("--runtime-adaptive-canary-percent 0"));
+        assert!(
+            !rendered.contains("--runtime-adaptive-rollback"),
+            "default native node service should omit rollback when it is false"
         );
     }
 

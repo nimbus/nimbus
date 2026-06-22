@@ -6,7 +6,11 @@ use nimbus_artifacts::{ArtifactVerificationPolicy, ArtifactVerifierBackend};
 use nimbus_core::{DocumentTriggerPattern, Error, Result};
 use nimbus_engine::TriggerRegistration;
 use nimbus_provenance::RuntimeBundleProvenanceConfig;
-use nimbus_runtime::{RuntimeBundle, RuntimeExecutor, RuntimeLimits, RuntimePolicy};
+use nimbus_runtime::{
+    EffectiveRuntimeScalingPlan, NominalRuntimeHostPressureSource,
+    RuntimeAdaptiveControllerSettings, RuntimeBundle, RuntimeExecutor, RuntimeHostPressureSource,
+    RuntimeHostResourceBudget, RuntimeLimits, RuntimePolicy,
+};
 
 use crate::{
     CLOUD_FUNCTIONS_ARTIFACT_MANIFEST_FILE, CLOUD_FUNCTIONS_INTERNAL_ARTIFACT_DIR,
@@ -64,6 +68,43 @@ impl CloudFunctionsRegistry {
 
     pub fn with_runtime_limits(mut self, limits: RuntimeLimits) -> Self {
         let runtime_policy = Arc::new(RuntimePolicy::new(limits));
+        self.runtime_policy = runtime_policy.clone();
+        self.runtime_executor = Arc::new(RuntimeExecutor::new(runtime_policy));
+        self
+    }
+
+    pub fn with_runtime_host_resource_budget(self, budget: RuntimeHostResourceBudget) -> Self {
+        self.with_runtime_host_governor(
+            budget,
+            Arc::new(NominalRuntimeHostPressureSource),
+            RuntimeAdaptiveControllerSettings::default(),
+        )
+    }
+
+    pub fn with_runtime_host_governor(
+        mut self,
+        budget: RuntimeHostResourceBudget,
+        pressure_source: Arc<dyn RuntimeHostPressureSource>,
+        adaptive_settings: RuntimeAdaptiveControllerSettings,
+    ) -> Self {
+        let runtime_policy = Arc::new(
+            RuntimePolicy::with_host_resource_governor(
+                self.runtime_policy.limits().clone(),
+                budget,
+                pressure_source,
+            )
+            .with_adaptive_controller_settings(adaptive_settings),
+        );
+        self.runtime_policy = runtime_policy.clone();
+        self.runtime_executor = Arc::new(RuntimeExecutor::new(runtime_policy));
+        self
+    }
+
+    pub fn with_effective_runtime_scaling_plan(
+        mut self,
+        plan: EffectiveRuntimeScalingPlan,
+    ) -> Self {
+        let runtime_policy = Arc::new(self.runtime_policy.clone_with_effective_scaling_plan(plan));
         self.runtime_policy = runtime_policy.clone();
         self.runtime_executor = Arc::new(RuntimeExecutor::new(runtime_policy));
         self
@@ -219,9 +260,15 @@ fn load_runtime_bundle(bundle_path: &Path, hash_path: &Path) -> Result<RuntimeBu
 mod tests {
     use std::fs;
     use std::path::Path;
+    use std::sync::Arc;
 
     use nimbus_core::FirestoreCloudEventType;
-    use nimbus_runtime::RuntimeBundle;
+    use nimbus_runtime::{
+        EffectiveRuntimeScalingPlan, RuntimeBundle, RuntimeHostPressureLevel,
+        RuntimeHostPressureSample, RuntimeHostPressureSource, RuntimeHostResourceBudget,
+        RuntimeMemoryPressureDecision, RuntimeMemoryPressureLevel,
+        RuntimeMemoryPressureSourceStatus,
+    };
     use tempfile::tempdir;
 
     use super::CloudFunctionsRegistry;
@@ -232,6 +279,39 @@ mod tests {
         CloudFunctionsSignatureType, CloudFunctionsTargetBinding, CloudFunctionsTargetDefinition,
         CloudFunctionsTargetsManifest,
     };
+
+    #[derive(Debug)]
+    struct FixedRuntimeHostPressureSource(RuntimeHostPressureSample);
+
+    impl RuntimeHostPressureSource for FixedRuntimeHostPressureSource {
+        fn sample(&self) -> RuntimeHostPressureSample {
+            self.0
+        }
+    }
+
+    fn two_seat_runtime_host_budget() -> RuntimeHostResourceBudget {
+        RuntimeHostResourceBudget {
+            host_millicpus: 2000,
+            system_reserved_millicpus: 0,
+            nimbus_control_plane_reserved_millicpus: 0,
+            runtime_hard_ceiling_millicpus: None,
+            runtime_seat_millicpus: std::num::NonZeroU32::new(1000)
+                .expect("one CPU seat is nonzero"),
+        }
+    }
+
+    fn critical_runtime_host_pressure_source() -> Arc<dyn RuntimeHostPressureSource> {
+        Arc::new(FixedRuntimeHostPressureSource(
+            RuntimeHostPressureSample::observed(
+                RuntimeHostPressureLevel::Critical,
+                RuntimeMemoryPressureDecision::for_level(
+                    RuntimeMemoryPressureLevel::Nominal,
+                    RuntimeMemoryPressureSourceStatus::Observed,
+                ),
+                false,
+            ),
+        ))
+    }
 
     #[test]
     fn cloud_functions_registry_loads_bundle_and_trigger_targets() {
@@ -270,6 +350,65 @@ export {};
         assert_eq!(
             registry.artifact_dir(),
             app_dir.path().join(CLOUD_FUNCTIONS_INTERNAL_ARTIFACT_DIR)
+        );
+    }
+
+    #[test]
+    fn cloud_functions_registry_applies_runtime_host_resource_budget_to_runtime_policy() {
+        let app_dir = tempdir().expect("app tempdir should build");
+        write_cloud_functions_artifact(app_dir.path(), &[], "export {};");
+        let budget = two_seat_runtime_host_budget();
+        let registry = CloudFunctionsRegistry::from_app_dir(app_dir.path())
+            .expect("registry should load")
+            .with_runtime_host_governor(
+                budget,
+                critical_runtime_host_pressure_source(),
+                nimbus_runtime::RuntimeAdaptiveControllerSettings::shadow(
+                    nimbus_runtime::RuntimeControllerReplayConfig::default(),
+                ),
+            );
+
+        assert_eq!(registry.runtime_policy().host_resource_budget(), budget);
+        assert_eq!(
+            registry
+                .runtime_policy()
+                .adaptive_controller_settings()
+                .mode(),
+            nimbus_runtime::RuntimeAdaptiveControllerMode::Shadow
+        );
+        assert_eq!(
+            registry
+                .runtime_policy()
+                .host_resource_decision()
+                .host_pressure_level,
+            RuntimeHostPressureLevel::Critical
+        );
+        assert_eq!(
+            registry
+                .runtime_policy()
+                .host_resource_decision()
+                .effective_dispatch_seats,
+            0
+        );
+    }
+
+    #[test]
+    fn cloud_functions_registry_applies_effective_runtime_scaling_plan_to_runtime_policy() {
+        let app_dir = tempdir().expect("app tempdir should build");
+        write_cloud_functions_artifact(app_dir.path(), &[], "export {};");
+        let plan = EffectiveRuntimeScalingPlan::baked_standard("syncUser", 5);
+        let registry = CloudFunctionsRegistry::from_app_dir(app_dir.path())
+            .expect("registry should load")
+            .with_effective_runtime_scaling_plan(plan.clone());
+
+        assert_eq!(registry.runtime_policy().effective_scaling_plan(), &plan);
+        assert_eq!(
+            registry
+                .runtime_policy()
+                .effective_scaling_plan()
+                .effective
+                .max_warm,
+            5
         );
     }
 

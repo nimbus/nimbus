@@ -25,6 +25,9 @@ pub enum NimbusRuntimeError {
     #[error("runtime execution timed out after {0:?}")]
     ExecutionTimeout(Duration),
 
+    #[error("runtime system wall time timed out after {0:?}")]
+    SystemTimeout(Duration),
+
     #[error("runtime heap memory limit exceeded ({0} MB)")]
     HeapLimitExceeded(usize),
 
@@ -35,6 +38,14 @@ pub enum NimbusRuntimeError {
         "runtime tenant queue limit exceeded for {tenant_label} ({limit} queued top-level invocations)"
     )]
     TenantQueueLimitExceeded { tenant_label: String, limit: usize },
+
+    #[error(
+        "runtime host resource pressure shed {work_class} work at {host_pressure_level} pressure"
+    )]
+    HostResourcePressureShed {
+        work_class: &'static str,
+        host_pressure_level: &'static str,
+    },
 
     #[error("runtime host call canceled")]
     Cancelled,

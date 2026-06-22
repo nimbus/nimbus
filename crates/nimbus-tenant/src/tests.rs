@@ -1,5 +1,5 @@
 use nimbus_core::{PrincipalContext, TenantId};
-use nimbus_runtime::{RuntimeBundle, RuntimeLimits, RuntimePolicy};
+use nimbus_runtime::{RuntimeBundle, RuntimeLimits, RuntimePolicy, RuntimeProfile};
 use nimbus_sandbox::{
     PublishedEndpointProtocol, SandboxBackendKind, SandboxOwnerSpec, SandboxProcessSpec,
     SandboxResourceCharge, SandboxRootSpec, SandboxSpec,
@@ -104,6 +104,112 @@ fn production_untrusted_route(policy: &RuntimePolicy) -> RuntimeIsolationRoute {
             panic!("policy should have produced a runtime isolation route")
         }
     }
+}
+
+fn runtime_policy_decision(
+    policy: &RuntimePolicy,
+    tier: RuntimeIsolationTier,
+    mode: TenantIsolationMode,
+) -> TenantRuntimePolicyDecision {
+    let context = test_application_context();
+    let admission = context.admit_runtime_policy(policy, tier, mode);
+    TenantRuntimePolicyDecision::from_runtime_policy(policy, tier, mode, admission)
+}
+
+#[test]
+fn runtime_efficiency_plan_classifies_web_and_node_after_admission_without_changing_axes() {
+    for (limits, expected_profile) in [
+        (
+            RuntimeLimits::application_web_standard(),
+            RuntimeProfile::WebLean,
+        ),
+        (
+            RuntimeLimits::application_node22(),
+            RuntimeProfile::NodeFull,
+        ),
+    ] {
+        let normalized = limits.normalized();
+        let policy = RuntimePolicy::new(normalized.clone());
+        let decision = runtime_policy_decision(
+            &policy,
+            RuntimeIsolationTier::InProcessUntrusted,
+            TenantIsolationMode::Production,
+        );
+        let plan = decision.runtime_efficiency_plan(&normalized);
+
+        assert_eq!(plan.profile(), Some(expected_profile));
+        assert_eq!(
+            plan.state(),
+            RuntimeEfficiencyPlanState::FlagOffCurrentBehavior,
+            "PIR1 is classification-only; current behavior remains effective"
+        );
+        assert_eq!(plan.effective_pool_kind(), normalized.runtime_pool_kind);
+        assert_eq!(plan.effective_execution_model(), normalized.execution_model);
+        assert_eq!(policy.limits(), &normalized);
+        assert_eq!(
+            decision.admission(),
+            &TenantRuntimePolicyAdmission::AdmitInProcess
+        );
+    }
+}
+
+#[test]
+fn runtime_efficiency_plan_never_downgrades_escalated_or_unsupported_surfaces() {
+    let service_limits = RuntimeLimits::application_node22_service_microvm().normalized();
+    let service_policy = RuntimePolicy::new(service_limits.clone());
+    let service_decision = runtime_policy_decision(
+        &service_policy,
+        RuntimeIsolationTier::MicroVmService,
+        TenantIsolationMode::Production,
+    );
+    let service_plan = service_decision.runtime_efficiency_plan(&service_limits);
+    assert_eq!(service_plan.profile(), Some(RuntimeProfile::NodeFull));
+    assert_eq!(
+        service_plan.state(),
+        RuntimeEfficiencyPlanState::EscalatedOrRouted,
+        "a microVM/service tier remains outside in-process efficiency selection"
+    );
+    assert!(
+        service_decision
+            .grants()
+            .net_listen
+            .contains(&"[::]".to_string()),
+        "classification must not strip service/microVM grants"
+    );
+
+    let routed_limits = RuntimeLimits::application_node22_local_development().normalized();
+    let routed_policy = RuntimePolicy::new(routed_limits.clone());
+    let routed_decision = runtime_policy_decision(
+        &routed_policy,
+        RuntimeIsolationTier::InProcessUntrusted,
+        TenantIsolationMode::Production,
+    );
+    let routed_plan = routed_decision.runtime_efficiency_plan(&routed_limits);
+    assert!(matches!(
+        routed_decision.admission(),
+        TenantRuntimePolicyAdmission::Route { .. }
+    ));
+    assert_eq!(routed_plan.profile(), Some(RuntimeProfile::NodeFull));
+    assert_eq!(
+        routed_plan.state(),
+        RuntimeEfficiencyPlanState::EscalatedOrRouted,
+        "a production route/rejection cannot be re-admitted by profile classification"
+    );
+
+    let bun_limits = RuntimeLimits::application_bun_jsc().normalized();
+    let bun_policy = RuntimePolicy::new(bun_limits.clone());
+    let bun_decision = runtime_policy_decision(
+        &bun_policy,
+        RuntimeIsolationTier::InProcessUntrusted,
+        TenantIsolationMode::Production,
+    );
+    let bun_plan = bun_decision.runtime_efficiency_plan(&bun_limits);
+    assert_eq!(bun_plan.profile(), None);
+    assert_eq!(
+        bun_plan.state(),
+        RuntimeEfficiencyPlanState::UnsupportedSurface,
+        "PIR1 does not collapse Bun/JSC into a V8 WebLean profile"
+    );
 }
 
 #[test]

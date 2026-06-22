@@ -6,6 +6,10 @@ use axum::middleware;
 use axum::routing::{any, delete, get, post};
 use axum::{Extension, Router};
 use nimbus_engine::Engine;
+use nimbus_runtime::{
+    EffectiveRuntimeScalingPlan, NominalRuntimeHostPressureSource,
+    RuntimeAdaptiveControllerSettings, RuntimeHostPressureSource, RuntimeHostResourceBudget,
+};
 use tokio::sync::watch;
 use tower::ServiceBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -79,6 +83,10 @@ pub struct RouterOptions {
     local_server_security: Option<Arc<LocalServerSecurityState>>,
     tenant_isolation_mode: TenantIsolationMode,
     cors_allowed_origins: Vec<String>,
+    runtime_host_resource_budget: RuntimeHostResourceBudget,
+    runtime_host_pressure_source: Arc<dyn RuntimeHostPressureSource>,
+    runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
+    effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan,
 }
 
 impl RouterOptions {
@@ -97,6 +105,10 @@ impl RouterOptions {
             local_server_security: None,
             tenant_isolation_mode: TenantIsolationMode::default(),
             cors_allowed_origins: Vec::new(),
+            runtime_host_resource_budget: default_runtime_host_resource_budget(),
+            runtime_host_pressure_source: default_runtime_host_pressure_source(),
+            runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings::default(),
+            effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan::default(),
         }
     }
 
@@ -178,6 +190,35 @@ impl RouterOptions {
         self
     }
 
+    pub fn with_runtime_host_resource_budget(mut self, budget: RuntimeHostResourceBudget) -> Self {
+        self.runtime_host_resource_budget = budget;
+        self
+    }
+
+    pub fn with_runtime_host_pressure_source(
+        mut self,
+        pressure_source: Arc<dyn RuntimeHostPressureSource>,
+    ) -> Self {
+        self.runtime_host_pressure_source = pressure_source;
+        self
+    }
+
+    pub fn with_runtime_adaptive_controller_settings(
+        mut self,
+        settings: RuntimeAdaptiveControllerSettings,
+    ) -> Self {
+        self.runtime_adaptive_controller_settings = settings;
+        self
+    }
+
+    pub fn with_effective_runtime_scaling_plan(
+        mut self,
+        plan: EffectiveRuntimeScalingPlan,
+    ) -> Self {
+        self.effective_runtime_scaling_plan = plan;
+        self
+    }
+
     pub(crate) fn engine(&self) -> Arc<Engine> {
         Arc::clone(&self.engine)
     }
@@ -218,6 +259,11 @@ impl RouterOptions {
             config = config.with_machine_lifecycle_manager(machine_lifecycle_manager);
         }
         config = config.with_cors_allowed_origins(self.cors_allowed_origins);
+        config = config.with_runtime_host_resource_budget(self.runtime_host_resource_budget);
+        config = config.with_runtime_host_pressure_source(self.runtime_host_pressure_source);
+        config = config
+            .with_runtime_adaptive_controller_settings(self.runtime_adaptive_controller_settings);
+        config = config.with_effective_runtime_scaling_plan(self.effective_runtime_scaling_plan);
         config
     }
 }
@@ -238,6 +284,10 @@ pub(crate) struct RouterBuildConfig {
     listen_addr: Option<SocketAddr>,
     server_shutdown: Option<watch::Sender<bool>>,
     cors_allowed_origins: Vec<String>,
+    runtime_host_resource_budget: RuntimeHostResourceBudget,
+    runtime_host_pressure_source: Arc<dyn RuntimeHostPressureSource>,
+    runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
+    effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan,
 }
 
 impl RouterBuildConfig {
@@ -260,11 +310,47 @@ impl RouterBuildConfig {
             listen_addr: None,
             server_shutdown: None,
             cors_allowed_origins: Vec::new(),
+            runtime_host_resource_budget: default_runtime_host_resource_budget(),
+            runtime_host_pressure_source: default_runtime_host_pressure_source(),
+            runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings::default(),
+            effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan::default(),
         }
     }
 
     pub(crate) fn with_cors_allowed_origins(mut self, origins: Vec<String>) -> Self {
         self.cors_allowed_origins = origins;
+        self
+    }
+
+    pub(crate) fn with_runtime_host_resource_budget(
+        mut self,
+        budget: RuntimeHostResourceBudget,
+    ) -> Self {
+        self.runtime_host_resource_budget = budget;
+        self
+    }
+
+    pub(crate) fn with_runtime_host_pressure_source(
+        mut self,
+        pressure_source: Arc<dyn RuntimeHostPressureSource>,
+    ) -> Self {
+        self.runtime_host_pressure_source = pressure_source;
+        self
+    }
+
+    pub(crate) fn with_runtime_adaptive_controller_settings(
+        mut self,
+        settings: RuntimeAdaptiveControllerSettings,
+    ) -> Self {
+        self.runtime_adaptive_controller_settings = settings;
+        self
+    }
+
+    pub(crate) fn with_effective_runtime_scaling_plan(
+        mut self,
+        plan: EffectiveRuntimeScalingPlan,
+    ) -> Self {
+        self.effective_runtime_scaling_plan = plan;
         self
     }
 
@@ -418,12 +504,43 @@ impl RouterBuildConfig {
         nimbus_system::install_table_projection_observer(&engine);
         let service_manager = self.runtime_service_source.service_manager();
         let version_check = build_version_check();
+        let runtime_host_resource_budget = self.runtime_host_resource_budget;
+        let runtime_host_pressure_source = self.runtime_host_pressure_source;
+        let runtime_adaptive_controller_settings = self.runtime_adaptive_controller_settings;
+        let effective_runtime_scaling_plan = self.effective_runtime_scaling_plan;
+        let convex_registry = self.convex_registry.map(|registry| {
+            registry
+                .with_runtime_host_governor(
+                    runtime_host_resource_budget,
+                    runtime_host_pressure_source.clone(),
+                    runtime_adaptive_controller_settings,
+                )
+                .with_effective_runtime_scaling_plan(effective_runtime_scaling_plan.clone())
+        });
+        let system_convex_registry = self.system_convex_registry.map(|registry| {
+            registry
+                .with_runtime_host_governor(
+                    runtime_host_resource_budget,
+                    runtime_host_pressure_source.clone(),
+                    runtime_adaptive_controller_settings,
+                )
+                .with_effective_runtime_scaling_plan(effective_runtime_scaling_plan.clone())
+        });
+        let cloud_functions_registry = self.cloud_functions_registry.map(|registry| {
+            registry
+                .with_runtime_host_governor(
+                    runtime_host_resource_budget,
+                    runtime_host_pressure_source.clone(),
+                    runtime_adaptive_controller_settings,
+                )
+                .with_effective_runtime_scaling_plan(effective_runtime_scaling_plan.clone())
+        });
         let state = Arc::new(AppState::from_config(AppStateConfig {
             engine: self.engine,
-            convex_registry: self.convex_registry,
-            system_convex_registry: self.system_convex_registry,
+            convex_registry,
+            system_convex_registry,
             application_auth_verifier: self.application_auth_verifier,
-            cloud_functions_registry: self.cloud_functions_registry,
+            cloud_functions_registry,
             firebase_config: self.firebase_config,
             license_state: self.license_state,
             runtime_service_registry: self
@@ -437,7 +554,45 @@ impl RouterBuildConfig {
             listen_addr: self.listen_addr,
             server_shutdown: self.server_shutdown,
             version_check,
+            runtime_host_resource_budget: self.runtime_host_resource_budget,
+            runtime_adaptive_controller_settings,
+            effective_runtime_scaling_plan,
         }));
+        let runtime_host_resource_budget = state.runtime_host_resource_budget();
+        tracing::info!(
+            host_millicpus = runtime_host_resource_budget.host_millicpus,
+            system_reserved_millicpus = runtime_host_resource_budget.system_reserved_millicpus,
+            nimbus_control_plane_reserved_millicpus =
+                runtime_host_resource_budget.nimbus_control_plane_reserved_millicpus,
+            runtime_hard_ceiling_millicpus =
+                runtime_host_resource_budget.runtime_hard_ceiling_millicpus,
+            runtime_seat_millicpus = runtime_host_resource_budget.runtime_seat_millicpus.get(),
+            runtime_allocatable_millicpus =
+                runtime_host_resource_budget.runtime_allocatable_millicpus(),
+            "configured runtime host resource budget"
+        );
+        let runtime_adaptive_controller_settings = state.runtime_adaptive_controller_settings();
+        tracing::info!(
+            mode = ?runtime_adaptive_controller_settings.mode(),
+            canary_remainders = runtime_adaptive_controller_settings
+                .canary_policy()
+                .admitted_remainders,
+            canary_modulus = runtime_adaptive_controller_settings.canary_policy().hash_modulus.get(),
+            rollback_to_static_defaults =
+                runtime_adaptive_controller_settings.rollback_to_static_defaults(),
+            live_adaptive_defaults_enabled =
+                runtime_adaptive_controller_settings.live_adaptive_defaults_enabled(),
+            "configured runtime adaptive controller"
+        );
+        let effective_runtime_scaling_plan = state.effective_runtime_scaling_plan();
+        tracing::info!(
+            function = %effective_runtime_scaling_plan.function,
+            min_warm = effective_runtime_scaling_plan.effective.min_warm,
+            activation_warm = effective_runtime_scaling_plan.effective.activation_warm,
+            max_warm = effective_runtime_scaling_plan.effective.max_warm,
+            pressure_adjustment = ?effective_runtime_scaling_plan.pressure_adjustment,
+            "configured effective runtime scaling plan"
+        );
         let deployment = state.current_deployment();
         if let Some(registry) = deployment.cloud_functions_registry() {
             state
@@ -507,6 +662,28 @@ fn build_version_check() -> Arc<VersionCheck> {
 /// Builds the Nimbus HTTP/WebSocket router from the canonical option bundle.
 pub fn build_router(options: RouterOptions) -> Router {
     options.into_build_config().build()
+}
+
+fn default_runtime_host_resource_budget() -> RuntimeHostResourceBudget {
+    let fallback_cpus = std::num::NonZeroUsize::new(1).expect("one logical CPU is nonzero");
+    let host_logical_cpus = std::thread::available_parallelism().unwrap_or(fallback_cpus);
+    RuntimeHostResourceBudget::conservative_for_logical_cpus(host_logical_cpus)
+}
+
+fn default_runtime_host_pressure_source() -> Arc<dyn RuntimeHostPressureSource> {
+    #[cfg(target_os = "linux")]
+    {
+        match nimbus_node::CgroupV2HostPressureSource::for_current_process() {
+            Ok(source) => return Arc::new(source),
+            Err(error) => {
+                tracing::debug!(
+                    error = %error,
+                    "cgroup v2 host pressure source unavailable; using nominal runtime host pressure source"
+                );
+            }
+        }
+    }
+    Arc::new(NominalRuntimeHostPressureSource)
 }
 
 fn build_cors_layer(configured_origins: &[String]) -> CorsLayer {

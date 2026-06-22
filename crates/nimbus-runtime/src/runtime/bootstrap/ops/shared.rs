@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Instant;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -16,7 +17,8 @@ use crate::runtime_capabilities::RuntimeContractPathsDescriptor;
 use super::super::payloads::RuntimeHostCallEnvelope;
 use super::super::state::{
     InstalledRuntimeCapabilityPolicy, InstalledRuntimeContract, InstalledRuntimeHostBridge,
-    RuntimeCancellationState,
+    RuntimeCancellationState, RuntimeInvocationExecutionPlanBinding,
+    RuntimeInvocationHostCallBinding, RuntimeWaitUntilState,
 };
 
 #[derive(Serialize)]
@@ -71,14 +73,33 @@ pub(super) fn op_nimbus_runtime_contract(state: &mut OpState) -> RuntimeContract
     }
 }
 
+#[op2]
+#[string]
+pub(super) fn op_nimbus_runtime_host_call_session_id(
+    state: &mut OpState,
+) -> std::result::Result<String, JsErrorBox> {
+    state
+        .borrow::<RuntimeInvocationHostCallBinding>()
+        .session_id()
+        .map(str::to_owned)
+        .ok_or_else(|| JsErrorBox::generic("runtime host-call session is not active"))
+}
+
+#[op2(fast)]
+pub(super) fn op_nimbus_runtime_wait_until_pending(state: &mut OpState) {
+    if let Some(wait_until) = state.try_borrow_mut::<RuntimeWaitUntilState>() {
+        wait_until.mark_pending();
+    }
+}
+
 struct HostCallPermitLease {
     permit: SharedInvocationPermit,
     completed: bool,
 }
 
 impl HostCallPermitLease {
-    fn new(permit: SharedInvocationPermit) -> Self {
-        permit.begin_async_host_call();
+    async fn new(permit: SharedInvocationPermit) -> Self {
+        permit.begin_async_host_call().await;
         Self {
             permit,
             completed: false,
@@ -110,7 +131,15 @@ pub(super) async fn op_nimbus_async_host_call<T>(
 where
     T: Serialize + Send + 'static,
 {
-    let (host_bridge, cancel_handle, cancellation_signal, permit, contract) = {
+    let (
+        host_bridge,
+        cancel_handle,
+        cancellation_signal,
+        permit,
+        contract,
+        host_call_binding,
+        execution_plan_binding,
+    ) = {
         let state = state.borrow();
         (
             state.borrow::<InstalledRuntimeHostBridge>().slot.current(),
@@ -121,12 +150,20 @@ where
             state.borrow::<RuntimeCancellationState>().signal.clone(),
             state.borrow::<SharedInvocationPermit>().clone(),
             state.borrow::<InstalledRuntimeContract>().clone(),
+            state.borrow::<RuntimeInvocationHostCallBinding>().clone(),
+            state
+                .borrow::<RuntimeInvocationExecutionPlanBinding>()
+                .clone(),
         )
     };
-    let mut permit_lease = HostCallPermitLease::new(permit);
     let payload_value =
         serde_json::to_value(payload).map_err(|error| JsErrorBox::generic(error.to_string()))?;
+    enforce_live_host_call_session(operation, &payload_value, &host_call_binding)?;
     enforce_host_call_grants(operation, &payload_value, &contract)?;
+    enforce_observed_host_call_effect(operation, &execution_plan_binding)?;
+    permit.record_host_operation_started(operation);
+    let mut permit_lease = HostCallPermitLease::new(permit.clone()).await;
+    let host_bridge_started_at = Instant::now();
     let host_call = host_bridge
         .call_async(
             HostCallRequest::new(operation, payload_value),
@@ -135,28 +172,42 @@ where
         .or_cancel(cancel_handle.clone());
     tokio::pin!(host_call);
 
-    tokio::select! {
+    let mut canceled_in_flight = false;
+    let result = tokio::select! {
         result = &mut host_call => {
-            let result = normalize_host_call_value(
-                result
-                .map_err(JsErrorBox::from)?
-                .map_err(|error| JsErrorBox::generic(error.to_string()))?
-            );
-            permit_lease.complete().await?;
-            result
+            normalize_completed_host_call_result(result, permit_lease.complete().await)
         }
         _ = cancellation_signal.cancelled() => {
+            canceled_in_flight = true;
             cancel_handle.cancel();
-            let result = normalize_host_call_value(
-                host_call
-                .await
-                .map_err(JsErrorBox::from)?
-                .map_err(|error| JsErrorBox::generic(error.to_string()))?
-            );
-            permit_lease.complete().await?;
-            result
+            let result = host_call.await;
+            normalize_completed_host_call_result(result, permit_lease.complete().await)
         }
+    };
+    permit.record_host_bridge_call(operation, host_bridge_started_at.elapsed());
+    if canceled_in_flight {
+        permit.record_host_operation_canceled_in_flight(operation);
+    } else if result.is_ok() {
+        permit.record_host_operation_succeeded(operation);
+    } else {
+        permit.record_host_operation_failed(operation);
     }
+    result
+}
+
+fn normalize_completed_host_call_result<E>(
+    result: std::result::Result<crate::error::Result<Value>, E>,
+    permit_result: std::result::Result<(), JsErrorBox>,
+) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox>
+where
+    JsErrorBox: From<E>,
+{
+    permit_result?;
+    normalize_host_call_value(
+        result
+            .map_err(JsErrorBox::from)?
+            .map_err(|error| JsErrorBox::generic(error.to_string()))?,
+    )
 }
 
 pub(super) fn op_nimbus_sync_host_call<T>(
@@ -168,14 +219,73 @@ where
     T: Serialize,
 {
     let host_bridge = state.borrow::<InstalledRuntimeHostBridge>().slot.current();
+    let permit = state.borrow::<SharedInvocationPermit>().clone();
     let contract = state.borrow::<InstalledRuntimeContract>().clone();
+    let host_call_binding = state.borrow::<RuntimeInvocationHostCallBinding>().clone();
+    let execution_plan_binding = state
+        .borrow::<RuntimeInvocationExecutionPlanBinding>()
+        .clone();
     let payload_value =
         serde_json::to_value(payload).map_err(|error| JsErrorBox::generic(error.to_string()))?;
+    enforce_live_host_call_session(operation, &payload_value, &host_call_binding)?;
     enforce_host_call_grants(operation, &payload_value, &contract)?;
-    let value = host_bridge
+    enforce_observed_host_call_effect(operation, &execution_plan_binding)?;
+    permit.record_host_operation_started(operation);
+    let host_bridge_started_at = Instant::now();
+    let result = host_bridge
         .call(HostCallRequest::new(operation, payload_value))
-        .map_err(|error| JsErrorBox::generic(error.to_string()))?;
+        .map_err(|error| JsErrorBox::generic(error.to_string()));
+    permit.record_host_bridge_call(operation, host_bridge_started_at.elapsed());
+    let value = match result {
+        Ok(value) => {
+            permit.record_host_operation_succeeded(operation);
+            value
+        }
+        Err(error) => {
+            permit.record_host_operation_failed(operation);
+            return Err(error);
+        }
+    };
     normalize_host_call_value(value)
+}
+
+fn enforce_live_host_call_session(
+    operation: HostCallOperation,
+    payload: &Value,
+    binding: &RuntimeInvocationHostCallBinding,
+) -> std::result::Result<(), JsErrorBox> {
+    if !operation_requires_host_call_session(operation) {
+        return Ok(());
+    }
+
+    let Some(expected_session) = binding.session_id() else {
+        return Err(JsErrorBox::generic(format!(
+            "runtime host-call session is stale or forged for `{operation}`: no live invocation binding"
+        )));
+    };
+    let provided_session = payload
+        .get("host_call_session_id")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty());
+    if provided_session == Some(expected_session) {
+        return Ok(());
+    }
+
+    let invocation = binding
+        .invocation_id()
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let tenant = binding.tenant_label().unwrap_or("unknown");
+    Err(JsErrorBox::generic(format!(
+        "runtime host-call session is stale or forged for `{operation}`: expected `{expected_session}` for invocation {invocation} tenant `{tenant}`"
+    )))
+}
+
+const fn operation_requires_host_call_session(operation: HostCallOperation) -> bool {
+    !matches!(
+        operation,
+        HostCallOperation::HttpRoute | HostCallOperation::RuntimeExtensionCall
+    )
 }
 
 fn enforce_host_call_grants(
@@ -203,6 +313,24 @@ fn enforce_host_call_grants(
 
     Err(JsErrorBox::generic(format!(
         "runtime service grant denied for `{service_name}`"
+    )))
+}
+
+fn enforce_observed_host_call_effect(
+    operation: HostCallOperation,
+    execution_plan_binding: &RuntimeInvocationExecutionPlanBinding,
+) -> std::result::Result<(), JsErrorBox> {
+    let Some(plan) = execution_plan_binding.plan() else {
+        return Ok(());
+    };
+    let observed_effect_class = operation.runtime_effect_class();
+    let Some(violation) = plan.observed_effect_violation(observed_effect_class) else {
+        return Ok(());
+    };
+
+    Err(JsErrorBox::generic(format!(
+        "runtime host-call effect violation for `{operation}`: planned {:?} but observed {:?} ({:?})",
+        violation.planned_effect_class, violation.observed_effect_class, violation.reason
     )))
 }
 

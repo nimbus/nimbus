@@ -12,6 +12,7 @@ workspace = true
 [features]
 default = []
 bun-jsc-linked-adapter = []
+v8-pointer-compression = ["deno_core/v8_enable_pointer_compression"]
 
 [dependencies]
 base64.workspace = true

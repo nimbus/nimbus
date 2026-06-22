@@ -18,10 +18,11 @@ mod invoke;
 mod lifecycle;
 mod queue;
 
-pub(crate) use self::admission::SharedInvocationPermit;
+pub(crate) use self::admission::{SharedInvocationPermit, SharedInvocationPermitAcquire};
 pub use self::facade::RuntimeExecutor;
 #[cfg(test)]
 pub(crate) use self::facade::RuntimeExecutorTestState;
+pub use self::invoke::RuntimeInvocationResponse;
 pub(crate) use self::lifecycle::run_invocation_lifecycle;
 pub(crate) use self::queue::RuntimeWorkerJob;
 pub(crate) use self::queue::{RuntimeWorkerQueue, RuntimeWorkerShutdown, WorkerActivitySignal};
@@ -34,7 +35,8 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::test_support::{
-        bounded_fairness_runtime_test_limits, cooperative_startup_snapshot_runtime_test_limits,
+        acquire_runtime_suite_lock, bounded_fairness_runtime_test_limits,
+        cooperative_startup_snapshot_runtime_test_limits,
         cooperative_warm_pool_runtime_test_limits, product_default_runtime_test_policy,
         run_to_completion_snapshot_runtime_test_limits,
     };

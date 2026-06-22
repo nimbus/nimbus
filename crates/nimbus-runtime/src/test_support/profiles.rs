@@ -52,6 +52,14 @@ pub(crate) fn cooperative_warm_pool_runtime_test_policy() -> Arc<RuntimePolicy> 
     ))
 }
 
+pub(crate) fn cooperative_context_recycle_runtime_test_limits() -> RuntimeLimits {
+    RuntimeLimits {
+        execution_model: RuntimeExecutionModel::CooperativeLocker,
+        runtime_pool_kind: RuntimePoolKind::WarmContextRecycle,
+        ..RuntimeLimits::default()
+    }
+}
+
 pub(crate) fn bounded_fairness_runtime_test_limits() -> RuntimeLimits {
     RuntimeLimits {
         execution_model: RuntimeExecutionModel::RunToCompletion,

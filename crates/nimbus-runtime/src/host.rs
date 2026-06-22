@@ -8,6 +8,7 @@ use serde_json::Value;
 use tokio::sync::Notify;
 
 use crate::error::{NimbusRuntimeError, Result};
+use crate::execution_plan::RuntimeEffectClass;
 use crate::runtime::InvocationAuth;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -72,6 +73,37 @@ impl HostCallOperation {
             Self::CtxServiceLookup => "ctx_service_lookup",
             Self::CtxRuntimeEnterNestedCall => "ctx_runtime_enter_nested_call",
             Self::RuntimeExtensionCall => "runtime_extension_call",
+        }
+    }
+
+    pub(crate) const fn runtime_effect_class(self) -> RuntimeEffectClass {
+        match self {
+            Self::HttpRoute => RuntimeEffectClass::HttpRoute,
+            Self::CtxQuery
+            | Self::CtxPaginatedQuery
+            | Self::DocumentGet
+            | Self::QueryBuilderStart
+            | Self::QueryBuilderWithIndex
+            | Self::QueryBuilderFilter
+            | Self::QueryBuilderOrder
+            | Self::QueryReadCollect
+            | Self::QueryReadTake
+            | Self::QueryReadPaginate
+            | Self::QueryReadFirst
+            | Self::QueryReadUnique => RuntimeEffectClass::ObservableRead,
+            Self::CtxMutation
+            | Self::DocumentInsert
+            | Self::DocumentPatch
+            | Self::DocumentDelete => RuntimeEffectClass::Write,
+            Self::CtxAction | Self::CtxServiceLookup => RuntimeEffectClass::ServiceExternal,
+            Self::CtxRunQuery
+            | Self::CtxRunMutation
+            | Self::CtxRunAction
+            | Self::CtxRuntimeEnterNestedCall => RuntimeEffectClass::NestedRuntime,
+            Self::CtxSchedulerRunAfter | Self::CtxSchedulerRunAt | Self::CtxSchedulerCancel => {
+                RuntimeEffectClass::Scheduler
+            }
+            Self::RuntimeExtensionCall => RuntimeEffectClass::Extension,
         }
     }
 }
@@ -518,6 +550,8 @@ mod tests {
 
     use serde_json::json;
 
+    use crate::execution_plan::RuntimeEffectClass;
+
     use super::{
         HOST_CALL_ABI_VERSION, HostCallCancellation, HostCallCancellationCause, HostCallEnvelope,
         HostCallOperation, HostCallRequest, RuntimeAsyncDbGetPayload,
@@ -548,6 +582,111 @@ mod tests {
         }))
         .expect_err("unknown operation names should fail to deserialize");
         assert!(error.to_string().contains("unknown variant"));
+    }
+
+    #[test]
+    fn host_call_operations_have_exhaustive_runtime_effect_classes() {
+        for (operation, effect_class) in [
+            (HostCallOperation::HttpRoute, RuntimeEffectClass::HttpRoute),
+            (
+                HostCallOperation::CtxQuery,
+                RuntimeEffectClass::ObservableRead,
+            ),
+            (
+                HostCallOperation::CtxPaginatedQuery,
+                RuntimeEffectClass::ObservableRead,
+            ),
+            (HostCallOperation::CtxMutation, RuntimeEffectClass::Write),
+            (
+                HostCallOperation::CtxAction,
+                RuntimeEffectClass::ServiceExternal,
+            ),
+            (
+                HostCallOperation::CtxRunQuery,
+                RuntimeEffectClass::NestedRuntime,
+            ),
+            (
+                HostCallOperation::CtxRunMutation,
+                RuntimeEffectClass::NestedRuntime,
+            ),
+            (
+                HostCallOperation::CtxRunAction,
+                RuntimeEffectClass::NestedRuntime,
+            ),
+            (
+                HostCallOperation::DocumentGet,
+                RuntimeEffectClass::ObservableRead,
+            ),
+            (
+                HostCallOperation::QueryBuilderStart,
+                RuntimeEffectClass::ObservableRead,
+            ),
+            (
+                HostCallOperation::QueryBuilderWithIndex,
+                RuntimeEffectClass::ObservableRead,
+            ),
+            (
+                HostCallOperation::QueryBuilderFilter,
+                RuntimeEffectClass::ObservableRead,
+            ),
+            (
+                HostCallOperation::QueryBuilderOrder,
+                RuntimeEffectClass::ObservableRead,
+            ),
+            (
+                HostCallOperation::QueryReadCollect,
+                RuntimeEffectClass::ObservableRead,
+            ),
+            (
+                HostCallOperation::QueryReadTake,
+                RuntimeEffectClass::ObservableRead,
+            ),
+            (
+                HostCallOperation::QueryReadPaginate,
+                RuntimeEffectClass::ObservableRead,
+            ),
+            (
+                HostCallOperation::QueryReadFirst,
+                RuntimeEffectClass::ObservableRead,
+            ),
+            (
+                HostCallOperation::QueryReadUnique,
+                RuntimeEffectClass::ObservableRead,
+            ),
+            (HostCallOperation::DocumentInsert, RuntimeEffectClass::Write),
+            (HostCallOperation::DocumentPatch, RuntimeEffectClass::Write),
+            (HostCallOperation::DocumentDelete, RuntimeEffectClass::Write),
+            (
+                HostCallOperation::CtxSchedulerRunAfter,
+                RuntimeEffectClass::Scheduler,
+            ),
+            (
+                HostCallOperation::CtxSchedulerRunAt,
+                RuntimeEffectClass::Scheduler,
+            ),
+            (
+                HostCallOperation::CtxSchedulerCancel,
+                RuntimeEffectClass::Scheduler,
+            ),
+            (
+                HostCallOperation::CtxServiceLookup,
+                RuntimeEffectClass::ServiceExternal,
+            ),
+            (
+                HostCallOperation::CtxRuntimeEnterNestedCall,
+                RuntimeEffectClass::NestedRuntime,
+            ),
+            (
+                HostCallOperation::RuntimeExtensionCall,
+                RuntimeEffectClass::Extension,
+            ),
+        ] {
+            assert_eq!(
+                operation.runtime_effect_class(),
+                effect_class,
+                "{operation} should classify as {effect_class:?}"
+            );
+        }
     }
 
     #[test]

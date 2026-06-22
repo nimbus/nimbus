@@ -9,10 +9,12 @@ pub(crate) use nimbus_core::{
 };
 use nimbus_provenance::RuntimeBundleProvenanceConfig;
 pub(crate) use nimbus_runtime::{
-    InvocationAuth, InvocationRequest, NimbusRuntimeError, RuntimeBackendKind, RuntimeBundle,
+    EffectiveRuntimeScalingPlan, InvocationAuth, InvocationRequest, NimbusRuntimeError,
+    RuntimeAdaptiveControllerSettings, RuntimeBackendKind, RuntimeBundle,
     RuntimeCompatibilityTarget, RuntimeExecutionAdapterArtifactDiagnostics,
-    RuntimeExecutionAdapterState, RuntimeExecutor, RuntimeLimits, RuntimeMetricsSnapshot,
-    RuntimePolicy, RuntimeResetCapabilities,
+    RuntimeExecutionAdapterState, RuntimeExecutor, RuntimeHostPressureSource,
+    RuntimeHostResourceBudget, RuntimeLimits, RuntimeMetricsSnapshot, RuntimePolicy,
+    RuntimeResetCapabilities,
 };
 pub(crate) use serde::{Deserialize, Serialize};
 pub(crate) use serde_json::Value;
@@ -111,12 +113,52 @@ impl ConvexRuntimeLane {
         execution_adapter_state: RuntimeExecutionAdapterState,
         execution_adapter_artifact: RuntimeExecutionAdapterArtifactDiagnostics,
     ) -> Self {
+        Self::from_policy(
+            Arc::new(RuntimePolicy::new(limits)),
+            execution_adapter_state,
+            execution_adapter_artifact,
+        )
+    }
+
+    fn from_policy(
+        policy: Arc<RuntimePolicy>,
+        execution_adapter_state: RuntimeExecutionAdapterState,
+        execution_adapter_artifact: RuntimeExecutionAdapterArtifactDiagnostics,
+    ) -> Self {
         Self {
-            policy: Arc::new(RuntimePolicy::new(limits)),
+            policy,
             executor: Arc::new(OnceLock::new()),
             execution_adapter_state,
             execution_adapter_artifact,
         }
+    }
+
+    fn with_runtime_host_governor(
+        &self,
+        budget: RuntimeHostResourceBudget,
+        pressure_source: Arc<dyn RuntimeHostPressureSource>,
+        adaptive_settings: RuntimeAdaptiveControllerSettings,
+    ) -> Self {
+        Self::from_policy(
+            Arc::new(
+                RuntimePolicy::with_host_resource_governor(
+                    self.policy.limits().clone(),
+                    budget,
+                    pressure_source,
+                )
+                .with_adaptive_controller_settings(adaptive_settings),
+            ),
+            self.execution_adapter_state.clone(),
+            self.execution_adapter_artifact.clone(),
+        )
+    }
+
+    fn with_effective_scaling_plan(&self, plan: EffectiveRuntimeScalingPlan) -> Self {
+        Self::from_policy(
+            Arc::new(self.policy.clone_with_effective_scaling_plan(plan)),
+            self.execution_adapter_state.clone(),
+            self.execution_adapter_artifact.clone(),
+        )
     }
 
     fn policy(&self) -> Arc<RuntimePolicy> {

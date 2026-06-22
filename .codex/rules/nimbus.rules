@@ -1,6 +1,18 @@
 # Nimbus project-local Codex command policy.
 # Keep this file focused on execution policy; keep architecture/process
 # guidance in AGENTS.md.
+#
+# Policy model:
+# - `allow`: routine repo work that should run directly.
+# - `prompt`: risky-but-legitimate actions that should route to Auto-review
+#   when "Approve for me" / `approvals_reviewer = "auto_review"` is active.
+# - `forbidden`: destructive actions Codex should not run.
+#
+# Codex `.rules` are static and are loaded into a session snapshot. They cannot
+# currently express "prompt in Approve for me, but allow in Full access." Keep
+# prompt rules reserved for actions we want the reviewer agent to inspect. Do
+# not run this repo with approval_policy="never" unless prompt-rule denials are
+# acceptable.
 
 # Safe verification loops for this repo.
 prefix_rule(
@@ -143,24 +155,218 @@ prefix_rule(
     ],
 )
 
-# Prompt before commands that mutate published history, dependency state, or
-# package installation.
+# Local staging operations.
+prefix_rule(
+    pattern = ["git", "add", [".", "-A", "--all", "-u", "--update"]],
+    decision = "prompt",
+    justification = "Bulk staging can accidentally include unrelated user changes and requires explicit approval.",
+    match = [
+        "git add .",
+        "git add -A",
+        "git add --all",
+        "git add -u",
+        "git add --update",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "add"],
+    decision = "allow",
+    justification = "Path-specific staging is a normal local workflow when the agent has inspected the intended file changes.",
+    match = [
+        "git add .github/workflows/ci.yml",
+        "git add .codex/rules/nimbus.rules",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "commit", ["--amend", "--no-verify", "--allow-empty", "--allow-empty-message"]],
+    decision = "prompt",
+    justification = "Amending history, bypassing hooks, or creating empty commits requires explicit approval.",
+    match = [
+        "git commit --amend",
+        "git commit --no-verify -m example",
+        "git commit --allow-empty -m example",
+        "git commit --allow-empty-message -m \"\"",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "commit"],
+    decision = "allow",
+    justification = "Ordinary local commits are allowed after the agent has staged, verified, and described the intended changes.",
+    match = [
+        "git commit -m \"Skip Windows ptrcomp simdutf artifacts\"",
+        "git commit -m \"Update CI\"",
+    ],
+)
+
+# Git network sync operations.
+prefix_rule(
+    pattern = ["git", "fetch"],
+    decision = "allow",
+    justification = "Fetching remote refs and tags is a normal read/sync workflow and does not publish local changes.",
+    match = [
+        "git fetch origin nimbus/v149.4.0 --tags",
+        "git fetch origin",
+        "git fetch --tags",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "pull"],
+    decision = "allow",
+    justification = "Pulling upstream changes is a normal repository sync workflow.",
+    match = [
+        "git pull",
+        "git pull --ff-only",
+        "git pull --rebase",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "clone"],
+    decision = "allow",
+    justification = "Cloning repositories is a normal setup and research workflow; filesystem policy still constrains clone destinations.",
+    match = [
+        "git clone git@github.com:nimbus/nimbus.git",
+        "git clone https://github.com/openai/codex.git",
+    ],
+)
+
+# Branch/worktree navigation.
+prefix_rule(
+    pattern = ["git", "switch", ["-C", "--force-create", "-f", "--force", "--discard-changes"]],
+    decision = "prompt",
+    justification = "Force-resetting a branch or discarding worktree changes requires explicit approval.",
+    match = [
+        "git switch -C codex/example origin/main",
+        "git switch --force-create codex/example origin/main",
+        "git switch -f main",
+        "git switch --discard-changes main",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "switch"],
+    decision = "allow",
+    justification = "Branch switching and new branch creation are normal local navigation workflows; Git preserves local changes unless forced.",
+    match = [
+        "git switch main",
+        "git switch -c codex/skip-windows-ptrcomp-simdutf origin/nimbus/v149.4.0",
+    ],
+)
+
+# Allow ordinary branch publication in no-approval Desktop/goal sessions, but
+# keep history-rewriting and raw transport paths behind an approval boundary.
+prefix_rule(
+    pattern = ["git", "push", ["--force", "--force-with-lease", "--force-if-includes", "--mirror", "--all"]],
+    decision = "prompt",
+    justification = "History-rewriting or broad push commands require explicit approval.",
+    match = [
+        "git push --force origin main",
+        "git push --force-with-lease origin main",
+        "git push --mirror origin",
+        "git push --all origin",
+    ],
+    not_match = [
+        "git push origin main --force",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "push", ["--delete", "-d"]],
+    decision = "prompt",
+    justification = "Deleting remote refs requires explicit approval.",
+    match = [
+        "git push --delete origin old-branch",
+        "git push -d origin old-branch",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "push", "origin", ["--delete", "-d"]],
+    decision = "prompt",
+    justification = "Deleting remote refs requires explicit approval.",
+    match = [
+        "git push origin --delete old-branch",
+        "git push origin -d old-branch",
+    ],
+    not_match = [
+        "git push origin :old-branch",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "push", ["--tags", "--follow-tags"]],
+    decision = "prompt",
+    justification = "Publishing tags requires explicit approval.",
+    match = [
+        "git push --tags",
+        "git push --follow-tags",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "push", "origin", ["--tags", "--follow-tags"]],
+    decision = "prompt",
+    justification = "Publishing tags requires explicit approval.",
+    match = [
+        "git push origin --tags",
+        "git push origin --follow-tags",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "send-pack"],
+    decision = "prompt",
+    justification = "Raw Git transport bypasses normal git push policy and requires explicit approval.",
+    match = [
+        "git send-pack git@github.com:nimbus/nimbus.git HEAD:refs/heads/codex/example",
+    ],
+)
+
+# Execpolicy matches argument prefixes, not full Git semantics. The prompt
+# rules above catch common dangerous leading forms; they do not catch every
+# suffix flag or refspec spelling.
 prefix_rule(
     pattern = ["git", "push"],
-    decision = "prompt",
-    justification = "Pushing branches or tags should stay intentional.",
+    decision = "allow",
+    justification = "Ordinary branch publication is allowed after the agent has staged, verified, and described the intended push.",
     match = [
         "git push origin main",
-        "git push --tags",
+        "git push origin HEAD:refs/heads/codex/example",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "tag", ["-d", "--delete"]],
+    decision = "prompt",
+    justification = "Deleting local tags requires explicit approval.",
+    match = [
+        "git tag -d v2.7.14-locker.33",
+        "git tag --delete v2.7.14-locker.33",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "tag", ["-f", "--force"]],
+    decision = "prompt",
+    justification = "Replacing an existing tag requires explicit approval.",
+    match = [
+        "git tag -f v2.7.14-locker.33",
+        "git tag --force v2.7.14-locker.33",
     ],
 )
 
 prefix_rule(
     pattern = ["git", "tag"],
-    decision = "prompt",
-    justification = "Tag creation should stay intentional.",
+    decision = "allow",
+    justification = "Ordinary tag creation and inspection are allowed; tag publication is guarded by git push tag rules.",
     match = [
         "git tag v2.7.14-locker.33",
+        "git tag -a v2.7.14-locker.33 -m v2.7.14-locker.33",
+        "git tag --list",
     ],
 )
 

@@ -4,12 +4,22 @@ use std::time::Instant;
 use tracing::debug;
 
 use crate::error::NimbusRuntimeError;
-use crate::executor::{RuntimeWorkerJob, RuntimeWorkerQueue, SharedInvocationPermit};
+use crate::executor::{
+    RuntimeWorkerJob, RuntimeWorkerQueue, SharedInvocationPermit, SharedInvocationPermitAcquire,
+};
 use crate::host::HostCallCancellation;
 use crate::limits::RuntimePolicy;
-use crate::runtime::{CooperativeRuntimeSlotStart, RuntimeInvocationExecution};
+use crate::runtime::{
+    CooperativeLockerRuntimeSlot, CooperativeRuntimeSlotStart, RuntimeInvocationExecution,
+};
 
 use super::{CooperativeInvocation, CooperativeWorkerLoop};
+
+enum CooperativeAdmissionStart {
+    Slot(CooperativeLockerRuntimeSlot),
+    DirectResult(crate::error::Result<serde_json::Value>),
+    Deferred,
+}
 
 impl CooperativeWorkerLoop {
     pub(super) fn cancellation_cause(
@@ -32,9 +42,12 @@ impl CooperativeWorkerLoop {
         Vec<RuntimeWorkerJob>,
     ) {
         let metrics = policy.metrics();
+        let runtime_profile = policy.runtime_profile();
         if let Err(error) = &result {
             match error {
-                NimbusRuntimeError::ExecutionTimeout(_) => metrics.record_timeout(),
+                NimbusRuntimeError::ExecutionTimeout(_) | NimbusRuntimeError::SystemTimeout(_) => {
+                    metrics.record_timeout()
+                }
                 NimbusRuntimeError::Cancelled => {
                     metrics.record_in_flight_canceled_invocation_for_tenant(
                         job.context.tenant_label.as_deref(),
@@ -49,6 +62,7 @@ impl CooperativeWorkerLoop {
 
         let execution = execution_started_at.elapsed();
         metrics.record_execution_for_tenant(job.context.tenant_label.as_deref(), execution);
+        metrics.record_profile_execution(runtime_profile, execution);
         if result.is_ok() {
             debug!(
                 worker_id,
@@ -67,6 +81,30 @@ impl CooperativeWorkerLoop {
     }
 
     pub(super) fn admit_job(&mut self, queue: &Arc<dyn RuntimeWorkerQueue>, job: RuntimeWorkerJob) {
+        let deferred = self.admit_job_inner(queue, job, true);
+        debug_assert!(
+            deferred.is_none(),
+            "blocking cooperative admission should not defer jobs"
+        );
+        if let Some(job) = deferred {
+            self.pending_admissions.push_front(job);
+        }
+    }
+
+    pub(super) fn try_admit_job(
+        &mut self,
+        queue: &Arc<dyn RuntimeWorkerQueue>,
+        job: RuntimeWorkerJob,
+    ) -> Option<RuntimeWorkerJob> {
+        self.admit_job_inner(queue, job, false)
+    }
+
+    fn admit_job_inner(
+        &mut self,
+        queue: &Arc<dyn RuntimeWorkerQueue>,
+        mut job: RuntimeWorkerJob,
+        allow_blocking_acquire: bool,
+    ) -> Option<RuntimeWorkerJob> {
         let cancellation_for_metrics = job.cancellation.clone();
         let permit = SharedInvocationPermit::new(
             self.policy.clone(),
@@ -89,10 +127,9 @@ impl CooperativeWorkerLoop {
                 );
             let ready_jobs = self.worker_runtime.block_on(permit.finish_invocation());
             queue.complete_job(job, Err(NimbusRuntimeError::Cancelled), ready_jobs);
-            return;
+            return None;
         }
 
-        self.policy.metrics().record_worker_dispatch();
         let runtime = job.host.runtime_with_policy(self.policy.clone());
         let worker_runtime = &self.worker_runtime;
         let v8_runtime_pool = &mut self.v8_runtime_pool;
@@ -101,11 +138,27 @@ impl CooperativeWorkerLoop {
         let worker_id = self.worker_id;
         let start = worker_runtime.block_on(async {
             let execution_started_at = Instant::now();
-            permit
-                .clone()
-                .acquire_initial(job.enqueued_at)
-                .await
-                .map_err(|error| (error, execution_started_at))?;
+            let mut permit_for_acquire = permit.clone();
+            if allow_blocking_acquire {
+                permit_for_acquire
+                    .acquire_initial(job.enqueued_at)
+                    .await
+                    .map_err(|error| (error, execution_started_at))?;
+            } else {
+                match permit_for_acquire
+                    .try_acquire_initial(job.enqueued_at)
+                    .map_err(|error| (error, execution_started_at))?
+                {
+                    SharedInvocationPermitAcquire::Acquired => {}
+                    SharedInvocationPermitAcquire::WouldBlock => {
+                        return Ok::<_, (NimbusRuntimeError, Instant)>((
+                            CooperativeAdmissionStart::Deferred,
+                            execution_started_at,
+                        ));
+                    }
+                }
+            }
+            self.policy.metrics().record_worker_dispatch();
             debug!(
                 worker_id,
                 invocation_id = job.context.invocation_id,
@@ -115,28 +168,45 @@ impl CooperativeWorkerLoop {
                 kind = job.context.kind,
                 "runtime worker invocation started"
             );
+
+            let invocation = RuntimeInvocationExecution {
+                watchdog,
+                bundle: job.bundle.clone(),
+                request: job.request.clone(),
+                context: job.context.clone(),
+                execution_plan: job.execution_plan.clone(),
+                external_cancellation: job.cancellation.clone(),
+                response_ready_tx: job.response_ready_tx.take(),
+                permit: permit.clone(),
+            };
+            if !job.execution_plan.permits_cooperative_scheduler_admission() {
+                let result = runtime
+                    .invoke_bundle_unmanaged(Some(v8_runtime_pool), invocation)
+                    .await;
+                return Ok::<_, (NimbusRuntimeError, Instant)>((
+                    CooperativeAdmissionStart::DirectResult(result),
+                    execution_started_at,
+                ));
+            }
+
             let slot = runtime
                 .start_cooperative_locker_runtime_slot(
                     v8_runtime_pool,
                     CooperativeRuntimeSlotStart {
-                        invocation: RuntimeInvocationExecution {
-                            watchdog,
-                            bundle: job.bundle.clone(),
-                            request: job.request.clone(),
-                            context: job.context.clone(),
-                            external_cancellation: job.cancellation.clone(),
-                            permit: permit.clone(),
-                        },
+                        invocation,
                         activity_signal,
                     },
                 )
                 .await
                 .map_err(|error| (error, execution_started_at))?;
-            Ok::<_, (NimbusRuntimeError, Instant)>((slot, execution_started_at))
+            Ok::<_, (NimbusRuntimeError, Instant)>((
+                CooperativeAdmissionStart::Slot(slot),
+                execution_started_at,
+            ))
         });
 
         match start {
-            Ok((slot, execution_started_at)) => {
+            Ok((CooperativeAdmissionStart::Slot(slot), execution_started_at)) => {
                 self.scheduler.admit_runnable(CooperativeInvocation {
                     job,
                     permit,
@@ -144,6 +214,33 @@ impl CooperativeWorkerLoop {
                     execution_started_at,
                     cancellation_for_metrics,
                 });
+                None
+            }
+            Ok((CooperativeAdmissionStart::DirectResult(result), execution_started_at)) => {
+                let (job, result, ready_jobs) =
+                    self.worker_runtime.block_on(Self::finish_invocation(
+                        self.policy.clone(),
+                        self.worker_id,
+                        job,
+                        permit,
+                        execution_started_at,
+                        cancellation_for_metrics,
+                        result,
+                    ));
+                queue.complete_job(job, result, ready_jobs);
+                None
+            }
+            Ok((CooperativeAdmissionStart::Deferred, _execution_started_at)) => {
+                debug!(
+                    worker_id,
+                    invocation_id = job.context.invocation_id,
+                    request_id = ?job.context.server_request_id,
+                    tenant = job.context.tenant_label.as_deref().unwrap_or("unknown"),
+                    function = %job.context.function_name,
+                    kind = job.context.kind,
+                        "runtime worker deferred admission behind parked cooperative slots"
+                );
+                Some(job)
             }
             Err((error, execution_started_at)) => {
                 let (job, result, ready_jobs) =
@@ -157,6 +254,7 @@ impl CooperativeWorkerLoop {
                         Err(error),
                     ));
                 queue.complete_job(job, result, ready_jobs);
+                None
             }
         }
     }

@@ -11,6 +11,15 @@ pub(super) struct RuntimeExecutorAdmissionState {
     pub(super) queued_tenants: VecDeque<String>,
 }
 
+impl RuntimeExecutorAdmissionState {
+    pub(super) fn total_in_flight(&self) -> usize {
+        self.tenants
+            .values()
+            .map(RuntimeExecutorTenantAdmissionState::total_in_flight)
+            .sum()
+    }
+}
+
 pub(super) struct RuntimeExecutorTenantAdmissionState {
     pub(super) active_invocations: usize,
     pub(super) parked_invocations: usize,
@@ -52,6 +61,7 @@ pub(super) fn promote_ready_jobs_locked(
         if cycle_len == 0 {
             break;
         }
+        let current_host_in_flight = state.total_in_flight();
         let mut promoted_this_cycle = false;
         for _ in 0..cycle_len {
             let Some(tenant_label) = state.queued_tenants.pop_front() else {
@@ -64,7 +74,15 @@ pub(super) fn promote_ready_jobs_locked(
                 if tenant_state.queued_jobs.is_empty() {
                     tenant_state.queued_in_rotation = false;
                     remove_tenant = tenant_state.total_in_flight() == 0;
-                } else if tenant_state.total_in_flight() < max_in_flight {
+                } else if tenant_state.total_in_flight() < max_in_flight
+                    && tenant_state.queued_jobs.front().is_some_and(|job| {
+                        matches!(
+                            admission
+                                .host_admission_action_for_in_flight(current_host_in_flight, job),
+                            crate::limits::RuntimeHostAdmissionAction::Admit
+                        )
+                    })
+                {
                     promoted_job = tenant_state.queued_jobs.pop_front().map(|mut job| {
                         tenant_state.parked_invocations += 1;
                         job.dispatch_handle = Some(RuntimeInvocationDispatchHandle {

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use tokio::sync::mpsc;
 
@@ -250,6 +251,14 @@ impl RuntimeWorkerRouter {
     }
 
     pub(in crate::executor) async fn dispatch_job(&self, job: RuntimeWorkerJob) -> Result<()> {
+        let started_at = Instant::now();
+        let result = self.dispatch_job_inner(job).await;
+        self.metrics
+            .record_worker_router_dispatch(started_at.elapsed());
+        result
+    }
+
+    async fn dispatch_job_inner(&self, job: RuntimeWorkerJob) -> Result<()> {
         let affinity_key = self.affinity_key(&job);
         let selection = self.choose_worker(affinity_key.as_ref());
         let dispatch_handle = job.dispatch_handle.clone();
@@ -271,6 +280,17 @@ impl RuntimeWorkerRouter {
     }
 
     pub(in crate::executor) fn dispatch_job_blocking(
+        &self,
+        job: RuntimeWorkerJob,
+    ) -> std::result::Result<(), Box<RuntimeWorkerJob>> {
+        let started_at = Instant::now();
+        let result = self.dispatch_job_blocking_inner(job);
+        self.metrics
+            .record_worker_router_dispatch(started_at.elapsed());
+        result
+    }
+
+    fn dispatch_job_blocking_inner(
         &self,
         job: RuntimeWorkerJob,
     ) -> std::result::Result<(), Box<RuntimeWorkerJob>> {
@@ -337,8 +357,10 @@ mod tests {
 
     use super::*;
     use crate::context::RuntimeInvocationContext;
+    use crate::execution_plan::RuntimeExecutionPlan;
     use crate::executor::queue::RuntimeWorkerResultSender;
     use crate::host::{HostBridge, HostCallRequest};
+    use crate::limits::RuntimePolicy;
     use crate::metrics::RuntimeMetrics;
     use crate::runtime::{InvocationKind, InvocationRequest, RuntimeBundle, RuntimeHost};
 
@@ -363,13 +385,18 @@ mod tests {
             auth: None,
             services: Default::default(),
         };
+        let context = RuntimeInvocationContext::top_level(&request);
+        let policy = RuntimePolicy::default();
+        let execution_plan = RuntimeExecutionPlan::for_invocation(&policy, &request, &context);
         RuntimeWorkerJob {
             host: RuntimeHost::new(Arc::new(NoopHost)),
             bundle: RuntimeBundle::new(&bundle_path),
             request: request.clone(),
-            context: RuntimeInvocationContext::top_level(&request),
+            context,
+            execution_plan,
             cancellation: None,
             enqueued_at: std::time::Instant::now(),
+            response_ready_tx: None,
             result_tx: RuntimeWorkerResultSender::Blocking(std::sync::mpsc::sync_channel(1).0),
             dispatch_handle: None,
         }

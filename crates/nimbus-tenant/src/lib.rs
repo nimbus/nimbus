@@ -9,6 +9,7 @@ mod image_admission;
 mod operator_policy;
 mod policy_input;
 mod runtime_admission;
+mod runtime_profile;
 
 #[cfg(test)]
 mod tests;
@@ -57,8 +58,10 @@ pub use operator_policy::{
     OperatorPolicyMetadata, OperatorPolicyProofReport, OperatorPolicyQuotaSummary,
     OperatorPolicyReloadOutcome, OperatorPolicyReloadState, OperatorPolicyWorkload,
     OperatorQuotaPolicy, OperatorRuntimePolicy, OperatorRuntimeProfile,
-    OperatorSandboxEgressPolicy, OperatorSandboxEgressRulePolicy, OperatorSandboxPolicy,
-    OperatorSecretPolicy, OperatorServicePolicy, OperatorStoragePolicy, OperatorVolumePolicy,
+    OperatorRuntimeScalingLimits, OperatorRuntimeScalingQuota, OperatorSandboxEgressPolicy,
+    OperatorSandboxEgressRulePolicy, OperatorSandboxPolicy, OperatorSecretPolicy,
+    OperatorServicePolicy, OperatorStoragePolicy, OperatorVolumePolicy,
+    TenantRuntimeScalingRequest,
 };
 pub use policy_input::{
     TenantAuditRedactionPolicy, TenantImagePolicyDecision, TenantIsolationPolicyInput,
@@ -72,3 +75,4 @@ pub(crate) use runtime_admission::RuntimePolicyAdmission;
 pub use runtime_admission::{
     RuntimeIsolationTier, TenantRuntimePolicyAdmission, TenantRuntimePolicyDecision,
 };
+pub use runtime_profile::{RuntimeEfficiencyPlan, RuntimeEfficiencyPlanState};

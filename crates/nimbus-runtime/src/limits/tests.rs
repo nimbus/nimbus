@@ -1,5 +1,16 @@
 use super::*;
+use std::num::NonZeroUsize;
+use std::sync::Arc;
 use std::time::Duration;
+
+#[derive(Debug)]
+struct FixedRuntimeHostPressureSource(RuntimeHostPressureSample);
+
+impl RuntimeHostPressureSource for FixedRuntimeHostPressureSource {
+    fn sample(&self) -> RuntimeHostPressureSample {
+        self.0
+    }
+}
 
 #[test]
 fn runtime_compatibility_target_parses_public_node_lts_aliases() {
@@ -129,6 +140,493 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
 }
 
 #[test]
+fn runtime_profile_is_derived_from_v8_javascript_surface_only() {
+    let web_limits = RuntimeLimits::application_web_standard().normalized();
+    assert_eq!(
+        RuntimeProfile::for_limits(&web_limits),
+        Some(RuntimeProfile::WebLean)
+    );
+
+    for limits in [
+        RuntimeLimits::application_node20(),
+        RuntimeLimits::application_node22(),
+        RuntimeLimits::application_node24(),
+        RuntimeLimits::application_node26(),
+    ] {
+        assert_eq!(
+            RuntimeProfile::for_limits(&limits.normalized()),
+            Some(RuntimeProfile::NodeFull)
+        );
+    }
+
+    let bun_limits = RuntimeLimits::application_bun_jsc().normalized();
+    assert_eq!(
+        RuntimeProfile::for_limits(&bun_limits),
+        None,
+        "Bun/JSC is not silently collapsed into a V8 runtime efficiency profile"
+    );
+}
+
+#[test]
+fn runtime_density_plan_uses_measured_profile_rss_and_reserves_active_slots() {
+    let mut limits = RuntimeLimits::application_node22();
+    limits.max_concurrent_runtime_instances = 4;
+    limits.worker_threads = 4;
+    limits.max_warm_pool_entries_per_worker = 8;
+    limits.max_heap_mb = 64;
+
+    let measurement = RuntimeDensityMeasurement::from_total_rss_delta(
+        RuntimeProfile::NodeFull,
+        RuntimeCompatibilityTarget::Node22,
+        RuntimeDensityMeasurementMethod::ProcessRssDelta,
+        NonZeroUsize::new(2).expect("nonzero sample count"),
+        mib(400),
+    );
+    let budget = RuntimeDensityBudget {
+        host_runtime_budget_bytes: mib(2048),
+        operator_reserved_headroom_bytes: mib(256),
+    };
+
+    let plan = RuntimeDensityPlan::for_limits_measurement_and_budget(&limits, measurement, budget);
+
+    assert_eq!(plan.measured_per_runtime_rss_bytes, mib(200));
+    assert_eq!(plan.heap_cap_bytes_per_runtime, mib(64));
+    assert_eq!(plan.planning_bytes_per_runtime, mib(200));
+    assert_eq!(plan.available_runtime_budget_bytes, mib(1792));
+    assert_eq!(plan.active_runtime_slots_reserved, 4);
+    assert_eq!(plan.active_runtime_reservation_bytes, mib(800));
+    assert_eq!(plan.retained_pool_budget_bytes, mib(992));
+    assert_eq!(plan.max_retained_runtimes_by_memory, 4);
+    assert_eq!(plan.max_retained_runtimes_per_worker_by_memory, 1);
+    assert_eq!(plan.effective_max_warm_pool_entries_per_worker, 1);
+}
+
+#[test]
+fn runtime_density_plan_bounds_node_pool_lower_than_web_under_same_budget() {
+    let budget = RuntimeDensityBudget {
+        host_runtime_budget_bytes: mib(4096),
+        operator_reserved_headroom_bytes: mib(512),
+    };
+    let web_limits = RuntimeLimits {
+        max_concurrent_runtime_instances: 4,
+        worker_threads: 4,
+        max_warm_pool_entries_per_worker: 16,
+        max_heap_mb: 128,
+        ..RuntimeLimits::application_web_standard()
+    };
+    let node_limits = RuntimeLimits {
+        max_concurrent_runtime_instances: 4,
+        worker_threads: 4,
+        max_warm_pool_entries_per_worker: 16,
+        max_heap_mb: 128,
+        ..RuntimeLimits::application_node26()
+    };
+
+    let web_plan = RuntimeDensityPlan::for_limits_measurement_and_budget(
+        &web_limits,
+        RuntimeDensityMeasurement::from_total_rss_delta(
+            RuntimeProfile::WebLean,
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeDensityMeasurementMethod::ProcessRssDelta,
+            NonZeroUsize::new(1).expect("nonzero sample count"),
+            mib(84),
+        ),
+        budget,
+    );
+    let node_plan = RuntimeDensityPlan::for_limits_measurement_and_budget(
+        &node_limits,
+        RuntimeDensityMeasurement::from_total_rss_delta(
+            RuntimeProfile::NodeFull,
+            RuntimeCompatibilityTarget::Node26,
+            RuntimeDensityMeasurementMethod::ProcessRssDelta,
+            NonZeroUsize::new(1).expect("nonzero sample count"),
+            mib(189),
+        ),
+        budget,
+    );
+
+    assert_eq!(web_plan.planning_bytes_per_runtime, mib(128));
+    assert_eq!(node_plan.planning_bytes_per_runtime, mib(189));
+    assert!(
+        node_plan.effective_max_warm_pool_entries_per_worker
+            < web_plan.effective_max_warm_pool_entries_per_worker,
+        "node density must be bounded by measured RSS instead of inheriting web-sized pool caps"
+    );
+    assert_eq!(web_plan.effective_max_warm_pool_entries_per_worker, 6);
+    assert_eq!(node_plan.effective_max_warm_pool_entries_per_worker, 3);
+}
+
+#[test]
+fn runtime_density_plan_keeps_isolate_group_ffi_deferred() {
+    let limits = RuntimeLimits::application_node22();
+    let plan = RuntimeDensityPlan::for_limits_measurement_and_budget(
+        &limits,
+        RuntimeDensityMeasurement::from_total_rss_delta(
+            RuntimeProfile::NodeFull,
+            RuntimeCompatibilityTarget::Node22,
+            RuntimeDensityMeasurementMethod::ProcessRssDelta,
+            NonZeroUsize::new(1).expect("nonzero sample count"),
+            mib(153),
+        ),
+        RuntimeDensityBudget {
+            host_runtime_budget_bytes: mib(4096),
+            operator_reserved_headroom_bytes: mib(512),
+        },
+    );
+
+    assert_eq!(
+        plan.isolate_group_ffi_status,
+        RuntimeIsolateGroupFfiStatus::DeferredPendingValidation
+    );
+    assert!(!plan.isolate_group_ffi_allowed());
+}
+
+#[test]
+fn runtime_memory_pressure_sample_classifies_observed_watermarks() {
+    let nominal = RuntimeMemoryPressureSample::observed(mib(512), mib(768), mib(960)).classify();
+    assert_eq!(nominal.level, RuntimeMemoryPressureLevel::Nominal);
+    assert_eq!(
+        nominal.source_status,
+        RuntimeMemoryPressureSourceStatus::Observed
+    );
+    assert!(!nominal.pause_prewarming);
+    assert!(!nominal.evict_idle_retained_runtimes);
+
+    let high = RuntimeMemoryPressureSample::observed(mib(800), mib(768), mib(960)).classify();
+    assert_eq!(high.level, RuntimeMemoryPressureLevel::High);
+    assert_eq!(
+        high.source_status,
+        RuntimeMemoryPressureSourceStatus::Observed
+    );
+    assert!(high.pause_prewarming);
+    assert!(high.run_idle_low_memory_maintenance);
+    assert!(high.evict_idle_retained_runtimes);
+
+    let critical = RuntimeMemoryPressureSample::observed(mib(960), mib(768), mib(960)).classify();
+    assert_eq!(critical.level, RuntimeMemoryPressureLevel::Critical);
+    assert_eq!(
+        critical.source_status,
+        RuntimeMemoryPressureSourceStatus::Observed
+    );
+    assert!(critical.pause_prewarming);
+    assert!(critical.run_idle_low_memory_maintenance);
+    assert!(critical.evict_idle_retained_runtimes);
+}
+
+#[test]
+fn runtime_memory_pressure_sample_degrades_conservatively_without_source() {
+    let decision = RuntimeMemoryPressureSample::unavailable().classify();
+
+    assert_eq!(decision.level, RuntimeMemoryPressureLevel::High);
+    assert_eq!(
+        decision.source_status,
+        RuntimeMemoryPressureSourceStatus::Unavailable
+    );
+    assert!(
+        decision.pause_prewarming,
+        "missing host/cgroup memory source must stop speculative warm growth"
+    );
+    assert!(
+        decision.evict_idle_retained_runtimes,
+        "missing host/cgroup memory source must prefer shrinking idle retained runtimes"
+    );
+}
+
+#[test]
+fn runtime_memory_pressure_decision_pauses_prewarm_scheduler() {
+    let nominal = RuntimeMemoryPressureSample::observed(mib(512), mib(768), mib(960))
+        .classify()
+        .schedule_prewarm_entries(3);
+    assert_eq!(nominal.requested_entries, 3);
+    assert_eq!(nominal.admitted_entries, 3);
+    assert!(!nominal.paused_by_memory_pressure);
+    assert_eq!(
+        nominal.memory_pressure_level,
+        RuntimeMemoryPressureLevel::Nominal
+    );
+    assert_eq!(
+        nominal.memory_pressure_source_status,
+        RuntimeMemoryPressureSourceStatus::Observed
+    );
+
+    let high = RuntimeMemoryPressureSample::observed(mib(800), mib(768), mib(960))
+        .classify()
+        .schedule_prewarm_entries(3);
+    assert_eq!(high.requested_entries, 3);
+    assert_eq!(high.admitted_entries, 0);
+    assert!(high.paused_by_memory_pressure);
+    assert_eq!(high.memory_pressure_level, RuntimeMemoryPressureLevel::High);
+    assert_eq!(
+        high.memory_pressure_source_status,
+        RuntimeMemoryPressureSourceStatus::Observed
+    );
+
+    let critical = RuntimeMemoryPressureSample::observed(mib(960), mib(768), mib(960))
+        .classify()
+        .schedule_prewarm_entries(3);
+    assert_eq!(critical.requested_entries, 3);
+    assert_eq!(critical.admitted_entries, 0);
+    assert!(critical.paused_by_memory_pressure);
+    assert_eq!(
+        critical.memory_pressure_level,
+        RuntimeMemoryPressureLevel::Critical
+    );
+
+    let unavailable = RuntimeMemoryPressureSample::unavailable()
+        .classify()
+        .schedule_prewarm_entries(3);
+    assert_eq!(unavailable.requested_entries, 3);
+    assert_eq!(unavailable.admitted_entries, 0);
+    assert!(unavailable.paused_by_memory_pressure);
+    assert_eq!(
+        unavailable.memory_pressure_source_status,
+        RuntimeMemoryPressureSourceStatus::Unavailable
+    );
+}
+
+#[test]
+fn runtime_memory_pressure_decision_sizes_retained_evictions() {
+    let nominal = RuntimeMemoryPressureDecision::for_level(
+        RuntimeMemoryPressureLevel::Nominal,
+        RuntimeMemoryPressureSourceStatus::Observed,
+    );
+    assert_eq!(nominal.retained_runtime_eviction_target(5), 0);
+
+    let high = RuntimeMemoryPressureDecision::for_level(
+        RuntimeMemoryPressureLevel::High,
+        RuntimeMemoryPressureSourceStatus::Observed,
+    );
+    assert_eq!(
+        high.retained_runtime_eviction_target(5),
+        3,
+        "high pressure evicts the oldest half, rounded up"
+    );
+
+    let critical = RuntimeMemoryPressureDecision::for_level(
+        RuntimeMemoryPressureLevel::Critical,
+        RuntimeMemoryPressureSourceStatus::Observed,
+    );
+    assert_eq!(
+        critical.retained_runtime_eviction_target(5),
+        5,
+        "critical pressure evicts every idle retained runtime"
+    );
+}
+
+#[test]
+fn runtime_host_resource_budget_reserves_system_and_control_plane_capacity() {
+    let budget =
+        RuntimeHostResourceBudget::conservative_for_logical_cpus(NonZeroUsize::new(8).unwrap());
+    assert_eq!(budget.host_millicpus, 8000);
+    assert_eq!(budget.system_reserved_millicpus, 1000);
+    assert_eq!(budget.nimbus_control_plane_reserved_millicpus, 1000);
+    assert_eq!(budget.runtime_allocatable_millicpus(), 6000);
+    assert_eq!(budget.nominal_dispatch_seats(16), 6);
+
+    let capped = RuntimeHostResourceBudget {
+        runtime_hard_ceiling_millicpus: Some(2500),
+        ..budget
+    };
+    assert_eq!(capped.runtime_allocatable_millicpus(), 2500);
+    assert_eq!(capped.nominal_dispatch_seats(16), 2);
+
+    let nominal: RuntimeHostResourceDecision =
+        capped.decide(16, RuntimeHostPressureSample::nominal());
+    assert_eq!(nominal.effective_dispatch_seats, 2);
+}
+
+#[test]
+fn runtime_host_pressure_overrides_unused_tenant_quota_for_lower_qos_work() {
+    let budget =
+        RuntimeHostResourceBudget::conservative_for_logical_cpus(NonZeroUsize::new(8).unwrap());
+    let decision = budget.decide(
+        8,
+        RuntimeHostPressureSample::observed(
+            RuntimeHostPressureLevel::High,
+            RuntimeMemoryPressureSample::observed(mib(512), mib(768), mib(960)).classify(),
+            false,
+        ),
+    );
+
+    assert_eq!(decision.host_pressure_level, RuntimeHostPressureLevel::High);
+    assert_eq!(decision.nominal_dispatch_seats, 6);
+    assert_eq!(decision.effective_dispatch_seats, 3);
+    assert!(decision.pause_prewarming);
+    let guaranteed: RuntimeHostAdmissionDecision =
+        decision.admission_for_in_flight(0, RuntimeHostWorkClass::Guaranteed, true);
+    assert_eq!(guaranteed.action, RuntimeHostAdmissionAction::Admit);
+    assert_eq!(
+        decision
+            .admission_for_in_flight(0, RuntimeHostWorkClass::Burstable, true)
+            .action,
+        RuntimeHostAdmissionAction::Admit,
+        "host pressure should admit burstable work while a reduced host seat remains available"
+    );
+    assert_eq!(
+        decision
+            .admission_for_in_flight(3, RuntimeHostWorkClass::Burstable, true)
+            .action,
+        RuntimeHostAdmissionAction::Queue,
+        "host pressure can queue burstable work when tenant quota remains but reduced host seats are full"
+    );
+    assert_eq!(
+        decision
+            .admission_for_in_flight(0, RuntimeHostWorkClass::BestEffort, true)
+            .action,
+        RuntimeHostAdmissionAction::Shed,
+        "host pressure can shed best-effort work even when tenant quota remains and a reduced host seat is available"
+    );
+    assert_eq!(
+        decision
+            .admission_for_in_flight(0, RuntimeHostWorkClass::BestEffort, true)
+            .over_capacity_action,
+        RuntimeHostAdmissionAction::Shed
+    );
+}
+
+#[test]
+fn runtime_host_pressure_degrades_conservatively_without_cpu_source() {
+    let budget =
+        RuntimeHostResourceBudget::conservative_for_logical_cpus(NonZeroUsize::new(4).unwrap());
+    let decision = budget.decide(
+        4,
+        RuntimeHostPressureSample::unavailable(
+            RuntimeMemoryPressureSample::unavailable().classify(),
+        ),
+    );
+
+    assert_eq!(decision.host_pressure_level, RuntimeHostPressureLevel::High);
+    assert_eq!(
+        decision.cpu_source_status,
+        RuntimeHostPressureSourceStatus::Unavailable
+    );
+    assert_eq!(
+        decision.memory_source_status,
+        RuntimeMemoryPressureSourceStatus::Unavailable
+    );
+    assert_eq!(decision.nominal_dispatch_seats, 2);
+    assert_eq!(decision.effective_dispatch_seats, 1);
+    assert!(decision.pause_prewarming);
+    assert!(decision.run_idle_low_memory_maintenance);
+    assert!(decision.evict_idle_retained_runtimes);
+}
+
+#[test]
+fn runtime_policy_records_low_cardinality_host_pressure_metrics() {
+    let policy = RuntimePolicy::with_host_resource_governor(
+        RuntimeLimits {
+            max_concurrent_runtime_instances: 4,
+            ..RuntimeLimits::default()
+        },
+        RuntimeHostResourceBudget::conservative_for_logical_cpus(NonZeroUsize::new(4).unwrap()),
+        Arc::new(FixedRuntimeHostPressureSource(
+            RuntimeHostPressureSample::unavailable(
+                RuntimeMemoryPressureSample::unavailable().classify(),
+            ),
+        )),
+    );
+
+    let decision = policy.host_resource_decision();
+    let metrics = policy.metrics_snapshot();
+
+    assert_eq!(decision.host_pressure_level, RuntimeHostPressureLevel::High);
+    assert_eq!(metrics.host_pressure.decisions, 1);
+    assert_eq!(metrics.host_pressure.high_decisions, 1);
+    assert_eq!(
+        metrics.host_pressure.latest_host_pressure_level,
+        RuntimeHostPressureLevel::High
+    );
+    assert_eq!(
+        metrics.host_pressure.latest_cpu_source_status,
+        RuntimeHostPressureSourceStatus::Unavailable
+    );
+    assert_eq!(
+        metrics.host_pressure.latest_memory_source_status,
+        RuntimeMemoryPressureSourceStatus::Unavailable
+    );
+    assert_eq!(metrics.host_pressure.latest_effective_dispatch_seats, 1);
+    assert!(
+        metrics.tenants.is_empty(),
+        "host pressure telemetry must not add tenant-cardinality labels"
+    );
+}
+
+#[test]
+fn runtime_policy_carries_adaptive_controller_settings_without_enabling_defaults() {
+    let policy = RuntimePolicy::new(RuntimeLimits::default());
+    assert!(
+        !policy
+            .adaptive_controller_settings()
+            .live_adaptive_defaults_enabled()
+    );
+
+    let adaptive = RuntimeAdaptiveControllerSettings::shadow(RuntimeControllerReplayConfig {
+        stable_window_observations: NonZeroUsize::new(2).expect("nonzero stable window"),
+        panic_window_observations: NonZeroUsize::new(1).expect("nonzero panic window"),
+        ..RuntimeControllerReplayConfig::default()
+    });
+    let policy = policy.with_adaptive_controller_settings(adaptive);
+
+    assert_eq!(
+        policy.adaptive_controller_settings().mode(),
+        RuntimeAdaptiveControllerMode::Shadow
+    );
+    assert!(
+        !policy
+            .adaptive_controller_settings()
+            .live_adaptive_defaults_enabled()
+    );
+}
+
+#[test]
+fn runtime_policy_clone_with_effective_plan_preserves_operational_controls() {
+    let budget =
+        RuntimeHostResourceBudget::conservative_for_logical_cpus(NonZeroUsize::new(4).unwrap());
+    let adaptive = RuntimeAdaptiveControllerSettings::shadow(RuntimeControllerReplayConfig {
+        stable_window_observations: NonZeroUsize::new(2).expect("nonzero stable window"),
+        panic_window_observations: NonZeroUsize::new(1).expect("nonzero panic window"),
+        ..RuntimeControllerReplayConfig::default()
+    });
+    let policy = RuntimePolicy::with_host_resource_governor(
+        RuntimeLimits {
+            max_concurrent_runtime_instances: 4,
+            ..RuntimeLimits::default()
+        },
+        budget,
+        Arc::new(FixedRuntimeHostPressureSource(
+            RuntimeHostPressureSample::observed(
+                RuntimeHostPressureLevel::High,
+                RuntimeMemoryPressureSample::observed(mib(512), mib(768), mib(960)).classify(),
+                false,
+            ),
+        )),
+    )
+    .with_adaptive_controller_settings(adaptive);
+    let effective = RuntimeScalingTarget {
+        min_warm: 0,
+        activation_warm: 0,
+        max_warm: 2,
+        scale_down_delay_secs: 120,
+        live_scaling: false,
+    };
+    let plan = EffectiveRuntimeScalingPlan::baked_standard("messages:send", 6)
+        .with_pressure_adjustment(effective, RuntimeScalingAdjustmentReason::HostPressure);
+
+    let cloned = policy.clone_with_effective_scaling_plan(plan.clone());
+
+    assert_eq!(cloned.effective_scaling_plan(), &plan);
+    assert_eq!(cloned.host_resource_budget(), budget);
+    assert_eq!(
+        cloned.adaptive_controller_settings().mode(),
+        RuntimeAdaptiveControllerMode::Shadow
+    );
+    assert_eq!(
+        cloned.host_resource_decision().host_pressure_level,
+        RuntimeHostPressureLevel::High
+    );
+}
+
+#[test]
 fn application_preset_supports_node_lts_targets() {
     let web_limits = RuntimeLimits::application_web_standard().normalized();
     assert_eq!(web_limits.mode, RuntimeMode::Standard);
@@ -199,6 +697,10 @@ fn application_preset_supports_node_lts_targets() {
         node26_limits.compatibility_target,
         RuntimeCompatibilityTarget::Node26
     );
+}
+
+fn mib(mebibytes: u64) -> u64 {
+    mebibytes * 1024 * 1024
 }
 
 #[test]
@@ -483,6 +985,62 @@ fn runtime_policy_accepts_current_v8_javascript_axis_combinations() {
         cooperative_warm_pool.limits().runtime_pool_kind,
         RuntimePoolKind::WarmPool
     );
+
+    let cooperative_context_recycle = RuntimePolicy::new(RuntimeLimits {
+        backend_kind: RuntimeBackendKind::V8,
+        bundle_content_kind: RuntimeBundleContentKind::JavaScript,
+        compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
+        execution_model: RuntimeExecutionModel::CooperativeLocker,
+        runtime_pool_kind: RuntimePoolKind::WarmContextRecycle,
+        ..RuntimeLimits::default()
+    });
+    assert_eq!(
+        cooperative_context_recycle.limits().runtime_pool_kind,
+        RuntimePoolKind::WarmContextRecycle
+    );
+    assert_eq!(
+        cooperative_context_recycle
+            .limits()
+            .module_state_semantics(),
+        RuntimeModuleStateSemantics::FreshPerInvocation
+    );
+}
+
+#[test]
+#[should_panic(expected = "WarmContextRecycle requires CooperativeLocker")]
+fn warm_context_recycle_rejects_run_to_completion() {
+    let _ = RuntimePolicy::new(RuntimeLimits {
+        execution_model: RuntimeExecutionModel::RunToCompletion,
+        runtime_pool_kind: RuntimePoolKind::WarmContextRecycle,
+        ..RuntimeLimits::default()
+    });
+}
+
+#[test]
+#[should_panic(expected = "requires same-owner exact-authority realm reuse proof")]
+fn warm_context_recycle_rejects_node_without_same_owner_exact_authority_realm_reuse_proof() {
+    let _ = RuntimePolicy::new(RuntimeLimits {
+        compatibility_target: RuntimeCompatibilityTarget::Node22,
+        execution_model: RuntimeExecutionModel::CooperativeLocker,
+        runtime_pool_kind: RuntimePoolKind::WarmContextRecycle,
+        ..RuntimeLimits::default()
+    });
+}
+
+#[test]
+fn warm_context_recycle_accepts_node_with_same_owner_exact_authority_realm_reuse_proof() {
+    let policy = RuntimePolicy::new(RuntimeLimits {
+        compatibility_target: RuntimeCompatibilityTarget::Node22,
+        execution_model: RuntimeExecutionModel::CooperativeLocker,
+        runtime_pool_kind: RuntimePoolKind::WarmContextRecycle,
+        node_full_realm_reuse_policy: RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority,
+        ..RuntimeLimits::default()
+    });
+
+    assert_eq!(
+        policy.limits().node_full_realm_reuse_policy,
+        RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority
+    );
 }
 
 #[test]
@@ -539,6 +1097,10 @@ fn runtime_pool_kind_exposes_engine_owned_diagnostics() {
         serde_json::json!("warm_pool")
     );
     assert_eq!(
+        serde_json::to_value(RuntimePoolKind::WarmContextRecycle).unwrap(),
+        serde_json::json!("warm_context_recycle")
+    );
+    assert_eq!(
         serde_json::to_value(RuntimePoolKind::BunJscTrustedRetained).unwrap(),
         serde_json::json!("bun_jsc_trusted_retained")
     );
@@ -588,6 +1150,23 @@ fn runtime_pool_kind_exposes_engine_owned_diagnostics() {
             user_module_state_per_invocation: true,
         }
     );
+
+    let v8_warm_context_recycle = RuntimeLimits {
+        runtime_pool_kind: RuntimePoolKind::WarmContextRecycle,
+        ..RuntimeLimits::default()
+    };
+    assert_eq!(
+        v8_warm_context_recycle.module_state_semantics(),
+        RuntimeModuleStateSemantics::FreshPerInvocation
+    );
+    assert_eq!(
+        v8_warm_context_recycle.reset_capabilities(),
+        RuntimeResetCapabilities {
+            op_state_per_invocation: true,
+            bootstrap_state_per_invocation: true,
+            user_module_state_per_invocation: true,
+        }
+    );
 }
 
 #[test]
@@ -600,6 +1179,7 @@ fn runtime_limits_expose_tenant_budget_from_normalized_limits() {
     limits.max_queued_top_level_invocations_per_tenant = 7;
     limits.max_heap_mb = 256;
     limits.execution_timeout = Duration::from_secs(9);
+    limits.system_timeout = Duration::from_secs(13);
     limits.max_nested_runtime_invocations = 11;
 
     let budget = limits.tenant_budget();
@@ -615,6 +1195,7 @@ fn runtime_limits_expose_tenant_budget_from_normalized_limits() {
     );
     assert_eq!(budget.max_active_heap_mb, 768);
     assert_eq!(budget.execution_timeout, Duration::from_secs(9));
+    assert_eq!(budget.system_timeout, Duration::from_secs(13));
     assert_eq!(budget.max_nested_runtime_invocations_per_top_level, 11);
     assert_eq!(RuntimePolicy::new(limits).tenant_budget(), budget);
 }

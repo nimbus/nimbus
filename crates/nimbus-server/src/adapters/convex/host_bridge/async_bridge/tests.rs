@@ -50,6 +50,7 @@ async fn async_host_call_records_precancel_metric() {
             failed: 0,
             canceled_before_start: 1,
             canceled_in_flight: 0,
+            nanos_total: 0,
         }
     );
 }
@@ -108,6 +109,7 @@ async fn async_host_call_records_cooperative_read_cancellation() {
             failed: 0,
             canceled_before_start: 0,
             canceled_in_flight: 1,
+            nanos_total: 0,
         }
     );
 }
@@ -172,6 +174,7 @@ async fn async_host_call_waits_for_write_completion_after_cancellation() {
             failed: 0,
             canceled_before_start: 0,
             canceled_in_flight: 0,
+            nanos_total: 0,
         }
     );
 }

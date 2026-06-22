@@ -7,7 +7,8 @@ pub(crate) use self::isolation::{
     run_v8_sensitive_runtime_test_in_subprocess,
 };
 pub(crate) use self::profiles::{
-    bounded_fairness_runtime_test_limits, cooperative_startup_snapshot_runtime_test_limits,
+    bounded_fairness_runtime_test_limits, cooperative_context_recycle_runtime_test_limits,
+    cooperative_startup_snapshot_runtime_test_limits,
     cooperative_startup_snapshot_runtime_test_policy, cooperative_warm_pool_runtime_test_limits,
     cooperative_warm_pool_runtime_test_policy, product_default_runtime_test_limits,
     product_default_runtime_test_policy, run_to_completion_snapshot_runtime_test_limits,

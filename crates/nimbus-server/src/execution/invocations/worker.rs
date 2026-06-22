@@ -1,22 +1,45 @@
 use std::sync::Arc;
 
 use nimbus_runtime::{
-    HostBridge, InvocationRequest, NimbusRuntime, NimbusRuntimeError, RuntimeBundle,
-    RuntimeExecutor, RuntimePolicy,
+    HostBridge, InvocationRequest, NimbusRuntimeError, RuntimeBundle, RuntimeExecutor,
+    RuntimeInvocationResponse, RuntimePolicy,
 };
 
 use super::{RuntimeBundleInvocationOptions, runtime_for_host, runtime_invocation_context};
 
-pub(crate) async fn invoke_runtime_bundle_on_worker(
+pub(crate) async fn invoke_runtime_bundle_on_worker_with_host(
     runtime_executor: &RuntimeExecutor,
-    runtime: NimbusRuntime,
+    runtime_policy: Arc<RuntimePolicy>,
+    host_bridge: Arc<dyn HostBridge>,
     bundle: RuntimeBundle,
     request: InvocationRequest,
     options: RuntimeBundleInvocationOptions<'_>,
 ) -> std::result::Result<serde_json::Value, NimbusRuntimeError> {
+    invoke_runtime_bundle_on_worker_response_ready_with_host(
+        runtime_executor,
+        runtime_policy,
+        host_bridge,
+        bundle,
+        request,
+        options,
+    )
+    .await?
+    .wait_until_complete()
+    .await
+}
+
+pub(crate) async fn invoke_runtime_bundle_on_worker_response_ready_with_host(
+    runtime_executor: &RuntimeExecutor,
+    runtime_policy: Arc<RuntimePolicy>,
+    host_bridge: Arc<dyn HostBridge>,
+    bundle: RuntimeBundle,
+    request: InvocationRequest,
+    options: RuntimeBundleInvocationOptions<'_>,
+) -> std::result::Result<RuntimeInvocationResponse, NimbusRuntimeError> {
     options.admit_runtime_bundle_artifact(&bundle)?;
+    let runtime = runtime_for_host(host_bridge, runtime_policy);
     runtime_executor
-        .invoke_on_worker(
+        .invoke_on_worker_response_ready(
             runtime,
             bundle,
             request.clone(),
@@ -30,24 +53,6 @@ pub(crate) async fn invoke_runtime_bundle_on_worker(
             options.cancellation,
         )
         .await
-}
-
-pub(crate) async fn invoke_runtime_bundle_on_worker_with_host(
-    runtime_executor: &RuntimeExecutor,
-    runtime_policy: Arc<RuntimePolicy>,
-    host_bridge: Arc<dyn HostBridge>,
-    bundle: RuntimeBundle,
-    request: InvocationRequest,
-    options: RuntimeBundleInvocationOptions<'_>,
-) -> std::result::Result<serde_json::Value, NimbusRuntimeError> {
-    invoke_runtime_bundle_on_worker(
-        runtime_executor,
-        runtime_for_host(host_bridge, runtime_policy),
-        bundle,
-        request,
-        options,
-    )
-    .await
 }
 
 pub(crate) async fn invoke_runtime_bundle_on_worker_with_host_state<H, S>(

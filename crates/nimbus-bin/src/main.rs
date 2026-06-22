@@ -11,7 +11,10 @@ mod deploy;
 mod dev;
 mod dirs;
 mod encryption;
+mod explain;
+mod function_scaling;
 mod init;
+mod list;
 mod local_server_client;
 mod machine;
 mod node;
@@ -30,6 +33,7 @@ mod test_support;
 mod token;
 mod typeinfo;
 mod ui;
+mod validate;
 mod wire_credentials;
 mod workload_boot;
 
@@ -41,7 +45,9 @@ use crate::container_runner::{ContainerRunnerCommand, run_container_runner_comma
 use crate::deploy::{DeployCommand, run_deploy_command};
 use crate::dev::{DevCommand, run_dev_command};
 use crate::encryption::{EncryptionCommand, run_encryption_command};
+use crate::explain::{ExplainCommand, run_explain_command};
 use crate::init::{InitCommand, run_init_command};
+use crate::list::{ListCommand, run_list_command};
 use crate::machine::{MachineCommand, run_machine_command};
 use crate::node_service::{NodeCommand, run_node_command};
 use crate::policy::{PolicyCommand, run_policy_command};
@@ -52,6 +58,7 @@ use crate::sandbox_supervisor::{SandboxSupervisorCommand, run_sandbox_supervisor
 use crate::start::{StartCommand, persistence_config_from_start_command, run_start_command};
 use crate::token::{TokenCommand, run_token_command};
 use crate::ui::{UiCommand, run_ui_command};
+use crate::validate::{ValidateCommand, run_validate_command};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -77,6 +84,12 @@ enum Command {
     Deploy(DeployCommand),
     /// Run a workload against an explicit Nimbus target.
     Run(RunCommand),
+    /// Explain effective Nimbus configuration and runtime admission.
+    Explain(ExplainCommand),
+    /// Validate Nimbus project config or policy.
+    Validate(ValidateCommand),
+    /// List Nimbus resources.
+    List(ListCommand),
     /// Manage sandbox resources on an explicit Nimbus target.
     Sandbox(SandboxCommand),
     /// Generate app artifacts from nimbus/ or convex/ source code.
@@ -133,6 +146,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Dev(command) => run_dev_command(*command).await?,
         Command::Deploy(command) => run_deploy_command(command).await?,
         Command::Run(command) => run_run_command(command).await?,
+        Command::Explain(command) => run_explain_command(command).await?,
+        Command::Validate(command) => run_validate_command(command).await?,
+        Command::List(command) => run_list_command(command).await?,
         Command::Sandbox(command) => run_sandbox_command(command).await?,
         Command::Codegen(command) => run_codegen_command(command).await?,
         Command::Init(command) => run_init_command(command).await?,
@@ -206,6 +222,78 @@ mod tests {
         assert!(
             matches!(cli.command, Command::Policy(PolicyCommand::Diff(_))),
             "policy diff should parse as a first-class root command"
+        );
+    }
+
+    #[test]
+    fn function_scaling_root_verb_commands_parse() {
+        let cli = Cli::parse_from(["nimbus", "explain", "functions", "messages:send"]);
+        assert!(
+            matches!(cli.command, Command::Explain(_)),
+            "nimbus explain functions <name> should parse"
+        );
+
+        let cli = Cli::parse_from([
+            "nimbus",
+            "explain",
+            "functions",
+            "--all",
+            "--tenant",
+            "tenant-a",
+        ]);
+        assert!(
+            matches!(cli.command, Command::Explain(_)),
+            "nimbus explain functions --all --tenant <tenant> should parse"
+        );
+
+        let cli = Cli::parse_from(["nimbus", "explain", "config", "functions.scaling"]);
+        assert!(
+            matches!(cli.command, Command::Explain(_)),
+            "nimbus explain config functions.scaling should parse"
+        );
+
+        let cli = Cli::parse_from(["nimbus", "validate"]);
+        assert!(
+            matches!(cli.command, Command::Validate(_)),
+            "nimbus validate should parse"
+        );
+
+        let cli = Cli::parse_from([
+            "nimbus",
+            "validate",
+            "functions",
+            "--policy",
+            "nimbus.policy.yaml",
+        ]);
+        assert!(
+            matches!(cli.command, Command::Validate(_)),
+            "nimbus validate functions --policy <file> should parse"
+        );
+
+        let cli = Cli::parse_from(["nimbus", "validate", "policy"]);
+        assert!(
+            matches!(cli.command, Command::Validate(_)),
+            "nimbus validate policy should parse"
+        );
+
+        let cli = Cli::parse_from(["nimbus", "list", "functions"]);
+        assert!(
+            matches!(cli.command, Command::List(_)),
+            "nimbus list functions should parse"
+        );
+
+        let cli = Cli::parse_from([
+            "nimbus",
+            "run",
+            "functions",
+            "messages:send",
+            "{\"body\":\"hello\"}",
+            "--policy",
+            "nimbus.policy.yaml",
+        ]);
+        assert!(
+            matches!(cli.command, Command::Run(_)),
+            "nimbus run functions <name> [jsonArgs] --policy <file> should parse"
         );
     }
 

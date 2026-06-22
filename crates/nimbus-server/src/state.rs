@@ -4,7 +4,10 @@ use std::sync::{Arc, RwLock};
 use axum::response::{IntoResponse, Response};
 use nimbus_core::Error;
 use nimbus_engine::Engine;
-use nimbus_runtime::{HostCallCancellation, InvocationAuth};
+use nimbus_runtime::{
+    EffectiveRuntimeScalingPlan, HostCallCancellation, InvocationAuth,
+    RuntimeAdaptiveControllerSettings, RuntimeHostResourceBudget,
+};
 use tokio::sync::watch;
 use tracing::warn;
 
@@ -40,6 +43,9 @@ pub(crate) struct AppStateConfig {
     pub(crate) listen_addr: Option<SocketAddr>,
     pub(crate) server_shutdown: Option<watch::Sender<bool>>,
     pub(crate) version_check: Arc<VersionCheck>,
+    pub(crate) runtime_host_resource_budget: RuntimeHostResourceBudget,
+    pub(crate) runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
+    pub(crate) effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan,
 }
 
 /// Shared application state.
@@ -57,6 +63,9 @@ pub(crate) struct AppState {
     pub(crate) listen_addr: Option<SocketAddr>,
     server_shutdown: Option<watch::Sender<bool>>,
     pub(crate) version_check: Arc<VersionCheck>,
+    runtime_host_resource_budget: RuntimeHostResourceBudget,
+    runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
+    effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan,
 }
 
 impl AppState {
@@ -78,6 +87,9 @@ impl AppState {
             listen_addr,
             server_shutdown,
             version_check,
+            runtime_host_resource_budget,
+            runtime_adaptive_controller_settings,
+            effective_runtime_scaling_plan,
         } = config;
         let convex_registry = convex_registry.map(Arc::new);
         let system_convex_registry = system_convex_registry.map(Arc::new);
@@ -104,6 +116,9 @@ impl AppState {
             listen_addr,
             server_shutdown,
             version_check,
+            runtime_host_resource_budget,
+            runtime_adaptive_controller_settings,
+            effective_runtime_scaling_plan,
         }
     }
 
@@ -113,6 +128,18 @@ impl AppState {
 
     pub(crate) fn runtime_service_registry(&self) -> Arc<dyn RuntimeServiceRegistry> {
         self.runtime_service_registry.clone()
+    }
+
+    pub(crate) fn runtime_host_resource_budget(&self) -> RuntimeHostResourceBudget {
+        self.runtime_host_resource_budget
+    }
+
+    pub(crate) fn runtime_adaptive_controller_settings(&self) -> RuntimeAdaptiveControllerSettings {
+        self.runtime_adaptive_controller_settings
+    }
+
+    pub(crate) fn effective_runtime_scaling_plan(&self) -> &EffectiveRuntimeScalingPlan {
+        &self.effective_runtime_scaling_plan
     }
 
     pub(crate) fn service_manager(&self) -> Option<Arc<ServiceManager>> {
@@ -355,6 +382,14 @@ mod tests {
             listen_addr: None,
             server_shutdown: None,
             version_check: test_version_check(),
+            runtime_host_resource_budget: RuntimeHostResourceBudget::conservative_for_logical_cpus(
+                std::num::NonZeroUsize::new(4).expect("fixture CPU count is nonzero"),
+            ),
+            runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings::default(),
+            effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan::baked_standard(
+                "__default__",
+                4,
+            ),
         });
 
         assert!(
@@ -363,6 +398,7 @@ mod tests {
                 .application_auth_verifier()
                 .is_none()
         );
+        assert_eq!(state.runtime_host_resource_budget().host_millicpus, 4000);
     }
 
     fn test_version_check() -> Arc<crate::system::VersionCheck> {
@@ -377,6 +413,60 @@ mod tests {
             current_exe: None,
         };
         crate::system::VersionCheck::new(current, config)
+    }
+
+    #[test]
+    fn app_state_carries_runtime_host_resource_budget() {
+        let temp = tempdir().expect("service tempdir should build");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
+        let runtime_host_resource_budget = RuntimeHostResourceBudget::conservative_for_logical_cpus(
+            std::num::NonZeroUsize::new(6).expect("fixture CPU count is nonzero"),
+        );
+        let state = AppState::from_config(AppStateConfig {
+            engine,
+            convex_registry: None,
+            system_convex_registry: None,
+            application_auth_verifier: None,
+            cloud_functions_registry: None,
+            firebase_config: None,
+            license_state: LicenseState::community(),
+            runtime_service_registry: Arc::new(
+                nimbus_services::ServiceInstanceBindingRegistry::new(Arc::new(
+                    nimbus_services::EmptyServiceInstanceCatalog,
+                )),
+            ),
+            service_manager: None,
+            machine_lifecycle_manager: None,
+            deploy_admin_token: None,
+            local_server_security: None,
+            tenant_isolation_mode: TenantIsolationMode::Production,
+            listen_addr: None,
+            server_shutdown: None,
+            version_check: test_version_check(),
+            runtime_host_resource_budget,
+            runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings::shadow(
+                nimbus_runtime::RuntimeControllerReplayConfig::default(),
+            ),
+            effective_runtime_scaling_plan: EffectiveRuntimeScalingPlan::baked_standard(
+                "messages:send",
+                6,
+            ),
+        });
+
+        assert_eq!(
+            state.runtime_host_resource_budget(),
+            runtime_host_resource_budget
+        );
+        assert_eq!(state.runtime_host_resource_budget().host_millicpus, 6000);
+        assert_eq!(
+            state.runtime_adaptive_controller_settings().mode(),
+            nimbus_runtime::RuntimeAdaptiveControllerMode::Shadow
+        );
+        assert_eq!(
+            state.effective_runtime_scaling_plan().function,
+            "messages:send"
+        );
+        assert_eq!(state.effective_runtime_scaling_plan().effective.max_warm, 6);
     }
 }
 

@@ -163,6 +163,105 @@ async fn cooperative_execution_model_cancels_parked_invocations_on_shutdown() {
 }
 
 #[tokio::test]
+async fn pir4_response_ready_returns_before_wait_until_background_completion() {
+    let _test_lock = runtime_executor_test_lock().lock().await;
+    let (_bundle_dir, bundle_path) = write_wait_until_bundle();
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
+    let policy = Arc::new(RuntimePolicy::new(limits));
+    let executor = RuntimeExecutor::new(policy.clone());
+    let host = Arc::new(ControlledAsyncGetHost::default());
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let mut request = test_request("messages:http_action");
+    request.kind = crate::runtime::InvocationKind::Action;
+
+    let response_ready = tokio::time::timeout(
+        Duration::from_secs(1),
+        executor.invoke_on_worker_response_ready(
+            NimbusRuntime::with_policy(host.clone(), policy),
+            bundle,
+            request.clone(),
+            test_context_for_tenant(&request, "tenant-a", "req-pir4-response-ready"),
+            None,
+        ),
+    )
+    .await
+    .expect("response-ready API should return before waitUntil completion")
+    .expect("response-ready invocation should succeed");
+
+    assert_eq!(
+        response_ready.response(),
+        &json!({ "responseReady": true }),
+        "caller should observe the response before background completion"
+    );
+
+    host.wait_until_started("slow-background").await;
+    let completion = response_ready.wait_until_complete();
+    tokio::pin!(completion);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut completion)
+            .await
+            .is_err(),
+        "waitUntil completion should remain pending while background host work is blocked"
+    );
+
+    host.release_slow_jobs();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), completion)
+            .await
+            .expect("waitUntil completion should finish after host release")
+            .expect("waitUntil completion should succeed"),
+        json!({ "responseReady": true })
+    );
+}
+
+#[tokio::test]
+async fn response_ready_completion_reports_rejected_wait_until_background_work() {
+    let _test_lock = runtime_executor_test_lock().lock().await;
+    let (_bundle_dir, bundle_path) = write_rejected_wait_until_bundle();
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
+    let policy = Arc::new(RuntimePolicy::new(limits));
+    let executor = RuntimeExecutor::new(policy.clone());
+    let host = Arc::new(RejectingAsyncGetHost::new("reject-background"));
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let mut request = test_request("messages:http_action");
+    request.kind = crate::runtime::InvocationKind::Action;
+
+    let response_ready = executor
+        .invoke_on_worker_response_ready(
+            NimbusRuntime::with_policy(host, policy),
+            bundle,
+            request.clone(),
+            test_context_for_tenant(&request, "tenant-a", "req-rejected-wait-until"),
+            None,
+        )
+        .await
+        .expect("response-ready invocation should return the user response");
+
+    assert_eq!(
+        response_ready.response(),
+        &json!({ "responseReady": true }),
+        "response-ready callers should observe the response before background rejection"
+    );
+
+    let error = response_ready
+        .wait_until_complete()
+        .await
+        .expect_err("rejected waitUntil background work should fail completion");
+    assert!(
+        matches!(
+            error,
+            NimbusRuntimeError::JavaScript(ref message)
+                if message.contains("waitUntil background drain rejected 1 promise")
+        ),
+        "expected waitUntil rejection completion error, got {error}"
+    );
+}
+
+#[tokio::test]
 async fn cooperative_execution_model_startup_snapshot_handles_multiple_parked_runtimes() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
@@ -236,4 +335,108 @@ async fn cooperative_execution_model_startup_snapshot_handles_multiple_parked_ru
     assert_eq!(metrics.runtime_pool_hits, 3);
     assert_eq!(metrics.runtime_pool_replacements, 0);
     assert_eq!(metrics.retained_runtime_pool_entries, 0);
+}
+
+#[tokio::test]
+async fn cooperative_warm_pool_handles_synthetic_await_four_tenants() {
+    let _test_lock = runtime_executor_test_lock().lock().await;
+    let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
+    limits.max_warm_reuses = 1_000_000;
+    let policy = Arc::new(RuntimePolicy::new(limits));
+    let executor = RuntimeExecutor::new(policy.clone());
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(SyntheticAwaitHost::new(Duration::ZERO)),
+        policy.clone(),
+    );
+    let bundle = RuntimeBundle::new(&bundle_path);
+    const BATCHES: usize = 16;
+    const TENANTS: [(&str, &str); 4] = [
+        ("tenant-a", "req-synthetic-await-a"),
+        ("tenant-b", "req-synthetic-await-b"),
+        ("tenant-c", "req-synthetic-await-c"),
+        ("tenant-d", "req-synthetic-await-d"),
+    ];
+
+    for batch in 0..BATCHES {
+        let handles = TENANTS.map(|(tenant_label, request_id)| {
+            let executor = executor.clone();
+            let runtime = runtime.clone();
+            let bundle = bundle.clone();
+            let request = test_request("doc-1");
+            let request_id = format!("{request_id}-{batch}");
+            let context = test_context_for_tenant(&request, tenant_label, &request_id);
+            std::thread::spawn(move || executor.invoke_blocking(runtime, bundle, request, context))
+        });
+
+        for handle in handles {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(handle.join());
+            });
+            let policy_for_timeout = policy.clone();
+            assert_eq!(
+                rx.recv_timeout(Duration::from_secs(5))
+                    .unwrap_or_else(|_| {
+                        let metrics = policy_for_timeout.metrics_snapshot();
+                        panic!(
+                            "synthetic-await warm-pool blocking invocation should complete in batch {batch}; active={}, queued={}, dispatched={}, started={}, completed={}, retained={}",
+                            metrics.active_runtime_instances,
+                            metrics.queued_invocations,
+                            metrics.worker_dispatched_invocations,
+                            metrics.started_invocations,
+                            metrics.completed_invocations,
+                            metrics.retained_runtime_pool_entries,
+                        )
+                    })
+                    .expect("synthetic-await caller thread should not panic")
+                    .unwrap_or_else(|error| {
+                        let metrics = policy.metrics_snapshot();
+                        panic!(
+                            "synthetic-await invocation should succeed in batch {batch}; error={error}; active={}, queued={}, dispatched={}, started={}, completed={}, retained={}",
+                            metrics.active_runtime_instances,
+                            metrics.queued_invocations,
+                            metrics.worker_dispatched_invocations,
+                            metrics.started_invocations,
+                            metrics.completed_invocations,
+                            metrics.retained_runtime_pool_entries,
+                        )
+                    }),
+                json!({
+                    "operation": "document_get",
+                    "payload": {
+                        "table": "messages",
+                        "id": "doc-1",
+                        "host_call_session_id": "query:doc-1",
+                    }
+                })
+            );
+        }
+    }
+
+    let metrics = policy.metrics_snapshot();
+    let total_invocations = (BATCHES * TENANTS.len()) as u64;
+    assert_eq!(metrics.worker_dispatched_invocations, total_invocations);
+    assert_eq!(
+        metrics.warm_pool_hits + metrics.warm_pool_misses,
+        total_invocations
+    );
+    assert!(
+        metrics.warm_pool_hits > 0,
+        "synthetic-await batch should exercise retained warm-pool reuse"
+    );
+    assert_eq!(
+        metrics.runtime_pool_hits + metrics.runtime_pool_misses,
+        total_invocations
+    );
+    assert_eq!(metrics.runtime_pool_hits, metrics.warm_pool_hits);
+    assert_eq!(metrics.runtime_pool_misses, metrics.warm_pool_misses);
+    assert_eq!(metrics.warm_pool_discard_unquiesced, 0);
+    assert!(
+        (1..=4).contains(&metrics.retained_runtime_pool_entries),
+        "successful synthetic-await batch should leave bounded retained warm-pool entries"
+    );
+    assert_eq!(metrics.runtime_pool_replacements, 0);
 }

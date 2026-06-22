@@ -4,12 +4,15 @@ use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
 
+use crate::backends::v8::V8RuntimeConstructionMode;
 use crate::backends::v8::embedder::ModuleSpecifier;
 use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
-    RuntimeJavaScriptEvaluationFormat, RuntimeLimits,
+    RuntimeExecutionModel, RuntimeJavaScriptEvaluationFormat, RuntimeLanguage, RuntimeLimits,
+    RuntimeMemoryEnforcement, RuntimeMode, RuntimeNodeFullRealmReusePolicy, RuntimePoolKind,
+    RuntimePreset, RuntimeProfile, RuntimeRoutingAffinity,
 };
 use crate::module_loader::BundleModuleCodeCache;
 
@@ -59,7 +62,7 @@ struct RuntimeBundleShared {
     module_code_caches: Mutex<HashMap<RuntimeBundleEngineCacheKey, Arc<BundleModuleCodeCache>>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RuntimeBundleEngineCacheKey {
     backend_kind: RuntimeBackendKind,
     backend_trust_tier: RuntimeBackendTrustTier,
@@ -68,10 +71,43 @@ struct RuntimeBundleEngineCacheKey {
     content_kind: RuntimeBundleContentKind,
     javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat,
     compatibility_target: RuntimeCompatibilityTarget,
+    runtime_profile: Option<RuntimeProfile>,
+    node_conditions: Vec<String>,
+    execution_model: RuntimeExecutionModel,
+    mode: RuntimeMode,
+    language: RuntimeLanguage,
+    preset: RuntimePreset,
+    runtime_pool_kind: RuntimePoolKind,
+    node_full_realm_reuse_policy: RuntimeNodeFullRealmReusePolicy,
+    memory_enforcement: RuntimeMemoryEnforcement,
+    routing_affinity: RuntimeRoutingAffinity,
+    max_heap_mb: usize,
+    initial_heap_mb: usize,
+    execution_timeout: std::time::Duration,
+    system_timeout: std::time::Duration,
+    max_nested_runtime_invocations: usize,
+    construction_mode: V8RuntimeConstructionMode,
+    service_extension_enabled: bool,
+    read_grants: Vec<String>,
+    write_grants: Vec<String>,
+    net_connect_grants: Vec<String>,
+    net_listen_grants: Vec<String>,
+    env_read_grants: Vec<String>,
+    env_write_grants: Vec<String>,
+    secret_grants: Vec<String>,
+    identity_grants: Vec<String>,
+    exact_service_grants: Vec<String>,
+    run_grants: Vec<String>,
+    sys_grants: Vec<String>,
+    ffi_grants: Vec<String>,
+    worker_grants: Vec<String>,
+    tool_grants: Vec<String>,
 }
 
 impl RuntimeBundleEngineCacheKey {
-    fn for_limits(limits: &RuntimeLimits) -> Self {
+    fn for_limits(limits: &RuntimeLimits, construction_mode: V8RuntimeConstructionMode) -> Self {
+        let service_extension_enabled =
+            limits.service_capability_enabled && limits.grants.has_service_grants();
         Self {
             backend_kind: limits.backend_kind,
             backend_trust_tier: limits.backend_trust_tier,
@@ -80,8 +116,50 @@ impl RuntimeBundleEngineCacheKey {
             content_kind: limits.bundle_content_kind,
             javascript_evaluation_format: limits.javascript_evaluation_format,
             compatibility_target: limits.compatibility_target,
+            runtime_profile: RuntimeProfile::for_limits(limits),
+            node_conditions: limits.node_conditions.clone(),
+            execution_model: limits.execution_model,
+            mode: limits.mode,
+            language: limits.language,
+            preset: limits.preset,
+            runtime_pool_kind: limits.runtime_pool_kind,
+            node_full_realm_reuse_policy: limits.node_full_realm_reuse_policy,
+            memory_enforcement: limits.memory_enforcement,
+            routing_affinity: limits.routing_affinity,
+            max_heap_mb: limits.max_heap_mb,
+            initial_heap_mb: limits.initial_heap_mb,
+            execution_timeout: limits.execution_timeout,
+            system_timeout: limits.system_timeout,
+            max_nested_runtime_invocations: limits.max_nested_runtime_invocations,
+            construction_mode,
+            service_extension_enabled,
+            read_grants: sorted_deduped(&limits.grants.read),
+            write_grants: sorted_deduped(&limits.grants.write),
+            net_connect_grants: sorted_deduped(&limits.grants.net_connect),
+            net_listen_grants: sorted_deduped(&limits.grants.net_listen),
+            env_read_grants: sorted_deduped(&limits.grants.env_read),
+            env_write_grants: sorted_deduped(&limits.grants.env_write),
+            secret_grants: sorted_deduped(&limits.grants.secret),
+            identity_grants: sorted_deduped(&limits.grants.identity),
+            exact_service_grants: if service_extension_enabled {
+                limits.grants.sorted_service_grants()
+            } else {
+                Vec::new()
+            },
+            run_grants: sorted_deduped(&limits.grants.run),
+            sys_grants: sorted_deduped(&limits.grants.sys),
+            ffi_grants: sorted_deduped(&limits.grants.ffi),
+            worker_grants: sorted_deduped(&limits.grants.worker),
+            tool_grants: sorted_deduped(&limits.grants.tool),
         }
     }
+}
+
+fn sorted_deduped(values: &[String]) -> Vec<String> {
+    let mut values = values.to_vec();
+    values.sort();
+    values.dedup();
+    values
 }
 
 #[derive(Debug, Clone)]
@@ -299,8 +377,12 @@ impl RuntimeBundle {
         }
     }
 
-    pub(crate) fn module_code_cache(&self, limits: &RuntimeLimits) -> Arc<BundleModuleCodeCache> {
-        let key = RuntimeBundleEngineCacheKey::for_limits(limits);
+    pub(crate) fn module_code_cache(
+        &self,
+        limits: &RuntimeLimits,
+        construction_mode: V8RuntimeConstructionMode,
+    ) -> Arc<BundleModuleCodeCache> {
+        let key = RuntimeBundleEngineCacheKey::for_limits(limits, construction_mode);
         let mut caches = self
             .shared
             .module_code_caches

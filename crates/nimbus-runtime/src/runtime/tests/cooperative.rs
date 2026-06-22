@@ -29,12 +29,52 @@ pub(super) const WARM_POOL_TWO_CYCLE_CASE: IsolatedRuntimeTestCase = IsolatedRun
     "runtime::tests::cooperative::warm_pool_cooperative_async_host_two_cycles_subprocess",
 );
 
+pub(super) const FRESH_REALM_EARLY_FINISH_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-cooperative-fresh-realm-early-finish",
+        "cooperative-context-recycle",
+        "warm context recycling destroys the fresh realm when a cooperative slot is finished early",
+        "runtime::tests::cooperative::warm_context_recycle_cooperative_slot_destroys_fresh_realm_on_early_finish_subprocess",
+    );
+
 pub(super) const CONCURRENT_DISPATCH_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
     "runtime-cooperative-concurrent-dispatch",
     "cooperative-startup-snapshot-and-warm-pool",
     "cooperative concurrent dispatch does not deadlock under bounded isolate concurrency",
     "runtime::tests::cooperative::cooperative_concurrent_dispatch_does_not_deadlock_subprocess",
 );
+
+pub(super) const PIR4_FORGED_HOST_CALL_SESSION_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-pir4-forged-host-call-session",
+        "cooperative-host-call-session",
+        "cooperative runtime rejects forged host-call sessions before host dispatch",
+        "runtime::tests::cooperative::pir4_rejects_forged_host_call_session_subprocess",
+    );
+
+pub(super) const REC3_QUERY_WRITE_EFFECT_VIOLATION_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-rec3-query-write-effect-violation",
+        "cooperative-execution-plan",
+        "cooperative query plan rejects observed document writes before host dispatch",
+        "runtime::tests::cooperative::rec3_query_write_effect_violation_rejects_before_host_dispatch_subprocess",
+    );
+
+pub(super) const PIR4_INTERLEAVED_HOST_CALL_SESSION_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-pir4-interleaved-host-call-session",
+        "cooperative-host-call-session",
+        "interleaved cooperative query isolates preserve their original host-call sessions",
+        "runtime::tests::cooperative::pir4_interleaved_queries_preserve_host_call_sessions_subprocess",
+    );
+
+pub(super) const PIR4_MUTATION_EXCLUSION_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-pir4-mutation-exclusion",
+        "cooperative-host-call-session",
+        "mutations bypass the cooperative read-safe scheduler and run to completion",
+        "runtime::tests::cooperative::pir4_mutations_do_not_enter_multiplexed_read_safe_scheduler_subprocess",
+    );
 
 fn cooperative_slot_progress_timeout() -> std::time::Duration {
     duration_ms_env_or(
@@ -66,6 +106,188 @@ fn cooperative_concurrent_dispatch_join_timeout() -> std::time::Duration {
     )
 }
 
+fn pir4_negative_assertion_window() -> std::time::Duration {
+    duration_ms_env_or(
+        "NIMBUS_PIR4_NEGATIVE_ASSERTION_WINDOW_MS",
+        ci_or_local_duration(
+            std::time::Duration::from_millis(150),
+            std::time::Duration::from_millis(500),
+        ),
+    )
+}
+
+fn cooperative_query_request(function_name: &str) -> InvocationRequest {
+    InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: function_name.to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: None,
+        services: Default::default(),
+    }
+}
+
+fn cooperative_mutation_request(function_name: &str) -> InvocationRequest {
+    InvocationRequest {
+        kind: InvocationKind::Mutation,
+        function_name: function_name.to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: None,
+        services: Default::default(),
+    }
+}
+
+fn host_call_session_id(call: &HostCallRequest) -> Option<&str> {
+    call.payload
+        .get("host_call_session_id")
+        .and_then(Value::as_str)
+}
+
+#[derive(Default)]
+struct ImmediateRecordingAsyncHost {
+    calls: std::sync::Mutex<Vec<HostCallRequest>>,
+}
+
+impl ImmediateRecordingAsyncHost {
+    fn calls(&self) -> Vec<HostCallRequest> {
+        self.calls
+            .lock()
+            .expect("immediate recording host lock should not be poisoned")
+            .clone()
+    }
+}
+
+impl HostBridge for ImmediateRecordingAsyncHost {
+    fn call(&self, _request: HostCallRequest) -> Result<Value> {
+        Err(NimbusRuntimeError::Contract(
+            "sync host bridge path should not be used for async ops".to_string(),
+        ))
+    }
+
+    fn call_async(
+        &self,
+        request: HostCallRequest,
+        _cancellation: HostCallCancellation,
+    ) -> crate::host::HostBridgeFuture {
+        self.calls
+            .lock()
+            .expect("immediate recording host lock should not be poisoned")
+            .push(request.clone());
+        Box::pin(async move {
+            Ok(serde_json::json!({
+                "status": "ok",
+                "value": {
+                    "operation": request.operation,
+                    "payload": request.payload,
+                },
+            }))
+        })
+    }
+}
+
+#[derive(Default)]
+struct DeferredRecordingAsyncHost {
+    release: Arc<tokio::sync::Notify>,
+    calls: std::sync::Mutex<Vec<HostCallRequest>>,
+}
+
+impl DeferredRecordingAsyncHost {
+    fn release(&self) {
+        self.release.notify_waiters();
+    }
+
+    fn calls(&self) -> Vec<HostCallRequest> {
+        self.calls
+            .lock()
+            .expect("deferred recording host lock should not be poisoned")
+            .clone()
+    }
+}
+
+impl HostBridge for DeferredRecordingAsyncHost {
+    fn call(&self, _request: HostCallRequest) -> Result<Value> {
+        Err(NimbusRuntimeError::Contract(
+            "sync host bridge path should not be used for async ops".to_string(),
+        ))
+    }
+
+    fn call_async(
+        &self,
+        request: HostCallRequest,
+        _cancellation: HostCallCancellation,
+    ) -> crate::host::HostBridgeFuture {
+        self.calls
+            .lock()
+            .expect("deferred recording host lock should not be poisoned")
+            .push(request.clone());
+        let release = self.release.clone();
+        Box::pin(async move {
+            release.notified().await;
+            Ok(serde_json::json!({
+                "status": "ok",
+                "value": {
+                    "operation": request.operation,
+                    "payload": request.payload,
+                },
+            }))
+        })
+    }
+}
+
+#[derive(Default)]
+struct MutationGateHost {
+    release_mutation: Arc<tokio::sync::Notify>,
+    calls: std::sync::Mutex<Vec<HostCallRequest>>,
+}
+
+impl MutationGateHost {
+    fn release_mutation(&self) {
+        self.release_mutation.notify_waiters();
+    }
+
+    fn calls(&self) -> Vec<HostCallRequest> {
+        self.calls
+            .lock()
+            .expect("mutation gate host lock should not be poisoned")
+            .clone()
+    }
+}
+
+impl HostBridge for MutationGateHost {
+    fn call(&self, _request: HostCallRequest) -> Result<Value> {
+        Err(NimbusRuntimeError::Contract(
+            "sync host bridge path should not be used for async ops".to_string(),
+        ))
+    }
+
+    fn call_async(
+        &self,
+        request: HostCallRequest,
+        _cancellation: HostCallCancellation,
+    ) -> crate::host::HostBridgeFuture {
+        self.calls
+            .lock()
+            .expect("mutation gate host lock should not be poisoned")
+            .push(request.clone());
+        let release_mutation = self.release_mutation.clone();
+        Box::pin(async move {
+            if request.operation == HostCallOperation::DocumentInsert {
+                release_mutation.notified().await;
+            }
+            Ok(serde_json::json!({
+                "status": "ok",
+                "value": {
+                    "operation": request.operation,
+                    "payload": request.payload,
+                },
+            }))
+        })
+    }
+}
+
 async fn wait_until_slot_parked(
     slot: &mut CooperativeLockerRuntimeSlot,
     case: IsolatedRuntimeTestCase,
@@ -76,6 +298,7 @@ async fn wait_until_slot_parked(
         loop {
             match slot.poll_once().await.expect("slot poll should succeed") {
                 CooperativeRuntimeSlotPoll::Runnable => tokio::task::yield_now().await,
+                CooperativeRuntimeSlotPoll::ResponseReady => tokio::task::yield_now().await,
                 CooperativeRuntimeSlotPoll::Parked => break,
                 CooperativeRuntimeSlotPoll::Completed => {
                     panic!(
@@ -105,6 +328,7 @@ async fn wait_until_slot_completed_without_external_release(
         loop {
             match slot.poll_once().await.expect("slot poll should succeed") {
                 CooperativeRuntimeSlotPoll::Runnable => tokio::task::yield_now().await,
+                CooperativeRuntimeSlotPoll::ResponseReady => tokio::task::yield_now().await,
                 CooperativeRuntimeSlotPoll::Completed => break,
                 CooperativeRuntimeSlotPoll::Parked => {
                     let description = case.failure_context(
@@ -193,6 +417,7 @@ export {};
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
+    let context = RuntimeInvocationContext::top_level(&request);
 
     let mut slot = runtime_owner
         .start_cooperative_locker_runtime_slot(
@@ -202,8 +427,14 @@ export {};
                     watchdog: watchdog.clone(),
                     bundle: bundle.clone(),
                     request: request.clone(),
-                    context: RuntimeInvocationContext::top_level(&request),
+                    context: context.clone(),
+                    execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
+                        runtime_owner.policy().as_ref(),
+                        &request,
+                        &context,
+                    ),
                     external_cancellation: None,
+                    response_ready_tx: None,
                     permit: permit.clone(),
                 },
                 activity_signal: activity_signal.clone(),
@@ -337,6 +568,7 @@ export {};
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
+    let context = RuntimeInvocationContext::top_level(&request);
 
     let mut slot = runtime_owner
         .start_cooperative_locker_runtime_slot(
@@ -346,8 +578,14 @@ export {};
                     watchdog: watchdog.clone(),
                     bundle: bundle.clone(),
                     request: request.clone(),
-                    context: RuntimeInvocationContext::top_level(&request),
+                    context: context.clone(),
+                    execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
+                        runtime_owner.policy().as_ref(),
+                        &request,
+                        &context,
+                    ),
                     external_cancellation: None,
+                    response_ready_tx: None,
                     permit,
                 },
                 activity_signal,
@@ -449,6 +687,7 @@ export {};
             .acquire_initial(std::time::Instant::now())
             .await
             .expect("permit should admit invocation");
+        let context = RuntimeInvocationContext::top_level(&request);
 
         let mut slot = runtime_owner
             .start_cooperative_locker_runtime_slot(
@@ -458,8 +697,14 @@ export {};
                         watchdog: watchdog.clone(),
                         bundle: bundle.clone(),
                         request: request.clone(),
-                        context: RuntimeInvocationContext::top_level(&request),
+                        context: context.clone(),
+                        execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
+                            runtime_owner.policy().as_ref(),
+                            &request,
+                            &context,
+                        ),
                         external_cancellation: None,
+                        response_ready_tx: None,
                         permit: permit.clone(),
                     },
                     activity_signal,
@@ -499,6 +744,656 @@ export {};
         assert!(ready_jobs.is_empty());
     }
 
+    watchdog.shutdown();
+}
+
+#[test]
+fn pir4_rejects_forged_host_call_session() {
+    run_v8_sensitive_runtime_test_in_subprocess(PIR4_FORGED_HOST_CALL_SESSION_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate cooperative locker V8 state"]
+fn pir4_rejects_forged_host_call_session_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(pir4_rejects_forged_host_call_session_inner());
+}
+
+async fn pir4_rejects_forged_host_call_session_inner() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function () {
+  try {
+    await globalThis.__nimbusAsyncHostValue("op_nimbus_document_get", {
+      table: "messages",
+      id: "doc-1",
+      host_call_session_id: "forged-session",
+    });
+    return { ok: false, message: "forged host call unexpectedly reached host" };
+  } catch (error) {
+    return { ok: true, message: String(error && error.message ? error.message : error) };
+  }
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let request = cooperative_query_request("messages:forged");
+    let host = Arc::new(ImmediateRecordingAsyncHost::default());
+    let runtime_owner =
+        NimbusRuntime::with_policy(host.clone(), cooperative_warm_pool_runtime_test_policy());
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let watchdog = WatchdogTimer::new();
+    let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
+    let mut permit = SharedInvocationPermit::new(
+        runtime_owner.policy(),
+        Some("tenant-a".to_string()),
+        None,
+        false,
+        None,
+    );
+    permit
+        .acquire_initial(std::time::Instant::now())
+        .await
+        .expect("permit should admit invocation");
+    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+
+    let mut slot = runtime_owner
+        .start_cooperative_locker_runtime_slot(
+            &mut v8_runtime_pool,
+            CooperativeRuntimeSlotStart {
+                invocation: RuntimeInvocationExecution {
+                    watchdog: watchdog.clone(),
+                    bundle,
+                    request: request.clone(),
+                    context: context.clone(),
+                    execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
+                        runtime_owner.policy().as_ref(),
+                        &request,
+                        &context,
+                    ),
+                    external_cancellation: None,
+                    response_ready_tx: None,
+                    permit: permit.clone(),
+                },
+                activity_signal,
+            },
+        )
+        .await
+        .expect("cooperative locker slot should start");
+
+    wait_until_slot_completed_without_external_release(
+        &mut slot,
+        PIR4_FORGED_HOST_CALL_SESSION_CASE,
+        "forged host-call session should reject before dispatch",
+    )
+    .await;
+
+    let result = slot
+        .take_result()
+        .expect("completed slot should retain its result");
+    assert_eq!(result.get("ok").and_then(Value::as_bool), Some(true));
+    let message = result
+        .get("message")
+        .and_then(Value::as_str)
+        .expect("rejection should return an error message");
+    assert!(
+        message.contains("stale or forged"),
+        "unexpected forged-session rejection message: {message}"
+    );
+    assert!(
+        host.calls().is_empty(),
+        "forged host-call session should be rejected before host dispatch"
+    );
+    assert!(permit.finish_invocation().await.is_empty());
+    watchdog.shutdown();
+}
+
+#[test]
+fn rec3_query_write_effect_violation_rejects_before_host_dispatch() {
+    run_v8_sensitive_runtime_test_in_subprocess(REC3_QUERY_WRITE_EFFECT_VIOLATION_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate cooperative locker V8 state"]
+fn rec3_query_write_effect_violation_rejects_before_host_dispatch_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(rec3_query_write_effect_violation_rejects_before_host_dispatch_inner());
+}
+
+async fn rec3_query_write_effect_violation_rejects_before_host_dispatch_inner() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function (request) {
+  try {
+    await globalThis.__nimbusAsyncHostValue("op_nimbus_document_insert", {
+      table: "messages",
+      fields: { body: "write from query" },
+      host_call_session_id: `${request.kind}:${request.function_name}`,
+    });
+    return { ok: false, message: "query write unexpectedly reached host" };
+  } catch (error) {
+    return { ok: true, message: String(error && error.message ? error.message : error) };
+  }
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let request = cooperative_query_request("messages:query-write");
+    let host = Arc::new(ImmediateRecordingAsyncHost::default());
+    let runtime_owner =
+        NimbusRuntime::with_policy(host.clone(), cooperative_warm_pool_runtime_test_policy());
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let watchdog = WatchdogTimer::new();
+    let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
+    let mut permit = SharedInvocationPermit::new(
+        runtime_owner.policy(),
+        Some("tenant-a".to_string()),
+        None,
+        false,
+        None,
+    );
+    permit
+        .acquire_initial(std::time::Instant::now())
+        .await
+        .expect("permit should admit invocation");
+    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+
+    let mut slot = runtime_owner
+        .start_cooperative_locker_runtime_slot(
+            &mut v8_runtime_pool,
+            CooperativeRuntimeSlotStart {
+                invocation: RuntimeInvocationExecution {
+                    watchdog: watchdog.clone(),
+                    bundle,
+                    request: request.clone(),
+                    context: context.clone(),
+                    execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
+                        runtime_owner.policy().as_ref(),
+                        &request,
+                        &context,
+                    ),
+                    external_cancellation: None,
+                    response_ready_tx: None,
+                    permit: permit.clone(),
+                },
+                activity_signal,
+            },
+        )
+        .await
+        .expect("cooperative locker slot should start");
+
+    wait_until_slot_completed_without_external_release(
+        &mut slot,
+        REC3_QUERY_WRITE_EFFECT_VIOLATION_CASE,
+        "query write effect violation should reject before dispatch",
+    )
+    .await;
+
+    let result = slot
+        .take_result()
+        .expect("completed slot should retain its result");
+    assert_eq!(result.get("ok").and_then(Value::as_bool), Some(true));
+    let message = result
+        .get("message")
+        .and_then(Value::as_str)
+        .expect("effect violation result should include message");
+    assert!(
+        message.contains("runtime host-call effect violation"),
+        "unexpected effect-violation message: {message}"
+    );
+    assert!(
+        host.calls()
+            .iter()
+            .all(|call| call.operation != HostCallOperation::DocumentInsert),
+        "query write effect violation should reject before DocumentInsert reaches host"
+    );
+    assert!(permit.finish_invocation().await.is_empty());
+    watchdog.shutdown();
+}
+
+#[test]
+fn pir4_interleaved_queries_preserve_host_call_sessions() {
+    run_v8_sensitive_runtime_test_in_subprocess(PIR4_INTERLEAVED_HOST_CALL_SESSION_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate cooperative locker V8 state"]
+fn pir4_interleaved_queries_preserve_host_call_sessions_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(pir4_interleaved_queries_preserve_host_call_sessions_inner());
+}
+
+async fn pir4_interleaved_queries_preserve_host_call_sessions_inner() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function (request) {
+  const ctx = globalThis.__nimbusCreateContext({ request });
+  const host = await ctx.db.get("messages", request.function_name);
+  return {
+    ok: true,
+    functionName: request.function_name,
+    host,
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let host = Arc::new(DeferredRecordingAsyncHost::default());
+    let runtime_owner =
+        NimbusRuntime::with_policy(host.clone(), cooperative_warm_pool_runtime_test_policy());
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let watchdog = WatchdogTimer::new();
+
+    let first_request = cooperative_query_request("messages:first");
+    let first_activity = Arc::new(crate::executor::WorkerActivitySignal::new());
+    let mut first_permit = SharedInvocationPermit::new(
+        runtime_owner.policy(),
+        Some("tenant-a".to_string()),
+        None,
+        false,
+        None,
+    );
+    first_permit
+        .acquire_initial(std::time::Instant::now())
+        .await
+        .expect("first permit should admit invocation");
+    let first_context = RuntimeInvocationContext::top_level_for_tenant(&first_request, "tenant-a");
+    let mut first_slot = runtime_owner
+        .start_cooperative_locker_runtime_slot(
+            &mut v8_runtime_pool,
+            CooperativeRuntimeSlotStart {
+                invocation: RuntimeInvocationExecution {
+                    watchdog: watchdog.clone(),
+                    bundle: bundle.clone(),
+                    request: first_request.clone(),
+                    context: first_context.clone(),
+                    execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
+                        runtime_owner.policy().as_ref(),
+                        &first_request,
+                        &first_context,
+                    ),
+                    external_cancellation: None,
+                    response_ready_tx: None,
+                    permit: first_permit.clone(),
+                },
+                activity_signal: first_activity,
+            },
+        )
+        .await
+        .expect("first cooperative slot should start");
+    wait_until_slot_parked(
+        &mut first_slot,
+        PIR4_INTERLEAVED_HOST_CALL_SESSION_CASE,
+        "first tenant query should park on deferred host work",
+    )
+    .await;
+    wait_for_value(
+        "first host call should be recorded before second slot starts",
+        cooperative_slot_progress_timeout(),
+        std::time::Duration::ZERO,
+        || async { host.calls() },
+        |calls| calls.len() == 1,
+    )
+    .await;
+
+    let second_request = cooperative_query_request("messages:second");
+    let second_activity = Arc::new(crate::executor::WorkerActivitySignal::new());
+    let mut second_permit = SharedInvocationPermit::new(
+        runtime_owner.policy(),
+        Some("tenant-b".to_string()),
+        None,
+        false,
+        None,
+    );
+    second_permit
+        .acquire_initial(std::time::Instant::now())
+        .await
+        .expect("second permit should admit after first parked and released capacity");
+    let second_context =
+        RuntimeInvocationContext::top_level_for_tenant(&second_request, "tenant-b");
+    let mut second_slot = runtime_owner
+        .start_cooperative_locker_runtime_slot(
+            &mut v8_runtime_pool,
+            CooperativeRuntimeSlotStart {
+                invocation: RuntimeInvocationExecution {
+                    watchdog: watchdog.clone(),
+                    bundle,
+                    request: second_request.clone(),
+                    context: second_context.clone(),
+                    execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
+                        runtime_owner.policy().as_ref(),
+                        &second_request,
+                        &second_context,
+                    ),
+                    external_cancellation: None,
+                    response_ready_tx: None,
+                    permit: second_permit.clone(),
+                },
+                activity_signal: second_activity,
+            },
+        )
+        .await
+        .expect("second cooperative slot should start while first is parked");
+    wait_until_slot_parked(
+        &mut second_slot,
+        PIR4_INTERLEAVED_HOST_CALL_SESSION_CASE,
+        "second tenant query should also park on deferred host work",
+    )
+    .await;
+    let calls = wait_for_value(
+        "both host calls should be recorded before release",
+        cooperative_slot_progress_timeout(),
+        std::time::Duration::ZERO,
+        || async { host.calls() },
+        |calls| calls.len() == 2,
+    )
+    .await;
+    assert_eq!(
+        calls.iter().map(host_call_session_id).collect::<Vec<_>>(),
+        vec![Some("query:messages:first"), Some("query:messages:second")]
+    );
+
+    host.release();
+    wait_until_slot_completed_without_external_release(
+        &mut second_slot,
+        PIR4_INTERLEAVED_HOST_CALL_SESSION_CASE,
+        "released second query should complete with its original host-call session",
+    )
+    .await;
+    wait_until_slot_completed_without_external_release(
+        &mut first_slot,
+        PIR4_INTERLEAVED_HOST_CALL_SESSION_CASE,
+        "released first query should complete with its original host-call session",
+    )
+    .await;
+
+    let first_result = first_slot
+        .take_result()
+        .expect("first completed slot should retain result");
+    let second_result = second_slot
+        .take_result()
+        .expect("second completed slot should retain result");
+    assert_eq!(
+        first_result
+            .pointer("/host/payload/host_call_session_id")
+            .and_then(Value::as_str),
+        Some("query:messages:first")
+    );
+    assert_eq!(
+        second_result
+            .pointer("/host/payload/host_call_session_id")
+            .and_then(Value::as_str),
+        Some("query:messages:second")
+    );
+    assert!(first_permit.finish_invocation().await.is_empty());
+    assert!(second_permit.finish_invocation().await.is_empty());
+    watchdog.shutdown();
+}
+
+#[test]
+fn pir4_mutations_do_not_enter_multiplexed_read_safe_scheduler() {
+    run_v8_sensitive_runtime_test_in_subprocess(PIR4_MUTATION_EXCLUSION_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate cooperative locker V8 state"]
+fn pir4_mutations_do_not_enter_multiplexed_read_safe_scheduler_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(pir4_mutations_do_not_enter_multiplexed_read_safe_scheduler_inner());
+}
+
+async fn pir4_mutations_do_not_enter_multiplexed_read_safe_scheduler_inner() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function (request) {
+  const ctx = globalThis.__nimbusCreateContext({ request });
+  if (request.kind === "mutation") {
+    return await ctx.db.insert("messages", { body: "write" });
+  }
+  return await ctx.db.get("messages", "doc-1");
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let host = Arc::new(MutationGateHost::default());
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
+    let policy = Arc::new(RuntimePolicy::new(limits));
+    let runtime_owner = NimbusRuntime::with_policy(host.clone(), policy.clone());
+    let executor = RuntimeExecutor::new(policy);
+    let mutation_request = cooperative_mutation_request("messages:write");
+    let query_request = cooperative_query_request("messages:read");
+
+    let mutation_handle = {
+        let executor = executor.clone();
+        let runtime_owner = runtime_owner.clone();
+        let bundle = bundle.clone();
+        let mutation_request = mutation_request.clone();
+        std::thread::spawn(move || {
+            executor.invoke_blocking(
+                runtime_owner,
+                bundle,
+                mutation_request.clone(),
+                RuntimeInvocationContext::top_level_for_tenant(&mutation_request, "tenant-a"),
+            )
+        })
+    };
+    wait_for_value(
+        "mutation host call should be recorded before query dispatch",
+        cooperative_slot_progress_timeout(),
+        std::time::Duration::ZERO,
+        || async { host.calls() },
+        |calls| calls.len() == 1 && calls[0].operation == HostCallOperation::DocumentInsert,
+    )
+    .await;
+
+    let query_handle = {
+        let executor = executor.clone();
+        let runtime_owner = runtime_owner.clone();
+        let bundle = bundle.clone();
+        let query_request = query_request.clone();
+        std::thread::spawn(move || {
+            executor.invoke_blocking(
+                runtime_owner,
+                bundle,
+                query_request.clone(),
+                RuntimeInvocationContext::top_level_for_tenant(&query_request, "tenant-b"),
+            )
+        })
+    };
+
+    tokio::time::sleep(pir4_negative_assertion_window()).await;
+    let calls_before_release = host.calls();
+    assert_eq!(
+        calls_before_release.len(),
+        1,
+        "query host work must not run while mutation is suspended on the cooperative worker"
+    );
+    assert_eq!(
+        host_call_session_id(&calls_before_release[0]),
+        Some("mutation:messages:write")
+    );
+
+    host.release_mutation();
+    let mutation_result = mutation_handle
+        .join()
+        .expect("mutation invocation thread should not panic")
+        .expect("mutation invocation should complete");
+    let query_result = query_handle
+        .join()
+        .expect("query invocation thread should not panic")
+        .expect("query invocation should complete");
+    assert_eq!(
+        mutation_result
+            .pointer("/payload/host_call_session_id")
+            .and_then(Value::as_str),
+        Some("mutation:messages:write")
+    );
+    assert_eq!(
+        query_result
+            .pointer("/payload/host_call_session_id")
+            .and_then(Value::as_str),
+        Some("query:messages:read")
+    );
+    let calls = host.calls();
+    assert_eq!(
+        calls
+            .iter()
+            .map(|call| (call.operation, host_call_session_id(call)))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                HostCallOperation::DocumentInsert,
+                Some("mutation:messages:write")
+            ),
+            (HostCallOperation::DocumentGet, Some("query:messages:read")),
+        ]
+    );
+}
+
+#[test]
+fn warm_context_recycle_cooperative_slot_destroys_fresh_realm_on_early_finish() {
+    run_v8_sensitive_runtime_test_in_subprocess(FRESH_REALM_EARLY_FINISH_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate cooperative locker V8 state"]
+fn warm_context_recycle_cooperative_slot_destroys_fresh_realm_on_early_finish_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(
+            warm_context_recycle_cooperative_slot_destroys_fresh_realm_on_early_finish_inner(),
+        );
+}
+
+async fn warm_context_recycle_cooperative_slot_destroys_fresh_realm_on_early_finish_inner() {
+    let destroy_probe =
+        super::super::realm_lifecycle::test_probe::start_fresh_realm_destroy_probe();
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function () {
+  return await new Promise(() => {});
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "messages:pending".to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: None,
+        services: Default::default(),
+    };
+    let mut limits = cooperative_context_recycle_runtime_test_limits();
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
+    let policy = Arc::new(RuntimePolicy::new(limits));
+    let runtime_owner = NimbusRuntime::with_policy(Arc::new(AsyncEchoHost), policy);
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let watchdog = WatchdogTimer::new();
+    let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
+    let mut permit = SharedInvocationPermit::new(runtime_owner.policy(), None, None, false, None);
+    permit
+        .acquire_initial(std::time::Instant::now())
+        .await
+        .expect("permit should admit invocation");
+    let context = RuntimeInvocationContext::top_level(&request);
+
+    let slot = runtime_owner
+        .start_cooperative_locker_runtime_slot(
+            &mut v8_runtime_pool,
+            CooperativeRuntimeSlotStart {
+                invocation: RuntimeInvocationExecution {
+                    watchdog: watchdog.clone(),
+                    bundle,
+                    request: request.clone(),
+                    context: context.clone(),
+                    execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
+                        runtime_owner.policy().as_ref(),
+                        &request,
+                        &context,
+                    ),
+                    external_cancellation: None,
+                    response_ready_tx: None,
+                    permit: permit.clone(),
+                },
+                activity_signal,
+            },
+        )
+        .await
+        .expect("fresh-realm cooperative slot should start");
+    assert_eq!(
+        destroy_probe.count(),
+        0,
+        "fresh realm should stay live while the cooperative slot owns the pending promise"
+    );
+
+    let (result, _returned_runtime) = slot
+        .finish_with_result_and_runtime(Err(NimbusRuntimeError::Cancelled))
+        .await;
+    assert!(
+        matches!(result, Err(NimbusRuntimeError::Cancelled)),
+        "early-finished slot should preserve the supplied cancellation error"
+    );
+    assert_eq!(
+        destroy_probe.count(),
+        1,
+        "early-finished cooperative slot should destroy the pending fresh realm"
+    );
+    let ready_jobs = permit.finish_invocation().await;
+    assert!(ready_jobs.is_empty());
     watchdog.shutdown();
 }
 
@@ -558,12 +1453,16 @@ export {};
     for &pool_kind in &[
         RuntimePoolKind::StartupSnapshotCache,
         RuntimePoolKind::WarmPool,
+        RuntimePoolKind::WarmContextRecycle,
     ] {
         let mut limits = match pool_kind {
             RuntimePoolKind::StartupSnapshotCache => {
                 cooperative_startup_snapshot_runtime_test_limits()
             }
             RuntimePoolKind::WarmPool => cooperative_warm_pool_runtime_test_limits(),
+            RuntimePoolKind::WarmContextRecycle => {
+                cooperative_context_recycle_runtime_test_limits()
+            }
             RuntimePoolKind::BunJscTrustedRetained | RuntimePoolKind::BunJscFreshDiscard => {
                 unreachable!("test covers only V8/Deno pool kinds")
             }

@@ -209,6 +209,77 @@ impl ConvexRegistry {
         self
     }
 
+    pub fn with_runtime_host_resource_budget(
+        self,
+        budget: nimbus_runtime::RuntimeHostResourceBudget,
+    ) -> Self {
+        self.with_runtime_host_governor(
+            budget,
+            Arc::new(nimbus_runtime::NominalRuntimeHostPressureSource),
+            nimbus_runtime::RuntimeAdaptiveControllerSettings::default(),
+        )
+    }
+
+    pub fn with_runtime_host_governor(
+        mut self,
+        budget: nimbus_runtime::RuntimeHostResourceBudget,
+        pressure_source: Arc<dyn nimbus_runtime::RuntimeHostPressureSource>,
+        adaptive_settings: nimbus_runtime::RuntimeAdaptiveControllerSettings,
+    ) -> Self {
+        self.runtime_lane = self.runtime_lane.with_runtime_host_governor(
+            budget,
+            pressure_source.clone(),
+            adaptive_settings,
+        );
+        self.node20_runtime_lane = self.node20_runtime_lane.with_runtime_host_governor(
+            budget,
+            pressure_source.clone(),
+            adaptive_settings,
+        );
+        self.node22_runtime_lane = self.node22_runtime_lane.with_runtime_host_governor(
+            budget,
+            pressure_source.clone(),
+            adaptive_settings,
+        );
+        self.node24_runtime_lane = self.node24_runtime_lane.with_runtime_host_governor(
+            budget,
+            pressure_source.clone(),
+            adaptive_settings,
+        );
+        self.node26_runtime_lane = self.node26_runtime_lane.with_runtime_host_governor(
+            budget,
+            pressure_source.clone(),
+            adaptive_settings,
+        );
+        self.bun_jsc_runtime_lane = self.bun_jsc_runtime_lane.with_runtime_host_governor(
+            budget,
+            pressure_source,
+            adaptive_settings,
+        );
+        self
+    }
+
+    pub fn with_effective_runtime_scaling_plan(
+        mut self,
+        plan: nimbus_runtime::EffectiveRuntimeScalingPlan,
+    ) -> Self {
+        self.runtime_lane = self.runtime_lane.with_effective_scaling_plan(plan.clone());
+        self.node20_runtime_lane = self
+            .node20_runtime_lane
+            .with_effective_scaling_plan(plan.clone());
+        self.node22_runtime_lane = self
+            .node22_runtime_lane
+            .with_effective_scaling_plan(plan.clone());
+        self.node24_runtime_lane = self
+            .node24_runtime_lane
+            .with_effective_scaling_plan(plan.clone());
+        self.node26_runtime_lane = self
+            .node26_runtime_lane
+            .with_effective_scaling_plan(plan.clone());
+        self.bun_jsc_runtime_lane = self.bun_jsc_runtime_lane.with_effective_scaling_plan(plan);
+        self
+    }
+
     pub fn with_runtime_bundle_provenance_verifier(
         mut self,
         policy: ArtifactVerificationPolicy,

@@ -8,7 +8,9 @@ use deno_web::{JsMessageData, MessagePort};
 
 use crate::RuntimeBundle;
 use crate::backends::v8::embedder::{CancelHandle, JsRuntime, OpState};
+use crate::context::RuntimeInvocationContext;
 use crate::error::{NimbusRuntimeError, Result};
+use crate::execution_plan::RuntimeExecutionPlan;
 use crate::executor::SharedInvocationPermit;
 use crate::host::{HostBridge, HostCallCancellation};
 use crate::limits::RuntimeLimits;
@@ -66,6 +68,111 @@ pub(crate) struct InstalledRuntimeOwner {
 #[derive(Clone)]
 pub(super) struct InstalledRuntimeContract {
     pub(super) limits: RuntimeLimits,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct RuntimeInvocationHostCallBinding {
+    session_id: Option<String>,
+    invocation_id: Option<u64>,
+    tenant_label: Option<String>,
+}
+
+impl RuntimeInvocationHostCallBinding {
+    fn inactive() -> Self {
+        Self {
+            session_id: None,
+            invocation_id: None,
+            tenant_label: None,
+        }
+    }
+
+    fn for_context(context: &RuntimeInvocationContext) -> Self {
+        Self {
+            session_id: Some(format!("{}:{}", context.kind, context.function_name)),
+            invocation_id: Some(context.invocation_id),
+            tenant_label: context.tenant_label.clone(),
+        }
+    }
+
+    pub(super) fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+
+    pub(super) fn invocation_id(&self) -> Option<u64> {
+        self.invocation_id
+    }
+
+    pub(super) fn tenant_label(&self) -> Option<&str> {
+        self.tenant_label.as_deref()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct RuntimeInvocationExecutionPlanBinding {
+    plan: Option<RuntimeExecutionPlan>,
+}
+
+impl RuntimeInvocationExecutionPlanBinding {
+    fn inactive() -> Self {
+        Self { plan: None }
+    }
+
+    fn for_plan(plan: &RuntimeExecutionPlan) -> Self {
+        Self {
+            plan: Some(plan.clone()),
+        }
+    }
+
+    pub(super) fn plan(&self) -> Option<&RuntimeExecutionPlan> {
+        self.plan.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RuntimeWaitUntilState {
+    pending: bool,
+}
+
+impl RuntimeWaitUntilState {
+    pub(crate) fn mark_pending(&mut self) {
+        self.pending = true;
+    }
+
+    fn take_pending(&mut self) -> bool {
+        let pending = self.pending;
+        self.pending = false;
+        pending
+    }
+
+    fn clear(&mut self) {
+        self.pending = false;
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RuntimeResourceTableSnapshot {
+    entries: BTreeMap<u32, String>,
+}
+
+impl RuntimeResourceTableSnapshot {
+    fn capture(state: &OpState) -> Self {
+        Self {
+            entries: state
+                .resource_table
+                .names()
+                .map(|(rid, name)| (rid, name.to_string()))
+                .collect(),
+        }
+    }
+
+    pub(crate) fn entries(&self) -> &BTreeMap<u32, String> {
+        &self.entries
+    }
+}
+
+#[derive(Clone, Debug)]
+struct RuntimeResourceTableBaseline {
+    snapshot: RuntimeResourceTableSnapshot,
 }
 
 #[derive(Clone)]
@@ -272,6 +379,33 @@ impl RuntimeInvocationTimeoutController {
         Ok(())
     }
 
+    pub(crate) async fn reset(&self, timeout: Duration) -> Result<()> {
+        let previous_registration = {
+            let mut state = self
+                .inner
+                .lock()
+                .expect("runtime timeout controller lock should not be poisoned");
+            state.remaining = timeout;
+            state.armed_at = None;
+            state.registration.take()
+        };
+        if let Some(registration) = previous_registration {
+            registration.disarm().await;
+        }
+
+        let mut state = self
+            .inner
+            .lock()
+            .expect("runtime timeout controller lock should not be poisoned");
+        if state.disarmed || timeout.is_zero() {
+            return Ok(());
+        }
+        let registration = Self::register(&state.timer, timeout, state.callback.clone())?;
+        state.armed_at = Some(Instant::now());
+        state.registration = Some(registration);
+        Ok(())
+    }
+
     pub(crate) async fn disarm(&self) {
         let registration = {
             let mut state = self
@@ -295,7 +429,7 @@ pub(crate) fn initialize_runtime_state(
 ) -> Result<()> {
     install_runtime_owner(runtime, runtime_owner.clone());
     install_runtime_host_bridge_slot(runtime, runtime_owner.host.clone());
-    install_runtime_contract(runtime, runtime_owner, bundle)?;
+    reset_runtime_contract(runtime, runtime_owner, bundle)?;
     if runtime_owner
         .policy()
         .limits()
@@ -312,11 +446,13 @@ pub(crate) fn initialize_runtime_state(
     reset_runtime_invocation_state(
         runtime,
         SharedInvocationPermit::new(runtime_owner.policy.clone(), None, None, true, None),
+        None,
+        None,
     );
     Ok(())
 }
 
-fn install_runtime_contract(
+pub(crate) fn reset_runtime_contract(
     runtime: &mut JsRuntime,
     runtime_owner: &NimbusRuntime,
     bundle: &RuntimeBundle,
@@ -399,9 +535,55 @@ pub(crate) fn bind_runtime_host_bridge(runtime: &mut JsRuntime, bridge: Arc<dyn 
 pub(crate) fn reset_runtime_invocation_state(
     runtime: &mut JsRuntime,
     permit: SharedInvocationPermit,
+    context: Option<&RuntimeInvocationContext>,
+    execution_plan: Option<&RuntimeExecutionPlan>,
 ) {
     let op_state = runtime.op_state();
     let mut state = op_state.borrow_mut();
+    let resource_table_baseline = RuntimeResourceTableSnapshot::capture(&state);
     state.put(fresh_runtime_cancellation_state());
     state.put(permit);
+    state.put(
+        context
+            .map(RuntimeInvocationHostCallBinding::for_context)
+            .unwrap_or_else(RuntimeInvocationHostCallBinding::inactive),
+    );
+    state.put(
+        execution_plan
+            .map(RuntimeInvocationExecutionPlanBinding::for_plan)
+            .unwrap_or_else(RuntimeInvocationExecutionPlanBinding::inactive),
+    );
+    state.put(RuntimeWaitUntilState::default());
+    state.put(RuntimeResourceTableBaseline {
+        snapshot: resource_table_baseline,
+    });
+}
+
+pub(crate) fn runtime_resource_table_delta(
+    runtime: &mut JsRuntime,
+) -> Option<(RuntimeResourceTableSnapshot, RuntimeResourceTableSnapshot)> {
+    let op_state = runtime.op_state();
+    let state = op_state.borrow();
+    let baseline = state
+        .try_borrow::<RuntimeResourceTableBaseline>()
+        .map(|baseline| baseline.snapshot.clone())?;
+    let current = RuntimeResourceTableSnapshot::capture(&state);
+    (baseline != current).then_some((baseline, current))
+}
+
+pub(crate) fn take_runtime_wait_until_pending(runtime: &mut JsRuntime) -> bool {
+    let op_state = runtime.op_state();
+    let mut state = op_state.borrow_mut();
+    state
+        .try_borrow_mut::<RuntimeWaitUntilState>()
+        .map(|wait_until| wait_until.take_pending())
+        .unwrap_or(false)
+}
+
+pub(crate) fn clear_runtime_wait_until_pending(runtime: &mut JsRuntime) {
+    let op_state = runtime.op_state();
+    let mut state = op_state.borrow_mut();
+    if let Some(wait_until) = state.try_borrow_mut::<RuntimeWaitUntilState>() {
+        wait_until.clear();
+    }
 }

@@ -2,6 +2,7 @@ mod affinity;
 mod backends;
 mod context;
 mod error;
+mod execution_plan;
 mod executor;
 mod host;
 mod limits;
@@ -25,7 +26,7 @@ pub fn bun_jsc_adapter_artifact_diagnostics() -> RuntimeExecutionAdapterArtifact
 
 pub use context::RuntimeInvocationContext;
 pub use error::{NimbusRuntimeError, Result};
-pub use executor::RuntimeExecutor;
+pub use executor::{RuntimeExecutor, RuntimeInvocationResponse};
 pub use host::{
     HOST_CALL_ABI_VERSION, HostBridge, HostBridgeFuture, HostCallCancellation,
     HostCallCancellationCause, HostCallEnvelope, HostCallOperation, HostCallPayload,
@@ -40,19 +41,40 @@ pub use host::{
     RuntimeSyncQueryOrderPayload, RuntimeSyncQueryStartPayload, RuntimeSyncQueryWithIndexPayload,
 };
 pub use limits::{
+    EffectiveRuntimeScalingPlan, NominalRuntimeHostPressureSource, RequestedRuntimeScalingTarget,
+    RuntimeAdaptiveActuationResult, RuntimeAdaptiveActuator, RuntimeAdaptiveCanaryPolicy,
+    RuntimeAdaptiveClock, RuntimeAdaptiveControllerMode, RuntimeAdaptiveControllerSettings,
+    RuntimeAdaptiveMetricsSink, RuntimeAdaptiveObservationSource, RuntimeAdaptivePressureAdapter,
+    RuntimeAdaptiveWarmPoolActuation, RuntimeAdaptiveWarmPoolActuationKind,
+    RuntimeAdaptiveWarmPoolAuthorityInput, RuntimeAdaptiveWarmPoolController,
+    RuntimeAdaptiveWarmPoolDecision, RuntimeAdaptiveWarmPoolDecisionReason,
+    RuntimeAdaptiveWarmPoolEvaluation, RuntimeAdaptiveWarmPoolRun, RuntimeAdaptiveWarmPoolSnapshot,
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
+    RuntimeControllerReplayAuthorityInput, RuntimeControllerReplayAuthorityKey,
+    RuntimeControllerReplayConfig, RuntimeControllerReplayDecision,
+    RuntimeControllerReplayObservation, RuntimeControllerReplayState, RuntimeDensityBudget,
+    RuntimeDensityMeasurement, RuntimeDensityMeasurementMethod, RuntimeDensityPlan,
     RuntimeExecutionAdapterArtifactDiagnostics, RuntimeExecutionAdapterArtifactSource,
     RuntimeExecutionAdapterArtifactStatus, RuntimeExecutionAdapterExpectedArtifact,
     RuntimeExecutionAdapterManifestArtifact, RuntimeExecutionAdapterState, RuntimeExecutionModel,
-    RuntimeGrants, RuntimeJavaScriptEvaluationFormat, RuntimeLanguage, RuntimeLimits,
-    RuntimeMemoryEnforcement, RuntimeMode, RuntimeModuleStateSemantics, RuntimeNodeLtsLane,
+    RuntimeGrants, RuntimeHostAdmissionAction, RuntimeHostAdmissionDecision,
+    RuntimeHostPressureLevel, RuntimeHostPressureSample, RuntimeHostPressureSource,
+    RuntimeHostPressureSourceStatus, RuntimeHostResourceBudget, RuntimeHostResourceDecision,
+    RuntimeHostWorkClass, RuntimeIsolateGroupFfiStatus, RuntimeJavaScriptEvaluationFormat,
+    RuntimeLanguage, RuntimeLimits, RuntimeMemoryEnforcement, RuntimeMemoryPressureDecision,
+    RuntimeMemoryPressureLevel, RuntimeMemoryPressureSample, RuntimeMemoryPressureSourceStatus,
+    RuntimeMode, RuntimeModuleStateSemantics, RuntimeNodeFullRealmReusePolicy, RuntimeNodeLtsLane,
     RuntimeNodeSupportPhase, RuntimePolicy, RuntimePoolKind, RuntimePreset,
-    RuntimeResetCapabilities, RuntimeRoutingAffinity, RuntimeTenantBudget,
+    RuntimePrewarmScheduleDecision, RuntimeProfile, RuntimeResetCapabilities,
+    RuntimeRoutingAffinity, RuntimeScalingAdjustmentReason, RuntimeScalingLimit,
+    RuntimeScalingPreset, RuntimeScalingTarget, RuntimeTenantBudget, replay_runtime_controller,
 };
 pub use metrics::{
-    RuntimeDurationDistributionSnapshot, RuntimeHostOperationMetricsSnapshot, RuntimeMetrics,
-    RuntimeMetricsSnapshot, RuntimeRequestCorrelationSnapshot, RuntimeTenantMetricsSnapshot,
+    RuntimeAdaptiveControllerMetricsSnapshot, RuntimeDurationDistributionSnapshot,
+    RuntimeHostOperationMetricsSnapshot, RuntimeHostPressureMetricsSnapshot, RuntimeMetrics,
+    RuntimeMetricsSnapshot, RuntimeProfileCountersSnapshot, RuntimeProfileTelemetrySnapshot,
+    RuntimeRequestCorrelationSnapshot, RuntimeTenantMetricsSnapshot,
 };
 pub use runtime::{
     InvocationAuth, InvocationKind, InvocationRequest, InvocationServiceBinding,

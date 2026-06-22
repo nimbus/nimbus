@@ -14,6 +14,7 @@ workspace = true
 
 [dependencies]
 nimbus-core = { path = "../nimbus-core" }
+nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 serde.workspace = true
 sha2.workspace = true
@@ -41,7 +42,7 @@ systemd-dbus-test-bus = ["systemd-dbus"]
 systemd-dbus-integration-tests = ["systemd-dbus"]
 
 [dev-dependencies]
-nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 serde_json.workspace = true
+tempfile.workspace = true
 tokio.workspace = true

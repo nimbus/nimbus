@@ -1,3 +1,4 @@
+use crate::backends::v8::embedder::JsRealm;
 use crate::backends::v8::embedder::JsRuntime;
 use crate::error::{NimbusRuntimeError, Result};
 
@@ -21,12 +22,71 @@ Object.defineProperty(globalThis, "__nimbusDrainImmediates", {
   enumerable: false,
   writable: true,
 });
+const __nimbusContextHostCallOps = new Set([
+  "op_nimbus_ctx_query_start",
+  "op_nimbus_ctx_query_with_index",
+  "op_nimbus_ctx_query_filter",
+  "op_nimbus_ctx_query_order",
+  "op_nimbus_ctx_query",
+  "op_nimbus_ctx_paginated_query",
+  "op_nimbus_ctx_mutation",
+  "op_nimbus_ctx_action",
+  "op_nimbus_document_get",
+  "op_nimbus_document_insert",
+  "op_nimbus_document_patch",
+  "op_nimbus_document_delete",
+  "op_nimbus_ctx_query_collect",
+  "op_nimbus_ctx_query_take",
+  "op_nimbus_ctx_query_paginate",
+  "op_nimbus_ctx_query_first",
+  "op_nimbus_ctx_query_unique",
+  "op_nimbus_ctx_scheduler_run_after",
+  "op_nimbus_ctx_scheduler_run_at",
+  "op_nimbus_ctx_scheduler_cancel",
+  "op_nimbus_ctx_runtime_enter_nested_call",
+  "op_nimbus_ctx_run_query",
+  "op_nimbus_ctx_run_mutation",
+  "op_nimbus_ctx_run_action",
+  "op_nimbus_ctx_service_lookup",
+]);
+
+const __nimbusCurrentHostCallSessionId = function __nimbusCurrentHostCallSessionId() {
+  const operation = __nimbusCoreOps.op_nimbus_runtime_host_call_session_id;
+  if (typeof operation !== "function") {
+    throw new Error("Nimbus runtime host-call session op not found");
+  }
+  return operation();
+};
+
+const __nimbusBindHostCallPayload = function __nimbusBindHostCallPayload(opName, payload) {
+  if (!__nimbusContextHostCallOps.has(opName)) {
+    return payload;
+  }
+  if (payload !== null && payload !== undefined && (typeof payload !== "object" || Array.isArray(payload))) {
+    throw new Error(`Nimbus runtime host-call payload must be an object for ${opName}`);
+  }
+  const currentSessionId = __nimbusCurrentHostCallSessionId();
+  const providedSessionId = payload?.host_call_session_id;
+  if (
+    providedSessionId !== undefined &&
+    providedSessionId !== null &&
+    providedSessionId !== "" &&
+    providedSessionId !== currentSessionId
+  ) {
+    throw new Error(`Nimbus runtime host-call session is stale or forged for ${opName}`);
+  }
+  return {
+    ...(payload ?? {}),
+    host_call_session_id: currentSessionId,
+  };
+};
+
 globalThis.__nimbusSyncHostValue = function(opName, payload) {
   const operation = __nimbusCoreOps[opName];
   if (typeof operation !== "function") {
     throw new Error(`Nimbus runtime sync host op not found: ${opName}`);
   }
-  const response = operation(payload);
+  const response = operation(__nimbusBindHostCallPayload(opName, payload));
   if (!response || response.status !== "ok") {
     const error = new Error(
       `Nimbus runtime sync host call failed for ${opName}: ${__nimbusFormatHostError(response?.error)}`,
@@ -56,7 +116,7 @@ globalThis.__nimbusAsyncHostValue = async function(opName, payload) {
   if (typeof operation !== "function") {
     throw new Error(`Nimbus runtime async host op not found: ${opName}`);
   }
-  const response = await operation(payload);
+  const response = await operation(__nimbusBindHostCallPayload(opName, payload));
   if (!response || response.status !== "ok") {
     const error = new Error(
       `Nimbus runtime async host call failed for ${opName}: ${__nimbusFormatHostError(response?.error)}`,
@@ -66,7 +126,39 @@ globalThis.__nimbusAsyncHostValue = async function(opName, payload) {
   }
   return response.value;
 };
-"#;
+
+let __nimbusWaitUntilQueue = [];
+
+globalThis.__nimbusWaitUntil = function(promise) {
+  if (promise === null || promise === undefined || typeof promise.then !== "function") {
+    throw new TypeError("Nimbus waitUntil requires a Promise-like value");
+  }
+  const markPending = __nimbusCoreOps.op_nimbus_runtime_wait_until_pending;
+  if (typeof markPending === "function") {
+    markPending();
+  }
+  __nimbusWaitUntilQueue.push(Promise.resolve(promise));
+};
+
+globalThis.__nimbusDrainWaitUntil = async function() {
+  let rejected = 0;
+  while (__nimbusWaitUntilQueue.length > 0) {
+    const batch = __nimbusWaitUntilQueue;
+    __nimbusWaitUntilQueue = [];
+    const settled = await Promise.allSettled(batch);
+    for (const result of settled) {
+      if (result.status === "rejected") {
+        rejected++;
+      }
+    }
+  }
+  return { rejected };
+};
+
+globalThis.__nimbusResetWaitUntil = function() {
+  __nimbusWaitUntilQueue = [];
+};
+	"#;
 
 const NIMBUS_CONTEXT_CONTRACT_SOURCE: &str = r#"
 const __nimbusNormalizeFieldName = function __nimbusNormalizeFieldName(field) {
@@ -261,7 +353,6 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
   });
 };
 
-let __nimbusNextHostCallSessionId = 1;
 let __nimbusInvocationGeneration = 0;
 
 globalThis.__nimbusCreateContext = function(options = {}) {
@@ -274,10 +365,14 @@ globalThis.__nimbusCreateContext = function(options = {}) {
       );
     }
   };
-  const hostCallSessionId =
+  const hostCallSessionId = __nimbusCurrentHostCallSessionId();
+  const requestedHostCallSessionId =
     typeof options.hostCallSessionId === "string" && options.hostCallSessionId.length > 0
       ? options.hostCallSessionId
-      : `host-call-session-${__nimbusNextHostCallSessionId++}`;
+      : null;
+  if (requestedHostCallSessionId !== null && requestedHostCallSessionId !== hostCallSessionId) {
+    throw new Error("Nimbus runtime host-call session is stale or forged");
+  }
   const requestAuth =
     options.request !== null &&
     typeof options.request === "object" &&
@@ -326,6 +421,146 @@ globalThis.__nimbusCreateContext = function(options = {}) {
     return null;
   };
 
+  const requestKind =
+    options.request !== null &&
+    typeof options.request === "object" &&
+    typeof options.request.kind === "string"
+      ? options.request.kind
+      : null;
+  const capabilities = (() => {
+    switch (requestKind) {
+      case "query":
+      case "paginated_query":
+        return { db: true, dbWrite: false, scheduler: false, nestedCalls: false };
+      case "mutation":
+        return { db: true, dbWrite: true, scheduler: true, nestedCalls: false };
+      case "action":
+      case "http_action":
+        return { db: false, dbWrite: false, scheduler: true, nestedCalls: true };
+      default:
+        return { db: true, dbWrite: true, scheduler: true, nestedCalls: true };
+    }
+  })();
+  const unsupported = (label) => {
+    throw new Error(
+      `Nimbus runtime ctx.${label} is not available for ${requestKind ?? "dynamic"} handlers`,
+    );
+  };
+
+  const db = capabilities.db
+    ? {
+        async get(tableOrId, maybeId) {
+          guardStale();
+          if (maybeId === undefined) {
+            if (
+              tableOrId &&
+              typeof tableOrId === "object" &&
+              typeof tableOrId.table === "string" &&
+              typeof tableOrId.id === "string"
+            ) {
+              return globalThis.__nimbusAsyncHostValue("op_nimbus_document_get", {
+                table: tableOrId.table,
+                id: tableOrId.id,
+                host_call_session_id: hostCallSessionId,
+              });
+            }
+            throw new Error(
+              "Nimbus runtime ctx.db.get currently requires table and id at runtime",
+            );
+          }
+          return globalThis.__nimbusAsyncHostValue("op_nimbus_document_get", {
+            table: tableOrId,
+            id: maybeId,
+            host_call_session_id: hostCallSessionId,
+          });
+        },
+        query(table) {
+          const builderId = syncHostValue("op_nimbus_ctx_query_start", { table });
+          return __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, hostCallSessionId);
+        },
+        insert(table, fields) {
+          if (!capabilities.dbWrite) {
+            unsupported("db.insert");
+          }
+          return asyncHostValue("op_nimbus_document_insert", {
+            table,
+            fields,
+          });
+        },
+        patch(table, id, patch) {
+          if (!capabilities.dbWrite) {
+            unsupported("db.patch");
+          }
+          return asyncHostValue("op_nimbus_document_patch", {
+            table,
+            id,
+            patch,
+          });
+        },
+        delete(table, id) {
+          if (!capabilities.dbWrite) {
+            unsupported("db.delete");
+          }
+          return asyncHostValue("op_nimbus_document_delete", {
+            table,
+            id,
+          });
+        },
+      }
+    : {
+        get() {
+          unsupported("db.get");
+        },
+        query() {
+          unsupported("db.query");
+        },
+        insert() {
+          unsupported("db.insert");
+        },
+        patch() {
+          unsupported("db.patch");
+        },
+        delete() {
+          unsupported("db.delete");
+        },
+      };
+
+  const scheduler = capabilities.scheduler
+    ? {
+        runAfter(delayMs, functionRef, args = {}) {
+          const normalized = __nimbusNormalizeFunctionReference(functionRef, "scheduler.runAfter");
+          return asyncHostValue("op_nimbus_ctx_scheduler_run_after", {
+            delay_ms: delayMs,
+            ...normalized,
+            args,
+          });
+        },
+        runAt(timestampMs, functionRef, args = {}) {
+          const normalized = __nimbusNormalizeFunctionReference(functionRef, "scheduler.runAt");
+          return asyncHostValue("op_nimbus_ctx_scheduler_run_at", {
+            timestamp_ms: timestampMs,
+            ...normalized,
+            args,
+          });
+        },
+        cancel(jobId) {
+          return asyncHostValue("op_nimbus_ctx_scheduler_cancel", {
+            job_id: jobId,
+          });
+        },
+      }
+    : {
+        runAfter() {
+          unsupported("scheduler.runAfter");
+        },
+        runAt() {
+          unsupported("scheduler.runAt");
+        },
+        cancel() {
+          unsupported("scheduler.cancel");
+        },
+      };
+
   return {
     auth: Object.freeze({
       async getUserIdentity() {
@@ -337,113 +572,51 @@ globalThis.__nimbusCreateContext = function(options = {}) {
         return cloneAuthIdentityOrThrow(verifiedAuthIdentity);
       },
     }),
-    db: {
-      async get(tableOrId, maybeId) {
-        guardStale();
-        if (maybeId === undefined) {
-          if (
-            tableOrId &&
-            typeof tableOrId === "object" &&
-            typeof tableOrId.table === "string" &&
-            typeof tableOrId.id === "string"
-          ) {
-            return globalThis.__nimbusAsyncHostValue("op_nimbus_document_get", {
-              table: tableOrId.table,
-              id: tableOrId.id,
-              host_call_session_id: hostCallSessionId,
-            });
-          }
-          throw new Error(
-            "Nimbus runtime ctx.db.get currently requires table and id at runtime",
-          );
-        }
-        return globalThis.__nimbusAsyncHostValue("op_nimbus_document_get", {
-          table: tableOrId,
-          id: maybeId,
-          host_call_session_id: hostCallSessionId,
-        });
-      },
-      query(table) {
-        const builderId = syncHostValue("op_nimbus_ctx_query_start", { table });
-        return __nimbusCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, hostCallSessionId);
-      },
-      insert(table, fields) {
-        return asyncHostValue("op_nimbus_document_insert", {
-          table,
-          fields,
-        });
-      },
-      patch(table, id, patch) {
-        return asyncHostValue("op_nimbus_document_patch", {
-          table,
-          id,
-          patch,
-        });
-      },
-      delete(table, id) {
-        return asyncHostValue("op_nimbus_document_delete", {
-          table,
-          id,
-        });
-      },
-    },
-    scheduler: {
-      runAfter(delayMs, functionRef, args = {}) {
-        const normalized = __nimbusNormalizeFunctionReference(functionRef, "scheduler.runAfter");
-        return asyncHostValue("op_nimbus_ctx_scheduler_run_after", {
-          delay_ms: delayMs,
-          ...normalized,
-          args,
-        });
-      },
-      runAt(timestampMs, functionRef, args = {}) {
-        const normalized = __nimbusNormalizeFunctionReference(functionRef, "scheduler.runAt");
-        return asyncHostValue("op_nimbus_ctx_scheduler_run_at", {
-          timestamp_ms: timestampMs,
-          ...normalized,
-          args,
-        });
-      },
-      cancel(jobId) {
-        return asyncHostValue("op_nimbus_ctx_scheduler_cancel", {
-          job_id: jobId,
-        });
-      },
-    },
-      runQuery(functionRef, args = {}) {
-        guardStale();
-        return __nimbusRunNamedFunction(
-          syncHostValue,
-          "op_nimbus_ctx_run_query",
-          hostCallSessionId,
-          requestAuth,
-          "query",
+    db,
+    scheduler,
+    runQuery(functionRef, args = {}) {
+      guardStale();
+      if (!capabilities.nestedCalls) {
+        unsupported("runQuery");
+      }
+      return __nimbusRunNamedFunction(
+        syncHostValue,
+        "op_nimbus_ctx_run_query",
+        hostCallSessionId,
+        requestAuth,
+        "query",
         "runQuery",
         functionRef,
         args,
       );
     },
-      runMutation(functionRef, args = {}) {
-        guardStale();
-        return __nimbusRunNamedFunction(
-          syncHostValue,
-          "op_nimbus_ctx_run_mutation",
-          hostCallSessionId,
-          requestAuth,
-          "mutation",
+    runMutation(functionRef, args = {}) {
+      guardStale();
+      if (!capabilities.nestedCalls) {
+        unsupported("runMutation");
+      }
+      return __nimbusRunNamedFunction(
+        syncHostValue,
+        "op_nimbus_ctx_run_mutation",
+        hostCallSessionId,
+        requestAuth,
+        "mutation",
         "runMutation",
         functionRef,
         args,
       );
     },
-      runAction(functionRef, args = {}) {
-        guardStale();
-        return __nimbusRunNamedFunction(
-          syncHostValue,
-          "op_nimbus_ctx_run_action",
-          hostCallSessionId,
-          requestAuth,
-          "action",
+    runAction(functionRef, args = {}) {
+      guardStale();
+      if (!capabilities.nestedCalls) {
+        unsupported("runAction");
+      }
+      return __nimbusRunNamedFunction(
+        syncHostValue,
+        "op_nimbus_ctx_run_action",
+        hostCallSessionId,
+        requestAuth,
+        "action",
         "runAction",
         functionRef,
         args,
@@ -885,6 +1058,126 @@ const __nimbusInstallRuntimeContractGlobals = function __nimbusInstallRuntimeCon
 Object.freeze(__nimbusInstallRuntimeContractGlobals);
 "#;
 
+const NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE: &str = r#"
+const __nimbusTimerResolutionMs = 10;
+const __nimbusCoarsenTimerValue = function __nimbusCoarsenTimerValue(value) {
+  return Number.isFinite(value)
+    ? Math.floor(value / __nimbusTimerResolutionMs) * __nimbusTimerResolutionMs
+    : value;
+};
+
+const __nimbusDefineFunctionMarker = function __nimbusDefineFunctionMarker(fn, marker) {
+  Object.defineProperty(fn, marker, {
+    configurable: false,
+    enumerable: false,
+    value: true,
+    writable: false,
+  });
+  return fn;
+};
+
+const __nimbusInstallDateNowCoarsening = function __nimbusInstallDateNowCoarsening() {
+  if (Date.now?.__nimbusCoarsenedTimer === true) {
+    return;
+  }
+  const nativeDateNow = Date.now.bind(Date);
+  const coarsenedDateNow = __nimbusDefineFunctionMarker(function now() {
+    return __nimbusCoarsenTimerValue(nativeDateNow());
+  }, "__nimbusCoarsenedTimer");
+  Object.defineProperty(Date, "now", {
+    configurable: true,
+    enumerable: false,
+    value: coarsenedDateNow,
+    writable: true,
+  });
+};
+
+const __nimbusInstallPerformanceNowCoarsening = function __nimbusInstallPerformanceNowCoarsening() {
+  if (globalThis.performance === undefined) {
+    const timeOrigin = Date.now();
+    Object.defineProperty(globalThis, "performance", {
+      configurable: true,
+      enumerable: false,
+      value: {
+        now: __nimbusDefineFunctionMarker(function now() {
+          return __nimbusCoarsenTimerValue(Date.now() - timeOrigin);
+        }, "__nimbusCoarsenedTimer"),
+        timeOrigin,
+      },
+      writable: true,
+    });
+    return;
+  }
+  if (
+    globalThis.performance !== null &&
+    typeof globalThis.performance === "object" &&
+    typeof globalThis.performance.now === "function" &&
+    globalThis.performance.now.__nimbusCoarsenedTimer !== true
+  ) {
+    const nativePerformanceNow = globalThis.performance.now.bind(globalThis.performance);
+    const coarsenedPerformanceNow = __nimbusDefineFunctionMarker(function now() {
+      return __nimbusCoarsenTimerValue(nativePerformanceNow());
+    }, "__nimbusCoarsenedTimer");
+    Object.defineProperty(globalThis.performance, "now", {
+      configurable: true,
+      enumerable: false,
+      value: coarsenedPerformanceNow,
+      writable: true,
+    });
+  }
+};
+
+const __nimbusDisableBlockingAtomicsWait = function __nimbusDisableBlockingAtomicsWait() {
+  if (typeof Atomics !== "object" || Atomics === null) {
+    return;
+  }
+  const disabledWait = __nimbusDefineFunctionMarker(function wait() {
+    throw new TypeError("Nimbus disables Atomics.wait for in-process untrusted runtimes");
+  }, "__nimbusDisabledAtomicsWait");
+  Object.defineProperty(Atomics, "wait", {
+    configurable: true,
+    enumerable: false,
+    value: disabledWait,
+    writable: true,
+  });
+  if (typeof Atomics.waitAsync === "function") {
+    const disabledWaitAsync = __nimbusDefineFunctionMarker(function waitAsync() {
+      throw new TypeError("Nimbus disables Atomics.waitAsync for in-process untrusted runtimes");
+    }, "__nimbusDisabledAtomicsWait");
+    Object.defineProperty(Atomics, "waitAsync", {
+      configurable: true,
+      enumerable: false,
+      value: disabledWaitAsync,
+      writable: true,
+    });
+  }
+};
+
+const __nimbusHideSharedArrayBuffer = function __nimbusHideSharedArrayBuffer() {
+  if (typeof globalThis.SharedArrayBuffer === "undefined") {
+    return;
+  }
+  Reflect.deleteProperty(globalThis, "SharedArrayBuffer");
+  if (typeof globalThis.SharedArrayBuffer !== "undefined") {
+    Object.defineProperty(globalThis, "SharedArrayBuffer", {
+      configurable: true,
+      enumerable: false,
+      value: undefined,
+      writable: true,
+    });
+  }
+};
+
+const __nimbusInstallSideChannelHardening = function __nimbusInstallSideChannelHardening() {
+  __nimbusInstallDateNowCoarsening();
+  __nimbusInstallPerformanceNowCoarsening();
+  __nimbusDisableBlockingAtomicsWait();
+  __nimbusHideSharedArrayBuffer();
+};
+
+__nimbusInstallSideChannelHardening();
+"#;
+
 // Keep Deno cleanup out of the bootstrap sources. Those sources are executed
 // during startup-snapshot creation, and moving `delete globalThis.Deno` into
 // them has already regressed snapshot-backed Locker runtime startup in the
@@ -921,6 +1214,7 @@ delete globalThis.__nimbusRetainDenoForNodeLazyScripts;
 delete globalThis.__bootstrap;
 delete globalThis.bootstrap;
 __nimbusInstallRuntimeContractGlobals(__nimbusRuntimeContract);
+__nimbusInstallSideChannelHardening();
 const __nimbusNodeVersion =
   __nimbusRuntimeContract?.node_api_contract?.version_number;
 const __nimbusNodeRuntimeMajor = __nimbusCompatibilityMatch
@@ -1005,6 +1299,7 @@ if (Promise.reject.__nimbusDomainAware !== true) {
 const RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE: &str = r#"
 __nimbusNextHostCallSessionId = 1;
 __nimbusInvocationGeneration++;
+__nimbusResetWaitUntil();
 {
   const __nimbusRuntimeExecPath = __nimbusCoreOps.op_nimbus_runtime_exec_path();
   if (
@@ -1040,6 +1335,40 @@ pub(crate) fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
             DENO_RUNTIME_GLOBALS_SOURCE,
         )
         .map_err(|error| NimbusRuntimeError::JavaScript(error.to_string()))?;
+    runtime
+        .execute_script(
+            "<nimbus-runtime:bootstrap:side-channel-hardening>",
+            NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE,
+        )
+        .map_err(|error| NimbusRuntimeError::JavaScript(error.to_string()))?;
+    Ok(())
+}
+
+pub(crate) fn install_bootstrap_in_realm(runtime: &mut JsRuntime, realm: &JsRealm) -> Result<()> {
+    execute_realm_script(
+        runtime,
+        realm,
+        "<nimbus-runtime:bootstrap:deno-host-call-transport>",
+        DENO_HOST_CALL_TRANSPORT_SOURCE,
+    )?;
+    execute_realm_script(
+        runtime,
+        realm,
+        "<nimbus-runtime:bootstrap:context-contract>",
+        NIMBUS_CONTEXT_CONTRACT_SOURCE,
+    )?;
+    execute_realm_script(
+        runtime,
+        realm,
+        "<nimbus-runtime:bootstrap:deno-runtime-globals>",
+        DENO_RUNTIME_GLOBALS_SOURCE,
+    )?;
+    execute_realm_script(
+        runtime,
+        realm,
+        "<nimbus-runtime:bootstrap:side-channel-hardening>",
+        NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE,
+    )?;
     Ok(())
 }
 
@@ -1053,6 +1382,19 @@ pub(crate) fn finalize_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn finalize_bootstrap_in_realm(runtime: &mut JsRuntime, realm: &JsRealm) -> Result<()> {
+    // Keep the realm path aligned with the main-context bootstrap contract: the
+    // finalize step stays separate so callers can snapshot or install sources
+    // before hiding bootstrap-only globals.
+    execute_realm_script(
+        runtime,
+        realm,
+        "<nimbus-runtime:bootstrap:finalize>",
+        POST_BOOTSTRAP_SOURCE,
+    )?;
+    Ok(())
+}
+
 pub(crate) fn reset_bootstrap_invocation_state(runtime: &mut JsRuntime) -> Result<()> {
     runtime
         .execute_script(
@@ -1063,11 +1405,36 @@ pub(crate) fn reset_bootstrap_invocation_state(runtime: &mut JsRuntime) -> Resul
     Ok(())
 }
 
+pub(crate) fn reset_bootstrap_invocation_state_in_realm(
+    runtime: &mut JsRuntime,
+    realm: &JsRealm,
+) -> Result<()> {
+    execute_realm_script(
+        runtime,
+        realm,
+        "<nimbus-runtime:bootstrap:reset>",
+        RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE,
+    )?;
+    Ok(())
+}
+
+fn execute_realm_script(
+    runtime: &mut JsRuntime,
+    realm: &JsRealm,
+    name: &'static str,
+    source: &'static str,
+) -> Result<()> {
+    realm
+        .execute_script(runtime.v8_isolate(), name, source)
+        .map_err(|error| NimbusRuntimeError::JavaScript(error.to_string()))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         DENO_HOST_CALL_TRANSPORT_SOURCE, DENO_RUNTIME_GLOBALS_SOURCE,
-        NIMBUS_CONTEXT_CONTRACT_SOURCE,
+        NIMBUS_CONTEXT_CONTRACT_SOURCE, NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE,
     };
 
     #[test]
@@ -1094,5 +1461,15 @@ mod tests {
         assert!(DENO_RUNTIME_GLOBALS_SOURCE.contains("op_nimbus_runtime_env_snapshot"));
         assert!(!NIMBUS_CONTEXT_CONTRACT_SOURCE.contains("__nimbusInstallRuntimeContractGlobals"));
         assert!(!NIMBUS_CONTEXT_CONTRACT_SOURCE.contains("op_nimbus_runtime_env_snapshot"));
+    }
+
+    #[test]
+    fn pir3_side_channel_hardening_source_coarsens_timers_and_removes_shared_memory() {
+        assert!(NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE.contains("__nimbusCoarsenTimerValue"));
+        assert!(NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE.contains("Date.now"));
+        assert!(NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE.contains("performance"));
+        assert!(NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE.contains("Atomics.wait"));
+        assert!(NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE.contains("Atomics.waitAsync"));
+        assert!(NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE.contains("SharedArrayBuffer"));
     }
 }

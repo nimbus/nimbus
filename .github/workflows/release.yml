@@ -52,6 +52,15 @@ jobs:
       - name: Verify bootc default promotion gate helper
         run: bash scripts/verify-bootc-default-promotion-gate-helper.sh
 
+      - name: Verify release runtime feature selector
+        shell: bash
+        run: |
+          bash -n scripts/nimbus-release-rust-features.sh
+          test "$(bash scripts/nimbus-release-rust-features.sh --target x86_64-unknown-linux-gnu --format cargo-args)" = "--features v8-pointer-compression"
+          test "$(bash scripts/nimbus-release-rust-features.sh --target aarch64-apple-darwin --format cargo-args)" = "--features v8-pointer-compression"
+          test -z "$(bash scripts/nimbus-release-rust-features.sh --target aarch64-unknown-linux-gnu --format cargo-args)"
+          test -z "$(bash scripts/nimbus-release-rust-features.sh --target x86_64-pc-windows-msvc --format cargo-args)"
+
       - name: Verify machine-os release ref contract
         run: bash scripts/verify-machine-os-release-ref-contract.sh
 
@@ -122,7 +131,7 @@ jobs:
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
         with:
-          shared-key: release-aarch64-unknown-linux-gnu-no-bin-v1
+          shared-key: release-aarch64-unknown-linux-gnu-non-ptrcomp-no-bin-v1
           save-cache: always
           linux-linker: default
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
@@ -151,6 +160,7 @@ jobs:
         run: npm run build:embedded-packages
 
       - name: Build release binary
+        shell: bash
         env:
           CARGO_PROFILE_RELEASE_LTO: thin
         run: |
@@ -171,7 +181,9 @@ jobs:
           done &
           heartbeat_pid=$!
           trap 'kill "$heartbeat_pid" 2>/dev/null || true' EXIT
-          cargo build --release -p nimbus-bin -j 1
+          cargo_features="$(bash scripts/nimbus-release-rust-features.sh --target aarch64-unknown-linux-gnu --format cargo-args)"
+          echo "release runtime features: ${cargo_features:-<none>}"
+          cargo build --release -p nimbus-bin ${cargo_features} -j 1
 
       - name: Prove SQLCipher release lane
         shell: bash
@@ -218,18 +230,21 @@ jobs:
             arch: x86_64
             esbuild_platform: linux-x64
             archive: tar.gz
+            runtime_feature_mode: ptrcomp
           - target: aarch64-apple-darwin
             runner: macos-14
             os: darwin
             arch: arm64
             esbuild_platform: darwin-arm64
             archive: tar.gz
+            runtime_feature_mode: ptrcomp
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
             os: windows
             arch: x86_64
             esbuild_platform: win32-x64
             archive: zip
+            runtime_feature_mode: non-ptrcomp
           # Windows ARM64 — V8 prebuilt available, but no free GitHub runner yet.
           # Uncomment when GitHub adds a free windows-arm64 runner.
           # See: https://github.com/actions/runner-images/issues
@@ -250,7 +265,7 @@ jobs:
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
         with:
-          shared-key: release-${{ matrix.target }}-no-bin-v1
+          shared-key: release-${{ matrix.target }}-${{ matrix.runtime_feature_mode }}-no-bin-v1
           save-cache: always
           linux-linker: default
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
@@ -302,7 +317,11 @@ jobs:
           git config --global core.longpaths true
 
       - name: Build release binary
-        run: cargo build --release -p nimbus-bin
+        shell: bash
+        run: |
+          cargo_features="$(bash scripts/nimbus-release-rust-features.sh --target "${{ matrix.target }}" --format cargo-args)"
+          echo "release runtime features: ${cargo_features:-<none>}"
+          cargo build --release -p nimbus-bin ${cargo_features}
 
       - name: Prove SQLCipher release lane
         shell: bash

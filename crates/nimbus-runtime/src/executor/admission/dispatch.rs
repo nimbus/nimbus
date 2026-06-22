@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::sync::OwnedSemaphorePermit;
+use tokio::sync::{OwnedSemaphorePermit, TryAcquireError};
 
 use crate::error::Result;
 
@@ -19,6 +19,12 @@ impl RuntimeInvocationDispatchHandle {
         self.admission
             .acquire_active_permit(&self.tenant_label, self.active_semaphore.clone())
             .await
+    }
+
+    pub(in crate::executor) fn try_acquire_active_permit(
+        &self,
+    ) -> std::result::Result<OwnedSemaphorePermit, TryAcquireError> {
+        self.active_semaphore.clone().try_acquire_owned()
     }
 
     pub(in crate::executor) fn mark_active_entered(&self) {

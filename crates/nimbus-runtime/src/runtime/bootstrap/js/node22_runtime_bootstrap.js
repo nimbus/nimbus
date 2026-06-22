@@ -1157,6 +1157,8 @@ function seedNodeProcessFeatures(nodeProcess) {
   delete features.quic;
 }
 
+const nimbusBuiltinModuleLoaderInstalled = Symbol("nimbus.builtinModuleLoaderInstalled");
+
 function seedNodeProcessBuiltinModuleLoader(nodeProcess) {
   if (!nodeProcess || typeof nodeProcess !== "object") {
     return;
@@ -1166,24 +1168,30 @@ function seedNodeProcessBuiltinModuleLoader(nodeProcess) {
   if (typeof getBuiltinModule !== "function") {
     return;
   }
-  if (
-    typeof nodeProcess.getBuiltinModule === "function" &&
-    nodeProcess.getBuiltinModule("module") !== undefined
-  ) {
+  if (nodeProcess[nimbusBuiltinModuleLoaderInstalled] === true) {
     return;
   }
   const nodeProcessBuiltinModule = nodeProcess;
+  function nimbusGetBuiltinModule(specifier) {
+    const normalizedSpecifier = typeof specifier === "string" &&
+        specifier.startsWith("node:")
+      ? specifier.slice(5)
+      : specifier;
+    if (normalizedSpecifier === "process") {
+      return nodeProcessBuiltinModule;
+    }
+    const moduleBuiltin = getBuiltinModule.call(nodeProcessBuiltin, specifier);
+    if (normalizedSpecifier === "module") {
+      installNimbusNativeExtensionErrorMapping(moduleBuiltin);
+    }
+    return moduleBuiltin;
+  }
+  Object.defineProperty(nodeProcess, nimbusBuiltinModuleLoaderInstalled, {
+    value: true,
+    configurable: true,
+  });
   Object.defineProperty(nodeProcess, "getBuiltinModule", {
-    value(specifier) {
-      const normalizedSpecifier = typeof specifier === "string" &&
-          specifier.startsWith("node:")
-        ? specifier.slice(5)
-        : specifier;
-      if (normalizedSpecifier === "process") {
-        return nodeProcessBuiltinModule;
-      }
-      return getBuiltinModule.call(nodeProcessBuiltin, specifier);
-    },
+    value: nimbusGetBuiltinModule,
     configurable: true,
     enumerable: true,
     writable: true,
@@ -1191,6 +1199,7 @@ function seedNodeProcessBuiltinModuleLoader(nodeProcess) {
 }
 
 const nimbusProcessFinalizationInstalled = Symbol("nimbus.processFinalizationInstalled");
+const nimbusProcessFatalGuardsInstalled = Symbol("nimbus.processFatalGuardsInstalled");
 
 function validateProcessFinalizationRegistration(ref, callback) {
   if ((typeof ref !== "object" && typeof ref !== "function") || ref === null) {
@@ -1270,6 +1279,46 @@ function seedNodeProcessFinalization(nodeProcess) {
   });
 }
 
+function createNimbusDeniedProcessFatalOperation(name) {
+  function deniedProcessFatalOperation() {
+    throw new Error(
+      `Nimbus denies process.${name}() in embedded Node runtime; use process or microVM isolation for fatal-capable workloads`,
+    );
+  }
+  Object.defineProperty(deniedProcessFatalOperation, "__nimbusDeniedProcessFatalOperation", {
+    value: name,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+  return deniedProcessFatalOperation;
+}
+
+function seedNodeProcessFatalGuards(nodeProcess) {
+  if (
+    !nodeProcess ||
+    typeof nodeProcess !== "object" ||
+    nodeProcess[nimbusProcessFatalGuardsInstalled] === true
+  ) {
+    return;
+  }
+
+  for (const name of ["abort", "kill"]) {
+    Object.defineProperty(nodeProcess, name, {
+      value: createNimbusDeniedProcessFatalOperation(name),
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+  }
+  Object.defineProperty(nodeProcess, nimbusProcessFatalGuardsInstalled, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+}
+
 const nimbusProcessDlopenPatched = Symbol("nimbus.processDlopenPatched");
 const nimbusNativeExtensionPatched = Symbol("nimbus.nativeExtensionPatched");
 
@@ -1329,10 +1378,7 @@ function installNimbusProcessDlopenErrorMapping(nodeProcess) {
   });
 }
 
-function installNimbusNativeExtensionErrorMapping(nodeProcess) {
-  const moduleBuiltin = typeof nodeProcess?.getBuiltinModule === "function"
-    ? nodeProcess.getBuiltinModule("module")
-    : undefined;
+function installNimbusNativeExtensionErrorMapping(moduleBuiltin) {
   const extensions = moduleBuiltin?._extensions;
   if (
     !extensions ||
@@ -1486,27 +1532,6 @@ function isLoadEnvFileAccessDeniedError(error) {
     );
 }
 
-function isNodePermissionModeEnabled(nodeProcess) {
-  const execArgv = nodeProcess?.execArgv;
-  if (!Array.isArray(execArgv)) {
-    return false;
-  }
-  return execArgv.some((arg) => {
-    const value = String(arg);
-    return value === "--permission" || value.startsWith("--permission=");
-  });
-}
-
-function isNodePermissionModeLoadEnvFileAccessDeniedError(nodeProcess, error) {
-  if (!isNodePermissionModeEnabled(nodeProcess)) {
-    return false;
-  }
-  const message = typeof error?.message === "string" ? error.message : "";
-  return error?.code === "EACCES"
-    || error?.name === "PermissionDenied"
-    || message.includes("permission denied");
-}
-
 function isLoadEnvFileNotFoundError(error) {
   const message = typeof error?.message === "string" ? error.message : "";
   return error?.name === "NotFound"
@@ -1558,11 +1583,6 @@ function seedNodeProcessEnvOverlay(nodeProcess) {
     });
   }
   return globalThis[nimbusLoadEnvOverlaySymbol];
-}
-
-function rememberLoadedEnvFileEntries(nodeProcess, path) {
-  const source = runtimeReadTextFileSync(resolveLoadEnvFilePath(nodeProcess, path));
-  applyLoadedEnvFileEntries(nodeProcess, source);
 }
 
 function applyLoadedEnvFileEntries(nodeProcess, source) {
@@ -1717,12 +1737,8 @@ function isNimbusFileHandle(value) {
   );
 }
 
-function getNodeFsPromiseTargets(nodeFs, nodeProcess) {
+function getNodeFsPromiseTargets(nodeFs) {
   const targets = [];
-  const builtinPromises = nodeProcess?.getBuiltinModule?.("fs/promises");
-  if (builtinPromises && typeof builtinPromises === "object") {
-    targets.push(builtinPromises);
-  }
   if (
     nodeFs?.promises &&
     typeof nodeFs.promises === "object" &&
@@ -2100,8 +2116,8 @@ async function readFsPromisePathHandle(handle, options, nodeFs) {
   }
 }
 
-function patchNodeFsReadSemantics(nodeProcess) {
-  const nodeFs = nodeProcess?.getBuiltinModule?.("fs");
+function patchNodeFsReadSemantics(nodeProcess, nodeFs = undefined) {
+  nodeFs ??= nodeProcess?.getBuiltinModule?.("fs");
   if (!nodeFs || typeof nodeFs !== "object") {
     return;
   }
@@ -2351,7 +2367,7 @@ function patchNodeFsReadSemantics(nodeProcess) {
     nodeFs.watch = patchedWatch;
   }
 
-  const nodeFsPromiseTargets = getNodeFsPromiseTargets(nodeFs, nodeProcess);
+  const nodeFsPromiseTargets = getNodeFsPromiseTargets(nodeFs);
   const nodeFsCloseSync = nodeFs.closeSync;
   if (
     typeof nodeFsCloseSync === "function" &&
@@ -2685,40 +2701,12 @@ function seedNodeProcessLoadEnvFile(nodeProcess) {
     return;
   }
 
-  if (originalLoadEnvFile[nimbusLoadEnvFilePatched] === true) {
-    return;
-  }
-
   seedNodeProcessEnvOverlay(nodeProcess);
 
   function patchedLoadEnvFile(path = undefined) {
     const resolvedPath = resolveLoadEnvFilePath(nodeProcess, path);
     const displayPath = displayLoadEnvFilePath(path);
-    try {
-      const result = originalLoadEnvFile.call(nodeProcess, resolvedPath);
-      rememberLoadedEnvFileEntries(nodeProcess, resolvedPath);
-      return result;
-    } catch (error) {
-      if (error !== undefined) {
-        if (isNodePermissionModeLoadEnvFileAccessDeniedError(nodeProcess, error)) {
-          throw createLoadEnvFileAccessDeniedError(displayPath, error);
-        }
-        if (isLoadEnvFileAccessDeniedError(error)) {
-          return loadEnvFileThroughNimbusHost(nodeProcess, resolvedPath, displayPath);
-        }
-        throw error;
-      }
-
-      try {
-        hiddenDenoGlobals.statSync(resolvedPath);
-      } catch (statError) {
-        if (statError?.name === "NotFound") {
-          throw createLoadEnvFileNotFoundError(displayPath);
-        }
-      }
-
-      throw error;
-    }
+    return loadEnvFileThroughNimbusHost(nodeProcess, resolvedPath, displayPath);
   }
 
   Object.defineProperty(patchedLoadEnvFile, nimbusLoadEnvFilePatched, {
@@ -3995,8 +3983,8 @@ seedNodeProcessExecPath(internals.nodeGlobals?.process);
 seedNodeProcessFeatures(internals.nodeGlobals?.process);
 seedNodeProcessBuiltinModuleLoader(internals.nodeGlobals?.process);
 seedNodeProcessFinalization(internals.nodeGlobals?.process);
+seedNodeProcessFatalGuards(internals.nodeGlobals?.process);
 installNimbusProcessDlopenErrorMapping(internals.nodeGlobals?.process);
-installNimbusNativeExtensionErrorMapping(internals.nodeGlobals?.process);
 seedNodeProcessCwd(globalThis.process);
 seedNodeProcessPlatformMetadata(globalThis.process);
 seedNodeProcessStdio(globalThis.process);
@@ -4004,8 +3992,8 @@ seedNodeProcessExecPath(globalThis.process);
 seedNodeProcessFeatures(globalThis.process);
 seedNodeProcessBuiltinModuleLoader(globalThis.process);
 seedNodeProcessFinalization(globalThis.process);
+seedNodeProcessFatalGuards(globalThis.process);
 installNimbusProcessDlopenErrorMapping(globalThis.process);
-installNimbusNativeExtensionErrorMapping(globalThis.process);
 installNimbusDomainPromiseRejectPatch();
 const workerBootstrapState =
   typeof core.ops.op_nimbus_worker_bootstrap_state === "function"
@@ -4056,7 +4044,7 @@ if (typeof internals.__initWorkerThreads === "function") {
   }
   seedNodeClusterWorkerIfNeeded(workerBootstrapState, workerMetadataObject);
 }
-patchNodeFsReadSemantics(globalThis.process);
+patchNodeFsReadSemantics(globalThis.process, core.loadExtScript("ext:deno_node/fs.ts"));
 seedNodeProcessLoadEnvFile(globalThis.process);
 seedNodeGlobalTimers(internals.nodeGlobals);
 seedNodeProcessWarnings(globalThis.process);

@@ -1,4 +1,9 @@
 use super::*;
+use crate::backends::v8::V8RuntimeConstructionMode;
+use crate::limits::{
+    RuntimeExecutionModel, RuntimeMemoryEnforcement, RuntimeMode, RuntimeNodeFullRealmReusePolicy,
+    RuntimePoolKind, RuntimePreset, RuntimeRoutingAffinity,
+};
 use crate::test_support::{RuntimeReproCase, product_default_runtime_test_policy};
 
 pub(super) const BUNDLE_INTEGRITY_RECHECK_CASE: RuntimeReproCase = RuntimeReproCase::new(
@@ -255,19 +260,183 @@ export {};
     assert!(metrics.bundle_evaluation_nanos_total > 0);
 }
 
+#[tokio::test]
+async fn startup_snapshot_module_code_cache_reloads_when_dependency_source_hash_changes() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    let dep_path = tempdir.path().join("dep.mjs");
+    std::fs::write(
+        &dep_path,
+        r#"
+export function value() {
+  return "before";
+}
+"#,
+    )
+    .expect("dependency should write");
+    std::fs::write(
+        &bundle_path,
+        r#"
+import { value } from "./dep.mjs";
+
+globalThis.__nimbusInvoke = async function () {
+  return { value: value() };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "messages:list".to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: None,
+        services: Default::default(),
+    };
+
+    let first = runtime
+        .invoke_bundle(&bundle, &request)
+        .await
+        .expect("first invocation should succeed");
+    assert_eq!(first, serde_json::json!({ "value": "before" }));
+    let first_entry_count = bundle.module_code_cache_entry_count();
+    let first_write_count = bundle.module_code_cache_write_count();
+    assert_eq!(bundle.module_code_cache_partition_count(), 1);
+    assert!(
+        first_entry_count >= 2,
+        "expected main module and dependency to populate cache"
+    );
+
+    std::fs::write(
+        &dep_path,
+        r#"
+export function value() {
+  return "after";
+}
+"#,
+    )
+    .expect("dependency update should write");
+
+    let second = runtime
+        .invoke_bundle(&bundle, &request)
+        .await
+        .expect("second invocation should succeed after dependency update");
+    assert_eq!(
+        second,
+        serde_json::json!({ "value": "after" }),
+        "module code cache must not serve stale bytecode after a source-hash change"
+    );
+    assert_eq!(
+        bundle.module_code_cache_partition_count(),
+        1,
+        "source changes should not fragment the engine cache partition"
+    );
+    assert_eq!(
+        bundle.module_code_cache_entry_count(),
+        first_entry_count,
+        "the changed dependency should replace its cache entry instead of adding an authority partition"
+    );
+    assert!(
+        bundle.module_code_cache_write_count() > first_write_count,
+        "changed dependency source should compile and store fresh cached data"
+    );
+}
+
 #[test]
 fn runtime_bundle_module_code_cache_is_partitioned_by_engine_config() {
     let bundle = RuntimeBundle::new("unused.mjs");
+    let startup_snapshot = V8RuntimeConstructionMode::StartupSnapshot;
+    let unsnapshotted = V8RuntimeConstructionMode::Unsnapshotted;
     let web_limits = crate::RuntimeLimits::application_web_standard();
     let node_limits = crate::RuntimeLimits::application_node22();
+    let node24_limits = crate::RuntimeLimits::application_node24();
+    let mut node_custom_condition_limits = node_limits.clone();
+    node_custom_condition_limits
+        .node_conditions
+        .push("custom".to_string());
+    let mut node_service_limits = node_limits.clone();
+    node_service_limits.service_capability_enabled = true;
+    node_service_limits.grants.service = vec!["db".to_string()];
+    let mut node_read_limits = node_limits.clone();
+    node_read_limits.grants.read = vec!["/app".to_string()];
+    let mut node_env_limits = node_limits.clone();
+    node_env_limits.grants.env_read = vec!["NIMBUS_CACHE_TEST".to_string()];
+    let mut node_run_limits = node_limits.clone();
+    node_run_limits.grants.run = vec!["nimbus-tool".to_string()];
+    let mut node_mode_limits = node_limits.clone();
+    node_mode_limits.mode = RuntimeMode::Privileged;
+    let mut node_preset_limits = node_limits.clone();
+    node_preset_limits.preset = RuntimePreset::Tooling;
+    let mut node_pool_limits = node_limits.clone();
+    node_pool_limits.execution_model = RuntimeExecutionModel::CooperativeLocker;
+    node_pool_limits.runtime_pool_kind = RuntimePoolKind::WarmContextRecycle;
+    node_pool_limits.node_full_realm_reuse_policy =
+        RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority;
+    let mut node_memory_limits = node_limits.clone();
+    node_memory_limits.memory_enforcement = RuntimeMemoryEnforcement::OuterQuotaRequired;
+    node_memory_limits.max_heap_mb += 1;
+    let mut node_routing_limits = node_limits.clone();
+    node_routing_limits.routing_affinity = RuntimeRoutingAffinity::Function;
+    let mut node_timeout_limits = node_limits.clone();
+    node_timeout_limits.execution_timeout += std::time::Duration::from_secs(1);
 
-    let web_cache = bundle.module_code_cache(&web_limits);
-    let second_web_cache = bundle.module_code_cache(&web_limits);
-    let node_cache = bundle.module_code_cache(&node_limits);
+    let web_cache = bundle.module_code_cache(&web_limits, startup_snapshot);
+    let second_web_cache = bundle.module_code_cache(&web_limits, startup_snapshot);
+    let node_cache = bundle.module_code_cache(&node_limits, startup_snapshot);
+    let node_unsnapshotted_cache = bundle.module_code_cache(&node_limits, unsnapshotted);
+    let node24_cache = bundle.module_code_cache(&node24_limits, startup_snapshot);
+    let node_custom_condition_cache =
+        bundle.module_code_cache(&node_custom_condition_limits, startup_snapshot);
+    let node_service_cache = bundle.module_code_cache(&node_service_limits, startup_snapshot);
+    let node_read_cache = bundle.module_code_cache(&node_read_limits, startup_snapshot);
+    let node_env_cache = bundle.module_code_cache(&node_env_limits, startup_snapshot);
+    let node_run_cache = bundle.module_code_cache(&node_run_limits, startup_snapshot);
+    let node_mode_cache = bundle.module_code_cache(&node_mode_limits, startup_snapshot);
+    let node_preset_cache = bundle.module_code_cache(&node_preset_limits, startup_snapshot);
+    let node_pool_cache = bundle.module_code_cache(&node_pool_limits, startup_snapshot);
+    let node_memory_cache = bundle.module_code_cache(&node_memory_limits, startup_snapshot);
+    let node_routing_cache = bundle.module_code_cache(&node_routing_limits, startup_snapshot);
+    let node_timeout_cache = bundle.module_code_cache(&node_timeout_limits, startup_snapshot);
 
     assert!(Arc::ptr_eq(&web_cache, &second_web_cache));
-    assert!(!Arc::ptr_eq(&web_cache, &node_cache));
-    assert_eq!(bundle.module_code_cache_partition_count(), 2);
+    let cache_partitions = [
+        ("web", &web_cache),
+        ("node22", &node_cache),
+        ("node22-unsnapshotted", &node_unsnapshotted_cache),
+        ("node24", &node24_cache),
+        ("node22-custom-condition", &node_custom_condition_cache),
+        ("node22-service-grant", &node_service_cache),
+        ("node22-read-grant", &node_read_cache),
+        ("node22-env-grant", &node_env_cache),
+        ("node22-run-grant", &node_run_cache),
+        ("node22-mode", &node_mode_cache),
+        ("node22-preset", &node_preset_cache),
+        ("node22-pool-policy", &node_pool_cache),
+        ("node22-memory-policy", &node_memory_cache),
+        ("node22-routing-policy", &node_routing_cache),
+        ("node22-timeout-policy", &node_timeout_cache),
+    ];
+    for (index, (left_name, left_cache)) in cache_partitions.iter().enumerate() {
+        for (right_name, right_cache) in cache_partitions.iter().skip(index + 1) {
+            assert!(
+                !Arc::ptr_eq(left_cache, right_cache),
+                "module code cache partitions must not cross authority dimension {left_name} -> {right_name}"
+            );
+        }
+    }
+    assert_eq!(
+        bundle.module_code_cache_partition_count(),
+        cache_partitions.len()
+    );
 }
 
 #[test]

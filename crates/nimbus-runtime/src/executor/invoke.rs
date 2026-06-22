@@ -2,11 +2,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::Value;
+use std::pin::Pin;
 use tokio::runtime::RuntimeFlavor;
 use tokio::sync::oneshot;
 
 use crate::context::RuntimeInvocationContext;
 use crate::error::{NimbusRuntimeError, Result};
+use crate::execution_plan::RuntimeExecutionPlan;
 use crate::host::HostCallCancellation;
 use crate::limits::RuntimePolicy;
 use crate::runtime::{
@@ -19,6 +21,36 @@ use super::facade::{BLOCKING_RESULT_POLL_INTERVAL, RuntimeExecutor};
 use super::lifecycle::run_invocation_lifecycle;
 use super::queue::{RuntimeWorkerJob, RuntimeWorkerResultSender, RuntimeWorkerRouter};
 
+pub struct RuntimeInvocationResponse {
+    response: Value,
+    completion: RuntimeInvocationCompletion,
+}
+
+enum RuntimeInvocationCompletion {
+    Pending(Pin<Box<oneshot::Receiver<Result<Value>>>>),
+    Complete,
+}
+
+impl RuntimeInvocationResponse {
+    pub fn response(&self) -> &Value {
+        &self.response
+    }
+
+    pub async fn wait_until_complete(self) -> Result<Value> {
+        match self.completion {
+            RuntimeInvocationCompletion::Pending(result_rx) => result_rx
+                .await
+                .map_err(|_| {
+                    NimbusRuntimeError::Contract(
+                        "runtime executor dropped an invocation completion".to_string(),
+                    )
+                })?
+                .map(|_| self.response),
+            RuntimeInvocationCompletion::Complete => Ok(self.response),
+        }
+    }
+}
+
 struct DirectRuntimeInvocation {
     watchdog: WatchdogTimer,
     host: RuntimeHost,
@@ -28,6 +60,19 @@ struct DirectRuntimeInvocation {
     context: RuntimeInvocationContext,
     cancellation: Option<HostCallCancellation>,
     queue_started_at: Instant,
+}
+
+fn execution_plan_for_invocation(
+    policy: &RuntimePolicy,
+    request: &InvocationRequest,
+    context: &RuntimeInvocationContext,
+) -> RuntimeExecutionPlan {
+    let started_at = Instant::now();
+    let plan = RuntimeExecutionPlan::for_invocation(policy, request, context);
+    policy
+        .metrics()
+        .record_execution_plan_build(started_at.elapsed());
+    plan
 }
 
 fn bridge_blocking_invocation<T, F>(thread_panic_message: &'static str, task: F) -> Result<T>
@@ -81,6 +126,7 @@ impl RuntimeExecutor {
             cancellation.clone(),
         );
         let runtime = host.runtime_with_policy(policy.clone());
+        let execution_plan = execution_plan_for_invocation(&policy, &request, &context);
         let (result, _ready_jobs) = run_invocation_lifecycle(
             permit,
             policy,
@@ -97,7 +143,9 @@ impl RuntimeExecutor {
                             bundle: bundle.clone(),
                             request: request.clone(),
                             context: context.clone(),
+                            execution_plan,
                             external_cancellation: cancellation,
+                            response_ready_tx: None,
                             permit,
                         },
                     )
@@ -171,13 +219,17 @@ impl RuntimeExecutor {
         }
 
         let (result_tx, result_rx) = oneshot::channel();
+        let execution_plan =
+            execution_plan_for_invocation(self.inner.policy.as_ref(), &request, &context);
         let admission = self.inner.admission.admit_job(RuntimeWorkerJob {
             host: runtime.invocation_host(),
             bundle,
             request,
             context,
+            execution_plan,
             cancellation: cancellation.clone(),
             enqueued_at: Instant::now(),
+            response_ready_tx: None,
             result_tx: RuntimeWorkerResultSender::Async(result_tx),
             dispatch_handle: None,
         })?;
@@ -201,6 +253,113 @@ impl RuntimeExecutor {
                     "runtime executor dropped an invocation result".to_string(),
                 )
             })?,
+        }
+    }
+
+    pub async fn invoke_on_worker_response_ready(
+        &self,
+        runtime: NimbusRuntime,
+        bundle: RuntimeBundle,
+        request: InvocationRequest,
+        context: RuntimeInvocationContext,
+        cancellation: Option<HostCallCancellation>,
+    ) -> Result<RuntimeInvocationResponse> {
+        self.inner
+            .policy
+            .metrics()
+            .record_request_correlation(&context);
+        if cancellation
+            .as_ref()
+            .is_some_and(HostCallCancellation::is_cancelled)
+        {
+            self.inner
+                .policy
+                .metrics()
+                .record_queued_canceled_invocation_for_tenant(
+                    context.tenant_label.as_deref(),
+                    cancellation.as_ref().and_then(HostCallCancellation::cause),
+                );
+            return Err(NimbusRuntimeError::Cancelled);
+        }
+
+        let (result_tx, result_rx) = oneshot::channel();
+        let (response_ready_tx, response_ready_rx) = oneshot::channel();
+        let execution_plan =
+            execution_plan_for_invocation(self.inner.policy.as_ref(), &request, &context);
+        let admission = self.inner.admission.admit_job(RuntimeWorkerJob {
+            host: runtime.invocation_host(),
+            bundle,
+            request,
+            context,
+            execution_plan,
+            cancellation: cancellation.clone(),
+            enqueued_at: Instant::now(),
+            response_ready_tx: Some(response_ready_tx),
+            result_tx: RuntimeWorkerResultSender::Async(result_tx),
+            dispatch_handle: None,
+        })?;
+        if let RuntimeExecutorAdmissionDecision::Dispatch(job) = admission {
+            self.dispatch_admitted_job_async(*job).await?;
+        }
+
+        let mut result_rx = Box::pin(result_rx);
+        let mut response_ready_rx = Box::pin(response_ready_rx);
+        let dropped_completion = || {
+            NimbusRuntimeError::Contract(
+                "runtime executor dropped an invocation completion".to_string(),
+            )
+        };
+
+        match cancellation {
+            Some(cancellation) => {
+                tokio::select! {
+                    _ = cancellation.cancelled() => Err(NimbusRuntimeError::Cancelled),
+                    response = &mut response_ready_rx => match response {
+                        Ok(response) => Ok(RuntimeInvocationResponse {
+                            response,
+                            completion: RuntimeInvocationCompletion::Pending(result_rx),
+                        }),
+                        Err(_) => {
+                            let response = result_rx.await.map_err(|_| dropped_completion())??;
+                            Ok(RuntimeInvocationResponse {
+                                response,
+                                completion: RuntimeInvocationCompletion::Complete,
+                            })
+                        }
+                    },
+                    result = &mut result_rx => {
+                        let response = result.map_err(|_| dropped_completion())??;
+                        Ok(RuntimeInvocationResponse {
+                            response,
+                            completion: RuntimeInvocationCompletion::Complete,
+                        })
+                    }
+                }
+            }
+            None => {
+                tokio::select! {
+                    response = &mut response_ready_rx => match response {
+                        Ok(response) => Ok(RuntimeInvocationResponse {
+                            response,
+                            completion: RuntimeInvocationCompletion::Pending(result_rx),
+                        }),
+                        Err(_) => {
+                            let response = result_rx.await.map_err(|_| dropped_completion())??;
+                            Ok(RuntimeInvocationResponse {
+                                response,
+                                completion: RuntimeInvocationCompletion::Complete,
+                            })
+                        }
+                    },
+                    result = &mut result_rx => {
+                        let response = result.map_err(|_| dropped_completion())??;
+                        Ok(RuntimeInvocationResponse {
+                            response,
+                            completion: RuntimeInvocationCompletion::Complete,
+                        })
+                    }
+                }
+            }
         }
     }
 
@@ -257,13 +416,17 @@ impl RuntimeExecutor {
         }
 
         let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
+        let execution_plan =
+            execution_plan_for_invocation(self.inner.policy.as_ref(), &request, &context);
         let admission = self.inner.admission.admit_job(RuntimeWorkerJob {
             host: runtime.invocation_host(),
             bundle,
             request,
             context,
+            execution_plan,
             cancellation: cancellation.clone(),
             enqueued_at: Instant::now(),
+            response_ready_tx: None,
             result_tx: RuntimeWorkerResultSender::Blocking(result_tx),
             dispatch_handle: None,
         })?;

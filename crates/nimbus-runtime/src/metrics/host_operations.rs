@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use serde::Serialize;
+
+use super::duration_to_nanos;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 pub struct RuntimeHostOperationMetricsSnapshot {
@@ -10,6 +13,7 @@ pub struct RuntimeHostOperationMetricsSnapshot {
     pub failed: u64,
     pub canceled_before_start: u64,
     pub canceled_in_flight: u64,
+    pub nanos_total: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -19,6 +23,7 @@ struct RuntimeHostOperationMetrics {
     failed: u64,
     canceled_before_start: u64,
     canceled_in_flight: u64,
+    nanos_total: u64,
 }
 
 #[derive(Debug, Default)]
@@ -47,6 +52,14 @@ impl RuntimeHostOperationRegistry {
         self.update(operation, |metrics| metrics.canceled_in_flight += 1);
     }
 
+    pub(super) fn record_duration(&self, operation: &str, duration: Duration) {
+        self.update(operation, |metrics| {
+            metrics.nanos_total = metrics
+                .nanos_total
+                .saturating_add(duration_to_nanos(duration));
+        });
+    }
+
     pub(super) fn snapshot(&self) -> BTreeMap<String, RuntimeHostOperationMetricsSnapshot> {
         self.metrics
             .lock()
@@ -61,6 +74,7 @@ impl RuntimeHostOperationRegistry {
                         failed: metrics.failed,
                         canceled_before_start: metrics.canceled_before_start,
                         canceled_in_flight: metrics.canceled_in_flight,
+                        nanos_total: metrics.nanos_total,
                     },
                 )
             })

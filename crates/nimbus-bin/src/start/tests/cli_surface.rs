@@ -269,6 +269,82 @@ fn cli_parses_per_tenant_runtime_budget_flags() {
 }
 
 #[test]
+fn cli_parses_runtime_host_budget_policy_flags() {
+    let cli = parse_start([
+        "nimbus",
+        "start",
+        "--runtime-host-millicpus",
+        "8000",
+        "--runtime-system-reserve-millicpus",
+        "1000",
+        "--runtime-control-plane-reserve-millicpus",
+        "1500",
+        "--runtime-hard-ceiling-millicpus",
+        "2500",
+        "--runtime-seat-millicpus",
+        "500",
+    ]);
+
+    assert_eq!(cli.runtime_host_millicpus, 8000);
+    assert_eq!(cli.runtime_system_reserve_millicpus, 1000);
+    assert_eq!(cli.runtime_control_plane_reserve_millicpus, 1500);
+    assert_eq!(cli.runtime_hard_ceiling_millicpus, Some(2500));
+    assert_eq!(cli.runtime_seat_millicpus, 500);
+}
+
+#[test]
+fn cli_parses_runtime_adaptive_operator_controls() {
+    let cli = parse_start([
+        "nimbus",
+        "start",
+        "--runtime-adaptive-mode",
+        "canary",
+        "--runtime-adaptive-canary-percent",
+        "5",
+        "--runtime-adaptive-rollback",
+    ]);
+
+    assert_eq!(cli.runtime_adaptive_mode, CliRuntimeAdaptiveMode::Canary);
+    assert_eq!(cli.runtime_adaptive_canary_percent, 5);
+    assert!(cli.runtime_adaptive_rollback);
+}
+
+#[test]
+fn cli_rejects_runtime_adaptive_canary_percent_above_one_hundred() {
+    let error = Cli::try_parse_from([
+        "nimbus",
+        "start",
+        "--runtime-adaptive-canary-percent",
+        "101",
+    ])
+    .expect_err("adaptive canary percent must be bounded");
+    assert_eq!(error.kind(), ErrorKind::ValueValidation);
+}
+
+#[test]
+fn cli_rejects_zero_runtime_host_capacity_or_seat() {
+    for flag in ["--runtime-host-millicpus", "--runtime-seat-millicpus"] {
+        let error = Cli::try_parse_from(["nimbus", "start", flag, "0"])
+            .expect_err(&format!("{flag}=0 must be rejected at parse time"));
+        assert_eq!(error.kind(), ErrorKind::ValueValidation);
+    }
+}
+
+#[test]
+fn start_does_not_accept_runtime_efficiency_profile_knobs() {
+    for flag in [
+        "--runtime-profile",
+        "--runtime-pool-kind",
+        "--runtime-execution-model",
+        "--runtime-reset-strategy",
+    ] {
+        let error = Cli::try_parse_from(["nimbus", "start", flag, "node_full"])
+            .expect_err(&format!("{flag} must not parse as a start flag"));
+        assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+    }
+}
+
+#[test]
 fn runtime_limits_from_command_applies_per_tenant_runtime_budgets() {
     let command = StartCommand {
         runtime_max_instances: 8,
@@ -284,6 +360,75 @@ fn runtime_limits_from_command_applies_per_tenant_runtime_budgets() {
     assert_eq!(limits.max_active_top_level_invocations_per_tenant, 3);
     assert_eq!(limits.max_in_flight_top_level_invocations_per_tenant, 5);
     assert_eq!(limits.max_queued_top_level_invocations_per_tenant, 7);
+}
+
+#[test]
+fn runtime_host_resource_budget_from_command_applies_operator_policy() {
+    let command = StartCommand {
+        runtime_max_instances: 16,
+        runtime_host_millicpus: 8000,
+        runtime_system_reserve_millicpus: 1000,
+        runtime_control_plane_reserve_millicpus: 1500,
+        runtime_hard_ceiling_millicpus: Some(2500),
+        runtime_seat_millicpus: 500,
+        ..StartCommand::default()
+    };
+
+    let budget = super::super::runtime_limits::runtime_host_resource_budget_from_command(&command);
+
+    assert_eq!(budget.host_millicpus, 8000);
+    assert_eq!(budget.system_reserved_millicpus, 1000);
+    assert_eq!(budget.nimbus_control_plane_reserved_millicpus, 1500);
+    assert_eq!(budget.runtime_hard_ceiling_millicpus, Some(2500));
+    assert_eq!(budget.runtime_seat_millicpus.get(), 500);
+    assert_eq!(budget.runtime_allocatable_millicpus(), 2500);
+    assert_eq!(
+        budget.nominal_dispatch_seats(command.runtime_max_instances),
+        5
+    );
+}
+
+#[test]
+fn runtime_adaptive_controller_settings_from_command_applies_operator_policy() {
+    let command = StartCommand {
+        runtime_adaptive_mode: CliRuntimeAdaptiveMode::Canary,
+        runtime_adaptive_canary_percent: 5,
+        runtime_adaptive_rollback: true,
+        ..StartCommand::default()
+    };
+
+    let settings =
+        super::super::runtime_limits::runtime_adaptive_controller_settings_from_command(&command);
+
+    assert_eq!(
+        settings.mode(),
+        nimbus::RuntimeAdaptiveControllerMode::Canary
+    );
+    assert!(settings.live_adaptive_defaults_enabled());
+    assert_eq!(settings.canary_policy().admitted_remainders, 5);
+    assert!(settings.rollback_to_static_defaults());
+}
+
+#[test]
+fn start_command_default_has_conservative_runtime_host_budget() {
+    let command = StartCommand::default();
+    let budget = super::super::runtime_limits::runtime_host_resource_budget_from_command(&command);
+
+    assert_eq!(budget.host_millicpus, command.runtime_host_millicpus);
+    assert!(
+        budget.system_reserved_millicpus > 0,
+        "default host budget should leave CPU for the host OS"
+    );
+    assert!(
+        budget.nimbus_control_plane_reserved_millicpus > 0,
+        "default host budget should leave CPU for Nimbus control-plane work"
+    );
+    assert_eq!(budget.runtime_hard_ceiling_millicpus, None);
+    assert_eq!(budget.runtime_seat_millicpus.get(), 1000);
+    assert!(
+        budget.runtime_allocatable_millicpus() < budget.host_millicpus,
+        "default allocatable runtime CPU should reserve non-runtime host capacity"
+    );
 }
 
 /// Summary-shape tests pass an opted-out enablement; the resolution
@@ -342,6 +487,11 @@ fn start_startup_summary_mentions_url_app_codegen_and_deploy_api() {
     assert!(
         lines
             .iter()
+            .any(|line| line.starts_with("runtime host budget:\t"))
+    );
+    assert!(
+        lines
+            .iter()
             .any(|line| line == "compose file: ./compose.yaml")
     );
     assert!(lines.iter().any(|line| line == "deploy admin API: enabled"));
@@ -350,6 +500,64 @@ fn start_startup_summary_mentions_url_app_codegen_and_deploy_api() {
     assert!(lines.iter().any(|line| line == "firestore routes:\toff"));
     assert!(lines.iter().any(|line| line == "mongodb listener:\toff"));
     assert!(lines.iter().any(|line| line == "dynamodb listener:\toff"));
+}
+
+#[test]
+fn start_startup_summary_mentions_runtime_host_budget() {
+    let command = StartCommand {
+        runtime_host_millicpus: 8000,
+        runtime_system_reserve_millicpus: 1000,
+        runtime_control_plane_reserve_millicpus: 1000,
+        runtime_hard_ceiling_millicpus: Some(2500),
+        runtime_seat_millicpus: 500,
+        ..StartCommand::default()
+    };
+
+    let lines = super::boot::start_startup_summary_lines(
+        &command,
+        None,
+        None,
+        &adapterless_enablement(),
+        SocketAddr::from((Ipv4Addr::UNSPECIFIED, 3210)),
+        false,
+    );
+
+    assert!(lines.iter().any(|line| {
+        line == "runtime host budget:\t2500m allocatable CPU (8000m host - 1000m system reserve - 1000m Nimbus control-plane reserve; hard ceiling 2500m; seat 500m)"
+    }));
+}
+
+#[test]
+fn start_startup_summary_mentions_baked_function_scaling_defaults() {
+    let start_lines = super::boot::start_startup_summary_lines(
+        &StartCommand::default(),
+        None,
+        None,
+        &adapterless_enablement(),
+        SocketAddr::from((Ipv4Addr::UNSPECIFIED, 3210)),
+        false,
+    );
+    assert!(start_lines.iter().any(|line| {
+        line
+            == "Function scaling: start defaults, active_recent_min_warm=0, max_warm=auto. Run nimbus explain functions <name>."
+    }));
+
+    let dev_command = StartCommand {
+        tenant_isolation_mode: nimbus_server::TenantIsolationMode::LocalDevelopment,
+        ..StartCommand::default()
+    };
+    let dev_lines = super::boot::start_startup_summary_lines(
+        &dev_command,
+        None,
+        None,
+        &adapterless_enablement(),
+        SocketAddr::from((Ipv4Addr::UNSPECIFIED, 3210)),
+        false,
+    );
+    assert!(dev_lines.iter().any(|line| {
+        line
+            == "Function scaling: dev defaults, active_recent_min_warm=1, max_warm=auto. Run nimbus explain functions <name>."
+    }));
 }
 
 #[test]

@@ -52,6 +52,69 @@ fn dev_plan_uses_project_local_persistence_root() {
 }
 
 #[test]
+fn dev_start_command_inherits_conservative_runtime_host_budget() {
+    let temp = tempdir().expect("tempdir should build");
+    create_source_root(temp.path(), "convex");
+
+    let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+        .expect("dev plan should resolve");
+    let start_defaults = StartCommand::default();
+
+    assert_eq!(
+        plan.start_command.runtime_host_millicpus, start_defaults.runtime_host_millicpus,
+        "dev must inherit the same host capacity default as nimbus start"
+    );
+    assert_eq!(
+        plan.start_command.runtime_system_reserve_millicpus,
+        start_defaults.runtime_system_reserve_millicpus,
+        "dev must preserve the start-side host OS reserve"
+    );
+    assert_eq!(
+        plan.start_command.runtime_control_plane_reserve_millicpus,
+        start_defaults.runtime_control_plane_reserve_millicpus,
+        "dev must preserve the start-side Nimbus control-plane reserve"
+    );
+    assert_eq!(
+        plan.start_command.runtime_hard_ceiling_millicpus,
+        start_defaults.runtime_hard_ceiling_millicpus,
+        "dev must not invent a separate runtime hard-ceiling policy"
+    );
+    assert_eq!(
+        plan.start_command.runtime_seat_millicpus, start_defaults.runtime_seat_millicpus,
+        "dev must use the same runtime dispatch seat size as nimbus start"
+    );
+    assert!(
+        plan.start_command.runtime_system_reserve_millicpus > 0
+            && plan.start_command.runtime_control_plane_reserve_millicpus > 0,
+        "dev must carry a conservative non-runtime CPU reserve"
+    );
+}
+
+#[test]
+fn dev_start_command_inherits_disabled_runtime_adaptive_controller() {
+    let temp = tempdir().expect("tempdir should build");
+    create_source_root(temp.path(), "convex");
+
+    let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+        .expect("dev plan should resolve");
+    let start_defaults = StartCommand::default();
+
+    assert_eq!(
+        plan.start_command.runtime_adaptive_mode, start_defaults.runtime_adaptive_mode,
+        "dev must inherit start's adaptive-controller mode instead of inventing a dev speed knob"
+    );
+    assert_eq!(
+        plan.start_command.runtime_adaptive_canary_percent,
+        start_defaults.runtime_adaptive_canary_percent,
+        "dev must not canary live adaptive actuation by default"
+    );
+    assert_eq!(
+        plan.start_command.runtime_adaptive_rollback, start_defaults.runtime_adaptive_rollback,
+        "dev must use the same rollback default as nimbus start"
+    );
+}
+
+#[test]
 fn firestore_client_plan_maps_discovered_project_to_auto_tenant() {
     let temp = tempdir().expect("tempdir should build");
     // Real apps live in git repos; the boundary keeps the app-dir

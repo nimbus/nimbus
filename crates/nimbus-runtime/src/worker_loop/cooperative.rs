@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -63,6 +64,7 @@ struct CooperativeWorkerLoop {
     activity_signal: Arc<crate::executor::WorkerActivitySignal>,
     activity_generation: u64,
     scheduler: CooperativeScheduler<CooperativeInvocation>,
+    pending_admissions: VecDeque<RuntimeWorkerJob>,
     deferred_v8_runtime_drops: DeferredV8RuntimeDropQueue,
 }
 
@@ -102,6 +104,7 @@ impl CooperativeWorkerLoop {
             activity_signal,
             activity_generation,
             scheduler: CooperativeScheduler::new(),
+            pending_admissions: VecDeque::new(),
             deferred_v8_runtime_drops: DeferredV8RuntimeDropQueue::new(),
         }
     }

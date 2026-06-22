@@ -1,6 +1,7 @@
 mod correlations;
 mod global;
 mod host_operations;
+mod profiles;
 mod tenants;
 
 use std::sync::atomic::Ordering;
@@ -10,11 +11,18 @@ use serde::Serialize;
 
 use crate::context::RuntimeInvocationContext;
 use crate::host::HostCallCancellationCause;
+use crate::limits::{
+    RuntimeAdaptiveMetricsSink, RuntimeAdaptiveWarmPoolEvaluation, RuntimeHostPressureLevel,
+    RuntimeHostPressureSourceStatus, RuntimeHostResourceDecision, RuntimeMemoryPressureLevel,
+    RuntimeMemoryPressureSourceStatus, RuntimeProfile,
+};
 
 pub use self::correlations::RuntimeRequestCorrelationSnapshot;
 use self::global::RuntimeGlobalCounters;
 pub use self::host_operations::RuntimeHostOperationMetricsSnapshot;
 use self::host_operations::RuntimeHostOperationRegistry;
+use self::profiles::RuntimeProfileTelemetryRegistry;
+pub use self::profiles::{RuntimeProfileCountersSnapshot, RuntimeProfileTelemetrySnapshot};
 use self::tenants::RuntimeTenantRegistry;
 pub use self::tenants::{RuntimeDurationDistributionSnapshot, RuntimeTenantMetricsSnapshot};
 
@@ -27,6 +35,7 @@ const DIAGNOSTIC_COUNTER_ORDERING: Ordering = Ordering::Relaxed;
 pub struct RuntimeMetrics {
     global: RuntimeGlobalCounters,
     host_operations: RuntimeHostOperationRegistry,
+    profiles: RuntimeProfileTelemetryRegistry,
     tenants: RuntimeTenantRegistry,
     recent_request_correlations: correlations::RuntimeRequestCorrelationLog,
 }
@@ -38,6 +47,14 @@ pub struct RuntimeMetricsSnapshot {
     pub worker_dispatched_invocations: u64,
     pub worker_affinity_routed_invocations: u64,
     pub worker_least_loaded_routed_invocations: u64,
+    pub request_correlation_records: u64,
+    pub request_correlation_nanos_total: u64,
+    pub execution_plan_builds: u64,
+    pub execution_plan_build_nanos_total: u64,
+    pub admission_decisions: u64,
+    pub admission_decision_nanos_total: u64,
+    pub worker_router_dispatches: u64,
+    pub worker_router_dispatch_nanos_total: u64,
     pub worker_affinity_cache_entries: usize,
     pub worker_affinity_cache_evictions: u64,
     pub retained_runtime_pool_entries: usize,
@@ -45,10 +62,28 @@ pub struct RuntimeMetricsSnapshot {
     pub retained_runtime_pool_retirements: u64,
     pub bundle_loads: u64,
     pub bundle_load_nanos_total: u64,
+    pub bundle_integrity_verifications: u64,
+    pub bundle_integrity_verify_nanos_total: u64,
     pub bundle_module_loads: u64,
     pub bundle_module_load_nanos_total: u64,
     pub bundle_evaluations: u64,
     pub bundle_evaluation_nanos_total: u64,
+    pub fresh_realm_creates: u64,
+    pub fresh_realm_create_nanos_total: u64,
+    pub fresh_realm_bootstrap_installs: u64,
+    pub fresh_realm_bootstrap_install_nanos_total: u64,
+    pub fresh_realm_bootstrap_finalizes: u64,
+    pub fresh_realm_bootstrap_finalize_nanos_total: u64,
+    pub fresh_realm_bootstrap_resets: u64,
+    pub fresh_realm_bootstrap_reset_nanos_total: u64,
+    pub fresh_realm_invocation_scripts: u64,
+    pub fresh_realm_invocation_script_nanos_total: u64,
+    pub fresh_realm_promise_resolves: u64,
+    pub fresh_realm_promise_resolve_nanos_total: u64,
+    pub fresh_realm_deserializations: u64,
+    pub fresh_realm_deserialization_nanos_total: u64,
+    pub fresh_realm_destroys: u64,
+    pub fresh_realm_destroy_nanos_total: u64,
     pub runtime_pool_hits: u64,
     pub runtime_pool_misses: u64,
     pub runtime_pool_replacements: u64,
@@ -66,15 +101,74 @@ pub struct RuntimeMetricsSnapshot {
     pub canceled_host_ops: u64,
     pub precanceled_host_ops: u64,
     pub in_flight_canceled_host_ops: u64,
+    pub host_bridge_calls: u64,
+    pub host_bridge_call_nanos_total: u64,
     pub nested_local_dispatches: u64,
     pub fallback_cross_runtime_dispatches: u64,
     pub warm_pool_hits: u64,
     pub warm_pool_misses: u64,
     pub warm_pool_retirements: u64,
     pub warm_pool_discard_unquiesced: u64,
+    pub host_pressure: RuntimeHostPressureMetricsSnapshot,
+    pub adaptive_controller: RuntimeAdaptiveControllerMetricsSnapshot,
+    pub profiles: RuntimeProfileTelemetrySnapshot,
     pub host_operations: std::collections::BTreeMap<String, RuntimeHostOperationMetricsSnapshot>,
     pub tenants: std::collections::BTreeMap<String, RuntimeTenantMetricsSnapshot>,
     pub recent_request_correlations: Vec<RuntimeRequestCorrelationSnapshot>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RuntimeHostPressureMetricsSnapshot {
+    pub decisions: u64,
+    pub nominal_decisions: u64,
+    pub high_decisions: u64,
+    pub critical_decisions: u64,
+    pub cpu_source_unavailable_decisions: u64,
+    pub memory_source_unavailable_decisions: u64,
+    pub latest_host_pressure_level: RuntimeHostPressureLevel,
+    pub latest_cpu_pressure_level: RuntimeHostPressureLevel,
+    pub latest_cpu_source_status: RuntimeHostPressureSourceStatus,
+    pub latest_memory_pressure_level: RuntimeMemoryPressureLevel,
+    pub latest_memory_source_status: RuntimeMemoryPressureSourceStatus,
+    pub latest_nominal_dispatch_seats: usize,
+    pub latest_effective_dispatch_seats: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+pub struct RuntimeAdaptiveControllerMetricsSnapshot {
+    pub evaluations: u64,
+    pub disabled_evaluations: u64,
+    pub shadow_evaluations: u64,
+    pub canary_evaluations: u64,
+    pub live_evaluations: u64,
+    pub rollback_evaluations: u64,
+    pub decisions: u64,
+    pub apply_target_decisions: u64,
+    pub shadow_only_decisions: u64,
+    pub canary_skipped_decisions: u64,
+    pub rollback_to_static_decisions: u64,
+    pub latest_recommended_warm_target_total: usize,
+    pub latest_effective_warm_target_total: usize,
+}
+
+impl Default for RuntimeHostPressureMetricsSnapshot {
+    fn default() -> Self {
+        Self {
+            decisions: 0,
+            nominal_decisions: 0,
+            high_decisions: 0,
+            critical_decisions: 0,
+            cpu_source_unavailable_decisions: 0,
+            memory_source_unavailable_decisions: 0,
+            latest_host_pressure_level: RuntimeHostPressureLevel::Nominal,
+            latest_cpu_pressure_level: RuntimeHostPressureLevel::Nominal,
+            latest_cpu_source_status: RuntimeHostPressureSourceStatus::Observed,
+            latest_memory_pressure_level: RuntimeMemoryPressureLevel::Nominal,
+            latest_memory_source_status: RuntimeMemoryPressureSourceStatus::Observed,
+            latest_nominal_dispatch_seats: 0,
+            latest_effective_dispatch_seats: 0,
+        }
+    }
 }
 
 impl RuntimeMetrics {
@@ -105,6 +199,10 @@ impl RuntimeMetrics {
         self.tenants.record_invocation_started(tenant_label);
     }
 
+    pub fn record_profile_invocation_started(&self, profile: Option<RuntimeProfile>) {
+        self.profiles.record_invocation_started(profile);
+    }
+
     pub fn record_worker_dispatch(&self) {
         self.global.record_worker_dispatch();
     }
@@ -115,6 +213,22 @@ impl RuntimeMetrics {
 
     pub fn record_worker_least_loaded_route(&self) {
         self.global.record_worker_least_loaded_route();
+    }
+
+    pub fn record_request_correlation_duration(&self, duration: Duration) {
+        self.global.record_request_correlation(duration);
+    }
+
+    pub fn record_execution_plan_build(&self, duration: Duration) {
+        self.global.record_execution_plan_build(duration);
+    }
+
+    pub fn record_admission_decision(&self, duration: Duration) {
+        self.global.record_admission_decision(duration);
+    }
+
+    pub fn record_worker_router_dispatch(&self, duration: Duration) {
+        self.global.record_worker_router_dispatch(duration);
     }
 
     pub fn update_worker_affinity_cache_entries(&self, entries: usize) {
@@ -161,6 +275,10 @@ impl RuntimeMetrics {
         self.global.record_bundle_load(duration);
     }
 
+    pub fn record_bundle_integrity_verify(&self, duration: Duration) {
+        self.global.record_bundle_integrity_verify(duration);
+    }
+
     pub fn record_bundle_module_load(&self, duration: Duration) {
         self.global.record_bundle_module_load(duration);
     }
@@ -169,16 +287,60 @@ impl RuntimeMetrics {
         self.global.record_bundle_evaluation(duration);
     }
 
+    pub fn record_fresh_realm_create(&self, duration: Duration) {
+        self.global.record_fresh_realm_create(duration);
+    }
+
+    pub fn record_fresh_realm_bootstrap_install(&self, duration: Duration) {
+        self.global.record_fresh_realm_bootstrap_install(duration);
+    }
+
+    pub fn record_fresh_realm_bootstrap_finalize(&self, duration: Duration) {
+        self.global.record_fresh_realm_bootstrap_finalize(duration);
+    }
+
+    pub fn record_fresh_realm_bootstrap_reset(&self, duration: Duration) {
+        self.global.record_fresh_realm_bootstrap_reset(duration);
+    }
+
+    pub fn record_fresh_realm_invocation_script(&self, duration: Duration) {
+        self.global.record_fresh_realm_invocation_script(duration);
+    }
+
+    pub fn record_fresh_realm_promise_resolve(&self, duration: Duration) {
+        self.global.record_fresh_realm_promise_resolve(duration);
+    }
+
+    pub fn record_fresh_realm_deserialization(&self, duration: Duration) {
+        self.global.record_fresh_realm_deserialization(duration);
+    }
+
+    pub fn record_fresh_realm_destroy(&self, duration: Duration) {
+        self.global.record_fresh_realm_destroy(duration);
+    }
+
     pub fn record_runtime_pool_hit(&self) {
         self.global.record_runtime_pool_hit();
+    }
+
+    pub fn record_profile_runtime_pool_hit(&self, profile: Option<RuntimeProfile>) {
+        self.profiles.record_runtime_pool_hit(profile);
     }
 
     pub fn record_runtime_pool_miss(&self) {
         self.global.record_runtime_pool_miss();
     }
 
+    pub fn record_profile_runtime_pool_miss(&self, profile: Option<RuntimeProfile>) {
+        self.profiles.record_runtime_pool_miss(profile);
+    }
+
     pub fn record_runtime_pool_replacement(&self) {
         self.global.record_runtime_pool_replacement();
+    }
+
+    pub fn record_profile_runtime_pool_replacement(&self, profile: Option<RuntimeProfile>) {
+        self.profiles.record_runtime_pool_replacement(profile);
     }
 
     pub fn decrement_active_runtime_instances(&self) {
@@ -200,6 +362,10 @@ impl RuntimeMetrics {
         self.tenants.record_invocation_completed(tenant_label);
     }
 
+    pub fn record_profile_invocation_completed(&self, profile: Option<RuntimeProfile>) {
+        self.profiles.record_invocation_completed(profile);
+    }
+
     pub fn record_queue_wait(&self, duration: Duration) {
         self.record_queue_wait_for_tenant(None, duration);
     }
@@ -209,6 +375,10 @@ impl RuntimeMetrics {
         self.tenants.record_queue_wait(tenant_label, duration);
     }
 
+    pub fn record_profile_queue_wait(&self, profile: Option<RuntimeProfile>, duration: Duration) {
+        self.profiles.record_queue_wait(profile, duration);
+    }
+
     pub fn record_execution(&self, duration: Duration) {
         self.record_execution_for_tenant(None, duration);
     }
@@ -216,6 +386,10 @@ impl RuntimeMetrics {
     pub fn record_execution_for_tenant(&self, tenant_label: Option<&str>, duration: Duration) {
         self.global.record_execution(duration);
         self.tenants.record_execution(tenant_label, duration);
+    }
+
+    pub fn record_profile_execution(&self, profile: Option<RuntimeProfile>, duration: Duration) {
+        self.profiles.record_execution(profile, duration);
     }
 
     pub fn record_timeout(&self) {
@@ -272,6 +446,10 @@ impl RuntimeMetrics {
         self.global.record_in_flight_canceled_host_op();
     }
 
+    pub fn record_host_bridge_call(&self, duration: Duration) {
+        self.global.record_host_bridge_call(duration);
+    }
+
     pub fn record_host_operation_started(&self, operation: &str) {
         self.host_operations.record_started(operation);
     }
@@ -294,6 +472,10 @@ impl RuntimeMetrics {
         self.host_operations.record_canceled_in_flight(operation);
     }
 
+    pub fn record_host_operation_duration(&self, operation: &str, duration: Duration) {
+        self.host_operations.record_duration(operation, duration);
+    }
+
     pub fn record_nested_local_dispatch(&self) {
         self.global.record_nested_local_dispatch();
     }
@@ -302,8 +484,22 @@ impl RuntimeMetrics {
         self.global.record_fallback_cross_runtime_dispatch();
     }
 
+    pub fn record_host_resource_decision(&self, decision: RuntimeHostResourceDecision) {
+        self.global.record_host_resource_decision(decision);
+    }
+
+    pub fn record_adaptive_controller_evaluation(
+        &self,
+        evaluation: &RuntimeAdaptiveWarmPoolEvaluation,
+    ) {
+        self.global
+            .record_adaptive_controller_evaluation(evaluation);
+    }
+
     pub fn record_request_correlation(&self, context: &RuntimeInvocationContext) {
+        let started_at = std::time::Instant::now();
         self.recent_request_correlations.record(context);
+        self.record_request_correlation_duration(started_at.elapsed());
     }
 
     pub fn snapshot(&self) -> RuntimeMetricsSnapshot {
@@ -314,6 +510,14 @@ impl RuntimeMetrics {
             worker_dispatched_invocations: global.worker_dispatched_invocations,
             worker_affinity_routed_invocations: global.worker_affinity_routed_invocations,
             worker_least_loaded_routed_invocations: global.worker_least_loaded_routed_invocations,
+            request_correlation_records: global.request_correlation_records,
+            request_correlation_nanos_total: global.request_correlation_nanos_total,
+            execution_plan_builds: global.execution_plan_builds,
+            execution_plan_build_nanos_total: global.execution_plan_build_nanos_total,
+            admission_decisions: global.admission_decisions,
+            admission_decision_nanos_total: global.admission_decision_nanos_total,
+            worker_router_dispatches: global.worker_router_dispatches,
+            worker_router_dispatch_nanos_total: global.worker_router_dispatch_nanos_total,
             worker_affinity_cache_entries: global.worker_affinity_cache_entries,
             worker_affinity_cache_evictions: global.worker_affinity_cache_evictions,
             retained_runtime_pool_entries: global.retained_runtime_pool_entries,
@@ -321,10 +525,31 @@ impl RuntimeMetrics {
             retained_runtime_pool_retirements: global.retained_runtime_pool_retirements,
             bundle_loads: global.bundle_loads,
             bundle_load_nanos_total: global.bundle_load_nanos_total,
+            bundle_integrity_verifications: global.bundle_integrity_verifications,
+            bundle_integrity_verify_nanos_total: global.bundle_integrity_verify_nanos_total,
             bundle_module_loads: global.bundle_module_loads,
             bundle_module_load_nanos_total: global.bundle_module_load_nanos_total,
             bundle_evaluations: global.bundle_evaluations,
             bundle_evaluation_nanos_total: global.bundle_evaluation_nanos_total,
+            fresh_realm_creates: global.fresh_realm_creates,
+            fresh_realm_create_nanos_total: global.fresh_realm_create_nanos_total,
+            fresh_realm_bootstrap_installs: global.fresh_realm_bootstrap_installs,
+            fresh_realm_bootstrap_install_nanos_total: global
+                .fresh_realm_bootstrap_install_nanos_total,
+            fresh_realm_bootstrap_finalizes: global.fresh_realm_bootstrap_finalizes,
+            fresh_realm_bootstrap_finalize_nanos_total: global
+                .fresh_realm_bootstrap_finalize_nanos_total,
+            fresh_realm_bootstrap_resets: global.fresh_realm_bootstrap_resets,
+            fresh_realm_bootstrap_reset_nanos_total: global.fresh_realm_bootstrap_reset_nanos_total,
+            fresh_realm_invocation_scripts: global.fresh_realm_invocation_scripts,
+            fresh_realm_invocation_script_nanos_total: global
+                .fresh_realm_invocation_script_nanos_total,
+            fresh_realm_promise_resolves: global.fresh_realm_promise_resolves,
+            fresh_realm_promise_resolve_nanos_total: global.fresh_realm_promise_resolve_nanos_total,
+            fresh_realm_deserializations: global.fresh_realm_deserializations,
+            fresh_realm_deserialization_nanos_total: global.fresh_realm_deserialization_nanos_total,
+            fresh_realm_destroys: global.fresh_realm_destroys,
+            fresh_realm_destroy_nanos_total: global.fresh_realm_destroy_nanos_total,
             runtime_pool_hits: global.runtime_pool_hits,
             runtime_pool_misses: global.runtime_pool_misses,
             runtime_pool_replacements: global.runtime_pool_replacements,
@@ -342,12 +567,17 @@ impl RuntimeMetrics {
             canceled_host_ops: global.canceled_host_ops,
             precanceled_host_ops: global.precanceled_host_ops,
             in_flight_canceled_host_ops: global.in_flight_canceled_host_ops,
+            host_bridge_calls: global.host_bridge_calls,
+            host_bridge_call_nanos_total: global.host_bridge_call_nanos_total,
             nested_local_dispatches: global.nested_local_dispatches,
             fallback_cross_runtime_dispatches: global.fallback_cross_runtime_dispatches,
             warm_pool_hits: global.warm_pool_hits,
             warm_pool_misses: global.warm_pool_misses,
             warm_pool_retirements: global.warm_pool_retirements,
             warm_pool_discard_unquiesced: global.warm_pool_discard_unquiesced,
+            host_pressure: global.host_pressure,
+            adaptive_controller: global.adaptive_controller,
+            profiles: self.profiles.snapshot(),
             host_operations: self.host_operations.snapshot(),
             tenants: self.tenants.snapshot(),
             recent_request_correlations: self.recent_request_correlations.snapshot(),
@@ -375,6 +605,12 @@ impl RuntimeMetrics {
     }
 }
 
+impl RuntimeAdaptiveMetricsSink for RuntimeMetrics {
+    fn record_controller_evaluation(&self, evaluation: &RuntimeAdaptiveWarmPoolEvaluation) {
+        self.record_adaptive_controller_evaluation(evaluation);
+    }
+}
+
 pub(super) fn duration_to_nanos(duration: Duration) -> u64 {
     duration.as_nanos().min(u128::from(u64::MAX)) as u64
 }
@@ -382,8 +618,198 @@ pub(super) fn duration_to_nanos(duration: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::num::NonZeroUsize;
 
     use super::*;
+    use crate::limits::{
+        RuntimeAdaptiveControllerMode, RuntimeAdaptiveControllerSettings,
+        RuntimeAdaptiveWarmPoolAuthorityInput, RuntimeAdaptiveWarmPoolController,
+        RuntimeAdaptiveWarmPoolSnapshot, RuntimeControllerReplayAuthorityInput,
+        RuntimeControllerReplayAuthorityKey, RuntimeControllerReplayConfig,
+        RuntimeControllerReplayObservation, RuntimeControllerReplayState,
+    };
+
+    #[test]
+    fn host_pressure_metrics_snapshot_is_low_cardinality_global_state() {
+        let metrics = RuntimeMetrics::default();
+
+        metrics.record_host_resource_decision(host_resource_decision(
+            RuntimeHostPressureLevel::High,
+            RuntimeHostPressureLevel::High,
+            RuntimeHostPressureSourceStatus::Unavailable,
+            RuntimeMemoryPressureLevel::Nominal,
+            RuntimeMemoryPressureSourceStatus::Observed,
+            4,
+            2,
+        ));
+        metrics.record_host_resource_decision(host_resource_decision(
+            RuntimeHostPressureLevel::Critical,
+            RuntimeHostPressureLevel::High,
+            RuntimeHostPressureSourceStatus::Observed,
+            RuntimeMemoryPressureLevel::Critical,
+            RuntimeMemoryPressureSourceStatus::Unavailable,
+            4,
+            0,
+        ));
+
+        let snapshot = metrics.snapshot();
+
+        assert_eq!(snapshot.host_pressure.decisions, 2);
+        assert_eq!(snapshot.host_pressure.nominal_decisions, 0);
+        assert_eq!(snapshot.host_pressure.high_decisions, 1);
+        assert_eq!(snapshot.host_pressure.critical_decisions, 1);
+        assert_eq!(snapshot.host_pressure.cpu_source_unavailable_decisions, 1);
+        assert_eq!(
+            snapshot.host_pressure.memory_source_unavailable_decisions,
+            1
+        );
+        assert_eq!(
+            snapshot.host_pressure.latest_host_pressure_level,
+            RuntimeHostPressureLevel::Critical
+        );
+        assert_eq!(
+            snapshot.host_pressure.latest_memory_pressure_level,
+            RuntimeMemoryPressureLevel::Critical
+        );
+        assert_eq!(snapshot.host_pressure.latest_nominal_dispatch_seats, 4);
+        assert_eq!(snapshot.host_pressure.latest_effective_dispatch_seats, 0);
+        assert!(
+            snapshot.tenants.is_empty(),
+            "host pressure metrics must not add tenant-cardinality labels"
+        );
+    }
+
+    #[test]
+    fn adaptive_controller_metrics_snapshot_is_low_cardinality_global_state() {
+        let metrics = RuntimeMetrics::default();
+        let controller = RuntimeAdaptiveWarmPoolController::new(
+            RuntimeAdaptiveControllerSettings::shadow(RuntimeControllerReplayConfig {
+                stable_window_observations: nonzero_usize(2),
+                panic_window_observations: nonzero_usize(1),
+                max_scale_up_step: nonzero_usize(16),
+                max_scale_down_step: nonzero_usize(16),
+                scale_down_hysteresis_observations: 0,
+                max_warm_runtimes_per_authority: 16,
+                max_warm_runtimes_per_tenant: 16,
+                ..RuntimeControllerReplayConfig::default()
+            }),
+        );
+        let evaluation = controller.evaluate_snapshot(RuntimeAdaptiveWarmPoolSnapshot {
+            observed_at_millis: 7,
+            host_resource_decision: host_resource_decision(
+                RuntimeHostPressureLevel::Nominal,
+                RuntimeHostPressureLevel::Nominal,
+                RuntimeHostPressureSourceStatus::Observed,
+                RuntimeMemoryPressureLevel::Nominal,
+                RuntimeMemoryPressureSourceStatus::Observed,
+                4,
+                4,
+            ),
+            authorities: vec![RuntimeAdaptiveWarmPoolAuthorityInput {
+                replay_input: RuntimeControllerReplayAuthorityInput {
+                    key: RuntimeControllerReplayAuthorityKey {
+                        tenant_hash: 11,
+                        authority_hash: 22,
+                        profile: RuntimeProfile::WebLean,
+                    },
+                    previous_state: RuntimeControllerReplayState {
+                        current_warm_target: 1,
+                        scale_down_observations_remaining: 0,
+                    },
+                    observations: vec![RuntimeControllerReplayObservation::nominal(
+                        4, 2_000_000, 200_000,
+                    )],
+                },
+                static_warm_target: 1,
+                current_retained_runtimes: 1,
+                projected_bytes_per_runtime: 128 * 1024 * 1024,
+            }],
+        });
+
+        metrics.record_adaptive_controller_evaluation(&evaluation);
+        let snapshot = metrics.snapshot();
+
+        assert_eq!(evaluation.mode, RuntimeAdaptiveControllerMode::Shadow);
+        assert_eq!(snapshot.adaptive_controller.evaluations, 1);
+        assert_eq!(snapshot.adaptive_controller.shadow_evaluations, 1);
+        assert_eq!(snapshot.adaptive_controller.decisions, 1);
+        assert_eq!(snapshot.adaptive_controller.shadow_only_decisions, 1);
+        assert_eq!(
+            snapshot
+                .adaptive_controller
+                .latest_recommended_warm_target_total,
+            3
+        );
+        assert_eq!(
+            snapshot
+                .adaptive_controller
+                .latest_effective_warm_target_total,
+            1
+        );
+        assert!(
+            snapshot.tenants.is_empty(),
+            "adaptive controller metrics must not add tenant-cardinality labels"
+        );
+    }
+
+    #[test]
+    fn profile_metrics_snapshot_is_fixed_bucket_runtime_state() {
+        let metrics = RuntimeMetrics::default();
+
+        metrics.record_profile_invocation_started(Some(RuntimeProfile::WebLean));
+        metrics.record_profile_queue_wait(Some(RuntimeProfile::WebLean), Duration::from_micros(9));
+        metrics.record_profile_execution(Some(RuntimeProfile::WebLean), Duration::from_millis(3));
+        metrics.record_profile_runtime_pool_miss(Some(RuntimeProfile::WebLean));
+        metrics.record_profile_invocation_completed(Some(RuntimeProfile::WebLean));
+
+        metrics.record_profile_invocation_started(Some(RuntimeProfile::NodeFull));
+        metrics.record_profile_runtime_pool_hit(Some(RuntimeProfile::NodeFull));
+        metrics.record_profile_runtime_pool_replacement(Some(RuntimeProfile::NodeFull));
+
+        metrics.record_profile_invocation_started(None);
+        metrics.record_profile_queue_wait(None, Duration::from_millis(1));
+        metrics.record_profile_execution(None, Duration::from_millis(2));
+        metrics.record_profile_runtime_pool_miss(None);
+        metrics.record_profile_invocation_completed(None);
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(
+            snapshot.profiles,
+            RuntimeProfileTelemetrySnapshot {
+                web_lean: RuntimeProfileCountersSnapshot {
+                    started_invocations: 1,
+                    completed_invocations: 1,
+                    queue_wait_nanos_total: 9_000,
+                    execution_nanos_total: 3_000_000,
+                    runtime_pool_hits: 0,
+                    runtime_pool_misses: 1,
+                    runtime_pool_replacements: 0,
+                },
+                node_full: RuntimeProfileCountersSnapshot {
+                    started_invocations: 1,
+                    completed_invocations: 0,
+                    queue_wait_nanos_total: 0,
+                    execution_nanos_total: 0,
+                    runtime_pool_hits: 1,
+                    runtime_pool_misses: 0,
+                    runtime_pool_replacements: 1,
+                },
+                unprofiled: RuntimeProfileCountersSnapshot {
+                    started_invocations: 1,
+                    completed_invocations: 1,
+                    queue_wait_nanos_total: 1_000_000,
+                    execution_nanos_total: 2_000_000,
+                    runtime_pool_hits: 0,
+                    runtime_pool_misses: 1,
+                    runtime_pool_replacements: 0,
+                },
+            }
+        );
+        assert!(
+            snapshot.tenants.is_empty(),
+            "profile metrics must not add tenant-cardinality labels"
+        );
+    }
 
     #[test]
     fn tenant_metrics_snapshot_tracks_distributions_and_cancellations() {
@@ -457,6 +883,53 @@ mod tests {
     }
 
     #[test]
+    fn host_operation_metrics_track_duration_without_tenant_entries() {
+        let metrics = RuntimeMetrics::default();
+
+        metrics.record_host_operation_started("document_get");
+        metrics.record_host_operation_duration("document_get", Duration::from_millis(3));
+        metrics.record_host_operation_succeeded("document_get");
+
+        metrics.record_host_operation_started("ctx_service_lookup");
+        metrics.record_host_operation_duration("ctx_service_lookup", Duration::from_millis(5));
+        metrics.record_host_operation_failed("ctx_service_lookup");
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(
+            snapshot
+                .host_operations
+                .get("document_get")
+                .expect("document_get host operation should be recorded"),
+            &RuntimeHostOperationMetricsSnapshot {
+                started: 1,
+                succeeded: 1,
+                failed: 0,
+                canceled_before_start: 0,
+                canceled_in_flight: 0,
+                nanos_total: 3_000_000,
+            }
+        );
+        assert_eq!(
+            snapshot
+                .host_operations
+                .get("ctx_service_lookup")
+                .expect("ctx_service_lookup host operation should be recorded"),
+            &RuntimeHostOperationMetricsSnapshot {
+                started: 1,
+                succeeded: 0,
+                failed: 1,
+                canceled_before_start: 0,
+                canceled_in_flight: 0,
+                nanos_total: 5_000_000,
+            }
+        );
+        assert!(
+            snapshot.tenants.is_empty(),
+            "host operation metrics must not create tenant-cardinality labels"
+        );
+    }
+
+    #[test]
     fn unattributed_metrics_do_not_create_tenant_entries() {
         let metrics = RuntimeMetrics::default();
 
@@ -468,14 +941,27 @@ mod tests {
         metrics.record_worker_dispatch();
         metrics.record_worker_affinity_route();
         metrics.record_worker_least_loaded_route();
+        metrics.record_request_correlation_duration(Duration::from_millis(16));
+        metrics.record_execution_plan_build(Duration::from_millis(17));
+        metrics.record_admission_decision(Duration::from_millis(18));
+        metrics.record_worker_router_dispatch(Duration::from_millis(19));
         metrics.update_worker_affinity_cache_entries(1);
         metrics.record_worker_affinity_cache_eviction();
         metrics.increment_retained_runtime_pool_entries();
         metrics.record_retained_runtime_pool_eviction();
         metrics.record_retained_runtime_pool_retirement();
         metrics.record_bundle_load(Duration::from_millis(5));
+        metrics.record_bundle_integrity_verify(Duration::from_millis(20));
         metrics.record_bundle_module_load(Duration::from_millis(6));
         metrics.record_bundle_evaluation(Duration::from_millis(7));
+        metrics.record_fresh_realm_create(Duration::from_millis(8));
+        metrics.record_fresh_realm_bootstrap_install(Duration::from_millis(9));
+        metrics.record_fresh_realm_bootstrap_finalize(Duration::from_millis(10));
+        metrics.record_fresh_realm_bootstrap_reset(Duration::from_millis(11));
+        metrics.record_fresh_realm_invocation_script(Duration::from_millis(12));
+        metrics.record_fresh_realm_promise_resolve(Duration::from_millis(13));
+        metrics.record_fresh_realm_deserialization(Duration::from_millis(14));
+        metrics.record_fresh_realm_destroy(Duration::from_millis(15));
         metrics.decrement_retained_runtime_pool_entries();
         metrics.record_runtime_pool_miss();
         metrics.record_runtime_pool_hit();
@@ -485,6 +971,7 @@ mod tests {
         metrics.record_queued_canceled_invocation();
         metrics.record_precanceled_host_op();
         metrics.record_in_flight_canceled_host_op();
+        metrics.record_host_bridge_call(Duration::from_millis(21));
         metrics.record_nested_local_dispatch();
         metrics.record_fallback_cross_runtime_dispatch();
         metrics.decrement_queued_invocations();
@@ -500,6 +987,14 @@ mod tests {
                 worker_dispatched_invocations: 1,
                 worker_affinity_routed_invocations: 1,
                 worker_least_loaded_routed_invocations: 1,
+                request_correlation_records: 1,
+                request_correlation_nanos_total: 16_000_000,
+                execution_plan_builds: 1,
+                execution_plan_build_nanos_total: 17_000_000,
+                admission_decisions: 1,
+                admission_decision_nanos_total: 18_000_000,
+                worker_router_dispatches: 1,
+                worker_router_dispatch_nanos_total: 19_000_000,
                 worker_affinity_cache_entries: 1,
                 worker_affinity_cache_evictions: 1,
                 retained_runtime_pool_entries: 0,
@@ -507,10 +1002,28 @@ mod tests {
                 retained_runtime_pool_retirements: 1,
                 bundle_loads: 1,
                 bundle_load_nanos_total: 5_000_000,
+                bundle_integrity_verifications: 1,
+                bundle_integrity_verify_nanos_total: 20_000_000,
                 bundle_module_loads: 1,
                 bundle_module_load_nanos_total: 6_000_000,
                 bundle_evaluations: 1,
                 bundle_evaluation_nanos_total: 7_000_000,
+                fresh_realm_creates: 1,
+                fresh_realm_create_nanos_total: 8_000_000,
+                fresh_realm_bootstrap_installs: 1,
+                fresh_realm_bootstrap_install_nanos_total: 9_000_000,
+                fresh_realm_bootstrap_finalizes: 1,
+                fresh_realm_bootstrap_finalize_nanos_total: 10_000_000,
+                fresh_realm_bootstrap_resets: 1,
+                fresh_realm_bootstrap_reset_nanos_total: 11_000_000,
+                fresh_realm_invocation_scripts: 1,
+                fresh_realm_invocation_script_nanos_total: 12_000_000,
+                fresh_realm_promise_resolves: 1,
+                fresh_realm_promise_resolve_nanos_total: 13_000_000,
+                fresh_realm_deserializations: 1,
+                fresh_realm_deserialization_nanos_total: 14_000_000,
+                fresh_realm_destroys: 1,
+                fresh_realm_destroy_nanos_total: 15_000_000,
                 runtime_pool_hits: 1,
                 runtime_pool_misses: 1,
                 runtime_pool_replacements: 1,
@@ -528,16 +1041,56 @@ mod tests {
                 canceled_host_ops: 2,
                 precanceled_host_ops: 1,
                 in_flight_canceled_host_ops: 1,
+                host_bridge_calls: 1,
+                host_bridge_call_nanos_total: 21_000_000,
                 nested_local_dispatches: 1,
                 fallback_cross_runtime_dispatches: 1,
                 warm_pool_hits: 0,
                 warm_pool_misses: 0,
                 warm_pool_retirements: 0,
                 warm_pool_discard_unquiesced: 0,
+                host_pressure: RuntimeHostPressureMetricsSnapshot::default(),
+                adaptive_controller: RuntimeAdaptiveControllerMetricsSnapshot::default(),
+                profiles: RuntimeProfileTelemetrySnapshot::default(),
                 host_operations: BTreeMap::new(),
                 tenants: BTreeMap::new(),
                 recent_request_correlations: Vec::new(),
             }
         );
+    }
+
+    fn host_resource_decision(
+        host_pressure_level: RuntimeHostPressureLevel,
+        cpu_pressure_level: RuntimeHostPressureLevel,
+        cpu_source_status: RuntimeHostPressureSourceStatus,
+        memory_pressure_level: RuntimeMemoryPressureLevel,
+        memory_source_status: RuntimeMemoryPressureSourceStatus,
+        nominal_dispatch_seats: usize,
+        effective_dispatch_seats: usize,
+    ) -> RuntimeHostResourceDecision {
+        RuntimeHostResourceDecision {
+            host_pressure_level,
+            cpu_pressure_level,
+            cpu_source_status,
+            memory_pressure_level,
+            memory_source_status,
+            control_plane_lag_high: false,
+            runtime_allocatable_millicpus: 4000,
+            nominal_dispatch_seats,
+            effective_dispatch_seats,
+            pause_prewarming: !matches!(host_pressure_level, RuntimeHostPressureLevel::Nominal),
+            run_idle_low_memory_maintenance: !matches!(
+                memory_pressure_level,
+                RuntimeMemoryPressureLevel::Nominal
+            ),
+            evict_idle_retained_runtimes: !matches!(
+                memory_pressure_level,
+                RuntimeMemoryPressureLevel::Nominal
+            ),
+        }
+    }
+
+    fn nonzero_usize(value: usize) -> NonZeroUsize {
+        NonZeroUsize::new(value).expect("test config constant should be nonzero")
     }
 }

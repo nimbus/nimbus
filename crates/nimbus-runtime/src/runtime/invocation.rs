@@ -21,6 +21,10 @@ impl InvocationKind {
             Self::Action => "action",
         }
     }
+
+    pub(crate) const fn is_convex_read_semantic_candidate(&self) -> bool {
+        matches!(self, Self::Query | Self::PaginatedQuery)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

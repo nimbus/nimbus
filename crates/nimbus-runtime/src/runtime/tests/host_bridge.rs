@@ -25,6 +25,7 @@ fn run_to_completion_policy_with_secret_and_identity_grants() -> Arc<RuntimePoli
 
 #[tokio::test]
 async fn runtime_async_ops_use_async_host_bridge_path() {
+    let _guard = acquire_runtime_suite_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -65,7 +66,144 @@ export {};
 }
 
 #[tokio::test]
+async fn runtime_query_context_is_reader_only_when_request_kind_is_present() {
+    let _guard = acquire_runtime_suite_lock();
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function (request) {
+  const ctx = globalThis.__nimbusCreateContext({ request });
+  const capture = async (fn) => {
+    try {
+      await fn();
+      return null;
+    } catch (error) {
+      return String(error && error.message ? error.message : error);
+    }
+  };
+  return {
+    getType: typeof ctx.db.get,
+    queryType: typeof ctx.db.query,
+    insertError: await capture(() => ctx.db.insert("messages", { body: "blocked" })),
+    schedulerError: await capture(() => ctx.scheduler.runAfter(1, "messages:send", {})),
+    runMutationError: await capture(() => ctx.runMutation("messages:send", {})),
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let host = Arc::new(RecordingHost::default());
+    let runtime = NimbusRuntime::with_policy(
+        host.clone(),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
+    let result = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:reader".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect("query context shape should be inspectable");
+
+    assert_eq!(result["getType"], "function");
+    assert_eq!(result["queryType"], "function");
+    for field in ["insertError", "schedulerError", "runMutationError"] {
+        let message = result[field]
+            .as_str()
+            .expect("denied query context operation should return an error string");
+        assert!(
+            message.contains("not available for query handlers"),
+            "unexpected {field}: {message}"
+        );
+    }
+    assert!(
+        host.calls
+            .lock()
+            .expect("host calls lock should not be poisoned")
+            .is_empty(),
+        "context-shape denials should not reach the host bridge"
+    );
+}
+
+#[tokio::test]
+async fn runtime_action_context_exposes_nested_calls_without_direct_db() {
+    let _guard = acquire_runtime_suite_lock();
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function (request) {
+  const ctx = globalThis.__nimbusCreateContext({ request });
+  let dbGetError = null;
+  try {
+    await ctx.db.get("messages", "doc-1");
+  } catch (error) {
+    dbGetError = String(error && error.message ? error.message : error);
+  }
+  return {
+    dbGetError,
+    schedulerType: typeof ctx.scheduler.runAfter,
+    runQueryType: typeof ctx.runQuery,
+    runMutationType: typeof ctx.runMutation,
+    runActionType: typeof ctx.runAction,
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
+    let result = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Action,
+                function_name: "actions:inspect".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect("action context shape should be inspectable");
+
+    let db_get_error = result["dbGetError"]
+        .as_str()
+        .expect("action db access should return an error string");
+    assert!(
+        db_get_error.contains("not available for action handlers"),
+        "unexpected action db denial: {db_get_error}"
+    );
+    assert_eq!(result["schedulerType"], "function");
+    assert_eq!(result["runQueryType"], "function");
+    assert_eq!(result["runMutationType"], "function");
+    assert_eq!(result["runActionType"], "function");
+}
+
+#[tokio::test]
 async fn runtime_exposes_verified_identity_extension_separately_from_convex_identity() {
+    let _guard = acquire_runtime_suite_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -196,6 +334,7 @@ export {};
 #[tokio::test]
 async fn runtime_secret_and_identity_grants_do_not_materialize_without_request_auth_or_secret_api()
 {
+    let _guard = acquire_runtime_suite_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -249,6 +388,7 @@ export {};
 
 #[tokio::test]
 async fn adapter_context_omits_services_and_request_services() {
+    let _guard = acquire_runtime_suite_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -311,6 +451,7 @@ export {};
 
 #[tokio::test]
 async fn adapter_context_with_service_grant_still_has_no_raw_service_op() {
+    let _guard = acquire_runtime_suite_lock();
     #[derive(Default)]
     struct ServiceLookupHost {
         async_calls: std::sync::Mutex<Vec<HostCallRequest>>,
@@ -345,7 +486,6 @@ async fn adapter_context_with_service_grant_still_has_no_raw_service_op() {
 globalThis.__nimbusInvoke = async function () {
   await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_service_lookup", {
     service_name: "db",
-    host_call_session_id: "host-call-session-1",
   });
 };
 
@@ -392,6 +532,7 @@ export {};
 
 #[tokio::test]
 async fn nimbus_native_service_op_uses_async_host_bridge_and_exact_grants() {
+    let _guard = acquire_runtime_suite_lock();
     #[derive(Default)]
     struct ServiceLookupHost {
         sync_calls: std::sync::Mutex<Vec<HostCallRequest>>,
@@ -447,7 +588,6 @@ async fn nimbus_native_service_op_uses_async_host_bridge_and_exact_grants() {
 globalThis.__nimbusInvoke = async function () {
   return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_service_lookup", {
     service_name: "db",
-    host_call_session_id: "host-call-session-1",
   });
 };
 
@@ -511,13 +651,14 @@ export {};
         calls[0].payload,
         serde_json::json!({
             "service_name": "db",
-            "host_call_session_id": "host-call-session-1",
+            "host_call_session_id": "query:services:get",
         })
     );
 }
 
 #[tokio::test]
 async fn nimbus_native_service_op_requires_exact_service_grant() {
+    let _guard = acquire_runtime_suite_lock();
     #[derive(Default)]
     struct ServiceLookupHost {
         async_calls: std::sync::Mutex<Vec<HostCallRequest>>,
@@ -552,7 +693,6 @@ async fn nimbus_native_service_op_requires_exact_service_grant() {
 globalThis.__nimbusInvoke = async function () {
   await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_service_lookup", {
     service_name: "cache",
-    host_call_session_id: "host-call-session-1",
   });
 };
 
@@ -599,6 +739,7 @@ export {};
 
 #[tokio::test]
 async fn runtime_query_builder_setup_uses_sync_host_bridge_path() {
+    let _guard = acquire_runtime_suite_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -663,6 +804,7 @@ export {};
 
 #[tokio::test]
 async fn runtime_async_write_and_scheduler_ops_use_async_host_bridge_path() {
+    let _guard = acquire_runtime_suite_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -720,7 +862,7 @@ export {};
                 "payload": {
                     "table": "messages",
                     "fields": { "body": "hello" },
-                    "host_call_session_id": "host-call-session-1",
+                    "host_call_session_id": "mutation:messages:write",
                 }
             },
             "patch": {
@@ -729,7 +871,7 @@ export {};
                     "table": "messages",
                     "id": "doc-1",
                     "patch": { "body": "updated" },
-                    "host_call_session_id": "host-call-session-1",
+                    "host_call_session_id": "mutation:messages:write",
                 }
             },
             "deletion": {
@@ -737,7 +879,7 @@ export {};
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
-                    "host_call_session_id": "host-call-session-1",
+                    "host_call_session_id": "mutation:messages:write",
                 }
             },
             "runAfter": {
@@ -747,7 +889,7 @@ export {};
                     "name": "messages:storeInternal",
                     "visibility": "internal",
                     "args": { "body": "scheduled" },
-                    "host_call_session_id": "host-call-session-1",
+                    "host_call_session_id": "mutation:messages:write",
                 }
             },
             "runAt": {
@@ -757,14 +899,14 @@ export {};
                     "name": "messages:storeInternal",
                     "visibility": "internal",
                     "args": { "body": "scheduled-at" },
-                    "host_call_session_id": "host-call-session-1",
+                    "host_call_session_id": "mutation:messages:write",
                 }
             },
             "cancel": {
                 "operation": "ctx_scheduler_cancel",
                 "payload": {
                     "job_id": "job-1",
-                    "host_call_session_id": "host-call-session-1",
+                    "host_call_session_id": "mutation:messages:write",
                 }
             }
         })
@@ -773,6 +915,7 @@ export {};
 
 #[tokio::test]
 async fn runtime_extension_call_uses_async_host_bridge_path() {
+    let _guard = acquire_runtime_suite_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -829,6 +972,7 @@ export {};
 
 #[tokio::test]
 async fn runtime_query_paginate_uses_async_host_bridge_and_returns_official_shape() {
+    let _guard = acquire_runtime_suite_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -909,13 +1053,14 @@ export {};
             "builder_id": "builder-1",
             "page_size": 2,
             "cursor": Value::Null,
-            "host_call_session_id": "host-call-session-1",
+            "host_call_session_id": "query:messages:listPage",
         })
     );
 }
 
 #[tokio::test]
 async fn runtime_query_paginate_treats_full_page_with_cursor_as_not_done() {
+    let _guard = acquire_runtime_suite_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -969,6 +1114,7 @@ export {};
 
 #[tokio::test]
 async fn runtime_same_isolate_nested_entry_uses_sync_host_bridge_path() {
+    let _guard = acquire_runtime_suite_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -1028,13 +1174,14 @@ export {};
         serde_json::json!({
             "name": "messages:list",
             "visibility": "public",
-            "host_call_session_id": "host-call-session-1",
+            "host_call_session_id": "query:messages:outer",
         })
     );
 }
 
 #[tokio::test]
 async fn runtime_async_ctx_run_ops_use_async_host_bridge_path() {
+    let _guard = acquire_runtime_suite_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -1091,7 +1238,7 @@ export {};
                     "name": "messages:list",
                     "visibility": "public",
                     "args": { "author": "Ada" },
-                    "host_call_session_id": "host-call-session-1",
+                    "host_call_session_id": "action:messages:outer",
                 }
             },
             "mutation": {
@@ -1100,7 +1247,7 @@ export {};
                     "name": "messages:storeInternal",
                     "visibility": "internal",
                     "args": { "body": "hello" },
-                    "host_call_session_id": "host-call-session-1",
+                    "host_call_session_id": "action:messages:outer",
                 }
             },
             "action": {
@@ -1109,7 +1256,7 @@ export {};
                     "name": "messages:sendViaAction",
                     "visibility": "public",
                     "args": { "body": "wave" },
-                    "host_call_session_id": "host-call-session-1",
+                    "host_call_session_id": "action:messages:outer",
                 }
             }
         })

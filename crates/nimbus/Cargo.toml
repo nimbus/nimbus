@@ -15,6 +15,7 @@ bun-jsc-linked-adapter = [
     "nimbus-runtime/bun-jsc-linked-adapter",
     "nimbus-server/bun-jsc-linked-adapter",
 ]
+v8-pointer-compression = ["nimbus-runtime/v8-pointer-compression"]
 
 [dependencies]
 nimbus-runtime = { path = "../nimbus-runtime" }

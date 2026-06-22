@@ -1,7 +1,8 @@
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 
-use crate::error::Result;
+use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::RuntimeCompatibilityTarget;
 use crate::runtime::bootstrap::{
     extension_transpiler_for_target, install_bootstrap, snapshot_extensions,
@@ -13,7 +14,7 @@ use super::embedder::{
 
 type ResidualLazySources = &'static [(&'static str, &'static str)];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum V8RuntimeConstructionMode {
     #[allow(dead_code)] // Used only in test helpers
     Unsnapshotted,
@@ -21,6 +22,14 @@ pub(crate) enum V8RuntimeConstructionMode {
 }
 
 impl V8RuntimeConstructionMode {
+    pub(crate) fn for_compatibility_target(target: RuntimeCompatibilityTarget) -> Self {
+        debug_assert!(
+            target != RuntimeCompatibilityTarget::BunJsc,
+            "Bun/JSC must not enter the V8 construction-mode selector"
+        );
+        Self::StartupSnapshot
+    }
+
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Unsnapshotted => "unsnapshotted",
@@ -37,6 +46,8 @@ pub(crate) struct V8StartupSnapshot {
     bytes: &'static [u8],
     residual_lazy_js_sources: ResidualLazySources,
     residual_lazy_esm_sources: ResidualLazySources,
+    extension_replay_js_sources: ResidualLazySources,
+    extension_replay_esm_sources: ResidualLazySources,
 }
 
 impl V8StartupSnapshot {
@@ -44,16 +55,20 @@ impl V8StartupSnapshot {
         bytes: Box<[u8]>,
         residual_lazy_js_sources: ResidualLazySources,
         residual_lazy_esm_sources: ResidualLazySources,
+        extension_replay_js_sources: ResidualLazySources,
+        extension_replay_esm_sources: ResidualLazySources,
     ) -> Self {
         // deno_core currently accepts startup snapshots as &'static [u8]. The
         // worker pool keeps a single bootstrap snapshot for its own lifetime,
-        // so leaking one buffer per compatibility target matches the pool's
-        // lifetime and avoids unsound lifetime extension tricks. Residual lazy
-        // extension sources follow the same process-lifetime contract.
+        // so leaking one buffer per compatibility target matches the pool's lifetime
+        // and avoids unsound lifetime extension tricks. Snapshot companion source
+        // tables follow the same process-lifetime contract.
         Self {
             bytes: Box::leak(bytes),
             residual_lazy_js_sources,
             residual_lazy_esm_sources,
+            extension_replay_js_sources,
+            extension_replay_esm_sources,
         }
     }
 
@@ -68,14 +83,31 @@ impl V8StartupSnapshot {
     pub(crate) fn residual_lazy_esm_sources(&self) -> ResidualLazySources {
         self.residual_lazy_esm_sources
     }
+
+    pub(crate) fn extension_replay_js_sources(&self) -> ResidualLazySources {
+        self.extension_replay_js_sources
+    }
+
+    pub(crate) fn extension_replay_esm_sources(&self) -> ResidualLazySources {
+        self.extension_replay_esm_sources
+    }
 }
 
 #[cfg(test)]
 static V8_BOOTSTRAP_SNAPSHOT_BUILDS: AtomicUsize = AtomicUsize::new(0);
+static V8_STARTUP_SNAPSHOT_BUILD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 pub(crate) fn create_v8_startup_snapshot(
     compatibility_target: RuntimeCompatibilityTarget,
+    service_extension_enabled: bool,
 ) -> Result<V8StartupSnapshot> {
+    let _snapshot_build_guard = V8_STARTUP_SNAPSHOT_BUILD_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| {
+            NimbusRuntimeError::Contract("V8 startup snapshot build lock was poisoned".to_string())
+        })?;
+
     #[cfg(test)]
     V8_BOOTSTRAP_SNAPSHOT_BUILDS.fetch_add(1, Ordering::Relaxed);
 
@@ -83,9 +115,13 @@ pub(crate) fn create_v8_startup_snapshot(
     // particular, post-bootstrap cleanup like `delete globalThis.Deno` must
     // stay in the separate finalize step for ordinary runtimes until the fork
     // offers an explicit snapshot-safe replacement.
-    let extensions = snapshot_extensions(compatibility_target);
-    let (residual_lazy_js_sources, residual_lazy_esm_sources) =
-        collect_residual_lazy_sources(compatibility_target, &extensions)?;
+    let extensions = snapshot_extensions(compatibility_target, service_extension_enabled);
+    let (
+        residual_lazy_js_sources,
+        residual_lazy_esm_sources,
+        extension_replay_js_sources,
+        extension_replay_esm_sources,
+    ) = collect_startup_snapshot_extension_sources(compatibility_target, &extensions)?;
     let mut runtime = JsRuntimeForSnapshot::new(RuntimeOptions {
         extensions,
         extension_transpiler: extension_transpiler_for_target(compatibility_target),
@@ -109,20 +145,47 @@ pub(crate) fn create_v8_startup_snapshot(
         runtime.snapshot(),
         residual_lazy_js_sources,
         residual_lazy_esm_sources,
+        extension_replay_js_sources,
+        extension_replay_esm_sources,
     ))
 }
 
-fn collect_residual_lazy_sources(
+fn collect_startup_snapshot_extension_sources(
     compatibility_target: RuntimeCompatibilityTarget,
     extensions: &[Extension],
-) -> Result<(ResidualLazySources, ResidualLazySources)> {
+) -> Result<(
+    ResidualLazySources,
+    ResidualLazySources,
+    ResidualLazySources,
+    ResidualLazySources,
+)> {
     let mut residual_lazy_js_sources = Vec::new();
     let mut residual_lazy_esm_sources = Vec::new();
+    let mut extension_replay_js_sources = Vec::new();
+    let mut extension_replay_esm_sources = Vec::new();
 
     for extension in extensions {
+        for file in &*extension.js_files {
+            if !file.is_runtime_loadable() {
+                extension_replay_js_sources.push(transpile_snapshot_extension_source(
+                    compatibility_target,
+                    file.specifier,
+                    file.load()?,
+                )?);
+            }
+        }
+        for file in &*extension.esm_files {
+            if !file.is_runtime_loadable() {
+                extension_replay_esm_sources.push(transpile_snapshot_extension_source(
+                    compatibility_target,
+                    file.specifier,
+                    file.load()?,
+                )?);
+            }
+        }
         for file in &*extension.lazy_loaded_js_files {
             if !file.is_runtime_loadable() {
-                residual_lazy_js_sources.push(transpile_residual_lazy_source(
+                residual_lazy_js_sources.push(transpile_snapshot_extension_source(
                     compatibility_target,
                     file.specifier,
                     file.load()?,
@@ -131,7 +194,7 @@ fn collect_residual_lazy_sources(
         }
         for file in &*extension.lazy_loaded_esm_files {
             if !file.is_runtime_loadable() {
-                residual_lazy_esm_sources.push(transpile_residual_lazy_source(
+                residual_lazy_esm_sources.push(transpile_snapshot_extension_source(
                     compatibility_target,
                     file.specifier,
                     file.load()?,
@@ -141,12 +204,14 @@ fn collect_residual_lazy_sources(
     }
 
     Ok((
-        leak_residual_lazy_sources(residual_lazy_js_sources)?,
-        leak_residual_lazy_sources(residual_lazy_esm_sources)?,
+        leak_snapshot_extension_sources(residual_lazy_js_sources)?,
+        leak_snapshot_extension_sources(residual_lazy_esm_sources)?,
+        leak_snapshot_extension_sources(extension_replay_js_sources)?,
+        leak_snapshot_extension_sources(extension_replay_esm_sources)?,
     ))
 }
 
-fn transpile_residual_lazy_source(
+fn transpile_snapshot_extension_source(
     compatibility_target: RuntimeCompatibilityTarget,
     specifier: &'static str,
     source: ModuleCodeString,
@@ -165,7 +230,7 @@ fn transpile_residual_lazy_source(
     Ok((specifier, source.to_string()))
 }
 
-fn leak_residual_lazy_sources(
+fn leak_snapshot_extension_sources(
     mut sources: Vec<(&'static str, String)>,
 ) -> Result<ResidualLazySources> {
     sources.sort_by_key(|(specifier, _)| *specifier);

@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
 use nimbus_engine::Engine;
+use nimbus_runtime::{
+    EffectiveRuntimeScalingPlan, RuntimeAdaptiveControllerSettings, RuntimeHostResourceBudget,
+};
 
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
 use crate::adapters::convex::ConvexRegistry;
@@ -133,6 +136,36 @@ impl ServeOptions {
     /// [`crate::normalize_cors_origin`] for the accepted form.
     pub fn with_cors_allowed_origins(mut self, origins: Vec<String>) -> Self {
         self.router_options = self.router_options.with_cors_allowed_origins(origins);
+        self
+    }
+
+    /// Set the aggregate host CPU budget available to in-process runtime work.
+    /// Tenant quotas remain separate; this is the node-allocatable-style host
+    /// guard that later runtime admission consumes.
+    pub fn with_runtime_host_resource_budget(mut self, budget: RuntimeHostResourceBudget) -> Self {
+        self.router_options = self
+            .router_options
+            .with_runtime_host_resource_budget(budget);
+        self
+    }
+
+    pub fn with_runtime_adaptive_controller_settings(
+        mut self,
+        settings: RuntimeAdaptiveControllerSettings,
+    ) -> Self {
+        self.router_options = self
+            .router_options
+            .with_runtime_adaptive_controller_settings(settings);
+        self
+    }
+
+    pub fn with_effective_runtime_scaling_plan(
+        mut self,
+        plan: EffectiveRuntimeScalingPlan,
+    ) -> Self {
+        self.router_options = self
+            .router_options
+            .with_effective_runtime_scaling_plan(plan);
         self
     }
 

@@ -1,39 +1,134 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::backends::v8::embedder::JsRuntime;
 use crate::backends::v8::{ReusableV8Runtime, V8RuntimeConstructionMode, V8WorkerRuntimePool};
 use crate::error::Result;
+use crate::execution_plan::RuntimeExecutionPlan;
 use crate::executor::SharedInvocationPermit;
 use crate::host::HostCallCancellation;
-use crate::limits::RuntimePolicy;
+use crate::limits::{RuntimePolicy, RuntimePoolKind};
 use crate::watchdog::WatchdogTimer;
 
-use super::super::bootstrap::RuntimeCancellationState;
+use super::super::bootstrap::{RuntimeCancellationState, take_runtime_wait_until_pending};
 use super::super::helpers::classify_runtime_error;
+use super::super::realm_lease::RuntimeRealmLeaseCondemnationReason;
+use super::super::realm_lifecycle::destroy_fresh_realm;
 use super::super::{NimbusRuntime, RuntimeInvocationExecution, RuntimeInvocationTimeoutController};
 
 pub(crate) struct RuntimeInvocationDriver {
     pub(crate) runtime: JsRuntime,
     pub(crate) warm_reuse_count: usize,
     pub(crate) construction_mode: V8RuntimeConstructionMode,
+    pub(crate) lifecycle: crate::backends::v8::RuntimeReuseLifecycle,
+    pub(crate) realm_lease_controller: crate::runtime::realm_lease::RuntimeRealmLeaseController,
     policy: Arc<RuntimePolicy>,
     permit: SharedInvocationPermit,
+    watchdog: WatchdogTimer,
     timeout_controller: Option<RuntimeInvocationTimeoutController>,
+    system_timeout_watchdog: Option<crate::watchdog::WatchdogRegistration>,
+    system_timeout_callback: Option<Arc<dyn Fn() + Send + Sync>>,
     external_cancellation_watchdog: Option<crate::watchdog::WatchdogRegistration>,
     timeout_triggered: Arc<AtomicBool>,
+    system_timeout_triggered: Arc<AtomicBool>,
     heap_limit_triggered: Arc<AtomicBool>,
     pub(crate) external_cancellation_triggered: Arc<AtomicBool>,
     record_replacement_on_error: bool,
 }
 
 impl RuntimeInvocationDriver {
+    pub(crate) async fn begin_wait_until_phase(&mut self) -> Result<()> {
+        let limits = self.policy.limits();
+        if let Some(timeout_controller) = &self.timeout_controller {
+            timeout_controller.reset(limits.execution_timeout).await?;
+        }
+        if let Some(system_timeout_watchdog) = self.system_timeout_watchdog.take() {
+            system_timeout_watchdog.disarm().await;
+        }
+        self.system_timeout_watchdog = match (&self.system_timeout_callback, limits.system_timeout)
+        {
+            (_, timeout) if timeout.is_zero() => None,
+            (Some(callback), timeout) => Some(self.watchdog.register_timeout(
+                std::time::Instant::now() + timeout,
+                {
+                    let callback = callback.clone();
+                    move || callback()
+                },
+            )?),
+            (None, _) => None,
+        };
+        Ok(())
+    }
+
+    pub(crate) fn wait_until_phase_timeout_error(
+        &self,
+    ) -> Option<crate::error::NimbusRuntimeError> {
+        let limits = self.policy.limits();
+        if self.system_timeout_triggered.load(Ordering::SeqCst) {
+            return Some(crate::error::NimbusRuntimeError::SystemTimeout(
+                limits.system_timeout,
+            ));
+        }
+        if self.timeout_triggered.load(Ordering::SeqCst) {
+            return Some(crate::error::NimbusRuntimeError::ExecutionTimeout(
+                limits.execution_timeout,
+            ));
+        }
+        None
+    }
+
+    pub(crate) fn record_fresh_realm_promise_resolve(&self, duration: Duration) {
+        self.policy
+            .metrics()
+            .record_fresh_realm_promise_resolve(duration);
+    }
+
+    pub(crate) fn record_fresh_realm_deserialization(&self, duration: Duration) {
+        self.policy
+            .metrics()
+            .record_fresh_realm_deserialization(duration);
+    }
+
+    pub(crate) fn record_fresh_realm_destroy(&self, duration: Duration) {
+        self.policy.metrics().record_fresh_realm_destroy(duration);
+    }
+
+    pub(crate) fn realm_lease_condemnation_reason(&self) -> RuntimeRealmLeaseCondemnationReason {
+        realm_lease_condemnation_reason_from_flags(
+            &self.timeout_triggered,
+            &self.system_timeout_triggered,
+            &self.heap_limit_triggered,
+            &self.external_cancellation_triggered,
+        )
+    }
+
+    pub(crate) fn realm_lease_condemnation_reason_classifier(
+        &self,
+    ) -> impl Fn() -> RuntimeRealmLeaseCondemnationReason + 'static {
+        let timeout_triggered = self.timeout_triggered.clone();
+        let system_timeout_triggered = self.system_timeout_triggered.clone();
+        let heap_limit_triggered = self.heap_limit_triggered.clone();
+        let external_cancellation_triggered = self.external_cancellation_triggered.clone();
+        move || {
+            realm_lease_condemnation_reason_from_flags(
+                &timeout_triggered,
+                &system_timeout_triggered,
+                &heap_limit_triggered,
+                &external_cancellation_triggered,
+            )
+        }
+    }
+
     pub(crate) async fn finalize_with_runtime(
-        self,
+        mut self,
         result: Result<serde_json::Value>,
     ) -> (Result<serde_json::Value>, Option<ReusableV8Runtime>) {
         if let Some(timeout_controller) = self.timeout_controller {
             timeout_controller.disarm().await;
+        }
+        if let Some(system_timeout_watchdog) = self.system_timeout_watchdog {
+            system_timeout_watchdog.disarm().await;
         }
         self.permit.clear_timeout_controller();
         if let Some(external_cancellation_watchdog) = self.external_cancellation_watchdog {
@@ -41,6 +136,7 @@ impl RuntimeInvocationDriver {
         }
 
         let replacement_required = self.timeout_triggered.load(Ordering::SeqCst)
+            || self.system_timeout_triggered.load(Ordering::SeqCst)
             || self.heap_limit_triggered.load(Ordering::SeqCst)
             || self.external_cancellation_triggered.load(Ordering::SeqCst);
 
@@ -48,21 +144,37 @@ impl RuntimeInvocationDriver {
             classify_runtime_error(
                 error,
                 &self.timeout_triggered,
+                &self.system_timeout_triggered,
                 &self.heap_limit_triggered,
                 &self.external_cancellation_triggered,
                 self.policy.limits(),
             )
         });
+        let near_heap_limit_triggered = self.heap_limit_triggered.load(Ordering::SeqCst);
         if result.is_err() && replacement_required && self.record_replacement_on_error {
             self.policy.metrics().record_runtime_pool_replacement();
+            self.policy
+                .metrics()
+                .record_profile_runtime_pool_replacement(self.policy.runtime_profile());
+            if near_heap_limit_triggered
+                && matches!(
+                    self.policy.limits().runtime_pool_kind,
+                    RuntimePoolKind::WarmPool
+                )
+            {
+                self.policy.metrics().record_warm_pool_retirement();
+            }
         }
         let runtime = if result.is_ok() && !replacement_required {
             Some(ReusableV8Runtime {
                 runtime: self.runtime,
                 warm_reuse_count: self.warm_reuse_count,
                 construction_mode: self.construction_mode,
+                lifecycle: self.lifecycle,
+                realm_lease_controller: self.realm_lease_controller,
             })
         } else {
+            self.lifecycle.mark_condemned();
             None
         };
         (result, runtime)
@@ -87,10 +199,18 @@ impl NimbusRuntime {
             bundle,
             request,
             context,
+            execution_plan,
             external_cancellation,
+            response_ready_tx,
             permit,
         } = invocation;
-        bundle.verify_integrity()?;
+        let mut response_ready_tx = response_ready_tx;
+        let integrity_started_at = Instant::now();
+        let integrity_result = bundle.verify_integrity();
+        self.policy
+            .metrics()
+            .record_bundle_integrity_verify(integrity_started_at.elapsed());
+        integrity_result?;
         self.policy
             .validate_bundle_content_kind(bundle.content_kind())?;
         let mut v8_runtime_pool = v8_runtime_pool;
@@ -109,6 +229,8 @@ impl NimbusRuntime {
             watchdog.clone(),
             external_cancellation.clone(),
             permit.clone(),
+            &context,
+            Some(&execution_plan),
             v8_runtime_pool.is_some(),
         )?;
 
@@ -123,11 +245,86 @@ impl NimbusRuntime {
                     .clone()
             };
             let external_cancellation_triggered = driver.external_cancellation_triggered.clone();
+            let context_recycling = matches!(
+                self.policy.limits().runtime_pool_kind,
+                crate::limits::RuntimePoolKind::WarmContextRecycle,
+            );
             let is_warm_hit = matches!(
                 self.policy.limits().runtime_pool_kind,
                 crate::limits::RuntimePoolKind::WarmPool,
             ) && driver.warm_reuse_count > 0;
             let invoke = async {
+                if context_recycling {
+                    let lease_failure_reason = driver.realm_lease_condemnation_reason_classifier();
+                    let (value, realm, mut realm_lease) = self
+                        .start_fresh_realm_bundle_invocation_with_lease_and_reason_trace(
+                            &driver.realm_lease_controller,
+                            &mut driver.runtime,
+                            &bundle,
+                            &request,
+                            driver.construction_mode,
+                            Some(&context),
+                            lease_failure_reason,
+                        )
+                        .await?;
+                    let response = self
+                        .resolve_fresh_realm_invocation_response_with_lease_and_trace(
+                            &mut driver.runtime,
+                            &realm,
+                            value,
+                            &bundle,
+                            &request,
+                            driver.construction_mode,
+                            Some(&context),
+                            &mut realm_lease,
+                        )
+                        .await;
+                    let result = match response {
+                        Ok(response) => {
+                            if let Some(response_ready_tx) = response_ready_tx.take() {
+                                let _ = response_ready_tx.send(response.clone());
+                            }
+                            if take_runtime_wait_until_pending(&mut driver.runtime) {
+                                driver.begin_wait_until_phase().await?;
+                                self.drain_wait_until_with_trace(
+                                    &mut driver.runtime,
+                                    Some(&realm),
+                                    Some(&bundle),
+                                    &request,
+                                    driver.construction_mode,
+                                    Some(&context),
+                                )
+                                .await?;
+                                match driver.wait_until_phase_timeout_error() {
+                                    Some(error) => Err(error),
+                                    None => Ok(response),
+                                }
+                            } else {
+                                Ok(response)
+                            }
+                        }
+                        Err(error) => Err(error),
+                    };
+                    let destroy_started_at = std::time::Instant::now();
+                    destroy_fresh_realm(&mut driver.runtime, realm);
+                    driver.record_fresh_realm_destroy(destroy_started_at.elapsed());
+                    return match result {
+                        Ok(response) => {
+                            self.return_clean_fresh_realm_lease(
+                                &mut driver.runtime,
+                                &mut realm_lease,
+                            )?;
+                            Ok(response)
+                        }
+                        Err(error) => {
+                            self.condemn_fresh_realm_lease_with_reason(
+                                &mut realm_lease,
+                                driver.realm_lease_condemnation_reason(),
+                            );
+                            Err(error)
+                        }
+                    };
+                }
                 if !is_warm_hit {
                     self.load_bundle_with_trace(
                         &mut driver.runtime,
@@ -138,14 +335,36 @@ impl NimbusRuntime {
                     )
                     .await?;
                 }
-                self.invoke_loaded_bundle_with_trace(
-                    &mut driver.runtime,
-                    &request,
-                    Some(&bundle),
-                    driver.construction_mode,
-                    Some(&context),
-                )
-                .await
+                let response = self
+                    .invoke_loaded_bundle_with_trace(
+                        &mut driver.runtime,
+                        &request,
+                        Some(&bundle),
+                        driver.construction_mode,
+                        Some(&context),
+                    )
+                    .await?;
+                if let Some(response_ready_tx) = response_ready_tx.take() {
+                    let _ = response_ready_tx.send(response.clone());
+                }
+                if take_runtime_wait_until_pending(&mut driver.runtime) {
+                    driver.begin_wait_until_phase().await?;
+                    self.drain_wait_until_with_trace(
+                        &mut driver.runtime,
+                        None,
+                        Some(&bundle),
+                        &request,
+                        driver.construction_mode,
+                        Some(&context),
+                    )
+                    .await?;
+                    match driver.wait_until_phase_timeout_error() {
+                        Some(error) => Err(error),
+                        None => Ok(response),
+                    }
+                } else {
+                    Ok(response)
+                }
             };
             tokio::pin!(invoke);
             match external_cancellation {
@@ -166,17 +385,14 @@ impl NimbusRuntime {
 
         let (result, reusable_runtime) = driver.finalize_with_runtime(result).await;
         if let (Some(pool), Some(mut runtime)) = (v8_runtime_pool, reusable_runtime) {
-            if matches!(
-                self.policy.limits().runtime_pool_kind,
-                crate::limits::RuntimePoolKind::WarmPool,
-            ) {
-                // Clear event loop state while preserving evaluated modules.
-                // If the runtime is not quiescent, discard instead of pooling.
-                if runtime.runtime.reset_request_state().is_err() {
-                    self.policy.metrics().record_warm_pool_discard_unquiesced();
-                    return result;
+            match self.policy.limits().runtime_pool_kind {
+                crate::limits::RuntimePoolKind::WarmPool
+                | crate::limits::RuntimePoolKind::WarmContextRecycle => {
+                    runtime.warm_reuse_count = runtime.warm_reuse_count.saturating_add(1);
                 }
-                runtime.warm_reuse_count = runtime.warm_reuse_count.saturating_add(1);
+                crate::limits::RuntimePoolKind::StartupSnapshotCache
+                | crate::limits::RuntimePoolKind::BunJscTrustedRetained
+                | crate::limits::RuntimePoolKind::BunJscFreshDiscard => {}
             }
             pool.return_runtime_for_invocation(self, &bundle, Some(&context), runtime);
         }
@@ -189,19 +405,30 @@ impl NimbusRuntime {
         watchdog: WatchdogTimer,
         external_cancellation: Option<HostCallCancellation>,
         permit: SharedInvocationPermit,
+        context: &crate::context::RuntimeInvocationContext,
+        execution_plan: Option<&RuntimeExecutionPlan>,
         record_replacement_on_error: bool,
     ) -> Result<RuntimeInvocationDriver> {
         let ReusableV8Runtime {
             mut runtime,
             warm_reuse_count,
             construction_mode,
+            lifecycle,
+            realm_lease_controller,
         } = runtime;
         let timeout = self.policy.limits().execution_timeout;
+        let system_timeout = self.policy.limits().system_timeout;
         let timeout_triggered = Arc::new(AtomicBool::new(false));
+        let system_timeout_triggered = Arc::new(AtomicBool::new(false));
         let heap_limit_triggered = Arc::new(AtomicBool::new(false));
         let external_cancellation_triggered = Arc::new(AtomicBool::new(false));
         super::super::bootstrap::bind_runtime_host_bridge(&mut runtime, self.host.clone());
-        super::super::bootstrap::reset_runtime_invocation_state(&mut runtime, permit.clone());
+        super::super::bootstrap::reset_runtime_invocation_state(
+            &mut runtime,
+            permit.clone(),
+            Some(context),
+            execution_plan,
+        );
         super::super::bootstrap::reset_bootstrap_invocation_state(&mut runtime)?;
         let cancellation_signal = {
             let op_state = runtime.op_state();
@@ -248,25 +475,79 @@ impl NimbusRuntime {
                 let _ = isolate_handle.terminate_execution();
             });
             Some(RuntimeInvocationTimeoutController::new(
-                watchdog, timeout, callback,
+                watchdog.clone(),
+                timeout,
+                callback,
             )?)
         };
         if let Some(timeout_controller) = timeout_controller.clone() {
             permit.set_timeout_controller(timeout_controller);
         }
 
+        let system_timeout_callback: Option<Arc<dyn Fn() + Send + Sync>> =
+            if system_timeout.is_zero() {
+                None
+            } else {
+                let isolate_handle = runtime.v8_isolate().thread_safe_handle();
+                let system_timeout_triggered = system_timeout_triggered.clone();
+                let cancellation_signal = cancellation_signal.clone();
+                Some(Arc::new(move || {
+                    system_timeout_triggered.store(true, Ordering::SeqCst);
+                    cancellation_signal.cancel();
+                    let _ = isolate_handle.terminate_execution();
+                }))
+            };
+
+        let system_timeout_watchdog = if system_timeout.is_zero() {
+            None
+        } else {
+            let callback = system_timeout_callback
+                .as_ref()
+                .expect("nonzero system timeout should install a callback")
+                .clone();
+            Some(watchdog.register_timeout(
+                std::time::Instant::now() + system_timeout,
+                move || {
+                    callback();
+                },
+            )?)
+        };
+
         Ok(RuntimeInvocationDriver {
             runtime,
             warm_reuse_count,
             construction_mode,
+            lifecycle,
+            realm_lease_controller,
             policy: self.policy.clone(),
             permit,
+            watchdog,
             timeout_controller,
+            system_timeout_watchdog,
+            system_timeout_callback,
             external_cancellation_watchdog,
             timeout_triggered,
+            system_timeout_triggered,
             heap_limit_triggered,
             external_cancellation_triggered,
             record_replacement_on_error,
         })
     }
+}
+
+fn realm_lease_condemnation_reason_from_flags(
+    timeout_triggered: &AtomicBool,
+    system_timeout_triggered: &AtomicBool,
+    heap_limit_triggered: &AtomicBool,
+    external_cancellation_triggered: &AtomicBool,
+) -> RuntimeRealmLeaseCondemnationReason {
+    if timeout_triggered.load(Ordering::SeqCst) || system_timeout_triggered.load(Ordering::SeqCst) {
+        return RuntimeRealmLeaseCondemnationReason::TimedOut;
+    }
+    if heap_limit_triggered.load(Ordering::SeqCst)
+        || external_cancellation_triggered.load(Ordering::SeqCst)
+    {
+        return RuntimeRealmLeaseCondemnationReason::ExternalPressure;
+    }
+    RuntimeRealmLeaseCondemnationReason::Dirty
 }

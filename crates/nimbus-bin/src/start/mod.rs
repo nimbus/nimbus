@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::Args;
+use clap::{Args, ValueEnum};
 
 pub(crate) mod adapters;
 mod boot;
@@ -17,14 +17,26 @@ pub(crate) use self::boot::resolve_optional_compose_selection;
 pub(crate) use self::boot::resolve_start_app_dir;
 pub(crate) use self::boot::run_start_command;
 pub(crate) use self::config::persistence_config_from_start_command;
-pub(crate) use self::config::{CliKeyProvider, CliTenantProvider};
+pub(crate) use self::config::{
+    CliKeyProvider, CliTenantProvider, RuntimeConfigFile, runtime_config_from_start_command,
+};
 use self::runtime_limits::{
-    default_runtime_heap_mb, default_runtime_initial_heap_mb,
+    default_runtime_control_plane_reserve_millicpus, default_runtime_heap_mb,
+    default_runtime_host_millicpus, default_runtime_initial_heap_mb,
     default_runtime_max_active_per_tenant, default_runtime_max_in_flight_per_tenant,
     default_runtime_max_instances, default_runtime_max_nested_calls,
-    default_runtime_max_queued_per_tenant, default_runtime_timeout_secs,
+    default_runtime_max_queued_per_tenant, default_runtime_seat_millicpus,
+    default_runtime_system_reserve_millicpus, default_runtime_timeout_secs,
     default_runtime_worker_threads,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum CliRuntimeAdaptiveMode {
+    Disabled,
+    Shadow,
+    Canary,
+    Live,
+}
 
 #[derive(Debug, Args)]
 #[command(
@@ -276,6 +288,38 @@ pub(crate) struct StartCommand {
     #[arg(long, default_value_t = default_runtime_max_nested_calls())]
     pub(crate) runtime_max_nested_calls: usize,
 
+    /// Host CPU capacity available to the isolate runtime governor, in millicpus.
+    #[arg(long = "runtime-host-millicpus", default_value_t = default_runtime_host_millicpus(), value_parser = clap::value_parser!(u32).range(1..))]
+    pub(crate) runtime_host_millicpus: u32,
+
+    /// CPU reserve kept outside isolate execution for the host OS, in millicpus.
+    #[arg(long = "runtime-system-reserve-millicpus", default_value_t = default_runtime_system_reserve_millicpus())]
+    pub(crate) runtime_system_reserve_millicpus: u32,
+
+    /// CPU reserve kept for Nimbus control-plane work, in millicpus.
+    #[arg(long = "runtime-control-plane-reserve-millicpus", default_value_t = default_runtime_control_plane_reserve_millicpus())]
+    pub(crate) runtime_control_plane_reserve_millicpus: u32,
+
+    /// Optional hard CPU ceiling for aggregate isolate execution, in millicpus.
+    #[arg(long = "runtime-hard-ceiling-millicpus")]
+    pub(crate) runtime_hard_ceiling_millicpus: Option<u32>,
+
+    /// CPU represented by one nominal isolate dispatch seat, in millicpus.
+    #[arg(long = "runtime-seat-millicpus", default_value_t = default_runtime_seat_millicpus(), value_parser = clap::value_parser!(u32).range(1..))]
+    pub(crate) runtime_seat_millicpus: u32,
+
+    /// Operator-only live adaptive warm-pool controller mode.
+    #[arg(long = "runtime-adaptive-mode", value_enum, default_value_t = CliRuntimeAdaptiveMode::Disabled)]
+    pub(crate) runtime_adaptive_mode: CliRuntimeAdaptiveMode,
+
+    /// Percentage of authority keys admitted to adaptive actuation in canary mode.
+    #[arg(long = "runtime-adaptive-canary-percent", default_value_t = 0, value_parser = clap::value_parser!(u8).range(0..=100))]
+    pub(crate) runtime_adaptive_canary_percent: u8,
+
+    /// Force live adaptive warm-pool control back to static measured defaults.
+    #[arg(long = "runtime-adaptive-rollback", default_value_t = false)]
+    pub(crate) runtime_adaptive_rollback: bool,
+
     // -------------------------------------------------------------------------
     // Local encryption options
     // -------------------------------------------------------------------------
@@ -391,6 +435,15 @@ impl Default for StartCommand {
             runtime_max_queued_per_tenant: default_runtime_max_queued_per_tenant(),
             runtime_worker_threads: default_runtime_worker_threads(),
             runtime_max_nested_calls: default_runtime_max_nested_calls(),
+            runtime_host_millicpus: default_runtime_host_millicpus(),
+            runtime_system_reserve_millicpus: default_runtime_system_reserve_millicpus(),
+            runtime_control_plane_reserve_millicpus:
+                default_runtime_control_plane_reserve_millicpus(),
+            runtime_hard_ceiling_millicpus: None,
+            runtime_seat_millicpus: default_runtime_seat_millicpus(),
+            runtime_adaptive_mode: CliRuntimeAdaptiveMode::Disabled,
+            runtime_adaptive_canary_percent: 0,
+            runtime_adaptive_rollback: false,
             encryption_key_provider: None,
             encryption_master_key_file: None,
             encryption_key_dir: None,

@@ -13,6 +13,7 @@ use nimbus_tenant::{
 
 mod direct_process;
 mod host_lifecycle;
+mod memory_pressure;
 mod reconciler;
 mod systemd_transient;
 
@@ -24,6 +25,10 @@ pub use host_lifecycle::{
     HostLifecyclePropertySet, HostLifecycleRequest, HostLifecycleStatus, HostLifecycleStatusReason,
     HostRestartPolicy, RunnerKind, RunnerSpec, RuntimePoolTrustClass, RuntimePoolTrustState,
     SystemdUnitKind, SystemdUnitName, TenantWorkloadId, TenantWorkloadLifecycleEvidence,
+};
+pub use memory_pressure::{
+    CgroupV2CpuPressureThresholds, CgroupV2HostPressureSource, CgroupV2MemoryPressureSource,
+    HostCpuPressureObservation, HostMemoryPressureObservation, HostPressureObservation,
 };
 pub use reconciler::{
     NodeAgent, NodeAgentAssignment, NodeAgentCapabilityReport, NodeAgentReconcileReport,

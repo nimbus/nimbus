@@ -18,6 +18,7 @@ bun-jsc-linked-adapter = [
     "nimbus/bun-jsc-linked-adapter",
     "nimbus-server/bun-jsc-linked-adapter",
 ]
+v8-pointer-compression = ["nimbus/v8-pointer-compression"]
 
 [[bin]]
 name = "nimbus"

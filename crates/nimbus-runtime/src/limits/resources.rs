@@ -9,8 +9,9 @@ use super::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
     RuntimeExecutionModel, RuntimeGrants, RuntimeJavaScriptEvaluationFormat, RuntimeLanguage,
-    RuntimeMemoryEnforcement, RuntimeMode, RuntimeModuleStateSemantics, RuntimePoolKind,
-    RuntimePreset, RuntimeResetCapabilities, RuntimeRoutingAffinity,
+    RuntimeMemoryEnforcement, RuntimeMode, RuntimeModuleStateSemantics,
+    RuntimeNodeFullRealmReusePolicy, RuntimePoolKind, RuntimePreset, RuntimeResetCapabilities,
+    RuntimeRoutingAffinity,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -30,6 +31,7 @@ pub struct RuntimeLimits {
     pub grants: RuntimeGrants,
     pub service_capability_enabled: bool,
     pub runtime_pool_kind: RuntimePoolKind,
+    pub node_full_realm_reuse_policy: RuntimeNodeFullRealmReusePolicy,
     pub memory_enforcement: RuntimeMemoryEnforcement,
     pub routing_affinity: RuntimeRoutingAffinity,
     pub routing_affinity_max_entries: usize,
@@ -38,6 +40,7 @@ pub struct RuntimeLimits {
     pub max_heap_mb: usize,
     pub initial_heap_mb: usize,
     pub execution_timeout: Duration,
+    pub system_timeout: Duration,
     pub max_concurrent_runtime_instances: usize,
     pub worker_threads: usize,
     pub max_active_top_level_invocations_per_tenant: usize,
@@ -57,6 +60,7 @@ pub struct RuntimeTenantBudget {
     pub memory_enforcement: RuntimeMemoryEnforcement,
     pub max_active_heap_mb: usize,
     pub execution_timeout: Duration,
+    pub system_timeout: Duration,
     pub max_nested_runtime_invocations_per_top_level: usize,
 }
 
@@ -240,7 +244,9 @@ impl RuntimeLimits {
             RuntimePoolKind::WarmPool | RuntimePoolKind::BunJscTrustedRetained => {
                 RuntimeModuleStateSemantics::WarmPerBundle
             }
-            RuntimePoolKind::StartupSnapshotCache | RuntimePoolKind::BunJscFreshDiscard => {
+            RuntimePoolKind::StartupSnapshotCache
+            | RuntimePoolKind::WarmContextRecycle
+            | RuntimePoolKind::BunJscFreshDiscard => {
                 RuntimeModuleStateSemantics::FreshPerInvocation
             }
         }
@@ -255,13 +261,13 @@ impl RuntimeLimits {
                     user_module_state_per_invocation: false,
                 }
             }
-            RuntimePoolKind::StartupSnapshotCache | RuntimePoolKind::BunJscFreshDiscard => {
-                RuntimeResetCapabilities {
-                    op_state_per_invocation: true,
-                    bootstrap_state_per_invocation: true,
-                    user_module_state_per_invocation: true,
-                }
-            }
+            RuntimePoolKind::StartupSnapshotCache
+            | RuntimePoolKind::WarmContextRecycle
+            | RuntimePoolKind::BunJscFreshDiscard => RuntimeResetCapabilities {
+                op_state_per_invocation: true,
+                bootstrap_state_per_invocation: true,
+                user_module_state_per_invocation: true,
+            },
         }
     }
 
@@ -284,6 +290,7 @@ impl RuntimeLimits {
                 .max_heap_mb
                 .saturating_mul(self.max_active_top_level_invocations_per_tenant),
             execution_timeout: self.execution_timeout,
+            system_timeout: self.system_timeout,
             max_nested_runtime_invocations_per_top_level: self.max_nested_runtime_invocations,
         }
     }
@@ -342,16 +349,17 @@ impl RuntimeLimits {
         validate_mode_grant_ceiling(self.mode, &grants);
 
         // WarmPool requires CooperativeLocker — fail fast.
-        if matches!(self.runtime_pool_kind, RuntimePoolKind::WarmPool)
-            && !matches!(
-                self.execution_model,
-                RuntimeExecutionModel::CooperativeLocker
-            )
-        {
+        if matches!(
+            self.runtime_pool_kind,
+            RuntimePoolKind::WarmPool | RuntimePoolKind::WarmContextRecycle
+        ) && !matches!(
+            self.execution_model,
+            RuntimeExecutionModel::CooperativeLocker
+        ) {
             panic!(
-                "WarmPool requires CooperativeLocker execution model, \
+                "{:?} requires CooperativeLocker execution model, \
                  got {:?}",
-                self.execution_model
+                self.runtime_pool_kind, self.execution_model
             );
         }
 
@@ -386,6 +394,7 @@ impl RuntimeLimits {
             grants,
             service_capability_enabled: self.service_capability_enabled,
             runtime_pool_kind: self.runtime_pool_kind,
+            node_full_realm_reuse_policy: self.node_full_realm_reuse_policy,
             memory_enforcement: self.memory_enforcement,
             routing_affinity: self.routing_affinity,
             routing_affinity_max_entries: self.routing_affinity_max_entries.max(1),
@@ -394,6 +403,7 @@ impl RuntimeLimits {
             max_heap_mb,
             initial_heap_mb,
             execution_timeout: self.execution_timeout,
+            system_timeout: self.system_timeout,
             max_concurrent_runtime_instances,
             worker_threads,
             max_active_top_level_invocations_per_tenant,
@@ -412,6 +422,7 @@ impl RuntimeLimits {
         self.max_heap_mb = source.max_heap_mb;
         self.initial_heap_mb = source.initial_heap_mb;
         self.execution_timeout = source.execution_timeout;
+        self.system_timeout = source.system_timeout;
         self.max_concurrent_runtime_instances = source.max_concurrent_runtime_instances;
         self.worker_threads = source.worker_threads;
         self.max_active_top_level_invocations_per_tenant =
@@ -454,6 +465,7 @@ impl Default for RuntimeLimits {
             grants: RuntimeGrants::application_web_standard(),
             service_capability_enabled: false,
             runtime_pool_kind: RuntimePoolKind::WarmPool,
+            node_full_realm_reuse_policy: RuntimeNodeFullRealmReusePolicy::Unproven,
             memory_enforcement: RuntimeMemoryEnforcement::V8IsolateHeapLimit,
             routing_affinity: RuntimeRoutingAffinity::Tenant,
             routing_affinity_max_entries,
@@ -462,6 +474,7 @@ impl Default for RuntimeLimits {
             max_heap_mb: 128,
             initial_heap_mb: 8,
             execution_timeout: Duration::from_secs(30),
+            system_timeout: Duration::from_secs(30),
             max_concurrent_runtime_instances,
             worker_threads,
             max_active_top_level_invocations_per_tenant,

@@ -20,10 +20,10 @@ pub(crate) enum PolicyCommand {
 pub(crate) struct PolicyFileCommand {
     /// Path to a nimbus.policy.yaml file.
     #[arg(long, value_name = "FILE")]
-    file: PathBuf,
+    pub(crate) file: PathBuf,
     /// Output format.
     #[arg(short = 'f', long, default_value = "text")]
-    format: PolicyOutputFormat,
+    pub(crate) format: PolicyOutputFormat,
 }
 
 #[derive(Debug, Args)]
@@ -40,7 +40,7 @@ pub(crate) struct PolicyDiffCommand {
 }
 
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
-enum PolicyOutputFormat {
+pub(crate) enum PolicyOutputFormat {
     #[default]
     Text,
     Json,
@@ -96,7 +96,7 @@ fn run_diff_command(command: PolicyDiffCommand) -> nimbus::Result<()> {
     Ok(())
 }
 
-fn load_policy_document(path: &Path) -> nimbus::Result<OperatorPolicyDocument> {
+pub(crate) fn load_policy_document(path: &Path) -> nimbus::Result<OperatorPolicyDocument> {
     let body = fs::read_to_string(path).map_err(|error| {
         nimbus::Error::InvalidInput(format!(
             "failed to read policy file {}: {error}",
@@ -111,7 +111,7 @@ fn load_policy_document(path: &Path) -> nimbus::Result<OperatorPolicyDocument> {
     })
 }
 
-fn print_json(value: &impl serde::Serialize) -> nimbus::Result<()> {
+pub(crate) fn print_json(value: &impl serde::Serialize) -> nimbus::Result<()> {
     let json = serde_json::to_string_pretty(value).map_err(|error| {
         nimbus::Error::Serialization(format!("failed to serialize policy output: {error}"))
     })?;

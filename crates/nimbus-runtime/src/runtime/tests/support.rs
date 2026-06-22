@@ -116,17 +116,78 @@ impl HostBridge for RecordingHost {
     }
 }
 
-pub(super) struct SlowEnvelopeHost {
+pub(super) struct DelayedAsyncEnvelopeHost {
     pub(super) delay: std::time::Duration,
 }
 
-impl HostBridge for SlowEnvelopeHost {
+impl HostBridge for DelayedAsyncEnvelopeHost {
     fn call(&self, _request: HostCallRequest) -> Result<Value> {
-        std::thread::sleep(self.delay);
-        Ok(serde_json::json!({
-            "status": "ok",
-            "value": Value::Null,
-        }))
+        Err(NimbusRuntimeError::Contract(
+            "sync host bridge path should not be used for delayed async ops".to_string(),
+        ))
+    }
+
+    fn call_async(
+        &self,
+        _request: HostCallRequest,
+        _cancellation: HostCallCancellation,
+    ) -> HostBridgeFuture {
+        let delay = self.delay;
+        Box::pin(async move {
+            tokio::time::sleep(delay).await;
+            Ok(serde_json::json!({
+                "status": "ok",
+                "value": Value::Null,
+            }))
+        })
+    }
+}
+
+pub(super) struct CountingDelayedAsyncEnvelopeHost {
+    delay: std::time::Duration,
+    calls: Mutex<usize>,
+}
+
+impl CountingDelayedAsyncEnvelopeHost {
+    pub(super) fn new(delay: std::time::Duration) -> Self {
+        Self {
+            delay,
+            calls: Mutex::new(0),
+        }
+    }
+
+    pub(super) fn calls(&self) -> usize {
+        *self
+            .calls
+            .lock()
+            .expect("counting delayed host lock should not be poisoned")
+    }
+}
+
+impl HostBridge for CountingDelayedAsyncEnvelopeHost {
+    fn call(&self, _request: HostCallRequest) -> Result<Value> {
+        Err(NimbusRuntimeError::Contract(
+            "sync host bridge path should not be used for counting delayed async ops".to_string(),
+        ))
+    }
+
+    fn call_async(
+        &self,
+        _request: HostCallRequest,
+        _cancellation: HostCallCancellation,
+    ) -> HostBridgeFuture {
+        *self
+            .calls
+            .lock()
+            .expect("counting delayed host lock should not be poisoned") += 1;
+        let delay = self.delay;
+        Box::pin(async move {
+            tokio::time::sleep(delay).await;
+            Ok(serde_json::json!({
+                "status": "ok",
+                "value": Value::Null,
+            }))
+        })
     }
 }
 

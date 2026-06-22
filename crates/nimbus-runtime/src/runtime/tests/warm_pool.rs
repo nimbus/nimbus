@@ -1,5 +1,10 @@
 use super::*;
-use crate::backends::v8::V8WorkerRuntimePool;
+use crate::backends::v8::{
+    RuntimeReuseLifecycleState, V8RuntimeConstructionMode, V8WorkerRuntimePool,
+    heap_carryover_limit_bytes_for_test, retained_entry_eviction_count_for_pressure_for_test,
+    v8_bootstrap_snapshot_build_count_for_test,
+};
+use crate::limits::{RuntimeCompatibilityTarget, RuntimeMemoryPressureLevel};
 
 pub(super) const CROSS_TENANT_WARM_POOL_CASE: IsolatedRuntimeTestCase =
     IsolatedRuntimeTestCase::new(
@@ -24,6 +29,45 @@ pub(super) const INVOCATION_KIND_REUSE_WARM_POOL_CASE: IsolatedRuntimeTestCase =
         "warm-pool entries are reused across invocation kinds: the configured grants are the \
          authority surface, so kind is not a partition dimension",
         "runtime::tests::warm_pool::warm_pool_reuses_across_invocation_kinds_subprocess",
+    );
+
+pub(super) const NODE_SNAPSHOT_WARM_POOL_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-warm-pool-node-startup-snapshot",
+        "cooperative-warm-pool",
+        "node-compatible warm-pool cold misses consume the V8 startup snapshot path",
+        "runtime::tests::warm_pool::warm_pool_uses_startup_snapshot_for_node_targets_subprocess",
+    );
+
+pub(super) const BOUNDARY_GC_WARM_POOL_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-warm-pool-boundary-gc",
+    "cooperative-warm-pool",
+    "warm-pool return runs boundary memory maintenance before retention",
+    "runtime::tests::warm_pool::warm_pool_runs_boundary_memory_maintenance_subprocess",
+);
+
+pub(super) const MAX_REUSE_CONDEMNATION_WARM_POOL_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-warm-pool-max-reuse-condemnation",
+        "cooperative-warm-pool",
+        "warm-pool return condemns runtimes that reached max_warm_reuses",
+        "runtime::tests::warm_pool::warm_pool_condemns_after_max_warm_reuses_subprocess",
+    );
+
+pub(super) const MEMORY_PRESSURE_EVICTION_WARM_POOL_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-warm-pool-memory-pressure-eviction",
+        "cooperative-warm-pool",
+        "warm-pool memory pressure response evicts idle retained runtimes before OOM",
+        "runtime::tests::warm_pool::warm_pool_memory_pressure_evicts_idle_entries_subprocess",
+    );
+
+pub(super) const NEAR_HEAP_LIMIT_WARM_POOL_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-warm-pool-near-heap-limit-condemnation",
+        "cooperative-warm-pool",
+        "near-heap-limit callbacks condemn checked-out warm-pool runtimes instead of retaining them",
+        "runtime::tests::warm_pool::warm_pool_condemns_checked_out_runtime_after_near_heap_limit_subprocess",
     );
 
 #[test]
@@ -107,6 +151,61 @@ fn warm_pool_reuses_across_invocation_kinds() {
 }
 
 #[test]
+fn warm_pool_uses_startup_snapshot_for_node_targets() {
+    run_v8_sensitive_runtime_test_in_subprocess(NODE_SNAPSHOT_WARM_POOL_CASE);
+}
+
+#[test]
+fn warm_pool_runs_boundary_memory_maintenance() {
+    run_v8_sensitive_runtime_test_in_subprocess(BOUNDARY_GC_WARM_POOL_CASE);
+}
+
+#[test]
+fn warm_pool_condemns_after_max_warm_reuses() {
+    run_v8_sensitive_runtime_test_in_subprocess(MAX_REUSE_CONDEMNATION_WARM_POOL_CASE);
+}
+
+#[test]
+fn warm_pool_memory_pressure_evicts_idle_entries() {
+    run_v8_sensitive_runtime_test_in_subprocess(MEMORY_PRESSURE_EVICTION_WARM_POOL_CASE);
+}
+
+#[test]
+fn warm_pool_condemns_checked_out_runtime_after_near_heap_limit() {
+    run_v8_sensitive_runtime_test_in_subprocess(NEAR_HEAP_LIMIT_WARM_POOL_CASE);
+}
+
+#[test]
+fn warm_pool_heap_carryover_limit_is_internal_fraction_of_heap_cap() {
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.max_heap_mb = 128;
+
+    assert_eq!(
+        heap_carryover_limit_bytes_for_test(&limits),
+        96 * 1024 * 1024
+    );
+}
+
+#[test]
+fn warm_pool_pressure_eviction_count_is_conservative() {
+    assert_eq!(
+        retained_entry_eviction_count_for_pressure_for_test(RuntimeMemoryPressureLevel::Nominal, 5),
+        0
+    );
+    assert_eq!(
+        retained_entry_eviction_count_for_pressure_for_test(RuntimeMemoryPressureLevel::High, 5),
+        3
+    );
+    assert_eq!(
+        retained_entry_eviction_count_for_pressure_for_test(
+            RuntimeMemoryPressureLevel::Critical,
+            5
+        ),
+        5
+    );
+}
+
+#[test]
 #[ignore = "runs in a subprocess to isolate warm-pool locker V8 state"]
 fn warm_pool_cross_tenant_isolation_subprocess() {
     tokio::runtime::Builder::new_current_thread()
@@ -134,6 +233,56 @@ fn warm_pool_reuses_across_invocation_kinds_subprocess() {
         .build()
         .expect("tokio runtime should build")
         .block_on(warm_pool_reuses_across_invocation_kinds_inner());
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate warm-pool locker V8 state"]
+fn warm_pool_uses_startup_snapshot_for_node_targets_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(warm_pool_uses_startup_snapshot_for_node_targets_inner());
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate warm-pool locker V8 state"]
+fn warm_pool_runs_boundary_memory_maintenance_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(warm_pool_runs_boundary_memory_maintenance_inner());
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate warm-pool locker V8 state"]
+fn warm_pool_condemns_after_max_warm_reuses_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(warm_pool_condemns_after_max_warm_reuses_inner());
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate warm-pool locker V8 state"]
+fn warm_pool_memory_pressure_evicts_idle_entries_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(warm_pool_memory_pressure_evicts_idle_entries_inner());
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate warm-pool locker V8 state"]
+fn warm_pool_condemns_checked_out_runtime_after_near_heap_limit_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(warm_pool_condemns_checked_out_runtime_after_near_heap_limit_inner());
 }
 
 async fn warm_pool_cross_tenant_isolation_inner() {
@@ -226,6 +375,10 @@ export {};
     assert_eq!(
         metrics_after_warm.warm_pool_misses, 2,
         "same-tenant take must not increment misses"
+    );
+    assert_eq!(
+        metrics_after_warm.retained_runtime_pool_entries, 1,
+        "taking a retained entry must decrement the retained-entry gauge"
     );
 
     // Pool should now have 1 entry (tenant-B's).
@@ -399,6 +552,10 @@ export {};
         0,
         "the reused entry leaves the pool while the action holds it"
     );
+    assert_eq!(
+        metrics_after_action_take.retained_runtime_pool_entries, 0,
+        "taking a retained entry must decrement the retained-entry gauge"
+    );
 
     v8_runtime_pool.return_runtime_for_invocation(
         &runtime_owner,
@@ -422,4 +579,358 @@ export {};
         "the same runtime keeps cycling across invocation kinds"
     );
     assert_eq!(metrics_after_query_reuse.warm_pool_misses, 1);
+}
+
+async fn warm_pool_uses_startup_snapshot_for_node_targets_inner() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = function () {
+  return { node: globalThis.process?.release?.name ?? null };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.compatibility_target = RuntimeCompatibilityTarget::Node22;
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
+    let runtime_owner = NimbusRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        Arc::new(RuntimePolicy::new(limits)),
+    );
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+
+    let snapshot_builds_before = v8_bootstrap_snapshot_build_count_for_test();
+    let reusable = v8_runtime_pool
+        .take_runtime_with_options(&runtime_owner, &bundle, true)
+        .expect("node-compatible warm-pool cold take should succeed");
+    let snapshot_builds_after = v8_bootstrap_snapshot_build_count_for_test();
+
+    assert_eq!(
+        reusable.construction_mode,
+        V8RuntimeConstructionMode::StartupSnapshot,
+        "node-compatible V8 runtimes should consume the startup snapshot path"
+    );
+    assert_eq!(
+        snapshot_builds_after,
+        snapshot_builds_before + 1,
+        "first node-compatible warm-pool cold miss should build the node bootstrap snapshot"
+    );
+}
+
+async fn warm_pool_runs_boundary_memory_maintenance_inner() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = function () {
+  return {};
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
+    limits.max_warm_reuses = 10;
+    let runtime_owner = NimbusRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        Arc::new(RuntimePolicy::new(limits)),
+    );
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+
+    let reusable = v8_runtime_pool
+        .take_runtime_with_options(&runtime_owner, &bundle, true)
+        .expect("runtime cold take should succeed");
+
+    v8_runtime_pool.return_runtime_for_invocation(&runtime_owner, &bundle, None, reusable);
+
+    assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 1);
+    let maintenance = v8_runtime_pool
+        .last_boundary_maintenance_for_test()
+        .expect("retained entry should record boundary maintenance");
+    assert_eq!(
+        v8_runtime_pool.last_lifecycle_state_for_test(),
+        Some(RuntimeReuseLifecycleState::Ready),
+        "retained warm-pool entries should be ready after clean return"
+    );
+    assert_eq!(
+        v8_runtime_pool.last_lifecycle_history_for_test(),
+        Some(
+            &[
+                RuntimeReuseLifecycleState::Cold,
+                RuntimeReuseLifecycleState::Bootstrapping,
+                RuntimeReuseLifecycleState::Ready,
+                RuntimeReuseLifecycleState::Leased,
+                RuntimeReuseLifecycleState::Draining,
+                RuntimeReuseLifecycleState::CleanReturn,
+                RuntimeReuseLifecycleState::Ready,
+            ][..]
+        ),
+        "warm-pool retention should expose the PIR2 lifecycle transition history"
+    );
+    assert_eq!(maintenance.moderate_memory_pressure_notifications, 1);
+    assert_eq!(maintenance.low_memory_notifications, 1);
+    assert!(
+        maintenance.cleanliness.warm_reuse_safe_before_reset,
+        "retention should only continue after Deno reports the runtime event loop is quiescent"
+    );
+    assert!(
+        maintenance.cleanliness.request_state_reset_succeeded,
+        "retention should record that Deno request-state reset succeeded"
+    );
+    assert_eq!(
+        maintenance.cleanliness.heap_after_maintenance, maintenance.heap_after,
+        "cleanliness accounting should be captured after boundary memory maintenance"
+    );
+    assert_eq!(
+        maintenance.cleanliness.retained_memory_bytes,
+        maintenance.heap_after.retained_memory_bytes(),
+        "cleanliness report should use the same retained-memory accounting as the pool"
+    );
+    assert_eq!(
+        maintenance.cleanliness.carryover_limit_bytes,
+        heap_carryover_limit_bytes_for_test(runtime_owner.policy.limits()),
+        "warm-pool carryover threshold should come from RuntimeLimits, not V8 defaults"
+    );
+    assert_eq!(
+        maintenance
+            .cleanliness
+            .heap_after_maintenance
+            .detached_context_count,
+        0,
+        "retained runtimes must not carry detached V8 contexts"
+    );
+    assert!(
+        maintenance.heap_after.used_heap_size_bytes <= maintenance.heap_after.heap_size_limit_bytes,
+        "retained runtime heap usage should remain inside its V8 heap limit"
+    );
+    assert_eq!(
+        maintenance.heap_after.retained_memory_bytes(),
+        maintenance
+            .heap_after
+            .used_heap_size_bytes
+            .saturating_add(maintenance.heap_after.external_memory_bytes),
+        "retained runtime accounting should include V8-reported external memory"
+    );
+    assert_eq!(
+        runtime_owner
+            .policy
+            .metrics_snapshot()
+            .retained_runtime_pool_entries,
+        1
+    );
+}
+
+async fn warm_pool_condemns_after_max_warm_reuses_inner() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = function () {
+  return {};
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
+    limits.max_warm_reuses = 1;
+    let runtime_owner = NimbusRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        Arc::new(RuntimePolicy::new(limits)),
+    );
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let mut reusable = v8_runtime_pool
+        .take_runtime_with_options(&runtime_owner, &bundle, true)
+        .expect("runtime cold take should succeed");
+    reusable.warm_reuse_count = 1;
+
+    v8_runtime_pool.return_runtime_for_invocation(&runtime_owner, &bundle, None, reusable);
+
+    assert_eq!(
+        v8_runtime_pool.warm_pool_count_for_test(),
+        0,
+        "runtime at max_warm_reuses must be condemned instead of retained"
+    );
+    let metrics = runtime_owner.policy.metrics_snapshot();
+    assert_eq!(metrics.warm_pool_retirements, 1);
+    assert_eq!(metrics.retained_runtime_pool_retirements, 1);
+    assert_eq!(metrics.retained_runtime_pool_entries, 0);
+}
+
+async fn warm_pool_memory_pressure_evicts_idle_entries_inner() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = function () {
+  return {};
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let expected_sha256 =
+        RuntimeBundle::compute_sha256_for_path(&bundle_path).expect("bundle hash should load");
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
+    limits.max_warm_pool_entries_per_worker = 8;
+    let runtime_owner = NimbusRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        Arc::new(RuntimePolicy::new(limits)),
+    );
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+
+    for tenant in ["tenant-a", "tenant-b", "tenant-c"] {
+        let bundle = RuntimeBundle::for_tenant(&bundle_path, &expected_sha256, tenant)
+            .expect("tenant bundle should build");
+        let reusable = v8_runtime_pool
+            .take_runtime_with_options(&runtime_owner, &bundle, true)
+            .expect("tenant runtime cold take should succeed");
+        v8_runtime_pool.return_runtime_for_invocation(&runtime_owner, &bundle, None, reusable);
+    }
+
+    assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 3);
+    assert_eq!(
+        runtime_owner
+            .policy
+            .metrics_snapshot()
+            .retained_runtime_pool_entries,
+        3
+    );
+
+    let high =
+        v8_runtime_pool.apply_memory_pressure(&runtime_owner, RuntimeMemoryPressureLevel::High);
+    assert_eq!(high.pressure, RuntimeMemoryPressureLevel::High);
+    assert_eq!(high.evicted_entries, 2);
+    assert_eq!(high.retained_entries, 1);
+    assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 1);
+    let metrics_after_high = runtime_owner.policy.metrics_snapshot();
+    assert_eq!(metrics_after_high.retained_runtime_pool_evictions, 2);
+    assert_eq!(metrics_after_high.retained_runtime_pool_entries, 1);
+
+    let critical =
+        v8_runtime_pool.apply_memory_pressure(&runtime_owner, RuntimeMemoryPressureLevel::Critical);
+    assert_eq!(critical.pressure, RuntimeMemoryPressureLevel::Critical);
+    assert_eq!(critical.evicted_entries, 1);
+    assert_eq!(critical.retained_entries, 0);
+    assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 0);
+    let metrics_after_critical = runtime_owner.policy.metrics_snapshot();
+    assert_eq!(metrics_after_critical.retained_runtime_pool_evictions, 3);
+    assert_eq!(metrics_after_critical.retained_runtime_pool_entries, 0);
+}
+
+async fn warm_pool_condemns_checked_out_runtime_after_near_heap_limit_inner() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = function () {
+  const retained = [];
+  while (true) {
+    retained.push("x".repeat(1024 * 1024));
+  }
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "messages:heap".to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: None,
+        services: Default::default(),
+    };
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.initial_heap_mb = 4;
+    limits.max_heap_mb = 8;
+    limits.execution_timeout = std::time::Duration::from_secs(5);
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
+    let runtime_owner = NimbusRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        Arc::new(RuntimePolicy::new(limits)),
+    );
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let watchdog = WatchdogTimer::new();
+    let mut permit = SharedInvocationPermit::new(runtime_owner.policy(), None, None, false, None);
+    permit
+        .acquire_initial(std::time::Instant::now())
+        .await
+        .expect("permit should admit invocation");
+    let context = RuntimeInvocationContext::top_level(&request);
+
+    let error = runtime_owner
+        .invoke_bundle_unmanaged(
+            Some(&mut v8_runtime_pool),
+            RuntimeInvocationExecution {
+                watchdog: watchdog.clone(),
+                bundle: bundle.clone(),
+                request: request.clone(),
+                context: context.clone(),
+                execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
+                    runtime_owner.policy().as_ref(),
+                    &request,
+                    &context,
+                ),
+                external_cancellation: None,
+                response_ready_tx: None,
+                permit: permit.clone(),
+            },
+        )
+        .await
+        .expect_err("heap growth should trip the near-heap-limit callback");
+
+    match error {
+        NimbusRuntimeError::HeapLimitExceeded(limit) => assert_eq!(limit, 8),
+        other => panic!("unexpected near-heap-limit error: {other}"),
+    }
+
+    let ready_jobs = permit.finish_invocation().await;
+    assert!(ready_jobs.is_empty());
+    watchdog.shutdown();
+
+    assert_eq!(
+        v8_runtime_pool.warm_pool_count_for_test(),
+        0,
+        "near-heap-limit runtime must not be retained after finalization"
+    );
+    let metrics = runtime_owner.policy.metrics_snapshot();
+    assert_eq!(metrics.warm_pool_misses, 1);
+    assert_eq!(metrics.runtime_pool_replacements, 1);
+    assert_eq!(
+        metrics.warm_pool_retirements, 1,
+        "checked-out warm-pool runtime should be retired when near-heap-limit fires"
+    );
+    assert_eq!(metrics.retained_runtime_pool_entries, 0);
 }

@@ -4,9 +4,12 @@ use std::sync::OnceLock;
 
 use crate::backends::v8::embedder::{
     JsErrorBox, JsRuntime, JsonModuleEvaluationCb, ModuleName, ModuleSpecifier, RuntimeOptions,
-    SharedArrayBufferStore, ValidateImportAttributesCb, v8,
+    ValidateImportAttributesCb, v8,
 };
-use crate::backends::v8::{V8StartupSnapshot, create_v8_startup_snapshot};
+use crate::backends::v8::{
+    RuntimeStartupSnapshotKey, V8RuntimeConstructionMode, V8StartupSnapshot,
+    create_v8_startup_snapshot,
+};
 use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::RuntimeCompatibilityTarget;
 use crate::module_loader::RestrictedModuleLoader;
@@ -25,30 +28,35 @@ impl NimbusRuntime {
         static WEB_STANDARD_BOOTSTRAP_SNAPSHOT: OnceLock<
             std::result::Result<V8StartupSnapshot, String>,
         > = OnceLock::new();
-        static NODE22_BOOTSTRAP_SNAPSHOT: OnceLock<std::result::Result<V8StartupSnapshot, String>> =
-            OnceLock::new();
-        static NODE20_BOOTSTRAP_SNAPSHOT: OnceLock<std::result::Result<V8StartupSnapshot, String>> =
-            OnceLock::new();
-        static NODE24_BOOTSTRAP_SNAPSHOT: OnceLock<std::result::Result<V8StartupSnapshot, String>> =
-            OnceLock::new();
-        static NODE26_BOOTSTRAP_SNAPSHOT: OnceLock<std::result::Result<V8StartupSnapshot, String>> =
-            OnceLock::new();
-        let snapshot = match self.policy.limits().compatibility_target {
-            RuntimeCompatibilityTarget::WebStandardIsolate => &WEB_STANDARD_BOOTSTRAP_SNAPSHOT,
-            RuntimeCompatibilityTarget::Node20 => &NODE20_BOOTSTRAP_SNAPSHOT,
-            RuntimeCompatibilityTarget::Node22 => &NODE22_BOOTSTRAP_SNAPSHOT,
-            RuntimeCompatibilityTarget::Node24 => &NODE24_BOOTSTRAP_SNAPSHOT,
-            RuntimeCompatibilityTarget::Node26 => &NODE26_BOOTSTRAP_SNAPSHOT,
-            RuntimeCompatibilityTarget::BunJsc => {
-                return Err(NimbusRuntimeError::Contract(
+        static WEB_STANDARD_SERVICE_BOOTSTRAP_SNAPSHOT: OnceLock<
+            std::result::Result<V8StartupSnapshot, String>,
+        > = OnceLock::new();
+        static NODE_FULL_BOOTSTRAP_SNAPSHOT: OnceLock<
+            std::result::Result<V8StartupSnapshot, String>,
+        > = OnceLock::new();
+        static NODE_FULL_SERVICE_BOOTSTRAP_SNAPSHOT: OnceLock<
+            std::result::Result<V8StartupSnapshot, String>,
+        > = OnceLock::new();
+
+        let snapshot_key =
+            RuntimeStartupSnapshotKey::for_limits(self.policy.limits()).ok_or_else(|| {
+                NimbusRuntimeError::Contract(
                     "Bun/JSC compatibility target cannot use the V8 bootstrap snapshot path"
                         .to_string(),
-                ));
-            }
+                )
+            })?;
+        let snapshot = match snapshot_key {
+            RuntimeStartupSnapshotKey::WebLean => &WEB_STANDARD_BOOTSTRAP_SNAPSHOT,
+            RuntimeStartupSnapshotKey::WebLeanService => &WEB_STANDARD_SERVICE_BOOTSTRAP_SNAPSHOT,
+            RuntimeStartupSnapshotKey::NodeFull => &NODE_FULL_BOOTSTRAP_SNAPSHOT,
+            RuntimeStartupSnapshotKey::NodeFullService => &NODE_FULL_SERVICE_BOOTSTRAP_SNAPSHOT,
         };
         match snapshot.get_or_init(|| {
-            Self::create_bootstrap_snapshot(self.policy.limits().compatibility_target)
-                .map_err(|error| error.to_string())
+            Self::create_bootstrap_snapshot(
+                snapshot_key.snapshot_build_target(),
+                snapshot_key.service_extension_enabled(),
+            )
+            .map_err(|error| error.to_string())
         }) {
             Ok(snapshot) => Ok(snapshot),
             Err(message) => Err(NimbusRuntimeError::Contract(format!(
@@ -59,8 +67,9 @@ impl NimbusRuntime {
 
     pub(crate) fn create_bootstrap_snapshot(
         compatibility_target: RuntimeCompatibilityTarget,
+        service_extension_enabled: bool,
     ) -> Result<V8StartupSnapshot> {
-        create_v8_startup_snapshot(compatibility_target)
+        create_v8_startup_snapshot(compatibility_target, service_extension_enabled)
     }
 
     pub(crate) fn create_runtime_from_snapshot(
@@ -134,6 +143,11 @@ impl NimbusRuntime {
             .compatibility_target
             .is_node()
             .then(deno_node::ops::module_hooks::LoaderHookRegistry::default);
+        let construction_mode = if startup_snapshot.is_some() {
+            V8RuntimeConstructionMode::StartupSnapshot
+        } else {
+            V8RuntimeConstructionMode::Unsnapshotted
+        };
         let mut extensions = execution_extensions(
             self.policy.limits().compatibility_target,
             &path_policy,
@@ -148,13 +162,19 @@ impl NimbusRuntime {
         let residual_lazy_esm_sources = startup_snapshot
             .map(V8StartupSnapshot::residual_lazy_esm_sources)
             .unwrap_or_default();
+        let extension_replay_js_sources = startup_snapshot
+            .map(V8StartupSnapshot::extension_replay_js_sources)
+            .unwrap_or_default();
+        let extension_replay_esm_sources = startup_snapshot
+            .map(V8StartupSnapshot::extension_replay_esm_sources)
+            .unwrap_or_default();
         Ok(RuntimeOptions {
             create_params: Some(self.create_isolate_params()),
             module_loader: Some(Rc::new(RestrictedModuleLoader::new(
                 path_policy.clone(),
                 self.policy.limits().compatibility_target,
                 self.policy.limits().node_conditions.clone(),
-                bundle.module_code_cache(self.policy.limits()),
+                bundle.module_code_cache(self.policy.limits(), construction_mode),
                 loader_hook_registry,
             ))),
             extensions,
@@ -171,7 +191,9 @@ impl NimbusRuntime {
             startup_snapshot: startup_snapshot_bytes,
             residual_lazy_js_sources,
             residual_lazy_esm_sources,
-            shared_array_buffer_store: Some(SharedArrayBufferStore::default()),
+            extension_replay_js_sources,
+            extension_replay_esm_sources,
+            shared_array_buffer_store: None,
             validate_import_attributes_cb: node_import_attribute_validator(
                 self.policy.limits().compatibility_target,
             ),
@@ -185,10 +207,12 @@ impl NimbusRuntime {
 
     pub(crate) fn create_isolate_params(&self) -> v8::CreateParams {
         let heap_megabyte = 1usize << 20;
-        v8::Isolate::create_params().heap_limits(
-            self.policy.limits().initial_heap_mb * heap_megabyte,
-            self.policy.limits().max_heap_mb * heap_megabyte,
-        )
+        v8::Isolate::create_params()
+            .heap_limits(
+                self.policy.limits().initial_heap_mb * heap_megabyte,
+                self.policy.limits().max_heap_mb * heap_megabyte,
+            )
+            .allow_atomics_wait(false)
     }
 
     pub(crate) fn initialize_runtime_state(

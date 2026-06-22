@@ -44,7 +44,10 @@ use self::runtime_local::{
     op_nimbus_runtime_symlink_sync, op_nimbus_runtime_target_triple, op_nimbus_runtime_utime,
     op_nimbus_runtime_utime_sync, op_nimbus_runtime_validate_open_path, op_set_raw,
 };
-use self::shared::op_nimbus_runtime_contract;
+use self::shared::{
+    op_nimbus_runtime_contract, op_nimbus_runtime_host_call_session_id,
+    op_nimbus_runtime_wait_until_pending,
+};
 use self::sync_query_builder::{
     op_nimbus_ctx_query_filter, op_nimbus_ctx_query_order, op_nimbus_ctx_query_start,
     op_nimbus_ctx_query_with_index,
@@ -96,6 +99,8 @@ extension!(
         op_nimbus_ctx_run_mutation,
         op_nimbus_ctx_run_action,
         op_nimbus_runtime_contract,
+        op_nimbus_runtime_host_call_session_id,
+        op_nimbus_runtime_wait_until_pending,
         op_nimbus_runtime_fs_read_file,
         op_nimbus_runtime_fs_write_file,
         op_nimbus_runtime_validate_open_path,
