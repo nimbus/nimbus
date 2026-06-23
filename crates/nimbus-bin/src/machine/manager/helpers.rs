@@ -5,10 +5,10 @@ use nimbus::Error;
 use super::{
     DEFAULT_GVPROXY_BINARY, GVPROXY_ENV, HELPER_BINARY_DIR_ENV, PODMAN_DARWIN_HELPER_DIRECTORIES,
 };
-// The VMM-binary env override is exercised only by the test-only helper-env
+// The VMM-binary env overrides are exercised only by the test-only helper-env
 // guard now that VMM resolution lives in `super::vmm`.
 #[cfg(test)]
-use super::KRUNKIT_ENV;
+use super::{KRUNKIT_ENV, VFKIT_ENV};
 
 /// Resolve the gvproxy user-mode network helper. gvproxy is bundled in the
 /// Nimbus archive and pinned, so resolution prefers the bundled `libexec` copy
@@ -128,6 +128,7 @@ fn helper_env_lock() -> &'static std::sync::Mutex<()> {
 pub(crate) struct MachineHelperEnvGuard {
     _lock: std::sync::MutexGuard<'static, ()>,
     previous_krunkit: Option<std::ffi::OsString>,
+    previous_vfkit: Option<std::ffi::OsString>,
     previous_gvproxy: Option<std::ffi::OsString>,
     previous_helper_dir: Option<std::ffi::OsString>,
     previous_path: Option<std::ffi::OsString>,
@@ -138,9 +139,19 @@ impl MachineHelperEnvGuard {
     pub(crate) fn install_stub_binaries(dir: &Path) -> Self {
         let krunkit_path = dir.join("krunkit");
         let gvproxy_path = dir.join("gvproxy");
+        let vfkit_path = dir.join("vfkit");
         write_helper_stub(&krunkit_path, "krunkit");
         write_helper_stub(&gvproxy_path, "gvproxy");
-        Self::set_paths(&krunkit_path, &gvproxy_path)
+        write_helper_stub(&vfkit_path, "vfkit");
+        let guard = Self::set_paths(&krunkit_path, &gvproxy_path);
+        // vfkit is the opt-in VMM backend. Install its stub and point the
+        // `NIMBUS_MACHINE_VFKIT` override at it under the same env lock so the
+        // vfkit launch path resolves a binary in tests; `guard` captured the
+        // previous value before this set, so Drop still restores it.
+        unsafe {
+            std::env::set_var(VFKIT_ENV, &vfkit_path);
+        }
+        guard
     }
 
     pub(crate) fn set_paths(krunkit_path: &Path, gvproxy_path: &Path) -> Self {
@@ -148,6 +159,7 @@ impl MachineHelperEnvGuard {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let previous_krunkit = std::env::var_os(KRUNKIT_ENV);
+        let previous_vfkit = std::env::var_os(VFKIT_ENV);
         let previous_gvproxy = std::env::var_os(GVPROXY_ENV);
         let previous_helper_dir = std::env::var_os(HELPER_BINARY_DIR_ENV);
         let previous_path = std::env::var_os("PATH");
@@ -158,6 +170,7 @@ impl MachineHelperEnvGuard {
         Self {
             _lock: lock,
             previous_krunkit,
+            previous_vfkit,
             previous_gvproxy,
             previous_helper_dir,
             previous_path,
@@ -169,17 +182,20 @@ impl MachineHelperEnvGuard {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let previous_krunkit = std::env::var_os(KRUNKIT_ENV);
+        let previous_vfkit = std::env::var_os(VFKIT_ENV);
         let previous_gvproxy = std::env::var_os(GVPROXY_ENV);
         let previous_helper_dir = std::env::var_os(HELPER_BINARY_DIR_ENV);
         let previous_path = std::env::var_os("PATH");
         unsafe {
             std::env::remove_var(KRUNKIT_ENV);
+            std::env::remove_var(VFKIT_ENV);
             std::env::remove_var(GVPROXY_ENV);
             std::env::set_var(HELPER_BINARY_DIR_ENV, dir);
         }
         Self {
             _lock: lock,
             previous_krunkit,
+            previous_vfkit,
             previous_gvproxy,
             previous_helper_dir,
             previous_path,
@@ -191,11 +207,13 @@ impl MachineHelperEnvGuard {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let previous_krunkit = std::env::var_os(KRUNKIT_ENV);
+        let previous_vfkit = std::env::var_os(VFKIT_ENV);
         let previous_gvproxy = std::env::var_os(GVPROXY_ENV);
         let previous_helper_dir = std::env::var_os(HELPER_BINARY_DIR_ENV);
         let previous_path = std::env::var_os("PATH");
         unsafe {
             std::env::remove_var(KRUNKIT_ENV);
+            std::env::remove_var(VFKIT_ENV);
             std::env::remove_var(GVPROXY_ENV);
             std::env::remove_var(HELPER_BINARY_DIR_ENV);
             std::env::set_var("PATH", dir);
@@ -203,6 +221,7 @@ impl MachineHelperEnvGuard {
         Self {
             _lock: lock,
             previous_krunkit,
+            previous_vfkit,
             previous_gvproxy,
             previous_helper_dir,
             previous_path,
@@ -216,6 +235,10 @@ impl Drop for MachineHelperEnvGuard {
         match &self.previous_krunkit {
             Some(path) => unsafe { std::env::set_var(KRUNKIT_ENV, path) },
             None => unsafe { std::env::remove_var(KRUNKIT_ENV) },
+        }
+        match &self.previous_vfkit {
+            Some(path) => unsafe { std::env::set_var(VFKIT_ENV, path) },
+            None => unsafe { std::env::remove_var(VFKIT_ENV) },
         }
         match &self.previous_gvproxy {
             Some(path) => unsafe { std::env::set_var(GVPROXY_ENV, path) },

@@ -67,6 +67,197 @@ fn krunkit_backend_pairs_gvproxy_unixgram_listen_mode() {
 }
 
 #[test]
+fn vfkit_backend_pairs_gvproxy_unixgram_listen_mode() {
+    let backend = VfkitVmmBackend;
+    assert_eq!(backend.provider(), MachineProvider::Vfkit);
+    // vfkit, like krunkit, drives host networking through gvproxy.
+    assert!(backend.requires_gvproxy());
+
+    // vfkit's `virtio-net,unixSocketPath=` device dials gvproxy's `-listen-vfkit`
+    // unixgram listener. The host listen contract is identical to krunkit (krunkit
+    // reuses vfkit's transport), so the listen arguments must pair the flag with a
+    // `unixgram://` URL at the shared socket; only the on-VMM net-device grammar in
+    // `build_launch_command` differs between the two backends.
+    let socket = PathBuf::from("/tmp/nimbus-machine/gvproxy.sock");
+    assert_eq!(
+        backend.gvproxy_listen_args(&socket),
+        vec![
+            "-listen-vfkit".to_owned(),
+            format!("unixgram://{}", socket.display()),
+        ]
+    );
+}
+
+#[test]
+fn vfkit_backend_resolves_binary_from_env_override() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let vfkit_path = temp_dir.path().join("vfkit");
+    // The env guard installs the vfkit stub and points NIMBUS_MACHINE_VFKIT at it,
+    // so resolution must honor the per-VMM override ahead of the bundled/known
+    // helper directories.
+    let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+
+    let resolved = VfkitVmmBackend
+        .resolve_vmm_binary()
+        .expect("vfkit binary should resolve via NIMBUS_MACHINE_VFKIT");
+
+    assert_eq!(resolved, vfkit_path);
+}
+
+/// Build a VMM launch command for `backend` against the deterministic sample
+/// config so the per-VMM device grammar can be asserted without booting a VM.
+/// `build_launch_command` only formats paths, so no filesystem state is needed.
+fn build_sample_launch_command(
+    backend: &dyn MachineVmmBackend,
+    image_path: &Path,
+    paths: &MachinePaths,
+    config: &MachineConfigRecord,
+) -> MachineCommandLine {
+    let efi_variable_store_path = paths.efi_variable_store_path.clone();
+    let rest_uri = format!("unix://{}", paths.vmm_endpoint_path.display());
+    let ctx = VmmLaunchContext {
+        paths,
+        config,
+        image_path,
+        efi_variable_store_path: &efi_variable_store_path,
+        rest_uri: &rest_uri,
+        bootstrap_mode: MachineBootstrapMode::Ignition,
+        machine_config_bundle_dir: None,
+    };
+    backend
+        .build_launch_command(Path::new("/opt/test/vmm"), &ctx)
+        .expect("launch command should build")
+}
+
+#[test]
+fn krunkit_build_launch_command_uses_libkrun_device_grammar() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.raw");
+    let config = sample_config(&image_path);
+    let paths = config.roots.paths("default");
+    let command = build_sample_launch_command(&KrunkitVmmBackend, &image_path, &paths, &config);
+
+    // Shared base args: CPU/memory sizing, the restful control endpoint, and the
+    // pidfile slot the readiness/stop lifecycle watches.
+    assert!(
+        command
+            .args
+            .windows(2)
+            .any(|pair| pair[0] == "--cpus" && pair[1] == "2")
+    );
+    assert!(
+        command
+            .args
+            .windows(2)
+            .any(|pair| pair[0] == "--memory" && pair[1] == "2048")
+    );
+    assert!(
+        command
+            .args
+            .windows(2)
+            .any(|pair| pair[0] == "--pidfile"
+                && pair[1] == paths.vmm_pid_path.display().to_string())
+    );
+
+    // krunkit exposes its own diagnostic --log-file; vfkit does not.
+    assert!(
+        command
+            .args
+            .windows(2)
+            .any(|pair| pair[0] == "--log-file"
+                && pair[1] == paths.vmm_log_path.display().to_string())
+    );
+
+    // krunkit's block device carries the raw format, and its net device is the
+    // libkrun unixgram grammar with offloading + vfkitMagic.
+    assert!(
+        command
+            .args
+            .iter()
+            .any(|arg| arg == &format!("virtio-blk,path={},format=raw", image_path.display()))
+    );
+    assert!(command.args.iter().any(|arg| arg
+        == &format!(
+            "virtio-net,type=unixgram,path={},mac={},offloading=on,vfkitMagic=on",
+            paths.gvproxy_socket_path.display(),
+            DEFAULT_MACHINE_MAC_ADDRESS
+        )));
+
+    // Shared applehv devices: machine-ready + Ignition vsock listeners.
+    assert!(command.args.iter().any(
+        |arg| arg == &build_virtio_vsock_listen_arg(READY_VSOCK_PORT, &paths.ready_socket_path)
+    ));
+    assert!(
+        command
+            .args
+            .iter()
+            .any(|arg| arg == &build_virtio_vsock_listen_arg(1024, &paths.ignition_socket_path))
+    );
+}
+
+#[test]
+fn vfkit_build_launch_command_uses_virtualization_framework_device_grammar() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.raw");
+    let config = sample_config(&image_path);
+    let paths = config.roots.paths("default");
+    let command = build_sample_launch_command(&VfkitVmmBackend, &image_path, &paths, &config);
+
+    // vfkit shares the base args (sizing, restful URI, pidfile) with krunkit.
+    assert!(
+        command
+            .args
+            .windows(2)
+            .any(|pair| pair[0] == "--cpus" && pair[1] == "2")
+    );
+    assert!(
+        command
+            .args
+            .windows(2)
+            .any(|pair| pair[0] == "--restful-uri"
+                && pair[1] == format!("unix://{}", paths.vmm_endpoint_path.display()))
+    );
+
+    // vfkit has no --log-file flag; the guest console still lands in the shared
+    // serial log device below.
+    assert!(!command.args.iter().any(|arg| arg == "--log-file"));
+
+    // vfkit's block device omits `format=`, and its net device uses
+    // `unixSocketPath=` rather than the libkrun `type=unixgram` grammar.
+    assert!(
+        command
+            .args
+            .iter()
+            .any(|arg| arg == &format!("virtio-blk,path={}", image_path.display()))
+    );
+    assert!(!command.args.iter().any(|arg| arg.contains("format=raw")));
+    assert!(command.args.iter().any(|arg| arg
+        == &format!(
+            "virtio-net,unixSocketPath={},mac={}",
+            paths.gvproxy_socket_path.display(),
+            DEFAULT_MACHINE_MAC_ADDRESS
+        )));
+    assert!(!command.args.iter().any(|arg| arg.contains("type=unixgram")));
+
+    // Shared applehv devices are wired identically to krunkit: the serial console
+    // log plus the machine-ready and Ignition vsock listeners.
+    assert!(command.args.iter().any(|arg| arg
+        == &format!(
+            "virtio-serial,logFilePath={}",
+            paths.machine_log_path.display()
+        )));
+    assert!(command.args.iter().any(
+        |arg| arg == &build_virtio_vsock_listen_arg(READY_VSOCK_PORT, &paths.ready_socket_path)
+    ));
+    assert!(
+        command
+            .args
+            .iter()
+            .any(|arg| arg == &build_virtio_vsock_listen_arg(1024, &paths.ignition_socket_path))
+    );
+}
+
+#[test]
 fn machine_image_reference_repository_strips_tag_and_digest() {
     assert_eq!(
         machine_image_reference_repository("docker://quay.io/podman/machine-os:6.0"),
