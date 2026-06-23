@@ -258,6 +258,85 @@ fn vfkit_build_launch_command_uses_virtualization_framework_device_grammar() {
 }
 
 #[test]
+fn applehv_backends_emit_one_virtiofs_device_per_user_volume() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.raw");
+    let mut config = sample_config(&image_path);
+    // The macOS default host-share set: each entry must surface as its own
+    // virtio-fs device in the launch command, not be collapsed, reordered into a
+    // single mount, or dropped. Distinct sources + distinct targets so each
+    // device string (and its digest-derived mount tag) is unique.
+    config.volumes = vec![
+        MachineVolume {
+            source: PathBuf::from("/Users"),
+            target: PathBuf::from("/Users"),
+        },
+        MachineVolume {
+            source: PathBuf::from("/private"),
+            target: PathBuf::from("/private"),
+        },
+        MachineVolume {
+            source: PathBuf::from("/var/folders"),
+            target: PathBuf::from("/var/folders"),
+        },
+    ];
+    let paths = config.roots.paths("default");
+
+    // Both applehv backends route user volumes through the shared
+    // `push_shared_applehv_devices` path, so the host-dir mount emission must be
+    // byte-identical across krunkit and vfkit — neither backend's block/net
+    // grammar may perturb the virtio-fs devices.
+    for backend in [
+        &KrunkitVmmBackend as &dyn MachineVmmBackend,
+        &VfkitVmmBackend as &dyn MachineVmmBackend,
+    ] {
+        let provider = backend.provider();
+        let command = build_sample_launch_command(backend, &image_path, &paths, &config);
+
+        for volume in &config.volumes {
+            // The guest mounts each share by the digest-derived tag of its
+            // target, so the expected device is computed from the production
+            // formatter rather than a hardcoded digest.
+            let expected = build_virtiofs_arg(&volume.source, &mount_tag(&volume.target));
+            let occurrences = command.args.iter().filter(|arg| *arg == &expected).count();
+            assert_eq!(
+                occurrences,
+                1,
+                "{provider:?} backend should emit exactly one virtio-fs device for {} (expected `{expected}`)",
+                volume.source.display(),
+            );
+        }
+
+        // `build_sample_launch_command` passes no machine-config bundle, so every
+        // virtio-fs device originates from a user volume: the count must equal the
+        // number of volumes exactly, proving none are coalesced or duplicated.
+        let virtiofs_device_count = command
+            .args
+            .iter()
+            .filter(|arg| arg.starts_with("virtio-fs,sharedDir="))
+            .count();
+        assert_eq!(
+            virtiofs_device_count,
+            config.volumes.len(),
+            "{provider:?} backend should emit one virtio-fs device per user volume",
+        );
+
+        // Each virtio-fs device must be introduced by its own `--device` flag, so
+        // the volumes contribute one `--device`/`virtio-fs,…` pair apiece.
+        let device_flagged_virtiofs = command
+            .args
+            .windows(2)
+            .filter(|pair| pair[0] == "--device" && pair[1].starts_with("virtio-fs,sharedDir="))
+            .count();
+        assert_eq!(
+            device_flagged_virtiofs,
+            config.volumes.len(),
+            "{provider:?} backend should precede every virtio-fs device with its own --device flag",
+        );
+    }
+}
+
+#[test]
 fn machine_image_reference_repository_strips_tag_and_digest() {
     assert_eq!(
         machine_image_reference_repository("docker://quay.io/podman/machine-os:6.0"),

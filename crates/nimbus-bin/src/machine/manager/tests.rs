@@ -23,7 +23,9 @@ use super::image::{
     current_machine_oci_architectures, machine_artifact_metadata_from_annotations,
     materialize_cached_disk, resolve_bootable_image_path,
 };
-use super::launch::{MachineCommandLine, MachineLaunchPlan, build_virtio_vsock_listen_arg};
+use super::launch::{
+    MachineCommandLine, MachineLaunchPlan, build_virtio_vsock_listen_arg, build_virtiofs_arg,
+};
 use super::ports::{
     load_machine_port_allocation_state, managed_machine_port_range_contains,
     with_port_allocation_lock, write_machine_port_allocation_state,
