@@ -61,8 +61,15 @@ api_socket="${runtime_root%/}/${machine_name}-api.sock"
 api_pid="${runtime_root%/}/${machine_name}-api.pid"
 identity_record="${runtime_root%/}/${machine_name}.identity"
 
-brew_prefix="$(cd "$(dirname "$0")/.." && pwd)"
-gvproxy_path="${brew_prefix}/bin/gvproxy"
+# Resolve our own staged location through the cask symlink so the bundled-first
+# gvproxy (staged into the Caskroom libexec) is what we report, mirroring the
+# real binary's canonicalized current-exe helper resolution.
+self_path="$0"
+if [[ -L "${self_path}" ]]; then
+  self_path="$(readlink "${self_path}")"
+fi
+staged_dir="$(cd "$(dirname "${self_path}")" && pwd)"
+gvproxy_path="${staged_dir}/libexec/gvproxy"
 
 if [[ "${1:-}" == "--version" ]]; then
   printf 'nimbus %s\n' "${host_version}"
@@ -547,6 +554,7 @@ guest_proof_dir="${output_dir}/guest-proof"
 for expected_file in \
   "${summary_file}" \
   "${output_dir}/cask-symlink.txt" \
+  "${output_dir}/staged-gvproxy.txt" \
   "${output_dir}/machine-status-running.txt" \
   "${output_dir}/guest-nimbus-version.txt" \
   "${guest_proof_dir}/guest-machine-api-health.txt" \
@@ -577,8 +585,13 @@ grep -Fq "${brew_prefix}/Caskroom/nimbus-dev/${host_version}/nimbus" "${output_d
   exit 1
 }
 
-grep -Fq "${brew_prefix}/bin/gvproxy" "${output_dir}/machine-status-running.txt" || {
-  echo "expected machine status to report the krunkit Homebrew dependency gvproxy path" >&2
+grep -Fq "${brew_prefix}/Caskroom/nimbus-dev/${host_version}/libexec/gvproxy" "${output_dir}/machine-status-running.txt" || {
+  echo "expected machine status to report the bundled Caskroom libexec gvproxy path" >&2
+  exit 1
+}
+
+grep -Fq "${brew_prefix}/Caskroom/nimbus-dev/${host_version}/libexec/gvproxy" "${output_dir}/staged-gvproxy.txt" || {
+  echo "expected staged gvproxy proof to show the bundled Caskroom libexec helper" >&2
   exit 1
 }
 
@@ -597,4 +610,4 @@ grep -Fq '"protocol_version":"v1alpha2"' "${guest_proof_dir}/guest-machine-api-c
   exit 1
 }
 
-echo "verified: nimbus homebrew cask proof helper captures the packaged macOS release-asset contract deterministically"
+echo "verified: nimbus homebrew cask proof helper captures the packaged macOS release-asset contract with a bundled-first gvproxy helper deterministically"

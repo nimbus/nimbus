@@ -469,7 +469,7 @@ collect-nimbus-machine-service-proof:
 
 # Collect real-host proof for the supported macOS Homebrew/cask install surface on isolated roots
 collect-nimbus-homebrew-cask-proof:
-	bash scripts/collect-nimbus-homebrew-cask-proof.sh $(if $(MACHINE),--machine "$(MACHINE)",) $(if $(HOME_DIR),--home "$(HOME_DIR)",) $(if $(RUNTIME_ROOT),--runtime-root "$(RUNTIME_ROOT)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(HOST_BINARY),--host-binary "$(HOST_BINARY)",) $(if $(GUEST_BINARY),--guest-binary "$(GUEST_BINARY)",) $(if $(BREW),--brew "$(BREW)",) $(if $(READLINK),--readlink "$(READLINK)",) $(if $(SSH_KEYGEN),--ssh-keygen "$(SSH_KEYGEN)",) $(if $(TAP),--tap "$(TAP)",) $(if $(CASK),--cask "$(CASK)",) $(if $(KEEP_INSTALLED),--keep-installed,)
+	bash scripts/collect-nimbus-homebrew-cask-proof.sh $(if $(MACHINE),--machine "$(MACHINE)",) $(if $(HOME_DIR),--home "$(HOME_DIR)",) $(if $(RUNTIME_ROOT),--runtime-root "$(RUNTIME_ROOT)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(HOST_BINARY),--host-binary "$(HOST_BINARY)",) $(if $(GUEST_BINARY),--guest-binary "$(GUEST_BINARY)",) $(if $(BREW),--brew "$(BREW)",) $(if $(BREW_PREFIX),--brew-prefix "$(BREW_PREFIX)",) $(if $(GVPROXY),--gvproxy "$(GVPROXY)",) $(if $(READLINK),--readlink "$(READLINK)",) $(if $(SSH_KEYGEN),--ssh-keygen "$(SSH_KEYGEN)",) $(if $(TAP),--tap "$(TAP)",) $(if $(CASK),--cask "$(CASK)",) $(if $(KEEP_INSTALLED),--keep-installed,)
 
 # Download SQLCipher proof bundles from a hosted GitHub Actions workflow run
 collect-sqlcipher-proof-bundles:

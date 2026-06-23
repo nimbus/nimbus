@@ -852,8 +852,8 @@ print_install_plan() {
     fi
   elif [ "$PLATFORM" = "darwin" ]; then
     say "  nimbus:      ${NIMBUS_PREFIX}/bin/nimbus"
+    say "  gvproxy:     ${NIMBUS_PREFIX}/libexec/gvproxy (bundled, pinned)"
     say "  krunkit:     \$(brew --prefix)/bin/krunkit (optional, via Homebrew libkrun/krun tap)"
-    say "  gvproxy:     \$(brew --prefix)/bin/gvproxy (optional, krunkit Homebrew dependency)"
     say "  libkrun:     \$(brew --prefix)/lib (optional, krunkit Homebrew dependency)"
   fi
 
@@ -1022,6 +1022,20 @@ download_and_install_nimbus() {
   maybe_sudo install -m 0755 "$tmpdir/nimbus" "${NIMBUS_PREFIX}/bin/nimbus"
 
   say_info "Installed nimbus to ${NIMBUS_PREFIX}/bin/nimbus"
+
+  # Install bundled machine helpers when the archive carries them. macOS ships a
+  # self-contained libexec (gvproxy, and later vfkit); Linux archives carry no
+  # libexec, so this loop is a no-op there. The runtime resolves these
+  # bundled-first via ${NIMBUS_PREFIX}/libexec/<helper>.
+  if [ -d "$tmpdir/libexec" ]; then
+    maybe_sudo install -d "${NIMBUS_PREFIX}/libexec"
+    for helper in "$tmpdir"/libexec/*; do
+      [ -e "$helper" ] || continue
+      helper_name="$(basename "$helper")"
+      maybe_sudo install -m 0755 "$helper" "${NIMBUS_PREFIX}/libexec/${helper_name}"
+      say_info "Installed bundled helper ${helper_name} to ${NIMBUS_PREFIX}/libexec/${helper_name}"
+    done
+  fi
 }
 
 download_and_install_bun_jsc_adapter_linux() {
@@ -1632,24 +1646,53 @@ verify_linux_inline() {
   inline_check_bun_jsc_adapter
 }
 
-# gvproxy is provided by the krunkit Homebrew formula (a managed dependency of
-# libkrun/krun/krunkit), so it lands on the Homebrew bin path. It is no longer
-# bundled inside the nimbus release archive.
-resolve_macos_gvproxy_path() {
+# Resolve a bundled-first macOS machine helper. Mirrors the Rust runtime
+# resolver (bundled_helper_candidates_for_executable in machine/manager/helpers.rs):
+# the Nimbus-pinned helper shipped in the archive's libexec/ is AUTHORITATIVE
+# and resolved first, then the Homebrew prefix and PATH as fallbacks.
+resolve_macos_bundled_helper() {
+  helper_name="$1"
+
+  # 1) Bundled in the install prefix's libexec (direct no-brew install path).
+  if [ -x "${NIMBUS_PREFIX}/libexec/${helper_name}" ]; then
+    printf '%s\n' "${NIMBUS_PREFIX}/libexec/${helper_name}"
+    return 0
+  fi
+
+  # 2) Bundled beside the resolved nimbus binary (e.g. Homebrew Caskroom, where
+  #    libexec sits next to the real binary the bin symlink points at).
+  nimbus_path="$(command -v nimbus 2>/dev/null || true)"
+  if [ -n "$nimbus_path" ]; then
+    real_path="$(readlink "$nimbus_path" 2>/dev/null || echo "$nimbus_path")"
+    if [ "${real_path#/}" = "$real_path" ]; then
+      real_path="$(cd "$(dirname "$nimbus_path")" && cd "$(dirname "$real_path")" && pwd)/$(basename "$real_path")"
+    fi
+    real_dir="$(dirname "$real_path")"
+    if [ -x "${real_dir}/libexec/${helper_name}" ]; then
+      printf '%s\n' "${real_dir}/libexec/${helper_name}"
+      return 0
+    fi
+  fi
+
+  # 3) Homebrew prefix / standard bin fallbacks, then PATH.
   brew_prefix="$(brew --prefix 2>/dev/null || echo "/opt/homebrew")"
-  for candidate in "${brew_prefix}/bin/gvproxy" "/usr/local/bin/gvproxy"; do
+  for candidate in "${brew_prefix}/bin/${helper_name}" "/usr/local/bin/${helper_name}"; do
     if [ -x "$candidate" ]; then
       printf '%s\n' "$candidate"
       return 0
     fi
   done
 
-  if gvproxy_path="$(command -v gvproxy 2>/dev/null)"; then
-    printf '%s\n' "$gvproxy_path"
+  if helper_path="$(command -v "${helper_name}" 2>/dev/null)"; then
+    printf '%s\n' "$helper_path"
     return 0
   fi
 
   return 1
+}
+
+resolve_macos_gvproxy_path() {
+  resolve_macos_bundled_helper "gvproxy"
 }
 
 verify_macos_inline() {
@@ -1660,7 +1703,7 @@ verify_macos_inline() {
   if gvproxy_path="$(resolve_macos_gvproxy_path)"; then
     inline_print_line "gvproxy" "present path=$gvproxy_path"
   else
-    inline_print_line "gvproxy" "missing (run 'brew install libkrun/krun/krunkit' for 'nimbus machine')"
+    inline_print_line "gvproxy" "missing (expected bundled at ${NIMBUS_PREFIX}/libexec/gvproxy)"
     inline_mark_warning
   fi
 }
