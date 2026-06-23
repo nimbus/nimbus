@@ -3,23 +3,25 @@ use std::path::{Path, PathBuf};
 use nimbus::Error;
 
 use super::{
-    DEFAULT_GVPROXY_BINARY, DEFAULT_KRUNKIT_BINARY, GVPROXY_ENV, HELPER_BINARY_DIR_ENV,
-    KRUNKIT_ENV, MachineHelperBinaryPaths, PODMAN_DARWIN_HELPER_DIRECTORIES,
+    DEFAULT_GVPROXY_BINARY, GVPROXY_ENV, HELPER_BINARY_DIR_ENV, PODMAN_DARWIN_HELPER_DIRECTORIES,
 };
+// The VMM-binary env override is exercised only by the test-only helper-env
+// guard now that VMM resolution lives in `super::vmm`.
+#[cfg(test)]
+use super::KRUNKIT_ENV;
 
-pub(super) fn resolve_machine_helper_binaries() -> Result<MachineHelperBinaryPaths, Error> {
-    let bundled_gvproxy = bundled_helper_candidates(DEFAULT_GVPROXY_BINARY);
-    let known_krunkit = known_helper_candidates(DEFAULT_KRUNKIT_BINARY);
-    let known_gvproxy = known_helper_candidates(DEFAULT_GVPROXY_BINARY);
-    Ok(MachineHelperBinaryPaths {
-        krunkit: resolve_helper_binary(KRUNKIT_ENV, DEFAULT_KRUNKIT_BINARY, &[], &known_krunkit)?,
-        gvproxy: resolve_helper_binary(
-            GVPROXY_ENV,
-            DEFAULT_GVPROXY_BINARY,
-            &bundled_gvproxy,
-            &known_gvproxy,
-        )?,
-    })
+/// Resolve the gvproxy user-mode network helper. gvproxy is bundled in the
+/// Nimbus archive and pinned, so resolution prefers the bundled `libexec` copy
+/// (and the `NIMBUS_MACHINE_GVPROXY` override) before falling back to the known
+/// Homebrew/Podman helper directories. VMM binary resolution is owned by each
+/// provider's [`MachineVmmBackend`](super::vmm::MachineVmmBackend) instead.
+pub(super) fn resolve_gvproxy_binary() -> Result<PathBuf, Error> {
+    resolve_helper_binary(
+        GVPROXY_ENV,
+        DEFAULT_GVPROXY_BINARY,
+        &bundled_helper_candidates(DEFAULT_GVPROXY_BINARY),
+        &known_helper_candidates(DEFAULT_GVPROXY_BINARY),
+    )
 }
 
 pub(super) fn resolve_helper_binary(

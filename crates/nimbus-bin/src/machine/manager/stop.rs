@@ -74,7 +74,9 @@ fn stop_provider_machine(
     timeout: Duration,
 ) -> Result<(), Error> {
     match config.provider {
-        MachineProvider::Krunkit => stop_krunkit_machine(paths, timeout),
+        // vfkit shares krunkit's host-side teardown (same pidfiles, sockets, and
+        // restful Stop/HardStop endpoint) until its dedicated runtime paths land.
+        MachineProvider::Krunkit | MachineProvider::Vfkit => stop_krunkit_machine(paths, timeout),
         MachineProvider::Wsl2 => Err(Error::InvalidInput(
             "the WSL2 machine provider is not available on this host yet".to_owned(),
         )),

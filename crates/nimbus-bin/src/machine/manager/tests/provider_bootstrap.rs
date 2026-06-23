@@ -13,6 +13,25 @@ fn krunkit_provider_capabilities_match_podman_aligned_contract() {
         MachineBootstrapMode::Ignition
     );
     assert_eq!(MachineProvider::Krunkit.oci_artifact_disk_type(), "applehv");
+
+    // vfkit is an applehv sibling of krunkit: it must report the identical
+    // podman-aligned capability contract so the shared launch/bootstrap path
+    // treats both managed applehv guests the same way.
+    assert!(!MachineProvider::Vfkit.uses_provider_networking());
+    assert!(MachineProvider::Vfkit.requires_exclusive_active());
+    assert_eq!(
+        MachineProvider::Vfkit.image_format(),
+        MachineImageFormat::Raw
+    );
+    assert_eq!(
+        MachineProvider::Vfkit.bootstrap_mode(),
+        MachineBootstrapMode::Ignition
+    );
+    assert_eq!(MachineProvider::Vfkit.oci_artifact_disk_type(), "applehv");
+    assert!(MachineProvider::Vfkit.uses_managed_applehv_guest());
+    assert!(MachineProvider::Krunkit.uses_managed_applehv_guest());
+    assert!(!MachineProvider::Wsl2.uses_managed_applehv_guest());
+
     assert!(MachineProvider::Wsl2.uses_provider_networking());
     assert!(!MachineProvider::Wsl2.requires_exclusive_active());
     assert_eq!(
@@ -24,6 +43,27 @@ fn krunkit_provider_capabilities_match_podman_aligned_contract() {
         MachineBootstrapMode::ShellScript
     );
     assert_eq!(MachineProvider::Wsl2.oci_artifact_disk_type(), "wsl");
+}
+
+#[test]
+fn krunkit_backend_pairs_gvproxy_unixgram_listen_mode() {
+    let backend = KrunkitVmmBackend;
+    assert_eq!(backend.provider(), MachineProvider::Krunkit);
+    // krunkit drives host networking through gvproxy.
+    assert!(backend.requires_gvproxy());
+
+    // The host side listens on a unixgram socket and the krunkit
+    // `virtio-net,type=unixgram` device dials it. gvproxy's `-listen-vfkit`
+    // mode speaks exactly that wire format, so the listen arguments must pair
+    // the flag with a `unixgram://` URL pointing at the shared socket.
+    let socket = PathBuf::from("/tmp/nimbus-machine/gvproxy.sock");
+    assert_eq!(
+        backend.gvproxy_listen_args(&socket),
+        vec![
+            "-listen-vfkit".to_owned(),
+            format!("unixgram://{}", socket.display()),
+        ]
+    );
 }
 
 #[test]

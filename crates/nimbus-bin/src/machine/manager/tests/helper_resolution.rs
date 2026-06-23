@@ -6,11 +6,16 @@ fn helper_resolution_honors_environment_overrides() {
     let krunkit_path = temp_dir.path().join("krunkit");
     let gvproxy_path = temp_dir.path().join("gvproxy");
     let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
-    let resolved =
-        resolve_machine_helper_binaries().expect("helper binaries should resolve via env");
 
-    assert_eq!(resolved.krunkit, krunkit_path);
-    assert_eq!(resolved.gvproxy, gvproxy_path);
+    // VMM binary resolution is owned by the per-provider backend; gvproxy
+    // resolution is the shared helper path. Both honor their env overrides.
+    let resolved_vmm = KrunkitVmmBackend
+        .resolve_vmm_binary()
+        .expect("krunkit binary should resolve via env");
+    let resolved_gvproxy = resolve_gvproxy_binary().expect("gvproxy should resolve via env");
+
+    assert_eq!(resolved_vmm, krunkit_path);
+    assert_eq!(resolved_gvproxy, gvproxy_path);
 }
 
 #[test]

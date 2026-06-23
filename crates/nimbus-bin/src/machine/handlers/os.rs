@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::machine::record::MachineProvider;
+
 pub(in crate::machine) fn run_machine_os(
     command: MachineOsCommand,
     roots: &MachineRootLayout,
@@ -532,22 +534,26 @@ pub(in crate::machine) fn plan_machine_os_upgrade(
 
 fn default_machine_os_upgrade_stream(config: &MachineConfigRecord) -> MachineOsUpgradeStream {
     match config.provider {
-        MachineProvider::Krunkit if cfg!(target_os = "macos") => MachineOsUpgradeStream {
-            repository: DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY,
-            additional_supported_repositories: &[],
-            target_image: default_machine_image_for_provider(config.provider),
-            target_version: machine_image_reference_version_label(
-                &default_machine_image_for_provider(config.provider),
-            ),
-            follows_host_release: false,
-        },
-        MachineProvider::Krunkit | MachineProvider::Wsl2 => MachineOsUpgradeStream {
-            repository: DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY,
-            additional_supported_repositories: &[],
-            target_image: default_machine_image_for_provider(config.provider),
-            target_version: super::super::current_machine_release_tag(),
-            follows_host_release: true,
-        },
+        provider if provider.uses_managed_applehv_guest() && cfg!(target_os = "macos") => {
+            MachineOsUpgradeStream {
+                repository: DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY,
+                additional_supported_repositories: &[],
+                target_image: default_machine_image_for_provider(config.provider),
+                target_version: machine_image_reference_version_label(
+                    &default_machine_image_for_provider(config.provider),
+                ),
+                follows_host_release: false,
+            }
+        }
+        MachineProvider::Krunkit | MachineProvider::Vfkit | MachineProvider::Wsl2 => {
+            MachineOsUpgradeStream {
+                repository: DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY,
+                additional_supported_repositories: &[],
+                target_image: default_machine_image_for_provider(config.provider),
+                target_version: super::super::current_machine_release_tag(),
+                follows_host_release: true,
+            }
+        }
     }
 }
 

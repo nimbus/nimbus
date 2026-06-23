@@ -30,7 +30,7 @@ use super::protocol::{
 };
 use super::record::{
     MachineConfigRecord, MachineGuestProvisioning, MachineImageSource, MachineLifecycle,
-    MachinePaths, MachineProvider, MachineRootLayout, MachineStateRecord, resolve_runtime_root,
+    MachinePaths, MachineRootLayout, MachineStateRecord, resolve_runtime_root,
 };
 use super::render::{
     MachineCommandResult, MachineOsCommandResult, build_machine_info_view,
@@ -277,7 +277,9 @@ fn initialize_machine_record(
     let config = MachineConfigRecord {
         version: super::CURRENT_MACHINE_CONFIG_VERSION,
         name: machine_name,
-        provider: MachineProvider::Krunkit,
+        // No CLI/config provider flag is wired yet, so selection comes from the
+        // environment (`NIMBUS_MACHINE_PROVIDER`) or the static krunkit default.
+        provider: super::resolve_machine_provider(None)?,
         guest: super::record::MachineGuestConfig {
             image_source,
             provisioning,

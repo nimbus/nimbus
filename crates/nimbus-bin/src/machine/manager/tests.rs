@@ -15,8 +15,8 @@ use tempfile::TempDir;
 
 use super::guest::{ensure_guest_nimbus_socket_shell_script, guest_nimbus_archive_name};
 use super::helpers::{
-    bundled_helper_candidates_for_executable, known_helper_candidates, resolve_helper_binary,
-    resolve_machine_helper_binaries, write_helper_stub,
+    bundled_helper_candidates_for_executable, known_helper_candidates, resolve_gvproxy_binary,
+    resolve_helper_binary, write_helper_stub,
 };
 use super::image::{
     attestation_repositories_for_reference, build_digest_reference,
@@ -36,6 +36,7 @@ use super::stop::{
     annotate_machine_start_error, cleanup_process, force_stop_pid, handle_start_machine_error,
     request_krunkit_state_change, send_signal, wait_for_pid_exit,
 };
+use super::vmm::{KrunkitVmmBackend, MachineVmmBackend};
 use super::*;
 use crate::machine::bootstrap::GUEST_NIMBUS_SOCKET;
 use crate::machine::{

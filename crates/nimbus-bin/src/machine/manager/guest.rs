@@ -208,12 +208,12 @@ pub(super) fn validate_machine_bootstrap_contract(
 }
 
 pub(super) fn requires_host_guest_nimbus_sync(config: &MachineConfigRecord) -> bool {
-    config.provider == super::super::MachineProvider::Krunkit
+    config.provider.uses_managed_applehv_guest()
         && super::super::uses_host_managed_machine_image_contract(config)
 }
 
 pub(super) fn requires_bootc_machine_config(config: &MachineConfigRecord) -> bool {
-    config.provider == super::super::MachineProvider::Krunkit
+    config.provider.uses_managed_applehv_guest()
         && machine_bootstrap_mode(config) == MachineBootstrapMode::BootcMachineConfig
 }
 
@@ -226,9 +226,7 @@ pub(super) fn ensure_guest_machine_api_ready(
     api_forward_child: &mut Option<Child>,
     startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
-    if config.provider != super::super::MachineProvider::Krunkit
-        || config.guest.ssh_identity_path.is_none()
-    {
+    if !config.provider.uses_managed_applehv_guest() || config.guest.ssh_identity_path.is_none() {
         return Ok(());
     }
 

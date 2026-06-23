@@ -19,6 +19,7 @@ mod ports;
 mod readiness;
 mod ssh;
 mod stop;
+mod vmm;
 
 #[cfg(test)]
 pub(crate) use self::helpers::MachineHelperEnvGuard;
@@ -226,13 +227,9 @@ pub(super) fn start_machine(
     let mut gvproxy_child = None;
     let mut api_forward_child = None;
     emit_machine_progress("Starting machine networking");
-    if let Err(error) = pre_start_networking(
-        paths,
-        config,
-        &launch_plan,
-        &mut gvproxy_child,
-        &startup_signals,
-    ) {
+    if let Err(error) =
+        pre_start_networking(paths, &launch_plan, &mut gvproxy_child, &startup_signals)
+    {
         return handle_start_machine_error(
             paths,
             config,
@@ -246,7 +243,7 @@ pub(super) fn start_machine(
 
     let mut krunkit_child = None;
     emit_machine_progress("Booting virtual machine");
-    if let Err(error) = start_vm(config, &launch_plan, &mut krunkit_child) {
+    if let Err(error) = start_vm(&launch_plan, &mut krunkit_child) {
         return handle_start_machine_error(
             paths,
             config,
