@@ -1148,7 +1148,16 @@ async fn wait_for_runtime_metrics_case_impl(
 ) -> nimbus_runtime::RuntimeMetricsSnapshot {
     wait_for_value(
         &description,
-        Duration::from_secs(3),
+        // Synchronization budget for a runtime-metrics condition (e.g. "the
+        // blocking query has dispatched onto a worker"), NOT an assertion. The
+        // first dispatch pays a cold-start cost -- worker-thread spawn + per-job
+        // tokio runtime build + first V8 isolate warm-up -- that lands around
+        // ~3s on a resource-contended CI host, so the previous 3s budget flaked
+        // (timeouts at ~3.0-3.02s). `wait_for_value` only ever awaits a positive
+        // condition and panics on timeout, so a wider budget buys slack on a
+        // loaded host, costs nothing on a healthy one, and never weakens the
+        // post-conditions these tests assert once the condition is met.
+        Duration::from_secs(20),
         Duration::from_millis(25),
         || async { registry.runtime_metrics_snapshot() },
         predicate,
