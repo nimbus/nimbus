@@ -373,7 +373,11 @@ echo "Checking macOS bundled-helper resolver parity..."
 # install time and verification time. It reduces each resolver body to a
 # canonical stage signature that ignores POSIX-vs-bash surface syntax
 # (`[ -x ]` vs `[[ -x ]]`, `${NIMBUS_PREFIX}` vs `${install_prefix}`) and
-# compares only the resolution-order semantics both copies must share.
+# compares only the resolution-order semantics both copies must share. The S3
+# stage additionally asserts the *intra-stage* ordering: the Homebrew-prefix
+# candidate (`${brew_prefix}/bin/${helper_name}`) must be probed before the
+# `/usr/local/bin/${helper_name}` fallback on that shared `for candidate` line,
+# so a reordering that silently changed which install wins also trips the guard.
 resolution_signature() {
   awk -v fn="$2" '
     $0 == (fn "() {") { inbody = 1; next }
@@ -382,13 +386,17 @@ resolution_signature() {
     {
       if (index($0, "-x ") && index($0, "/libexec/${helper_name}") && !index($0, "real_dir") && !s1) { printf "S1:prefix-libexec "; s1 = 1 }
       if (index($0, "-x ") && index($0, "real_dir}/libexec/${helper_name}") && !s2) { printf "S2:beside-binary "; s2 = 1 }
-      if (index($0, "/usr/local/bin/${helper_name}") && !s3) { printf "S3:brew-usrlocal "; s3 = 1 }
+      if (!s3 && index($0, "/usr/local/bin/${helper_name}")) {
+        brew_idx = index($0, "${brew_prefix}/bin/${helper_name}")
+        usrlocal_idx = index($0, "/usr/local/bin/${helper_name}")
+        if (brew_idx > 0 && brew_idx < usrlocal_idx) { printf "S3:brew-then-usrlocal "; s3 = 1 }
+      }
       if (index($0, "command -v \"${helper_name}\"") && !s4) { printf "S4:path "; s4 = 1 }
     }
   ' "$1"
 }
 
-expected_resolver_signature="S1:prefix-libexec S2:beside-binary S3:brew-usrlocal S4:path "
+expected_resolver_signature="S1:prefix-libexec S2:beside-binary S3:brew-then-usrlocal S4:path "
 install_resolver_signature="$(resolution_signature "${repo_root}/scripts/install.sh" resolve_macos_bundled_helper)"
 verify_resolver_signature="$(resolution_signature "${repo_root}/scripts/verify-install.sh" resolve_macos_bundled_helper_path)"
 

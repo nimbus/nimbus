@@ -1083,6 +1083,18 @@ download_and_install_nimbus() {
   # none, so this is a no-op there. The runtime resolves these bundled-first via
   # ${NIMBUS_PREFIX}/libexec/<helper>.
   install_bundled_helpers "$tmpdir"
+
+  # Hard post-condition (macOS): every helper the install promises to bundle must
+  # now be present and executable. install_bundled_helpers only copies what the
+  # archive's libexec actually contains, and the helpers-only reconcile path
+  # above returns success even when it copied nothing, so a truncated or
+  # malformed archive could otherwise leave the install "successful" with
+  # vfkit/gvproxy missing — the machine path would then fail opaquely at first
+  # boot. Fail loudly here instead. Vacuously true on Linux (no bundled helpers),
+  # and past the dry-run guard so it only fires on a real install.
+  if ! bundled_helpers_present; then
+    err "bundled machine helpers are missing from ${NIMBUS_PREFIX}/libexec after install; the downloaded archive appears incomplete — re-run the installer, and if it persists report it at https://github.com/nimbus/nimbus/issues"
+  fi
 }
 
 download_and_install_bun_jsc_adapter_linux() {
@@ -1353,8 +1365,52 @@ install_macos_microvm_deps() {
   return 0
 }
 
+# Fail fast when the install prefix is not writable and we have no way to gain
+# privilege, instead of letting the first `maybe_sudo install` abort mid-run
+# with a bare "need sudo to install to system paths" after the user has already
+# waited on a download. What governs success is the *writability* of the prefix,
+# not whether we are root: a user-owned --prefix (e.g. $HOME/.local) needs no
+# sudo at all, while the default /usr/local typically does. The leaf prefix
+# directories may not exist yet, so probe the deepest existing ancestor.
+preflight_prefix_access() {
+  [ -n "$DRY_RUN" ] && return 0
+
+  probe="$NIMBUS_PREFIX"
+  while [ -n "$probe" ] && [ ! -e "$probe" ]; do
+    parent="$(dirname "$probe")"
+    # Stop if dirname stops making progress (reached "/" or ".").
+    [ "$parent" = "$probe" ] && break
+    probe="$parent"
+  done
+  [ -n "$probe" ] || probe="/"
+
+  # A writable prefix needs no elevation, whatever the uid.
+  if [ -w "$probe" ]; then
+    return 0
+  fi
+
+  # Already root: the install writes succeed without sudo.
+  if [ "$(id -u)" -eq 0 ]; then
+    return 0
+  fi
+
+  # Non-root: sudo can still carry the install, but only if it will not block on
+  # a password we cannot answer. An interactive terminal can satisfy a prompt;
+  # otherwise require passwordless sudo (`sudo -n`) so a piped `curl | sh` does
+  # not hang or fail deep inside the install. This mirrors maybe_sudo's runtime
+  # choice, just surfaced up front with an actionable message.
+  if check_cmd sudo; then
+    if is_interactive || sudo -n true 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  err "cannot write to ${NIMBUS_PREFIX} (needed for ${NIMBUS_PREFIX}/bin and ${NIMBUS_PREFIX}/libexec) and cannot elevate. Re-run with sudo (e.g. 'curl ... | sudo sh'), run as root, or set --prefix to a writable location such as \$HOME/.local."
+}
+
 install_macos() {
   check_macos_version
+  preflight_prefix_access
   resolve_nimbus_version
   download_and_install_nimbus
   install_macos_microvm_deps
