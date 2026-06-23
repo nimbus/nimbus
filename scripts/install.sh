@@ -853,7 +853,8 @@ print_install_plan() {
   elif [ "$PLATFORM" = "darwin" ]; then
     say "  nimbus:      ${NIMBUS_PREFIX}/bin/nimbus"
     say "  gvproxy:     ${NIMBUS_PREFIX}/libexec/gvproxy (bundled, pinned)"
-    say "  krunkit:     \$(brew --prefix)/bin/krunkit (optional, via Homebrew libkrun/krun tap)"
+    say "  vfkit:       ${NIMBUS_PREFIX}/libexec/vfkit (bundled, pinned; opt-in NIMBUS_MACHINE_PROVIDER=vfkit)"
+    say "  krunkit:     \$(brew --prefix)/bin/krunkit (default backend, via Homebrew libkrun/krun tap)"
     say "  libkrun:     \$(brew --prefix)/lib (optional, krunkit Homebrew dependency)"
   fi
 
@@ -866,6 +867,9 @@ print_install_plan() {
       say "  Homebrew not found — 'nimbus' runs without it; install Homebrew (https://brew.sh)"
       say "  then 'brew install libkrun/krun/krunkit' to enable the 'nimbus machine' dev flow"
     fi
+    say "  vfkit backend (opt-in): NIMBUS_MACHINE_PROVIDER=vfkit uses the bundled"
+    say "  ${NIMBUS_PREFIX}/libexec/vfkit; 'brew install vfkit' is only needed if you"
+    say "  prefer the Homebrew copy. The default backend stays krunkit."
   fi
 
   if [ "$PLATFORM" = "linux" ] && [ -z "$SKIP_DEPS" ]; then
@@ -1695,6 +1699,10 @@ resolve_macos_gvproxy_path() {
   resolve_macos_bundled_helper "gvproxy"
 }
 
+resolve_macos_vfkit_path() {
+  resolve_macos_bundled_helper "vfkit"
+}
+
 verify_macos_inline() {
   inline_check_command "nimbus" "nimbus" required
   inline_check_command "krunkit" "krunkit" recommended
@@ -1705,6 +1713,14 @@ verify_macos_inline() {
   else
     inline_print_line "gvproxy" "missing (expected bundled at ${NIMBUS_PREFIX}/libexec/gvproxy)"
     inline_mark_warning
+  fi
+
+  # vfkit is the opt-in backend (NIMBUS_MACHINE_PROVIDER=vfkit); the default
+  # stays krunkit, so a missing vfkit is informational rather than a warning.
+  if vfkit_path="$(resolve_macos_vfkit_path)"; then
+    inline_print_line "vfkit" "present path=$vfkit_path (opt-in: NIMBUS_MACHINE_PROVIDER=vfkit)"
+  else
+    inline_print_line "vfkit" "absent (opt-in backend; bundled at ${NIMBUS_PREFIX}/libexec/vfkit when shipped)"
   fi
 }
 

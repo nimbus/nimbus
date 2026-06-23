@@ -356,6 +356,16 @@ jobs:
             -o dist/libexec/gvproxy \
             "https://github.com/containers/gvisor-tap-vsock/releases/download/${GVPROXY_VERSION}/gvproxy-darwin"
           chmod 0755 dist/libexec/gvproxy
+          # vfkit is the opt-in macOS VMM backend (NIMBUS_MACHINE_PROVIDER=vfkit).
+          # The default backend stays krunkit; vfkit is bundled so the seam works
+          # without a brew install. crc-org publishes a codesigned + notarized
+          # `vfkit` asset that already carries com.apple.security.virtualization,
+          # so the signed binary travels intact through packaging (no Nimbus
+          # re-sign step strips it). The unsigned asset is deliberately not used.
+          curl --fail -sSL --retry 5 \
+            -o dist/libexec/vfkit \
+            "https://github.com/crc-org/vfkit/releases/download/${VFKIT_VERSION}/vfkit"
+          chmod 0755 dist/libexec/vfkit
 
       - name: Package archive (unix)
         if: matrix.archive == 'tar.gz'
@@ -364,8 +374,8 @@ jobs:
           cp target/release/nimbus dist/nimbus
           cp README.md LICENSE dist/
           if [[ "${{ matrix.os }}" == "darwin" ]]; then
-            # darwin carries the bundled libexec machine helpers (gvproxy, and
-            # later vfkit) so the no-brew archive is self-contained.
+            # darwin carries the bundled libexec machine helpers (gvproxy and
+            # vfkit) so the no-brew archive is self-contained.
             tar czf nimbus_${{ matrix.os }}_${{ matrix.arch }}.tar.gz \
               -C dist nimbus libexec README.md LICENSE
           else
@@ -1189,6 +1199,10 @@ jobs:
                 brew install libkrun/krun/krunkit
 
               The 'nimbus' server itself runs fine without this chain.
+
+              A pinned vfkit (Apple Virtualization.framework) ships bundled in
+              this cask as an opt-in machine backend; enable it with
+              NIMBUS_MACHINE_PROVIDER=vfkit. The default backend stays krunkit.
 
               Documentation: https://github.com/nimbus/nimbus
             EOS

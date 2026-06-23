@@ -32,6 +32,7 @@ printf 'readme\n' > "${good_artifacts}/darwin/README.md"
 printf 'license\n' > "${good_artifacts}/darwin/LICENSE"
 mkdir -p "${good_artifacts}/darwin/libexec"
 printf 'stub gvproxy\n' > "${good_artifacts}/darwin/libexec/gvproxy"
+printf 'stub vfkit\n' > "${good_artifacts}/darwin/libexec/vfkit"
 cp "${good_artifacts}/darwin/README.md" "${good_artifacts}/linux-x86_64/README.md"
 cp "${good_artifacts}/darwin/LICENSE" "${good_artifacts}/linux-x86_64/LICENSE"
 cp "${good_artifacts}/darwin/README.md" "${good_artifacts}/linux-arm64/README.md"
@@ -42,7 +43,8 @@ cp "${good_artifacts}/darwin/LICENSE" "${good_artifacts}/windows/LICENSE"
 chmod 0755 "${good_artifacts}/darwin/nimbus" \
   "${good_artifacts}/linux-x86_64/nimbus" \
   "${good_artifacts}/linux-arm64/nimbus" \
-  "${good_artifacts}/darwin/libexec/gvproxy"
+  "${good_artifacts}/darwin/libexec/gvproxy" \
+  "${good_artifacts}/darwin/libexec/vfkit"
 
 tar -czf "${good_artifacts}/nimbus_darwin_arm64.tar.gz" \
   -C "${good_artifacts}/darwin" nimbus libexec README.md LICENSE
@@ -93,4 +95,21 @@ fi
 grep -F "expected path missing: " "${output_dir}/bad-license.txt" >/dev/null
 grep -F "LICENSE" "${output_dir}/bad-license.txt" >/dev/null
 
-printf 'verified: release archive layout helper accepts the bundled macOS gvproxy layout and rejects a missing gvproxy helper or missing LICENSE payloads\n'
+bad_vfkit_artifacts="${output_dir}/bad-vfkit"
+cp -R "${good_artifacts}" "${bad_vfkit_artifacts}"
+rm -f "${bad_vfkit_artifacts}/nimbus_darwin_arm64.tar.gz"
+rm -f "${bad_vfkit_artifacts}/darwin/libexec/vfkit"
+tar -czf "${bad_vfkit_artifacts}/nimbus_darwin_arm64.tar.gz" \
+  -C "${bad_vfkit_artifacts}/darwin" nimbus libexec README.md LICENSE
+
+if bash "${repo_root}/scripts/verify-release-archive-layout.sh" \
+  --artifacts-dir "${bad_vfkit_artifacts}" \
+  > "${output_dir}/bad-vfkit.txt" 2>&1; then
+  echo "expected release archive layout verification to fail when macOS omits the bundled vfkit helper" >&2
+  exit 1
+fi
+
+grep -F "expected path missing: " "${output_dir}/bad-vfkit.txt" >/dev/null
+grep -F "libexec/vfkit" "${output_dir}/bad-vfkit.txt" >/dev/null
+
+printf 'verified: release archive layout helper accepts the bundled macOS gvproxy + vfkit layout and rejects a missing gvproxy helper, missing vfkit helper, or missing LICENSE payloads\n'

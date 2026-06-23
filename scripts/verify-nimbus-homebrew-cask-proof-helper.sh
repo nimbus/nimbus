@@ -555,6 +555,7 @@ for expected_file in \
   "${summary_file}" \
   "${output_dir}/cask-symlink.txt" \
   "${output_dir}/staged-gvproxy.txt" \
+  "${output_dir}/staged-vfkit.txt" \
   "${output_dir}/machine-status-running.txt" \
   "${output_dir}/guest-nimbus-version.txt" \
   "${guest_proof_dir}/guest-machine-api-health.txt" \
@@ -595,6 +596,11 @@ grep -Fq "${brew_prefix}/Caskroom/nimbus-dev/${host_version}/libexec/gvproxy" "$
   exit 1
 }
 
+grep -Fq "${brew_prefix}/Caskroom/nimbus-dev/${host_version}/libexec/vfkit" "${output_dir}/staged-vfkit.txt" || {
+  echo "expected staged vfkit proof to show the bundled Caskroom libexec helper" >&2
+  exit 1
+}
+
 grep -Fq "nimbus ${host_version}" "${output_dir}/guest-nimbus-version.txt" || {
   echo "expected guest version proof to match host version" >&2
   exit 1
@@ -610,4 +616,4 @@ grep -Fq '"protocol_version":"v1alpha2"' "${guest_proof_dir}/guest-machine-api-c
   exit 1
 }
 
-echo "verified: nimbus homebrew cask proof helper captures the packaged macOS release-asset contract with a bundled-first gvproxy helper deterministically"
+echo "verified: nimbus homebrew cask proof helper captures the packaged macOS release-asset contract with bundled-first gvproxy and vfkit helpers deterministically"
