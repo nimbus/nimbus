@@ -99,6 +99,12 @@ case "${subcommand}" in
     ;;
   start)
     mkdir -p "$(dirname "${machine_log}")"
+    # Mirror the real binary, which announces the nimbus version embedded in the
+    # pinned machine-os image. The proof script parses this line to learn which
+    # guest version to expect when no --guest-binary override is supplied. The
+    # stub models the guest as reporting the host version, so the embedded
+    # version it announces here must match.
+    printf "info: machine image 'docker://ghcr.io/nimbus/machine-os:v9.9.9' embeds nimbus v%s\n" "${host_version}"
     cat > "${machine_log}" <<OUT
 booting ${machine_name}
 guest nimbus ${host_version}

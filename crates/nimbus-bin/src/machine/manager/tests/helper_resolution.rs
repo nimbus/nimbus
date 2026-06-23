@@ -80,16 +80,39 @@ fn known_helper_candidates_mirror_podman_darwin_defaults() {
     assert_eq!(
         known_helper_candidates("gvproxy"),
         vec![
-            PathBuf::from("/usr/local/opt/podman/libexec/podman/gvproxy"),
-            PathBuf::from("/opt/homebrew/opt/podman/libexec/podman/gvproxy"),
             PathBuf::from("/opt/homebrew/bin/gvproxy"),
             PathBuf::from("/usr/local/bin/gvproxy"),
+            PathBuf::from("/usr/local/opt/podman/libexec/podman/gvproxy"),
+            PathBuf::from("/opt/homebrew/opt/podman/libexec/podman/gvproxy"),
             PathBuf::from("/opt/homebrew/libexec/podman/gvproxy"),
             PathBuf::from("/usr/local/libexec/podman/gvproxy"),
             PathBuf::from("/usr/local/lib/podman/gvproxy"),
             PathBuf::from("/usr/libexec/podman/gvproxy"),
             PathBuf::from("/usr/lib/podman/gvproxy"),
         ]
+    );
+}
+
+#[test]
+fn homebrew_managed_helpers_outrank_podman_libexec() {
+    // The Nimbus cask declares its `krunkit` (and therefore `gvproxy`)
+    // dependency into the Homebrew prefix `bin`. That declared, version-pinned
+    // helper must win over a `gvproxy` an unrelated `podman` install happens to
+    // ship in its `libexec`, otherwise the cask's managed dependency is silently
+    // shadowed and the resolved helper depends on whatever else is installed.
+    let candidates = known_helper_candidates("gvproxy");
+    let homebrew_bin = candidates
+        .iter()
+        .position(|path| path == &PathBuf::from("/opt/homebrew/bin/gvproxy"))
+        .expect("Homebrew prefix bin must be a known candidate");
+    let podman_libexec = candidates
+        .iter()
+        .position(|path| path == &PathBuf::from("/opt/homebrew/opt/podman/libexec/podman/gvproxy"))
+        .expect("Podman libexec must remain a fallback candidate");
+
+    assert!(
+        homebrew_bin < podman_libexec,
+        "Homebrew-managed gvproxy ({homebrew_bin}) must outrank Podman libexec ({podman_libexec})"
     );
 }
 

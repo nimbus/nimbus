@@ -261,7 +261,16 @@ if [[ -z "${home_dir}" ]]; then
   home_dir="${output_dir}/home"
 fi
 if [[ -z "${runtime_root}" ]]; then
-  runtime_root="${output_dir}/runtime"
+  # gvproxy binds a unixgram control socket at
+  # "${runtime_root}/default-gvproxy.sock". macOS caps sockaddr_un.sun_path at
+  # 104 bytes, and the default macOS $TMPDIR ("/var/folders/.../T/...") is long
+  # enough that "${output_dir}/runtime/default-gvproxy.sock" overflows it, so
+  # `machine start` fails with gvproxy exiting before its socket appears. Anchor
+  # the runtime root at a short, stable base so the socket path always fits,
+  # independent of where the (text-only) output artifacts live.
+  runtime_tmp_base="/private/tmp"
+  [[ -d "${runtime_tmp_base}" ]] || runtime_tmp_base="/tmp"
+  runtime_root="$(mktemp -d "${runtime_tmp_base}/nimbus-homebrew-runtime.XXXXXX")"
 fi
 
 mkdir -p "${home_dir}" "${runtime_root}"
@@ -667,10 +676,31 @@ assert_file_contains \
   "${output_dir}/host-nimbus-version.txt" \
   "^nimbus ${host_version}"
 
+# The guest's reported version depends on which Linux nimbus the VM actually
+# runs, not on the host build:
+#
+#   * With `--guest-binary`, `machine start` syncs that host-matched Linux guest
+#     into the VM, so the guest must report the same version as the host.
+#   * Without it, the VM runs the nimbus baked into the pinned machine-os image.
+#     `machine start` declares that embedded version ("embeds nimbus vX.Y.Z");
+#     the guest must report exactly it. Asserting the host version here would be
+#     wrong whenever the machine-os pin trails the host release.
+if [[ -n "${guest_binary}" ]]; then
+  expected_guest_version="${host_version}"
+else
+  expected_guest_version="$(sed -n 's/.*embeds nimbus v\([0-9][0-9A-Za-z.+-]*\).*/\1/p' \
+    "${output_dir}/machine-start.txt" | head -n1)"
+  if [[ -z "${expected_guest_version}" ]]; then
+    echo "failed to determine machine-os embedded nimbus version from ${output_dir}/machine-start.txt" >&2
+    exit 64
+  fi
+fi
+print_line "guest.version.expected" "${expected_guest_version}"
+
 assert_file_contains \
   "assert.guest_version" \
   "${output_dir}/guest-nimbus-version.txt" \
-  "^nimbus ${host_version}"
+  "^nimbus ${expected_guest_version}"
 
 assert_file_contains \
   "assert.guest_proof_health" \

@@ -72,11 +72,19 @@ const OCI_ANNOTATION_MACHINE_ATTESTATION_REPOSITORY: &str =
 const OCI_ANNOTATION_MACHINE_NIMBUS_VERSION: &str = "io.nimbus.machine.nimbus.version";
 pub(super) const MACHINE_API_FORWARD_TRANSPORT: &str = "gvproxy-ssh-forwarded-unix-socket";
 pub(super) const MACHINE_API_FORWARD_USER: &str = "root";
+// macOS helper-binary search order for `krunkit` and `gvproxy`.
+//
+// The Homebrew prefix `bin` directories rank first: that is where the Nimbus
+// cask's *declared* `krunkit` dependency (and its own `gvproxy` dependency)
+// land. Preferring them keeps the managed, version-pinned helpers authoritative
+// so an incidental `podman` install can never silently shadow the dependency
+// the cask actually declares. The Podman `libexec` directories remain as
+// fallbacks for hosts that only ship Podman's bundled helpers.
 const PODMAN_DARWIN_HELPER_DIRECTORIES: &[&str] = &[
-    "/usr/local/opt/podman/libexec/podman",
-    "/opt/homebrew/opt/podman/libexec/podman",
     "/opt/homebrew/bin",
     "/usr/local/bin",
+    "/usr/local/opt/podman/libexec/podman",
+    "/opt/homebrew/opt/podman/libexec/podman",
     "/opt/homebrew/libexec/podman",
     "/usr/local/libexec/podman",
     "/usr/local/lib/podman",
