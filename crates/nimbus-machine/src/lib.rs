@@ -15,6 +15,20 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_MACHINE_RUNTIME_ROOT: &str = "/tmp/nimbus";
 pub const MACHINE_RUNTIME_ROOT_ENV: &str = "NIMBUS_MACHINE_RUNTIME_ROOT";
 pub const CURRENT_MACHINE_CONFIG_VERSION: u32 = 3;
+// The machine state schema (`status.json`) is at its first version. The
+// `krunkit` -> `vmm` runtime-helper rename -- one provider-neutral VMM slot per
+// machine, with the matching `*-krunkit.{pid,sock}` -> `*-vmm.*` runtime-file
+// scheme -- was made directly as a pre-launch breaking change, not a migration.
+// A `status.json` written before the rename simply lacks the now-required
+// `runtime.helper_binaries.vmm` field; the loader rebuilds that unparseable
+// record into a clean Stopped/Stale state (see
+// `files::load_machine_state_if_exists`) rather than stranding the machine, so
+// the rename needs no version bump. State is rebuildable runtime data, not
+// durable user data. The version gate (probe + newer/older rebuild arms) stays
+// so the first post-launch schema change can bump to 2 and route pre-existing
+// files through the rebuild arm with an explicit "schema evolved" reason;
+// pre-launch there is no shipped older version to account for, so the schema
+// starts at 1.
 pub const CURRENT_MACHINE_STATE_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

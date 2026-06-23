@@ -635,6 +635,90 @@ fn load_machine_state_rebuilds_older_schema_versions_with_explicit_error() {
 }
 
 #[test]
+fn load_machine_state_rebuilds_pre_rename_helper_record_instead_of_erroring() {
+    // Regression guard for the `krunkit` -> `vmm` runtime-helper rename. A
+    // machine started before the rename persisted its runtime helper under the
+    // old `krunkit` field and recorded a live `running` lifecycle. That on-disk
+    // record carries the current state-schema version but no longer matches the
+    // current `MachineHelperBinaryPaths` shape (now `vmm`). Reading it must NOT
+    // surface as corruption or strand the machine: the loader rebuilds the
+    // unparseable record into a clean Stopped/Stale state so a subsequent
+    // refresh/stop treats the machine as stale instead of trusting a
+    // half-understood record. This self-heal is exactly why the rename needed no
+    // schema-version bump.
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let layout = MachineRootLayout::test_sibling_roots(
+        temp_dir.path().join("config"),
+        temp_dir.path().join("state"),
+        temp_dir.path().join("runtime"),
+    );
+    let paths = layout.paths(DEFAULT_MACHINE_NAME);
+    fs::create_dir_all(&paths.state_dir).expect("state dir should exist");
+
+    // A realistic pre-rename `status.json`: a running machine whose runtime
+    // helper slot is the old `krunkit` field, which no longer exists on the
+    // current `MachineHelperBinaryPaths` (now `vmm`). It is stamped with the
+    // current schema version, so it routes through the current-version arm and
+    // fails the struct parse on the missing `vmm` field.
+    let pre_rename_state = serde_json::json!({
+        "version": CURRENT_MACHINE_STATE_VERSION,
+        "lifecycle": "running",
+        "manager": "ready",
+        "runtime": {
+            "helper_binaries": {
+                "krunkit": "/opt/homebrew/bin/krunkit",
+                "gvproxy": "/opt/homebrew/bin/gvproxy",
+            },
+            "image_path": "/tmp/nimbus/data/default/images/default.raw",
+            "efi_variable_store_path": "/tmp/nimbus/data/default/efi-vars",
+            "machine_image_source": "oci:nimbus/machine-os:latest",
+            "ssh_port": 49213,
+            "rest_uri": "unix:///tmp/nimbus/default-krunkit.sock",
+            "ready_vsock_port": 1025,
+        },
+        "last_error": null,
+    });
+    fs::write(
+        &paths.state_path,
+        serde_json::to_vec_pretty(&pre_rename_state).expect("pre-rename state should serialize"),
+    )
+    .expect("pre-rename state should write");
+
+    let state = load_machine_state_if_exists(&paths.state_path)
+        .expect("state load should succeed by rebuilding the pre-rename record")
+        .expect("rebuilt state should exist");
+    let rewritten = read_json_file_if_exists::<MachineStateRecord>(&paths.state_path)
+        .expect("rewritten state should read")
+        .expect("rewritten state should exist");
+
+    // The record is rebuilt to the current schema, not parsed: a `running`
+    // lifecycle collapses to Stopped/Stale with no runtime so the lifecycle no
+    // longer points at helper processes from the old runtime-file scheme.
+    assert_eq!(state.version, CURRENT_MACHINE_STATE_VERSION);
+    assert_eq!(state.lifecycle, MachineLifecycle::Stopped);
+    assert_eq!(state.manager, MachineManagerState::Stale);
+    assert!(
+        state.runtime.is_none(),
+        "a rebuilt pre-rename record must drop the stale runtime pointer"
+    );
+
+    // The reason proves the rebuild fired on the specific renamed field rather
+    // than generic corruption: serde reports the now-required `vmm` helper slot
+    // as missing.
+    let reason = state
+        .last_error
+        .as_deref()
+        .expect("rebuilt pre-rename record must record why it was rebuilt");
+    assert!(
+        reason.contains("vmm"),
+        "pre-rename rebuild reason should name the missing `vmm` helper field, got: {reason:?}"
+    );
+
+    assert_eq!(rewritten.version, CURRENT_MACHINE_STATE_VERSION);
+    assert_eq!(rewritten, state);
+}
+
+#[test]
 fn load_machine_state_rebuilds_unreadable_record_with_explicit_error() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let layout = MachineRootLayout::test_sibling_roots(
