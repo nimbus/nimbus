@@ -123,14 +123,16 @@ pub(super) fn pre_start_networking(
         return Ok(());
     };
 
-    let mut child = gvproxy_command.spawn()?;
+    // Store the child in the caller's slot before awaiting readiness so a
+    // `wait_for_path` failure still hands the spawned gvproxy back through the
+    // start-error cleanup path to be reaped, rather than dropping it un-waited.
+    let child = gvproxy_child.insert(gvproxy_command.spawn()?);
     wait_for_path(
         &paths.gvproxy_socket_path,
         GVPROXY_SOCKET_WAIT_TIMEOUT,
-        &mut child,
+        child,
         startup_signals,
     )?;
-    *gvproxy_child = Some(child);
     Ok(())
 }
 
@@ -195,7 +197,7 @@ pub(super) fn conduct_readiness_check(
         config,
         ssh_port,
         resolve_ssh_ready_wait_timeout(),
-        required_child(vmm_child, "krunkit")?,
+        required_child(vmm_child, "machine VMM")?,
         required_child(gvproxy_child, "gvproxy")?,
         startup_signals,
     )

@@ -209,7 +209,7 @@ fn detect_guest_bootstrap_hint(
     config: &MachineConfigRecord,
     error: &Error,
 ) -> Option<&'static str> {
-    if config.provider != MachineProvider::Krunkit
+    if !config.provider.uses_managed_applehv_guest()
         || machine_bootstrap_mode(config) != MachineBootstrapMode::Ignition
     {
         return None;

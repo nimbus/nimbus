@@ -53,7 +53,7 @@ fn converge_machine_image_contract_rebuilds_boot_artifacts_when_recorded_image_d
     let mut state = MachineStateRecord::initialized();
     state.runtime = Some(MachineRuntimeState {
         helper_binaries: MachineHelperBinaryPaths {
-            krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+            vmm: PathBuf::from("/opt/homebrew/bin/krunkit"),
             gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
         },
         image_path: paths.materialized_image_path.clone(),

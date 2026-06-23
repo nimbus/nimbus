@@ -198,7 +198,7 @@ fn uses_podman_machine_image_source(source: &MachineImageSource) -> bool {
 }
 
 fn uses_host_managed_machine_image_contract(config: &MachineConfigRecord) -> bool {
-    if !(cfg!(target_os = "macos") && config.provider == MachineProvider::Krunkit) {
+    if !(cfg!(target_os = "macos") && config.provider.uses_managed_applehv_guest()) {
         return false;
     }
 

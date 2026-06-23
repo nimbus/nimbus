@@ -78,7 +78,7 @@ impl MachineLaunchPlan {
     ) -> Result<Self, Error> {
         let backend = vmm_backend(config.provider)?;
         let helper_binaries = MachineHelperBinaryPaths {
-            krunkit: backend.resolve_vmm_binary()?,
+            vmm: backend.resolve_vmm_binary()?,
             gvproxy: resolve_gvproxy_binary()?,
         };
         let image_path =
@@ -124,7 +124,7 @@ impl MachineLaunchPlan {
         });
 
         let vmm_command = backend.build_launch_command(
-            &helper_binaries.krunkit,
+            &helper_binaries.vmm,
             &VmmLaunchContext {
                 paths,
                 config,

@@ -501,7 +501,7 @@ pub(in crate::machine) fn plan_machine_os_upgrade(
             stream.repository, reference
         )));
     }
-    if cfg!(target_os = "macos") && config.provider == MachineProvider::Krunkit {
+    if cfg!(target_os = "macos") && config.provider.uses_managed_applehv_guest() {
         let current_version = machine_image_reference_version_label(&reference);
         let update_available = reference != stream.target_image;
         return Ok(MachineOsUpgradePlan {

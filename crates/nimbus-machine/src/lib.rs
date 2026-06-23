@@ -500,7 +500,9 @@ pub struct MachineRuntimeState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MachineHelperBinaryPaths {
-    pub krunkit: PathBuf,
+    /// The resolved VMM binary for the machine's provider (krunkit or vfkit).
+    /// One VMM runs per machine, so this is a single provider-neutral slot.
+    pub vmm: PathBuf,
     pub gvproxy: PathBuf,
 }
 

@@ -606,7 +606,7 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
     state.manager = nimbus_machine::MachineManagerState::Ready;
     state.runtime = Some(nimbus_machine::MachineRuntimeState {
         helper_binaries: nimbus_machine::MachineHelperBinaryPaths {
-            krunkit: temp.path().join("krunkit"),
+            vmm: temp.path().join("krunkit"),
             gvproxy: temp.path().join("gvproxy"),
         },
         image_path: temp.path().join("default.raw"),

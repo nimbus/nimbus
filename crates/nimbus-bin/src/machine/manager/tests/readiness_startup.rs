@@ -206,7 +206,7 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
     state.manager = MachineManagerState::Launching;
     state.runtime = Some(MachineRuntimeState {
         helper_binaries: MachineHelperBinaryPaths {
-            krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+            vmm: PathBuf::from("/opt/homebrew/bin/krunkit"),
             gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
         },
         image_path,

@@ -11,7 +11,7 @@ fn launch_plan_reuses_recorded_managed_ssh_port_when_available() {
     let mut state = MachineStateRecord::initialized();
     state.runtime = Some(MachineRuntimeState {
         helper_binaries: MachineHelperBinaryPaths {
-            krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+            vmm: PathBuf::from("/opt/homebrew/bin/krunkit"),
             gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
         },
         image_path: image_path.clone(),
@@ -48,7 +48,7 @@ fn launch_plan_reassigns_recorded_ssh_port_when_it_is_busy() {
     let mut state = MachineStateRecord::initialized();
     state.runtime = Some(MachineRuntimeState {
         helper_binaries: MachineHelperBinaryPaths {
-            krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+            vmm: PathBuf::from("/opt/homebrew/bin/krunkit"),
             gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
         },
         image_path: image_path.clone(),
@@ -111,7 +111,7 @@ fn refresh_machine_state_marks_missing_pids_as_stale() {
     state.manager = MachineManagerState::Ready;
     state.runtime = Some(MachineRuntimeState {
         helper_binaries: MachineHelperBinaryPaths {
-            krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+            vmm: PathBuf::from("/opt/homebrew/bin/krunkit"),
             gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
         },
         image_path: PathBuf::from("/tmp/disk.raw"),

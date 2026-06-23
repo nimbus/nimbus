@@ -81,8 +81,8 @@ pub(super) trait MachineVmmBackend {
 /// Resolve the VMM backend for a provider. krunkit and vfkit are implemented;
 /// wsl2 fails closed with an explicit message until its backend lands. This is
 /// the single provider gate on the start path — `MachineLaunchPlan::build` calls
-/// it before any host state mutates, so an unsupported provider never partially
-/// starts a machine.
+/// it before any VMM or gvproxy process is spawned, so an unsupported provider
+/// never partially starts a machine.
 pub(super) fn vmm_backend(provider: MachineProvider) -> Result<Box<dyn MachineVmmBackend>, Error> {
     match provider {
         MachineProvider::Krunkit => Ok(Box::new(KrunkitVmmBackend)),
@@ -91,6 +91,17 @@ pub(super) fn vmm_backend(provider: MachineProvider) -> Result<Box<dyn MachineVm
             "the WSL2 machine provider is not available on this host yet".to_owned(),
         )),
     }
+}
+
+/// The gvproxy listen-mode arguments both applehv backends share. gvproxy
+/// listens in vfkit unixgram mode (`-listen-vfkit unixgram://<sock>`) for
+/// krunkit and vfkit alike — krunkit reuses vfkit's host transport, so only the
+/// on-VMM net-device grammar (`KrunkitVmmBackend` vs `VfkitVmmBackend`) differs.
+fn gvproxy_unixgram_listen_args(socket_path: &Path) -> Vec<String> {
+    vec![
+        "-listen-vfkit".to_owned(),
+        format!("unixgram://{}", socket_path.display()),
+    ]
 }
 
 /// The leading VMM arguments that krunkit and vfkit share verbatim: CPU/memory
@@ -182,10 +193,7 @@ impl MachineVmmBackend for KrunkitVmmBackend {
     }
 
     fn gvproxy_listen_args(&self, socket_path: &Path) -> Vec<String> {
-        vec![
-            "-listen-vfkit".to_owned(),
-            format!("unixgram://{}", socket_path.display()),
-        ]
+        gvproxy_unixgram_listen_args(socket_path)
     }
 
     fn build_launch_command(
@@ -246,14 +254,7 @@ impl MachineVmmBackend for VfkitVmmBackend {
     }
 
     fn gvproxy_listen_args(&self, socket_path: &Path) -> Vec<String> {
-        // gvproxy's `-listen-vfkit` unixgram listener is the mode vfkit's
-        // `virtio-net,unixSocketPath=` device dials; the host side is identical to
-        // krunkit (krunkit reuses vfkit's transport), only the on-VMM net-device
-        // grammar below differs.
-        vec![
-            "-listen-vfkit".to_owned(),
-            format!("unixgram://{}", socket_path.display()),
-        ]
+        gvproxy_unixgram_listen_args(socket_path)
     }
 
     fn build_launch_command(

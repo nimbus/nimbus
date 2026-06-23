@@ -65,6 +65,19 @@ fn environment_override_is_case_and_whitespace_insensitive() {
 }
 
 #[test]
+fn managed_applehv_guest_covers_both_macos_microvm_backends() {
+    // `uses_managed_applehv_guest` is the single predicate that gates host↔guest
+    // binary sync, the host-managed image contract, the OS-upgrade plan branch,
+    // and the boot-failure login hint. Both macOS microVM backends drive the
+    // Nimbus-managed applehv guest, so both must qualify identically; WSL2 owns
+    // its own guest plumbing and must not. A regression here silently mistreats
+    // vfkit as if it were an unmanaged provider.
+    assert!(MachineProvider::Krunkit.uses_managed_applehv_guest());
+    assert!(MachineProvider::Vfkit.uses_managed_applehv_guest());
+    assert!(!MachineProvider::Wsl2.uses_managed_applehv_guest());
+}
+
+#[test]
 fn unknown_environment_override_is_rejected() {
     let error = resolve_machine_provider_from(None, Some("qemu"))
         .expect_err("an unknown provider token must not silently fall back to a default");

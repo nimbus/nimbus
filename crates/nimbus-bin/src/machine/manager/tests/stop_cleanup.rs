@@ -56,7 +56,7 @@ fn stop_machine_uses_graceful_krunkit_stop_before_cleaning_up_helpers() {
     state.manager = MachineManagerState::Ready;
     state.runtime = Some(MachineRuntimeState {
         helper_binaries: MachineHelperBinaryPaths {
-            krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+            vmm: PathBuf::from("/opt/homebrew/bin/krunkit"),
             gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
         },
         image_path,

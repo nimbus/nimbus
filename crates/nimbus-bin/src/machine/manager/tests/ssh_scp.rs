@@ -22,7 +22,7 @@ fn ssh_command_requires_running_machine_and_identity() {
     state.lifecycle = MachineLifecycle::Running;
     state.runtime = Some(MachineRuntimeState {
         helper_binaries: MachineHelperBinaryPaths {
-            krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+            vmm: PathBuf::from("/opt/homebrew/bin/krunkit"),
             gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
         },
         image_path,
@@ -52,7 +52,7 @@ fn ssh_command_applies_localhost_machine_safety_options() {
     state.lifecycle = MachineLifecycle::Running;
     state.runtime = Some(MachineRuntimeState {
         helper_binaries: MachineHelperBinaryPaths {
-            krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+            vmm: PathBuf::from("/opt/homebrew/bin/krunkit"),
             gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
         },
         image_path,
@@ -104,7 +104,7 @@ fn scp_command_applies_localhost_machine_safety_options() {
     state.lifecycle = MachineLifecycle::Running;
     state.runtime = Some(MachineRuntimeState {
         helper_binaries: MachineHelperBinaryPaths {
-            krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+            vmm: PathBuf::from("/opt/homebrew/bin/krunkit"),
             gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
         },
         image_path,
@@ -165,7 +165,7 @@ fn scp_command_formats_guest_source_for_downloads() {
     state.lifecycle = MachineLifecycle::Running;
     state.runtime = Some(MachineRuntimeState {
         helper_binaries: MachineHelperBinaryPaths {
-            krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+            vmm: PathBuf::from("/opt/homebrew/bin/krunkit"),
             gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
         },
         image_path,
