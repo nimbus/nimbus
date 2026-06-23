@@ -409,7 +409,41 @@ fn v8_string<'s>(
 }
 
 fn install_missing_runtime_extension_state(runtime: &mut JsRuntime) {
+    install_missing_uv_loop(runtime);
     let op_state = runtime.op_state();
     let mut state = op_state.borrow_mut();
     install_missing_deno_extension_state(&mut state);
+}
+
+/// Re-install the per-runtime libuv-compat loop on snapshot-restored runtimes.
+///
+/// `deno_core::JsRuntime::new` installs the `Box<uv_loop_t>` (and its sibling
+/// `uv_compat::AsyncId`) that ext/node TTY and stream ops borrow from `OpState`
+/// only on the fresh, non-snapshot construction path; the startup-snapshot
+/// restore path skips it. Without the loop, the first Node op that needs it --
+/// e.g. `process.stdout` materializing a `TTY` via `TTY.newTty` -- panics
+/// inside a non-unwinding V8 callback ("required type Box<uv_loop_t> is not
+/// present in GothamState container") and aborts the whole process.
+/// `install_missing_deno_extension_state` already backfills the sibling
+/// `AsyncId`; this backfills the loop itself, mirroring `deno_core`'s own setup.
+/// `deno_core`'s runtime teardown destroys the realm and then drops the
+/// `Box<uv_loop_t>` from `OpState` generically, so no extra cleanup is required.
+fn install_missing_uv_loop(runtime: &mut JsRuntime) {
+    {
+        let op_state = runtime.op_state();
+        let already_installed = op_state
+            .borrow()
+            .has::<Box<deno_core::uv_compat::uv_loop_t>>();
+        if already_installed {
+            return;
+        }
+    }
+    // SAFETY: zeroed memory is a valid `uv_loop_t` before `uv_loop_init`; the
+    // pointer is valid and initialized before `register_uv_loop`; the loop is
+    // owned by `OpState` for the runtime's lifetime and torn down with it.
+    let mut uv_loop = Box::new(unsafe { std::mem::zeroed::<deno_core::uv_compat::uv_loop_t>() });
+    unsafe { deno_core::uv_compat::uv_loop_init(&mut *uv_loop) };
+    let loop_ptr: *mut deno_core::uv_compat::uv_loop_t = &mut *uv_loop;
+    unsafe { runtime.register_uv_loop(loop_ptr) };
+    runtime.op_state().borrow_mut().put(uv_loop);
 }
