@@ -14,7 +14,18 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_MACHINE_RUNTIME_ROOT: &str = "/tmp/nimbus";
 pub const MACHINE_RUNTIME_ROOT_ENV: &str = "NIMBUS_MACHINE_RUNTIME_ROOT";
-pub const CURRENT_MACHINE_CONFIG_VERSION: u32 = 3;
+// The machine config schema (`config.json`) is at its first version. Like the
+// state schema it starts at 1 pre-launch -- there is no shipped older version to
+// account for, so the dev-era 1 -> 2 -> 3 history collapses to a single
+// canonical v1. Unlike the state schema, the config loader is *strict*: a
+// version mismatch is a hard error directing the operator to recreate
+// (`nimbus machine rm` then `nimbus machine init`), never a silent rebuild.
+// config.json is the operator's declared configuration (provider, resources,
+// image source, volumes) -- durable user data -- so rebuilding it would discard
+// their intent. That asymmetry with `CURRENT_MACHINE_STATE_VERSION`
+// (rebuildable runtime data) is deliberate; do not make config self-heal. The
+// first post-launch schema change bumps to 2.
+pub const CURRENT_MACHINE_CONFIG_VERSION: u32 = 1;
 // The machine state schema (`status.json`) is at its first version. The
 // `krunkit` -> `vmm` runtime-helper rename -- one provider-neutral VMM slot per
 // machine, with the matching `*-krunkit.{pid,sock}` -> `*-vmm.*` runtime-file
